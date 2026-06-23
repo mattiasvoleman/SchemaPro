@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "SchemaPro Teacher",
+    "slug": "schemapro-teacher",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "schemapro",
+    "userInterfaceStyle": "dark",
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "SchemaPro uses Face ID to verify your identity before submitting or altering attendance records."
+        }
+      ],
+      [
+        "expo-sqlite",
+        {
+          "enableFTS": true,
+          "useSQLCipher": true
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.schemapro.teacher",
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "SchemaPro uses the local network to receive real-time schedule updates from the school server."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0f0f1a"
+      },
+      "package": "com.schemapro.teacher",
+      "permissions": [
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.INTERNET"
+      ]
+    },
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

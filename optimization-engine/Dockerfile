@@ -1,0 +1,67 @@
+# =============================================================================
+# Stage 1 — builder
+# =============================================================================
+# Use the official Python slim image pinned to an exact digest for
+# reproducibility and supply-chain security.
+FROM python:3.11-slim AS builder
+
+# Prevent .pyc files and enable unbuffered stdout/stderr (important for logs)
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /build
+
+# Install OS-level build dependencies required by OR-Tools native extensions.
+# These are only needed at build time; they won't appear in the final image.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        g++ \
+        cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python dependencies into a prefix directory so we can
+# cleanly copy them to the runtime stage.
+COPY requirements.txt .
+RUN pip install --upgrade pip \
+    && pip install --prefix=/install -r requirements.txt
+
+
+# =============================================================================
+# Stage 2 — runtime
+# =============================================================================
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH="/app"
+
+# Only install runtime shared libraries that OR-Tools needs (no build tools).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 1001 appgroup \
+    && useradd --uid 1001 --gid appgroup --no-create-home --shell /sbin/nologin appuser
+
+# Pull compiled packages from the builder stage
+COPY --from=builder /install /usr/local
+
+WORKDIR /app
+
+# Copy application source (excludes everything in .dockerignore)
+COPY app/ ./app/
+
+# Drop root privileges before starting the process
+USER appuser
+
+EXPOSE 8000
+
+# Use exec form for proper signal handling (SIGTERM reaches uvicorn)
+CMD ["uvicorn", "app.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "1", \
+     "--log-config", "/dev/null", \
+     "--no-access-log"]

@@ -1,0 +1,23 @@
+node_modules/
+dist/
+build/
+
+# Secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Prisma
+/prisma/*.db
+/prisma/*.db-journal
+
+# OS / editor
+.DS_Store
+*.log
+
+# Python optimization engine
+optimization-engine/.venv/
+optimization-engine/__pycache__/
+optimization-engine/**/__pycache__/
+optimization-engine/.pytest_cache/
+optimization-engine/.env

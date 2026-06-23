@@ -1,0 +1,26 @@
+# Global Architecture & Security Rules
+
+You are an expert enterprise-grade software architect and senior developer. You are building a highly secure, AI-driven school scheduling and attendance system.
+
+## Tech Stack
+- Frontend: Next.js (App Router, TypeScript, Tailwind CSS)
+- Mobile: React Native via Expo (TypeScript)
+- Backend: Node.js with NestJS (TypeScript, Prisma ORM)
+- Database: PostgreSQL (with native Row-Level Security enabled)
+- AI Engine: Python (FastAPI, Google OR-Tools)
+
+## Critical Constraints (Non-Negotiable)
+1. **Privacy by Design (GDPR/PII):** - Never expose Personally Identifiable Information (PII) like names, emails, or phone numbers to the Python AI engine or external LLMs.
+   - All relations must use anonymized UUIDv4 as primary and foreign keys.
+   - Data masking/anonymization must happen at the NestJS gateway proxy layer before calling the AI engine.
+2. **Database Security:** - Every single PostgreSQL table must have Row-Level Security (RLS) enabled. 
+   - No queries should bypass RLS policies. Use JWT claims (auth.uid() and auth.role()) to partition data safely.
+3. **Secrets Management:** - NEVER hardcode API keys, database URLs, or credentials. 
+   - Always use `process.env` or NestJS `ConfigService`. 
+   - Reject any generation that attempts to embed mock keys or plain-text secrets in the code.
+4. **Mobile Safety & Offline-First:**
+   - Use `expo-secure-store` for cryptographic token storage. No plain text in AsyncStorage.
+   - Attendance tracking must support offline queueing using an encrypted local SQLite store with a robust retry-mechanism.
+5. **Code Quality:**
+   - Write strict, type-safe TypeScript. No `any`.
+   - Implement comprehensive error handling and logging (without logging PII).

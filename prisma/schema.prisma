@@ -1,0 +1,420 @@
+// =============================================================================
+// SchemaPro — AI-driven school scheduling & attendance system
+// PostgreSQL data layer (Prisma ORM)
+//
+// Design principles (see .cursorrules):
+//   * Privacy by Design: every primary/foreign key is an anonymized UUIDv4 so
+//     that only opaque identifiers ever reach the Python AI engine. PII lives
+//     exclusively on the `Users` table and is masked at the NestJS gateway.
+//   * Multi-tenancy: every table carries `schoolId` so PostgreSQL Row-Level
+//     Security can partition data per school cheaply (see migration.sql).
+//   * Performance: indexes are tuned for date/time range scans of the calendar.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum UserRole {
+  STUDENT
+  TEACHER
+  SCHOOL_ADMIN
+}
+
+enum RoomType {
+  CLASSROOM
+  LABORATORY
+  GYMNASIUM
+  AUDITORIUM
+  WORKSHOP
+  OTHER
+}
+
+enum LessonStatus {
+  SCHEDULED
+  CANCELLED
+  COMPLETED
+  RESCHEDULED
+}
+
+enum AttendanceStatus {
+  UNKNOWN
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+enum TeacherAssignmentRole {
+  LEAD
+  ASSISTANT
+  SUBSTITUTE
+}
+
+enum ConstraintResource {
+  TEACHER
+  ROOM
+  STUDENT_GROUP
+}
+
+enum ConstraintType {
+  UNAVAILABLE
+  PREFERRED_FREE
+  PREFERRED_BUSY
+}
+
+// -----------------------------------------------------------------------------
+// Tenant root
+// -----------------------------------------------------------------------------
+
+model School {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  slug      String   @unique
+  timezone  String   @default("Europe/Stockholm")
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  users                   User[]
+  rooms                   Room[]
+  subjects                Subject[]
+  academicYears           AcademicYear[]
+  studentGroups           StudentGroup[]
+  teachingRequirements    TeachingRequirement[]
+  masterLessons           MasterLesson[]
+  calendarLessons         CalendarLesson[]
+  calendarLessonTeachers  CalendarLessonTeacher[]
+  attendanceRecords       AttendanceRecord[]
+  availabilityConstraints AvailabilityConstraint[]
+
+  @@map("Schools")
+}
+
+// -----------------------------------------------------------------------------
+// Users (the ONLY table that stores PII)
+// -----------------------------------------------------------------------------
+
+model User {
+  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId String   @db.Uuid
+  // `authId` is the immutable subject claim from the JWT (auth.uid()).
+  authId   String   @unique
+  role     UserRole
+
+  // --- PII (masked at the NestJS gateway, never sent to the AI engine) ---
+  firstName String
+  lastName  String
+  email     String
+  phone     String?
+  // ----------------------------------------------------------------------
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school         School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  // A student's primary group (null for teachers/admins).
+  studentGroupId String?       @db.Uuid
+  studentGroup   StudentGroup? @relation("StudentGroupMembers", fields: [studentGroupId], references: [id], onDelete: SetNull)
+
+  // Relations where this user acts as a teacher.
+  teachingRequirements    TeachingRequirement[]    @relation("RequirementTeacher")
+  masterLessons           MasterLesson[]           @relation("MasterLessonTeacher")
+  calendarLessonTeachers  CalendarLessonTeacher[]  @relation("AssignedTeacher")
+  recordedAttendance      AttendanceRecord[]       @relation("AttendanceRecorder")
+  availabilityConstraints AvailabilityConstraint[] @relation("ConstraintTeacher")
+
+  // Relations where this user is the student.
+  attendanceRecords AttendanceRecord[] @relation("AttendanceStudent")
+
+  @@unique([schoolId, email])
+  @@index([schoolId])
+  @@index([schoolId, role])
+  @@index([studentGroupId])
+  @@map("Users")
+}
+
+// -----------------------------------------------------------------------------
+// Physical resources
+// -----------------------------------------------------------------------------
+
+model Room {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String   @db.Uuid
+  name      String
+  code      String?
+  capacity  Int?
+  type      RoomType @default(CLASSROOM)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school                  School                   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  masterLessons           MasterLesson[]
+  calendarLessons         CalendarLesson[]
+  availabilityConstraints AvailabilityConstraint[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@map("Rooms")
+}
+
+model Subject {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String   @db.Uuid
+  name      String
+  code      String?
+  color     String?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school               School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  teachingRequirements TeachingRequirement[]
+  masterLessons        MasterLesson[]
+  calendarLessons      CalendarLesson[]
+
+  @@unique([schoolId, code])
+  @@index([schoolId])
+  @@map("Subjects")
+}
+
+model AcademicYear {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String   @db.Uuid
+  name      String
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  isActive  Boolean  @default(false)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school               School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  studentGroups        StudentGroup[]
+  teachingRequirements TeachingRequirement[]
+  masterLessons        MasterLesson[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@index([schoolId, startDate, endDate])
+  @@map("AcademicYears")
+}
+
+model StudentGroup {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  academicYearId String   @db.Uuid
+  name           String
+  gradeLevel     Int?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  members                 User[]                   @relation("StudentGroupMembers")
+  teachingRequirements    TeachingRequirement[]
+  masterLessons           MasterLesson[]
+  calendarLessons         CalendarLesson[]
+  availabilityConstraints AvailabilityConstraint[] @relation("ConstraintGroup")
+
+  @@unique([schoolId, academicYearId, name])
+  @@index([schoolId])
+  @@index([academicYearId])
+  @@map("StudentGroups")
+}
+
+// -----------------------------------------------------------------------------
+// Curriculum / scheduling demand
+// -----------------------------------------------------------------------------
+
+model TeachingRequirement {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String   @db.Uuid
+  academicYearId   String   @db.Uuid
+  subjectId        String   @db.Uuid
+  studentGroupId   String   @db.Uuid
+  teacherId        String?  @db.Uuid
+  lessonsPerWeek   Int      @default(1)
+  minutesPerLesson Int      @default(60)
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  subject      Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  studentGroup StudentGroup @relation(fields: [studentGroupId], references: [id], onDelete: Cascade)
+  teacher      User?        @relation("RequirementTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
+
+  @@unique([academicYearId, studentGroupId, subjectId])
+  @@index([schoolId])
+  @@index([teacherId])
+  @@map("TeachingRequirements")
+}
+
+// -----------------------------------------------------------------------------
+// Master timetable (recurring weekly template the AI engine produces)
+// -----------------------------------------------------------------------------
+
+model MasterLesson {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  academicYearId String   @db.Uuid
+  subjectId      String   @db.Uuid
+  studentGroupId String   @db.Uuid
+  teacherId      String?  @db.Uuid
+  roomId         String?  @db.Uuid
+  // ISO weekday: 1 = Monday ... 7 = Sunday.
+  dayOfWeek      Int
+  startTime      DateTime @db.Time(0)
+  endTime        DateTime @db.Time(0)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  subject      Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  studentGroup StudentGroup @relation(fields: [studentGroupId], references: [id], onDelete: Cascade)
+  teacher      User?        @relation("MasterLessonTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
+  room         Room?        @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  calendarLessons CalendarLesson[]
+
+  @@index([schoolId, dayOfWeek, startTime])
+  @@index([studentGroupId, dayOfWeek])
+  @@index([teacherId, dayOfWeek])
+  @@index([roomId, dayOfWeek])
+  @@map("MasterLessons")
+}
+
+// -----------------------------------------------------------------------------
+// Concrete calendar (materialized instances for a specific date)
+// -----------------------------------------------------------------------------
+
+model CalendarLesson {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String       @db.Uuid
+  masterLessonId String?      @db.Uuid
+  subjectId      String       @db.Uuid
+  studentGroupId String       @db.Uuid
+  roomId         String?      @db.Uuid
+  date           DateTime     @db.Date
+  startsAt       DateTime     @db.Timestamptz(6)
+  endsAt         DateTime     @db.Timestamptz(6)
+  status         LessonStatus @default(SCHEDULED)
+  note           String?
+  createdAt      DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
+
+  school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  masterLesson MasterLesson? @relation(fields: [masterLessonId], references: [id], onDelete: SetNull)
+  subject      Subject       @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  studentGroup StudentGroup  @relation(fields: [studentGroupId], references: [id], onDelete: Cascade)
+  room         Room?         @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  teachers          CalendarLessonTeacher[]
+  attendanceRecords AttendanceRecord[]
+
+  // Indexes optimized for fast date/time range scans.
+  @@index([schoolId, date])
+  @@index([schoolId, startsAt, endsAt])
+  @@index([studentGroupId, date])
+  @@index([studentGroupId, startsAt])
+  @@index([roomId, startsAt])
+  @@index([masterLessonId])
+  @@index([date])
+  @@index([startsAt])
+  @@map("CalendarLessons")
+}
+
+// -----------------------------------------------------------------------------
+// Teacher <-> CalendarLesson assignment (supports co-teaching / substitutes)
+// -----------------------------------------------------------------------------
+
+model CalendarLessonTeacher {
+  id               String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String                @db.Uuid
+  calendarLessonId String                @db.Uuid
+  teacherId        String                @db.Uuid
+  role             TeacherAssignmentRole @default(LEAD)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(6)
+
+  school         School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  calendarLesson CalendarLesson @relation(fields: [calendarLessonId], references: [id], onDelete: Cascade)
+  teacher        User           @relation("AssignedTeacher", fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([calendarLessonId, teacherId])
+  @@index([schoolId])
+  @@index([teacherId])
+  @@map("CalendarLessonTeachers")
+}
+
+// -----------------------------------------------------------------------------
+// Attendance
+// -----------------------------------------------------------------------------
+
+model AttendanceRecord {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String           @db.Uuid
+  calendarLessonId String           @db.Uuid
+  studentId        String           @db.Uuid
+  status           AttendanceStatus @default(UNKNOWN)
+  recordedById     String?          @db.Uuid
+  recordedAt       DateTime?        @db.Timestamptz(6)
+  note             String?
+  createdAt        DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @db.Timestamptz(6)
+
+  school         School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  calendarLesson CalendarLesson @relation(fields: [calendarLessonId], references: [id], onDelete: Cascade)
+  student        User           @relation("AttendanceStudent", fields: [studentId], references: [id], onDelete: Cascade)
+  recordedBy     User?          @relation("AttendanceRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@unique([calendarLessonId, studentId])
+  @@index([schoolId, recordedAt])
+  @@index([studentId, recordedAt])
+  @@index([calendarLessonId])
+  @@map("AttendanceRecords")
+}
+
+// -----------------------------------------------------------------------------
+// Availability / scheduling constraints (consumed by the OR-Tools engine)
+// -----------------------------------------------------------------------------
+
+model AvailabilityConstraint {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String             @db.Uuid
+  resourceType   ConstraintResource
+  userId         String?            @db.Uuid
+  roomId         String?            @db.Uuid
+  studentGroupId String?            @db.Uuid
+  // Either a recurring weekday (1-7) or a one-off `date` may be set.
+  dayOfWeek      Int?
+  date           DateTime?          @db.Date
+  startTime      DateTime           @db.Time(0)
+  endTime        DateTime           @db.Time(0)
+  type           ConstraintType     @default(UNAVAILABLE)
+  reason         String?
+  createdAt      DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @db.Timestamptz(6)
+
+  school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user         User?         @relation("ConstraintTeacher", fields: [userId], references: [id], onDelete: Cascade)
+  room         Room?         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  studentGroup StudentGroup? @relation("ConstraintGroup", fields: [studentGroupId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, dayOfWeek])
+  @@index([userId, dayOfWeek])
+  @@index([roomId, dayOfWeek])
+  @@index([studentGroupId, dayOfWeek])
+  @@index([date])
+  @@map("AvailabilityConstraints")
+}
