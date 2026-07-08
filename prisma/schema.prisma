@@ -107,8 +107,8 @@ model School {
 model User {
   id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId String   @db.Uuid
-  // `authId` is the immutable subject claim from the JWT (auth.uid()).
-  authId   String   @unique
+  // `authId` is the Supabase Auth user id (auth.users.id == JWT sub == auth.uid()).
+  authId   String   @unique @db.Uuid
   role     UserRole
 
   // --- PII (masked at the NestJS gateway, never sent to the AI engine) ---

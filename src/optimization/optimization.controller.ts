@@ -1,8 +1,11 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseUUIDPipe,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -15,6 +18,10 @@ import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { TriggerOptimizationDto } from './dto/trigger-optimization.dto';
 import { OptimizationProxyService } from './optimization-proxy.service';
+import {
+  OptimizationJobsService,
+  type OptimizationJobView,
+} from './optimization-jobs.service';
 import type { AiEngineScheduleResponse } from './interfaces/ai-engine-payload.interface';
 
 /**
@@ -26,11 +33,36 @@ import type { AiEngineScheduleResponse } from './interfaces/ai-engine-payload.in
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN, Role.SYSTEM_ADMIN)
 export class OptimizationController {
-  constructor(private readonly proxy: OptimizationProxyService) {}
+  constructor(
+    private readonly proxy: OptimizationProxyService,
+    private readonly jobsService: OptimizationJobsService,
+  ) {}
 
   /**
-   * Triggers a full scheduling run for the given academic year.
-   * Returns the AI engine's raw status + generated master lessons count.
+   * Starts an asynchronous scheduling run and returns a job id the UI polls.
+   */
+  @Post('jobs')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  startJob(
+    @Body() dto: TriggerOptimizationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): { jobId: string } {
+    return this.jobsService.start(dto.academicYearId, user);
+  }
+
+  /** Returns live status + result (solver status, conflicts) for a job. */
+  @Get('jobs/:id')
+  getJob(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): OptimizationJobView {
+    return this.jobsService.get(id, user);
+  }
+
+  /**
+   * Synchronous trigger kept for scripted/CI use. Blocks until the solver
+   * responds; prefer `POST /jobs` from interactive clients.
    */
   @Post('trigger')
   @HttpCode(HttpStatus.ACCEPTED)

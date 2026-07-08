@@ -73,6 +73,18 @@ export class EnvironmentVariables {
   @IsOptional()
   @IsString()
   REDIS_URL?: string;
+
+  /**
+   * Supabase Auth admin access — required only for the user-invite flow
+   * (`POST /api/v1/users`). All other endpoints work without it.
+   */
+  @IsOptional()
+  @IsString()
+  SUPABASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  SUPABASE_SERVICE_ROLE_KEY?: string;
 }
 
 export function validateEnv(

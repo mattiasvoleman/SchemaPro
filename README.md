@@ -40,33 +40,37 @@ These follow the non-negotiable constraints in `.cursorrules`:
 Every table is multi-tenant via a denormalized `schoolId`, which keeps RLS
 policies uniform and index-friendly.
 
-## Row-Level Security model
+## Row-Level Security model (Supabase-compatible)
 
-The migration creates helper functions and one set of policies per role.
+The migration enables RLS on every table and creates one set of policies per
+role. It is designed to run on **Supabase** and relies on Supabase's built-in
+primitives — it does **not** redefine them.
 
 ### How the request context is established
 
-The NestJS gateway must:
+- **Browser / app traffic** goes through Supabase (PostgREST) as the built-in
+  **`authenticated`** role. Supabase verifies the JWT and exposes it via
+  `request.jwt.claims`, and provides `auth.uid()` (the `auth.users` id, a `uuid`)
+  and `auth.role()`. `Users.authId` stores that same `auth.users` id.
+- **Server-side traffic** (e.g. the NestJS gateway, the AI engine proxy) uses the
+  **`service_role`** key, which bypasses RLS by design. Keep it server-only —
+  never ship it to the browser or the AI engine.
 
-1. Connect to PostgreSQL as the least-privilege role **`app_authenticated`**
-   (created by the migration) — never as a superuser or the table owner.
-2. Open a transaction per request and inject the verified JWT payload:
+Helper functions resolve the caller from the database:
 
-```sql
-SET LOCAL "request.jwt.claims" = '{"sub":"<authId>","role":"TEACHER"}';
-```
-
-Helper functions then resolve the caller:
-
-- `auth.uid()` / `auth.role()` — read the raw JWT claims.
+- `auth.uid()` / `auth.role()` — provided by Supabase (the migration only adds
+  fallback versions if they are absent, so a plain-Postgres shadow DB used by
+  `prisma migrate dev` still works; Supabase's own implementations are never
+  overwritten).
 - `app.current_user_id()`, `app.current_school_id()`, `app.current_user_role()`,
-  `app.current_user_group_id()` — `SECURITY DEFINER` lookups that authoritatively
-  resolve the caller from the `Users` table (matching `Users.authId = auth.uid()`).
+  `app.current_user_group_id()` — `SECURITY DEFINER` lookups that resolve the
+  caller from the `Users` table (matching `Users.authId = auth.uid()`).
 
-> RLS is intentionally **not** forced on the table owner so these
-> `SECURITY DEFINER` helpers can resolve identity without recursive policy
-> evaluation. Because the app connects as `app_authenticated` (a non-owner),
-> every application query is still fully constrained by RLS.
+> The `SECURITY DEFINER` helpers are owned by the migration role (`postgres` on
+> Supabase) and therefore bypass RLS, so identity resolution never recurses
+> through the policies. Policy predicates wrap each helper call in `(select …)`
+> so the planner evaluates it once per statement (Supabase RLS performance
+> guidance).
 
 ### Policy summary
 
@@ -83,16 +87,23 @@ Helper functions then resolve the caller:
 npm install
 
 # 2. Configure secrets (never commit the real .env)
-cp .env.example .env   # then fill in DATABASE_URL / DIRECT_URL
+cp .env.example .env
+# Fill in the Supabase Postgres connection strings (Supabase dashboard ->
+# Project Settings -> Database):
+#   DATABASE_URL -> pooled connection (port 6543, PgBouncer) for the app
+#   DIRECT_URL   -> direct connection (port 5432) for migrations
 
-# 3. Apply the migration (creates tables, indexes, RLS, policies)
-npm run migrate:deploy   # production
-# or, during development:
-npm run migrate:dev
+# 3. Apply the migration against Supabase (creates tables, indexes, RLS, policies)
+npm run migrate:deploy
 
 # 4. Generate the typed Prisma client
 npm run prisma:generate
 ```
+
+> `migrate:deploy` applies the migration as-is and is the recommended path for
+> Supabase. `migrate:dev` spins up a temporary plain-Postgres shadow database;
+> the migration's guarded fallbacks (roles + `auth.uid()`/`auth.role()`) let it
+> succeed there too.
 
 ## Useful scripts
 

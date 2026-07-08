@@ -37,7 +37,7 @@ CREATE TABLE "Schools" (
 CREATE TABLE "Users" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "schoolId" UUID NOT NULL,
-    "authId" TEXT NOT NULL,
+    "authId" UUID NOT NULL,
     "role" "UserRole" NOT NULL,
     "firstName" TEXT NOT NULL,
     "lastName" TEXT NOT NULL,
@@ -303,93 +303,107 @@ CREATE INDEX "AvailabilityConstraints_studentGroupId_dayOfWeek_idx" ON "Availabi
 CREATE INDEX "AvailabilityConstraints_date_idx" ON "AvailabilityConstraints"("date");
 
 -- =============================================================================
--- 5. ROW-LEVEL SECURITY
+-- 5. ROW-LEVEL SECURITY (Supabase-compatible)
 -- =============================================================================
 -- SECURITY MODEL
---   * The NestJS gateway opens a transaction per request and runs
---       SET LOCAL "request.jwt.claims" = '<verified JWT payload as JSON>';
---     so the helper functions below can read auth.uid()/auth.role().
---   * The application MUST connect as the non-owning, non-superuser role
---     `app_authenticated` (created below). RLS is NOT forced on the table
---     owner, which lets the SECURITY DEFINER helper functions resolve the
---     current user without recursive policy evaluation, while every
---     application query is still fully constrained by RLS.
+--   * Authenticated requests reach the database through Supabase / PostgREST as
+--     the built-in `authenticated` role, with the verified JWT exposed via
+--     `request.jwt.claims`. Supabase provides `auth.uid()` (the auth.users id,
+--     a uuid) and `auth.role()` — we DO NOT redefine them here.
+--   * `Users.authId` stores that Supabase Auth user id, so the SECURITY DEFINER
+--     helpers below resolve the caller's tenant/role from the DB. They are owned
+--     by the migration role (`postgres` on Supabase) and bypass RLS, which
+--     avoids recursive policy evaluation.
+--   * The `service_role` key (server-side only, e.g. the NestJS gateway) bypasses
+--     RLS by design — never expose it to the browser or the AI engine.
+--
+--   The guarded DO-blocks also create fallback roles/functions so this file still
+--   applies on a plain PostgreSQL shadow database (e.g. `prisma migrate dev`).
+--   On Supabase those objects already exist and are left untouched.
 -- -----------------------------------------------------------------------------
 
--- 5.1 Least-privilege application role -----------------------------------------
+CREATE SCHEMA IF NOT EXISTS "auth";
+CREATE SCHEMA IF NOT EXISTS "app";
+
+-- 5.1 Fallback roles (no-ops on Supabase, which already defines them) ----------
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_authenticated') THEN
-        CREATE ROLE "app_authenticated" NOLOGIN;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        CREATE ROLE "anon" NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        CREATE ROLE "authenticated" NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+        CREATE ROLE "service_role" NOLOGIN BYPASSRLS;
     END IF;
 END
 $$;
 
-GRANT USAGE ON SCHEMA "public" TO "app_authenticated";
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "public" TO "app_authenticated";
-ALTER DEFAULT PRIVILEGES IN SCHEMA "public"
-    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO "app_authenticated";
+-- 5.2 Fallback auth.uid()/auth.role() — created ONLY if missing, so Supabase's
+--     built-in implementations are never overwritten.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'auth' AND p.proname = 'uid'
+    ) THEN
+        CREATE FUNCTION auth.uid() RETURNS uuid
+        LANGUAGE sql STABLE AS $fn$
+            SELECT NULLIF(current_setting('request.jwt.claims', true)::jsonb ->> 'sub', '')::uuid
+        $fn$;
+    END IF;
 
--- 5.2 JWT + identity helper functions ------------------------------------------
-CREATE SCHEMA IF NOT EXISTS "auth";
-CREATE SCHEMA IF NOT EXISTS "app";
-
-GRANT USAGE ON SCHEMA "auth" TO "app_authenticated";
-GRANT USAGE ON SCHEMA "app" TO "app_authenticated";
-
--- Raw JWT subject claim (matches Users.authId).
-CREATE OR REPLACE FUNCTION auth.uid() RETURNS text
-LANGUAGE sql STABLE AS $$
-    SELECT NULLIF(
-        coalesce(
-            current_setting('request.jwt.claim.sub', true),
-            (current_setting('request.jwt.claims', true)::jsonb ->> 'sub')
-        ),
-        ''
-    )
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'auth' AND p.proname = 'role'
+    ) THEN
+        CREATE FUNCTION auth.role() RETURNS text
+        LANGUAGE sql STABLE AS $fn$
+            SELECT current_setting('request.jwt.claims', true)::jsonb ->> 'role'
+        $fn$;
+    END IF;
+END
 $$;
 
--- Raw JWT role claim.
-CREATE OR REPLACE FUNCTION auth.role() RETURNS text
-LANGUAGE sql STABLE AS $$
-    SELECT coalesce(
-        current_setting('request.jwt.claim.role', true),
-        (current_setting('request.jwt.claims', true)::jsonb ->> 'role')
-    )
-$$;
+-- 5.3 Table privileges. RLS still governs which rows are visible; these GRANTs
+--     only expose the tables to the Supabase roles (anon stays locked out).
+GRANT USAGE ON SCHEMA "public" TO "authenticated", "service_role";
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "public" TO "authenticated";
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA "public" TO "service_role";
 
--- The internal user id of the caller. SECURITY DEFINER so it can read Users
--- without being blocked (or recursing) through RLS.
+-- 5.4 Identity helpers. SECURITY DEFINER so they read Users without recursing
+--     through RLS. `authId` == Supabase auth.users id (uuid) == auth.uid().
+--     Calls are wrapped in (select ...) inside policies so the planner caches
+--     the result once per statement (Supabase RLS performance best practice).
+GRANT USAGE ON SCHEMA "app" TO "authenticated", "service_role";
+
 CREATE OR REPLACE FUNCTION app.current_user_id() RETURNS uuid
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-    SELECT "id" FROM "Users" WHERE "authId" = auth.uid()
+    SELECT "id" FROM "Users" WHERE "authId" = (select auth.uid())
 $$;
 
--- The caller's school (tenant) id.
 CREATE OR REPLACE FUNCTION app.current_school_id() RETURNS uuid
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-    SELECT "schoolId" FROM "Users" WHERE "authId" = auth.uid()
+    SELECT "schoolId" FROM "Users" WHERE "authId" = (select auth.uid())
 $$;
 
--- The caller's application role (authoritative, read from the DB).
 CREATE OR REPLACE FUNCTION app.current_user_role() RETURNS "UserRole"
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-    SELECT "role" FROM "Users" WHERE "authId" = auth.uid()
+    SELECT "role" FROM "Users" WHERE "authId" = (select auth.uid())
 $$;
 
--- The student's own group (NULL for staff). Used to scope a student's schedule.
 CREATE OR REPLACE FUNCTION app.current_user_group_id() RETURNS uuid
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
-    SELECT "studentGroupId" FROM "Users" WHERE "authId" = auth.uid()
+    SELECT "studentGroupId" FROM "Users" WHERE "authId" = (select auth.uid())
 $$;
 
 GRANT EXECUTE ON FUNCTION
-    auth.uid(), auth.role(),
     app.current_user_id(), app.current_school_id(),
     app.current_user_role(), app.current_user_group_id()
-TO "app_authenticated";
+TO "authenticated", "service_role";
 
--- 5.3 Enable RLS on every table ------------------------------------------------
+-- 5.5 Enable RLS on every table ------------------------------------------------
 ALTER TABLE "Schools" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Users" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "Rooms" ENABLE ROW LEVEL SECURITY;
@@ -404,7 +418,7 @@ ALTER TABLE "AttendanceRecords" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "AvailabilityConstraints" ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
--- 5.4 Policies
+-- 5.6 Policies
 --   Permissive policies are OR-combined: a row is accessible if ANY policy of
 --   the matching command passes. Each table therefore gets one policy per role.
 -- =============================================================================
@@ -412,236 +426,236 @@ ALTER TABLE "AvailabilityConstraints" ENABLE ROW LEVEL SECURITY;
 -- ---- Schools ----------------------------------------------------------------
 -- Any member of the school can read their own school record.
 CREATE POLICY "schools_member_select" ON "Schools"
-    FOR SELECT TO "app_authenticated"
-    USING ("id" = app.current_school_id());
+    FOR SELECT TO "authenticated"
+    USING ("id" = (select app.current_school_id()));
 
 -- Admins may update their own school.
 CREATE POLICY "schools_admin_update" ON "Schools"
-    FOR UPDATE TO "app_authenticated"
-    USING ("id" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("id" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR UPDATE TO "authenticated"
+    USING ("id" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("id" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- Users ------------------------------------------------------------------
 -- Students can read only their own record.
 CREATE POLICY "users_self_select" ON "Users"
-    FOR SELECT TO "app_authenticated"
-    USING ("id" = app.current_user_id());
+    FOR SELECT TO "authenticated"
+    USING ("id" = (select app.current_user_id()));
 
 -- Teachers (and admins) can read every user in their school.
 CREATE POLICY "users_staff_select" ON "Users"
-    FOR SELECT TO "app_authenticated"
+    FOR SELECT TO "authenticated"
     USING (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN')
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) IN ('TEACHER', 'SCHOOL_ADMIN')
     );
 
 -- Admins have full write access to users within their school.
 CREATE POLICY "users_admin_all" ON "Users"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- Rooms ------------------------------------------------------------------
 -- All members can read rooms of their school (needed to render schedules).
 CREATE POLICY "rooms_member_select" ON "Rooms"
-    FOR SELECT TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id());
+    FOR SELECT TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()));
 
 CREATE POLICY "rooms_admin_all" ON "Rooms"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- Subjects ---------------------------------------------------------------
 CREATE POLICY "subjects_member_select" ON "Subjects"
-    FOR SELECT TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id());
+    FOR SELECT TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()));
 
 CREATE POLICY "subjects_admin_all" ON "Subjects"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- AcademicYears ----------------------------------------------------------
 CREATE POLICY "academic_years_member_select" ON "AcademicYears"
-    FOR SELECT TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id());
+    FOR SELECT TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()));
 
 CREATE POLICY "academic_years_admin_all" ON "AcademicYears"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- StudentGroups ----------------------------------------------------------
 -- A student sees only their own group; staff see all groups in the school.
 CREATE POLICY "student_groups_student_select" ON "StudentGroups"
-    FOR SELECT TO "app_authenticated"
-    USING ("id" = app.current_user_group_id());
+    FOR SELECT TO "authenticated"
+    USING ("id" = (select app.current_user_group_id()));
 
 CREATE POLICY "student_groups_staff_select" ON "StudentGroups"
-    FOR SELECT TO "app_authenticated"
+    FOR SELECT TO "authenticated"
     USING (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN')
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) IN ('TEACHER', 'SCHOOL_ADMIN')
     );
 
 CREATE POLICY "student_groups_admin_all" ON "StudentGroups"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- TeachingRequirements (curriculum planning: staff only) -----------------
 CREATE POLICY "teaching_requirements_staff_select" ON "TeachingRequirements"
-    FOR SELECT TO "app_authenticated"
+    FOR SELECT TO "authenticated"
     USING (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN')
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) IN ('TEACHER', 'SCHOOL_ADMIN')
     );
 
 CREATE POLICY "teaching_requirements_admin_all" ON "TeachingRequirements"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- MasterLessons ----------------------------------------------------------
 -- Students may read the recurring template for their own group.
 CREATE POLICY "master_lessons_student_select" ON "MasterLessons"
-    FOR SELECT TO "app_authenticated"
-    USING ("studentGroupId" = app.current_user_group_id());
+    FOR SELECT TO "authenticated"
+    USING ("studentGroupId" = (select app.current_user_group_id()));
 
 CREATE POLICY "master_lessons_staff_select" ON "MasterLessons"
-    FOR SELECT TO "app_authenticated"
+    FOR SELECT TO "authenticated"
     USING (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN')
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) IN ('TEACHER', 'SCHOOL_ADMIN')
     );
 
 CREATE POLICY "master_lessons_admin_all" ON "MasterLessons"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- CalendarLessons --------------------------------------------------------
 -- Students see only their own group's lessons (their personal schedule).
 CREATE POLICY "calendar_lessons_student_select" ON "CalendarLessons"
-    FOR SELECT TO "app_authenticated"
-    USING ("studentGroupId" = app.current_user_group_id());
+    FOR SELECT TO "authenticated"
+    USING ("studentGroupId" = (select app.current_user_group_id()));
 
 -- Teachers and admins see every lesson in their school.
 CREATE POLICY "calendar_lessons_staff_select" ON "CalendarLessons"
-    FOR SELECT TO "app_authenticated"
+    FOR SELECT TO "authenticated"
     USING (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN')
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) IN ('TEACHER', 'SCHOOL_ADMIN')
     );
 
 CREATE POLICY "calendar_lessons_admin_all" ON "CalendarLessons"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- CalendarLessonTeachers -------------------------------------------------
 -- Students can see the teacher assignment(s) for their own group's lessons.
 CREATE POLICY "calendar_lesson_teachers_student_select" ON "CalendarLessonTeachers"
-    FOR SELECT TO "app_authenticated"
+    FOR SELECT TO "authenticated"
     USING (
         EXISTS (
             SELECT 1 FROM "CalendarLessons" cl
             WHERE cl."id" = "CalendarLessonTeachers"."calendarLessonId"
-              AND cl."studentGroupId" = app.current_user_group_id()
+              AND cl."studentGroupId" = (select app.current_user_group_id())
         )
     );
 
 CREATE POLICY "calendar_lesson_teachers_staff_select" ON "CalendarLessonTeachers"
-    FOR SELECT TO "app_authenticated"
+    FOR SELECT TO "authenticated"
     USING (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN')
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) IN ('TEACHER', 'SCHOOL_ADMIN')
     );
 
 CREATE POLICY "calendar_lesson_teachers_admin_all" ON "CalendarLessonTeachers"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- AttendanceRecords ------------------------------------------------------
 -- Students can read only their own attendance.
 CREATE POLICY "attendance_student_select" ON "AttendanceRecords"
-    FOR SELECT TO "app_authenticated"
-    USING ("studentId" = app.current_user_id());
+    FOR SELECT TO "authenticated"
+    USING ("studentId" = (select app.current_user_id()));
 
 -- Teachers (and admins) can read all attendance in their school.
 CREATE POLICY "attendance_staff_select" ON "AttendanceRecords"
-    FOR SELECT TO "app_authenticated"
+    FOR SELECT TO "authenticated"
     USING (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN')
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) IN ('TEACHER', 'SCHOOL_ADMIN')
     );
 
 -- Teachers may insert attendance only for lessons they are assigned to.
 CREATE POLICY "attendance_teacher_insert" ON "AttendanceRecords"
-    FOR INSERT TO "app_authenticated"
+    FOR INSERT TO "authenticated"
     WITH CHECK (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() = 'TEACHER'
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) = 'TEACHER'
         AND EXISTS (
             SELECT 1 FROM "CalendarLessonTeachers" clt
             WHERE clt."calendarLessonId" = "AttendanceRecords"."calendarLessonId"
-              AND clt."teacherId" = app.current_user_id()
+              AND clt."teacherId" = (select app.current_user_id())
         )
     );
 
 -- Teachers may update attendance only for lessons they are assigned to.
 CREATE POLICY "attendance_teacher_update" ON "AttendanceRecords"
-    FOR UPDATE TO "app_authenticated"
+    FOR UPDATE TO "authenticated"
     USING (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() = 'TEACHER'
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) = 'TEACHER'
         AND EXISTS (
             SELECT 1 FROM "CalendarLessonTeachers" clt
             WHERE clt."calendarLessonId" = "AttendanceRecords"."calendarLessonId"
-              AND clt."teacherId" = app.current_user_id()
+              AND clt."teacherId" = (select app.current_user_id())
         )
     )
     WITH CHECK (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() = 'TEACHER'
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) = 'TEACHER'
         AND EXISTS (
             SELECT 1 FROM "CalendarLessonTeachers" clt
             WHERE clt."calendarLessonId" = "AttendanceRecords"."calendarLessonId"
-              AND clt."teacherId" = app.current_user_id()
+              AND clt."teacherId" = (select app.current_user_id())
         )
     );
 
 -- Admins have full control over attendance in their school.
 CREATE POLICY "attendance_admin_all" ON "AttendanceRecords"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');
 
 -- ---- AvailabilityConstraints ------------------------------------------------
 -- Teachers can read and manage their own availability constraints.
 CREATE POLICY "availability_teacher_select" ON "AvailabilityConstraints"
-    FOR SELECT TO "app_authenticated"
+    FOR SELECT TO "authenticated"
     USING (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() IN ('TEACHER', 'SCHOOL_ADMIN')
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) IN ('TEACHER', 'SCHOOL_ADMIN')
     );
 
 CREATE POLICY "availability_teacher_modify" ON "AvailabilityConstraints"
-    FOR ALL TO "app_authenticated"
+    FOR ALL TO "authenticated"
     USING (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() = 'TEACHER'
-        AND "userId" = app.current_user_id()
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) = 'TEACHER'
+        AND "userId" = (select app.current_user_id())
     )
     WITH CHECK (
-        "schoolId" = app.current_school_id()
-        AND app.current_user_role() = 'TEACHER'
-        AND "userId" = app.current_user_id()
+        "schoolId" = (select app.current_school_id())
+        AND (select app.current_user_role()) = 'TEACHER'
+        AND "userId" = (select app.current_user_id())
     );
 
 CREATE POLICY "availability_admin_all" ON "AvailabilityConstraints"
-    FOR ALL TO "app_authenticated"
-    USING ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN')
-    WITH CHECK ("schoolId" = app.current_school_id() AND app.current_user_role() = 'SCHOOL_ADMIN');
+    FOR ALL TO "authenticated"
+    USING ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN')
+    WITH CHECK ("schoolId" = (select app.current_school_id()) AND (select app.current_user_role()) = 'SCHOOL_ADMIN');

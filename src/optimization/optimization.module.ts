@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import type { AiEngineConfig } from '../config/configuration';
 import { OptimizationController } from './optimization.controller';
 import { OptimizationProxyService } from './optimization-proxy.service';
+import { OptimizationJobsService } from './optimization-jobs.service';
 
 @Module({
   imports: [
@@ -22,6 +23,6 @@ import { OptimizationProxyService } from './optimization-proxy.service';
     }),
   ],
   controllers: [OptimizationController],
-  providers: [OptimizationProxyService],
+  providers: [OptimizationProxyService, OptimizationJobsService],
 })
 export class OptimizationModule {}

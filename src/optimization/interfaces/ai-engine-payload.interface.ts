@@ -20,6 +20,8 @@ export interface AnonymousRequirement {
   teacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** Active-student headcount — an aggregate used for room-capacity checks. */
+  studentGroupSize: number;
 }
 
 export interface AnonymousRoom {
@@ -50,10 +52,35 @@ export interface AiEngineScheduleRequest {
   constraints: AnonymousConstraint[];
 }
 
+export type ConflictCategory =
+  | 'REQUIREMENT_DEMAND'
+  | 'TEACHER_OVERLAP'
+  | 'ROOM_OVERLAP'
+  | 'GROUP_OVERLAP'
+  | 'ROOM_CAPACITY'
+  | 'AVAILABILITY'
+  | 'INSUFFICIENT_RESOURCES';
+
+export interface AiEngineConflictDetail {
+  category: ConflictCategory;
+  /** Human-readable but PII-free — the engine only ever saw anonymous ids. */
+  message: string;
+  requirementIds: string[];
+  roomIds: string[];
+  constraintIds: string[];
+  resourceIds: string[];
+}
+
+export interface AiEngineConflictAnalysis {
+  summary: string;
+  conflicts: AiEngineConflictDetail[];
+}
+
 export interface AiEngineScheduleResponse {
   requestId: string;
   status: 'FEASIBLE' | 'INFEASIBLE' | 'OPTIMAL';
   lessons: AiEngineLesson[];
+  conflicts?: AiEngineConflictAnalysis | null;
 }
 
 export interface AiEngineLesson {

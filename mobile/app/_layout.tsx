@@ -23,7 +23,7 @@ function AuthGate(): React.JSX.Element {
     if (!authState.isAuthenticated && !inAuthGroup) {
       router.replace('/(auth)/login');
     } else if (authState.isAuthenticated && inAuthGroup) {
-      router.replace('/(app)/attendance');
+      router.replace('/(app)/schedule');
     }
   }, [authState.isAuthenticated, isLoading, segments, router]);
 

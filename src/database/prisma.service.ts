@@ -62,21 +62,30 @@ export class PrismaService
   async withRls<T>(
     user: AuthenticatedUser,
     fn: (tx: PrismaClient) => Promise<T>,
+    options?: { timeoutMs?: number },
   ): Promise<T> {
-    return this.$transaction(async (tx) => {
-      // SET LOCAL means these variables exist only for this transaction.
-      // We never log the values themselves to avoid writing auth-id to logs.
-      await tx.$executeRawUnsafe(
-        `SET LOCAL "request.jwt.claim.sub" = $1`,
-        user.authId,
-      );
-      await tx.$executeRawUnsafe(
-        `SET LOCAL "request.jwt.claim.role" = $1`,
-        user.role,
-      );
+    // Both claim styles are set so every auth.uid()/auth.role() variant works:
+    // Supabase's helpers read `request.jwt.claims` (JSON) while older builds
+    // and the plain-PostgreSQL fallback read the individual claim settings.
+    // set_config(..., true) is transaction-local — the values are never
+    // visible across requests even when a pooled connection is reused.
+    const claims = JSON.stringify({ sub: user.authId, role: 'authenticated' });
 
-      return fn(tx as unknown as PrismaClient);
-    });
+    return this.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`
+          SELECT
+            set_config('request.jwt.claims', ${claims}, true),
+            set_config('request.jwt.claim.sub', ${user.authId}, true),
+            set_config('request.jwt.claim.role', ${'authenticated'}, true)
+        `;
+
+        return fn(tx as unknown as PrismaClient);
+      },
+      {
+        timeout: options?.timeoutMs ?? 15_000,
+      },
+    );
   }
 
   /**

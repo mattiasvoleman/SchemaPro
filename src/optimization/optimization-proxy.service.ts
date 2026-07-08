@@ -151,6 +151,20 @@ export class OptimizationProxyService {
       },
     });
 
+    // Group headcounts (an aggregate, not PII) enable room-capacity checks.
+    const groupSizes = await tx.user.groupBy({
+      by: ['studentGroupId'],
+      where: {
+        role: 'STUDENT',
+        isActive: true,
+        studentGroupId: { in: rawRequirements.map((r) => r.studentGroupId) },
+      },
+      _count: { _all: true },
+    });
+    const sizeByGroup = new Map(
+      groupSizes.map((row) => [row.studentGroupId, row._count._all]),
+    );
+
     const requirements: AnonymousRequirement[] = rawRequirements.map((r) => ({
       id: anonId(requirementAnonMap, r.id),
       subjectId: anonId(subjectAnonMap, r.subjectId),
@@ -158,6 +172,7 @@ export class OptimizationProxyService {
       teacherId: r.teacherId ? anonId(teacherAnonMap, r.teacherId) : null,
       lessonsPerWeek: r.lessonsPerWeek,
       minutesPerLesson: r.minutesPerLesson,
+      studentGroupSize: Math.max(1, sizeByGroup.get(r.studentGroupId) ?? 1),
     }));
 
     // Fetch rooms (drop name, code — keep only capacity and type-agnostic size).

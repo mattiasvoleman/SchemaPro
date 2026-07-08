@@ -20,6 +20,9 @@ import { RolesGuard } from './auth/roles.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { OptimizationModule } from './optimization/optimization.module';
 import { AttendanceModule } from './attendance/attendance.module';
+import { ResourcesModule } from './resources/resources.module';
+import { UsersModule } from './users/users.module';
+import { CalendarModule } from './calendar/calendar.module';
 import type { ThrottleConfig } from './config/configuration';
 
 /**
@@ -88,6 +91,9 @@ import type { ThrottleConfig } from './config/configuration';
 
     OptimizationModule,
     AttendanceModule,
+    ResourcesModule,
+    UsersModule,
+    CalendarModule,
   ],
 
   providers: [

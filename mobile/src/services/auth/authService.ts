@@ -1,89 +1,88 @@
+import { getSupabase } from '../supabase';
 import { SecureTokenStore } from './secureTokenStore';
 import type { AuthState } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// API_BASE_URL is resolved from the environment at build time.
-// It must NEVER be hardcoded here.
+// Authentication via Supabase Auth (email + password).
+//
+// After sign-in the app profile (Users.id + role) is resolved from the tenant
+// `Users` table under RLS and cached in expo-secure-store so that
+// restoreSession() works offline. The Supabase session itself is persisted by
+// the secure chunked storage adapter in services/supabase.ts.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const API_BASE_URL = process.env['EXPO_PUBLIC_API_BASE_URL'];
 
 interface LoginCredentials {
   readonly email: string;
   readonly password: string;
 }
 
-interface AuthTokenResponse {
-  readonly accessToken: string;
-  readonly teacherId: string;
+interface ProfileRow {
+  readonly id: string;
   readonly role: string;
 }
 
-function resolveApiBase(): string {
-  if (!API_BASE_URL) {
-    throw new Error(
-      '[AuthService] EXPO_PUBLIC_API_BASE_URL is not set. Check your .env.local file.',
-    );
-  }
-  return API_BASE_URL;
-}
+const SIGNED_OUT: AuthState = { isAuthenticated: false, teacherId: null, role: null };
 
-async function parseErrorMessage(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as Record<string, unknown>;
-    return typeof body['message'] === 'string' ? body['message'] : `HTTP ${response.status}`;
-  } catch {
-    return `HTTP ${response.status}`;
-  }
+async function fetchProfile(authId: string): Promise<ProfileRow | null> {
+  const { data, error } = await getSupabase()
+    .from('Users')
+    .select('id, role')
+    .eq('authId', authId)
+    .maybeSingle<ProfileRow>();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 export const AuthService = {
   async login(credentials: LoginCredentials): Promise<AuthState> {
-    const base = resolveApiBase();
+    const supabase = getSupabase();
 
-    const response = await fetch(`${base}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(credentials),
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: credentials.email.trim(),
+      password: credentials.password,
     });
-
-    if (!response.ok) {
-      const message = await parseErrorMessage(response);
-      throw new Error(message);
+    if (error || !data.user) {
+      throw new Error(error?.message ?? 'Login failed.');
     }
 
-    const data = (await response.json()) as AuthTokenResponse;
+    const profile = await fetchProfile(data.user.id);
+    if (!profile) {
+      await supabase.auth.signOut();
+      throw new Error('No SchemaPro profile is linked to this account.');
+    }
+    if (profile.role === 'STUDENT') {
+      await supabase.auth.signOut();
+      throw new Error('The mobile app is for school staff. Students use the web portal.');
+    }
 
-    await Promise.all([
-      SecureTokenStore.saveToken(data.accessToken),
-      SecureTokenStore.saveTeacherSession(data.teacherId, data.role),
-    ]);
+    // Cache the profile so restoreSession() works with no connectivity.
+    await SecureTokenStore.saveTeacherSession(profile.id, profile.role);
 
-    return {
-      isAuthenticated: true,
-      teacherId: data.teacherId,
-      role: data.role,
-    };
+    return { isAuthenticated: true, teacherId: profile.id, role: profile.role };
   },
 
   async restoreSession(): Promise<AuthState> {
-    const [token, session] = await Promise.all([
-      SecureTokenStore.getToken(),
-      SecureTokenStore.getTeacherSession(),
-    ]);
+    const { data } = await getSupabase().auth.getSession();
+    if (!data.session) return SIGNED_OUT;
 
-    if (!token || !session) {
-      return { isAuthenticated: false, teacherId: null, role: null };
+    const cached = await SecureTokenStore.getTeacherSession();
+    if (cached) {
+      return { isAuthenticated: true, teacherId: cached.teacherId, role: cached.role };
     }
 
-    return {
-      isAuthenticated: true,
-      teacherId: session.teacherId,
-      role: session.role,
-    };
+    // Cache miss (e.g. cleared keychain): resolve the profile online.
+    try {
+      const profile = await fetchProfile(data.session.user.id);
+      if (!profile) return SIGNED_OUT;
+      await SecureTokenStore.saveTeacherSession(profile.id, profile.role);
+      return { isAuthenticated: true, teacherId: profile.id, role: profile.role };
+    } catch {
+      return SIGNED_OUT;
+    }
   },
 
   async logout(): Promise<void> {
+    await getSupabase().auth.signOut();
     await SecureTokenStore.clearSession();
   },
 } as const;

@@ -28,12 +28,18 @@ export interface ThrottleConfig {
   redisUrl?: string;
 }
 
+export interface SupabaseAdminConfig {
+  url?: string;
+  serviceRoleKey?: string;
+}
+
 export interface Configuration {
   app: AppConfig;
   database: DatabaseConfig;
   jwt: JwtConfig;
   aiEngine: AiEngineConfig;
   throttle: ThrottleConfig;
+  supabase: SupabaseAdminConfig;
 }
 
 /**
@@ -68,6 +74,10 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
       ttlSeconds: env.THROTTLE_TTL_SECONDS,
       limit: env.THROTTLE_LIMIT,
       redisUrl: env.REDIS_URL && env.REDIS_URL.length > 0 ? env.REDIS_URL : undefined,
+    },
+    supabase: {
+      url: env.SUPABASE_URL,
+      serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
     },
   };
 }

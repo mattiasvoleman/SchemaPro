@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@shopify/flash-list": "1.6.4",
+    "@supabase/supabase-js": "^2.110.1",
     "expo": "^56.0.12",
     "expo-crypto": "~13.0.2",
     "expo-local-authentication": "~14.0.0",
@@ -20,6 +21,7 @@
     "expo-status-bar": "~1.12.1",
     "react": "18.2.0",
     "react-native": "^0.86.0",
+    "react-native-url-polyfill": "^3.0.0",
     "socket.io-client": "^4.7.5"
   },
   "devDependencies": {

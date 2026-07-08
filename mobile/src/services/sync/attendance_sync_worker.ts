@@ -1,12 +1,12 @@
 import * as Network from 'expo-network';
-import { SecureTokenStore } from '../auth/secureTokenStore';
+import { getAccessToken } from '../supabase';
 import {
   getPendingAttendanceRecords,
   getPendingQueueCount,
   incrementRetryCount,
   markAttendanceRecordSynced,
 } from '../database/localDatabase';
-import type { PendingAttendanceRecord, SyncStatus } from '../../types';
+import type { AttendanceStatus, PendingAttendanceRecord, SyncStatus } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Exponential backoff: delay = min(BASE * 2^retryCount, MAX_DELAY)
@@ -46,28 +46,47 @@ async function isOnline(): Promise<boolean> {
   return state.isConnected === true && state.isInternetReachable === true;
 }
 
-async function pushRecord(record: PendingAttendanceRecord, token: string): Promise<void> {
+/** Local statuses are lowercase; the NestJS API uses the Prisma enum. */
+const STATUS_TO_API: Record<AttendanceStatus, string> = {
+  present: 'PRESENT',
+  absent: 'ABSENT',
+  late: 'LATE',
+  excused: 'EXCUSED',
+};
+
+/**
+ * Pushes every pending record for one lesson as a single batch to
+ * `POST /api/v1/attendance/report` — the idempotent ingestion endpoint the
+ * gateway exposes (safe to retry from this offline queue).
+ */
+async function pushLessonBatch(
+  calendarLessonId: string,
+  records: readonly PendingAttendanceRecord[],
+  token: string,
+): Promise<void> {
   if (!API_BASE_URL) {
     throw new Error('[SyncWorker] EXPO_PUBLIC_API_BASE_URL is not set.');
   }
 
-  const response = await fetch(`${API_BASE_URL}/attendance`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/attendance/report`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
-      id: record.id,
-      lessonId: record.lessonId,
-      studentId: record.studentId,
-      status: record.status,
-      timestamp: record.timestamp,
+      calendarLessonId,
+      records: records.map((record) => ({
+        studentId: record.studentId,
+        status: STATUS_TO_API[record.status],
+      })),
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`[SyncWorker] Server rejected record ${record.id} with status ${response.status}`);
+    throw new Error(
+      `[SyncWorker] Server rejected batch for lesson ${calendarLessonId} with status ${response.status}`,
+    );
   }
 }
 
@@ -119,7 +138,7 @@ export class AttendanceSyncWorker {
     this.isSyncing = true;
     this.onStatusChange('syncing', records.length, null);
 
-    const token = await SecureTokenStore.getToken();
+    const token = await getAccessToken();
     if (!token) {
       this.isSyncing = false;
       this.onStatusChange('error', records.length, 'Session expired — please log in again.');
@@ -128,22 +147,30 @@ export class AttendanceSyncWorker {
 
     let failureCount = 0;
 
+    // Batch per lesson — the API ingests one lesson's records per request.
+    const byLesson = new Map<string, PendingAttendanceRecord[]>();
     for (const record of records) {
       if (record.retryCount >= MAX_RETRIES) {
         // Silently skip — do not log PII, only the ID.
         console.warn(`[SyncWorker] Skipping record ${record.id}: exceeded ${MAX_RETRIES} retries.`);
         continue;
       }
+      const list = byLesson.get(record.lessonId) ?? [];
+      list.push(record);
+      byLesson.set(record.lessonId, list);
+    }
 
-      const delay = backoffDelay(record.retryCount);
+    for (const [lessonId, batch] of byLesson) {
+      const maxRetryInBatch = Math.max(...batch.map((record) => record.retryCount));
+      const delay = backoffDelay(maxRetryInBatch);
       if (delay > 0) await sleep(delay);
 
       try {
-        await pushRecord(record, token);
-        await markAttendanceRecordSynced(record.id);
+        await pushLessonBatch(lessonId, batch, token);
+        await Promise.all(batch.map((record) => markAttendanceRecordSynced(record.id)));
       } catch (err) {
-        await incrementRetryCount(record.id);
-        failureCount++;
+        await Promise.all(batch.map((record) => incrementRetryCount(record.id)));
+        failureCount += batch.length;
         const msg = err instanceof Error ? err.message : 'Unknown error';
         console.error(`[SyncWorker] ${msg}`);
       }
