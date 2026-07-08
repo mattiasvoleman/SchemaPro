@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import {
+  BarChart3,
+  CalendarClock,
   CalendarDays,
   CalendarRange,
   ClipboardCheck,
@@ -60,6 +62,13 @@ const ADMIN_NAV: NavSection[] = [
     items: [
       { labelKey: "generate", href: "/admin/generate", icon: Sparkles },
       { labelKey: "timetable", href: "/admin/timetable", icon: CalendarDays },
+    ],
+  },
+  {
+    labelKey: "operations",
+    items: [
+      { labelKey: "dayPlanner", href: "/admin/lessons", icon: CalendarClock },
+      { labelKey: "reports", href: "/admin/reports", icon: BarChart3 },
     ],
   },
 ];

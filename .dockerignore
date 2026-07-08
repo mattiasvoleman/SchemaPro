@@ -1,0 +1,12 @@
+node_modules
+dist
+web
+mobile
+optimization-engine
+terminals
+.git
+.env
+.env.*
+!.env.example
+*.md
+test

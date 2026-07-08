@@ -12,7 +12,10 @@ import {
   usePublishSchedule,
   useRooms,
   useSubjects,
+  useUpdateMasterLesson,
 } from "@/lib/queries";
+import { ApiError } from "@/lib/api";
+import type { MasterLesson } from "@/lib/types";
 import { subjectColor, timeToMinutes } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import {
@@ -41,10 +44,17 @@ import {
 } from "@/components/ui/select";
 
 const ALL = "__all__";
+const NONE = "__none__";
+
+/** Normalizes DB time values ("HH:MM:SS") to input-friendly "HH:MM". */
+function toHHMM(time: string): string {
+  return time.slice(0, 5);
+}
 
 export default function TimetablePage() {
   const t = useTranslations("timetable");
   const tCommon = useTranslations("common");
+  const tDays = useTranslations("days");
   const { activeYear } = useActiveYear();
   const { data: lessons, isLoading } = useMasterLessons(activeYear?.id ?? null);
   const { data: subjects } = useSubjects();
@@ -52,12 +62,20 @@ export default function TimetablePage() {
   const { data: rooms } = useRooms();
   const { data: people } = usePeople();
   const publish = usePublishSchedule();
+  const updateLesson = useUpdateMasterLesson();
 
   const [groupFilter, setGroupFilter] = useState<string>(ALL);
   const [teacherFilter, setTeacherFilter] = useState<string>(ALL);
   const [publishOpen, setPublishOpen] = useState(false);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+
+  const [editing, setEditing] = useState<MasterLesson | null>(null);
+  const [editDay, setEditDay] = useState("1");
+  const [editStart, setEditStart] = useState("");
+  const [editEnd, setEditEnd] = useState("");
+  const [editRoom, setEditRoom] = useState(NONE);
+  const [editTeacher, setEditTeacher] = useState(NONE);
 
   const teachers = useMemo(
     () => (people ?? []).filter((person) => person.role === "TEACHER"),
@@ -116,6 +134,39 @@ export default function TimetablePage() {
       }),
     [filtered, subjectById, groupById, teacherById, roomById],
   );
+
+  const openEditor = (lessonId: string) => {
+    const lesson = (lessons ?? []).find((entry) => entry.id === lessonId);
+    if (!lesson) return;
+    setEditing(lesson);
+    setEditDay(String(lesson.dayOfWeek));
+    setEditStart(toHHMM(lesson.startTime));
+    setEditEnd(toHHMM(lesson.endTime));
+    setEditRoom(lesson.roomId ?? NONE);
+    setEditTeacher(lesson.teacherId ?? NONE);
+  };
+
+  const doSaveEdit = async () => {
+    if (!editing) return;
+    try {
+      const result = await updateLesson.mutateAsync({
+        id: editing.id,
+        dayOfWeek: Number(editDay),
+        startTime: editStart,
+        endTime: editEnd,
+        roomId: editRoom === NONE ? null : editRoom,
+        teacherId: editTeacher === NONE ? null : editTeacher,
+      });
+      toast.success(t("editSaved", { count: result.propagatedLessons }));
+      setEditing(null);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        toast.error(`${t("editConflict")}: ${error.message}`);
+      } else {
+        toast.error(error instanceof Error ? error.message : tCommon("error"));
+      }
+    }
+  };
 
   const doPublish = async () => {
     if (!activeYear) return;
@@ -191,8 +242,106 @@ export default function TimetablePage() {
       ) : !lessons || lessons.length === 0 ? (
         <EmptyState icon={CalendarDays} title={tCommon("noResults")} description={t("empty")} />
       ) : (
-        <TimetableGrid lessons={gridLessons} />
+        <TimetableGrid
+          lessons={gridLessons}
+          onLessonClick={(lesson) => openEditor(lesson.id)}
+        />
       )}
+
+      <Dialog open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("editTitle")}</DialogTitle>
+            <DialogDescription>{t("editBody")}</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2 space-y-2">
+              <Label>{t("editDay")}</Label>
+              <Select value={editDay} onValueChange={setEditDay}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[1, 2, 3, 4, 5, 6, 7].map((day) => (
+                    <SelectItem key={day} value={String(day)}>
+                      {tDays(String(day))}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-start">{t("editStart")}</Label>
+              <Input
+                id="edit-start"
+                type="time"
+                value={editStart}
+                onChange={(e) => setEditStart(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-end">{t("editEnd")}</Label>
+              <Input
+                id="edit-end"
+                type="time"
+                value={editEnd}
+                onChange={(e) => setEditEnd(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>{t("editRoom")}</Label>
+              <Select value={editRoom} onValueChange={setEditRoom}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>{t("noRoom")}</SelectItem>
+                  {(rooms ?? []).map((room) => (
+                    <SelectItem key={room.id} value={room.id}>
+                      {room.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>{t("editTeacher")}</Label>
+              <Select value={editTeacher} onValueChange={setEditTeacher}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE}>{t("noTeacher")}</SelectItem>
+                  {teachers.map((teacher) => (
+                    <SelectItem key={teacher.id} value={teacher.id}>
+                      {teacher.firstName} {teacher.lastName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">{t("propagateHint")}</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>
+              {tCommon("cancel")}
+            </Button>
+            <Button
+              onClick={doSaveEdit}
+              disabled={updateLesson.isPending || !editStart || !editEnd}
+            >
+              {updateLesson.isPending ? (
+                <>
+                  <Loader2 className="animate-spin" />
+                  {tCommon("saving")}
+                </>
+              ) : (
+                tCommon("save")
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
         <DialogContent className="max-w-md">

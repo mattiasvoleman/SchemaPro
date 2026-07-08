@@ -351,6 +351,117 @@ export function usePublishSchedule() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Timetable adjustments & lesson operations
+// ---------------------------------------------------------------------------
+
+export interface UpdateMasterLessonInput {
+  id: string;
+  dayOfWeek?: number;
+  startTime?: string;
+  endTime?: string;
+  roomId?: string | null;
+  teacherId?: string | null;
+}
+
+export function useUpdateMasterLesson() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: UpdateMasterLessonInput) =>
+      api.patch<{ propagatedLessons: number }>(`/api/v1/master-lessons/${id}`, body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
+      void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
+      void queryClient.invalidateQueries({ queryKey: ["teacherLessons"] });
+    },
+  });
+}
+
+export interface DayLessonRow extends CalendarLessonRow {
+  teachers: Array<{ role: string; teacherId: string }>;
+}
+
+/** Calendar lessons for one date, including teacher assignments (admin day view). */
+export function useDayLessons(date: string) {
+  return useQuery({
+    queryKey: ["dayLessons", date],
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("CalendarLessons")
+        .select(
+          "id, subjectId, studentGroupId, roomId, date, startsAt, endsAt, status, note, teachers:CalendarLessonTeachers(role, teacherId)",
+        )
+        .eq("date", date)
+        .order("startsAt");
+      if (error) throw new Error(error.message);
+      return (data ?? []) as unknown as DayLessonRow[];
+    },
+  });
+}
+
+export function useLessonActions() {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["dayLessons"] });
+    void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
+    void queryClient.invalidateQueries({ queryKey: ["teacherLessons"] });
+  };
+
+  const cancel = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      api.patch(`/api/v1/calendar-lessons/${id}/cancel`, reason ? { reason } : {}),
+    onSuccess: invalidate,
+  });
+  const reinstate = useMutation({
+    mutationFn: (id: string) => api.patch(`/api/v1/calendar-lessons/${id}/reinstate`, {}),
+    onSuccess: invalidate,
+  });
+  const substitute = useMutation({
+    mutationFn: ({ id, teacherId, note }: { id: string; teacherId: string; note?: string }) =>
+      api.patch(`/api/v1/calendar-lessons/${id}/substitute`, {
+        teacherId,
+        ...(note ? { note } : {}),
+      }),
+    onSuccess: invalidate,
+  });
+
+  return { cancel, reinstate, substitute };
+}
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
+
+export interface GroupAttendanceRow {
+  studentId: string;
+  status: "UNKNOWN" | "PRESENT" | "ABSENT" | "LATE" | "EXCUSED";
+}
+
+/** All attendance records for a class within a date window (admin reports). */
+export function useGroupAttendance(
+  groupId: string | null,
+  fromDate: string,
+  toDate: string,
+) {
+  return useQuery({
+    queryKey: ["groupAttendance", groupId, fromDate, toDate],
+    enabled: groupId !== null,
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("AttendanceRecords")
+        .select("studentId, status, lesson:CalendarLessons!inner(id, date, studentGroupId)")
+        .eq("lesson.studentGroupId", groupId!)
+        .gte("lesson.date", fromDate)
+        .lte("lesson.date", toDate)
+        .limit(20000);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as unknown as GroupAttendanceRow[];
+    },
+  });
+}
+
 export interface AttendanceEntryInput {
   studentId: string;
   status: "PRESENT" | "ABSENT" | "LATE" | "EXCUSED" | "UNKNOWN";

@@ -25,10 +25,13 @@ export class EnvironmentVariables {
   @IsEnum(NodeEnv)
   NODE_ENV: NodeEnv = NodeEnv.Development;
 
+  // NOTE: numeric fields need explicit `: number` annotations — TypeScript
+  // only emits accurate design:type metadata for declared types, and
+  // class-transformer's implicit conversion relies on it.
   @IsInt()
   @Min(0)
   @Max(65535)
-  PORT = 3000;
+  PORT: number = 3000;
 
   @IsOptional()
   @IsString()
@@ -60,15 +63,15 @@ export class EnvironmentVariables {
 
   @IsInt()
   @Min(1000)
-  AI_ENGINE_TIMEOUT_MS = 15000;
+  AI_ENGINE_TIMEOUT_MS: number = 15000;
 
   @IsInt()
   @Min(1)
-  THROTTLE_TTL_SECONDS = 60;
+  THROTTLE_TTL_SECONDS: number = 60;
 
   @IsInt()
   @Min(1)
-  THROTTLE_LIMIT = 120;
+  THROTTLE_LIMIT: number = 120;
 
   @IsOptional()
   @IsString()

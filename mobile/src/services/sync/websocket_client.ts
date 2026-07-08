@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client';
-import { SecureTokenStore } from '../auth/secureTokenStore';
+import { getAccessToken } from '../supabase';
 import type { CalendarLessonUpdatedPayload } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ export class WebSocketClient {
       return;
     }
 
-    const token = await SecureTokenStore.getToken();
+    const token = await getAccessToken();
     if (!token) {
       console.warn('[WebSocket] No auth token — skipping connection.');
       return;

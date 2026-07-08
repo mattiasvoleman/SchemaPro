@@ -1,0 +1,89 @@
+# =============================================================================
+# SchemaPro — local development stack
+#
+#   docker compose up --build
+#
+# Services:
+#   db       PostgreSQL 16 with RLS roles bootstrapped (scripts/db-init)
+#   migrate  One-shot: applies Prisma migrations as the DB owner
+#   api      NestJS gateway (connects as least-privilege app_authenticated)
+#   solver   Python FastAPI + OR-Tools optimization engine
+#
+# Secrets: every sensitive value is read from the host environment (or a root
+# .env file next to this compose file). The defaults below are for local
+# development ONLY — never reuse them anywhere else.
+# =============================================================================
+
+name: schemapro
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: schemapro
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_local}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./scripts/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d schemapro"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      # Migrations run as the owner; the API itself never uses this role.
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_local}@db:5432/schemapro?schema=public
+      DIRECT_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_local}@db:5432/schemapro?schema=public
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:19006}
+      # Least-privilege connection — RLS enforced on every query.
+      DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@db:5432/schemapro?schema=public
+      DIRECT_URL: postgresql://app_authenticated:app_authenticated_local@db:5432/schemapro?schema=public
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (your Supabase JWT secret) in the environment}
+      JWT_ISSUER: ${JWT_ISSUER:-}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-authenticated}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      AI_ENGINE_URL: http://solver:8000
+      AI_ENGINE_API_KEY: ${AI_ENGINE_API_KEY:-local-dev-shared-key}
+      AI_ENGINE_TIMEOUT_MS: ${AI_ENGINE_TIMEOUT_MS:-60000}
+      THROTTLE_TTL_SECONDS: "60"
+      THROTTLE_LIMIT: "120"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      solver:
+        condition: service_started
+
+  solver:
+    build: ./optimization-engine
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: production
+      API_KEY: ${AI_ENGINE_API_KEY:-local-dev-shared-key}
+      ALLOWED_ORIGINS: http://api:4000
+      SOLVER_TIMEOUT_SECONDS: ${SOLVER_TIMEOUT_SECONDS:-60}
+
+volumes:
+  db-data:
