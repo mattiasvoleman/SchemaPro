@@ -111,7 +111,7 @@ Run it with:
 The solver needs no database and no PII ever reaches it. Keep it on a private
 network reachable only by the API if your host supports it.
 
-Verify: `curl https://<solver-host>/healthz` (or `/docs` for the OpenAPI UI).
+Verify: `curl https://<solver-host>/health` (or `/docs` for the OpenAPI UI).
 
 ## 5. Deploy the NestJS API
 

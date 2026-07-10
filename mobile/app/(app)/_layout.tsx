@@ -1,8 +1,8 @@
 import React from 'react';
-import { Text } from 'react-native';
+import { Text, type ColorValue } from 'react-native';
 import { Tabs } from 'expo-router';
 
-function TabGlyph({ glyph, color }: { readonly glyph: string; readonly color: string }): React.JSX.Element {
+function TabGlyph({ glyph, color }: { readonly glyph: string; readonly color: ColorValue }): React.JSX.Element {
   return <Text style={{ fontSize: 18, color }}>{glyph}</Text>;
 }
 

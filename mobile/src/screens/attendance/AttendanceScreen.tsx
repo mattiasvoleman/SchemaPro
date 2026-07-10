@@ -436,7 +436,12 @@ const styles = StyleSheet.create({
 
   // Loading overlay
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    // StyleSheet.absoluteFillObject was removed from the RN 0.86 types.
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(15,15,26,0.55)',
