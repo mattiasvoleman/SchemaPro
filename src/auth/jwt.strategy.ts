@@ -4,7 +4,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy, StrategyOptions } from 'passport-jwt';
 import type { JwtConfig } from '../config/configuration';
 import { PrismaService } from '../database/prisma.service';
-import { isRole, Role } from './enums/role.enum';
+import { Role } from './enums/role.enum';
 import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
 
@@ -26,6 +26,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       secretOrKey: jwt.secret,
+      // Pin the accepted signature algorithm. The secret is a symmetric HS256
+      // key (Supabase JWT secret); pinning removes any algorithm ambiguity.
+      algorithms: ['HS256'],
       ...(jwt.issuer ? { issuer: jwt.issuer } : {}),
       ...(jwt.audience ? { audience: jwt.audience } : {}),
     };
@@ -36,24 +39,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   /**
    * Runs after the signature/issuer/audience/expiry have been verified.
    * Returns the principal that Passport attaches to `request.user`.
+   *
+   * Security note: the application role, tenant (`schoolId`) and internal
+   * `userId` are ALWAYS resolved from the `Users` table by the verified
+   * subject claim — never trusted from the token body. This ensures that even
+   * if a token carried a spoofed `role`/`schoolId` claim, it cannot grant
+   * access beyond what the database says the account is, and revoked/inactive
+   * accounts are rejected on every request.
    */
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
     if (!payload.sub) {
       throw new UnauthorizedException('Invalid authentication token.');
     }
 
-    // First-party tokens carry the application role directly.
-    if (isRole(payload.role)) {
-      return {
-        authId: payload.sub,
-        role: payload.role,
-        userId: payload.userId,
-        schoolId: payload.schoolId,
-      };
-    }
-
-    // Supabase tokens: resolve the profile from the Users table. This is an
-    // identity lookup by the verified subject claim, so it intentionally runs
+    // Identity lookup by the verified subject claim. This intentionally runs
     // outside RLS (there is no session to scope by yet).
     const profile = await this.prisma.withSystemTransaction((tx) =>
       tx.user.findUnique({
@@ -62,17 +61,30 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       }),
     );
 
-    if (!profile || !profile.isActive) {
-      throw new UnauthorizedException(
-        'No active user profile is linked to this account.',
-      );
+    if (profile && profile.isActive) {
+      return {
+        authId: payload.sub,
+        role: profile.role as Role,
+        userId: profile.id,
+        schoolId: profile.schoolId,
+      };
     }
 
-    return {
-      authId: payload.sub,
-      role: profile.role as Role,
-      userId: profile.id,
-      schoolId: profile.schoolId,
-    };
+    // No tenant profile exists for this subject. A genuine cross-tenant
+    // platform operator (SYSTEM_ADMIN) is intentionally NOT stored in the
+    // per-tenant Users table, so honour that role ONLY when the verified token
+    // explicitly carries it — it grants no implicit RLS data access.
+    if (payload.role === Role.SYSTEM_ADMIN) {
+      return {
+        authId: payload.sub,
+        role: Role.SYSTEM_ADMIN,
+        userId: payload.userId,
+        schoolId: payload.schoolId,
+      };
+    }
+
+    throw new UnauthorizedException(
+      'No active user profile is linked to this account.',
+    );
   }
 }

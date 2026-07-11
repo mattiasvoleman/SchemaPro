@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.config import Settings, get_settings
 from app.dependencies import verify_api_key
@@ -12,6 +13,31 @@ from app.solver.scheduler_solver import SchedulerSolver
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["optimization"])
+
+# Head-room added on top of the solver wall-clock limit to cover the synchronous
+# model-build phase. If the whole solve exceeds this, we fail rather than let a
+# pathological request pin the worker indefinitely.
+_SOLVE_BUILD_HEADROOM_SECONDS = 30.0
+
+
+async def run_solver(
+    payload: OptimizeScheduleRequest,
+    settings: Settings,
+) -> OptimizeScheduleResponse:
+    """Run the CPU-bound solve off the event loop with a hard ceiling."""
+    solver = SchedulerSolver(settings)
+    timeout = settings.solver_max_time_seconds + _SOLVE_BUILD_HEADROOM_SECONDS
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(solver.solve, payload),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.error("optimization_timed_out", request_id=str(payload.request_id))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Optimization timed out.",
+        ) from None
 
 
 @router.post(
@@ -35,8 +61,7 @@ async def optimize_schedule(
         constraint_count=len(payload.constraints),
     )
 
-    solver = SchedulerSolver(settings)
-    response = solver.solve(payload)
+    response = await run_solver(payload, settings)
 
     log_fields: dict[str, Any] = {
         "request_id": str(response.request_id),

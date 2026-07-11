@@ -1,5 +1,6 @@
 import { io, type Socket } from 'socket.io-client';
 import { getAccessToken } from '../supabase';
+import { assertSecureBaseUrl } from '../network/secureUrl';
 import type { CalendarLessonUpdatedPayload } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,6 +37,7 @@ export class WebSocketClient {
       console.error('[WebSocket] EXPO_PUBLIC_WS_BASE_URL is not set. Real-time updates disabled.');
       return;
     }
+    assertSecureBaseUrl(WS_BASE_URL, 'EXPO_PUBLIC_WS_BASE_URL');
 
     const token = await getAccessToken();
     if (!token) {

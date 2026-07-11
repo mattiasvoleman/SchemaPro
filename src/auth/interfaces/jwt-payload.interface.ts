@@ -1,12 +1,12 @@
 /**
  * The verified JWT payload.
  *
- * Two token flavours are accepted:
- *  1. Supabase Auth access tokens — `role` is the PostgREST role (usually
- *     `"authenticated"`); the application role is resolved from the `Users`
- *     table by `authId` (= `sub`).
- *  2. First-party service tokens — `role` carries an application `Role`
- *     directly, plus optional `userId` / `schoolId` convenience claims.
+ * The application role, tenant (`schoolId`) and internal `userId` are ALWAYS
+ * resolved from the `Users` table by the verified `sub` claim — they are never
+ * trusted from the token body. The only exception is the cross-tenant
+ * `SYSTEM_ADMIN` platform role, which by design has no `Users` row and is
+ * honoured solely from an explicit, verified `role` claim (it grants no
+ * implicit RLS data access).
  *
  * `sub` is the immutable subject claim and MUST equal `Users.authId` — this is
  * exactly what the database `auth.uid()` helper reads to evaluate RLS.

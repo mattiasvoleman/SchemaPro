@@ -28,13 +28,13 @@ import {
  * are emitted to the affected teachers' user rooms plus the school room, so
  * admins' dashboards can also react.
  *
- * CORS reuses the HTTP allowlist semantics: socket.io performs its own
- * origin check against the configured origins at runtime (see AppModule
- * bootstrap in main.ts for the HTTP equivalent).
+ * CORS reuses the HTTP `CORS_ORIGINS` allowlist, applied by `CorsIoAdapter`
+ * (registered in main.ts) at socket.io server-construction time. The decorator
+ * intentionally does NOT set `origin` here — the adapter is the single source
+ * of truth so browser origins cannot be reflected indiscriminately.
  */
 @WebSocketGateway({
   transports: ['websocket'],
-  cors: { origin: true, credentials: true },
 })
 export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);

@@ -4,6 +4,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { CorsIoAdapter } from './realtime/cors-io.adapter';
 import type { AppConfig } from './config/configuration';
 
 async function bootstrap(): Promise<void> {
@@ -31,6 +32,9 @@ async function bootstrap(): Promise<void> {
   }
 
   // Global prefix is handled per-route (api/v1/*) for explicit versioning.
+
+  // Apply the HTTP CORS allowlist to the Socket.IO gateway as well.
+  app.useWebSocketAdapter(new CorsIoAdapter(app));
 
   const port = appConfig.port;
   await app.listen(port);

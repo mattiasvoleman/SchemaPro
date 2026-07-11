@@ -1,5 +1,6 @@
 import * as Network from 'expo-network';
 import { getAccessToken } from '../supabase';
+import { assertSecureBaseUrl } from '../network/secureUrl';
 import {
   getPendingAttendanceRecords,
   getPendingQueueCount,
@@ -67,6 +68,7 @@ async function pushLessonBatch(
   if (!API_BASE_URL) {
     throw new Error('[SyncWorker] EXPO_PUBLIC_API_BASE_URL is not set.');
   }
+  assertSecureBaseUrl(API_BASE_URL, 'EXPO_PUBLIC_API_BASE_URL');
 
   const response = await fetch(`${API_BASE_URL}/api/v1/attendance/report`, {
     method: 'POST',

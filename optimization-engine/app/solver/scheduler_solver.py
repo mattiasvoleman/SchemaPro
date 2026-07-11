@@ -42,6 +42,14 @@ class LessonDecision:
 class SchedulerSolver:
     """CP-SAT weekly master timetable optimizer."""
 
+    # Hard ceilings applied before any CP-SAT model is constructed. The solver's
+    # wall-clock timeout only bounds Solve(); the model-BUILD phase (variable and
+    # constraint creation) runs first and scales multiplicatively with the input
+    # list lengths. These budgets reject pathological payloads up front so a
+    # single request cannot exhaust CPU/RAM before the timeout can engage.
+    MAX_LESSON_INSTANCES = 5_000
+    MAX_MODEL_COMPLEXITY = 2_000_000
+
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._grid = TimeGrid(
@@ -99,6 +107,26 @@ class SchedulerSolver:
             raise InvalidScheduleInputError("At least one teaching requirement is required.")
         if not request.rooms:
             raise InvalidScheduleInputError("At least one room is required.")
+
+        # Aggregate complexity budget — reject oversized models before building.
+        total_lessons = sum(r.lessons_per_week for r in request.requirements)
+        if total_lessons > self.MAX_LESSON_INSTANCES:
+            msg = (
+                f"Too many lesson instances ({total_lessons}); "
+                f"limit is {self.MAX_LESSON_INSTANCES}."
+            )
+            raise InvalidScheduleInputError(msg)
+
+        estimated_complexity = (
+            total_lessons * len(request.rooms)
+            + total_lessons * len(request.constraints) * len(self._grid.schedule_days)
+        )
+        if estimated_complexity > self.MAX_MODEL_COMPLEXITY:
+            msg = (
+                "Scheduling request is too large to solve; "
+                "reduce the number of rooms, requirements, or constraints."
+            )
+            raise InvalidScheduleInputError(msg)
 
         for requirement in request.requirements:
             duration_slots = self._grid.minutes_to_slots(requirement.minutes_per_lesson)

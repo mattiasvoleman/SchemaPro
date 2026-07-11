@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import time
+from collections import deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from threading import Lock
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, Request, status
@@ -11,6 +14,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.optimize import router as optimize_router
+from app.api.v1.optimize import run_solver
 from app.config import Settings, get_settings
 from app.dependencies import verify_api_key
 from app.exceptions import (
@@ -21,9 +25,38 @@ from app.exceptions import (
 )
 from app.logging_config import clear_request_context, configure_logging, get_logger
 from app.schemas.schedule import OptimizeScheduleRequest, OptimizeScheduleResponse
-from app.solver.scheduler_solver import SchedulerSolver
 
 logger = get_logger(__name__)
+
+# Reject request bodies larger than this before parsing. The gateway's largest
+# legitimate payload (max lists in OptimizeScheduleRequest) is well under 8 MB.
+MAX_REQUEST_BODY_BYTES = 8 * 1024 * 1024
+
+
+class SlidingWindowRateLimiter:
+    """Dependency-free per-client fixed-window rate limiter.
+
+    Correct for a single-instance deployment (which mirrors the gateway's own
+    in-memory throttler). For horizontal scaling, back this with Redis.
+    """
+
+    def __init__(self, limit_per_minute: int) -> None:
+        self._limit = limit_per_minute
+        self._window_seconds = 60.0
+        self._hits: dict[str, deque[float]] = {}
+        self._lock = Lock()
+
+    def allow(self, client_key: str) -> bool:
+        now = time.monotonic()
+        cutoff = now - self._window_seconds
+        with self._lock:
+            bucket = self._hits.setdefault(client_key, deque())
+            while bucket and bucket[0] < cutoff:
+                bucket.popleft()
+            if len(bucket) >= self._limit:
+                return False
+            bucket.append(now)
+            return True
 
 
 @asynccontextmanager
@@ -52,8 +85,7 @@ def create_legacy_schedule_router(settings: Settings) -> APIRouter:
         dependencies=[Depends(verify_api_key)],
     )
     async def schedule_legacy(payload: OptimizeScheduleRequest) -> OptimizeScheduleResponse:
-        solver = SchedulerSolver(settings)
-        return solver.solve(payload)
+        return await run_solver(payload, settings)
 
     return legacy
 
@@ -168,10 +200,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.add_middleware(
         CORSMiddleware,
         allow_origins=resolved_settings.allowed_origins,
-        allow_credentials=True,
+        # This is a service-to-service API authenticated by X-API-Key, not by
+        # browser cookies — credentialed CORS provides no benefit and only widens
+        # the attack surface if ALLOWED_ORIGINS is ever misconfigured.
+        allow_credentials=False,
         allow_methods=["POST", "GET"],
         allow_headers=["Content-Type", "X-API-Key"],
     )
+
+    rate_limiter = SlidingWindowRateLimiter(resolved_settings.rate_limit_per_minute)
+
+    @application.middleware("http")
+    async def enforce_rate_limit(request: Request, call_next: Callable[..., Any]) -> Any:
+        # Health checks are unauthenticated and cheap — never rate-limit them.
+        if request.url.path == "/health":
+            return await call_next(request)
+        client_key = request.client.host if request.client else "unknown"
+        if not rate_limiter.allow(client_key):
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content=error_payload(
+                    code="RATE_LIMITED",
+                    message="Too many requests. Slow down and retry shortly.",
+                ),
+            )
+        return await call_next(request)
+
+    @application.middleware("http")
+    async def enforce_max_body_size(request: Request, call_next: Callable[..., Any]) -> Any:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared = int(content_length)
+            except ValueError:
+                declared = None
+            if declared is not None and declared > MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content=error_payload(
+                        code="PAYLOAD_TOO_LARGE",
+                        message="Request body exceeds the maximum allowed size.",
+                    ),
+                )
+        return await call_next(request)
 
     register_exception_handlers(application)
     application.include_router(optimize_router)
@@ -191,7 +262,7 @@ def _default_app() -> FastAPI:
         # Allow test collection to inject env before the module-level app is used.
         return create_app(
             Settings(
-                API_KEY="development-placeholder",
+                API_KEY="development-placeholder-0000000000000000",
                 ALLOWED_ORIGINS="http://localhost:3000",
             ),
         )

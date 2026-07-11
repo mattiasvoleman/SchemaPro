@@ -1,14 +1,39 @@
+import * as Crypto from 'expo-crypto';
+import * as SecureStore from 'expo-secure-store';
 import * as SQLite from 'expo-sqlite';
 import type { AttendanceStatus, CalendarLesson, PendingAttendanceRecord, Student } from '../../types';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SQLite is opened with SQLCipher (configured in app.json plugin options).
-// WAL mode is enabled for better concurrent read performance.
-// Foreign keys are enforced at the connection level.
+// The database is encrypted at rest with SQLCipher (compiled in via the
+// `expo-sqlite` plugin `useSQLCipher` option in app.json). SQLCipher only
+// encrypts once a key is supplied, so `initDatabase` derives a random 256-bit
+// key, stores it in the OS keychain via expo-secure-store, and applies it with
+// `PRAGMA key` as the FIRST statement on the connection (required by SQLCipher,
+// before WAL / any table access). WAL mode is enabled for concurrent reads and
+// foreign keys are enforced at the connection level.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DB_NAME = 'schemapro.db';
+const DB_KEY_ID = 'sp_sqlcipher_key';
+const DB_KEY_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+};
 let _db: SQLite.SQLiteDatabase | null = null;
+
+/**
+ * Returns the raw 64-hex-char (256-bit) SQLCipher key, generating and
+ * persisting one in the device keychain on first use.
+ */
+async function getOrCreateDbKey(): Promise<string> {
+  const existing = await SecureStore.getItemAsync(DB_KEY_ID, DB_KEY_STORE_OPTIONS);
+  if (existing && existing.length === 64) {
+    return existing;
+  }
+  const bytes = await Crypto.getRandomBytesAsync(32);
+  const key = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  await SecureStore.setItemAsync(DB_KEY_ID, key, DB_KEY_STORE_OPTIONS);
+  return key;
+}
 
 function getDb(): SQLite.SQLiteDatabase {
   if (!_db) {
@@ -59,7 +84,21 @@ const SCHEMA_SQL = `
 `;
 
 export async function initDatabase(): Promise<void> {
+  const key = await getOrCreateDbKey();
   _db = await SQLite.openDatabaseAsync(DB_NAME);
+  // PRAGMA key MUST be the first statement executed, before WAL or any table
+  // access, or SQLCipher will not key the database.
+  await _db.execAsync(`PRAGMA key = "x'${key}'";`);
+  // Fail loudly if the build lacks SQLCipher (cipher_version is empty on plain
+  // SQLite) so we never silently fall back to writing PII in plaintext.
+  const cipher = await _db.getFirstAsync<{ cipher_version: string | null }>(
+    'PRAGMA cipher_version;',
+  );
+  if (!cipher?.cipher_version) {
+    throw new Error(
+      '[LocalDatabase] SQLCipher is not active — refusing to store data unencrypted.',
+    );
+  }
   await _db.execAsync(SCHEMA_SQL);
 }
 

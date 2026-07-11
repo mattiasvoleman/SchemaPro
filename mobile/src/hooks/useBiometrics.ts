@@ -1,5 +1,7 @@
 import { useCallback, useState } from 'react';
+import * as Crypto from 'expo-crypto';
 import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 
 export interface BiometricCapability {
   readonly isAvailable: boolean;
@@ -10,18 +12,39 @@ interface UseBiometricsReturn {
   readonly isAuthenticating: boolean;
   readonly checkCapability: () => Promise<BiometricCapability>;
   /**
-   * Prompts the user with a biometric challenge.
-   * Returns `true` if verified, `false` on failure/cancel.
-   * This MUST be called immediately before any sensitive write action
+   * Enforces a biometric challenge that is bound to the OS keychain.
+   * Returns `true` only if verified, `false` on failure/cancel.
+   * MUST be called immediately before any sensitive write action
    * (submitting or altering an attendance report).
    */
   readonly authenticate: (reason: string) => Promise<boolean>;
 }
 
+// A device-local secret stored behind the keychain's own biometric gate
+// (`requireAuthentication: true`). Reading it forces the OS to perform a
+// biometric check and release the value only on success — so unlike a bare
+// `LocalAuthentication.authenticateAsync()` boolean, this cannot be spoofed by
+// hooking/patching the JS layer: without a genuine biometric unlock the OS
+// never returns the secret and the gate fails closed.
+const BIOMETRIC_GATE_KEY = 'sp_biometric_gate';
+
+const GATE_STORE_OPTIONS: SecureStore.SecureStoreOptions = {
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  requireAuthentication: true,
+};
+
 /**
- * Thin wrapper around expo-local-authentication.
- * Device passcode fallback is always allowed so teachers are not
- * blocked if biometrics are temporarily unavailable.
+ * Biometric gate for sensitive attendance writes.
+ *
+ * Security model: `disableDeviceFallback: true` makes this biometric-only (a
+ * device passcode does NOT satisfy it), and the challenge is enforced at the OS
+ * keychain layer via a `requireAuthentication` secret rather than trusting a
+ * client-side boolean.
+ *
+ * NOTE: this remains a client/device-side control. The server still authorizes
+ * every write via the JWT + RLS (a teacher may only write attendance for
+ * lessons they are assigned to). Full server-verified biometric attestation
+ * would additionally require per-device key enrollment; see docs/SECURITY_AUDIT.md.
  */
 export function useBiometrics(): UseBiometricsReturn {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
@@ -49,18 +72,25 @@ export function useBiometrics(): UseBiometricsReturn {
           return false;
         }
 
+        // 1) Explicit biometric-only challenge (clear prompt + intent).
         const result = await LocalAuthentication.authenticateAsync({
           promptMessage: reason,
-          fallbackLabel: 'Use Passcode',
           cancelLabel: 'Cancel',
-          disableDeviceFallback: false,
+          disableDeviceFallback: true,
         });
-
         if (!result.success) {
           console.warn(`[Biometrics] Verification failed: ${result.error}`);
+          return false;
         }
 
-        return result.success;
+        // 2) OS-keychain-enforced gate: retrieving this secret requires a real
+        //    biometric unlock, so a spoofed step (1) cannot bypass it.
+        await ensureGateSecret(reason);
+        const secret = await SecureStore.getItemAsync(BIOMETRIC_GATE_KEY, {
+          ...GATE_STORE_OPTIONS,
+          authenticationPrompt: reason,
+        });
+        return typeof secret === 'string' && secret.length > 0;
       } catch (err) {
         const name = err instanceof Error ? err.name : 'UnknownError';
         console.error(`[Biometrics] Unexpected error (${name})`);
@@ -73,4 +103,24 @@ export function useBiometrics(): UseBiometricsReturn {
   );
 
   return { isAuthenticating, checkCapability, authenticate };
+}
+
+/**
+ * Ensures the keychain gate secret exists. Created once per install with a
+ * random value; the value itself is never used, only its retrievability behind
+ * the biometric gate matters.
+ */
+async function ensureGateSecret(reason: string): Promise<void> {
+  try {
+    const existing = await SecureStore.getItemAsync(BIOMETRIC_GATE_KEY, {
+      ...GATE_STORE_OPTIONS,
+      authenticationPrompt: reason,
+    });
+    if (existing) return;
+  } catch {
+    // Not yet created (or unreadable) — (re)create it below.
+  }
+  const bytes = await Crypto.getRandomBytesAsync(32);
+  const value = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  await SecureStore.setItemAsync(BIOMETRIC_GATE_KEY, value, GATE_STORE_OPTIONS);
 }

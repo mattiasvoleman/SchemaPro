@@ -43,13 +43,14 @@ class AnonymousRequirement(CamelModel):
         default=1,
         alias="studentGroupSize",
         ge=1,
+        le=1000,
         description="Headcount used for room capacity checks when provided by the gateway.",
     )
 
 
 class AnonymousRoom(CamelModel):
     id: UUID4
-    capacity: int | None = Field(default=None, ge=1)
+    capacity: int | None = Field(default=None, ge=1, le=10000)
 
 
 class AnonymousConstraint(CamelModel):
@@ -79,9 +80,12 @@ class AnonymousConstraint(CamelModel):
 class OptimizeScheduleRequest(CamelModel):
     request_id: UUID4 = Field(alias="requestId")
     academic_year_id: UUID4 = Field(alias="academicYearId")
-    requirements: list[AnonymousRequirement] = Field(min_length=1)
-    rooms: list[AnonymousRoom] = Field(min_length=1)
-    constraints: list[AnonymousConstraint] = Field(default_factory=list)
+    # Upper bounds cap the payload size so an oversized request cannot force
+    # unbounded CP-SAT model construction before the solver timeout applies.
+    # See also SchedulerSolver._validate_request for the aggregate complexity budget.
+    requirements: list[AnonymousRequirement] = Field(min_length=1, max_length=2000)
+    rooms: list[AnonymousRoom] = Field(min_length=1, max_length=1000)
+    constraints: list[AnonymousConstraint] = Field(default_factory=list, max_length=5000)
 
 
 class ScheduledLesson(CamelModel):

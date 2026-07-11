@@ -23,6 +23,8 @@ class Settings(BaseSettings):
 
     api_key: str = Field(alias="API_KEY")
 
+    rate_limit_per_minute: int = Field(default=120, alias="RATE_LIMIT_PER_MINUTE", ge=1)
+
     allowed_origins_env: str = Field(
         default="http://nestjs-backend:3000",
         alias="ALLOWED_ORIGINS",
@@ -68,6 +70,22 @@ class Settings(BaseSettings):
     def validate_slot_minutes(cls, value: int) -> int:
         if value <= 0 or 60 % value != 0:
             msg = "SLOT_MINUTES must divide 60 evenly and be greater than zero."
+            raise ValueError(msg)
+        return value
+
+    @field_validator("api_key")
+    @classmethod
+    def validate_api_key_strength(cls, value: str) -> str:
+        if len(value) < 32:
+            msg = "API_KEY must be at least 32 characters (use e.g. `openssl rand -hex 32`)."
+            raise ValueError(msg)
+        return value
+
+    @field_validator("allowed_origins_env")
+    @classmethod
+    def reject_wildcard_origin(cls, value: str) -> str:
+        if any(origin.strip() == "*" for origin in value.split(",")):
+            msg = "Wildcard '*' origin is not permitted for this service."
             raise ValueError(msg)
         return value
 
