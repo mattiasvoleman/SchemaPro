@@ -1,6 +1,8 @@
 // Domain types mirrored from the Prisma schema (subset used by the web UI).
 
-export type UserRole = "STUDENT" | "TEACHER" | "SCHOOL_ADMIN";
+export type UserRole = "STUDENT" | "TEACHER" | "SCHOOL_ADMIN" | "GUARDIAN";
+export type AbsenceReportType = "SICK" | "APPOINTMENT" | "OTHER";
+export type LeaveRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
 export type RoomType =
   | "CLASSROOM"
   | "LABORATORY"
@@ -36,6 +38,8 @@ export interface Subject {
   name: string;
   code: string | null;
   color: string | null;
+  /** When set, the optimizer only places this subject in rooms of this type. */
+  requiredRoomType: RoomType | null;
 }
 
 export interface Room {
@@ -78,6 +82,8 @@ export interface TeachingRequirement {
   subjectId: string;
   studentGroupId: string;
   teacherId: string | null;
+  /** Optional second teacher scheduled together with the lead (co-teaching). */
+  coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
 }
@@ -102,10 +108,18 @@ export interface MasterLesson {
   subjectId: string;
   studentGroupId: string;
   teacherId: string | null;
+  /** Optional second teacher (co-teaching); published as ASSISTANT. */
+  coTeacherId: string | null;
   roomId: string | null;
   dayOfWeek: number;
   startTime: string;
   endTime: string;
+  /** Locked lessons survive regeneration and are pinned on the grid. */
+  isLocked: boolean;
+  /** Additional classes attending (beyond the primary group). */
+  extraGroupIds: string[];
+  /** Individual participating students (electives across classes). */
+  studentIds: string[];
 }
 
 export interface CalendarLessonRow {
@@ -127,4 +141,36 @@ export interface AttendanceRecordRow {
   status: AttendanceStatus;
   recordedAt: string | null;
   note: string | null;
+}
+
+export interface GuardianLink {
+  id: string;
+  guardianId: string;
+  studentId: string;
+}
+
+export interface AbsenceReport {
+  id: string;
+  studentId: string;
+  reportedById: string;
+  date: string;
+  startTime: string | null;
+  endTime: string | null;
+  type: AbsenceReportType;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface LeaveRequest {
+  id: string;
+  studentId: string;
+  requestedById: string;
+  startDate: string;
+  endDate: string;
+  reason: string;
+  status: LeaveRequestStatus;
+  decidedById: string | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  createdAt: string;
 }

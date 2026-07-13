@@ -61,5 +61,7 @@ export function homePathForRole(role: Profile["role"]): string {
       return "/teacher";
     case "STUDENT":
       return "/student";
+    case "GUARDIAN":
+      return "/guardian";
   }
 }

@@ -9,6 +9,7 @@ import {
 import { createClient } from "@/utils/supabase/client";
 import { api } from "@/lib/api";
 import type {
+  AbsenceReport,
   AcademicYear,
   AttendanceRecordRow,
   AvailabilityConstraint,
@@ -16,6 +17,7 @@ import type {
   MasterLesson,
   Person,
   Room,
+  LeaveRequest,
   StudentGroup,
   Subject,
   TeachingRequirement,
@@ -35,7 +37,8 @@ async function selectAll<T>(table: string, columns: string, orderBy: string): Pr
 export function useSubjects() {
   return useQuery({
     queryKey: ["subjects"],
-    queryFn: () => selectAll<Subject>("Subjects", "id, name, code, color", "name"),
+    queryFn: () =>
+      selectAll<Subject>("Subjects", "id, name, code, color, requiredRoomType", "name"),
   });
 }
 
@@ -96,7 +99,7 @@ export function useRequirements(academicYearId: string | null) {
       const { data, error } = await supabase
         .from("TeachingRequirements")
         .select(
-          "id, academicYearId, subjectId, studentGroupId, teacherId, lessonsPerWeek, minutesPerLesson",
+          "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson",
         )
         .eq("academicYearId", academicYearId!);
       if (error) throw new Error(error.message);
@@ -126,13 +129,23 @@ export function useMasterLessons(academicYearId: string | null) {
       const { data, error } = await supabase
         .from("MasterLessons")
         .select(
-          "id, academicYearId, subjectId, studentGroupId, teacherId, roomId, dayOfWeek, startTime, endTime",
+          "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
         )
         .eq("academicYearId", academicYearId!)
         .order("dayOfWeek")
         .order("startTime");
       if (error) throw new Error(error.message);
-      return (data ?? []) as MasterLesson[];
+      const rows = (data ?? []) as unknown as Array<
+        Omit<MasterLesson, "extraGroupIds" | "studentIds"> & {
+          extraGroups: Array<{ studentGroupId: string }>;
+          participants: Array<{ studentId: string }>;
+        }
+      >;
+      return rows.map(({ extraGroups, participants, ...lesson }) => ({
+        ...lesson,
+        extraGroupIds: extraGroups.map((entry) => entry.studentGroupId),
+        studentIds: participants.map((entry) => entry.studentId),
+      })) as MasterLesson[];
     },
   });
 }
@@ -220,6 +233,58 @@ export function useLesson(lessonId: string) {
         .single();
       if (error) throw new Error(error.message);
       return data as CalendarLessonRow;
+    },
+  });
+}
+
+/**
+ * Full roster of a calendar lesson: students of the primary class, of every
+ * extra class, and individually participating students (deduplicated).
+ */
+export function useLessonRoster(
+  calendarLessonId: string | null,
+  primaryGroupId: string | null,
+) {
+  return useQuery({
+    queryKey: ["lessonRoster", calendarLessonId, primaryGroupId],
+    enabled: calendarLessonId !== null && primaryGroupId !== null,
+    queryFn: async () => {
+      const supabase = createClient();
+      const [extraGroupsRes, participantsRes] = await Promise.all([
+        supabase
+          .from("CalendarLessonGroups")
+          .select("studentGroupId")
+          .eq("calendarLessonId", calendarLessonId!),
+        supabase
+          .from("CalendarLessonStudents")
+          .select("studentId")
+          .eq("calendarLessonId", calendarLessonId!),
+      ]);
+      if (extraGroupsRes.error) throw new Error(extraGroupsRes.error.message);
+      if (participantsRes.error) throw new Error(participantsRes.error.message);
+
+      const groupIds = [
+        primaryGroupId!,
+        ...(extraGroupsRes.data ?? []).map(
+          (row) => (row as { studentGroupId: string }).studentGroupId,
+        ),
+      ];
+      const studentIds = (participantsRes.data ?? []).map(
+        (row) => (row as { studentId: string }).studentId,
+      );
+
+      const filters = [`studentGroupId.in.(${groupIds.join(",")})`];
+      if (studentIds.length > 0) filters.push(`id.in.(${studentIds.join(",")})`);
+
+      const { data, error } = await supabase
+        .from("Users")
+        .select("id, role, firstName, lastName, email, phone, isActive, studentGroupId")
+        .eq("role", "STUDENT")
+        .eq("isActive", true)
+        .or(filters.join(","))
+        .order("lastName");
+      if (error) throw new Error(error.message);
+      return (data ?? []) as Person[];
     },
   });
 }
@@ -317,14 +382,46 @@ export interface OptimizationJob {
   finishedAt: string | null;
 }
 
+export interface ObjectiveWeights {
+  preferredFree?: number;
+  preferredBusy?: number;
+  disruption?: number;
+  spread?: number;
+  teacherGap?: number;
+}
+
+export interface ScheduleRules {
+  /** HH:MM:SS */
+  lunchStartTime?: string;
+  lunchEndTime?: string;
+  lunchMinutes?: number;
+  maxLessonsPerDayPerGroup?: number;
+}
+
 export function useStartOptimization() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (academicYearId: string) =>
-      api.post<{ jobId: string }>("/api/v1/optimization/jobs", { academicYearId }),
+    mutationFn: (body: {
+      academicYearId: string;
+      weights?: ObjectiveWeights;
+      rules?: ScheduleRules;
+    }) => api.post<{ jobId: string }>("/api/v1/optimization/jobs", body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
+      void queryClient.invalidateQueries({ queryKey: ["optimizationHistory"] });
     },
+  });
+}
+
+/** Latest optimization runs for an academic year (durable job history). */
+export function useOptimizationHistory(academicYearId: string | null) {
+  return useQuery({
+    queryKey: ["optimizationHistory", academicYearId],
+    enabled: academicYearId !== null,
+    queryFn: () =>
+      api.get<OptimizationJob[]>(
+        `/api/v1/optimization/jobs?academicYearId=${academicYearId}`,
+      ),
   });
 }
 
@@ -362,18 +459,77 @@ export interface UpdateMasterLessonInput {
   endTime?: string;
   roomId?: string | null;
   teacherId?: string | null;
+  isLocked?: boolean;
+  propagate?: boolean;
+  extraGroupIds?: string[];
+  studentIds?: string[];
+}
+
+export interface CreateMasterLessonInput {
+  academicYearId: string;
+  subjectId: string;
+  studentGroupId: string;
+  teacherId?: string | null;
+  roomId?: string | null;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  isLocked?: boolean;
+  extraGroupIds?: string[];
+  studentIds?: string[];
+}
+
+export interface MasterLessonResponse {
+  id: string;
+  academicYearId: string;
+  subjectId: string;
+  studentGroupId: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  roomId: string | null;
+  teacherId: string | null;
+  isLocked: boolean;
+}
+
+function useInvalidateSchedule() {
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
+    void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
+    void queryClient.invalidateQueries({ queryKey: ["teacherLessons"] });
+  };
 }
 
 export function useUpdateMasterLesson() {
-  const queryClient = useQueryClient();
+  const invalidate = useInvalidateSchedule();
   return useMutation({
     mutationFn: ({ id, ...body }: UpdateMasterLessonInput) =>
-      api.patch<{ propagatedLessons: number }>(`/api/v1/master-lessons/${id}`, body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
-      void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
-      void queryClient.invalidateQueries({ queryKey: ["teacherLessons"] });
-    },
+      api.patch<MasterLessonResponse & { propagatedLessons: number }>(
+        `/api/v1/master-lessons/${id}`,
+        body,
+      ),
+    onSuccess: invalidate,
+  });
+}
+
+export function useCreateMasterLesson() {
+  const invalidate = useInvalidateSchedule();
+  return useMutation({
+    mutationFn: (body: CreateMasterLessonInput) =>
+      api.post<MasterLessonResponse>("/api/v1/master-lessons", body),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteMasterLesson() {
+  const invalidate = useInvalidateSchedule();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.delete<{ id: string; removedCalendarLessons: number }>(
+        `/api/v1/master-lessons/${id}`,
+      ),
+    onSuccess: invalidate,
   });
 }
 
@@ -430,12 +586,95 @@ export function useLessonActions() {
 }
 
 // ---------------------------------------------------------------------------
+// Schedule versions (snapshots / restore)
+// ---------------------------------------------------------------------------
+
+export interface ScheduleVersion {
+  id: string;
+  academicYearId: string;
+  name: string;
+  lessonCount: number;
+  createdAt: string;
+}
+
+export interface VersionLesson {
+  subjectId: string;
+  studentGroupId: string;
+  teacherId: string | null;
+  coTeacherId?: string | null;
+  roomId: string | null;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  isLocked: boolean;
+  extraGroupIds?: string[];
+  studentIds?: string[];
+}
+
+/** Snapshot content, used for diffing a version against the live timetable. */
+export function useScheduleVersionDetail(versionId: string | null) {
+  return useQuery({
+    queryKey: ["scheduleVersionDetail", versionId],
+    enabled: versionId !== null,
+    queryFn: () =>
+      api.get<ScheduleVersion & { lessons: VersionLesson[] }>(
+        `/api/v1/schedule-versions/${versionId}`,
+      ),
+  });
+}
+
+export function useScheduleVersions(academicYearId: string | null) {
+  return useQuery({
+    queryKey: ["scheduleVersions", academicYearId],
+    enabled: academicYearId !== null,
+    queryFn: () =>
+      api.get<ScheduleVersion[]>(
+        `/api/v1/schedule-versions?academicYearId=${academicYearId}`,
+      ),
+  });
+}
+
+export function useScheduleVersionActions() {
+  const queryClient = useQueryClient();
+  const invalidateVersions = () => {
+    void queryClient.invalidateQueries({ queryKey: ["scheduleVersions"] });
+  };
+  const invalidateSchedule = () => {
+    invalidateVersions();
+    void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
+    void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
+    void queryClient.invalidateQueries({ queryKey: ["teacherLessons"] });
+  };
+
+  const save = useMutation({
+    mutationFn: (body: { academicYearId: string; name: string }) =>
+      api.post<ScheduleVersion>("/api/v1/schedule-versions", body),
+    onSuccess: invalidateVersions,
+  });
+  const restore = useMutation({
+    mutationFn: (id: string) =>
+      api.post<{ restoredLessons: number; safetyVersionId: string }>(
+        `/api/v1/schedule-versions/${id}/restore`,
+        {},
+      ),
+    onSuccess: invalidateSchedule,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/schedule-versions/${id}`),
+    onSuccess: invalidateVersions,
+  });
+
+  return { save, restore, remove };
+}
+
+// ---------------------------------------------------------------------------
 // Reports
 // ---------------------------------------------------------------------------
 
 export interface GroupAttendanceRow {
   studentId: string;
   status: "UNKNOWN" | "PRESENT" | "ABSENT" | "LATE" | "EXCUSED";
+  lesson: { startsAt: string; endsAt: string } | null;
 }
 
 /** All attendance records for a class within a date window (admin reports). */
@@ -449,10 +688,14 @@ export function useGroupAttendance(
     enabled: groupId !== null,
     queryFn: async () => {
       const supabase = createClient();
+      // Filter by the STUDENT's class (not the lesson's primary class) so
+      // electives and multi-class lessons count toward the right class.
       const { data, error } = await supabase
         .from("AttendanceRecords")
-        .select("studentId, status, lesson:CalendarLessons!inner(id, date, studentGroupId)")
-        .eq("lesson.studentGroupId", groupId!)
+        .select(
+          "studentId, status, lesson:CalendarLessons!inner(id, date, startsAt, endsAt), student:Users!AttendanceRecords_studentId_fkey!inner(studentGroupId)",
+        )
+        .eq("student.studentGroupId", groupId!)
         .gte("lesson.date", fromDate)
         .lte("lesson.date", toDate)
         .limit(20000);
@@ -479,4 +722,162 @@ export function useReportAttendance() {
       });
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Guardians, absence reporting, leave requests
+// ---------------------------------------------------------------------------
+
+/** The signed-in guardian's children (via GuardianStudents, RLS-scoped). */
+export function useMyChildren(guardianUserId: string | null) {
+  return useQuery({
+    queryKey: ["myChildren", guardianUserId],
+    enabled: guardianUserId !== null,
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("GuardianStudents")
+        .select(
+          "id, studentId, student:Users!GuardianStudents_studentId_fkey(id, role, firstName, lastName, email, phone, isActive, studentGroupId)",
+        )
+        .eq("guardianId", guardianUserId!);
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []) as unknown as Array<{
+        id: string;
+        studentId: string;
+        student: Person;
+      }>;
+      return rows.map((row) => ({ linkId: row.id, ...row.student }));
+    },
+  });
+}
+
+/** Guardians linked to one student (admin management view). */
+export function useStudentGuardians(studentId: string | null) {
+  return useQuery({
+    queryKey: ["studentGuardians", studentId],
+    enabled: studentId !== null,
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("GuardianStudents")
+        .select(
+          "id, guardianId, guardian:Users!GuardianStudents_guardianId_fkey(id, firstName, lastName, email)",
+        )
+        .eq("studentId", studentId!);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as unknown as Array<{
+        id: string;
+        guardianId: string;
+        guardian: Pick<Person, "id" | "firstName" | "lastName" | "email">;
+      }>;
+    },
+  });
+}
+
+export function useGuardianLinkActions() {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["studentGuardians"] });
+    void queryClient.invalidateQueries({ queryKey: ["myChildren"] });
+  };
+  const link = useMutation({
+    mutationFn: (body: { guardianId: string; studentId: string }) =>
+      api.post("/api/v1/guardian-links", body),
+    onSuccess: invalidate,
+  });
+  const unlink = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/guardian-links/${id}`),
+    onSuccess: invalidate,
+  });
+  return { link, unlink };
+}
+
+/** Absence reports visible to the caller (RLS: own children / own / staff). */
+export function useAbsenceReports(options?: { date?: string; studentId?: string }) {
+  return useQuery({
+    queryKey: ["absenceReports", options?.date ?? null, options?.studentId ?? null],
+    queryFn: async () => {
+      const supabase = createClient();
+      let query = supabase
+        .from("AbsenceReports")
+        .select(
+          "id, studentId, reportedById, date, startTime, endTime, type, note, createdAt",
+        )
+        .order("date", { ascending: false })
+        .limit(200);
+      if (options?.date) query = query.eq("date", options.date);
+      if (options?.studentId) query = query.eq("studentId", options.studentId);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return (data ?? []) as AbsenceReport[];
+    },
+  });
+}
+
+export function useAbsenceReportActions() {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["absenceReports"] });
+  };
+  const report = useMutation({
+    mutationFn: (body: {
+      studentId: string;
+      date: string;
+      startTime?: string;
+      endTime?: string;
+      type: "SICK" | "APPOINTMENT" | "OTHER";
+      note?: string;
+    }) => api.post("/api/v1/absence-reports", body),
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/absence-reports/${id}`),
+    onSuccess: invalidate,
+  });
+  return { report, remove };
+}
+
+/** Leave requests visible to the caller (guardian: children; admin: all). */
+export function useLeaveRequests(status?: "PENDING" | "APPROVED" | "REJECTED") {
+  return useQuery({
+    queryKey: ["leaveRequests", status ?? null],
+    queryFn: async () => {
+      const supabase = createClient();
+      let query = supabase
+        .from("LeaveRequests")
+        .select(
+          "id, studentId, requestedById, startDate, endDate, reason, status, decidedById, decidedAt, decisionNote, createdAt",
+        )
+        .order("createdAt", { ascending: false })
+        .limit(200);
+      if (status) query = query.eq("status", status);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return (data ?? []) as LeaveRequest[];
+    },
+  });
+}
+
+export function useLeaveRequestActions() {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["leaveRequests"] });
+    void queryClient.invalidateQueries({ queryKey: ["absenceReports"] });
+  };
+  const request = useMutation({
+    mutationFn: (body: {
+      studentId: string;
+      startDate: string;
+      endDate: string;
+      reason: string;
+    }) => api.post("/api/v1/leave-requests", body),
+    onSuccess: invalidate,
+  });
+  const decide = useMutation({
+    mutationFn: ({ id, status, note }: { id: string; status: "APPROVED" | "REJECTED"; note?: string }) =>
+      api.patch(`/api/v1/leave-requests/${id}/decide`, { status, ...(note ? { note } : {}) }),
+    onSuccess: invalidate,
+  });
+  return { request, decide };
 }

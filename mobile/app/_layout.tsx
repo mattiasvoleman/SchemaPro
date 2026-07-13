@@ -19,11 +19,23 @@ function AuthGate(): React.JSX.Element {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
+    const homeGroup =
+      authState.role === 'GUARDIAN'
+        ? '(guardian)'
+        : authState.role === 'STUDENT'
+          ? '(student)'
+          : '(app)';
+    const homeRoute =
+      authState.role === 'GUARDIAN'
+        ? '/(guardian)/children'
+        : authState.role === 'STUDENT'
+          ? '/(student)/schedule'
+          : '/(app)/schedule';
 
     if (!authState.isAuthenticated && !inAuthGroup) {
       router.replace('/(auth)/login');
-    } else if (authState.isAuthenticated && inAuthGroup) {
-      router.replace('/(app)/schedule');
+    } else if (authState.isAuthenticated && (inAuthGroup || segments[0] !== homeGroup)) {
+      router.replace(homeRoute);
     }
   }, [authState.isAuthenticated, isLoading, segments, router]);
 

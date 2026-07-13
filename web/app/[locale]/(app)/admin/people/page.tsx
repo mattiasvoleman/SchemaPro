@@ -3,8 +3,14 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2, UserCheck } from "lucide-react";
-import { useCrudMutations, useGroups, usePeople } from "@/lib/queries";
+import { Link2, Pencil, Plus, Trash2, UserCheck } from "lucide-react";
+import {
+  useCrudMutations,
+  useGroups,
+  useGuardianLinkActions,
+  usePeople,
+  useStudentGuardians,
+} from "@/lib/queries";
 import type { Person, UserRole } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -39,7 +45,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-const ROLES: UserRole[] = ["STUDENT", "TEACHER", "SCHOOL_ADMIN"];
+const ROLES: UserRole[] = ["STUDENT", "TEACHER", "SCHOOL_ADMIN", "GUARDIAN"];
 const NO_GROUP = "__none__";
 
 interface PersonForm {
@@ -66,6 +72,10 @@ export default function PeoplePage() {
   const tRoles = useTranslations("roles");
   const { data: people, isLoading } = usePeople();
   const { data: groups } = useGroups();
+  const [guardiansFor, setGuardiansFor] = useState<Person | null>(null);
+  const { data: studentGuardians } = useStudentGuardians(guardiansFor?.id ?? null);
+  const guardianLinks = useGuardianLinkActions();
+  const [newGuardianId, setNewGuardianId] = useState("");
   const mutations = useCrudMutations<{
     firstName: string;
     lastName: string;
@@ -213,6 +223,20 @@ export default function PeoplePage() {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
+                    {person.role === "STUDENT" ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => {
+                          setNewGuardianId("");
+                          setGuardiansFor(person);
+                        }}
+                        aria-label={t("manageGuardians")}
+                        title={t("manageGuardians")}
+                      >
+                        <Link2 />
+                      </Button>
+                    ) : null}
                     <Button
                       variant="ghost"
                       size="icon"
@@ -342,6 +366,90 @@ export default function PeoplePage() {
               {tCommon("save")}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={guardiansFor !== null}
+        onOpenChange={(open) => !open && setGuardiansFor(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {t("guardiansTitle", {
+                name: guardiansFor
+                  ? `${guardiansFor.firstName} ${guardiansFor.lastName}`
+                  : "",
+              })}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            {(studentGuardians ?? []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t("guardiansEmpty")}</p>
+            ) : (
+              (studentGuardians ?? []).map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between rounded-md border px-3 py-2 text-sm"
+                >
+                  <div className="min-w-0">
+                    <div className="font-medium">
+                      {entry.guardian.firstName} {entry.guardian.lastName}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {entry.guardian.email}
+                    </div>
+                  </div>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => void guardianLinks.unlink.mutateAsync(entry.id)}
+                    aria-label={tCommon("delete")}
+                  >
+                    <Trash2 className="text-destructive" />
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Select value={newGuardianId || undefined} onValueChange={setNewGuardianId}>
+              <SelectTrigger>
+                <SelectValue placeholder={t("selectGuardian")} />
+              </SelectTrigger>
+              <SelectContent>
+                {(people ?? [])
+                  .filter(
+                    (person) =>
+                      person.role === "GUARDIAN" &&
+                      !(studentGuardians ?? []).some(
+                        (entry) => entry.guardianId === person.id,
+                      ),
+                  )
+                  .map((person) => (
+                    <SelectItem key={person.id} value={person.id}>
+                      {person.firstName} {person.lastName}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            <Button
+              onClick={() => {
+                if (!guardiansFor || !newGuardianId) return;
+                void guardianLinks.link
+                  .mutateAsync({ guardianId: newGuardianId, studentId: guardiansFor.id })
+                  .then(() => setNewGuardianId(""))
+                  .catch((error: unknown) =>
+                    toast.error(
+                      error instanceof Error ? error.message : tCommon("error"),
+                    ),
+                  );
+              }}
+              disabled={!newGuardianId || guardianLinks.link.isPending}
+            >
+              {t("linkGuardian")}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

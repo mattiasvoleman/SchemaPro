@@ -130,3 +130,226 @@ def test_rate_limit_returns_429() -> None:
         for _ in range(5)
     ]
     assert 429 in statuses
+
+
+def test_fixed_lessons_block_shared_resources(client: TestClient) -> None:
+    """Generated lessons must not overlap a locked lesson sharing group/teacher/room.
+
+    The group is boxed in: Monday 08:00-18:00 is fully blocked by a fixed
+    lesson except 09:00-10:00, and Tue-Fri are blocked by UNAVAILABLE
+    constraints. The only legal placement for the single generated lesson is
+    Monday 09:00-10:00, which proves the fixed window is honored.
+    """
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+    group_id = requirement["studentGroupId"]  # type: ignore[index]
+    room_id = payload["rooms"][0]["id"]  # type: ignore[index]
+
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "teacherId": None,
+            "studentGroupId": group_id,
+            "roomId": room_id,
+            "dayOfWeek": 1,
+            "startTime": "08:00:00",
+            "endTime": "09:00:00",
+        },
+        {
+            "id": str(uuid4()),
+            "teacherId": None,
+            "studentGroupId": group_id,
+            "roomId": room_id,
+            "dayOfWeek": 1,
+            "startTime": "10:00:00",
+            "endTime": "18:00:00",
+        },
+    ]
+    payload["constraints"] = [
+        {
+            "id": str(uuid4()),
+            "resourceKind": "STUDENT_GROUP",
+            "resourceId": group_id,
+            "dayOfWeek": day,
+            "date": None,
+            "startTime": "08:00:00",
+            "endTime": "17:45:00",
+            "kind": "UNAVAILABLE",
+        }
+        for day in (2, 3, 4, 5)
+    ]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] in {"OPTIMAL", "FEASIBLE"}
+    assert len(body["lessons"]) == 1
+    lesson = body["lessons"][0]
+    assert lesson["dayOfWeek"] == 1
+    assert lesson["startTime"] == "09:00:00"
+    assert lesson["endTime"] == "10:00:00"
+
+
+def test_fixed_lessons_outside_grid_are_ignored(client: TestClient) -> None:
+    """A locked weekend lesson must not break a Mon-Fri grid solve."""
+    payload = _sample_payload()
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "teacherId": None,
+            "studentGroupId": payload["requirements"][0]["studentGroupId"],  # type: ignore[index]
+            "roomId": None,
+            "dayOfWeek": 6,
+            "startTime": "09:00:00",
+            "endTime": "10:00:00",
+        }
+    ]
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_required_room_type_is_enforced(client: TestClient) -> None:
+    """A LABORATORY-only requirement must land in the lab, not the bigger classroom."""
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+    requirement["requiredRoomType"] = "LABORATORY"  # type: ignore[index]
+    lab_id = str(uuid4())
+    payload["rooms"] = [
+        {"id": payload["rooms"][0]["id"], "capacity": 100, "type": "CLASSROOM"},  # type: ignore[index]
+        {"id": lab_id, "capacity": 30, "type": "LABORATORY"},
+    ]
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] in {"OPTIMAL", "FEASIBLE"}
+    assert body["lessons"][0]["roomId"] == lab_id
+
+
+def test_previous_lessons_are_preserved(client: TestClient) -> None:
+    """With disruption weight active, the solver keeps the previous slots."""
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    payload["previousLessons"] = [
+        {
+            "requirementId": requirement["id"],  # type: ignore[index]
+            "dayOfWeek": 3,
+            "startTime": "11:00:00",
+        },
+        {
+            "requirementId": requirement["id"],  # type: ignore[index]
+            "dayOfWeek": 5,
+            "startTime": "14:00:00",
+        },
+    ]
+    payload["weights"] = {"disruption": 100, "spread": 0}
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "OPTIMAL"
+    placed = {(lesson["dayOfWeek"], lesson["startTime"]) for lesson in body["lessons"]}
+    assert (3, "11:00:00") in placed
+    assert (5, "14:00:00") in placed
+
+
+def test_co_teacher_prevents_overlap(client: TestClient) -> None:
+    """Two requirements sharing a co-teacher must never overlap."""
+    payload = _sample_payload()
+    shared_co = str(uuid4())
+    base = payload["requirements"][0]  # type: ignore[index]
+    base["lessonsPerWeek"] = 3  # type: ignore[index]
+    base["coTeacherId"] = shared_co  # type: ignore[index]
+    payload["requirements"].append(  # type: ignore[union-attr]
+        {
+            "id": str(uuid4()),
+            "subjectId": str(uuid4()),
+            "studentGroupId": str(uuid4()),
+            "teacherId": str(uuid4()),
+            "coTeacherId": shared_co,
+            "lessonsPerWeek": 3,
+            "minutesPerLesson": 60,
+            "studentGroupSize": 20,
+        }
+    )
+    payload["rooms"].append({"id": str(uuid4()), "capacity": 30})  # type: ignore[union-attr]
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] in {"OPTIMAL", "FEASIBLE"}
+    slots = [
+        (lesson["dayOfWeek"], lesson["startTime"], lesson["endTime"])
+        for lesson in body["lessons"]
+    ]
+
+    def minutes(value: str) -> int:
+        h, m, _ = value.split(":")
+        return int(h) * 60 + int(m)
+
+    for i in range(len(slots)):
+        for j in range(i + 1, len(slots)):
+            if slots[i][0] != slots[j][0]:
+                continue
+            no_overlap = (
+                minutes(slots[i][2]) <= minutes(slots[j][1])
+                or minutes(slots[j][2]) <= minutes(slots[i][1])
+            )
+            assert no_overlap, f"co-taught lessons overlap: {slots[i]} vs {slots[j]}"
+
+
+def test_lunch_break_rule_is_enforced(client: TestClient) -> None:
+    """Each group keeps a free 45-min window inside 11:00-13:00 every day."""
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 10  # type: ignore[index]
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "13:00:00",
+        "lunchMinutes": 45,
+    }
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] in {"OPTIMAL", "FEASIBLE"}
+
+    def minutes(value: str) -> int:
+        h, m, _ = value.split(":")
+        return int(h) * 60 + int(m)
+
+    by_day: dict[int, list[tuple[int, int]]] = {}
+    for lesson in body["lessons"]:
+        by_day.setdefault(lesson["dayOfWeek"], []).append(
+            (minutes(lesson["startTime"]), minutes(lesson["endTime"]))
+        )
+    for day, intervals in by_day.items():
+        found_window = False
+        for cand in range(11 * 60, 13 * 60 - 45 + 1, 15):
+            if all(end <= cand or start >= cand + 45 for start, end in intervals):
+                found_window = True
+                break
+        assert found_window, f"no 45-min lunch window on day {day}: {sorted(intervals)}"

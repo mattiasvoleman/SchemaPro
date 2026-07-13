@@ -9,6 +9,7 @@ import type { PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import type { AssignSubstituteDto, CancelLessonDto } from './dto/lesson-action.dto';
 
 export interface LessonActionResult {
@@ -31,6 +32,7 @@ export class CalendarLessonsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly realtime: RealtimeService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async cancel(
@@ -51,6 +53,7 @@ export class CalendarLessonsService {
       });
 
       await this.realtime.notifyLessonChanged(tx, id);
+      await this.notifyGroup(tx, lesson, 'LESSON_CANCELLED');
       this.logger.log(`Lesson cancelled [lesson=${id}]`);
       return updated;
     });
@@ -134,6 +137,7 @@ export class CalendarLessonsService {
 
       await this.realtime.notifyLessonChanged(tx, id);
       // Ids only in logs — never teacher names.
+      await this.notifyGroup(tx, lesson, 'LESSON_SUBSTITUTE');
       this.logger.log(`Substitute assigned [lesson=${id}]`);
       return updated;
     });
@@ -149,6 +153,8 @@ export class CalendarLessonsService {
     note: string | null;
     startsAt: Date;
     endsAt: Date;
+    studentGroupId: string;
+    subject: { name: string };
   }> {
     const lesson = await tx.calendarLesson.findUnique({
       where: { id },
@@ -159,11 +165,38 @@ export class CalendarLessonsService {
         note: true,
         startsAt: true,
         endsAt: true,
+        studentGroupId: true,
+        subject: { select: { name: true } },
       },
     });
     if (!lesson) {
       throw new NotFoundException('Lesson not found.');
     }
     return lesson;
+  }
+
+  /** In-app notice to the lesson's class (students + guardians). */
+  private async notifyGroup(
+    tx: PrismaClient,
+    lesson: {
+      schoolId: string;
+      studentGroupId: string;
+      startsAt: Date;
+      subject: { name: string };
+    },
+    type: 'LESSON_CANCELLED' | 'LESSON_SUBSTITUTE',
+  ): Promise<void> {
+    const recipients = await this.notifications.recipientsForGroups(tx, [
+      lesson.studentGroupId,
+    ]);
+    await this.notifications.notifyUsers(tx, {
+      schoolId: lesson.schoolId,
+      userIds: recipients,
+      type,
+      meta: {
+        subjectName: lesson.subject.name,
+        startsAt: lesson.startsAt.toISOString(),
+      },
+    });
   }
 }

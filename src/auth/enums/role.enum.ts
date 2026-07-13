@@ -14,6 +14,7 @@ export enum Role {
   SCHOOL_ADMIN = 'SCHOOL_ADMIN',
   TEACHER = 'TEACHER',
   STUDENT = 'STUDENT',
+  GUARDIAN = 'GUARDIAN',
 }
 
 export function isRole(value: unknown): value is Role {

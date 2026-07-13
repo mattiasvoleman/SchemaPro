@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { Lock, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface TimetableLesson {
@@ -16,6 +17,18 @@ export interface TimetableLesson {
   room?: string;
   color: string;
   cancelled?: boolean;
+  /** Pinned: survives regeneration; shown with a lock badge. */
+  locked?: boolean;
+  /** Existing clash detected by the client conflict engine. */
+  conflicted?: boolean;
+  /** Label of a collaborator currently editing this lesson (soft lock). */
+  remoteEditor?: string;
+}
+
+export interface LessonChange {
+  dayOfWeek: number;
+  startMinutes: number;
+  endMinutes: number;
 }
 
 interface TimetableGridProps {
@@ -23,6 +36,20 @@ interface TimetableGridProps {
   /** Optional dates rendered under each day header (index 0 = Monday). */
   dates?: Date[];
   onLessonClick?: (lesson: TimetableLesson) => void;
+  /** Enables drag-to-move, drag-to-resize and empty-slot clicks. */
+  editable?: boolean;
+  /** Called after a valid drag-move or resize is dropped. */
+  onLessonChange?: (id: string, change: LessonChange) => void;
+  /** Live validity check during drag: return false to show the ghost red. */
+  validateChange?: (id: string, change: LessonChange) => boolean;
+  /** Called when a drag ends on an invalid slot (e.g. to offer suggestions). */
+  onInvalidDrop?: (id: string, change: LessonChange) => void;
+  /** Lessons rendered with a selection outline (bulk editing). */
+  selectedIds?: ReadonlySet<string>;
+  /** Shift+click toggles selection instead of opening the editor. */
+  onToggleSelect?: (id: string) => void;
+  /** Click on an empty slot (create-lesson affordance). */
+  onSlotClick?: (dayOfWeek: number, startMinutes: number) => void;
   className?: string;
 }
 
@@ -33,6 +60,31 @@ interface PositionedLesson extends TimetableLesson {
 
 const DAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
 const SLOT_HEIGHT_PX = 1.1; // pixels per minute
+const TIME_AXIS_PX = 56; // 3.5rem
+const DRAG_SNAP_MINUTES = 5;
+const SLOT_CLICK_SNAP_MINUTES = 15;
+const DRAG_THRESHOLD_PX = 5;
+const MIN_DURATION_MINUTES = 15;
+const RESIZE_HANDLE_PX = 8;
+
+interface DragState {
+  pointerId: number;
+  lessonId: string;
+  mode: "move" | "resize";
+  /** Minutes between pointer and lesson start at drag begin (move mode). */
+  grabOffsetMinutes: number;
+  origin: TimetableLesson;
+  startClientX: number;
+  startClientY: number;
+  moved: boolean;
+}
+
+interface GhostState {
+  dayOfWeek: number;
+  startMinutes: number;
+  endMinutes: number;
+  valid: boolean;
+}
 
 /** Assigns overlapping lessons within a day to side-by-side lanes. */
 function layoutDay(lessons: TimetableLesson[]): PositionedLesson[] {
@@ -56,8 +108,29 @@ function layoutDay(lessons: TimetableLesson[]): PositionedLesson[] {
   return positioned.map((lesson) => ({ ...lesson, laneCount }));
 }
 
-export function TimetableGrid({ lessons, dates, onLessonClick, className }: TimetableGridProps) {
+function snap(minutes: number, step: number): number {
+  return Math.round(minutes / step) * step;
+}
+
+export function TimetableGrid({
+  lessons,
+  dates,
+  onLessonClick,
+  editable = false,
+  onLessonChange,
+  validateChange,
+  onInvalidDrop,
+  selectedIds,
+  onToggleSelect,
+  onSlotClick,
+  className,
+}: TimetableGridProps) {
   const t = useTranslations("common");
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const ghostRef = useRef<GhostState | null>(null);
+  const [ghost, setGhost] = useState<GhostState | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
 
   const includeWeekend = lessons.some((lesson) => lesson.dayOfWeek > 5);
   const dayCount = includeWeekend ? 7 : 5;
@@ -74,6 +147,8 @@ export function TimetableGrid({ lessons, dates, onLessonClick, className }: Time
 
   const totalMinutes = (endHour - startHour) * 60;
   const gridHeight = totalMinutes * SLOT_HEIGHT_PX;
+  const dayStartMinutes = startHour * 60;
+  const dayEndMinutes = endHour * 60;
 
   const byDay = useMemo(() => {
     const map = new Map<number, PositionedLesson[]>();
@@ -86,11 +161,255 @@ export function TimetableGrid({ lessons, dates, onLessonClick, className }: Time
     return map;
   }, [lessons, dayCount]);
 
+  const lessonById = useMemo(
+    () => new Map(lessons.map((lesson) => [lesson.id, lesson])),
+    [lessons],
+  );
+
+  /** Converts a pointer event to grid coordinates (day + minute). */
+  const locate = useCallback(
+    (clientX: number, clientY: number): { day: number; minute: number } | null => {
+      const body = bodyRef.current;
+      if (!body) return null;
+      const rect = body.getBoundingClientRect();
+      const x = clientX - rect.left - TIME_AXIS_PX;
+      const y = clientY - rect.top;
+      const dayWidth = (rect.width - TIME_AXIS_PX) / dayCount;
+      if (dayWidth <= 0) return null;
+      const day = Math.min(dayCount, Math.max(1, Math.floor(x / dayWidth) + 1));
+      const minute = dayStartMinutes + y / SLOT_HEIGHT_PX;
+      return { day, minute };
+    },
+    [dayCount, dayStartMinutes],
+  );
+
+  const updateGhost = useCallback(
+    (next: GhostState | null) => {
+      ghostRef.current = next;
+      setGhost(next);
+    },
+    [],
+  );
+
+  const endDrag = useCallback(
+    (commit: boolean) => {
+      const drag = dragRef.current;
+      const currentGhost = ghostRef.current;
+      dragRef.current = null;
+      setDraggingId(null);
+      updateGhost(null);
+
+      if (!drag || !drag.moved) return;
+      if (!commit || !currentGhost) return;
+      if (!currentGhost.valid) {
+        if (onInvalidDrop) {
+          onInvalidDrop(drag.lessonId, {
+            dayOfWeek: currentGhost.dayOfWeek,
+            startMinutes: currentGhost.startMinutes,
+            endMinutes: currentGhost.endMinutes,
+          });
+        }
+        return;
+      }
+
+      const changed =
+        currentGhost.dayOfWeek !== drag.origin.dayOfWeek ||
+        currentGhost.startMinutes !== drag.origin.startMinutes ||
+        currentGhost.endMinutes !== drag.origin.endMinutes;
+      if (changed && onLessonChange) {
+        onLessonChange(drag.lessonId, {
+          dayOfWeek: currentGhost.dayOfWeek,
+          startMinutes: currentGhost.startMinutes,
+          endMinutes: currentGhost.endMinutes,
+        });
+      }
+    },
+    [onLessonChange, onInvalidDrop, updateGhost],
+  );
+
+  useEffect(() => {
+    if (!draggingId) return;
+
+    const onMove = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+
+      if (!drag.moved) {
+        const dx = Math.abs(event.clientX - drag.startClientX);
+        const dy = Math.abs(event.clientY - drag.startClientY);
+        if (dx + dy < DRAG_THRESHOLD_PX) return;
+        drag.moved = true;
+      }
+
+      const located = locate(event.clientX, event.clientY);
+      if (!located) return;
+
+      const duration = drag.origin.endMinutes - drag.origin.startMinutes;
+      let next: GhostState;
+
+      if (drag.mode === "move") {
+        let start = snap(located.minute - drag.grabOffsetMinutes, DRAG_SNAP_MINUTES);
+        start = Math.max(dayStartMinutes, Math.min(start, dayEndMinutes - duration));
+        next = {
+          dayOfWeek: located.day,
+          startMinutes: start,
+          endMinutes: start + duration,
+          valid: true,
+        };
+      } else {
+        let end = snap(located.minute, DRAG_SNAP_MINUTES);
+        end = Math.max(
+          drag.origin.startMinutes + MIN_DURATION_MINUTES,
+          Math.min(end, dayEndMinutes),
+        );
+        next = {
+          dayOfWeek: drag.origin.dayOfWeek,
+          startMinutes: drag.origin.startMinutes,
+          endMinutes: end,
+          valid: true,
+        };
+      }
+
+      if (validateChange) {
+        next.valid = validateChange(drag.lessonId, {
+          dayOfWeek: next.dayOfWeek,
+          startMinutes: next.startMinutes,
+          endMinutes: next.endMinutes,
+        });
+      }
+      updateGhost(next);
+    };
+
+    const onUp = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const wasClick = !drag.moved;
+      const lesson = lessonById.get(drag.lessonId);
+      endDrag(true);
+      if (wasClick && lesson) {
+        if (event.shiftKey && onToggleSelect) onToggleSelect(lesson.id);
+        else if (onLessonClick) onLessonClick(lesson);
+      }
+    };
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") endDrag(false);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [
+    draggingId,
+    locate,
+    lessonById,
+    onLessonClick,
+    onToggleSelect,
+    endDrag,
+    updateGhost,
+    validateChange,
+    dayStartMinutes,
+    dayEndMinutes,
+  ]);
+
+  const startDrag = (event: React.PointerEvent, lesson: TimetableLesson) => {
+    if (!editable || event.button !== 0) return;
+    event.preventDefault();
+
+    const target = event.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const nearBottom = rect.bottom - event.clientY <= RESIZE_HANDLE_PX;
+
+    const located = locate(event.clientX, event.clientY);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      lessonId: lesson.id,
+      mode: nearBottom ? "resize" : "move",
+      grabOffsetMinutes: located ? located.minute - lesson.startMinutes : 0,
+      origin: lesson,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+    setDraggingId(lesson.id);
+  };
+
+  /**
+   * Keyboard editing (a11y-parity with drag & drop): arrows move the focused
+   * lesson by 15 min (Up/Down) or one day (Left/Right); Enter opens the
+   * editor. Moves are validated before being applied.
+   */
+  const handleLessonKey = (event: React.KeyboardEvent, lesson: TimetableLesson) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (event.shiftKey && onToggleSelect) onToggleSelect(lesson.id);
+      else if (onLessonClick) onLessonClick(lesson);
+      return;
+    }
+    if (!onLessonChange) return;
+
+    const duration = lesson.endMinutes - lesson.startMinutes;
+    let day = lesson.dayOfWeek;
+    let start = lesson.startMinutes;
+    if (event.key === "ArrowUp") start -= SLOT_CLICK_SNAP_MINUTES;
+    else if (event.key === "ArrowDown") start += SLOT_CLICK_SNAP_MINUTES;
+    else if (event.key === "ArrowLeft") day -= 1;
+    else if (event.key === "ArrowRight") day += 1;
+    else return;
+
+    event.preventDefault();
+    day = Math.min(dayCount, Math.max(1, day));
+    start = Math.max(dayStartMinutes, Math.min(start, dayEndMinutes - duration));
+    const change: LessonChange = {
+      dayOfWeek: day,
+      startMinutes: start,
+      endMinutes: start + duration,
+    };
+    if (
+      change.dayOfWeek === lesson.dayOfWeek &&
+      change.startMinutes === lesson.startMinutes
+    ) {
+      return;
+    }
+    if (validateChange && !validateChange(lesson.id, change)) {
+      onInvalidDrop?.(lesson.id, change);
+      return;
+    }
+    onLessonChange(lesson.id, change);
+  };
+
+  const handleSlotClick = (event: React.MouseEvent, day: number) => {
+    if (!editable || !onSlotClick) return;
+    // Only clicks on the column background (not on a lesson) create slots.
+    if (event.target !== event.currentTarget) return;
+    const located = locate(event.clientX, event.clientY);
+    if (!located) return;
+    const minute = Math.max(
+      dayStartMinutes,
+      Math.min(
+        dayEndMinutes - MIN_DURATION_MINUTES,
+        Math.floor(located.minute / SLOT_CLICK_SNAP_MINUTES) * SLOT_CLICK_SNAP_MINUTES,
+      ),
+    );
+    onSlotClick(day, minute);
+  };
+
   const hours: number[] = [];
   for (let h = startHour; h <= endHour; h++) hours.push(h);
 
   return (
-    <div className={cn("overflow-x-auto rounded-lg border bg-card", className)}>
+    <div
+      className={cn(
+        "overflow-x-auto rounded-lg border bg-card",
+        draggingId && "select-none",
+        className,
+      )}
+    >
       <div className="min-w-[720px]">
         {/* Header row */}
         <div
@@ -130,6 +449,7 @@ export function TimetableGrid({ lessons, dates, onLessonClick, className }: Time
 
         {/* Body */}
         <div
+          ref={bodyRef}
           className="relative grid"
           style={{
             gridTemplateColumns: `3.5rem repeat(${dayCount}, 1fr)`,
@@ -154,12 +474,16 @@ export function TimetableGrid({ lessons, dates, onLessonClick, className }: Time
             const day = i + 1;
             const dayLessons = byDay.get(day) ?? [];
             return (
-              <div key={day} className="relative border-l">
+              <div
+                key={day}
+                className="relative border-l"
+                onClick={(event) => handleSlotClick(event, day)}
+              >
                 {/* Hour lines */}
                 {hours.slice(1, -1).map((hour) => (
                   <div
                     key={hour}
-                    className="absolute inset-x-0 border-t border-border/60"
+                    className="pointer-events-none absolute inset-x-0 border-t border-border/60"
                     style={{ top: `${(hour - startHour) * 60 * SLOT_HEIGHT_PX}px` }}
                   />
                 ))}
@@ -171,15 +495,37 @@ export function TimetableGrid({ lessons, dates, onLessonClick, className }: Time
                     (lesson.endMinutes - lesson.startMinutes) * SLOT_HEIGHT_PX,
                   );
                   const widthPct = 100 / lesson.laneCount;
+                  const isDragSource = draggingId === lesson.id;
                   return (
                     <button
                       key={lesson.id}
                       type="button"
-                      onClick={onLessonClick ? () => onLessonClick(lesson) : undefined}
+                      onClick={
+                        // In editable mode clicks are resolved on pointerup
+                        // (drag vs click); otherwise plain click-to-open.
+                        !editable && onLessonClick
+                          ? () => onLessonClick(lesson)
+                          : undefined
+                      }
+                      onPointerDown={
+                        editable ? (event) => startDrag(event, lesson) : undefined
+                      }
+                      onKeyDown={
+                        editable
+                          ? (event) => handleLessonKey(event, lesson)
+                          : undefined
+                      }
                       className={cn(
                         "absolute overflow-hidden rounded-md border-l-4 p-1.5 text-left text-xs shadow-sm transition-shadow",
-                        onLessonClick ? "cursor-pointer hover:shadow-md" : "cursor-default",
+                        onLessonClick || editable
+                          ? "cursor-pointer hover:shadow-md"
+                          : "cursor-default",
+                        editable && "touch-none",
                         lesson.cancelled && "opacity-45 line-through",
+                        lesson.conflicted && "ring-2 ring-red-500/80",
+                        selectedIds?.has(lesson.id) &&
+                          "outline outline-2 outline-offset-1 outline-blue-500",
+                        isDragSource && "opacity-40",
                       )}
                       style={{
                         top: `${top}px`,
@@ -190,8 +536,29 @@ export function TimetableGrid({ lessons, dates, onLessonClick, className }: Time
                         borderLeftColor: lesson.color,
                       }}
                     >
-                      <div className="truncate font-semibold" style={{ color: lesson.color }}>
-                        {lesson.title}
+                      <div className="flex items-start justify-between gap-1">
+                        <div
+                          className="truncate font-semibold"
+                          style={{ color: lesson.color }}
+                        >
+                          {lesson.title}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          {lesson.remoteEditor ? (
+                            <span
+                              title={lesson.remoteEditor}
+                              className="rounded bg-amber-200/80 px-1 text-[9px] font-semibold text-amber-900"
+                            >
+                              {lesson.remoteEditor}
+                            </span>
+                          ) : null}
+                          {lesson.conflicted ? (
+                            <TriangleAlert className="h-3 w-3 text-red-500" />
+                          ) : null}
+                          {lesson.locked ? (
+                            <Lock className="h-3 w-3 text-muted-foreground" />
+                          ) : null}
+                        </div>
                       </div>
                       {lesson.subtitle ? (
                         <div className="truncate text-muted-foreground">{lesson.subtitle}</div>
@@ -199,9 +566,37 @@ export function TimetableGrid({ lessons, dates, onLessonClick, className }: Time
                       {lesson.room ? (
                         <div className="truncate text-muted-foreground">{lesson.room}</div>
                       ) : null}
+                      {editable ? (
+                        <div className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
+                      ) : null}
                     </button>
                   );
                 })}
+
+                {/* Drag ghost */}
+                {ghost && draggingId && ghost.dayOfWeek === day ? (
+                  <div
+                    className={cn(
+                      "pointer-events-none absolute inset-x-0.5 z-10 rounded-md border-2 border-dashed px-1.5 py-1 text-[11px] font-medium tabular-nums",
+                      ghost.valid
+                        ? "border-emerald-500 bg-emerald-500/15 text-emerald-700"
+                        : "border-red-500 bg-red-500/15 text-red-700",
+                    )}
+                    style={{
+                      top: `${(ghost.startMinutes - startHour * 60) * SLOT_HEIGHT_PX}px`,
+                      height: `${Math.max(
+                        20,
+                        (ghost.endMinutes - ghost.startMinutes) * SLOT_HEIGHT_PX,
+                      )}px`,
+                    }}
+                  >
+                    {String(Math.floor(ghost.startMinutes / 60)).padStart(2, "0")}:
+                    {String(ghost.startMinutes % 60).padStart(2, "0")}
+                    {"–"}
+                    {String(Math.floor(ghost.endMinutes / 60)).padStart(2, "0")}:
+                    {String(ghost.endMinutes % 60).padStart(2, "0")}
+                  </div>
+                ) : null}
               </div>
             );
           })}

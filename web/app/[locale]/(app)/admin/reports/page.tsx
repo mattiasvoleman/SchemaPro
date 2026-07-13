@@ -41,6 +41,20 @@ interface StudentStats {
   total: number;
   /** present + late, as a share of recorded (non-UNKNOWN) lessons. */
   rate: number | null;
+  /** Minute-accurate absence (Skola24-style): giltig = EXCUSED minutes,
+   * ogiltig = ABSENT minutes; LATE counts 15 min ogiltig by convention. */
+  validAbsenceMinutes: number;
+  invalidAbsenceMinutes: number;
+  scheduledMinutes: number;
+}
+
+const LATE_PENALTY_MINUTES = 15;
+
+function lessonMinutes(lesson: { startsAt: string; endsAt: string } | null): number {
+  if (!lesson) return 0;
+  const minutes =
+    (new Date(lesson.endsAt).getTime() - new Date(lesson.startsAt).getTime()) / 60000;
+  return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : 0;
 }
 
 function toDateInput(date: Date): string {
@@ -89,6 +103,9 @@ export default function ReportsPage() {
           excused: 0,
           total: 0,
           rate: null,
+          validAbsenceMinutes: 0,
+          invalidAbsenceMinutes: 0,
+          scheduledMinutes: 0,
         },
       ]),
     );
@@ -97,10 +114,19 @@ export default function ReportsPage() {
       const entry = byStudent.get(record.studentId);
       if (!entry || record.status === "UNKNOWN") continue;
       entry.total += 1;
+      const minutes = lessonMinutes(record.lesson);
+      entry.scheduledMinutes += minutes;
       if (record.status === "PRESENT") entry.present += 1;
-      else if (record.status === "ABSENT") entry.absent += 1;
-      else if (record.status === "LATE") entry.late += 1;
-      else if (record.status === "EXCUSED") entry.excused += 1;
+      else if (record.status === "ABSENT") {
+        entry.absent += 1;
+        entry.invalidAbsenceMinutes += minutes;
+      } else if (record.status === "LATE") {
+        entry.late += 1;
+        entry.invalidAbsenceMinutes += Math.min(LATE_PENALTY_MINUTES, minutes);
+      } else if (record.status === "EXCUSED") {
+        entry.excused += 1;
+        entry.validAbsenceMinutes += minutes;
+      }
     }
 
     for (const entry of byStudent.values()) {
@@ -129,6 +155,9 @@ export default function ReportsPage() {
       t("late"),
       t("excused"),
       t("rate"),
+      t("validMinutes"),
+      t("invalidMinutes"),
+      t("scheduledMinutes"),
     ];
     const lines = [
       header.map(csvField).join(";"),
@@ -141,6 +170,9 @@ export default function ReportsPage() {
           entry.late,
           entry.excused,
           entry.rate !== null ? `${Math.round(entry.rate * 100)}%` : "",
+          entry.validAbsenceMinutes,
+          entry.invalidAbsenceMinutes,
+          entry.scheduledMinutes,
         ]
           .map(csvField)
           .join(";"),
@@ -245,6 +277,8 @@ export default function ReportsPage() {
                 <TableHead className="text-right">{t("late")}</TableHead>
                 <TableHead className="text-right">{t("excused")}</TableHead>
                 <TableHead className="text-right">{t("rate")}</TableHead>
+                <TableHead className="text-right">{t("validMinutes")}</TableHead>
+                <TableHead className="text-right">{t("invalidMinutes")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -260,6 +294,12 @@ export default function ReportsPage() {
                     <Badge variant={rateBadgeVariant(entry.rate)}>
                       {ratePercent(entry.rate)}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {entry.validAbsenceMinutes}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums text-destructive">
+                    {entry.invalidAbsenceMinutes}
                   </TableCell>
                 </TableRow>
               ))}

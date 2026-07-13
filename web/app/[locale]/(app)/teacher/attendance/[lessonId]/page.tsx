@@ -6,8 +6,9 @@ import { toast } from "sonner";
 import { ArrowLeft, CheckCheck, Loader2 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import {
-  useGroupStudents,
+  useAbsenceReports,
   useLesson,
+  useLessonRoster,
   useLessonAttendance,
   useReportAttendance,
   useSubjects,
@@ -42,14 +43,53 @@ export default function LessonAttendancePage({
   const tCommon = useTranslations("common");
 
   const { data: lesson } = useLesson(lessonId);
-  const { data: students, isLoading: studentsLoading } = useGroupStudents(
+  // Full roster: primary class + extra classes + individual participants.
+  const { data: students, isLoading: studentsLoading } = useLessonRoster(
+    lesson ? lessonId : null,
     lesson?.studentGroupId ?? null,
   );
   const { data: existingRecords } = useLessonAttendance(lessonId);
+  const { data: absenceReports } = useAbsenceReports({
+    date: lesson?.date ? lesson.date.slice(0, 10) : undefined,
+  });
+
+  /** Students with a guardian-reported absence covering this lesson. */
+  const reportedAbsent = useMemo(() => {
+    if (!lesson || !absenceReports) return new Set<string>();
+    const lessonStart = new Date(lesson.startsAt);
+    const lessonEnd = new Date(lesson.endsAt);
+    const toMin = (d: Date) => d.getHours() * 60 + d.getMinutes();
+    const set = new Set<string>();
+    for (const report of absenceReports) {
+      if (report.date.slice(0, 10) !== lesson.date.slice(0, 10)) continue;
+      if (report.startTime && report.endTime) {
+        const [sh, sm] = report.startTime.split(":").map(Number);
+        const [eh, em] = report.endTime.split(":").map(Number);
+        const overlaps =
+          sh * 60 + sm < toMin(lessonEnd) && toMin(lessonStart) < eh * 60 + em;
+        if (!overlaps) continue;
+      }
+      set.add(report.studentId);
+    }
+    return set;
+  }, [lesson, absenceReports]);
+
   const { data: subjects } = useSubjects();
   const report = useReportAttendance();
 
   const [statuses, setStatuses] = useState<Record<string, AttendanceStatus>>({});
+
+  // Pre-fill reported-absent students as EXCUSED (teacher can override).
+  useEffect(() => {
+    if (reportedAbsent.size === 0) return;
+    setStatuses((current) => {
+      const next = { ...current };
+      for (const studentId of reportedAbsent) {
+        if (!(studentId in next)) next[studentId] = "EXCUSED";
+      }
+      return next;
+    });
+  }, [reportedAbsent]);
 
   // Seed local state from existing records once loaded.
   useEffect(() => {
@@ -152,6 +192,11 @@ export default function LessonAttendancePage({
                   >
                     <span className="font-medium">
                       {student.firstName} {student.lastName}
+                      {reportedAbsent.has(student.id) ? (
+                        <Badge variant="warning" className="ml-2">
+                          {t("reportedAbsent")}
+                        </Badge>
+                      ) : null}
                     </span>
                     <div className="flex gap-1">
                       {STATUSES.map((status) => (

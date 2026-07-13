@@ -46,6 +46,26 @@ class Settings(BaseSettings):
         default=5,
         alias="WEIGHT_PREFERRED_BUSY_VIOLATION",
     )
+    weight_disruption: int = Field(
+        default=8,
+        alias="WEIGHT_DISRUPTION",
+        description="Reward for keeping a lesson on its previous slot during re-optimization.",
+    )
+    weight_spread: int = Field(
+        default=3,
+        alias="WEIGHT_SPREAD",
+        description="Penalty per pair of same-requirement lessons on the same day.",
+    )
+    weight_teacher_gap: int = Field(
+        default=2,
+        alias="WEIGHT_TEACHER_GAP",
+        description="Penalty per idle slot between two same-day lessons of a teacher.",
+    )
+    weight_date_unavailable: int = Field(
+        default=2,
+        alias="WEIGHT_DATE_UNAVAILABLE",
+        description="Soft penalty for placing weekly lessons where one-off dated absences fall.",
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -15,6 +15,9 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
+import { FamilyModule } from './family/family.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { IntegrationModule } from './integration/integration.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -62,6 +65,9 @@ import type { ThrottleConfig } from './config/configuration';
     AppConfigModule,
     DatabaseModule,
     AuthModule,
+    FamilyModule,
+    NotificationsModule,
+    IntegrationModule,
 
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],

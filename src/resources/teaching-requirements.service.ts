@@ -27,6 +27,7 @@ export class TeachingRequirementsService {
             subjectId: dto.subjectId,
             studentGroupId: dto.studentGroupId,
             teacherId: dto.teacherId ?? null,
+            coTeacherId: dto.coTeacherId ?? null,
             lessonsPerWeek: dto.lessonsPerWeek ?? 1,
             minutesPerLesson: dto.minutesPerLesson ?? 60,
           },
@@ -48,6 +49,9 @@ export class TeachingRequirementsService {
           where: { id },
           data: {
             ...(dto.teacherId !== undefined ? { teacherId: dto.teacherId } : {}),
+            ...(dto.coTeacherId !== undefined
+              ? { coTeacherId: dto.coTeacherId }
+              : {}),
             ...(dto.lessonsPerWeek !== undefined
               ? { lessonsPerWeek: dto.lessonsPerWeek }
               : {}),

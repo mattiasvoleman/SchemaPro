@@ -20,12 +20,14 @@ import {
   GraduationCap,
   X,
   type LucideIcon,
+  KeyRound,
 } from "lucide-react";
 import { Link, usePathname } from "@/i18n/navigation";
 import { cn } from "@/lib/utils";
 import type { UserRole } from "@/lib/types";
 import { LocaleSwitcher } from "./locale-switcher";
 import { ThemeToggle } from "./theme-toggle";
+import { NotificationBell } from "@/components/layout/notification-bell";
 import { UserMenu } from "./user-menu";
 import { Button } from "@/components/ui/button";
 
@@ -68,7 +70,9 @@ const ADMIN_NAV: NavSection[] = [
     labelKey: "operations",
     items: [
       { labelKey: "dayPlanner", href: "/admin/lessons", icon: CalendarClock },
+      { labelKey: "leaveRequests", href: "/admin/leave", icon: ClipboardCheck },
       { labelKey: "reports", href: "/admin/reports", icon: BarChart3 },
+      { labelKey: "integrations", href: "/admin/integrations", icon: KeyRound },
     ],
   },
 ];
@@ -79,6 +83,15 @@ const TEACHER_NAV: NavSection[] = [
     items: [
       { labelKey: "mySchedule", href: "/teacher", icon: CalendarDays },
       { labelKey: "attendance", href: "/teacher/attendance", icon: ClipboardCheck },
+    ],
+  },
+];
+
+const GUARDIAN_NAV: NavSection[] = [
+  {
+    labelKey: null,
+    items: [
+      { labelKey: "myChildren", href: "/guardian", icon: Users },
     ],
   },
 ];
@@ -101,6 +114,8 @@ function navForRole(role: UserRole): NavSection[] {
       return TEACHER_NAV;
     case "STUDENT":
       return STUDENT_NAV;
+    case "GUARDIAN":
+      return GUARDIAN_NAV;
   }
 }
 
@@ -212,6 +227,7 @@ export function AppShell({ role, userName, email, schoolName, children }: AppShe
           <div className="flex-1" />
           <LocaleSwitcher />
           <ThemeToggle />
+          <NotificationBell />
           <UserMenu userName={userName} email={email} role={role} />
         </header>
 

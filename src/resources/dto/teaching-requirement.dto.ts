@@ -22,6 +22,12 @@ export class CreateTeachingRequirementDto {
   @IsUUID('4')
   teacherId?: string | null;
 
+  /** Optional second teacher scheduled together with the lead (co-teaching). */
+  @ValidateIf((dto: CreateTeachingRequirementDto) => dto.coTeacherId !== null)
+  @IsOptional()
+  @IsUUID('4')
+  coTeacherId?: string | null;
+
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -40,6 +46,11 @@ export class UpdateTeachingRequirementDto {
   @IsOptional()
   @IsUUID('4')
   teacherId?: string | null;
+
+  @ValidateIf((dto: UpdateTeachingRequirementDto) => dto.coTeacherId !== null)
+  @IsOptional()
+  @IsUUID('4')
+  coTeacherId?: string | null;
 
   @IsOptional()
   @IsInt()

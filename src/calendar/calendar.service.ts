@@ -72,6 +72,9 @@ export class CalendarService {
             subjectId: true,
             studentGroupId: true,
             teacherId: true,
+        coTeacherId: true,
+        extraGroups: { select: { studentGroupId: true } },
+        participants: { select: { studentId: true } },
             roomId: true,
             dayOfWeek: true,
             startTime: true,
@@ -153,11 +156,42 @@ export class CalendarService {
                   startsAt,
                   endsAt,
                   status: 'SCHEDULED',
-                  ...(template.teacherId
+                  ...(template.extraGroups.length > 0
+                    ? {
+                        extraGroups: {
+                          create: template.extraGroups.map((entry) => ({
+                            schoolId,
+                            studentGroupId: entry.studentGroupId,
+                          })),
+                        },
+                      }
+                    : {}),
+                  ...(template.participants.length > 0
+                    ? {
+                        participants: {
+                          create: template.participants.map((entry) => ({
+                            schoolId,
+                            studentId: entry.studentId,
+                          })),
+                        },
+                      }
+                    : {}),
+                  ...(template.teacherId || template.coTeacherId
                     ? {
                         teachers: {
                           create: [
-                            { schoolId, teacherId: template.teacherId, role: 'LEAD' as const },
+                            ...(template.teacherId
+                              ? [{ schoolId, teacherId: template.teacherId, role: 'LEAD' as const }]
+                              : []),
+                            ...(template.coTeacherId
+                              ? [
+                                  {
+                                    schoolId,
+                                    teacherId: template.coTeacherId,
+                                    role: 'ASSISTANT' as const,
+                                  },
+                                ]
+                              : []),
                           ],
                         },
                       }

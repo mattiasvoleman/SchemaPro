@@ -1,8 +1,11 @@
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import {
+  MessageBody,
+  ConnectedSocket,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
@@ -11,8 +14,20 @@ import { PrismaService } from '../database/prisma.service';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import {
   LESSON_UPDATED_EVENT,
+  MASTER_TIMETABLE_UPDATED_EVENT,
+  TIMETABLE_PRESENCE_EVENT,
   type CalendarLessonUpdatedPayload,
+  type TimetablePeer,
 } from './realtime.types';
+
+interface SocketProfile {
+  userId: string;
+  schoolId: string;
+  /** Display label for presence chips — "First L." (no email, no full PII). */
+  label: string;
+  /** Master-lesson id this user is currently editing, if any. */
+  editingLessonId: string | null;
+}
 
 /**
  * Socket.IO gateway for live schedule updates.
@@ -71,7 +86,13 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     const profile = await this.prisma.withSystemTransaction((tx) =>
       tx.user.findUnique({
         where: { authId: payload.sub },
-        select: { id: true, schoolId: true, isActive: true },
+        select: {
+          id: true,
+          schoolId: true,
+          isActive: true,
+          firstName: true,
+          lastName: true,
+        },
       }),
     );
     if (!profile || !profile.isActive) {
@@ -79,13 +100,69 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
       return;
     }
 
+    const socketProfile: SocketProfile = {
+      userId: profile.id,
+      schoolId: profile.schoolId,
+      label: `${profile.firstName} ${profile.lastName.charAt(0)}.`,
+      editingLessonId: null,
+    };
+    client.data['profile'] = socketProfile;
+
     await client.join([`school:${profile.schoolId}`, `user:${profile.id}`]);
     // Only opaque ids in logs — never emails or names.
     this.logger.log(`Socket connected [user=${profile.id}]`);
   }
 
-  handleDisconnect(): void {
-    // Rooms are cleaned up automatically by socket.io.
+  handleDisconnect(client: Socket): void {
+    // Rooms are cleaned up automatically by socket.io; peers just need a
+    // fresh roster without the departed editor.
+    const profile = client.data['profile'] as SocketProfile | undefined;
+    if (profile) {
+      // Fire after socket.io finishes removing the socket from its rooms.
+      setImmediate(() => void this.broadcastPresence(profile.schoolId));
+    }
+  }
+
+  /**
+   * Presence heartbeat from the timetable editor. `editingLessonId` is the
+   * master lesson the admin currently has open (soft edit-lock), or null.
+   * Every change re-broadcasts the school's full roster.
+   */
+  @SubscribeMessage('timetable:presence')
+  async onPresence(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { editingLessonId?: string | null } | undefined,
+  ): Promise<void> {
+    const profile = client.data['profile'] as SocketProfile | undefined;
+    if (!profile) return;
+    profile.editingLessonId =
+      typeof body?.editingLessonId === 'string' ? body.editingLessonId : null;
+    await this.broadcastPresence(profile.schoolId);
+  }
+
+  /** Roster of connected users per school + what each one is editing. */
+  private async broadcastPresence(schoolId: string): Promise<void> {
+    const sockets = await this.server.in(`school:${schoolId}`).fetchSockets();
+    const peers: TimetablePeer[] = [];
+    const seen = new Set<string>();
+    for (const socket of sockets) {
+      const profile = socket.data['profile'] as SocketProfile | undefined;
+      if (!profile || seen.has(profile.userId)) continue;
+      seen.add(profile.userId);
+      peers.push({
+        userId: profile.userId,
+        label: profile.label,
+        editingLessonId: profile.editingLessonId,
+      });
+    }
+    this.server.to(`school:${schoolId}`).emit(TIMETABLE_PRESENCE_EVENT, { peers });
+  }
+
+  /** Notifies a school that the master timetable changed (clients refetch). */
+  emitMasterTimetableUpdated(schoolId: string): void {
+    this.server
+      .to(`school:${schoolId}`)
+      .emit(MASTER_TIMETABLE_UPDATED_EVENT, { changedAt: new Date().toISOString() });
   }
 
   /** Emits a lesson update to its school room and each affected teacher. */

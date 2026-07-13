@@ -47,6 +47,7 @@ interface CellForm {
   lessonsPerWeek: string;
   minutesPerLesson: string;
   teacherId: string;
+  coTeacherId: string;
 }
 
 export default function RequirementsPage() {
@@ -67,6 +68,7 @@ export default function RequirementsPage() {
     subjectId: string;
     studentGroupId: string;
     teacherId?: string | null;
+    coTeacherId?: string | null;
     lessonsPerWeek?: number;
     minutesPerLesson?: number;
   }>("/api/v1/teaching-requirements", [["requirements", activeYearId ?? ""]]);
@@ -76,6 +78,7 @@ export default function RequirementsPage() {
     lessonsPerWeek: "2",
     minutesPerLesson: "60",
     teacherId: NO_TEACHER,
+    coTeacherId: NO_TEACHER,
   });
 
   const teachers = useMemo(
@@ -114,6 +117,7 @@ export default function RequirementsPage() {
       lessonsPerWeek: String(existing?.lessonsPerWeek ?? 2),
       minutesPerLesson: String(existing?.minutesPerLesson ?? 60),
       teacherId: existing?.teacherId ?? NO_TEACHER,
+      coTeacherId: existing?.coTeacherId ?? NO_TEACHER,
     });
   };
 
@@ -122,6 +126,10 @@ export default function RequirementsPage() {
     const lessonsPerWeek = Number(form.lessonsPerWeek);
     const minutesPerLesson = Number(form.minutesPerLesson);
     const teacherId = form.teacherId === NO_TEACHER ? null : form.teacherId;
+    const coTeacherId =
+      form.coTeacherId === NO_TEACHER || form.coTeacherId === form.teacherId
+        ? null
+        : form.coTeacherId;
     try {
       if (cell.existing) {
         await mutations.update.mutateAsync({
@@ -129,6 +137,7 @@ export default function RequirementsPage() {
           lessonsPerWeek,
           minutesPerLesson,
           teacherId,
+          coTeacherId,
         });
       } else {
         await mutations.create.mutateAsync({
@@ -136,6 +145,7 @@ export default function RequirementsPage() {
           subjectId: cell.subjectId,
           studentGroupId: cell.groupId,
           teacherId,
+          coTeacherId,
           lessonsPerWeek,
           minutesPerLesson,
         });
@@ -318,6 +328,28 @@ export default function RequirementsPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>{t("coTeacher")}</Label>
+              <Select
+                value={form.coTeacherId}
+                onValueChange={(value) => setForm({ ...form, coTeacherId: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_TEACHER}>{tCommon("notAssigned")}</SelectItem>
+                  {teachers
+                    .filter((teacher) => teacher.id !== form.teacherId)
+                    .map((teacher) => (
+                      <SelectItem key={teacher.id} value={teacher.id}>
+                        {teacher.firstName} {teacher.lastName}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t("coTeacherHint")}</p>
             </div>
           </div>
           <DialogFooter className="sm:justify-between">

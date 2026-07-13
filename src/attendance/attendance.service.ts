@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import type { ReportAttendanceDto } from './dto/report-attendance.dto';
 
 export interface AttendanceReportResult {
@@ -34,7 +35,10 @@ export interface AttendanceReportResult {
 export class AttendanceService {
   private readonly logger = new Logger(AttendanceService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async reportAttendance(
     dto: ReportAttendanceDto,
@@ -44,7 +48,14 @@ export class AttendanceService {
       // Verify the lesson exists (RLS will scope this to the caller's school).
       const lesson = await tx.calendarLesson.findUnique({
         where: { id: dto.calendarLessonId },
-        select: { id: true, schoolId: true },
+        select: {
+          id: true,
+          schoolId: true,
+          date: true,
+          startsAt: true,
+          endsAt: true,
+          subject: { select: { name: true } },
+        },
       });
 
       if (!lesson) {
@@ -110,6 +121,65 @@ export class AttendanceService {
       this.logger.log(
         `Attendance reported [lesson=${dto.calendarLessonId}, created=${created}, updated=${updated}]`,
       );
+
+      // Skola24-style guardian alert: a student was marked ABSENT without a
+      // prior absence report covering this lesson.
+      const absentIds = dto.records
+        .filter((entry) => entry.status === 'ABSENT')
+        .map((entry) => entry.studentId);
+      if (absentIds.length > 0) {
+        const reports = await tx.absenceReport.findMany({
+          where: { studentId: { in: absentIds }, date: lesson.date },
+          select: { studentId: true, startTime: true, endTime: true },
+        });
+        const lessonStartMin =
+          lesson.startsAt.getUTCHours() * 60 + lesson.startsAt.getUTCMinutes();
+        const lessonEndMin =
+          lesson.endsAt.getUTCHours() * 60 + lesson.endsAt.getUTCMinutes();
+        const covered = new Set(
+          reports
+            .filter((report) => {
+              if (!report.startTime || !report.endTime) return true; // full day
+              const start =
+                report.startTime.getUTCHours() * 60 +
+                report.startTime.getUTCMinutes();
+              const end =
+                report.endTime.getUTCHours() * 60 + report.endTime.getUTCMinutes();
+              return start < lessonEndMin && lessonStartMin < end;
+            })
+            .map((report) => report.studentId),
+        );
+        const unreported = absentIds.filter((studentId) => !covered.has(studentId));
+        if (unreported.length > 0) {
+          const students = await tx.user.findMany({
+            where: { id: { in: unreported } },
+            select: { id: true, firstName: true, lastName: true },
+          });
+          for (const student of students) {
+            const guardianIds = await this.notifications.guardiansOf(tx, [student.id]);
+            if (guardianIds.length === 0) continue;
+            const studentName = `${student.firstName} ${student.lastName}`;
+            await this.notifications.notifyUsers(tx, {
+              schoolId: lesson.schoolId,
+              userIds: guardianIds,
+              type: 'ABSENCE_UNREPORTED',
+              meta: {
+                studentName,
+                subjectName: lesson.subject.name,
+                date: lesson.date.toISOString().slice(0, 10),
+              },
+              email: {
+                subject: 'Unreported absence / Oanmäld frånvaro',
+                body:
+                  `${studentName} was marked absent from ${lesson.subject.name} on ` +
+                  `${lesson.date.toISOString().slice(0, 10)} without a prior absence report.\n\n` +
+                  `${studentName} markerades frånvarande från ${lesson.subject.name} den ` +
+                  `${lesson.date.toISOString().slice(0, 10)} utan föranmäld frånvaro.`,
+              },
+            });
+          }
+        }
+      }
 
       return { created, updated };
     });

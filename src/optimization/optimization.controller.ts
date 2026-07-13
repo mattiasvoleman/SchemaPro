@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
@@ -47,8 +48,18 @@ export class OptimizationController {
   startJob(
     @Body() dto: TriggerOptimizationDto,
     @CurrentUser() user: AuthenticatedUser,
-  ): { jobId: string } {
-    return this.jobsService.start(dto.academicYearId, user);
+  ): Promise<{ jobId: string }> {
+    return this.jobsService.start(dto.academicYearId, user, dto.weights, dto.rules);
+  }
+
+  /** Latest optimization runs for an academic year (run history). */
+  @Get('jobs')
+  listJobs(
+    @Query('academicYearId', new ParseUUIDPipe({ version: '4' }))
+    academicYearId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<OptimizationJobView[]> {
+    return this.jobsService.list(academicYearId, user);
   }
 
   /** Returns live status + result (solver status, conflicts) for a job. */
@@ -56,7 +67,7 @@ export class OptimizationController {
   getJob(
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @CurrentUser() user: AuthenticatedUser,
-  ): OptimizationJobView {
+  ): Promise<OptimizationJobView> {
     return this.jobsService.get(id, user);
   }
 

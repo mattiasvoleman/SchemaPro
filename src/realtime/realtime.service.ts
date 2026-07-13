@@ -18,6 +18,18 @@ export class RealtimeService {
   constructor(private readonly gateway: RealtimeGateway) {}
 
   /**
+   * Broadcasts that the master timetable of a school changed (create/update/
+   * delete/regenerate/restore). Collaborating admin clients refetch on it.
+   */
+  notifyMasterTimetableChanged(schoolId: string): void {
+    try {
+      this.gateway.emitMasterTimetableUpdated(schoolId);
+    } catch {
+      this.logger.warn(`Realtime timetable broadcast failed [school=${schoolId}]`);
+    }
+  }
+
+  /**
    * Loads the lesson's current state (inside the caller's RLS transaction)
    * and broadcasts it after the transaction work is done.
    */

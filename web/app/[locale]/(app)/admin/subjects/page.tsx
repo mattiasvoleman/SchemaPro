@@ -5,7 +5,14 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { BookOpen, Pencil, Plus, Trash2 } from "lucide-react";
 import { useCrudMutations, useSubjects } from "@/lib/queries";
-import type { Subject } from "@/lib/types";
+import type { RoomType, Subject } from "@/lib/types";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,9 +41,25 @@ interface SubjectForm {
   name: string;
   code: string;
   color: string;
+  requiredRoomType: string;
 }
 
-const EMPTY_FORM: SubjectForm = { name: "", code: "", color: "#6366f1" };
+const ANY_ROOM = "__any__";
+const ROOM_TYPES: RoomType[] = [
+  "CLASSROOM",
+  "LABORATORY",
+  "GYMNASIUM",
+  "AUDITORIUM",
+  "WORKSHOP",
+  "OTHER",
+];
+
+const EMPTY_FORM: SubjectForm = {
+  name: "",
+  code: "",
+  color: "#6366f1",
+  requiredRoomType: ANY_ROOM,
+};
 
 export default function SubjectsPage() {
   const t = useTranslations("subjects");
@@ -46,7 +69,9 @@ export default function SubjectsPage() {
     name: string;
     code?: string | null;
     color?: string | null;
+    requiredRoomType?: RoomType | null;
   }>("/api/v1/subjects", [["subjects"]]);
+  const tRoomTypes = useTranslations("roomTypes");
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Subject | null>(null);
@@ -65,6 +90,7 @@ export default function SubjectsPage() {
       name: subject.name,
       code: subject.code ?? "",
       color: subject.color ?? "#6366f1",
+      requiredRoomType: subject.requiredRoomType ?? ANY_ROOM,
     });
     setDialogOpen(true);
   };
@@ -74,6 +100,10 @@ export default function SubjectsPage() {
       name: form.name.trim(),
       code: form.code.trim() || null,
       color: form.color,
+      requiredRoomType:
+        form.requiredRoomType === ANY_ROOM
+          ? null
+          : (form.requiredRoomType as RoomType),
     };
     try {
       if (editing) {
@@ -218,6 +248,31 @@ export default function SubjectsPage() {
                   onChange={(e) => setForm({ ...form, color: e.target.value })}
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>
+                {t("requiredRoomType")}{" "}
+                <span className="text-muted-foreground">({tCommon("optional")})</span>
+              </Label>
+              <Select
+                value={form.requiredRoomType}
+                onValueChange={(value) =>
+                  setForm({ ...form, requiredRoomType: value })
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ANY_ROOM}>{t("anyRoomType")}</SelectItem>
+                  {ROOM_TYPES.map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {tRoomTypes(type)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t("requiredRoomTypeHint")}</p>
             </div>
           </div>
           <DialogFooter>

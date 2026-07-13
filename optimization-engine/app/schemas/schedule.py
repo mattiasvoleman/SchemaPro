@@ -7,6 +7,14 @@ from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
 DayOfWeek = Literal[1, 2, 3, 4, 5, 6, 7]
 ConstraintKind = Literal["UNAVAILABLE", "PREFERRED_FREE", "PREFERRED_BUSY"]
 ResourceKind = Literal["TEACHER", "ROOM", "STUDENT_GROUP"]
+RoomTypeKind = Literal[
+    "CLASSROOM",
+    "LABORATORY",
+    "GYMNASIUM",
+    "AUDITORIUM",
+    "WORKSHOP",
+    "OTHER",
+]
 SolverStatus = Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE"]
 ConflictCategory = Literal[
     "REQUIREMENT_DEMAND",
@@ -46,11 +54,22 @@ class AnonymousRequirement(CamelModel):
         le=1000,
         description="Headcount used for room capacity checks when provided by the gateway.",
     )
+    required_room_type: RoomTypeKind | None = Field(
+        default=None,
+        alias="requiredRoomType",
+        description="When set, lessons for this requirement may only use rooms of this type.",
+    )
+    co_teacher_id: UUID4 | None = Field(
+        default=None,
+        alias="coTeacherId",
+        description="Optional second teacher scheduled together with the lead (co-teaching).",
+    )
 
 
 class AnonymousRoom(CamelModel):
     id: UUID4
     capacity: int | None = Field(default=None, ge=1, le=10000)
+    type: RoomTypeKind | None = Field(default=None)
 
 
 class AnonymousConstraint(CamelModel):
@@ -77,6 +96,67 @@ class AnonymousConstraint(CamelModel):
         return value
 
 
+class FixedLesson(CamelModel):
+    """A locked master lesson the solver must plan around (never re-placed).
+
+    Fixed lessons are hard blockers: no generated lesson may overlap a fixed
+    lesson that shares its teacher, student group, or room. Times need not be
+    slot-aligned — the solver rounds the blocked window outward to whole slots.
+    """
+
+    id: UUID4
+    teacher_id: UUID4 | None = Field(default=None, alias="teacherId")
+    co_teacher_id: UUID4 | None = Field(default=None, alias="coTeacherId")
+    student_group_id: UUID4 = Field(alias="studentGroupId")
+    extra_group_ids: list[UUID4] = Field(
+        default_factory=list,
+        alias="extraGroupIds",
+        max_length=20,
+        description="Additional classes attending — the blocker covers them all.",
+    )
+    room_id: UUID4 | None = Field(default=None, alias="roomId")
+    day_of_week: DayOfWeek = Field(alias="dayOfWeek")
+    start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+
+
+class PreviousLesson(CamelModel):
+    """A slot the previous schedule used for a requirement.
+
+    Enables minimal-disruption re-optimization: the solver is rewarded for
+    keeping lesson instances of the requirement on these slots.
+    """
+
+    requirement_id: UUID4 = Field(alias="requirementId")
+    day_of_week: DayOfWeek = Field(alias="dayOfWeek")
+    start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+
+
+class ObjectiveWeights(CamelModel):
+    """Per-request objective weights (override server defaults when set)."""
+
+    preferred_free: int | None = Field(default=None, alias="preferredFree", ge=0, le=1000)
+    preferred_busy: int | None = Field(default=None, alias="preferredBusy", ge=0, le=1000)
+    disruption: int | None = Field(default=None, ge=0, le=1000)
+    spread: int | None = Field(default=None, ge=0, le=1000)
+    teacher_gap: int | None = Field(default=None, alias="teacherGap", ge=0, le=1000)
+
+
+class ScheduleRules(CamelModel):
+    """Optional hard scheduling rules, sent per request by the gateway."""
+
+    lunch_start_time: str | None = Field(
+        default=None, alias="lunchStartTime", pattern=r"^\d{2}:\d{2}:\d{2}$",
+    )
+    lunch_end_time: str | None = Field(
+        default=None, alias="lunchEndTime", pattern=r"^\d{2}:\d{2}:\d{2}$",
+    )
+    lunch_minutes: int | None = Field(default=None, alias="lunchMinutes", ge=15, le=120)
+    max_lessons_per_day_per_group: int | None = Field(
+        default=None, alias="maxLessonsPerDayPerGroup", ge=1, le=20,
+    )
+
+
 class OptimizeScheduleRequest(CamelModel):
     request_id: UUID4 = Field(alias="requestId")
     academic_year_id: UUID4 = Field(alias="academicYearId")
@@ -86,6 +166,18 @@ class OptimizeScheduleRequest(CamelModel):
     requirements: list[AnonymousRequirement] = Field(min_length=1, max_length=2000)
     rooms: list[AnonymousRoom] = Field(min_length=1, max_length=1000)
     constraints: list[AnonymousConstraint] = Field(default_factory=list, max_length=5000)
+    fixed_lessons: list[FixedLesson] = Field(
+        default_factory=list,
+        alias="fixedLessons",
+        max_length=5000,
+    )
+    previous_lessons: list[PreviousLesson] = Field(
+        default_factory=list,
+        alias="previousLessons",
+        max_length=5000,
+    )
+    weights: ObjectiveWeights | None = None
+    rules: ScheduleRules | None = None
 
 
 class ScheduledLesson(CamelModel):

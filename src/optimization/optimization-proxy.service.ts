@@ -19,11 +19,16 @@ import type {
   AiEngineScheduleRequest,
   AiEngineScheduleResponse,
   AnonymousConstraint,
+  AnonymousFixedLesson,
+  AnonymousPreviousLesson,
   AnonymousRequirement,
   AnonymousRoom,
   ConstraintKind,
   DayOfWeek,
+  ObjectiveWeights,
   ResourceKind,
+  RoomTypeKind,
+  ScheduleRules,
 } from './interfaces/ai-engine-payload.interface';
 
 /**
@@ -58,6 +63,8 @@ export class OptimizationProxyService {
   async triggerScheduling(
     academicYearId: string,
     user: AuthenticatedUser,
+    weights?: ObjectiveWeights | null,
+    rules?: ScheduleRules | null,
   ): Promise<AiEngineScheduleResponse> {
     const requestId = randomUUID();
 
@@ -73,6 +80,8 @@ export class OptimizationProxyService {
       requirements,
       rooms,
       constraints,
+      fixedLessons,
+      previousLessons,
       roomAnonMap,
       requirementAnonMap,
     } = await this.prisma.withRls(user, (tx) =>
@@ -85,10 +94,19 @@ export class OptimizationProxyService {
       requirements,
       rooms,
       constraints,
+      fixedLessons,
+      previousLessons,
+      ...(weights ? { weights } : {}),
+      ...(rules ? { rules } : {}),
     };
 
-    // Step 2: Call the AI engine with the stripped payload.
-    const response = await this.callAiEngine(payload);
+    // Step 2: Call the AI engine with the stripped payload. When every
+    // requirement is already covered by locked lessons there is nothing left
+    // to solve — skip the engine and just clean up unlocked leftovers.
+    const response: AiEngineScheduleResponse =
+      requirements.length > 0
+        ? await this.callAiEngine(payload)
+        : { requestId, status: 'FEASIBLE', lessons: [], conflicts: null };
 
     // Step 3: Persist the master-lesson output, translating anon ids back.
     await this.prisma.withRls(user, (tx) =>
@@ -120,6 +138,8 @@ export class OptimizationProxyService {
     requirements: AnonymousRequirement[];
     rooms: AnonymousRoom[];
     constraints: AnonymousConstraint[];
+    fixedLessons: AnonymousFixedLesson[];
+    previousLessons: AnonymousPreviousLesson[];
     roomAnonMap: Map<string, string>;
     requirementAnonMap: Map<string, string>;
   }> {
@@ -138,7 +158,9 @@ export class OptimizationProxyService {
       return id;
     };
 
-    // Fetch teaching requirements (no PII fields selected).
+    // Fetch teaching requirements (no PII fields selected). The subject's
+    // required room type is an enum (not PII) and rides along for room
+    // eligibility in the engine.
     const rawRequirements = await tx.teachingRequirement.findMany({
       where: { academicYearId },
       select: {
@@ -146,8 +168,10 @@ export class OptimizationProxyService {
         subjectId: true,
         studentGroupId: true,
         teacherId: true,
+        coTeacherId: true,
         lessonsPerWeek: true,
         minutesPerLesson: true,
+        subject: { select: { requiredRoomType: true } },
       },
     });
 
@@ -165,29 +189,124 @@ export class OptimizationProxyService {
       groupSizes.map((row) => [row.studentGroupId, row._count._all]),
     );
 
-    const requirements: AnonymousRequirement[] = rawRequirements.map((r) => ({
-      id: anonId(requirementAnonMap, r.id),
-      subjectId: anonId(subjectAnonMap, r.subjectId),
-      studentGroupId: anonId(groupAnonMap, r.studentGroupId),
-      teacherId: r.teacherId ? anonId(teacherAnonMap, r.teacherId) : null,
-      lessonsPerWeek: r.lessonsPerWeek,
-      minutesPerLesson: r.minutesPerLesson,
-      studentGroupSize: Math.max(1, sizeByGroup.get(r.studentGroupId) ?? 1),
+    // Locked master lessons are immovable, and participant lessons
+    // (multi-class / individual students) are manual constructs the generator
+    // never recreates — both are forwarded to the engine as fixed placements
+    // and preserved by regeneration. Their count is subtracted from the
+    // weekly demand of the matching requirement so the solver only re-places
+    // the machine-owned remainder.
+    const lockedLessons = await tx.masterLesson.findMany({
+      where: {
+        academicYearId,
+        OR: [
+          { isLocked: true },
+          { extraGroups: { some: {} } },
+          { participants: { some: {} } },
+        ],
+      },
+      select: {
+        id: true,
+        subjectId: true,
+        studentGroupId: true,
+        teacherId: true,
+        coTeacherId: true,
+        roomId: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+        extraGroups: { select: { studentGroupId: true } },
+      },
+    });
+
+    const lockedCountByDemand = new Map<string, number>();
+    for (const lesson of lockedLessons) {
+      const key = `${lesson.studentGroupId}:${lesson.subjectId}`;
+      lockedCountByDemand.set(key, (lockedCountByDemand.get(key) ?? 0) + 1);
+    }
+
+    const requirements: AnonymousRequirement[] = rawRequirements.flatMap((r) => {
+      const lockedCount =
+        lockedCountByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? 0;
+      const remaining = r.lessonsPerWeek - lockedCount;
+      if (remaining <= 0) return [];
+      return [
+        {
+          id: anonId(requirementAnonMap, r.id),
+          subjectId: anonId(subjectAnonMap, r.subjectId),
+          studentGroupId: anonId(groupAnonMap, r.studentGroupId),
+          teacherId: r.teacherId ? anonId(teacherAnonMap, r.teacherId) : null,
+          lessonsPerWeek: remaining,
+          minutesPerLesson: r.minutesPerLesson,
+          studentGroupSize: Math.max(1, sizeByGroup.get(r.studentGroupId) ?? 1),
+          requiredRoomType: (r.subject.requiredRoomType ?? null) as RoomTypeKind | null,
+          coTeacherId: r.coTeacherId ? anonId(teacherAnonMap, r.coTeacherId) : null,
+        },
+      ];
+    });
+
+    // Previous (unlocked) placements → minimal-disruption re-optimization.
+    // Mapped to their requirement via (group, subject); lessons whose
+    // requirement no longer exists (or is fully locked) are skipped.
+    const anonReqByDemand = new Map<string, string>();
+    for (const r of rawRequirements) {
+      const anon = requirementAnonMap.get(r.id);
+      if (anon) anonReqByDemand.set(`${r.studentGroupId}:${r.subjectId}`, anon);
+    }
+    const unlockedLessons = await tx.masterLesson.findMany({
+      where: { academicYearId, isLocked: false },
+      select: {
+        subjectId: true,
+        studentGroupId: true,
+        dayOfWeek: true,
+        startTime: true,
+      },
+    });
+    const previousLessons: AnonymousPreviousLesson[] = unlockedLessons.flatMap(
+      (lesson) => {
+        const anonReq = anonReqByDemand.get(
+          `${lesson.studentGroupId}:${lesson.subjectId}`,
+        );
+        if (!anonReq) return [];
+        return [
+          {
+            requirementId: anonReq,
+            dayOfWeek: lesson.dayOfWeek as DayOfWeek,
+            startTime: this.timeToString(lesson.startTime),
+          },
+        ];
+      },
+    );
+
+    const fixedLessons: AnonymousFixedLesson[] = lockedLessons.map((lesson) => ({
+      id: randomUUID(),
+      teacherId: lesson.teacherId ? anonId(teacherAnonMap, lesson.teacherId) : null,
+      coTeacherId: lesson.coTeacherId
+        ? anonId(teacherAnonMap, lesson.coTeacherId)
+        : null,
+      studentGroupId: anonId(groupAnonMap, lesson.studentGroupId),
+      roomId: lesson.roomId ? anonId(roomAnonMap, lesson.roomId) : null,
+      dayOfWeek: lesson.dayOfWeek as DayOfWeek,
+      startTime: this.timeToString(lesson.startTime),
+      endTime: this.timeToString(lesson.endTime),
+      extraGroupIds: lesson.extraGroups.map((entry) =>
+        anonId(groupAnonMap, entry.studentGroupId),
+      ),
     }));
 
-    // Fetch rooms (drop name, code — keep only capacity and type-agnostic size).
+    // Fetch rooms (drop name, code — capacity and type are non-PII enums/numbers).
     const rawRooms = await tx.room.findMany({
       where: {
         school: {
           academicYears: { some: { id: academicYearId } },
         },
       },
-      select: { id: true, capacity: true },
+      select: { id: true, capacity: true, type: true },
     });
 
     const rooms: AnonymousRoom[] = rawRooms.map((r) => ({
       id: anonId(roomAnonMap, r.id),
       capacity: r.capacity,
+      type: (r.type ?? null) as RoomTypeKind | null,
     }));
 
     // Fetch availability constraints (drop reason text field).
@@ -239,6 +358,8 @@ export class OptimizationProxyService {
       requirements,
       rooms,
       constraints,
+      fixedLessons,
+      previousLessons,
       roomAnonMap,
       requirementAnonMap,
     };
@@ -320,13 +441,27 @@ export class OptimizationProxyService {
         subjectId: true,
         studentGroupId: true,
         teacherId: true,
+        coTeacherId: true,
       },
     });
     const reqById = new Map(requirementDetails.map((r) => [r.id, r]));
 
-    // Delete any existing master lessons for this academic year before writing
-    // the new schedule so we don't accumulate stale records.
-    await tx.masterLesson.deleteMany({ where: { academicYearId } });
+    // Non-destructive regeneration: locked lessons AND participant lessons
+    // (manual multi-class / individual-student constructs) are preserved
+    // verbatim; only machine-owned lessons are replaced by the new solution.
+    const preservedWhere = {
+      OR: [
+        { isLocked: true },
+        { extraGroups: { some: {} } },
+        { participants: { some: {} } },
+      ],
+    };
+    const { count: removedUnlocked } = await tx.masterLesson.deleteMany({
+      where: { academicYearId, NOT: preservedWhere },
+    });
+    const lockedPreserved = await tx.masterLesson.count({
+      where: { academicYearId, ...preservedWhere },
+    });
 
     const creates = response.lessons.flatMap((lesson) => {
       const realReqId = realRequirementId.get(lesson.requirementId);
@@ -344,6 +479,7 @@ export class OptimizationProxyService {
             subjectId: req.subjectId,
             studentGroupId: req.studentGroupId,
             teacherId: req.teacherId ?? null,
+            coTeacherId: req.coTeacherId ?? null,
             roomId: realRoom ?? null,
             dayOfWeek: lesson.dayOfWeek,
             startTime: this.parseTime(lesson.startTime),
@@ -354,6 +490,23 @@ export class OptimizationProxyService {
     });
 
     await Promise.all(creates);
+
+    // Append a REGENERATE entry to the schedule audit trail.
+    await tx.scheduleChangeLog.create({
+      data: {
+        schoolId: user.schoolId,
+        academicYearId,
+        masterLessonId: null,
+        actorId: user.userId ?? null,
+        action: 'REGENERATE',
+        after: {
+          solverStatus: response.status,
+          lessonsCreated: creates.length,
+          unlockedReplaced: removedUnlocked,
+          lockedPreserved,
+        },
+      },
+    });
   }
 
   /** Converts a Prisma `Time` value (a JS Date with time component) to HH:MM:SS. */

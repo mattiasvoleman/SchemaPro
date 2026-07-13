@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsInt,
   IsOptional,
@@ -46,10 +48,32 @@ export class UpdateMasterLessonDto {
   teacherId?: string | null;
 
   /**
+   * Locks/unlocks the lesson. Locked lessons are treated as fixed placements
+   * by the optimizer and survive regeneration untouched.
+   */
+  @IsOptional()
+  @IsBoolean()
+  isLocked?: boolean;
+
+  /**
    * When true (default) the change is propagated to future, still-SCHEDULED
    * calendar lessons materialized from this template that have no attendance.
    */
   @IsOptional()
   @IsBoolean()
   propagate?: boolean;
+
+  /** Replaces the additional-classes list when provided. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsUUID('4', { each: true })
+  extraGroupIds?: string[];
+
+  /** Replaces the individual-participants list when provided. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsUUID('4', { each: true })
+  studentIds?: string[];
 }

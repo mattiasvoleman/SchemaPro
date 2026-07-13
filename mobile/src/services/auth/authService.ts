@@ -50,10 +50,6 @@ export const AuthService = {
       await supabase.auth.signOut();
       throw new Error('No SchemaPro profile is linked to this account.');
     }
-    if (profile.role === 'STUDENT') {
-      await supabase.auth.signOut();
-      throw new Error('The mobile app is for school staff. Students use the web portal.');
-    }
 
     // Cache the profile so restoreSession() works with no connectivity.
     await SecureTokenStore.saveTeacherSession(profile.id, profile.role);
