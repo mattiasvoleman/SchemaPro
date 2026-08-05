@@ -44,7 +44,12 @@
     --card-foreground: 240 5% 92%;
     --popover: 240 8% 8%;
     --popover-foreground: 240 5% 92%;
-    --primary: 243 85% 68%;
+    /* 68% lightness gave 4.37:1 against --card (#131316) — below the 4.5:1
+       WCAG 2.1 AA floor for normal text, which axe flagged on 58 nodes (every
+       `text-primary` link and label in dark mode). 70% measures 4.83:1. Hue and
+       saturation are unchanged; verify with `npm run test:a11y` before moving
+       this value down. */
+    --primary: 243 85% 70%;
     --primary-foreground: 240 10% 5%;
     --secondary: 240 6% 14%;
     --secondary-foreground: 240 5% 92%;
