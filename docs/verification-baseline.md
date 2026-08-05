@@ -150,8 +150,46 @@ LCP and TTI need a Lighthouse run against the built app; the build now succeeds
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
 | Schedule generation, 2,000 students | < 10s | **rejected before solving** | ✗ |
-| API P99, reads | ≤ 50ms | not measured (needs live DB) | — |
-| API P99, updates | ≤ 150ms | not measured (needs live DB) | — |
+| API P99, reads | ≤ 50ms | **71–86ms** on list endpoints | ✗ |
+| API P99, updates | ≤ 150ms | **83ms** | ✓ |
+
+### API latency, measured against the real stack
+
+Run on docker-compose (Postgres + API + solver) with a seeded database,
+25 connections, 20s per scenario. **Zero non-2xx in every scenario** — see the
+warning below about why that number is the first thing to check.
+
+| Scenario | p50 | p99 | Budget | |
+| :--- | ---: | ---: | ---: | :--- |
+| `GET /health/ready` | 5ms | 12ms | 50ms | ✓ |
+| `GET /api/v1/schedule-versions` | 52ms | 71ms | 50ms | ✗ |
+| `GET /api/v1/optimization/jobs` | 54ms | 86ms | 50ms | ✗ |
+| `POST /api/v1/attendance/report` | 40ms | 83ms | 150ms | ✓ |
+
+`/health/ready` is one `SELECT 1`, so ~12ms is the framework-plus-connection
+floor on this hardware. The two list endpoints sit at roughly six times that,
+which places their cost in their own queries and RLS policy evaluation rather
+than in the stack. Writes pass with headroom.
+
+Caveats worth carrying: these are Docker Desktop numbers on a laptop VM, so
+treat them as relative rather than absolute — CI is the gating run. The write
+figure is 24 serial samples, not a flood (see below), so its p99 is indicative.
+
+**The gateway's read surface is small by design.** The web client queries
+Supabase directly (`web/lib/queries.ts`); this API handles writes, AI proxying
+and the SS12000 feed. Only three JWT-authenticated GET endpoints exist, and all
+three are measured above. An earlier version of the benchmark invented paths
+like `/api/v1/resources/rooms` that do not exist and would have timed 404s.
+
+**Two endpoints cannot be flood-tested, for good reasons.** The global
+throttler is 120 req/60s, and `POST /attendance/report` carries its own
+`@Throttle({ limit: 10, ttl: 30_000 })`. Under load 99.9% of responses were
+429, and the benchmark cheerfully reported PASS on the throttler's latency
+until the non-2xx guard was tightened from "all failed" to ">1% failed". The
+attendance route is now sampled serially at 3.2s intervals instead: 10 per 30s
+is 0.33 req/s and autocannon's minimum rate is 1 req/s, so the allowance cannot
+be expressed to it at all. Raise `THROTTLE_LIMIT` on the target before a run —
+the throttler is not what this gate measures.
 
 ### The solver cannot accept a 2,000-student school
 
