@@ -17,3 +17,11 @@ Dockerfile
 .dockerignore
 dist/
 build/
+
+# Local virtualenv (138M) — the image installs its own dependencies.
+.venv/
+
+# Wall-clock benchmarks: run from a checkout, never shipped in the image.
+benchmarks/
+.coverage
+coverage.xml

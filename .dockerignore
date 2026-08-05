@@ -10,3 +10,16 @@ terminals
 !.env.example
 *.md
 test
+
+# Agent worktrees — full repo checkouts, 2.3G locally. Without this the build
+# context is dominated by them and every `docker build` crawls.
+.claude
+
+# Verification harness output — regenerated, never needed in an image.
+coverage
+reports
+.stryker-tmp
+deploy
+scripts
+docs
+.github
