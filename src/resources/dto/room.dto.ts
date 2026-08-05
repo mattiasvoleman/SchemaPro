@@ -1,5 +1,6 @@
 import { RoomType } from '@prisma/client';
 import {
+  IsBoolean,
   IsEnum,
   IsInt,
   IsNotEmpty,
@@ -30,6 +31,10 @@ export class CreateRoomDto {
   @IsOptional()
   @IsEnum(RoomType)
   type?: RoomType;
+
+  @IsOptional()
+  @IsBoolean()
+  requiresApproval?: boolean;
 }
 
 export class UpdateRoomDto {
@@ -53,4 +58,8 @@ export class UpdateRoomDto {
   @IsOptional()
   @IsEnum(RoomType)
   type?: RoomType;
+
+  @IsOptional()
+  @IsBoolean()
+  requiresApproval?: boolean;
 }

@@ -48,6 +48,23 @@ export interface Room {
   code: string | null;
   capacity: number | null;
   type: RoomType;
+  requiresApproval: boolean;
+}
+
+export type RoomBookingStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+
+export interface RoomBooking {
+  id: string;
+  roomId: string;
+  bookedById: string;
+  title: string;
+  startsAt: string;
+  endsAt: string;
+  status: RoomBookingStatus;
+  decidedById: string | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  createdAt: string;
 }
 
 export interface AcademicYear {

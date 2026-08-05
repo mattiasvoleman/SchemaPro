@@ -20,7 +20,9 @@ interface NotificationRow {
     | "LEAVE_DECIDED"
     | "LESSON_CANCELLED"
     | "LESSON_SUBSTITUTE"
-    | "SCHEDULE_CHANGED";
+    | "LESSON_ROOM_CHANGED"
+    | "SCHEDULE_CHANGED"
+    | "ROOM_BOOKING_DECIDED";
   meta: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
@@ -90,8 +92,18 @@ export function NotificationBell() {
           subject: str("subjectName"),
           when: new Date(str("startsAt")).toLocaleString(),
         });
+      case "LESSON_ROOM_CHANGED":
+        return t("lessonRoomChanged", {
+          subject: str("subjectName"),
+          when: new Date(str("startsAt")).toLocaleString(),
+        });
       case "SCHEDULE_CHANGED":
         return t("scheduleChanged", { subject: str("subjectName") });
+      case "ROOM_BOOKING_DECIDED":
+        return t(
+          str("status") === "APPROVED" ? "roomBookingApproved" : "roomBookingRejected",
+          { room: str("roomName"), when: new Date(str("startsAt")).toLocaleString() },
+        );
     }
   };
 

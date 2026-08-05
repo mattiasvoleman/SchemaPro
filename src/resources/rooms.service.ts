@@ -21,6 +21,9 @@ export class RoomsService {
             code: dto.code ?? null,
             capacity: dto.capacity ?? null,
             ...(dto.type !== undefined ? { type: dto.type } : {}),
+            ...(dto.requiresApproval !== undefined
+              ? { requiresApproval: dto.requiresApproval }
+              : {}),
           },
         }),
       );
@@ -39,6 +42,9 @@ export class RoomsService {
             ...(dto.code !== undefined ? { code: dto.code } : {}),
             ...(dto.capacity !== undefined ? { capacity: dto.capacity } : {}),
             ...(dto.type !== undefined ? { type: dto.type } : {}),
+            ...(dto.requiresApproval !== undefined
+              ? { requiresApproval: dto.requiresApproval }
+              : {}),
           },
         }),
       );

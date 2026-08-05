@@ -126,18 +126,59 @@ model already supports this better than class-based systems).
 - Custom report builder: pick dimensions/filters, save, export CSV/PDF.
 - Effort: ~3 weeks. Depends on: P0.1 (absence categories).
 
-**7. Substitute & cancellation workflows at scale** — day view exists; add:
-teacher-absence entry that lists all affected lessons with one-click
-substitute/cancel/room-change per lesson, substitute suggestions (free +
-qualified, reusing the open-slot finder logic), and notification fan-out.
+**7. Substitute & cancellation workflows at scale — ✅ SHIPPED v1 (2026-07-13)**
+Implemented: a **teacher-absence entry** page (`/admin/teacher-absence`) that
+lists every scheduled lesson a chosen teacher has over a date range and offers
+one-click **assign substitute / change room / cancel** per lesson, plus a
+"cancel all shown" bulk action. **Substitute suggestions** come from a new
+`GET /api/v1/calendar-lessons/:id/substitute-suggestions` endpoint that returns
+qualified-and-free teachers (those with a `TeachingRequirement` for the
+subject, filtered by the same overlapping-lesson check the assignment itself
+enforces, so every suggestion is assignable); the class's own subject teachers
+rank first. New `PATCH :id/room-change` endpoint moves a single lesson to a
+different room (or clears it) with a room double-booking guard. **Notification
+fan-out** was extended so cancel/substitute/room-change now also notify the
+outgoing teacher and the substitute (not just the class's students +
+guardians) and carry an email body; a new `LESSON_ROOM_CHANGED` notification
+type renders in the bell. Room-change was also added to the existing day
+planner for parity. Migration: `20260713220000_lesson_room_changed_notification`.
+Still open: qualified-teacher suggestions that also honour one-off availability
+constraints (currently only calendar-lesson clashes are checked, matching the
+booking validator), and Swedish localization of email bodies.
+
+**7 (original scope).** Substitute & cancellation workflows at scale — day
+view exists; add: teacher-absence entry that lists all affected lessons with
+one-click substitute/cancel/room-change per lesson, substitute suggestions
+(free + qualified, reusing the open-slot finder logic), and notification
+fan-out.
 - Effort: ~2 weeks. Depends on: P0.2.
 
 ## P2 — Competitive differentiation / module parity
 
-**8. Room booking (Skola24 Lokal parity)** — let teachers book free rooms
-themselves: room-availability view (data already present), booking entity
-that coexists with lessons in conflict checking, approval option for special
-rooms, cross-school sharing later.
+**8. Room booking (Skola24 Lokal parity) — ✅ SHIPPED v1 (2026-07-13)**
+Implemented: a `RoomBooking` entity (own table + RLS — teachers create/read/
+cancel their own bookings, staff read all school bookings, admins approve
+anything) that **coexists with lessons in conflict checking**: a booking is
+rejected if any scheduled lesson *or* active (pending/approved) booking
+overlaps the room+time, and moving a lesson into a room (`changeRoom`) now also
+rejects rooms held by an approved booking. Teachers get a **"Book a room"** page
+(`/teacher/rooms`): pick a date + time window and see the free rooms (computed
+from lessons + active bookings), book one, and manage their own bookings with
+status + cancel. **Special-room approval**: a new `Room.requiresApproval` flag
+(toggle in the admin rooms editor) makes self-service bookings start PENDING;
+an admin **approval inbox** (`/admin/room-bookings`) approves/rejects with a
+re-check of availability at approval time, and the requester gets a
+`ROOM_BOOKING_DECIDED` notification (in-app + bilingual email). Ordinary rooms
+auto-approve; admins booking directly skip approval. New NestJS
+`RoomBookingsModule` (`POST /api/v1/room-bookings`, `PATCH :id/cancel`,
+`PATCH :id/decide`). Migrations: `20260713230000_room_bookings`,
+`20260713230100_room_booking_notification`. Still open: cross-school room
+sharing, recurring bookings, and an availability grid/heatmap view.
+
+**8 (original scope).** Room booking (Skola24 Lokal parity) — let teachers book
+free rooms themselves: room-availability view (data already present), booking
+entity that coexists with lessons in conflict checking, approval option for
+special rooms, cross-school sharing later.
 - Effort: ~2–3 weeks.
 
 **9. Timetable viewer/publication portal** — public read-only schedule links

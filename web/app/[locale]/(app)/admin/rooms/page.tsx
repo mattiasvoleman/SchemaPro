@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -51,9 +52,16 @@ interface RoomForm {
   code: string;
   capacity: string;
   type: RoomType;
+  requiresApproval: boolean;
 }
 
-const EMPTY_FORM: RoomForm = { name: "", code: "", capacity: "", type: "CLASSROOM" };
+const EMPTY_FORM: RoomForm = {
+  name: "",
+  code: "",
+  capacity: "",
+  type: "CLASSROOM",
+  requiresApproval: false,
+};
 
 export default function RoomsPage() {
   const t = useTranslations("rooms");
@@ -65,6 +73,7 @@ export default function RoomsPage() {
     code?: string | null;
     capacity?: number | null;
     type?: RoomType;
+    requiresApproval?: boolean;
   }>("/api/v1/rooms", [["rooms"]]);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -85,6 +94,7 @@ export default function RoomsPage() {
       code: room.code ?? "",
       capacity: room.capacity !== null ? String(room.capacity) : "",
       type: room.type,
+      requiresApproval: room.requiresApproval,
     });
     setDialogOpen(true);
   };
@@ -96,6 +106,7 @@ export default function RoomsPage() {
       code: form.code.trim() || null,
       capacity: capacity !== null && Number.isFinite(capacity) ? capacity : null,
       type: form.type,
+      requiresApproval: form.requiresApproval,
     };
     try {
       if (editing) {
@@ -168,7 +179,14 @@ export default function RoomsPage() {
             <TableBody>
               {rooms.map((room) => (
                 <TableRow key={room.id}>
-                  <TableCell className="font-medium">{room.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <span className="inline-flex items-center gap-1.5">
+                      {room.name}
+                      {room.requiresApproval ? (
+                        <Badge variant="secondary">{t("approvalBadge")}</Badge>
+                      ) : null}
+                    </span>
+                  </TableCell>
                   <TableCell>
                     {room.code ? <Badge variant="secondary">{room.code}</Badge> : "—"}
                   </TableCell>
@@ -255,6 +273,19 @@ export default function RoomsPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="room-approval">{t("requiresApproval")}</Label>
+                <p className="text-xs text-muted-foreground">{t("requiresApprovalHint")}</p>
+              </div>
+              <Switch
+                id="room-approval"
+                checked={form.requiresApproval}
+                onCheckedChange={(checked) =>
+                  setForm({ ...form, requiresApproval: checked })
+                }
+              />
             </div>
           </div>
           <DialogFooter>

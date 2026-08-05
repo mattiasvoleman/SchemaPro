@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -15,8 +16,13 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import {
   CalendarLessonsService,
   type LessonActionResult,
+  type SubstituteSuggestion,
 } from './calendar-lessons.service';
-import { AssignSubstituteDto, CancelLessonDto } from './dto/lesson-action.dto';
+import {
+  AssignSubstituteDto,
+  CancelLessonDto,
+  ChangeRoomDto,
+} from './dto/lesson-action.dto';
 
 /**
  * Day-to-day lesson operations for school admins: cancel, reinstate and
@@ -52,5 +58,23 @@ export class CalendarLessonsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<LessonActionResult> {
     return this.lessons.assignSubstitute(id, dto, user);
+  }
+
+  /** Qualified, currently-free teachers who can cover this lesson. */
+  @Get(':id/substitute-suggestions')
+  suggestSubstitutes(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<SubstituteSuggestion[]> {
+    return this.lessons.suggestSubstitutes(id, user);
+  }
+
+  @Patch(':id/room-change')
+  changeRoom(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: ChangeRoomDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<LessonActionResult> {
+    return this.lessons.changeRoom(id, dto, user);
   }
 }

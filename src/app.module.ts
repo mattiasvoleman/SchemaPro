@@ -27,6 +27,7 @@ import { AttendanceModule } from './attendance/attendance.module';
 import { ResourcesModule } from './resources/resources.module';
 import { UsersModule } from './users/users.module';
 import { CalendarModule } from './calendar/calendar.module';
+import { RoomBookingsModule } from './room-bookings/room-bookings.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import type { ThrottleConfig } from './config/configuration';
 
@@ -103,6 +104,7 @@ import type { ThrottleConfig } from './config/configuration';
     ResourcesModule,
     UsersModule,
     CalendarModule,
+    RoomBookingsModule,
     RealtimeModule,
   ],
 

@@ -15,6 +15,7 @@ import {
   BookOpen,
   Users,
   UserCheck,
+  UserX,
   SlidersHorizontal,
   Sparkles,
   GraduationCap,
@@ -70,6 +71,8 @@ const ADMIN_NAV: NavSection[] = [
     labelKey: "operations",
     items: [
       { labelKey: "dayPlanner", href: "/admin/lessons", icon: CalendarClock },
+      { labelKey: "teacherAbsence", href: "/admin/teacher-absence", icon: UserX },
+      { labelKey: "roomBookings", href: "/admin/room-bookings", icon: MapPin },
       { labelKey: "leaveRequests", href: "/admin/leave", icon: ClipboardCheck },
       { labelKey: "reports", href: "/admin/reports", icon: BarChart3 },
       { labelKey: "integrations", href: "/admin/integrations", icon: KeyRound },
@@ -83,6 +86,7 @@ const TEACHER_NAV: NavSection[] = [
     items: [
       { labelKey: "mySchedule", href: "/teacher", icon: CalendarDays },
       { labelKey: "attendance", href: "/teacher/attendance", icon: ClipboardCheck },
+      { labelKey: "roomBooking", href: "/teacher/rooms", icon: MapPin },
     ],
   },
 ];

@@ -3,7 +3,14 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { CalendarX2, ChevronLeft, ChevronRight, Loader2, UserPlus } from "lucide-react";
+import {
+  CalendarX2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  MapPin,
+  UserPlus,
+} from "lucide-react";
 import {
   useDayLessons,
   useGroups,
@@ -45,6 +52,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+// Sentinel for "no room" — Radix Select forbids an empty-string item value.
+const NO_ROOM = "__none__";
+
 function toDateInput(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -70,13 +80,15 @@ export default function DayPlannerPage() {
   const { data: groups } = useGroups();
   const { data: rooms } = useRooms();
   const { data: people } = usePeople();
-  const { cancel, reinstate, substitute } = useLessonActions();
+  const { cancel, reinstate, substitute, changeRoom } = useLessonActions();
 
   const [cancelTarget, setCancelTarget] = useState<DayLessonRow | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [subTarget, setSubTarget] = useState<DayLessonRow | null>(null);
   const [subTeacher, setSubTeacher] = useState("");
   const [subNote, setSubNote] = useState("");
+  const [roomTarget, setRoomTarget] = useState<DayLessonRow | null>(null);
+  const [roomValue, setRoomValue] = useState("");
 
   const subjectById = useMemo(
     () => new Map((subjects ?? []).map((subject) => [subject.id, subject.name])),
@@ -159,6 +171,21 @@ export default function DayPlannerPage() {
       setSubTarget(null);
       setSubTeacher("");
       setSubNote("");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tCommon("error"));
+    }
+  };
+
+  const doChangeRoom = async () => {
+    if (!roomTarget) return;
+    try {
+      await changeRoom.mutateAsync({
+        id: roomTarget.id,
+        roomId: roomValue === NO_ROOM ? null : roomValue,
+      });
+      toast.success(t("roomChangedToast"));
+      setRoomTarget(null);
+      setRoomValue("");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
@@ -253,6 +280,17 @@ export default function DayPlannerPage() {
                           >
                             <UserPlus />
                             {t("substituteAction")}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setRoomTarget(lesson);
+                              setRoomValue(lesson.roomId ?? NO_ROOM);
+                            }}
+                          >
+                            <MapPin />
+                            {t("roomChangeAction")}
                           </Button>
                           <Button
                             variant="outline"
@@ -367,6 +405,41 @@ export default function DayPlannerPage() {
             <Button onClick={doSubstitute} disabled={!subTeacher || substitute.isPending}>
               {substitute.isPending ? <Loader2 className="animate-spin" /> : null}
               {t("substituteAction")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Room-change dialog */}
+      <Dialog open={roomTarget !== null} onOpenChange={(open) => !open && setRoomTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("roomChangeTitle")}</DialogTitle>
+            <DialogDescription>{t("roomChangeBody")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label>{t("roomSelect")}</Label>
+            <Select value={roomValue} onValueChange={setRoomValue}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_ROOM}>{t("roomNone")}</SelectItem>
+                {(rooms ?? []).map((room) => (
+                  <SelectItem key={room.id} value={room.id}>
+                    {room.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRoomTarget(null)}>
+              {tCommon("cancel")}
+            </Button>
+            <Button onClick={doChangeRoom} disabled={changeRoom.isPending}>
+              {changeRoom.isPending ? <Loader2 className="animate-spin" /> : null}
+              {t("roomChangeAction")}
             </Button>
           </DialogFooter>
         </DialogContent>

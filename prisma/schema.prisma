@@ -49,7 +49,16 @@ enum NotificationType {
   LEAVE_DECIDED
   LESSON_CANCELLED
   LESSON_SUBSTITUTE
+  LESSON_ROOM_CHANGED
   SCHEDULE_CHANGED
+  ROOM_BOOKING_DECIDED
+}
+
+enum RoomBookingStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
 }
 
 enum RoomType {
@@ -140,6 +149,7 @@ model School {
   leaveRequests           LeaveRequest[]
   notifications           Notification[]
   integrationApiKeys      IntegrationApiKey[]
+  roomBookings            RoomBooking[]
 
   @@map("Schools")
 }
@@ -194,6 +204,8 @@ model User {
   requestedLeaves  LeaveRequest[]  @relation("LeaveRequester")
   decidedLeaves    LeaveRequest[]  @relation("LeaveDecider")
   notifications    Notification[]  @relation("NotificationRecipient")
+  roomBookings         RoomBooking[] @relation("RoomBookingBooker")
+  decidedRoomBookings  RoomBooking[] @relation("RoomBookingDecider")
 
   @@unique([schoolId, email])
   @@index([schoolId])
@@ -213,6 +225,9 @@ model Room {
   code      String?
   capacity  Int?
   type      RoomType @default(CLASSROOM)
+  /// "Special" rooms (labs, gyms, auditoria) whose self-service bookings need
+  /// admin approval before they're confirmed. Ordinary rooms auto-approve.
+  requiresApproval Boolean @default(false)
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
@@ -220,6 +235,7 @@ model Room {
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
   availabilityConstraints AvailabilityConstraint[]
+  roomBookings            RoomBooking[]
 
   @@unique([schoolId, name])
   @@index([schoolId])
@@ -667,6 +683,40 @@ model LeaveRequest {
   @@index([schoolId, status, createdAt])
   @@index([studentId, startDate])
   @@map("LeaveRequests")
+}
+
+// -----------------------------------------------------------------------------
+// Self-service room bookings (Skola24 Lokal parity). Teachers reserve free
+// rooms themselves; these bookings coexist with lessons in conflict checking.
+// Bookings on "special" rooms (requiresApproval) start PENDING until an admin
+// decides; ordinary rooms auto-approve.
+// -----------------------------------------------------------------------------
+
+model RoomBooking {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId     String            @db.Uuid
+  roomId       String            @db.Uuid
+  bookedById   String            @db.Uuid
+  title        String
+  startsAt     DateTime          @db.Timestamptz(6)
+  endsAt       DateTime          @db.Timestamptz(6)
+  status       RoomBookingStatus @default(APPROVED)
+  decidedById  String?           @db.Uuid
+  decidedAt    DateTime?         @db.Timestamptz(6)
+  decisionNote String?
+  createdAt    DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(6)
+
+  school    School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  room      Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  bookedBy  User   @relation("RoomBookingBooker", fields: [bookedById], references: [id], onDelete: Cascade)
+  decidedBy User?  @relation("RoomBookingDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([schoolId, startsAt])
+  @@index([roomId, startsAt])
+  @@index([bookedById, startsAt])
+  @@index([schoolId, status, createdAt])
+  @@map("RoomBookings")
 }
 
 // -----------------------------------------------------------------------------

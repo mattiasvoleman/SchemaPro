@@ -17,6 +17,8 @@ import type {
   MasterLesson,
   Person,
   Room,
+  RoomBooking,
+  RoomBookingStatus,
   LeaveRequest,
   StudentGroup,
   Subject,
@@ -45,7 +47,12 @@ export function useSubjects() {
 export function useRooms() {
   return useQuery({
     queryKey: ["rooms"],
-    queryFn: () => selectAll<Room>("Rooms", "id, name, code, capacity, type", "name"),
+    queryFn: () =>
+      selectAll<Room>(
+        "Rooms",
+        "id, name, code, capacity, type, requiresApproval",
+        "name",
+      ),
   });
 }
 
@@ -562,6 +569,7 @@ export function useLessonActions() {
     void queryClient.invalidateQueries({ queryKey: ["dayLessons"] });
     void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
     void queryClient.invalidateQueries({ queryKey: ["teacherLessons"] });
+    void queryClient.invalidateQueries({ queryKey: ["teacherAbsenceLessons"] });
   };
 
   const cancel = useMutation({
@@ -581,8 +589,65 @@ export function useLessonActions() {
       }),
     onSuccess: invalidate,
   });
+  const changeRoom = useMutation({
+    mutationFn: ({ id, roomId, note }: { id: string; roomId: string | null; note?: string }) =>
+      api.patch(`/api/v1/calendar-lessons/${id}/room-change`, {
+        roomId,
+        ...(note ? { note } : {}),
+      }),
+    onSuccess: invalidate,
+  });
 
-  return { cancel, reinstate, substitute };
+  return { cancel, reinstate, substitute, changeRoom };
+}
+
+export interface SubstituteSuggestion {
+  teacherId: string;
+  isPrimary: boolean;
+}
+
+/** Qualified, currently-free teachers who can cover a lesson (server-ranked). */
+export function useSubstituteSuggestions(lessonId: string | null) {
+  return useQuery({
+    queryKey: ["substituteSuggestions", lessonId],
+    enabled: lessonId !== null,
+    queryFn: () =>
+      api.get<SubstituteSuggestion[]>(
+        `/api/v1/calendar-lessons/${lessonId}/substitute-suggestions`,
+      ),
+  });
+}
+
+/**
+ * Scheduled lessons taught by one teacher over a date range — the affected
+ * lessons a school admin needs to cover when a teacher is out. Direct Supabase
+ * read under RLS (admins see all school lessons); the inner join restricts to
+ * lessons where this teacher is assigned.
+ */
+export function useTeacherAbsenceLessons(
+  teacherId: string | null,
+  from: string,
+  to: string,
+) {
+  return useQuery({
+    queryKey: ["teacherAbsenceLessons", teacherId, from, to],
+    enabled: teacherId !== null,
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("CalendarLessons")
+        .select(
+          "id, subjectId, studentGroupId, roomId, date, startsAt, endsAt, status, note, teachers:CalendarLessonTeachers!inner(role, teacherId)",
+        )
+        .gte("date", from)
+        .lte("date", to)
+        .eq("status", "SCHEDULED")
+        .eq("teachers.teacherId", teacherId!)
+        .order("startsAt");
+      if (error) throw new Error(error.message);
+      return (data ?? []) as unknown as DayLessonRow[];
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -880,4 +945,121 @@ export function useLeaveRequestActions() {
     onSuccess: invalidate,
   });
   return { request, decide };
+}
+
+// ---------------------------------------------------------------------------
+// Room bookings (Skola24 Lokal parity)
+// ---------------------------------------------------------------------------
+
+/**
+ * Room bookings overlapping a date range. Direct Supabase read under RLS:
+ * teachers see their own + all school bookings; admins see everything.
+ * `status` filters the set (e.g. the admin approval inbox).
+ */
+export function useRoomBookings(
+  fromDate: string,
+  toDate: string,
+  status?: RoomBookingStatus,
+) {
+  return useQuery({
+    queryKey: ["roomBookings", fromDate, toDate, status ?? null],
+    queryFn: async () => {
+      const supabase = createClient();
+      let query = supabase
+        .from("RoomBookings")
+        .select(
+          "id, roomId, bookedById, title, startsAt, endsAt, status, decidedById, decidedAt, decisionNote, createdAt",
+        )
+        // Bookings that overlap [from, to): start before the range end AND end
+        // after the range start (dates are day-granular here).
+        .lt("startsAt", `${toDate}T23:59:59.999Z`)
+        .gt("endsAt", `${fromDate}T00:00:00.000Z`)
+        .order("startsAt");
+      if (status) query = query.eq("status", status);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return (data ?? []) as RoomBooking[];
+    },
+  });
+}
+
+/** Admin approval inbox: all school bookings by status (most recent first). */
+export function useRoomBookingRequests(status?: RoomBookingStatus) {
+  return useQuery({
+    queryKey: ["roomBookings", "inbox", status ?? null],
+    queryFn: async () => {
+      const supabase = createClient();
+      let query = supabase
+        .from("RoomBookings")
+        .select(
+          "id, roomId, bookedById, title, startsAt, endsAt, status, decidedById, decidedAt, decisionNote, createdAt",
+        )
+        .order("createdAt", { ascending: false })
+        .limit(200);
+      if (status) query = query.eq("status", status);
+      const { data, error } = await query;
+      if (error) throw new Error(error.message);
+      return (data ?? []) as RoomBooking[];
+    },
+  });
+}
+
+/** The signed-in user's own room bookings (upcoming first). */
+export function useMyRoomBookings(userId: string) {
+  return useQuery({
+    queryKey: ["myRoomBookings", userId],
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("RoomBookings")
+        .select(
+          "id, roomId, bookedById, title, startsAt, endsAt, status, decidedById, decidedAt, decisionNote, createdAt",
+        )
+        .eq("bookedById", userId)
+        .order("startsAt", { ascending: false })
+        .limit(100);
+      if (error) throw new Error(error.message);
+      return (data ?? []) as RoomBooking[];
+    },
+  });
+}
+
+export function useRoomBookingActions() {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["roomBookings"] });
+    void queryClient.invalidateQueries({ queryKey: ["myRoomBookings"] });
+  };
+
+  const book = useMutation({
+    mutationFn: (body: {
+      roomId: string;
+      title: string;
+      startsAt: string;
+      endsAt: string;
+    }) => api.post("/api/v1/room-bookings", body),
+    onSuccess: invalidate,
+  });
+  const cancel = useMutation({
+    mutationFn: (id: string) => api.patch(`/api/v1/room-bookings/${id}/cancel`, {}),
+    onSuccess: invalidate,
+  });
+  const decide = useMutation({
+    mutationFn: ({
+      id,
+      status,
+      note,
+    }: {
+      id: string;
+      status: "APPROVED" | "REJECTED";
+      note?: string;
+    }) =>
+      api.patch(`/api/v1/room-bookings/${id}/decide`, {
+        status,
+        ...(note ? { note } : {}),
+      }),
+    onSuccess: invalidate,
+  });
+
+  return { book, cancel, decide };
 }
