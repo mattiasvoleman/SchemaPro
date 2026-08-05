@@ -15,6 +15,7 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppConfigModule } from './config/config.module';
 import { DatabaseModule } from './database/database.module';
 import { AuthModule } from './auth/auth.module';
+import { HealthModule } from './health/health.module';
 import { FamilyModule } from './family/family.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { IntegrationModule } from './integration/integration.module';
@@ -65,6 +66,7 @@ import type { ThrottleConfig } from './config/configuration';
     AppConfigModule,
     DatabaseModule,
     AuthModule,
+    HealthModule,
     FamilyModule,
     NotificationsModule,
     IntegrationModule,
