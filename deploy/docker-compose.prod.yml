@@ -1,0 +1,136 @@
+# =============================================================================
+# SchemaPro — production / staging deployment
+#
+#   docker compose -f deploy/docker-compose.prod.yml up -d
+#
+# Differs from the root docker-compose.yml (local development) in three ways
+# that matter:
+#
+#   1. NO database service. Production runs against managed Postgres (Supabase),
+#      because that is where the RLS policies and auth schema live. Bringing up
+#      a throwaway Postgres here would silently point the API at an empty
+#      database with no policies — worse than failing to start.
+#   2. NO migration service. `prisma migrate deploy` is a release step, not a
+#      container that races the API on every restart. See the run book below.
+#   3. Every secret is required, not defaulted. `${VAR:?message}` makes the
+#      stack refuse to start rather than come up with a development password.
+#
+# Images are built from this repo by CI and referenced by digest-pinned tags;
+# override IMAGE_TAG per release so a rollback is a tag change, not a rebuild.
+#
+# ---- Release run book ------------------------------------------------------
+#   1. Apply migrations from a machine with the owner DATABASE_URL:
+#        npm run migrate:deploy
+#   2. Roll the services:
+#        IMAGE_TAG=<sha> docker compose -f deploy/docker-compose.prod.yml up -d
+#   3. Verify:
+#        curl -fsS http://<host>:4000/health
+#   Rollback: re-run step 2 with the previous IMAGE_TAG. Migrations are
+#   forward-only — a rollback that needs a schema change needs a new migration.
+# ---------------------------------------------------------------------------
+
+name: schemapro-prod
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  api:
+    image: ${API_IMAGE:-ghcr.io/schemapro/api}:${IMAGE_TAG:?Set IMAGE_TAG to the release SHA}
+    <<: *hardening
+    ports:
+      - '${API_PORT:-4000}:4000'
+    environment:
+      NODE_ENV: production
+      PORT: '4000'
+      CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS to the web origin(s)}
+
+      # Least-privilege pooled connection. This role must NOT own the schema —
+      # RLS is not enforced for table owners, so an owner connection would
+      # silently disable every tenancy policy.
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL (app_authenticated role, pooled)}
+      DIRECT_URL: ${DIRECT_URL:?Set DIRECT_URL (app_authenticated role, direct)}
+
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (Supabase JWT secret)}
+      JWT_ISSUER: ${JWT_ISSUER:-}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-authenticated}
+
+      SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?Set SUPABASE_SERVICE_ROLE_KEY}
+
+      AI_ENGINE_URL: http://solver:8000
+      AI_ENGINE_API_KEY: ${AI_ENGINE_API_KEY:?Set AI_ENGINE_API_KEY (shared with solver)}
+      AI_ENGINE_TIMEOUT_MS: ${AI_ENGINE_TIMEOUT_MS:-60000}
+
+      THROTTLE_TTL_SECONDS: ${THROTTLE_TTL_SECONDS:-60}
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-120}
+
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+    depends_on:
+      solver:
+        condition: service_healthy
+    healthcheck:
+      # node -e rather than curl: the runtime image has no curl, and adding one
+      # would widen the attack surface for a health probe.
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://127.0.0.1:4000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: '${API_CPUS:-2}'
+          memory: ${API_MEMORY:-1g}
+
+  solver:
+    image: ${SOLVER_IMAGE:-ghcr.io/schemapro/solver}:${IMAGE_TAG:?Set IMAGE_TAG to the release SHA}
+    <<: *hardening
+    # Not published: the solver has no tenancy model and trusts its caller, so
+    # it must only ever be reachable from the API over the internal network.
+    expose:
+      - '8000'
+    environment:
+      APP_ENV: production
+      API_KEY: ${AI_ENGINE_API_KEY:?Set AI_ENGINE_API_KEY (shared with api)}
+      ALLOWED_ORIGINS: http://api:4000
+      SOLVER_TIMEOUT_SECONDS: ${SOLVER_TIMEOUT_SECONDS:-60}
+      SOLVER_MAX_TIME_SECONDS: ${SOLVER_MAX_TIME_SECONDS:-60}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3).status==200 else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          # CP-SAT is CPU-bound and parallelises across workers; this is the
+          # single biggest lever on the §2 "2,000 students under 10s" target.
+          cpus: '${SOLVER_CPUS:-4}'
+          memory: ${SOLVER_MEMORY:-2g}
