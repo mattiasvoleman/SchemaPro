@@ -22,3 +22,23 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# The benchmark suite is a wall-clock measurement, not a correctness test; it
+# runs in its own CI job so a slow machine never fails the unit gate.
+norecursedirs = ["benchmarks", ".venv"]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+omit = ["app/logging_config.py"]
+
+[tool.coverage.report]
+# §2 sets ≥95% line coverage across all packages. `--cov-fail-under` on the
+# command line overrides this when the gate is being ratcheted deliberately.
+fail_under = 95
+show_missing = true
+skip_covered = false
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
