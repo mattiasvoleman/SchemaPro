@@ -8,6 +8,13 @@
 # production
 /build
 
+# test & audit output. NOTE: e2e/**-snapshots/ is deliberately NOT ignored —
+# visual-regression baselines must be committed and reviewed like source.
+/test-results/
+/playwright-report/
+/blob-report/
+/.lighthouseci/
+
 # misc
 .DS_Store
 *.pem

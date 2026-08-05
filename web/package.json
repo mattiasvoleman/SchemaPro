@@ -6,7 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "playwright test",
+    "test:smoke": "playwright test --project=smoke",
+    "test:a11y": "playwright test --project=a11y",
+    "test:visual": "playwright test --project=visual --project=visual-mobile",
+    "test:visual:update": "playwright test --project=visual --project=visual-mobile --update-snapshots",
+    "lighthouse": "npm exec --yes -- @lhci/cli@^0.14 autorun --config=lighthouserc.json"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.2.2",

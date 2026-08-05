@@ -1,0 +1,59 @@
+{
+  "ci": {
+    "collect": {
+      "startServerCommand": "npm run start",
+      "startServerReadyPattern": "Ready in",
+      "startServerReadyTimeout": 120000,
+      "url": [
+        "http://localhost:3000/sv/login",
+        "http://localhost:3000/en/login",
+        "http://localhost:3000/sv/forgot-password"
+      ],
+      "numberOfRuns": 3,
+      "settings": {
+        "preset": "desktop",
+        "throttlingMethod": "simulate",
+        "throttling": {
+          "rttMs": 150,
+          "throughputKbps": 1638.4,
+          "cpuSlowdownMultiplier": 4,
+          "requestLatencyMs": 562.5,
+          "downloadThroughputKbps": 1474.56,
+          "uploadThroughputKbps": 675
+        }
+      }
+    },
+    "assert": {
+      "assertions": {
+        "categories:accessibility": ["error", { "minScore": 1 }],
+
+        "largest-contentful-paint": ["error", { "maxNumericValue": 1200 }],
+        "interactive": ["error", { "maxNumericValue": 1500 }],
+
+        "total-blocking-time": ["error", { "maxNumericValue": 100 }],
+        "max-potential-fid": ["warn", { "maxNumericValue": 100 }],
+
+        "cumulative-layout-shift": ["error", { "maxNumericValue": 0.1 }],
+
+        "color-contrast": ["error", { "minScore": 1 }],
+        "heading-order": ["error", { "minScore": 1 }],
+        "html-has-lang": ["error", { "minScore": 1 }],
+        "label": ["error", { "minScore": 1 }],
+        "link-name": ["error", { "minScore": 1 }],
+        "button-name": ["error", { "minScore": 1 }],
+        "meta-viewport": ["error", { "minScore": 1 }]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./.lighthouseci"
+    }
+  },
+
+  "_notes": {
+    "throttling": "The custom throttling block is Lighthouse's 'Slow 4G' profile (150ms RTT, 1.6Mbps), which is what §2's 'on 4G networks' target means. The desktop preset otherwise disables throttling entirely and would report flattering numbers.",
+    "inp": "INP is a field metric — it needs real user interactions and cannot be measured in a lab run. total-blocking-time is asserted at the same 100ms threshold as the closest lab proxy, and max-potential-fid is a warning only because it is noisy. Enforcing the real INP ≤ 100ms target requires RUM (web-vitals reporting to an analytics endpoint); this file cannot substitute for that.",
+    "interactive": "'interactive' is Lighthouse's Time to Interactive audit. It is deprecated upstream and may be removed in a future major; if it disappears, replace with total-blocking-time plus speed-index rather than dropping the TTI gate silently.",
+    "accessibility": "categories:accessibility minScore 1 is the 'Lighthouse accessibility score = 100' requirement. Like axe-core it covers only automatable checks; AA conformance still needs a manual keyboard and screen-reader pass."
+  }
+}
