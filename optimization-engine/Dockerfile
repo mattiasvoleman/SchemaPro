@@ -59,9 +59,15 @@ USER appuser
 EXPOSE 8000
 
 # Use exec form for proper signal handling (SIGTERM reaches uvicorn)
+#
+# No --log-config: the application owns logging. app.main:create_app calls
+# configure_logging(), which installs structlog's JSON renderer on the root
+# logger. Passing "--log-config /dev/null" (as this did previously) does not
+# disable uvicorn's logging — uvicorn treats the path as a logging.fileConfig
+# file and aborts at startup with "RuntimeError: /dev/null is an empty file",
+# so the container never came up at all.
 CMD ["uvicorn", "app.main:app", \
      "--host", "0.0.0.0", \
      "--port", "8000", \
      "--workers", "1", \
-     "--log-config", "/dev/null", \
      "--no-access-log"]
