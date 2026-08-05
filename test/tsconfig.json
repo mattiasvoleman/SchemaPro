@@ -3,6 +3,9 @@
   "compilerOptions": {
     "noUnusedLocals": false,
     "noUnusedParameters": false,
+    // ts-jest transpiles per-file; this makes tsc enforce the same constraints
+    // it compiles under, so `npm run typecheck:test` catches what jest can't.
+    "isolatedModules": true,
     "types": ["jest", "node"]
   },
   "include": ["**/*.ts", "../src/**/*.ts"]

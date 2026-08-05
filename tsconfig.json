@@ -28,5 +28,8 @@
     }
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "test"]
+  // Co-located unit specs are typechecked by `npm run typecheck:test` against
+  // test/tsconfig.json (which adds the jest globals and relaxes the
+  // unused-symbol rules that test doubles legitimately trip).
+  "exclude": ["node_modules", "dist", "test", "src/**/*.spec.ts"]
 }

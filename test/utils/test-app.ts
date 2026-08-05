@@ -12,11 +12,11 @@ import {
 import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import type { Request } from 'express';
-import type { PrismaClient } from '@prisma/client';
 import { AppConfigModule } from '../../src/config/config.module';
 import { DatabaseModule } from '../../src/database/database.module';
 import { HttpExceptionFilter } from '../../src/common/filters/http-exception.filter';
 import { RolesGuard } from '../../src/auth/roles.guard';
+import { NotificationsModule } from '../../src/notifications/notifications.module';
 import { AttendanceModule } from '../../src/attendance/attendance.module';
 import { ResourcesModule } from '../../src/resources/resources.module';
 import { CalendarModule } from '../../src/calendar/calendar.module';
@@ -25,6 +25,9 @@ import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RealtimeService } from '../../src/realtime/realtime.service';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
+import { createPrismaMock, createTxMock, type TxMock } from './prisma-mock';
+
+export type { TxMock };
 
 /**
  * E2E harness: boots the production feature modules with the real validation
@@ -72,6 +75,9 @@ class TestRealtimeModule {}
     AppConfigModule,
     DatabaseModule,
     TestRealtimeModule,
+    // @Global in production; feature services inject it directly, so the test
+    // graph needs it imported explicitly or their constructors cannot resolve.
+    NotificationsModule,
     AttendanceModule,
     ResourcesModule,
     CalendarModule,
@@ -94,11 +100,6 @@ class TestRealtimeModule {}
 })
 class TestAppModule {}
 
-/** Loose mock of a Prisma transaction client — tests stub what they need. */
-export type TxMock = {
-  [model: string]: { [method: string]: jest.Mock };
-};
-
 export interface TestHarness {
   app: INestApplication;
   tx: TxMock;
@@ -118,39 +119,8 @@ export function asUser(user: Partial<AuthenticatedUser>): string {
 export async function createTestApp(): Promise<TestHarness> {
   // Environment defaults live in test/setup-env.ts (jest setupFiles) because
   // ConfigModule validates the environment at import time.
-  const tx: TxMock = {};
-
-  // Auto-vivifying proxy: `tx.subject.create` exists as a jest.Mock the first
-  // time it is touched, so individual tests only stub what they assert on.
-  function modelProxy(): { [method: string]: jest.Mock } {
-    const methods: { [method: string]: jest.Mock } = {};
-    return new Proxy(methods, {
-      get(target, method: string) {
-        target[method] = target[method] ?? jest.fn();
-        return target[method];
-      },
-    });
-  }
-
-  const txProxy = new Proxy(tx, {
-    get(target, model: string) {
-      target[model] = target[model] ?? modelProxy();
-      return target[model];
-    },
-  });
-
-  const prismaMock = {
-    onModuleInit: jest.fn(),
-    onModuleDestroy: jest.fn(),
-    withRls: jest.fn(
-      <T>(_user: AuthenticatedUser, fn: (tx: PrismaClient) => Promise<T>) =>
-        fn(txProxy as unknown as PrismaClient),
-    ),
-    withSystemTransaction: jest.fn(
-      <T>(fn: (tx: PrismaClient) => Promise<T>) =>
-        fn(txProxy as unknown as PrismaClient),
-    ),
-  };
+  const txProxy = createTxMock();
+  const prismaMock = createPrismaMock(txProxy);
 
   const moduleRef = await Test.createTestingModule({
     imports: [TestAppModule],

@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "thresholds_comment": "Mutation testing for the API package. §2 of the engineering spec sets an 85% kill rate as the gate; `break` fails the run below it, so CI needs no extra assertion. `high`/`low` only colour the report. Stryker treats any `<option>_comment` key as documentation and ignores it.",
+  "packageManager": "npm",
+  "testRunner": "jest",
+  "jest": {
+    "projectType": "custom",
+    "configFile": "jest.mutation.config.js",
+    "enableFindRelatedTests": true
+  },
+  "coverageAnalysis": "perTest",
+  "ignorePatterns_comment": "Stryker copies the project into .stryker-tmp before mutating. In this monorepo an unrestricted sandbox tries to copy optimization-engine/.venv (138M), web/node_modules (439M) and mobile/node_modules (169M) — it never finishes. This whitelist keeps the sandbox to what the API package actually needs to run its unit tests. If a new top-level file becomes a test dependency, add it here or the run fails with a missing-module error.",
+  "ignorePatterns": [
+    "**",
+    "!src/**",
+    "!test/**",
+    "!prisma/schema.prisma",
+    "!package.json",
+    "!package-lock.json",
+    "!tsconfig.json",
+    "!tsconfig.build.json",
+    "!jest.base.js",
+    "!jest.mutation.config.js",
+    "!nest-cli.json"
+  ],
+  "mutate": [
+    "src/**/*.ts",
+    "!src/**/*.spec.ts",
+    "!src/main.ts",
+    "!src/**/*.module.ts",
+    "!src/**/dto/**",
+    "!src/**/interfaces/**",
+    "!src/**/enums/**"
+  ],
+  "thresholds": {
+    "high": 95,
+    "low": 85,
+    "break": 85
+  },
+  "reporters": ["progress", "clear-text", "html", "json"],
+  "htmlReporter": { "fileName": "reports/mutation/index.html" },
+  "jsonReporter": { "fileName": "reports/mutation/mutation.json" },
+  "timeoutMS": 60000,
+  "concurrency": 4,
+  "tempDirName": ".stryker-tmp"
+}
