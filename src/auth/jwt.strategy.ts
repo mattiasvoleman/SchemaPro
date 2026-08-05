@@ -52,9 +52,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Invalid authentication token.');
     }
 
-    // Identity lookup by the verified subject claim. This intentionally runs
-    // outside RLS (there is no session to scope by yet).
-    const profile = await this.prisma.withSystemTransaction((tx) =>
+    // Identity lookup by the verified subject claim, scoped to that subject.
+    //
+    // This previously used `withSystemTransaction` on the assumption that it
+    // ran outside RLS. It does not — the API connects as a non-owner role, so
+    // policies apply to every statement, and with no claims set the lookup
+    // matched zero rows. Every authenticated request failed with "No active
+    // user profile is linked to this account".
+    //
+    // `payload.sub` is verified at this point (signature, issuer, audience and
+    // expiry are all checked before validate() runs), so injecting it grants
+    // exactly the caller's own row via the users_self_select policy.
+    const profile = await this.prisma.withVerifiedSubject(payload.sub, (tx) =>
       tx.user.findUnique({
         where: { authId: payload.sub },
         select: { id: true, schoolId: true, role: true, isActive: true },

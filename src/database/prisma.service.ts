@@ -89,12 +89,49 @@ export class PrismaService
   }
 
   /**
-   * Execute `fn` inside a plain transaction without setting any RLS session
-   * variables. Reserved for operations that intentionally bypass row-level
-   * filtering (e.g. system-level migrations, admin bootstrap tasks) and
-   * require an explicit, documented justification at the call-site.
+   * Resolves a principal's own profile during authentication, before a
+   * full `AuthenticatedUser` exists.
    *
-   * NEVER use this method for user-triggered data access.
+   * `authId` MUST already be a cryptographically verified subject claim — the
+   * caller has checked the JWT signature, issuer, audience and expiry. Given
+   * that, injecting the claim grants exactly the access the token holder
+   * already has (the `users_self_select` policy, `id = app.current_user_id()`).
+   * It is not a privilege escalation, and it is not a bypass.
+   *
+   * This exists because `withSystemTransaction` cannot be used here — see the
+   * warning on that method.
+   */
+  async withVerifiedSubject<T>(
+    authId: string,
+    fn: (tx: PrismaClient) => Promise<T>,
+  ): Promise<T> {
+    return this.withRls({ authId } as AuthenticatedUser, fn);
+  }
+
+  /**
+   * Execute `fn` inside a plain transaction with no RLS session variables set.
+   *
+   * ## This does NOT bypass row-level security
+   *
+   * It was previously documented as bypassing row-level filtering. It does
+   * not, and cannot: the API connects as `app_authenticated`, a non-owner, and
+   * every table has `relrowsecurity = true`, so PostgreSQL applies policies to
+   * every statement regardless of which helper opened the transaction.
+   *
+   * What actually happens is worse than a bypass — with no claims set,
+   * `auth.uid()` returns NULL, every policy predicate evaluates false, and
+   * queries silently return **zero rows** instead of erroring. That made
+   * authentication fail closed for every user with "No active user profile is
+   * linked to this account", because `JwtStrategy` used this method to load
+   * the profile it needs to build the principal.
+   *
+   * Use `withVerifiedSubject` for identity bootstrap.
+   *
+   * Callers that genuinely need cross-tenant access (the SS12000 integration
+   * feed and the integration-key guard) are still on this method and are still
+   * affected. Fixing those needs a connection as a role holding BYPASSRLS, or
+   * an explicit set of policies for a service principal — a deployment
+   * decision, not a code change. See docs/verification-baseline.md.
    */
   async withSystemTransaction<T>(
     fn: (tx: PrismaClient) => Promise<T>,
