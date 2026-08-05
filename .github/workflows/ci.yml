@@ -11,13 +11,17 @@ concurrency:
 
 jobs:
   api:
-    name: API — typecheck & e2e tests
+    name: API — typecheck, tests & coverage
     runs-on: ubuntu-latest
     env:
       # `prisma validate` resolves env("DATABASE_URL") / env("DIRECT_URL");
       # placeholder values are enough — nothing connects to a database in CI.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+      # §2 mandates ≥95% line coverage. Set the COVERAGE_MIN repository
+      # variable to ratchet toward it while the suite is built out; the
+      # spec target is the default so the gate never silently weakens.
+      COVERAGE_MIN: ${{ vars.COVERAGE_MIN || '95' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -35,19 +39,34 @@ jobs:
       - name: Validate Prisma schema
         run: npm run prisma:validate
 
-      - name: Typecheck
+      - name: Typecheck (production sources)
         run: npm run typecheck
 
-      # E2E tests run against a mocked Prisma layer — no database required.
-      - name: E2E tests
-        run: npm run test:e2e
+      - name: Typecheck (test sources)
+        run: npm run typecheck:test
+
+      # Unit + e2e in one run so the reported coverage is the combined figure
+      # §2 gates on. Both exercise a mocked Prisma layer — no database needed.
+      - name: Unit + integration tests with coverage
+        run: npm run test:cov
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-coverage
+          path: coverage/
+          retention-days: 14
 
   web:
-    name: Web — typecheck & build
+    name: Web — typecheck, build, bundle & browser gates
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
+    env:
+      # Placeholder values so `next build` can prerender; real values are
+      # injected at deploy time. Never commit real keys.
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: placeholder-publishable-key
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
     steps:
       - uses: actions/checkout@v5
 
@@ -59,25 +78,56 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+        working-directory: web
 
       - name: Typecheck
         run: npm run typecheck
+        working-directory: web
 
       - name: Build
         run: npm run build
-        env:
-          # Placeholder values so `next build` can prerender; real values are
-          # injected at deploy time. Never commit real keys.
-          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: placeholder-publishable-key
-          NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
+        working-directory: web
+
+      # §2: ≤150KB initial gzipped JS. Reads the build manifest, so it must
+      # run after the build and needs no browser.
+      - name: Bundle size budget
+        run: node scripts/bench/bundle-size.mjs --max-kb 150
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+
+      # §2: WCAG 2.1 AA, zero automated violations.
+      - name: Accessibility (axe-core)
+        run: npx playwright test --project=a11y
+        working-directory: web
+
+      - name: Functional smoke
+        run: npx playwright test --project=smoke
+        working-directory: web
+
+      # §2: ≤0.1% pixel variance. Baselines are committed and must match the
+      # Linux renderer — regenerate them in a Linux container, not on macOS.
+      - name: Visual regression
+        run: npx playwright test --project=visual --project=visual-mobile
+        working-directory: web
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-playwright-report
+          path: web/playwright-report/
+          retention-days: 14
 
   solver:
-    name: Solver — pytest
+    name: Solver — pytest & coverage
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: optimization-engine
+    env:
+      COVERAGE_MIN: ${{ vars.ENGINE_COVERAGE_MIN || '95' }}
     steps:
       - uses: actions/checkout@v5
 
@@ -90,8 +140,66 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
-      - name: Run tests
-        run: python -m pytest -q
+      - name: Run tests with coverage
+        run: >-
+          python -m pytest -q
+          --cov=app --cov-report=term-missing --cov-report=xml
+          --cov-fail-under=${COVERAGE_MIN}
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: solver-coverage
+          path: optimization-engine/coverage.xml
+          retention-days: 14
+
+  security:
+    name: Security — dependency audit & SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      # §2 allows 0 Critical / High / Medium. npm audit's lowest failing level
+      # is `moderate`, which is npm's name for Medium.
+      - name: npm audit (API)
+        run: npm audit --audit-level=moderate
+
+      - name: npm audit (web)
+        run: npm audit --audit-level=moderate
+        working-directory: web
+
+      - name: npm audit (mobile)
+        run: npm audit --audit-level=moderate
+        working-directory: mobile
+
+      - name: pip-audit (solver)
+        run: |
+          pip install pip-audit
+          pip-audit --requirement optimization-engine/requirements.txt --strict
+
+      # Static analysis across every package. `--error` makes any finding fail
+      # the job; the rulesets cover OWASP Top 10 patterns for TS/JS and Python.
+      - name: Semgrep SAST
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/owasp-top-ten
+            p/typescript
+            p/javascript
+            p/python
+            p/secrets
+            p/nestjs
+            p/react
 
   mobile:
     name: Mobile — typecheck
