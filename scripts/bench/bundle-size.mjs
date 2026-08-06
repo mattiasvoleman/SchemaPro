@@ -71,19 +71,30 @@ const isJs = (asset) => typeof asset === 'string' && asset.endsWith('.js');
 const toAssetPath = (chunk) =>
   chunk.startsWith('/_next/') ? chunk.slice('/_next/'.length) : chunk;
 
+/**
+ * Chunks every route pays for — but NOT the polyfills.
+ *
+ * Next's App Router emits `polyfillFiles` with `noModule: true` (see
+ * app-render.js), so any browser supporting ES modules — which is every
+ * browser this app targets — skips them entirely. Counting them inflated every
+ * route in this report by 38.6KB of code that modern users never download.
+ *
+ * They are still measured and reported separately, because the legacy payload
+ * is real for the browsers that do fetch it; it just is not what the budget
+ * is about.
+ */
 const sharedChunks = new Set(
-  [
-    ...(buildManifest.rootMainFiles ?? []),
-    ...(buildManifest.polyfillFiles ?? []),
-  ]
-    .filter(isJs)
-    .map(toAssetPath),
+  (buildManifest.rootMainFiles ?? []).filter(isJs).map(toAssetPath),
+);
+
+const legacyPolyfills = new Set(
+  (buildManifest.polyfillFiles ?? []).filter(isJs).map(toAssetPath),
 );
 
 if (sharedChunks.size === 0) {
   fail(
-    'build-manifest.json listed no rootMainFiles or polyfillFiles. Either the ' +
-      'build is incomplete or the manifest shape changed.',
+    'build-manifest.json listed no rootMainFiles. Either the build is ' +
+      'incomplete or the manifest shape changed.',
   );
 }
 
@@ -176,6 +187,9 @@ const report = {
   worstRoute: worst.route,
   worstGzipKb: kb(worst.gzipBytes),
   sharedGzipKb: kb([...sharedChunks].reduce((s, c) => s + gzipSize(c), 0)),
+  legacyPolyfillGzipKb: kb(
+    [...legacyPolyfills].reduce((s, c) => s + gzipSize(c), 0),
+  ),
   routeCount: routes.length,
   routes: routes.map((r) => ({
     route: r.route,
@@ -189,7 +203,8 @@ if (asJson) {
 } else {
   console.log(
     `Initial gzipped JS per route ` +
-      `(${report.routeCount} routes, shared runtime ${report.sharedGzipKb}KB)\n`,
+      `(${report.routeCount} routes, shared runtime ${report.sharedGzipKb}KB; ` +
+        `+${report.legacyPolyfillGzipKb}KB nomodule polyfills, legacy browsers only)\n`,
   );
   for (const r of report.routes) {
     const over = maxKb !== undefined && r.gzipKb > maxKb;

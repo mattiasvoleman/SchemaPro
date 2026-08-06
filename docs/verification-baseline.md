@@ -28,7 +28,7 @@ could be evaluated at all.
 | API coverage | ✗ 42.40% vs 95% (ratcheted) |
 | Solver coverage | ✗ 81% vs 95% (ratcheted) |
 | Mutation score | ✗ 66.21% vs 85% |
-| Bundle size | ✗ 355.4KB worst / 164.7KB floor vs 150KB |
+| Bundle size | ✗ 316.8KB worst / 126.1KB floor vs 150KB (2 of 30 routes pass) |
 | Solver, 2,000 students | ✗ payload rejected before solving |
 | Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | — needs a seeded DB (CI only) |
@@ -117,21 +117,35 @@ that is a separate piece of work, not a coverage push.
 
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
-| Initial gzip JS, worst route | ≤ 150KB | **355.4KB** | ✗ |
-| Initial gzip JS, best real route | ≤ 150KB | **216.3KB** | ✗ |
-| Shared runtime alone | (within 150KB) | **164.7KB** | ✗ |
+| Initial gzip JS, worst route | ≤ 150KB | **316.8KB** | ✗ |
+| Initial gzip JS, best real route | ≤ 150KB | **165.3KB** | ✗ |
+| Shared runtime alone | (within 150KB) | **126.1KB** | ✗ |
 | LCP (Slow 4G) | ≤ 1.2s | not measured | — |
 | TTI | ≤ 1.5s | not measured | — |
 | INP | ≤ 100ms | **not lab-measurable** | — |
 
-`npm run bench:bundle` — 30 routes measured, **every one over budget**.
+`npm run bench:bundle` — 30 routes measured, **28 over budget**. `/_not-found`
+and `/_global-error` pass at 129.7KB.
 
-The decisive number is the third row: at 164.7KB, the Next runtime plus
-polyfills exceed the entire 150KB budget *before any application code loads*.
+The decisive number is the third row: at 126.1KB the Next runtime consumes 84%
+of the 150KB budget *before any application code loads*.
 No route can pass this gate by trimming page-level imports alone — the shared
 bundle itself has to change (or the budget has to be restated as, say, per-route
 page JS excluding the framework runtime, which is a different metric than §2
 specifies).
+
+**Correction — the earlier 164.7KB figure was wrong.** It counted
+`polyfillFiles`, which Next's App Router emits with `noModule: true`
+(`next/dist/server/app-render/app-render.js`). Every browser this app targets
+supports ES modules and therefore *never downloads* that 38.6KB chunk. The gate
+was inflating all 30 routes by 38.6KB of code no modern user fetches. It now
+measures `rootMainFiles` only and reports the legacy polyfill payload
+separately.
+
+Composition of the 126.1KB, by fingerprinting the chunks: react-dom + react
+69.8KB, Next App Router client 44.5KB, Turbopack runtime and misc 11.9KB.
+**None of it is application code** — a hello-world on this Next/React pair
+measures the same. It is a framework floor, not bloat.
 
 Two concrete leads from the per-chunk breakdown:
 
