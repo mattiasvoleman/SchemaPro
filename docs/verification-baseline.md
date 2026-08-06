@@ -15,7 +15,7 @@ wall-clock figures are machine-dependent; CI numbers are the ones that gate.
 
 ## Scorecard
 
-Four of eleven gates pass today. The rest have a harness and a measured number
+Five of eleven gates pass today. The rest have a harness and a measured number
 they are failing against — which is the point: before this work none of them
 could be evaluated at all.
 
@@ -24,9 +24,9 @@ could be evaluated at all.
 | API dependency audit | ✓ pass (0/0/0) |
 | Mobile dependency audit | ✓ pass (0/0/0) |
 | WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
-| Visual regression | ◐ harness verified, Linux baselines needed |
+| Visual regression | ✓ pass (16/16 on Linux baselines) |
 | API coverage | ✗ 42.40% vs 95% (ratcheted) |
-| Solver coverage | ✗ 78% vs 95% |
+| Solver coverage | ✗ 81% vs 95% (ratcheted) |
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✗ 355.4KB worst / 164.7KB floor vs 150KB |
 | Solver, 2,000 students | ✗ payload rejected before solving |
@@ -64,7 +64,7 @@ could be evaluated at all.
 | API statement coverage | ≥ 95% | 43.25% (946/2187) | ✗ | same |
 | API branch coverage | ≥ 95% | 35.77% (430/1202) | ✗ | same |
 | API function coverage | ≥ 95% | 25.90% (114/440) | ✗ | same |
-| Solver line coverage | ≥ 95% | **78%** (908 stmts, 168 missed) | ✗ | `npm run test:engine:cov` |
+| Solver line coverage | ≥ 95% | **81%** (922 stmts, 148 missed) | ✗ | `npm run test:engine:cov` |
 | Mutation score, tested files | ≥ 85% | **66.21%** (192 killed / 97 survived) | ✗ | `npm run test:mutation` |
 | Web unit coverage | ≥ 95% | **no harness** | ✗ | — |
 
@@ -479,7 +479,29 @@ known-bad input rather than assumed working:
   too strict and too permissive — then restored.
 - **Solver benchmark**: exits non-zero on the §2 target shape.
 
-Baselines are committed with a `-darwin` suffix (Playwright's default), so they
-do **not** collide with the `-linux` baselines CI needs. CI is configured with
-`updateSnapshots: "none"`, so it will fail rather than silently write its own —
-generate the Linux set deliberately in a container.
+Baselines are committed for both platforms — 32 files, 16 `-darwin` and 16
+`-linux` (Playwright's default suffix, so they cannot collide). CI is
+configured with `updateSnapshots: "none"`, so it fails rather than silently
+writing its own; that is what makes a missing baseline a failure instead of a
+free pass.
+
+Regenerate the Linux set in the image matching the pinned Playwright version,
+never on macOS:
+
+```
+docker run --rm -v "$PWD:/w" -w /w/web -e CI=1 \
+  -e NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co \
+  -e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=placeholder-publishable-key \
+  -e NEXT_PUBLIC_API_BASE_URL=http://localhost:4000 \
+  mcr.microsoft.com/playwright:v1.61.1-noble \
+  bash -c "npm ci && npm run build && \
+    npx playwright test --project=visual --project=visual-mobile \
+      --update-snapshots=all"
+```
+
+`--update-snapshots=all` is required: the config sets `updateSnapshots: "none"`
+under `CI`, and the CLI flag is what overrides it.
+
+Note the side effect — that `npm ci` writes Linux binaries into the shared
+`web/node_modules` mount, leaving the host with `@next/swc-linux-arm64-gnu`
+where the darwin build should be. Run `npm ci` on the host afterwards.
