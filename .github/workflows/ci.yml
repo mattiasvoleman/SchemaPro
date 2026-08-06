@@ -154,6 +154,50 @@ jobs:
           path: optimization-engine/coverage.xml
           retention-days: 14
 
+  rls:
+    name: Database — row-level-security policies
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      POSTGRES_PASSWORD: postgres_local
+      JWT_SECRET: ci-rls-secret-not-used-anywhere-else
+      AI_ENGINE_API_KEY: ci-local-shared-key
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run prisma:generate
+
+      # This gate exists because the e2e suite mocks PrismaService and so
+      # cannot see the database contract at all. Three production-breaking
+      # bugs shipped behind that blind spot: missing table grants, an identity
+      # lookup returning zero rows under RLS, and the SS12000 API silently
+      # returning empty payloads. All three are asserted against here.
+      - name: Start database and apply migrations
+        run: docker compose up -d --wait db migrate
+
+      - name: Seed
+        run: npm run db:seed
+        env:
+          DATABASE_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+          DIRECT_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+
+      - name: RLS policy assertions
+        run: ./scripts/test/run-rls-tests.sh
+
+      - name: Database logs
+        if: failure()
+        run: docker compose logs db --no-color --tail=100
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
   security:
     name: Security — dependency audit & SAST
     runs-on: ubuntu-latest

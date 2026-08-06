@@ -43,6 +43,7 @@ could be evaluated at all.
 | Gate | Harness | Wired into CI |
 | :--- | :--- | :--- |
 | Unit + integration coverage | `jest.config.js` (unit + e2e projects, combined coverage) | `ci.yml` → api |
+| RLS / tenancy policies | `scripts/test/run-rls-tests.sh` | `ci.yml` → rls |
 | Mutation score | `stryker.conf.json` | `quality-gates.yml` → mutation (nightly) |
 | Visual regression | `web/e2e/visual.spec.ts` | `ci.yml` → web |
 | Accessibility | `web/e2e/a11y.spec.ts` (axe-core) + `web/lighthouserc.json` | `ci.yml` → web, `quality-gates.yml` → lighthouse |
@@ -242,6 +243,7 @@ benchmark's own pass/fail check trusts that status.
 
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
+| RLS / tenancy policies | no cross-tenant leak | **all assertions pass** | ✓ |
 | API dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
 | Mobile dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
 | Web dependency audit | 0 critical/high/moderate | **1 / 3 / 1** | ✗ |
@@ -391,6 +393,47 @@ violations", and that is all CI should be read as claiming.
   run from *never* to 24 seconds.
 - A dark-mode WCAG AA contrast violation across 58 nodes (see above).
 
+## Tenancy: the service principal
+
+`withSystemTransaction` was believed to bypass RLS. It cannot — the API
+connects as a non-owner and every table has `relrowsecurity`, so with no claims
+set queries return **zero rows without erroring**. Three call sites were
+affected in three different ways:
+
+- `JwtStrategy` and `RealtimeGateway` — fixed with `withVerifiedSubject`,
+  scoping the lookup to the already-verified JWT subject.
+- `IntegrationKeyGuard` and the six SS12000 methods — could not be, because
+  they authenticate with an `X-API-Key` and have no `auth.uid()` to scope by.
+  Every SS12000 endpoint silently returned an empty payload, which an
+  integrating system reads as "this school has no data".
+
+Resolved with **service-principal policies** rather than a `BYPASSRLS` role.
+The integration key resolves to exactly one school, so the principal is not
+cross-tenant — it is "the service acting for school X" — and the policies
+enforce in the database what the service layer already intended. A query that
+forgets its own `where: { schoolId }` now returns nothing instead of leaking.
+
+Two transaction-local settings drive it, so neither can outlive a transaction
+or leak onto a pooled connection:
+
+| Setting | Set by | Grants |
+| :--- | :--- | :--- |
+| `app.service_key_lookup` | `withServiceKeyLookup` | SELECT/UPDATE on non-revoked `IntegrationApiKeys`, nothing else |
+| `app.service_school_id` | `withServicePrincipal` | One school's rows across the seven tables SS12000 touches |
+
+Verified against a real database, as the role the API actually uses:
+
+| Principal | API keys | Users | Schools |
+| :--- | ---: | ---: | ---: |
+| none (the old broken state) | 0 | 0 | 0 |
+| key-lookup only | 1 | 0 | 0 |
+| service principal, school A | 0 | 89 (0 from school B) | 1 |
+
+The user count was taken **without a `WHERE` clause**, which is the point: the
+policy alone confines it. `scripts/test/run-rls-tests.sh` encodes all of this,
+including that the settings do not survive `COMMIT`, and runs per-PR in
+`ci.yml`.
+
 ## Verification that the gates are not vacuous
 
 A gate that cannot fail is worse than no gate, so each was checked against a
@@ -404,6 +447,10 @@ known-bad input rather than assumed working:
 - **Bundle size**: fails today on all 30 routes, with per-route numbers.
 - **Coverage / mutation**: both currently report below threshold and exit
   non-zero.
+- **RLS policies**: dropping `users_service_select` fails with "saw 0 users for
+  its own school"; adding a policy that lets the key-lookup principal read
+  `Users` fails with "leaked 90 user rows". Checked in both directions —
+  too strict and too permissive — then restored.
 - **Solver benchmark**: exits non-zero on the §2 target shape.
 
 Baselines are committed with a `-darwin` suffix (Playwright's default), so they

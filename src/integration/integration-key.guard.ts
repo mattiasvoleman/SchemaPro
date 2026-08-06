@@ -29,7 +29,13 @@ export class IntegrationKeyGuard implements CanActivate {
     }
 
     const keyHash = createHash('sha256').update(key).digest('hex');
-    const row = await this.prisma.withSystemTransaction((tx) =>
+
+    // The only lookup that cannot be tenant-scoped — the tenant is what it is
+    // resolving. `withServiceKeyLookup` is constrained by policy to SELECT and
+    // UPDATE on non-revoked IntegrationApiKeys rows and nothing else; it
+    // replaces `withSystemTransaction`, which returned zero rows under RLS and
+    // so rejected every valid key with "Invalid API key."
+    const row = await this.prisma.withServiceKeyLookup((tx) =>
       tx.integrationApiKey.findFirst({
         where: { keyHash, revokedAt: null },
         select: { id: true, schoolId: true },
@@ -42,7 +48,7 @@ export class IntegrationKeyGuard implements CanActivate {
     request.integrationSchoolId = row.schoolId;
     // Best-effort usage timestamp; never blocks the request.
     void this.prisma
-      .withSystemTransaction((tx) =>
+      .withServiceKeyLookup((tx) =>
         tx.integrationApiKey.update({
           where: { id: row.id },
           data: { lastUsedAt: new Date() },

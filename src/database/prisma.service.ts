@@ -109,6 +109,54 @@ export class PrismaService
   }
 
   /**
+   * Resolves an `X-API-Key` to the school that owns it, before any tenant
+   * context exists.
+   *
+   * This is the one integration operation that cannot be tenant-scoped: the
+   * tenant is what it is trying to discover. The matching policies
+   * (`integration_keys_service_lookup` / `_touch`) therefore grant the
+   * narrowest thing that works — SELECT and UPDATE on non-revoked rows of
+   * `IntegrationApiKeys`, and nothing else. Once the school is known, callers
+   * must switch to `withServicePrincipal`.
+   */
+  async withServiceKeyLookup<T>(
+    fn: (tx: PrismaClient) => Promise<T>,
+  ): Promise<T> {
+    return this.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.service_key_lookup', 'on', true)`;
+      return fn(tx as unknown as PrismaClient);
+    });
+  }
+
+  /**
+   * Execute `fn` as the SS12000 integration service acting for one school.
+   *
+   * `schoolId` MUST come from a verified integration key (see
+   * `IntegrationKeyGuard`), never from request input. The service-principal
+   * policies then constrain every statement to that tenant, so a query that
+   * forgets its own `where: { schoolId }` returns nothing rather than leaking
+   * across schools — the database enforces what the service layer intends.
+   *
+   * `set_config(..., true)` is transaction-local, so the principal cannot
+   * outlive the transaction or leak onto a pooled connection.
+   */
+  async withServicePrincipal<T>(
+    schoolId: string,
+    fn: (tx: PrismaClient) => Promise<T>,
+    options?: { timeoutMs?: number },
+  ): Promise<T> {
+    return this.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`
+          SELECT set_config('app.service_school_id', ${schoolId}, true)
+        `;
+        return fn(tx as unknown as PrismaClient);
+      },
+      { timeout: options?.timeoutMs ?? 30_000 },
+    );
+  }
+
+  /**
    * Execute `fn` inside a plain transaction with no RLS session variables set.
    *
    * ## This does NOT bypass row-level security
@@ -125,13 +173,16 @@ export class PrismaService
    * linked to this account", because `JwtStrategy` used this method to load
    * the profile it needs to build the principal.
    *
-   * Use `withVerifiedSubject` for identity bootstrap.
+   * There is no remaining caller for which this method is correct. Use:
    *
-   * Callers that genuinely need cross-tenant access (the SS12000 integration
-   * feed and the integration-key guard) are still on this method and are still
-   * affected. Fixing those needs a connection as a role holding BYPASSRLS, or
-   * an explicit set of policies for a service principal — a deployment
-   * decision, not a code change. See docs/verification-baseline.md.
+   *   `withRls`                — a request on behalf of an authenticated user
+   *   `withVerifiedSubject`    — identity bootstrap from a verified JWT subject
+   *   `withServiceKeyLookup`   — resolving an X-API-Key to its school
+   *   `withServicePrincipal`   — the SS12000 service acting for one school
+   *
+   * It is kept only so that any future call site is an explicit, reviewable
+   * choice rather than an accident. If you are reaching for it, one of the four
+   * above is almost certainly what you want.
    */
   async withSystemTransaction<T>(
     fn: (tx: PrismaClient) => Promise<T>,

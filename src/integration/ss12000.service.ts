@@ -13,6 +13,20 @@ import { PrismaService } from '../database/prisma.service';
  * calendarEvents, displayName, groupMemberships, …); see
  * docs/integration-api.md for the exact mapping table.
  */
+/**
+ * Tenancy note: every method runs inside `withServicePrincipal(schoolId, …)`.
+ *
+ * `schoolId` always originates from `IntegrationKeyGuard`, which resolves it
+ * from a hashed `X-API-Key` — never from request input. Inside that
+ * transaction the service-principal RLS policies constrain each statement to
+ * that one school, so the `where: { schoolId }` clauses below are defence in
+ * depth rather than the only thing standing between two tenants: a query that
+ * forgets one returns nothing instead of leaking.
+ *
+ * These methods previously used `withSystemTransaction` on the assumption that
+ * it bypassed RLS. It does not, so every endpoint here returned empty payloads
+ * — which an integrating system reads as "this school has no data".
+ */
 @Injectable()
 export class Ss12000Service {
   private readonly logger = new Logger(Ss12000Service.name);
@@ -26,7 +40,7 @@ export class Ss12000Service {
   }
 
   async organisation(schoolId: string) {
-    return this.prisma.withSystemTransaction(async (tx) => {
+    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
       const school = await tx.school.findUnique({
         where: { id: schoolId },
         select: { id: true, name: true, timezone: true },
@@ -42,7 +56,7 @@ export class Ss12000Service {
 
   async persons(schoolId: string, limit?: string, offset?: string, role?: string) {
     const { take, skip } = this.page(limit, offset);
-    return this.prisma.withSystemTransaction(async (tx) => {
+    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
       const where = {
         schoolId,
         ...(role ? { role: role as never } : {}),
@@ -101,7 +115,7 @@ export class Ss12000Service {
 
   async groups(schoolId: string, limit?: string, offset?: string) {
     const { take, skip } = this.page(limit, offset);
-    return this.prisma.withSystemTransaction(async (tx) => {
+    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
       const where = { schoolId };
       const [totalCount, groups] = await Promise.all([
         tx.studentGroup.count({ where }),
@@ -140,7 +154,7 @@ export class Ss12000Service {
   /** Weekly master timetable as SS12000 activities. */
   async activities(schoolId: string, limit?: string, offset?: string) {
     const { take, skip } = this.page(limit, offset);
-    return this.prisma.withSystemTransaction(async (tx) => {
+    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
       const where = { schoolId, academicYear: { isActive: true } };
       const [totalCount, lessons] = await Promise.all([
         tx.masterLesson.count({ where }),
@@ -200,7 +214,7 @@ export class Ss12000Service {
       throw new BadRequestException('from and to (YYYY-MM-DD) are required.');
     }
     const { take, skip } = this.page(limit, offset);
-    return this.prisma.withSystemTransaction(async (tx) => {
+    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
       const where = {
         schoolId,
         date: {
@@ -277,7 +291,7 @@ export class Ss12000Service {
     if (!Array.isArray(persons) || persons.length === 0 || persons.length > 2000) {
       throw new BadRequestException('persons must be a non-empty array (max 2000).');
     }
-    return this.prisma.withSystemTransaction(async (tx) => {
+    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
       const activeYear = await tx.academicYear.findFirst({
         where: { schoolId, isActive: true },
         select: { id: true },

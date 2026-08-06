@@ -10,6 +10,9 @@ export interface PrismaMock {
   onModuleInit: jest.Mock;
   onModuleDestroy: jest.Mock;
   withRls: jest.Mock;
+  withVerifiedSubject: jest.Mock;
+  withServiceKeyLookup: jest.Mock;
+  withServicePrincipal: jest.Mock;
   withSystemTransaction: jest.Mock;
 }
 
@@ -46,19 +49,32 @@ export function createTxMock(): TxMock {
  * their real transaction bodies without a database.
  */
 export function createPrismaMock(tx: TxMock): PrismaMock {
+  const run = <T>(fn: (client: PrismaClient) => Promise<T>) =>
+    fn(tx as unknown as PrismaClient);
+
   return {
     onModuleInit: jest.fn(),
     onModuleDestroy: jest.fn(),
     withRls: jest.fn(
       <T>(_user: AuthenticatedUser, fn: (client: PrismaClient) => Promise<T>) =>
-        fn(tx as unknown as PrismaClient),
+        run(fn),
     ),
-    withSystemTransaction: jest.fn(
-      <T>(fn: (client: PrismaClient) => Promise<T>) =>
-        fn(tx as unknown as PrismaClient),
+    withVerifiedSubject: jest.fn(
+      <T>(_authId: string, fn: (client: PrismaClient) => Promise<T>) => run(fn),
     ),
+    withServiceKeyLookup: jest.fn(run),
+    withServicePrincipal: jest.fn(
+      <T>(_schoolId: string, fn: (client: PrismaClient) => Promise<T>) =>
+        run(fn),
+    ),
+    withSystemTransaction: jest.fn(run),
   };
 }
+
+// NOTE: these mocks run the callback directly, so a unit test proves the call
+// *shape* and nothing about tenancy. The RLS session variables each real method
+// sets are what actually confine a query, and no mock can exercise them —
+// see scripts/test/rls-policies.sql for the tests that do.
 
 /** Convenience: a fully-populated principal, overridable per test. */
 export function testUser(
