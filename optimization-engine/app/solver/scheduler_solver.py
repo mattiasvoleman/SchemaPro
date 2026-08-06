@@ -7,7 +7,11 @@ from uuid import UUID
 from ortools.sat.python import cp_model
 
 from app.config import Settings
-from app.exceptions import InvalidScheduleInputError, SolverBuildError
+from app.exceptions import (
+    InvalidScheduleInputError,
+    SolverBuildError,
+    SolverTimeoutError,
+)
 from app.schemas.schedule import (
     AnonymousConstraint,
     AnonymousRequirement,
@@ -105,9 +109,19 @@ class SchedulerSolver:
         solver.parameters.max_time_in_seconds = self._settings.solver_max_time_seconds
 
         status_code = solver.Solve(model)
-        status = self._map_status(status_code)
 
-        if status == "INFEASIBLE":
+        if status_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return OptimizeScheduleResponse(
+                request_id=request.request_id,
+                status=self._map_status(status_code),
+                lessons=self._extract_lessons(solver, decisions, rooms),
+                conflicts=None,
+            )
+
+        # Only a genuine CP-SAT INFEASIBLE proves no timetable exists. The
+        # gateway treats INFEASIBLE as final and writes no lessons, so every
+        # other terminal status has to surface as an error instead.
+        if status_code == cp_model.INFEASIBLE:
             return OptimizeScheduleResponse(
                 request_id=request.request_id,
                 status="INFEASIBLE",
@@ -115,17 +129,16 @@ class SchedulerSolver:
                 conflicts=build_conflict_analysis(solver, registry),
             )
 
-        if status_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            msg = "Solver terminated without a usable schedule."
-            raise SolverBuildError(msg)
+        if status_code == cp_model.UNKNOWN:
+            msg = (
+                "Solver found no schedule within "
+                f"{self._settings.solver_max_time_seconds}s and could not prove "
+                "the request infeasible."
+            )
+            raise SolverTimeoutError(msg)
 
-        lessons = self._extract_lessons(solver, decisions, rooms)
-        return OptimizeScheduleResponse(
-            request_id=request.request_id,
-            status=status,
-            lessons=lessons,
-            conflicts=None,
-        )
+        msg = f"Solver terminated without a usable schedule (status {status_code})."
+        raise SolverBuildError(msg)
 
     def _validate_request(self, request: OptimizeScheduleRequest) -> None:
         if not request.requirements:
@@ -895,11 +908,8 @@ class SchedulerSolver:
 
     @staticmethod
     def _map_status(status_code: int) -> SolverStatus:
-        if status_code == cp_model.OPTIMAL:
-            return "OPTIMAL"
-        if status_code == cp_model.FEASIBLE:
-            return "FEASIBLE"
-        return "INFEASIBLE"
+        """Map a solved-with-a-solution CP-SAT status. Callers handle the rest."""
+        return "OPTIMAL" if status_code == cp_model.OPTIMAL else "FEASIBLE"
 
 
 def _hhmmss_to_minutes(value: str) -> int:

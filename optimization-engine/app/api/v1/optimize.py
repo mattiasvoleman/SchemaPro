@@ -5,8 +5,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.config import Settings, get_settings
-from app.dependencies import verify_api_key
+from app.config import Settings
+from app.dependencies import get_app_settings, verify_api_key
 from app.logging_config import get_logger
 from app.schemas.schedule import OptimizeScheduleRequest, OptimizeScheduleResponse
 from app.solver.scheduler_solver import SchedulerSolver
@@ -49,7 +49,7 @@ async def run_solver(
 )
 async def optimize_schedule(
     payload: OptimizeScheduleRequest,
-    settings: Settings = Depends(get_settings),
+    settings: Settings = Depends(get_app_settings),
 ) -> OptimizeScheduleResponse:
     """Accept anonymized scheduling demand and return a weekly master timetable."""
     logger.info(

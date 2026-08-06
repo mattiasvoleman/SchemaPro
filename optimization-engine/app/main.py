@@ -16,11 +16,12 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.api.v1.optimize import router as optimize_router
 from app.api.v1.optimize import run_solver
 from app.config import Settings, get_settings
-from app.dependencies import verify_api_key
+from app.dependencies import get_app_settings, verify_api_key
 from app.exceptions import (
     InvalidScheduleInputError,
     OptimizationEngineError,
     SolverBuildError,
+    SolverTimeoutError,
     error_payload,
 )
 from app.logging_config import clear_request_context, configure_logging, get_logger
@@ -60,8 +61,8 @@ class SlidingWindowRateLimiter:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    settings = get_settings()
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    settings: Settings = application.state.settings
     configure_logging(settings.log_level)
     logger.info(
         "service_starting",
@@ -73,7 +74,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("service_stopped")
 
 
-def create_legacy_schedule_router(settings: Settings) -> APIRouter:
+def create_legacy_schedule_router() -> APIRouter:
     """NestJS gateway compatibility route (`POST /v1/schedule`)."""
     legacy = APIRouter(prefix="/v1", tags=["legacy"])
 
@@ -84,7 +85,10 @@ def create_legacy_schedule_router(settings: Settings) -> APIRouter:
         include_in_schema=False,
         dependencies=[Depends(verify_api_key)],
     )
-    async def schedule_legacy(payload: OptimizeScheduleRequest) -> OptimizeScheduleResponse:
+    async def schedule_legacy(
+        payload: OptimizeScheduleRequest,
+        settings: Settings = Depends(get_app_settings),
+    ) -> OptimizeScheduleResponse:
         return await run_solver(payload, settings)
 
     return legacy
@@ -160,6 +164,19 @@ def register_exception_handlers(application: FastAPI) -> None:
             content=error_payload(code="SOLVER_BUILD_ERROR", message=str(exc)),
         )
 
+    @application.exception_handler(SolverTimeoutError)
+    async def solver_timeout_handler(
+        request: Request,
+        exc: SolverTimeoutError,
+    ) -> JSONResponse:
+        # 503, not 500: the request was valid and retrying with a larger budget
+        # may succeed. Mirrors the asyncio wait_for ceiling in run_solver.
+        logger.error("solver_timed_out", path=request.url.path, error=str(exc))
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=error_payload(code="SOLVER_TIMEOUT", message=str(exc)),
+        )
+
     @application.exception_handler(OptimizationEngineError)
     async def optimization_engine_handler(
         request: Request,
@@ -196,6 +213,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         docs_url="/docs" if resolved_settings.is_development else None,
         redoc_url="/redoc" if resolved_settings.is_development else None,
     )
+
+    # The single source of truth for this app instance. Handlers read it via the
+    # get_app_settings dependency so an explicitly passed Settings is actually
+    # the one the solver path uses, rather than the cached env-backed default.
+    application.state.settings = resolved_settings
 
     application.add_middleware(
         CORSMiddleware,
@@ -246,7 +268,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     register_exception_handlers(application)
     application.include_router(optimize_router)
-    application.include_router(create_legacy_schedule_router(resolved_settings))
+    application.include_router(create_legacy_schedule_router())
 
     @application.get("/health", tags=["health"])
     async def healthcheck() -> dict[str, str]:
