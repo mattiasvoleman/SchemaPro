@@ -899,8 +899,8 @@ export default function TimetablePage() {
     toast.success(t("icsExported", { count: filtered.length }));
   };
 
-  const doExportPdf = () => {
-    exportTimetablePdf({
+  const doExportPdf = async () => {
+    await exportTimetablePdf({
       title: t("title"),
       subtitle: activeYear?.name,
       dayNames: [1, 2, 3, 4, 5, 6, 7].map((day) => tDays(String(day))),
