@@ -15,7 +15,13 @@ RoomTypeKind = Literal[
     "WORKSHOP",
     "OTHER",
 ]
-SolverStatus = Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE"]
+# INFEASIBLE is a *proof*: CP-SAT searched the whole space and showed no
+# timetable exists. TIMEOUT means the solver ran out of wall-clock budget
+# without finding a schedule and without proving anything — the same request
+# may well succeed with a larger SOLVER_MAX_TIME_SECONDS. The two must never
+# be conflated: only INFEASIBLE justifies telling a school its requirements
+# are impossible, and only INFEASIBLE carries a conflict analysis.
+SolverStatus = Literal["OPTIMAL", "FEASIBLE", "INFEASIBLE", "TIMEOUT"]
 ConflictCategory = Literal[
     "REQUIREMENT_DEMAND",
     "TEACHER_OVERLAP",

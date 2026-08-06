@@ -353,3 +353,194 @@ def test_lunch_break_rule_is_enforced(client: TestClient) -> None:
                 found_window = True
                 break
         assert found_window, f"no 45-min lunch window on day {day}: {sorted(intervals)}"
+
+
+# ---------------------------------------------------------------------------
+# Solver status semantics
+#
+# "INFEASIBLE" is a proof and must stay one. A solve that merely ran out of
+# wall-clock time proves nothing, so it reports "TIMEOUT" and carries no
+# conflict analysis — a conflict core read off an unfinished search would name
+# conflicts that need not exist.
+# ---------------------------------------------------------------------------
+
+
+def _oversubscribed_payload() -> dict[str, object]:
+    """A payload that is provably impossible: one group needs 160 h of a 50 h week.
+
+    The single student group must attend 40 lessons of 240 minutes (9600 min)
+    but the grid only offers 5 days x 600 min = 3000 min, so the group's
+    no-overlap constraint is violated by simple energy reasoning. CP-SAT
+    refutes this at presolve, well inside the default time budget.
+    """
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 40  # type: ignore[index]
+    requirement["minutesPerLesson"] = 240  # type: ignore[index]
+    return payload
+
+
+def _large_feasible_payload() -> dict[str, object]:
+    """A satisfiable but slow-to-build payload: 30 self-contained groups.
+
+    Every group has its own teacher and its own room, so a schedule always
+    exists — whatever the solver reports, it can never legitimately be
+    INFEASIBLE.
+    """
+    room_ids = [str(uuid4()) for _ in range(30)]
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": str(uuid4()),
+                "subjectId": str(uuid4()),
+                "studentGroupId": str(uuid4()),
+                "teacherId": str(uuid4()),
+                "lessonsPerWeek": 3,
+                "minutesPerLesson": 60,
+                "studentGroupSize": 24,
+            }
+            for _ in range(30)
+        ],
+        "rooms": [{"id": room_id, "capacity": 30} for room_id in room_ids],
+        "constraints": [],
+    }
+
+
+def _cp_model_status(name: str) -> int:
+    from ortools.sat.python import cp_model
+
+    return int(getattr(cp_model, name))
+
+
+def _patch_solve_status(monkeypatch: pytest.MonkeyPatch, status_code: int) -> None:
+    """Force CpSolver.Solve to return a specific CP-SAT status code.
+
+    Timeouts are wall-clock dependent, so faking the status is the only way to
+    assert the mapping deterministically.
+    """
+    from app.solver import scheduler_solver as solver_module
+
+    def _fake_solve(self, model, solution_callback=None):  # type: ignore[no-untyped-def]  # noqa: ANN001, ANN202, ARG001
+        return status_code
+
+    monkeypatch.setattr(solver_module.cp_model.CpSolver, "Solve", _fake_solve)
+
+
+def test_map_status_only_reports_infeasible_when_cp_sat_proved_it() -> None:
+    from ortools.sat.python import cp_model
+
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    assert SchedulerSolver._map_status(cp_model.OPTIMAL) == "OPTIMAL"
+    assert SchedulerSolver._map_status(cp_model.FEASIBLE) == "FEASIBLE"
+    assert SchedulerSolver._map_status(cp_model.INFEASIBLE) == "INFEASIBLE"
+    # The regression: UNKNOWN is "we ran out of time", not "it is impossible".
+    assert SchedulerSolver._map_status(cp_model.UNKNOWN) == "TIMEOUT"
+
+
+def test_proven_infeasible_reports_infeasible_with_conflicts(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/optimize",
+        json=_oversubscribed_payload(),
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "INFEASIBLE"
+    assert body["lessons"] == []
+    # A proof happened, so the school gets an explanation.
+    assert body["conflicts"] is not None
+    assert len(body["conflicts"]["conflicts"]) >= 1
+    assert body["conflicts"]["summary"]
+
+
+def test_timed_out_solve_reports_timeout_not_infeasible(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_solve_status(monkeypatch, _cp_model_status("UNKNOWN"))
+    response = client.post(
+        "/api/v1/optimize",
+        json=_sample_payload(),
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "TIMEOUT"
+    assert body["lessons"] == []
+
+
+def test_timed_out_solve_never_builds_a_conflict_analysis(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No assumption was proven guilty, so no conflict core may be reported."""
+    from app.solver import scheduler_solver as solver_module
+
+    def _explode(*args: object, **kwargs: object) -> None:
+        msg = "conflict analysis must not run on an unproven (timed-out) solve"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(solver_module, "build_conflict_analysis", _explode)
+    _patch_solve_status(monkeypatch, _cp_model_status("UNKNOWN"))
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=_sample_payload(),
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    assert response.json()["conflicts"] is None
+
+
+def test_invalid_model_is_a_server_error_not_infeasible(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MODEL_INVALID is our bug, not the school's — never a scheduling verdict."""
+    _patch_solve_status(monkeypatch, _cp_model_status("MODEL_INVALID"))
+    response = client.post(
+        "/api/v1/optimize",
+        json=_sample_payload(),
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 500
+    assert response.json()["code"] == "SOLVER_BUILD_ERROR"
+
+
+def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end guard on a real solve with a 1 ms budget.
+
+    The payload is satisfiable by construction, so INFEASIBLE is always a lie
+    here no matter how fast the machine is — and conflicts may only ever
+    accompany a proof. Before the fix this returned INFEASIBLE plus a conflict
+    analysis read off an unfinished search.
+
+    The budget is set through the environment because the request handler
+    resolves its Settings via the cached get_settings() dependency, not from
+    the Settings instance handed to create_app().
+    """
+    monkeypatch.setenv("SOLVER_MAX_TIME_SECONDS", "0.001")
+    get_settings.cache_clear()
+    try:
+        settings = Settings(
+            API_KEY="test-api-key-000000000000000000000000",
+            ALLOWED_ORIGINS="http://testserver",
+            SCHEDULE_DAYS="1,2,3,4,5",
+        )
+        impatient_client = TestClient(create_app(settings))
+        response = impatient_client.post(
+            "/api/v1/optimize",
+            json=_large_feasible_payload(),
+            headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] != "INFEASIBLE"
+        assert body["conflicts"] is None
+    finally:
+        get_settings.cache_clear()

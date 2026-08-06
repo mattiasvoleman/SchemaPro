@@ -164,6 +164,11 @@ export default function GeneratePage() {
   };
 
   const solverStatus = job?.status === "SUCCEEDED" ? job.solverStatus : null;
+  // Both verdicts mean "no timetable came back", but only INFEASIBLE is a
+  // proof — TIMEOUT just means the solver needs more time, so it gets its own
+  // hint and never claims the requirements are impossible.
+  const noScheduleProduced =
+    solverStatus === "INFEASIBLE" || solverStatus === "TIMEOUT";
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -324,7 +329,7 @@ export default function GeneratePage() {
         <Card className="mt-6">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              {job.status === "FAILED" || solverStatus === "INFEASIBLE" ? (
+              {job.status === "FAILED" || noScheduleProduced ? (
                 <AlertTriangle className="h-5 w-5 text-warning" />
               ) : (
                 <CheckCircle2 className="h-5 w-5 text-success" />
@@ -340,7 +345,7 @@ export default function GeneratePage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {job.status === "SUCCEEDED" && solverStatus !== "INFEASIBLE" ? (
+            {job.status === "SUCCEEDED" && !noScheduleProduced ? (
               <>
                 <Badge variant="success">
                   {t("lessonsGenerated", { count: job.lessonsGenerated })}
@@ -358,6 +363,8 @@ export default function GeneratePage() {
 
             {solverStatus === "INFEASIBLE" ? (
               <p className="text-sm text-muted-foreground">{t("infeasibleHint")}</p>
+            ) : solverStatus === "TIMEOUT" ? (
+              <p className="text-sm text-muted-foreground">{t("timeoutHint")}</p>
             ) : null}
 
             {job.conflicts.length > 0 ? (
@@ -412,7 +419,8 @@ export default function GeneratePage() {
                   <span className="flex items-center gap-2">
                     {run.status === "FAILED" ? (
                       <Badge variant="destructive">{run.status}</Badge>
-                    ) : run.solverStatus === "INFEASIBLE" ? (
+                    ) : run.solverStatus === "INFEASIBLE" ||
+                      run.solverStatus === "TIMEOUT" ? (
                       <Badge variant="warning">{run.solverStatus}</Badge>
                     ) : (
                       <Badge variant="success">{run.solverStatus ?? run.status}</Badge>

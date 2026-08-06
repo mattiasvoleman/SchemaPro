@@ -414,9 +414,12 @@ export class OptimizationProxyService {
     requirementAnonMap: Map<string, string>,
     roomAnonMap: Map<string, string>,
   ): Promise<void> {
-    if (response.status === 'INFEASIBLE') {
+    // Neither verdict yields lessons, so both must bail out *before* the
+    // delete-and-recreate below — otherwise a run that produced nothing would
+    // wipe the school's existing unlocked timetable.
+    if (response.status === 'INFEASIBLE' || response.status === 'TIMEOUT') {
       this.logger.warn(
-        `AI engine returned INFEASIBLE for academicYearId=${academicYearId}. No master lessons written.`,
+        `AI engine returned ${response.status} for academicYearId=${academicYearId}. No master lessons written.`,
       );
       return;
     }

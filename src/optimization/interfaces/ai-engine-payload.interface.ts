@@ -148,7 +148,13 @@ export interface AiEngineConflictAnalysis {
 
 export interface AiEngineScheduleResponse {
   requestId: string;
-  status: 'FEASIBLE' | 'INFEASIBLE' | 'OPTIMAL';
+  /**
+   * INFEASIBLE means the engine *proved* no timetable exists (and only then is
+   * `conflicts` populated). TIMEOUT means the solver ran out of time without
+   * finding one — nothing was proven and the same request may succeed with a
+   * longer engine budget. Both yield an empty `lessons` array.
+   */
+  status: 'FEASIBLE' | 'INFEASIBLE' | 'OPTIMAL' | 'TIMEOUT';
   lessons: AiEngineLesson[];
   conflicts?: AiEngineConflictAnalysis | null;
 }

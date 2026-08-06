@@ -10,7 +10,7 @@ import type {
 } from './interfaces/ai-engine-payload.interface';
 
 export type JobStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
-export type SolverStatus = 'OPTIMAL' | 'FEASIBLE' | 'INFEASIBLE';
+export type SolverStatus = 'OPTIMAL' | 'FEASIBLE' | 'INFEASIBLE' | 'TIMEOUT';
 
 export interface OptimizationJobView {
   id: string;
