@@ -135,9 +135,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
-      POSTGRES_PASSWORD: ci_local_password
+      POSTGRES_PASSWORD: postgres_local
       JWT_SECRET: ci-benchmark-secret-not-used-anywhere-else
-      AI_ENGINE_API_KEY: ci-local-shared-key
+      JWT_AUDIENCE: schemapro-api
+      # Must be ≥32 chars: Settings.validate_api_key_strength in the solver
+      # rejects anything shorter and the container exits at startup.
+      AI_ENGINE_API_KEY: ci-benchmark-shared-key-not-a-secret-0000
+      # The dev default is 120 req/60s. The benchmark drives ~450 req/s by
+      # design, so without this ~99% of responses are 429 and the run measures
+      # the throttler, not the API. api-latency.mjs fails on >1% non-2xx rather
+      # than reporting the flattering number that produces.
+      THROTTLE_LIMIT: "10000000"
+      DATABASE_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+      DIRECT_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
     steps:
       - uses: actions/checkout@v5
 
@@ -147,6 +157,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm run prisma:generate
 
       # Latency against a mocked Prisma layer is meaningless — the serializable
       # transaction and RLS policy evaluation are the cost being measured, so
@@ -154,19 +165,40 @@ jobs:
       - name: Start stack
         run: docker compose up --build -d --wait
 
-      - name: Seed benchmark data
-        run: docker compose run --rm --entrypoint npm api run db:seed
+      # Seeding runs on the host, not `docker compose run api`. The runtime
+      # image is a hardened production build: it has no writable home
+      # (npm fails with EACCES /home/appuser) and dev dependencies are pruned,
+      # so ts-node and the seed script are not present in it at all.
+      - name: Seed
+        run: npm run db:seed
 
-      - name: Mint benchmark token
-        id: token
+      # Emits the admin authId, an academicYearId and an attendance payload.
+      # Without these the benchmark skips three of its four scenarios and would
+      # report a green pass having measured only /health/ready.
+      - name: Benchmark fixtures
+        id: fixtures
         run: |
-          AUTH_ID=$(docker compose exec -T db psql -U postgres -d schemapro -tAc \
-            "SELECT \"authId\" FROM \"Users\" WHERE \"isActive\" AND role = 'SCHOOL_ADMIN' LIMIT 1")
-          if [ -z "$AUTH_ID" ]; then
-            echo "No seeded SCHOOL_ADMIN found — the seed script must create one." >&2
+          set -euo pipefail
+          docker compose exec -T db psql -U postgres -d schemapro \
+            -v ON_ERROR_STOP=1 -tA -f /dev/stdin \
+            < scripts/bench/fixtures.sql > /tmp/fixtures.txt
+
+          # Keyed, not line-indexed: psql prints a command tag for the
+          # data-modifying statement in the fixture, which shifts line numbers.
+          auth_id="$(sed -n 's/^authId=//p'         /tmp/fixtures.txt)"
+          year_id="$(sed -n 's/^academicYearId=//p' /tmp/fixtures.txt)"
+          body="$(sed -n 's/^writeBody=//p'         /tmp/fixtures.txt)"
+
+          if [ -z "$auth_id" ] || [ -z "$year_id" ] || [ -z "$body" ]; then
+            echo "fixtures incomplete — is the database seeded?" >&2
+            echo "  authId='${auth_id}' year='${year_id}' body='${body}'" >&2
+            cat /tmp/fixtures.txt >&2
             exit 1
           fi
-          echo "token=$(node scripts/bench/mint-token.mjs --sub "$AUTH_ID")" >> "$GITHUB_OUTPUT"
+
+          printf '%s' "$body" > /tmp/write-body.json
+          echo "academic_year=${year_id}" >> "$GITHUB_OUTPUT"
+          echo "token=$(node scripts/bench/mint-token.mjs --sub "$auth_id")" >> "$GITHUB_OUTPUT"
 
       # autocannon is installed --no-save for the same reason as Stryker: its
       # transitive deps carry moderate advisories and it ships nothing.
@@ -175,7 +207,9 @@ jobs:
           npm install --no-save --no-audit --no-fund autocannon@^8 &&
           node scripts/bench/api-latency.mjs
           --url http://localhost:4000
-          --token '${{ steps.token.outputs.token }}'
+          --token '${{ steps.fixtures.outputs.token }}'
+          --academic-year '${{ steps.fixtures.outputs.academic_year }}'
+          --write-body /tmp/write-body.json
           --duration 20 --connections 25
 
       - name: Stack logs

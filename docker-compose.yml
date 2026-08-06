@@ -63,10 +63,13 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       AI_ENGINE_URL: http://solver:8000
-      AI_ENGINE_API_KEY: ${AI_ENGINE_API_KEY:-local-dev-shared-key}
+      AI_ENGINE_API_KEY: ${AI_ENGINE_API_KEY:-local-dev-shared-key-not-a-secret-0000}
       AI_ENGINE_TIMEOUT_MS: ${AI_ENGINE_TIMEOUT_MS:-60000}
-      THROTTLE_TTL_SECONDS: "60"
-      THROTTLE_LIMIT: "120"
+      # Overridable like every other value here. The latency benchmark drives
+      # far more traffic than a dev limit allows, and a run that measures the
+      # throttler instead of the API is worthless — see scripts/bench/.
+      THROTTLE_TTL_SECONDS: ${THROTTLE_TTL_SECONDS:-60}
+      THROTTLE_LIMIT: ${THROTTLE_LIMIT:-120}
     depends_on:
       db:
         condition: service_healthy
@@ -81,7 +84,7 @@ services:
       - "8000:8000"
     environment:
       APP_ENV: production
-      API_KEY: ${AI_ENGINE_API_KEY:-local-dev-shared-key}
+      API_KEY: ${AI_ENGINE_API_KEY:-local-dev-shared-key-not-a-secret-0000}
       ALLOWED_ORIGINS: http://api:4000
       SOLVER_TIMEOUT_SECONDS: ${SOLVER_TIMEOUT_SECONDS:-60}
 
