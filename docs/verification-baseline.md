@@ -15,7 +15,7 @@ wall-clock figures are machine-dependent; CI numbers are the ones that gate.
 
 ## Scorecard
 
-Three of eleven gates pass today. The rest have a harness and a measured number
+Four of eleven gates pass today. The rest have a harness and a measured number
 they are failing against — which is the point: before this work none of them
 could be evaluated at all.
 
@@ -30,7 +30,7 @@ could be evaluated at all.
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✗ 492.5KB worst / 166.9KB floor vs 150KB |
 | Solver, 2,000 students | ✗ payload rejected before solving |
-| Web dependency audit | ✗ 1 critical / 1 high / 1 moderate (jsPDF chain) |
+| Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | — needs a seeded DB (CI only) |
 | Lighthouse LCP/TTI | — not yet run |
 | Web unit coverage | — no harness exists |
@@ -104,16 +104,16 @@ that is a separate piece of work, not a coverage push.
 
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
-| Initial gzip JS, worst route | ≤ 150KB | **492.5KB** | ✗ |
+| Initial gzip JS, worst route | ≤ 150KB | **355.4KB** | ✗ |
 | Initial gzip JS, best real route | ≤ 150KB | **216.3KB** | ✗ |
-| Shared runtime alone | (within 150KB) | **166.9KB** | ✗ |
+| Shared runtime alone | (within 150KB) | **164.7KB** | ✗ |
 | LCP (Slow 4G) | ≤ 1.2s | not measured | — |
 | TTI | ≤ 1.5s | not measured | — |
 | INP | ≤ 100ms | **not lab-measurable** | — |
 
 `npm run bench:bundle` — 30 routes measured, **every one over budget**.
 
-The decisive number is the third row: at 166.9KB, the Next runtime plus
+The decisive number is the third row: at 164.7KB, the Next runtime plus
 polyfills exceed the entire 150KB budget *before any application code loads*.
 No route can pass this gate by trimming page-level imports alone — the shared
 bundle itself has to change (or the budget has to be restated as, say, per-route
@@ -122,13 +122,12 @@ specifies).
 
 Two concrete leads from the per-chunk breakdown:
 
-1. **jsPDF is eagerly bundled into the timetable page.** A single 146.5KB
-   gzipped chunk (471KB raw) is `jsPDF` + `AutoTable`, and it is referenced by
-   exactly one route — `/[locale]/(app)/admin/timetable` — which is why that
-   route is 492.5KB against ~346KB for its siblings. A `await import("jspdf")`
-   inside the export handler removes it from initial load entirely. This is also
-   the library carrying the critical `dompurify` advisory, so the export path is
-   worth revisiting on both counts.
+1. ~~jsPDF is eagerly bundled into the timetable page.~~ **Fixed.** A single
+   146.5KB gzipped chunk (471KB raw) of `jsPDF` + `AutoTable` sat in the initial
+   payload of exactly one route, making `/[locale]/(app)/admin/timetable`
+   492.5KB against ~346KB for its siblings. Moving it behind
+   `await import("jspdf")` in the export handler took that route to **355.4KB**,
+   a 137KB drop, and back in line with its siblings.
 
 2. **The `(app)` group carries ~130KB more than the `(auth)` group** (346KB vs
    290KB) and the auth pages themselves are 74KB above the shared floor. Worth
@@ -246,7 +245,7 @@ benchmark's own pass/fail check trusts that status.
 | RLS / tenancy policies | no cross-tenant leak | **all assertions pass** | ✓ |
 | API dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
 | Mobile dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
-| Web dependency audit | 0 critical/high/moderate | **1 / 1 / 1** (jsPDF chain) | ✗ |
+| Web dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
 | Solver dependency audit (`pip-audit`) | 0 critical/high/moderate | not measured | — |
 | Semgrep SAST | 0 findings | not measured | — |
 | WCAG 2.1 AA (axe-core) | 0 violations | **0 violations, 10/10 pass** | ✓ |
@@ -275,12 +274,35 @@ Everything non-breaking was applied to the API and mobile packages, taking them
 from 4 high / 6 moderate and 3 high respectively to **zero**: `postcss`,
 `socket.io-parser`, `brace-expansion`, `fast-uri` and `qs`.
 
-Web's three residual advisories are all one dependency chain.
+**All four packages now report 0 / 0 / 0.**
 
-**The `jspdf` chain** — `jspdf` (critical) → `dompurify` (moderate) and
-`jspdf-autotable` (high). Clearing them needs major upgrades (`jspdf` 2 → 4,
-`jspdf-autotable` 3 → 5) that change the PDF export API. That is a code change
-with its own verification, not an `npm audit fix`.
+**The `jspdf` chain — resolved.** `jspdf` (critical) → `dompurify` (moderate)
+and `jspdf-autotable` (high) were the last holdouts, and clearing them meant
+two majors: `jspdf` 2 → 4 and `jspdf-autotable` 3 → 5.
+
+Those majors turned out to be **drop-in for this codebase**, which was not
+obvious in advance and is the reason it needed verifying rather than merging.
+`web/lib/pdf.ts` needed no changes: `autoTable(doc, options)` accepts the same
+options shape, and the undocumented `doc.lastAutoTable.finalY` we rely on for
+multi-table cursor positioning still exists and still advances correctly.
+
+Verified by generating a real PDF through the exact call sequence
+`exportTimetablePdf` uses — three tables, checked `finalY` advanced each time,
+and asserted the output carries a `%PDF-` header at a plausible size — then by
+a full `next build` to confirm the bundler resolves the new export shape.
+
+Worth recording, because it nearly produced a false alarm: `jspdf-autotable` v5
+ships CommonJS with `__esModule: true` and the function on
+`module.exports.default`. A bundler honours that marker, so
+`(await import("jspdf-autotable")).default` is the function and the app code is
+correct. **Node's ESM interop does not** — there the same expression yields
+`module.exports`, and the function sits at `.default.default`. A first attempt
+at the verification script failed with `autoTable is not a function` and looked
+like a broken upgrade; the script was wrong, not the app. Any future Node-side
+probe of a browser-only module needs the same care.
+
+Typecheck does not catch this class of problem: `tsc` passed against both the
+correct and incorrect interop shapes.
 
 **`next` + `sharp` — resolved.** These were briefly held back. `npm audit fix`
 upgrades `next` 16.2.9 → 16.3.0, clearing nine advisories including
