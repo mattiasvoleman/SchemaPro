@@ -1,26 +1,31 @@
-import os
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
-os.environ.setdefault("API_KEY", "test-api-key-000000000000000000000000")
-os.environ.setdefault("ALLOWED_ORIGINS", "http://testserver")
-os.environ.setdefault("SCHEDULE_DAYS", "1,2,3,4,5")
+# conftest.py seeds the environment before this module is imported, which the
+# module-level `app = _default_app()` in app.main needs at import time.
+from app.config import Settings
+from app.main import create_app
 
-from app.config import Settings, get_settings
-from app.main import create_app  # noqa: E402
+API_KEY = "test-api-key-000000000000000000000000"
+
+
+def _settings(**overrides: object) -> Settings:
+    """Settings for a test app. create_app() honours these for every route."""
+    return Settings(
+        **{
+            "API_KEY": API_KEY,
+            "ALLOWED_ORIGINS": "http://testserver",
+            "SCHEDULE_DAYS": "1,2,3,4,5",
+            **overrides,
+        },
+    )
 
 
 @pytest.fixture
 def client() -> TestClient:
-    get_settings.cache_clear()
-    settings = Settings(
-        API_KEY="test-api-key-000000000000000000000000",
-        ALLOWED_ORIGINS="http://testserver",
-        SCHEDULE_DAYS="1,2,3,4,5",
-    )
-    return TestClient(create_app(settings))
+    return TestClient(create_app(_settings()))
 
 
 def _sample_payload() -> dict[str, object]:
@@ -47,6 +52,33 @@ def _sample_payload() -> dict[str, object]:
         "rooms": [
             {"id": room_id, "capacity": 30},
         ],
+        "constraints": [],
+    }
+
+
+def _large_but_satisfiable_payload() -> dict[str, object]:
+    """100 lessons across 8 rooms — comfortably satisfiable, not instant to solve.
+
+    Room capacity is 8 rooms x 50 hour-slots = 400 lesson-slots for 100 lessons,
+    so a solution provably exists; the model is just big enough that a
+    millisecond budget expires before CP-SAT finds one.
+    """
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": str(uuid4()),
+                "subjectId": str(uuid4()),
+                "studentGroupId": str(uuid4()),
+                "teacherId": str(uuid4()),
+                "lessonsPerWeek": 5,
+                "minutesPerLesson": 60,
+                "studentGroupSize": 24,
+            }
+            for _ in range(20)
+        ],
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(8)],
         "constraints": [],
     }
 
@@ -101,6 +133,99 @@ def test_optimize_rejects_oversized_requirements(client: TestClient) -> None:
     assert response.status_code == 422  # schema max_length rejects before solving
 
 
+def test_settings_passed_to_create_app_reach_the_solver() -> None:
+    """create_app()'s Settings must win over the cached env-backed defaults.
+
+    The route used to resolve `Depends(get_settings)` — the lru_cached factory
+    reading os.environ — so everything handed to create_app() (solver budget,
+    grid geometry, objective weights) was silently ignored.
+
+    A Monday-only grid is the sharpest probe: the environment says Mon-Fri, and
+    under Mon-Fri the spread penalty actively pushes the requirement's two
+    lessons onto *different* days. Both landing on Monday is only possible if
+    the SCHEDULE_DAYS handed to create_app() is what the solver actually built.
+    """
+    app = create_app(_settings(SCHEDULE_DAYS="1"))
+    assert app.state.settings.schedule_days == [1]
+
+    response = TestClient(app).post(
+        "/api/v1/optimize",
+        json=_sample_payload(),
+        headers={"X-API-Key": API_KEY},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] in {"OPTIMAL", "FEASIBLE"}
+    assert len(body["lessons"]) == 2
+    assert [lesson["dayOfWeek"] for lesson in body["lessons"]] == [1, 1]
+
+
+def test_provably_infeasible_request_still_reports_infeasible(client: TestClient) -> None:
+    """A genuine impossibility keeps returning INFEASIBLE plus conflict analysis.
+
+    Guards the other side of the timeout fix: only CP-SAT's INFEASIBLE maps to
+    "INFEASIBLE", and it still must.
+    """
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+    # Block the group across the whole grid. 17:45 is the last representable
+    # time (the 18:00 day end is exclusive), leaving only a 15-minute tail —
+    # too short for the 60-minute lesson, so no placement exists.
+    payload["constraints"] = [
+        {
+            "id": str(uuid4()),
+            "resourceKind": "STUDENT_GROUP",
+            "resourceId": requirement["studentGroupId"],  # type: ignore[index]
+            "dayOfWeek": day,
+            "date": None,
+            "startTime": "08:00:00",
+            "endTime": "17:45:00",
+            "kind": "UNAVAILABLE",
+        }
+        for day in (1, 2, 3, 4, 5)
+    ]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": API_KEY},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "INFEASIBLE"
+    assert body["lessons"] == []
+    assert body["conflicts"] is not None
+    assert body["conflicts"]["conflicts"], "infeasible responses must explain why"
+
+
+def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible() -> None:
+    """A budget too small to solve in must not be reported as "no schedule exists".
+
+    CP-SAT returns UNKNOWN when it exhausts its budget without finding a
+    solution — that is not a proof of infeasibility. The gateway treats
+    INFEASIBLE as final and writes no lessons, so conflating the two would tell
+    a school its timetable is impossible when the solver merely ran out of time.
+    """
+    payload = _large_but_satisfiable_payload()
+    headers = {"X-API-Key": API_KEY}
+
+    generous = TestClient(create_app(_settings(SOLVER_MAX_TIME_SECONDS=30.0)))
+    baseline = generous.post("/api/v1/optimize", json=payload, headers=headers)
+    assert baseline.status_code == 200
+    assert baseline.json()["status"] in {"OPTIMAL", "FEASIBLE"}, (
+        "payload must be satisfiable for this test to mean anything"
+    )
+
+    starved = TestClient(create_app(_settings(SOLVER_MAX_TIME_SECONDS=0.001)))
+    response = starved.post("/api/v1/optimize", json=payload, headers=headers)
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["code"] == "SOLVER_TIMEOUT"
+    assert "INFEASIBLE" not in str(body)
+
+
 def test_short_api_key_is_rejected_at_config() -> None:
     with pytest.raises(ValueError, match="at least 32 characters"):
         Settings(API_KEY="too-short", ALLOWED_ORIGINS="http://testserver")
@@ -115,21 +240,24 @@ def test_wildcard_origin_is_rejected_at_config() -> None:
 
 
 def test_rate_limit_returns_429() -> None:
-    get_settings.cache_clear()
-    settings = Settings(
-        API_KEY="test-api-key-000000000000000000000000",
-        ALLOWED_ORIGINS="http://testserver",
-        SCHEDULE_DAYS="1,2,3,4,5",
-        RATE_LIMIT_PER_MINUTE=3,
-    )
-    limited_client = TestClient(create_app(settings))
+    limited_client = TestClient(create_app(_settings(RATE_LIMIT_PER_MINUTE=3)))
     # Health is exempt; hit an authed route repeatedly to trip the limiter.
-    headers = {"X-API-Key": "test-api-key-000000000000000000000000"}
+    # The limiter counts requests before routing, so an intentionally invalid
+    # body exercises the window without paying for three real solves.
+    headers = {"X-API-Key": API_KEY}
     statuses = [
-        limited_client.post("/api/v1/optimize", json=_sample_payload(), headers=headers).status_code
+        limited_client.post("/api/v1/optimize", json={"bad": "payload"}, headers=headers).status_code
         for _ in range(5)
     ]
-    assert 429 in statuses
+    # Exactly the configured limit gets through: with the 120/min default from
+    # the environment, all five would have been let past.
+    assert statuses == [422, 422, 422, 429, 429]
+
+
+def test_rate_limit_exempts_health() -> None:
+    limited_client = TestClient(create_app(_settings(RATE_LIMIT_PER_MINUTE=1)))
+    statuses = [limited_client.get("/health").status_code for _ in range(3)]
+    assert statuses == [200, 200, 200]
 
 
 def test_fixed_lessons_block_shared_resources(client: TestClient) -> None:
@@ -510,9 +638,7 @@ def test_invalid_model_is_a_server_error_not_infeasible(
     assert response.json()["code"] == "SOLVER_BUILD_ERROR"
 
 
-def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible() -> None:
     """End-to-end guard on a real solve with a 1 ms budget.
 
     The payload is satisfiable by construction, so INFEASIBLE is always a lie
@@ -520,27 +646,25 @@ def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible(
     accompany a proof. Before the fix this returned INFEASIBLE plus a conflict
     analysis read off an unfinished search.
 
-    The budget is set through the environment because the request handler
-    resolves its Settings via the cached get_settings() dependency, not from
-    the Settings instance handed to create_app().
+    The budget is passed straight to `create_app()`. That only works because
+    handlers now resolve configuration through `get_app_settings`; while they
+    still called the lru_cached `get_settings()`, this Settings instance was
+    silently ignored and the test had to set SOLVER_MAX_TIME_SECONDS in the
+    environment and clear the cache around it.
     """
-    monkeypatch.setenv("SOLVER_MAX_TIME_SECONDS", "0.001")
-    get_settings.cache_clear()
-    try:
-        settings = Settings(
-            API_KEY="test-api-key-000000000000000000000000",
-            ALLOWED_ORIGINS="http://testserver",
-            SCHEDULE_DAYS="1,2,3,4,5",
-        )
-        impatient_client = TestClient(create_app(settings))
-        response = impatient_client.post(
-            "/api/v1/optimize",
-            json=_large_feasible_payload(),
-            headers={"X-API-Key": "test-api-key-000000000000000000000000"},
-        )
-        assert response.status_code == 200
-        body = response.json()
-        assert body["status"] != "INFEASIBLE"
-        assert body["conflicts"] is None
-    finally:
-        get_settings.cache_clear()
+    settings = Settings(
+        API_KEY="test-api-key-000000000000000000000000",
+        ALLOWED_ORIGINS="http://testserver",
+        SCHEDULE_DAYS="1,2,3,4,5",
+        SOLVER_MAX_TIME_SECONDS=0.001,
+    )
+    impatient_client = TestClient(create_app(settings))
+    response = impatient_client.post(
+        "/api/v1/optimize",
+        json=_large_feasible_payload(),
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] != "INFEASIBLE"
+    assert body["conflicts"] is None

@@ -15,6 +15,15 @@ class InvalidScheduleInputError(OptimizationEngineError):
     """Raised when request payload fails business validation."""
 
 
+class SolverTimeoutError(OptimizationEngineError):
+    """Raised when CP-SAT exhausts its budget without proving anything.
+
+    Distinct from INFEASIBLE: the model may well be satisfiable, the solver just
+    ran out of time. Reporting it as INFEASIBLE would tell the gateway that no
+    schedule exists, which it surfaces to the school as a hard failure.
+    """
+
+
 def error_payload(
     *,
     code: str,
