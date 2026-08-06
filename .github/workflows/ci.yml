@@ -160,8 +160,14 @@ jobs:
     timeout-minutes: 25
     env:
       POSTGRES_PASSWORD: postgres_local
+      # docker-compose.yml declares JWT_SECRET with `:?`, so compose refuses to
+      # interpolate the file without it — even though only the `db` service is
+      # started here and nothing reads it.
       JWT_SECRET: ci-rls-secret-not-used-anywhere-else
-      AI_ENGINE_API_KEY: ci-local-shared-key
+      # Migrations run as the owner; the RLS assertions then connect as
+      # app_authenticated, which is the whole point of the gate.
+      DATABASE_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+      DIRECT_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
     steps:
       - uses: actions/checkout@v5
 
@@ -178,14 +184,27 @@ jobs:
       # bugs shipped behind that blind spot: missing table grants, an identity
       # lookup returning zero rows under RLS, and the SS12000 API silently
       # returning empty payloads. All three are asserted against here.
-      - name: Start database and apply migrations
-        run: docker compose up -d --wait db migrate
+      #
+      # Postgres only. Migrations and seeding run from the host rather than
+      # through the `migrate` compose service, for two reasons:
+      #
+      #   1. `docker compose up --wait db migrate` does NOT wait for a one-shot
+      #      container to *finish* — only to be running. Nothing here depends on
+      #      migrate's completion the way the `api` service does
+      #      (`condition: service_completed_successfully`), so the seed raced
+      #      ahead of the migrations and failed with
+      #      "The column `requiresApproval` does not exist in the current
+      #      database" — a table from the initial migration, a column from a
+      #      later one. It passed locally purely because the apply won the race.
+      #   2. Using the compose service means building the whole API image just
+      #      to run `prisma migrate deploy`, which the host can do directly.
+      - name: Start database
+        run: docker compose up -d --wait db
 
-      - name: Seed
-        run: npm run db:seed
-        env:
-          DATABASE_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
-          DIRECT_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+      - name: Apply migrations and seed
+        run: |
+          npm run migrate:deploy
+          npm run db:seed
 
       - name: RLS policy assertions
         run: ./scripts/test/run-rls-tests.sh
