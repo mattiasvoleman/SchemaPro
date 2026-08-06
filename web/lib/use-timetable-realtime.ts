@@ -8,9 +8,15 @@
 // timetable whenever any collaborator changes it.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/utils/supabase/client";
+
+// socket.io-client is ~12.9KB gzipped and only the timetable editor uses it.
+// Importing it lazily inside the effect keeps it out of that route's initial
+// payload — the connection is established after mount anyway, so nothing waits
+// on it that was not already waiting. `import type` above erases at compile
+// time and costs nothing.
 
 export interface TimetablePeer {
   userId: string;
@@ -39,6 +45,11 @@ export function useTimetableRealtime(): {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
       if (!token || cancelled) return;
+
+      const { io } = await import("socket.io-client");
+      // The dynamic import is a second await point, so re-check: the component
+      // may have unmounted while the chunk was in flight.
+      if (cancelled) return;
 
       socket = io(API_BASE_URL, {
         transports: ["websocket"],
