@@ -287,7 +287,25 @@ Everything non-breaking was applied to the API and mobile packages, taking them
 from 4 high / 6 moderate and 3 high respectively to **zero**: `postcss`,
 `socket.io-parser`, `brace-expansion`, `fast-uri` and `qs`.
 
-**All four packages now report 0 / 0 / 0.**
+**All four packages now report 0 / 0 / 0** — the three npm packages and the
+solver's Python dependencies.
+
+**The solver's Python chain — resolved.** `pip-audit --strict` reported 11
+advisories across two transitively-pinned packages: `starlette 0.41.3` (nine)
+and `protobuf 5.26.1` (two). Neither is a direct dependency — they arrive via
+`fastapi` and `ortools`, both of which were pinned to exact versions well
+behind their parents' current releases.
+
+Clearing all nine starlette advisories needs **≥1.3.1**, which is a major-line
+jump from 0.41. It was viable because modern `fastapi` declares
+`starlette>=0.46.0` with no upper bound. Verified in a `python:3.12-slim`
+container matching CI — 23/23 engine tests pass on starlette 1.4.1 — and again
+by rebuilding the production image, which runs `python:3.11-slim`, and
+confirming `/health` responds.
+
+One advisory was self-inflicted along the way: an arbitrarily chosen
+`pydantic-settings 2.13.0` carried GHSA-4xgf-cpjx-pc3j, caught by re-running
+the audit after the first upgrade pass rather than assuming it was done.
 
 **The `jspdf` chain — resolved.** `jspdf` (critical) → `dompurify` (moderate)
 and `jspdf-autotable` (high) were the last holdouts, and clearing them meant

@@ -1,21 +1,21 @@
 # Core framework
-fastapi==0.115.6
-uvicorn[standard]==0.32.1
+fastapi==0.141.1
+uvicorn[standard]==0.39.0
 python-multipart==0.0.32
 
 # Data validation
-pydantic==2.10.4
-pydantic-settings==2.7.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
 
 # OR-Tools — CP-SAT solver
-ortools==9.11.4210
+ortools==9.15.6755
 
 # Structured logging
-structlog==24.4.0
+structlog==25.5.0
 
 # HTTP server extras (for production)
-httptools==0.6.4
-uvloop==0.21.0
+httptools==0.7.1
+uvloop==0.22.1
 
 # Utilities
 python-dotenv==1.2.2
