@@ -24,6 +24,19 @@ optimization-engine/coverage.xml
 .claude/worktrees/
 .claude/settings.local.json
 
+# iCloud Drive conflict copies ("migration 2.sql", "pdf 3.ts").
+#
+# This repo currently lives under ~/Desktop, which iCloud syncs. During heavy
+# file churn iCloud duplicates files with a " N" suffix; four of them reached
+# committed history once, including one inside a Prisma migration directory.
+# It has also corrupted .git/refs, which breaks GitHub Desktop.
+#
+# The real fix is to move the repo out of the synced folder. Until then this
+# keeps the copies out of commits. Verified against the tree: no legitimate
+# file matches this pattern.
+* [0-9].*
+* [0-9]
+
 # OS / editor
 .DS_Store
 *.log
