@@ -30,7 +30,7 @@ could be evaluated at all.
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✗ 492.5KB worst / 166.9KB floor vs 150KB |
 | Solver, 2,000 students | ✗ payload rejected before solving |
-| Web dependency audit | ✗ 1 critical / 3 high / 1 moderate |
+| Web dependency audit | ✗ 1 critical / 1 high / 1 moderate (jsPDF chain) |
 | API P99 latency | — needs a seeded DB (CI only) |
 | Lighthouse LCP/TTI | — not yet run |
 | Web unit coverage | — no harness exists |
@@ -144,7 +144,7 @@ same 100ms threshold as the closest lab proxy. Actually gating the real INP ≤
 does not exist yet, so this row cannot be honestly closed by CI alone.
 
 LCP and TTI need a Lighthouse run against the built app; the build now succeeds
-(on pinned next 16.2.9) so these are unblocked — `npm run bench:lighthouse`.
+so these are unblocked — `npm run bench:lighthouse`.
 
 ## Backend / solver
 
@@ -246,7 +246,7 @@ benchmark's own pass/fail check trusts that status.
 | RLS / tenancy policies | no cross-tenant leak | **all assertions pass** | ✓ |
 | API dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
 | Mobile dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
-| Web dependency audit | 0 critical/high/moderate | **1 / 3 / 1** | ✗ |
+| Web dependency audit | 0 critical/high/moderate | **1 / 1 / 1** (jsPDF chain) | ✗ |
 | Solver dependency audit (`pip-audit`) | 0 critical/high/moderate | not measured | — |
 | Semgrep SAST | 0 findings | not measured | — |
 | WCAG 2.1 AA (axe-core) | 0 violations | **0 violations, 10/10 pass** | ✓ |
@@ -275,48 +275,32 @@ Everything non-breaking was applied to the API and mobile packages, taking them
 from 4 high / 6 moderate and 3 high respectively to **zero**: `postcss`,
 `socket.io-parser`, `brace-expansion`, `fast-uri` and `qs`.
 
-Web's five residual advisories split into two independent problems.
+Web's three residual advisories are all one dependency chain.
 
 **The `jspdf` chain** — `jspdf` (critical) → `dompurify` (moderate) and
 `jspdf-autotable` (high). Clearing them needs major upgrades (`jspdf` 2 → 4,
 `jspdf-autotable` 3 → 5) that change the PDF export API. That is a code change
 with its own verification, not an `npm audit fix`.
 
-**`next` + `sharp` (both high) are a deliberate, documented trade.** `npm audit
-fix` upgrades `next` 16.2.9 → 16.3.0, clearing nine advisories — including
-GHSA-6gpp-xcg3-4w24, a middleware/proxy bypass specific to App Router apps using
-Turbopack with a single locale, which describes this app exactly. But on 16.3.0
-with next-intl 4.13.1 the production build **fails**:
+**`next` + `sharp` — resolved.** These were briefly held back. `npm audit fix`
+upgrades `next` 16.2.9 → 16.3.0, clearing nine advisories including
+GHSA-6gpp-xcg3-4w24, a middleware/proxy bypass specific to App Router apps
+using Turbopack with a single locale, which describes this app exactly. But on
+16.3.0 with **next-intl 4.13.1** the production build died in page-data
+collection with `TypeError: Cannot read properties of undefined (reading
+'validationLevel')` — after compilation and typechecking had both passed, and
+with no stack frame in application code.
 
-```
-✓ Compiled successfully in 86.9min
-  Running TypeScript ...
-  Finished TypeScript in 10.4min ...
-  Collecting page data using 7 workers ...
+The cause was a version skew, not a Next.js regression: `validationLevel`
+appears in `next/dist/server/config-schema.js` only in 16.3.0, so it became a
+recognised `next.config` option in that release, and next-intl 4.13.1's plugin
+wrapper did not supply it. **next-intl 4.13.3+ does.** The pin is gone; `web`
+now runs `next ^16.3.0` with `next-intl ^4.13.5`, the build succeeds, and both
+`next` and `sharp` are clear.
 
-> Build error occurred
-TypeError: Cannot read properties of undefined (reading 'validationLevel')
-```
-
-Compilation and typechecking both pass; the failure is in page-data collection,
-with no stack frame in application code — which is exactly why this is easy to
-land without noticing.
-
-Narrowed down by diffing the two installed trees: `validationLevel` appears in
-`next/dist/server/config-schema.js` **only in 16.3.0** (zero occurrences in
-16.2.9), so it became a recognised `next.config` option in that release. The
-consumer is `next/dist/server/app-render/instant-validation/instant-config.js`
-(present in both versions), which handles an `instantConfig` object. So 16.3.0
-reads `<something>.validationLevel` during page-data collection and that object
-is undefined for this project — most likely a config block next-intl's
-`createNextIntlPlugin` wrapper drops, or one Next fails to default when absent.
-
-`next` is therefore **pinned to the exact version `16.2.9`** in
-`web/package.json` (not a caret range) so `npm install` cannot drift back into a
-broken build. Reverting also reverts `sharp`, which is why two high advisories
-reappear. Shipping a working build with two known advisories beat shipping no
-build at all, but this is a temporary position, not a resolution — resolving it
-means finding the next-intl/Next 16.3 incompatibility and unpinning.
+Worth keeping in mind for the next upgrade: nothing short of a full `npm run
+build` catches this class of failure. Compile and typecheck both pass on the
+broken combination.
 
 Note on tooling: Stryker, autocannon and `@lhci/cli` are **not** committed
 devDependencies. Each carries transitive advisories (`typed-rest-client` → `qs`,
@@ -325,12 +309,6 @@ that would fail this gate on tools which ship nothing to users. They install
 on demand — see the `test:mutation`, `bench:latency` and `lighthouse` scripts —
 so `npm audit` can stay at zero tolerance instead of needing an exception list.
 
-Note on tooling: Stryker, autocannon and `@lhci/cli` are **not** committed
-devDependencies. Each carries transitive advisories (`typed-rest-client` → `qs`,
-`hyperid`/`uuid`, and `lighthouse` → `@sentry/node` → `cookie` respectively)
-that would fail this gate on tools which ship nothing to users. They install
-on demand — see the `test:mutation`, `bench:latency` and `lighthouse` scripts —
-so `npm audit` can stay at zero tolerance instead of needing an exception list.
 
 The browser suites are written and enumerate cleanly (31 tests: 6 smoke, 9
 a11y, 16 visual across desktop and mobile viewports) but have never executed,
@@ -344,11 +322,6 @@ violations", and that is all CI should be read as claiming.
 ---
 
 ## Known blockers
-
-1. **`next` is pinned to 16.2.9** because 16.3.0 breaks the build (see the
-   security section). Do not run `npm audit fix` in `web/` without re-verifying
-   `npm run build` — it will re-upgrade `next` and silently break the build,
-   since compilation and typechecking both still pass.
 
 2. **Builds are slow here.** `next build` took 87 minutes to compile plus 10
    minutes of typechecking on this machine, and cold ts-jest compiles take ~100s
