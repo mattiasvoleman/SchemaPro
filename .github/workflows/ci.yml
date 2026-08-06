@@ -30,6 +30,14 @@ jobs:
           node-version: 20
           cache: npm
 
+      # Pin npm explicitly. Node 20 bundles npm 10, but npm 10 and 11 resolve
+      # optional peer dependencies differently and produce mutually incompatible
+      # lockfiles: an npm 11 lock fails npm 10 with "Missing @swc/helpers", and
+      # an npm 10 lock fails npm 11 with "Missing @parcel/watcher-*". Whichever
+      # npm generates the committed lock must be the one CI installs with.
+      - name: Pin npm
+        run: npm install -g npm@11
+
       - name: Install dependencies
         run: npm ci
 
@@ -75,6 +83,14 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: web/package-lock.json
+
+      # Pin npm explicitly. Node 20 bundles npm 10, but npm 10 and 11 resolve
+      # optional peer dependencies differently and produce mutually incompatible
+      # lockfiles: an npm 11 lock fails npm 10 with "Missing @swc/helpers", and
+      # an npm 10 lock fails npm 11 with "Missing @parcel/watcher-*". Whichever
+      # npm generates the committed lock must be the one CI installs with.
+      - name: Pin npm
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: npm ci
@@ -176,6 +192,14 @@ jobs:
           node-version: 20
           cache: npm
 
+      # Pin npm explicitly. Node 20 bundles npm 10, but npm 10 and 11 resolve
+      # optional peer dependencies differently and produce mutually incompatible
+      # lockfiles: an npm 11 lock fails npm 10 with "Missing @swc/helpers", and
+      # an npm 10 lock fails npm 11 with "Missing @parcel/watcher-*". Whichever
+      # npm generates the committed lock must be the one CI installs with.
+      - name: Pin npm
+        run: npm install -g npm@11
+
       - run: npm ci
       - run: npm run prisma:generate
 
@@ -228,6 +252,14 @@ jobs:
           node-version: 20
           cache: npm
 
+      # Pin npm explicitly. Node 20 bundles npm 10, but npm 10 and 11 resolve
+      # optional peer dependencies differently and produce mutually incompatible
+      # lockfiles: an npm 11 lock fails npm 10 with "Missing @swc/helpers", and
+      # an npm 10 lock fails npm 11 with "Missing @parcel/watcher-*". Whichever
+      # npm generates the committed lock must be the one CI installs with.
+      - name: Pin npm
+        run: npm install -g npm@11
+
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -278,6 +310,14 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: mobile/package-lock.json
+
+      # Pin npm explicitly. Node 20 bundles npm 10, but npm 10 and 11 resolve
+      # optional peer dependencies differently and produce mutually incompatible
+      # lockfiles: an npm 11 lock fails npm 10 with "Missing @swc/helpers", and
+      # an npm 10 lock fails npm 11 with "Missing @parcel/watcher-*". Whichever
+      # npm generates the committed lock must be the one CI installs with.
+      - name: Pin npm
+        run: npm install -g npm@11
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
