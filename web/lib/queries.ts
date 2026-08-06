@@ -373,7 +373,7 @@ export interface ConflictDetail {
 export interface OptimizationJob {
   id: string;
   status: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
-  solverStatus: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | null;
+  solverStatus: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "TIMEOUT" | null;
   lessonsGenerated: number;
   conflictSummary: string | null;
   conflicts: ConflictDetail[];

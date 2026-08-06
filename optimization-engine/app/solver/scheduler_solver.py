@@ -105,14 +105,35 @@ class SchedulerSolver:
         solver.parameters.max_time_in_seconds = self._settings.solver_max_time_seconds
 
         status_code = solver.Solve(model)
+
+        # MODEL_INVALID is a bug in model construction, not a property of the
+        # school's data — surface it as a server error instead of dressing it
+        # up as a scheduling verdict.
+        if status_code == cp_model.MODEL_INVALID:
+            msg = f"CP-SAT rejected the generated model: {model.Validate()}"
+            raise SolverBuildError(msg)
+
         status = self._map_status(status_code)
 
+        # Conflict analysis is only meaningful once CP-SAT has *proved*
+        # infeasibility: SufficientAssumptionsForInfeasibility() returns a core
+        # extracted from a completed proof. After a timeout no assumption was
+        # ever proven guilty, so any "explanation" derived from that search
+        # state would name conflicts that need not exist.
         if status == "INFEASIBLE":
             return OptimizeScheduleResponse(
                 request_id=request.request_id,
                 status="INFEASIBLE",
                 lessons=[],
                 conflicts=build_conflict_analysis(solver, registry),
+            )
+
+        if status == "TIMEOUT":
+            return OptimizeScheduleResponse(
+                request_id=request.request_id,
+                status="TIMEOUT",
+                lessons=[],
+                conflicts=None,
             )
 
         if status_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -895,11 +916,24 @@ class SchedulerSolver:
 
     @staticmethod
     def _map_status(status_code: int) -> SolverStatus:
+        """Translate a CP-SAT status into the public API status.
+
+        Only cp_model.INFEASIBLE maps to "INFEASIBLE" — that code means the
+        search space was exhausted and no timetable exists. cp_model.UNKNOWN
+        means the solver hit max_time_in_seconds with nothing found and nothing
+        proven; reporting it as INFEASIBLE would tell a school its requirements
+        are impossible when the real answer is "needs more solver time".
+
+        cp_model.MODEL_INVALID is rejected in solve() before reaching here; it
+        falls through to "TIMEOUT" only as a defensive default.
+        """
         if status_code == cp_model.OPTIMAL:
             return "OPTIMAL"
         if status_code == cp_model.FEASIBLE:
             return "FEASIBLE"
-        return "INFEASIBLE"
+        if status_code == cp_model.INFEASIBLE:
+            return "INFEASIBLE"
+        return "TIMEOUT"
 
 
 def _hhmmss_to_minutes(value: str) -> int:
