@@ -24,7 +24,7 @@ could be evaluated at all.
 | API dependency audit | ✓ pass (0/0/0) |
 | Mobile dependency audit | ✓ pass (0/0/0) |
 | WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
-| Visual regression | ✓ pass (16/16 on Linux baselines) |
+| Visual regression | ✓ pass (16/16 on linux-x64 baselines) |
 | API coverage | ✗ 42.40% vs 95% (ratcheted) |
 | Solver coverage | ✗ 81% vs 95% (ratcheted) |
 | Mutation score | ✗ 66.21% vs 85% |
@@ -540,17 +540,25 @@ known-bad input rather than assumed working:
   too strict and too permissive — then restored.
 - **Solver benchmark**: exits non-zero on the §2 target shape.
 
-Baselines are committed for both platforms — 32 files, 16 `-darwin` and 16
-`-linux` (Playwright's default suffix, so they cannot collide). CI is
-configured with `updateSnapshots: "none"`, so it fails rather than silently
-writing its own; that is what makes a missing baseline a failure instead of a
-free pass.
+Baselines are committed per **platform and CPU architecture** — 32 files, 16
+`-darwin-arm64` and 16 `-linux-x64`. CI is configured with
+`updateSnapshots: "none"`, so it fails rather than silently writing its own;
+that is what makes a missing baseline a failure instead of a free pass.
 
-Regenerate the Linux set in the image matching the pinned Playwright version,
-never on macOS:
+**The architecture suffix is load-bearing.** Playwright's default suffix is the
+platform alone (`-linux`), which is not specific enough: font rasterisation
+differs between CPU architectures. Baselines generated in an **arm64** Linux
+container failed against amd64 CI with a uniform ~1–2% pixel difference on all
+16 screenshots — far past the 0.1% budget, and at a glance indistinguishable
+from a real regression. `snapshotPathTemplate` in playwright.config.ts now
+appends `process.arch`, so a mismatched architecture is a *missing* baseline
+that CI reports loudly, rather than a wrong-renderer comparison.
+
+GitHub's ubuntu-latest runners are **linux-x64**. On Apple Silicon that means
+regenerating under emulation — `--platform linux/amd64` is not optional:
 
 ```
-docker run --rm -v "$PWD:/w" -w /w/web -e CI=1 \
+docker run --rm --platform linux/amd64 -v "$PWD:/w" -w /w/web -e CI=1 \
   -e NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co \
   -e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=placeholder-publishable-key \
   -e NEXT_PUBLIC_API_BASE_URL=http://localhost:4000 \
@@ -561,8 +569,9 @@ docker run --rm -v "$PWD:/w" -w /w/web -e CI=1 \
 ```
 
 `--update-snapshots=all` is required: the config sets `updateSnapshots: "none"`
-under `CI`, and the CLI flag is what overrides it.
+under `CI`, and only the CLI flag overrides it. Always re-run without the flag
+afterwards to confirm the committed files actually match.
 
 Note the side effect — that `npm ci` writes Linux binaries into the shared
-`web/node_modules` mount, leaving the host with `@next/swc-linux-arm64-gnu`
-where the darwin build should be. Run `npm ci` on the host afterwards.
+`web/node_modules` mount, leaving the host with the wrong `@next/swc-*`. Run
+`npm ci` on the host afterwards.

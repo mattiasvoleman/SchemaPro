@@ -27,6 +27,22 @@ export default defineConfig({
   // failed visual gate into a silent pass.
   updateSnapshots: isCI ? "none" : "missing",
 
+  // Playwright's default suffix is the platform only ("-linux"), which is not
+  // specific enough. Font rasterisation differs between CPU architectures, so
+  // baselines generated in an arm64 Linux container fail against amd64 CI with
+  // a uniform ~1-2% pixel difference on every screenshot — well past the 0.1%
+  // budget, and indistinguishable at a glance from a real regression.
+  //
+  // Including process.arch makes that collision impossible: a mismatched
+  // architecture becomes a *missing* baseline, which CI fails on loudly
+  // (updateSnapshots: "none") instead of silently comparing against the wrong
+  // renderer's output.
+  //
+  // GitHub's ubuntu-latest runners are linux-x64. Regenerate with
+  // `--platform linux/amd64` on an Apple Silicon machine — see
+  // docs/verification-baseline.md.
+  snapshotPathTemplate: `{testDir}/{testFileName}-snapshots/{arg}{-projectName}-{platform}-${process.arch}{ext}`,
+
   expect: {
     toHaveScreenshot: {
       // §2: Visual Regression Diff Threshold ≤ 0.1% pixel variance.
