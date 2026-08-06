@@ -1,7 +1,7 @@
 // PDF rendering of the weekly master timetable (one table per weekday).
-
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
+//
+// jspdf + jspdf-autotable are ~124KB gzipped, so they are loaded on demand when
+// the user actually exports rather than being pulled into the page bundle.
 
 export interface PdfLesson {
   dayOfWeek: number; // ISO 1-7
@@ -13,14 +13,19 @@ export interface PdfLesson {
   room: string;
 }
 
-export function exportTimetablePdf(options: {
+export async function exportTimetablePdf(options: {
   title: string;
   subtitle?: string;
   dayNames: string[]; // index 0 = Monday
   columnLabels: { time: string; subject: string; group: string; teacher: string; room: string };
   lessons: PdfLesson[];
   filename?: string;
-}): void {
+}): Promise<void> {
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+    import("jspdf"),
+    import("jspdf-autotable"),
+  ]);
+
   const doc = new jsPDF();
   doc.setFontSize(16);
   doc.text(options.title, 14, 16);
