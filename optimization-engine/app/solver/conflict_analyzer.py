@@ -20,10 +20,34 @@ class AssumptionRecord:
 
 
 class AssumptionRegistry:
-    """Tracks assumption literals for OR-Tools infeasible-core extraction."""
+    """Tracks assumption literals for OR-Tools infeasible-core extraction.
 
-    def __init__(self) -> None:
+    The literal is created either way; what changes is how it is pinned true.
+
+    ``use_assumptions=False`` (the default) fixes it with a unit clause. The
+    feasible set is identical, but the ``CpModel.assumptions`` field stays
+    empty — and that field is expensive. CP-SAT refuses to run multi-threaded
+    while it is populated, and says so in its own log::
+
+        Forcing sequential search as assumptions are not supported in multi-thread.
+        Forcing presolve to keep all feasible solutions in the presence of assumptions.
+        Starting search at 0.80s with 1 workers.
+
+    Because ``_add_capacity_constraints`` registers once per lesson instance, a
+    2,000-student payload carried 3,046 assumption literals and therefore ran on
+    one core, with the weakest search strategy, no LNS portfolio, and
+    solution-losing presolve reductions disabled. On the 250-student benchmark
+    that alone is the difference between TIMEOUT and a valid timetable.
+
+    ``use_assumptions=True`` restores the native behaviour, which is what makes
+    ``SufficientAssumptionsForInfeasibility()`` return a core. The solver builds
+    the model that way only on the INFEASIBLE path, where the diagnosis is the
+    point of the response and the single-threaded cost is worth paying.
+    """
+
+    def __init__(self, *, use_assumptions: bool = False) -> None:
         self._records: list[AssumptionRecord] = []
+        self._use_assumptions = use_assumptions
 
     def register(
         self,
@@ -38,7 +62,12 @@ class AssumptionRegistry:
         resource_ids: list[UUID] | None = None,
     ) -> cp_model.IntVar:
         literal = model.NewBoolVar(name)
-        model.AddAssumption(literal)
+        if self._use_assumptions:
+            model.AddAssumption(literal)
+        else:
+            # Same effect on the feasible set, without populating the
+            # assumptions field. Presolve folds this away.
+            model.AddBoolAnd([literal])
         self._records.append(
             AssumptionRecord(
                 literal=literal,

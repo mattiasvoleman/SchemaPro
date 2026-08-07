@@ -668,3 +668,164 @@ def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible() -> N
     body = response.json()
     assert body["status"] != "INFEASIBLE"
     assert body["conflicts"] is None
+
+
+def _minutes(hhmmss: str) -> int:
+    hours, minutes, _seconds = (int(part) for part in hhmmss.split(":"))
+    return hours * 60 + minutes
+
+
+def test_lessons_never_run_past_the_end_of_their_day() -> None:
+    """A lesson must finish on the day it starts.
+
+    `start` used to range over one contiguous [0, horizon - duration] band
+    covering the whole week, so a 60-minute lesson could begin three slots
+    before 18:00. `_extract_lessons` then reported "17:30-18:30" — past the
+    configured day end — while the model had reserved the teacher, group and
+    room for the *next* morning's opening slots.
+    """
+    from ortools.sat.python import cp_model
+
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    settings = _settings(SOLVER_MAX_TIME_SECONDS=5.0)
+    solver = SchedulerSolver(settings)
+    request = OptimizeScheduleRequest.model_validate(_sample_payload())
+
+    # The domain itself must exclude straddling starts, so no search decision
+    # can produce one. `domain` is a flat [lo, hi, lo, hi, …] bound list.
+    model = cp_model.CpModel()
+    decisions = solver._create_lesson_decisions(
+        model, request.requirements, len(request.rooms),
+    )
+    slots_per_day = solver._grid.slots_per_day
+    for decision in decisions:
+        # Read the domain off the MODEL proto. IntVar.Proto() segfaults the
+        # interpreter in ortools 9.15 rather than raising.
+        bounds = list(model.Proto().variables[decision.start.Index()].domain)
+        # Check EVERY admissible value, not just the interval endpoints: the old
+        # contiguous domain [0, 196] has valid endpoints (0 and 196 both leave
+        # room) while containing 37, 38, 39, 77, … which do not.
+        admissible = [
+            value
+            for lo, hi in zip(bounds[::2], bounds[1::2])
+            for value in range(lo, hi + 1)
+        ]
+        assert admissible, "start variable has an empty domain"
+        for value in admissible:
+            assert value % slots_per_day + decision.duration <= slots_per_day, (
+                f"start {value} leaves only "
+                f"{slots_per_day - value % slots_per_day} slots before the day ends, "
+                f"but the lesson needs {decision.duration}"
+            )
+
+    response = solver.solve(request)
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    day_end = settings.schedule_day_end_minutes
+    for lesson in response.lessons:
+        assert _minutes(lesson.end_time) <= day_end, (
+            f"lesson ends {lesson.end_time}, past the {day_end}-minute day end"
+        )
+        assert _minutes(lesson.start_time) < _minutes(lesson.end_time), (
+            "a lesson that wraps a day boundary decodes to a non-increasing span"
+        )
+
+
+def test_every_group_keeps_a_free_lunch_window() -> None:
+    """The lunch rule survives its re-encoding as a movable interval.
+
+    The interval formulation replaced an existential over candidate lunch
+    starts. This asserts the guarantee at the response level rather than
+    trusting the model: for each group and day, some contiguous window of
+    `lunchMinutes` inside the lunch window must be free of that group's lessons.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    settings = _settings(SOLVER_MAX_TIME_SECONDS=10.0)
+
+    # A 10-hour day fits exactly ten 60-minute lessons, so 50 lessons across a
+    # 5-day week saturates the week to the minute. Demanding a 30-minute break
+    # as well cannot fit — which makes the rule strictly binding, so a test that
+    # passes with the rule removed is proving nothing.
+    # lessonsPerWeek is schema-capped at 40, so the 50 lessons are split across
+    # two requirements that share the group and the teacher — they still cannot
+    # overlap each other.
+    def _payload(total: int, with_lunch: bool) -> dict[str, object]:
+        payload = _sample_payload()
+        first = payload["requirements"][0]  # type: ignore[index]
+        second = {
+            **first,  # type: ignore[dict-item]
+            "id": str(uuid4()),
+            "subjectId": str(uuid4()),
+        }
+        first["lessonsPerWeek"] = total // 2  # type: ignore[index]
+        second["lessonsPerWeek"] = total - total // 2
+        payload["requirements"] = [first, second]
+        if with_lunch:
+            payload["rules"] = {
+                "lunchStartTime": "11:00:00",
+                "lunchEndTime": "13:00:00",
+                "lunchMinutes": 30,
+            }
+        return payload
+
+    solver = SchedulerSolver(settings)
+    packed = solver.solve(OptimizeScheduleRequest.model_validate(_payload(50, False)))
+    assert packed.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(packed.lessons) == 50, "the week should hold exactly 50 lessons"
+
+    constrained = solver.solve(OptimizeScheduleRequest.model_validate(_payload(50, True)))
+    assert constrained.status == "INFEASIBLE", (
+        "50 lessons plus a daily lunch break cannot fit a 5-day, 10-hour week; "
+        "reporting anything else means the lunch rule is not being enforced"
+    )
+
+    # And in the feasible direction: with room to breathe, every day the group
+    # is taught must still leave a contiguous free window inside 11:00-13:00.
+    roomy = _payload(40, True)
+    relaxed = solver.solve(OptimizeScheduleRequest.model_validate(roomy))
+    assert relaxed.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(relaxed.lessons) == 40
+
+    grid = solver._grid
+    window_start = grid.parse_hhmmss("11:00:00")
+    window_end = grid.parse_hhmmss("13:00:00")
+    need = grid.minutes_to_slots(30)
+    duration = grid.minutes_to_slots(60)
+
+    by_day: dict[int, list[tuple[int, int]]] = {}
+    for lesson in relaxed.lessons:
+        start_slot = grid.parse_hhmmss(lesson.start_time)
+        by_day.setdefault(lesson.day_of_week, []).append(
+            (start_slot, start_slot + duration),
+        )
+
+    for day, spans in by_day.items():
+        assert any(
+            all(cand + need <= s or cand >= e for s, e in spans)
+            for cand in range(window_start, window_end - need + 1)
+        ), f"day {day} has no free 30-minute window inside 11:00-13:00"
+
+
+def test_a_feasible_solve_leaves_the_assumptions_field_empty() -> None:
+    """The fast path must not populate CpModel.assumptions.
+
+    CP-SAT refuses to run multi-threaded while that field is non-empty
+    ("Forcing sequential search as assumptions are not supported in
+    multi-thread"), which on a real payload is the difference between a
+    schedule and a timeout. Conflict analysis rebuilds with assumptions on the
+    INFEASIBLE path instead — see the neighbouring conflict tests.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=5.0))
+    request = OptimizeScheduleRequest.model_validate(_sample_payload())
+
+    fast, _, _ = solver._build_model(request, use_assumptions=False)
+    assert list(fast.Proto().assumptions) == []
+
+    explained, registry, _ = solver._build_model(request, use_assumptions=True)
+    assert len(explained.Proto().assumptions) > 0

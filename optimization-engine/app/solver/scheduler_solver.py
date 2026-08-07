@@ -75,11 +75,19 @@ class SchedulerSolver:
             schedule_days=tuple(settings.schedule_days),
         )
 
-    def solve(self, request: OptimizeScheduleRequest) -> OptimizeScheduleResponse:
-        self._validate_request(request)
+    def _build_model(
+        self,
+        request: OptimizeScheduleRequest,
+        *,
+        use_assumptions: bool,
+    ) -> tuple[cp_model.CpModel, AssumptionRegistry, list[LessonDecision]]:
+        """Construct the CP-SAT model. Called twice only on the INFEASIBLE path.
 
+        `use_assumptions` is threaded through to the registry; see its docstring
+        for why the default build keeps CpModel.assumptions empty.
+        """
         model = cp_model.CpModel()
-        registry = AssumptionRegistry()
+        registry = AssumptionRegistry(use_assumptions=use_assumptions)
         rooms = request.rooms
         decisions = self._create_lesson_decisions(model, request.requirements, len(rooms))
 
@@ -100,6 +108,41 @@ class SchedulerSolver:
             *self._add_teacher_gap_objective(model, decisions, weights, day_vars),
         ]
         model.Minimize(sum(objective_terms) if objective_terms else 0)
+        return model, registry, decisions
+
+    def _explain_infeasible(
+        self,
+        request: OptimizeScheduleRequest,
+    ) -> OptimizeScheduleResponse:
+        """Re-solve with assumptions so CP-SAT can name the guilty constraints.
+
+        Only reached once the fast build has already *proved* infeasibility.
+        This second solve is the single-threaded one, which is affordable here:
+        it runs on a payload that has no timetable, where a precise explanation
+        is the whole value of the response.
+
+        If it cannot reproduce the proof within the budget, the verdict still
+        stands — it was proved by the first solve — and the response degrades to
+        an unexplained INFEASIBLE rather than an invented explanation.
+        """
+        model, registry, _ = self._build_model(request, use_assumptions=True)
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = self._settings.solver_max_time_seconds
+        conflicts = None
+        if solver.Solve(model) == cp_model.INFEASIBLE:
+            conflicts = build_conflict_analysis(solver, registry)
+        return OptimizeScheduleResponse(
+            request_id=request.request_id,
+            status="INFEASIBLE",
+            lessons=[],
+            conflicts=conflicts,
+        )
+
+    def solve(self, request: OptimizeScheduleRequest) -> OptimizeScheduleResponse:
+        self._validate_request(request)
+
+        rooms = request.rooms
+        model, registry, decisions = self._build_model(request, use_assumptions=False)
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self._settings.solver_max_time_seconds
@@ -120,13 +163,12 @@ class SchedulerSolver:
         # extracted from a completed proof. After a timeout no assumption was
         # ever proven guilty, so any "explanation" derived from that search
         # state would name conflicts that need not exist.
+        #
+        # The core also requires the assumptions field, which this build leaves
+        # empty so the search can use every core. Explaining the failure means
+        # rebuilding — paid only here, on a payload that has no timetable.
         if status == "INFEASIBLE":
-            return OptimizeScheduleResponse(
-                request_id=request.request_id,
-                status="INFEASIBLE",
-                lessons=[],
-                conflicts=build_conflict_analysis(solver, registry),
-            )
+            return self._explain_infeasible(request)
 
         if status == "TIMEOUT":
             return OptimizeScheduleResponse(
@@ -203,11 +245,28 @@ class SchedulerSolver:
         decisions: list[LessonDecision] = []
         horizon = self._grid.horizon
 
+        slots_per_day = self._grid.slots_per_day
+        day_count = len(self._grid.schedule_days)
+
         for requirement in requirements:
             duration = self._grid.minutes_to_slots(requirement.minutes_per_lesson)
+            # One interval per day, each ending in time for the lesson to finish
+            # before that day does. A single contiguous [0, horizon - duration]
+            # range would also admit starts near a day's end, which put a lesson
+            # across the 18:00 -> 08:00 boundary: reported as e.g. "Monday
+            # 17:30-18:30" (past the configured day end) while the model has
+            # actually reserved the teacher, group and room for Tuesday morning.
+            # _validate_request guarantees duration <= slots_per_day, so every
+            # interval below is non-empty.
+            start_domain = cp_model.Domain.FromIntervals(
+                [
+                    [day * slots_per_day, day * slots_per_day + slots_per_day - duration]
+                    for day in range(day_count)
+                ],
+            )
             for lesson_index in range(requirement.lessons_per_week):
                 lesson = LessonInstance(requirement=requirement, lesson_index=lesson_index)
-                start = model.NewIntVar(0, max(0, horizon - duration), f"start_{lesson.key()}")
+                start = model.NewIntVarFromDomain(start_domain, f"start_{lesson.key()}")
                 end = model.NewIntVar(duration, horizon, f"end_{lesson.key()}")
                 interval = model.NewIntervalVar(start, duration, end, f"interval_{lesson.key()}")
                 model.Add(end == start + duration)
@@ -847,40 +906,48 @@ class SchedulerSolver:
                     "Lunch window is shorter than the required lunch break.",
                 )
 
+            # "There is a contiguous free window of `lunch_slots` inside the
+            # lunch window" is exactly "a mandatory task of that length can be
+            # placed among this group's lessons". Handing that to the
+            # disjunctive propagator as one movable interval per (group, day)
+            # replaces an existential over every candidate start:
+            #
+            #   was:  3 booleans per (group x day x candidate x lesson)
+            #         — 302,400 variables at 2,000 students, 46% of the model
+            #   now:  1 interval per (group, day) — 400 variables
+            #
+            # The old encoding also propagated almost nothing: its final
+            # AddBoolOr over the per-candidate literals could not prune until
+            # every candidate but one had been individually refuted, which needs
+            # the lesson starts nearly fixed. The interval form lets CP-SAT
+            # deduce "these lessons plus a mandatory break do not fit" up front.
+            #
+            # The NoOverlap below spans the group's lessons *and* its lunch
+            # intervals, so it also covers single-lesson groups, which
+            # _add_group_no_overlap skips.
+            slots_per_day = self._grid.slots_per_day
             for group_id, group in by_group.items():
+                lunch_intervals: list[cp_model.IntervalVar] = []
                 for day_index in range(len(self._grid.schedule_days)):
-                    day_offset = day_index * self._grid.slots_per_day
-                    candidates: list[cp_model.IntVar] = []
-                    for cand_start in range(
-                        window_start, window_end - lunch_slots + 1,
-                    ):
-                        abs_start = day_offset + cand_start
-                        abs_end = abs_start + lunch_slots
-                        outside_all: list[cp_model.IntVar] = []
-                        for decision in group:
-                            tag = f"lunch_{group_id}_{day_index}_{cand_start}_{decision.lesson.key()}"
-                            before = model.NewBoolVar(f"b_{tag}")
-                            after = model.NewBoolVar(f"a_{tag}")
-                            outside = model.NewBoolVar(f"o_{tag}")
-                            model.Add(decision.end <= abs_start).OnlyEnforceIf(before)
-                            model.Add(decision.end > abs_start).OnlyEnforceIf(before.Not())
-                            model.Add(decision.start >= abs_end).OnlyEnforceIf(after)
-                            model.Add(decision.start < abs_end).OnlyEnforceIf(after.Not())
-                            model.AddBoolOr([before, after]).OnlyEnforceIf(outside)
-                            model.AddBoolAnd([before.Not(), after.Not()]).OnlyEnforceIf(
-                                outside.Not(),
-                            )
-                            outside_all.append(outside)
-                        free = model.NewBoolVar(
-                            f"lunchfree_{group_id}_{day_index}_{cand_start}",
-                        )
-                        model.AddBoolAnd(outside_all).OnlyEnforceIf(free)
-                        model.AddBoolOr(
-                            [o.Not() for o in outside_all],
-                        ).OnlyEnforceIf(free.Not())
-                        candidates.append(free)
-                    if candidates:
-                        model.AddBoolOr(candidates)
+                    day_offset = day_index * slots_per_day
+                    # Inclusive bounds matching the candidate enumeration this
+                    # replaces: range(window_start, window_end - lunch_slots + 1).
+                    lunch_start = model.NewIntVar(
+                        day_offset + window_start,
+                        day_offset + window_end - lunch_slots,
+                        f"lunchstart_{group_id}_{day_index}",
+                    )
+                    lunch_intervals.append(
+                        model.NewFixedSizeIntervalVar(
+                            lunch_start,
+                            lunch_slots,
+                            f"lunch_{group_id}_{day_index}",
+                        ),
+                    )
+                if lunch_intervals:
+                    model.AddNoOverlap(
+                        [decision.interval for decision in group] + lunch_intervals,
+                    )
 
     @staticmethod
     def _room_allowed(room: AnonymousRoom, requirement: AnonymousRequirement) -> bool:
