@@ -1039,3 +1039,76 @@ def test_room_classes_merge_only_truly_interchangeable_rooms() -> None:
     assert sorted(len(c.room_indices) for c in pinned) == [1, 1, 1, 1], (
         "a distinguished room must become its own singleton class"
     )
+
+
+def test_phase2_failure_returns_the_phase1_schedule_not_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A solver holding a valid timetable must never answer "nothing".
+
+    solve() runs two phases: feasibility (no objective), then optimisation
+    from a hint. If the optimising phase exhausts its budget without a
+    solution, the feasibility schedule is the answer — reported as FEASIBLE,
+    never as phase 1's raw status: a satisfaction solve calls any solution
+    OPTIMAL, which would misstate an objective it never evaluated.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver import scheduler_solver as solver_module
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    real_solve = solver_module.cp_model.CpSolver.Solve
+    calls = {"count": 0}
+
+    def flaky_solve(self, model, solution_callback=None):  # noqa: ANN001, ANN202
+        calls["count"] += 1
+        if calls["count"] == 2:  # the optimising phase
+            return solver_module.cp_model.UNKNOWN
+        return real_solve(self, model)
+
+    monkeypatch.setattr(solver_module.cp_model.CpSolver, "Solve", flaky_solve)
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0))
+    response = solver.solve(OptimizeScheduleRequest.model_validate(_sample_payload()))
+
+    assert calls["count"] == 2, "expected a feasibility solve then an optimising solve"
+    assert response.status == "FEASIBLE"
+    assert len(response.lessons) == 2, "the phase-1 schedule must be returned intact"
+    for lesson in response.lessons:
+        assert lesson.room_id is not None
+
+
+def test_clone_satisfaction_rescues_a_failed_clean_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 1 is a portfolio of two encodings, and the second must be real.
+
+    The objective-free build wins at small sizes but stops converging entirely
+    around 1,000 students, where the cleared-clone encoding solves in ~82s —
+    measured, reproducible, and counterintuitive enough that someone will one
+    day be tempted to delete the "redundant" second encoding. This pins the
+    escalation: when the clean satisfaction solve comes back empty, the clone
+    must still produce a schedule.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver import scheduler_solver as solver_module
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    real_solve = solver_module.cp_model.CpSolver.Solve
+    calls = {"count": 0}
+
+    def flaky_solve(self, model, solution_callback=None):  # noqa: ANN001, ANN202
+        calls["count"] += 1
+        if calls["count"] == 1:  # the clean satisfaction build finds nothing
+            return solver_module.cp_model.UNKNOWN
+        return real_solve(self, model)
+
+    monkeypatch.setattr(solver_module.cp_model.CpSolver, "Solve", flaky_solve)
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0))
+    response = solver.solve(OptimizeScheduleRequest.model_validate(_sample_payload()))
+
+    assert calls["count"] >= 2, "the clone encoding was never tried"
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 2, "the clone-phase schedule must be delivered"
+    for lesson in response.lessons:
+        assert lesson.room_id is not None

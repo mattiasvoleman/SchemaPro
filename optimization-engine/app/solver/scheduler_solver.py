@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import date as date_type
 from uuid import UUID
@@ -85,11 +86,19 @@ class SchedulerSolver:
         request: OptimizeScheduleRequest,
         *,
         use_assumptions: bool,
+        include_objective: bool = True,
     ) -> tuple[cp_model.CpModel, AssumptionRegistry, list[LessonDecision], RoomPlan]:
-        """Construct the CP-SAT model. Called twice only on the INFEASIBLE path.
+        """Construct the CP-SAT model.
 
         `use_assumptions` is threaded through to the registry; see its docstring
         for why the default build keeps CpModel.assumptions empty.
+
+        `include_objective=False` builds the satisfaction model for phase 1.
+        Constraints are identical either way — only the objective terms and
+        their auxiliary variables are omitted. Merely clearing the objective on
+        a clone is NOT equivalent: the auxiliary variables stay behind as free
+        variables, and a few thousand functionally-determined free literals are
+        measurably enough to flip a solvable satisfaction model to UNKNOWN.
         """
         model = cp_model.CpModel()
         registry = AssumptionRegistry(use_assumptions=use_assumptions)
@@ -105,16 +114,21 @@ class SchedulerSolver:
         self._add_availability_constraints(model, registry, decisions, rooms, request.constraints)
         self._add_fixed_lesson_constraints(model, decisions, rooms, request.fixed_lessons)
 
-        weights = self._resolve_weights(request)
         day_vars: dict[str, cp_model.IntVar] = {}
         self._add_rules_constraints(model, decisions, request.rules, day_vars)
-        objective_terms = [
-            *self._add_preference_objective(model, decisions, rooms, request.constraints, weights),
-            *self._add_disruption_objective(model, decisions, request.previous_lessons, weights),
-            *self._add_spread_objective(model, decisions, weights, day_vars),
-            *self._add_teacher_gap_objective(model, decisions, weights, day_vars),
-        ]
-        model.Minimize(sum(objective_terms) if objective_terms else 0)
+        if include_objective:
+            weights = self._resolve_weights(request)
+            objective_terms = [
+                *self._add_preference_objective(
+                    model, decisions, rooms, request.constraints, weights,
+                ),
+                *self._add_disruption_objective(
+                    model, decisions, request.previous_lessons, weights,
+                ),
+                *self._add_spread_objective(model, decisions, weights, day_vars),
+                *self._add_teacher_gap_objective(model, decisions, weights, day_vars),
+            ]
+            model.Minimize(sum(objective_terms) if objective_terms else 0)
         return model, registry, decisions, room_plan
 
     def _explain_infeasible(
@@ -145,59 +159,198 @@ class SchedulerSolver:
             conflicts=conflicts,
         )
 
+    # A phase below this gets no real search done — it is all presolve — so a
+    # smaller remainder is not worth a second solve and the winning phase-1
+    # schedule is returned directly.
+    MIN_PHASE_SECONDS = 0.5
+    # Cap on the objective-free build's slice of phase 1. Beyond mid-size
+    # schools it stops converging at all (>240s at 1,000 students), so letting
+    # it run longer only starves the encoding that does work there.
+    CLEAN_SAT_CAP_SECONDS = 60.0
+
     def solve(self, request: OptimizeScheduleRequest) -> OptimizeScheduleResponse:
+        """Two-phase solve: prove a timetable exists, then improve it.
+
+        A single solve of the optimising model stops producing anything beyond
+        ~400 students: CP-SAT hunts for a first solution of the full objective
+        model and finds none within budget, so the response is TIMEOUT with
+        zero lessons. Splitting existence from quality changes what the budget
+        buys — measured on the benchmark school, one solve vs this method:
+
+            750 students    nothing -> valid timetable well inside 120s
+            1,300 students  nothing -> valid timetable in ~9 min
+
+        Phase 1 proves existence with a SEQUENTIAL PORTFOLIO of two
+        satisfaction encodings, because neither dominates (measured, seconds
+        to first solution):
+
+            students        250    400    500     1000
+            clean build     3.6    8.3   35.4    >240 (fails)
+            cleared clone   9.4   19.5   44.4      82
+
+        The "clean" model is a fresh build without the objective builders; the
+        "clone" is the full model with the objective cleared, which keeps the
+        objective's auxiliary variables as free variables. Intuition says the
+        smaller clean model should always win; at 1,000 students it is the
+        clone that solves and the clean build that fails, reproducibly. So the
+        clean build runs first (capped — see CLEAN_SAT_CAP_SECONDS), and the
+        clone takes the remaining budget if needed. Both share the full
+        model's constraint set exactly, so an INFEASIBLE from either is a real
+        proof, and either schedule already satisfies every hard rule.
+
+        Phase 2 re-solves the full model with every decision hinted to the
+        winning phase-1 values — starting from a solution instead of searching
+        for one — in whatever time remains. If it cannot produce a solution in
+        that remainder, the phase-1 schedule is returned: a solver holding a
+        valid timetable must never answer "nothing". It is reported as
+        FEASIBLE, never as phase 1's raw status — a satisfaction solve calls
+        any solution OPTIMAL, which would misstate an objective it never
+        evaluated.
+        """
         self._validate_request(request)
 
         rooms = request.rooms
-        model, registry, decisions, room_plan = self._build_model(
-            request, use_assumptions=False,
+        model, _, decisions, room_plan = self._build_model(
+            request, use_assumptions=False, include_objective=True,
+        )
+        feas_model, _, feas_decisions, feas_plan = self._build_model(
+            request, use_assumptions=False, include_objective=False,
         )
 
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = self._settings.solver_max_time_seconds
+        total_budget = self._settings.solver_max_time_seconds
+        started = time.monotonic()
 
-        status_code = solver.Solve(model)
+        def _remaining() -> float:
+            return total_budget - (time.monotonic() - started)
+
+        # ---- phase 1a: clean satisfaction build -----------------------------
+        phase1 = cp_model.CpSolver()
+        phase1.parameters.max_time_in_seconds = min(
+            total_budget, self.CLEAN_SAT_CAP_SECONDS,
+        )
+        phase1_code = phase1.Solve(feas_model)
 
         # MODEL_INVALID is a bug in model construction, not a property of the
         # school's data — surface it as a server error instead of dressing it
         # up as a scheduling verdict.
-        if status_code == cp_model.MODEL_INVALID:
-            msg = f"CP-SAT rejected the generated model: {model.Validate()}"
+        if phase1_code == cp_model.MODEL_INVALID:
+            msg = f"CP-SAT rejected the generated model: {feas_model.Validate()}"
             raise SolverBuildError(msg)
 
-        status = self._map_status(status_code)
-
         # Conflict analysis is only meaningful once CP-SAT has *proved*
-        # infeasibility: SufficientAssumptionsForInfeasibility() returns a core
-        # extracted from a completed proof. After a timeout no assumption was
-        # ever proven guilty, so any "explanation" derived from that search
-        # state would name conflicts that need not exist.
-        #
-        # The core also requires the assumptions field, which this build leaves
-        # empty so the search can use every core. Explaining the failure means
-        # rebuilding — paid only here, on a payload that has no timetable.
-        if status == "INFEASIBLE":
+        # infeasibility, and the proof needs the assumptions field, which
+        # these builds leave empty so the search can use every core.
+        # Explaining the failure means rebuilding — paid only on a payload
+        # that has no timetable.
+        if phase1_code == cp_model.INFEASIBLE:
             return self._explain_infeasible(request)
 
-        if status == "TIMEOUT":
+        if phase1_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            winner_solver: cp_model.CpSolver = phase1
+            winner_decisions = feas_decisions
+            winner_plan = feas_plan
+            # The two builds iterate the same request in the same order, so
+            # their decision lists and room-class literal maps correspond
+            # one-to-one. Guarded rather than assumed: hinting mismatched
+            # variables would silently corrupt the search.
+            if len(decisions) != len(feas_decisions) or set(
+                room_plan.literals,
+            ) != set(feas_plan.literals):
+                msg = "objective-free and full builds disagree on model structure"
+                raise SolverBuildError(msg)
+            hint_pairs = list(zip(decisions, feas_decisions))
+            hint_literals = [
+                (literal, feas_plan.literals[key][class_index])
+                for key, literals in room_plan.literals.items()
+                for class_index, literal in literals.items()
+            ]
+        else:
+            # ---- phase 1b: the cleared clone takes what is left -------------
+            remaining = _remaining()
+            if remaining < self.MIN_PHASE_SECONDS:
+                return OptimizeScheduleResponse(
+                    request_id=request.request_id,
+                    status="TIMEOUT",
+                    lessons=[],
+                    conflicts=None,
+                )
+            clone_model = model.Clone()
+            clone_model.ClearObjective()
+            phase1b = cp_model.CpSolver()
+            phase1b.parameters.max_time_in_seconds = remaining
+            phase1b_code = phase1b.Solve(clone_model)
+
+            if phase1b_code == cp_model.MODEL_INVALID:
+                msg = f"CP-SAT rejected the generated model: {clone_model.Validate()}"
+                raise SolverBuildError(msg)
+            if phase1b_code == cp_model.INFEASIBLE:
+                return self._explain_infeasible(request)
+            if phase1b_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                return OptimizeScheduleResponse(
+                    request_id=request.request_id,
+                    status="TIMEOUT",
+                    lessons=[],
+                    conflicts=None,
+                )
+            # Clone() preserves variable indices, so the full model's own
+            # variables read their values straight off the clone's solver.
+            winner_solver = phase1b
+            winner_decisions = decisions
+            winner_plan = room_plan
+            hint_pairs = [(decision, decision) for decision in decisions]
+            hint_literals = [
+                (literal, literal)
+                for literals in room_plan.literals.values()
+                for literal in literals.values()
+            ]
+
+        def _phase1_response() -> OptimizeScheduleResponse:
+            lessons = self._extract_lessons(
+                winner_solver, winner_decisions, rooms, winner_plan,
+            )
             return OptimizeScheduleResponse(
                 request_id=request.request_id,
-                status="TIMEOUT",
-                lessons=[],
+                status="FEASIBLE",
+                lessons=lessons,
                 conflicts=None,
             )
 
-        if status_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            msg = "Solver terminated without a usable schedule."
+        remaining = _remaining()
+        if remaining < self.MIN_PHASE_SECONDS:
+            return _phase1_response()
+
+        # ---- phase 2: improve the schedule in the remaining budget ----------
+        # _add_disruption_objective already hints previous-lesson slots; they
+        # must yield to the complete phase-1 solution — CP-SAT rejects a model
+        # whose hint names the same variable twice, and a full feasible
+        # assignment is a strictly stronger starting point than a partial
+        # guess.
+        model.ClearHints()
+        for decision, source in hint_pairs:
+            model.AddHint(decision.start, winner_solver.Value(source.start))
+            model.AddHint(decision.room_index, winner_solver.Value(source.room_index))
+        for literal, source_literal in hint_literals:
+            model.AddHint(literal, winner_solver.Value(source_literal))
+
+        phase2 = cp_model.CpSolver()
+        phase2.parameters.max_time_in_seconds = remaining
+        phase2_code = phase2.Solve(model)
+        if phase2_code == cp_model.MODEL_INVALID:
+            msg = f"CP-SAT rejected the generated model: {model.Validate()}"
             raise SolverBuildError(msg)
 
-        lessons = self._extract_lessons(solver, decisions, rooms, room_plan)
-        return OptimizeScheduleResponse(
-            request_id=request.request_id,
-            status=status,
-            lessons=lessons,
-            conflicts=None,
-        )
+        if phase2_code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            lessons = self._extract_lessons(phase2, decisions, rooms, room_plan)
+            return OptimizeScheduleResponse(
+                request_id=request.request_id,
+                status=self._map_status(phase2_code),
+                lessons=lessons,
+                conflicts=None,
+            )
+
+        # Phase 2 came up empty: fall back to the phase-1 schedule rather than
+        # returning nothing. FEASIBLE, deliberately.
+        return _phase1_response()
 
     def _validate_request(self, request: OptimizeScheduleRequest) -> None:
         if not request.requirements:
