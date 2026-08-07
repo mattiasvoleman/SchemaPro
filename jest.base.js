@@ -85,10 +85,10 @@ const floor = (name, ratchet) =>
   asNumber(process.env[name]) ?? asNumber(process.env.COVERAGE_MIN) ?? ratchet;
 
 const coverageMin = {
-  lines: floor('COVERAGE_MIN_LINES', 42),
-  statements: floor('COVERAGE_MIN_STATEMENTS', 43),
-  functions: floor('COVERAGE_MIN_FUNCTIONS', 25),
-  branches: floor('COVERAGE_MIN_BRANCHES', 35),
+  lines: floor('COVERAGE_MIN_LINES', 91),
+  statements: floor('COVERAGE_MIN_STATEMENTS', 91),
+  functions: floor('COVERAGE_MIN_FUNCTIONS', 83),
+  branches: floor('COVERAGE_MIN_BRANCHES', 83),
 };
 
 const coverage = {

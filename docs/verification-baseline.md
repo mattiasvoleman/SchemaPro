@@ -25,7 +25,7 @@ could be evaluated at all.
 | Mobile dependency audit | ✓ pass (0/0/0) |
 | WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
 | Visual regression | ✓ pass (16/16 on linux-x64 baselines) |
-| API coverage | ✗ 42.40% vs 95% (ratcheted) |
+| API coverage | ✗ 91.77% vs 95% (ratcheted at 91; remainder is module wiring) |
 | Solver coverage | ✗ 81% vs 95% (ratcheted) |
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
@@ -62,15 +62,27 @@ could be evaluated at all.
 
 | Metric | Target | Measured | Status | How to measure |
 | :--- | :--- | :--- | :--- | :--- |
-| API line coverage | ≥ 95% | **42.40%** (846/1995) | ✗ | `npm run test:cov` |
-| API statement coverage | ≥ 95% | 43.25% (946/2187) | ✗ | same |
-| API branch coverage | ≥ 95% | 35.77% (430/1202) | ✗ | same |
-| API function coverage | ≥ 95% | 25.90% (114/440) | ✗ | same |
+| API line coverage | ≥ 95% | **91.77%** (1831/1995) | ✗ | `npm run test:cov` |
+| API statement coverage | ≥ 95% | 91.44% (2000/2187) | ✗ | same |
+| API branch coverage | ≥ 95% | 83.44% (1003/1202) | ✗ | same |
+| API function coverage | ≥ 95% | 83.86% (369/440) | ✗ | same |
 | Solver line coverage | ≥ 95% | **81%** (922 stmts, 148 missed) | ✗ | `npm run test:engine:cov` |
 | Mutation score, tested files | ≥ 85% | **66.21%** (192 killed / 97 survived) | ✗ | `npm run test:mutation` |
 | Web unit coverage | ≥ 95% | **no harness** | ✗ | — |
 
-The API suite is 136 tests across 10 suites (8 unit, 2 e2e), all passing.
+The API suite is 568 tests across 33 suites, all passing. The gap from 91.77%
+to 95% is almost entirely `*.module.ts` DI wiring, `main.ts`, and `app.module.ts`
+(~90 statements) — deliberately untested as unit tests, per the convention that
+wiring smoke tests assert nothing behaviour-shaped. Closing the §2 row therefore
+means either e2e-bootstrapping the real module graph or excluding wiring from
+collection; both are decisions, not test-writing.
+
+The test-writing pass also pinned **11 suspected production bugs** — each has a
+test documenting current behaviour with a "suspected bug" comment (unhandled
+promise rejections on disconnect and in job startup, an update-path bypass of
+the students-only group rule, notification fan-out computed from a stale
+snapshot, mixed-format time-range validation, and more). They are deliberately
+NOT fixed in the coverage commit; fixing them flips each pinning test.
 
 ### The gate is ratcheted, not met
 
@@ -79,9 +91,9 @@ under what the suite achieves today, so CI blocks regression instead of failing
 permanently on a known gap — an always-red pipeline trains people to ignore it,
 which is how a real failure hides among the expected ones.
 
-Thresholds are per-metric because one number cannot fit: 42% of lines are
-covered but only 26% of functions. A single shared value would either let line
-coverage regress 16 points unnoticed, or fail the build on functions no matter
+Thresholds are per-metric because one number cannot fit: 92% of lines are
+covered but only 84% of functions. A single shared value would either let line
+coverage regress 8 points unnoticed, or fail the build on functions no matter
 what. Raise them via the `COVERAGE_MIN*` repository variables as coverage
 grows; never lower one to green a build.
 

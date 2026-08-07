@@ -261,6 +261,21 @@ describe('Ss12000Service', () => {
   });
 
   describe('activities', () => {
+    const masterLesson = (overrides: Record<string, unknown> = {}) => ({
+      id: 'l1',
+      dayOfWeek: 2,
+      startTime: new Date('1970-01-01T08:15:00.000Z'),
+      endTime: new Date('1970-01-01T09:00:00.000Z'),
+      teacherId: 't1',
+      coTeacherId: null,
+      roomId: 'r1',
+      subject: { id: 's1', name: 'Matematik' },
+      studentGroup: { id: 'g1', name: '7A' },
+      extraGroups: [],
+      participants: [],
+      ...overrides,
+    });
+
     it('restricts to the active academic year', async () => {
       arrangeList('masterLesson', 0, []);
 
@@ -268,6 +283,52 @@ describe('Ss12000Service', () => {
 
       expect(tx.masterLesson.count).toHaveBeenCalledWith({
         where: { schoolId: SCHOOL_ID, academicYear: { isActive: true } },
+      });
+    });
+
+    it('maps a master lesson to the SS12000 activity shape', async () => {
+      arrangeList('masterLesson', 1, [
+        masterLesson({
+          extraGroups: [{ studentGroupId: 'g2' }],
+          participants: [{ studentId: 'p1' }, { studentId: 'p2' }],
+        }),
+      ]);
+
+      const result = await service.activities(SCHOOL_ID);
+      expect(result.data[0]).toEqual({
+        id: 'l1',
+        displayName: 'Matematik — 7A',
+        activityType: 'Undervisning',
+        subject: { id: 's1', displayName: 'Matematik' },
+        groupIds: ['g1', 'g2'],
+        teacherIds: ['t1'],
+        studentIds: ['p1', 'p2'],
+        roomId: 'r1',
+        dayOfWeek: 2,
+        startTime: '08:15:00',
+        endTime: '09:00:00',
+      });
+    });
+
+    it('includes the co-teacher when one is assigned', async () => {
+      arrangeList('masterLesson', 1, [masterLesson({ coTeacherId: 't2' })]);
+
+      const result = await service.activities(SCHOOL_ID);
+      expect(result.data[0]).toMatchObject({ teacherIds: ['t1', 't2'] });
+    });
+
+    it('renders times as zero-padded HH:MM:00 in UTC', async () => {
+      arrangeList('masterLesson', 1, [
+        masterLesson({
+          startTime: new Date('1970-01-01T07:05:00.000Z'),
+          endTime: new Date('1970-01-01T13:40:00.000Z'),
+        }),
+      ]);
+
+      const result = await service.activities(SCHOOL_ID);
+      expect(result.data[0]).toMatchObject({
+        startTime: '07:05:00',
+        endTime: '13:40:00',
       });
     });
   });
@@ -289,6 +350,341 @@ describe('Ss12000Service', () => {
       await expect(
         service.calendarEvents(SCHOOL_ID, '2026-08-01', '2026-08-31'),
       ).resolves.toMatchObject({ totalCount: 0 });
+    });
+
+    it('bounds the query to the requested dates within the tenant', async () => {
+      await service.calendarEvents(SCHOOL_ID, '2026-08-01', '2026-08-31');
+
+      expect(tx.calendarLesson.count).toHaveBeenCalledWith({
+        where: {
+          schoolId: SCHOOL_ID,
+          date: {
+            gte: new Date('2026-08-01T00:00:00.000Z'),
+            lte: new Date('2026-08-31T00:00:00.000Z'),
+          },
+        },
+      });
+    });
+
+    const calendarLesson = (overrides: Record<string, unknown> = {}) => ({
+      id: 'cl1',
+      masterLessonId: 'l1',
+      startsAt: new Date('2026-08-10T08:15:00.000Z'),
+      endsAt: new Date('2026-08-10T09:00:00.000Z'),
+      status: 'SCHEDULED',
+      subject: { id: 's1', name: 'Matematik' },
+      studentGroup: { id: 'g1', name: '7A' },
+      room: { id: 'r1', name: 'Sal 12' },
+      teachers: [{ teacherId: 't1', role: 'PRIMARY' }],
+      extraGroups: [],
+      participants: [],
+      ...overrides,
+    });
+
+    it('maps a dated lesson to the SS12000 calendarEvent shape', async () => {
+      arrangeList('calendarLesson', 1, [
+        calendarLesson({
+          extraGroups: [{ studentGroupId: 'g2' }],
+          participants: [{ studentId: 'p1' }],
+        }),
+      ]);
+
+      const result = await service.calendarEvents(
+        SCHOOL_ID,
+        '2026-08-01',
+        '2026-08-31',
+      );
+      expect(result.data[0]).toEqual({
+        id: 'cl1',
+        activityId: 'l1',
+        startTime: '2026-08-10T08:15:00.000Z',
+        endTime: '2026-08-10T09:00:00.000Z',
+        cancelled: false,
+        subject: { id: 's1', displayName: 'Matematik' },
+        groupIds: ['g1', 'g2'],
+        teachers: [{ personId: 't1', role: 'PRIMARY' }],
+        studentIds: ['p1'],
+        room: { id: 'r1', displayName: 'Sal 12' },
+      });
+    });
+
+    it('flags a CANCELLED lesson and tolerates a missing room', async () => {
+      arrangeList('calendarLesson', 1, [
+        calendarLesson({ status: 'CANCELLED', room: null }),
+      ]);
+
+      const result = await service.calendarEvents(
+        SCHOOL_ID,
+        '2026-08-01',
+        '2026-08-31',
+      );
+      expect(result.data[0]).toMatchObject({ cancelled: true, room: null });
+    });
+  });
+
+  describe('importPersons', () => {
+    const STUDENT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const GUARDIAN_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const YEAR_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+    /**
+     * `tx.user.findFirst` serves two lookups: the person by email, and each
+     * guardian (whose where-clause carries `role: 'GUARDIAN'`). Route on that.
+     */
+    const arrangeUsers = (
+      person: { id: string; role: string } | null,
+      guardian: { id: string } | null = null,
+    ) => {
+      tx.user.findFirst.mockImplementation(
+        ({ where }: { where: { role?: string } }) =>
+          Promise.resolve(where.role === 'GUARDIAN' ? guardian : person),
+      );
+    };
+
+    beforeEach(() => {
+      tx.academicYear.findFirst.mockResolvedValue({ id: YEAR_ID });
+      tx.user.update.mockResolvedValue({});
+      tx.guardianStudent.upsert.mockResolvedValue({});
+    });
+
+    it('runs under the service principal for the key’s school', async () => {
+      arrangeUsers(null);
+
+      await service.importPersons(SCHOOL_ID, [{ email: 'a@b.se' }]);
+
+      expect(prisma.withServicePrincipal).toHaveBeenCalledWith(
+        SCHOOL_ID,
+        expect.any(Function),
+      );
+      expect(prisma.withSystemTransaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects an empty batch before opening a transaction', async () => {
+      await expect(service.importPersons(SCHOOL_ID, [])).rejects.toThrow(
+        'persons must be a non-empty array (max 2000).',
+      );
+      expect(prisma.withServicePrincipal).not.toHaveBeenCalled();
+    });
+
+    it('rejects a batch above 2000 but accepts exactly 2000', async () => {
+      arrangeUsers(null);
+      const person = (i: number) => ({ email: `p${i}@example.test` });
+
+      await expect(
+        service.importPersons(
+          SCHOOL_ID,
+          Array.from({ length: 2001 }, (_, i) => person(i)),
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      await expect(
+        service.importPersons(
+          SCHOOL_ID,
+          Array.from({ length: 2000 }, (_, i) => person(i)),
+        ),
+      ).resolves.toMatchObject({ updated: 0 });
+    });
+
+    it('skips entries without an email entirely', async () => {
+      await expect(
+        service.importPersons(SCHOOL_ID, [{ givenName: 'Karin' }]),
+      ).resolves.toEqual({
+        updated: 0,
+        groupsCreated: 0,
+        guardianLinks: 0,
+        needsProvisioning: [],
+      });
+      expect(tx.user.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('matches the person case-insensitively on a normalized email, tenant-scoped', async () => {
+      arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+
+      await service.importPersons(SCHOOL_ID, [
+        { email: '  Karin.Andersson@Example.TEST ' },
+      ]);
+
+      expect(tx.user.findFirst).toHaveBeenCalledWith({
+        where: {
+          schoolId: SCHOOL_ID,
+          email: { equals: 'karin.andersson@example.test', mode: 'insensitive' },
+        },
+        select: { id: true, role: true },
+      });
+    });
+
+    it('reports unknown persons for provisioning instead of creating accounts', async () => {
+      arrangeUsers(null);
+
+      await expect(
+        service.importPersons(SCHOOL_ID, [{ email: 'Ny@Example.test' }]),
+      ).resolves.toMatchObject({
+        updated: 0,
+        needsProvisioning: ['ny@example.test'],
+      });
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('deduplicates the provisioning list', async () => {
+      arrangeUsers(null);
+
+      const result = await service.importPersons(SCHOOL_ID, [
+        { email: 'dubblett@example.test' },
+        { email: 'DUBBLETT@example.test' },
+      ]);
+      expect(result.needsProvisioning).toEqual(['dubblett@example.test']);
+    });
+
+    it('syncs both names when the roster supplies them', async () => {
+      arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+
+      await service.importPersons(SCHOOL_ID, [
+        { email: 'karin@example.test', givenName: 'Karin', familyName: 'Nygren' },
+      ]);
+
+      expect(tx.user.update).toHaveBeenCalledWith({
+        where: { id: STUDENT_ID },
+        data: { firstName: 'Karin', lastName: 'Nygren' },
+      });
+    });
+
+    it('updates only the name fields that were supplied', async () => {
+      arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+
+      const result = await service.importPersons(SCHOOL_ID, [
+        { email: 'karin@example.test', familyName: 'Nygren' },
+      ]);
+
+      // Exact data object: no firstName, no studentGroupId slipped in.
+      expect(tx.user.update).toHaveBeenCalledWith({
+        where: { id: STUDENT_ID },
+        data: { lastName: 'Nygren' },
+      });
+      expect(result.updated).toBe(1);
+    });
+
+    it('reuses an existing class for a student, matched within the tenant', async () => {
+      arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+      tx.studentGroup.findFirst.mockResolvedValue({ id: 'g-existing' });
+
+      const result = await service.importPersons(SCHOOL_ID, [
+        { email: 'karin@example.test', groupDisplayName: '7A' },
+      ]);
+
+      expect(tx.studentGroup.findFirst).toHaveBeenCalledWith({
+        where: { schoolId: SCHOOL_ID, name: '7A' },
+        select: { id: true },
+      });
+      expect(tx.studentGroup.create).not.toHaveBeenCalled();
+      expect(tx.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ studentGroupId: 'g-existing' }),
+        }),
+      );
+      expect(result.groupsCreated).toBe(0);
+    });
+
+    it('creates an unknown class in the active year and enrols the student', async () => {
+      arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+      tx.studentGroup.findFirst.mockResolvedValue(null);
+      tx.studentGroup.create.mockResolvedValue({ id: 'g-new' });
+
+      const result = await service.importPersons(SCHOOL_ID, [
+        { email: 'karin@example.test', groupDisplayName: '7B' },
+      ]);
+
+      expect(tx.studentGroup.create).toHaveBeenCalledWith({
+        data: { schoolId: SCHOOL_ID, academicYearId: YEAR_ID, name: '7B' },
+        select: { id: true },
+      });
+      expect(tx.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ studentGroupId: 'g-new' }),
+        }),
+      );
+      expect(result.groupsCreated).toBe(1);
+    });
+
+    it('ignores group membership for non-students', async () => {
+      arrangeUsers({ id: 'teacher-1', role: 'TEACHER' });
+
+      await service.importPersons(SCHOOL_ID, [
+        { email: 'lars@example.test', groupDisplayName: '7A' },
+      ]);
+
+      expect(tx.studentGroup.findFirst).not.toHaveBeenCalled();
+      expect(tx.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.not.objectContaining({ studentGroupId: expect.anything() }),
+        }),
+      );
+    });
+
+    it('skips group handling when no academic year is active', async () => {
+      tx.academicYear.findFirst.mockResolvedValue(null);
+      arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+
+      const result = await service.importPersons(SCHOOL_ID, [
+        { email: 'karin@example.test', groupDisplayName: '7A' },
+      ]);
+
+      expect(tx.studentGroup.findFirst).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ updated: 1, groupsCreated: 0 });
+    });
+
+    it('links an existing guardian to the student, scoped to the tenant', async () => {
+      arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' }, { id: GUARDIAN_ID });
+
+      const result = await service.importPersons(SCHOOL_ID, [
+        {
+          email: 'karin@example.test',
+          responsibleEmails: [' Mor.Andersson@Example.Test '],
+        },
+      ]);
+
+      expect(tx.user.findFirst).toHaveBeenCalledWith({
+        where: {
+          schoolId: SCHOOL_ID,
+          role: 'GUARDIAN',
+          email: {
+            equals: 'mor.andersson@example.test',
+            mode: 'insensitive',
+          },
+        },
+        select: { id: true },
+      });
+      expect(tx.guardianStudent.upsert).toHaveBeenCalledWith({
+        where: {
+          guardianId_studentId: {
+            guardianId: GUARDIAN_ID,
+            studentId: STUDENT_ID,
+          },
+        },
+        create: {
+          schoolId: SCHOOL_ID,
+          guardianId: GUARDIAN_ID,
+          studentId: STUDENT_ID,
+        },
+        update: {},
+      });
+      expect(result.guardianLinks).toBe(1);
+    });
+
+    it('reports unknown guardians for provisioning without linking', async () => {
+      arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' }, null);
+
+      const result = await service.importPersons(SCHOOL_ID, [
+        {
+          email: 'karin@example.test',
+          responsibleEmails: ['Okand@Example.test'],
+        },
+      ]);
+
+      expect(tx.guardianStudent.upsert).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        guardianLinks: 0,
+        needsProvisioning: ['okand@example.test'],
+      });
     });
   });
 });
