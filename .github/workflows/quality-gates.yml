@@ -25,6 +25,60 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  visual-baselines:
+    name: Regenerate visual baselines (native runner)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 40
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: placeholder-publishable-key
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Pin npm
+        run: npm install -g npm@11
+
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+
+      # Baselines MUST be produced by the same machine that verifies them.
+      # Generating them elsewhere has failed three times: macOS instead of
+      # Linux, then arm64 instead of amd64, then QEMU-emulated amd64 instead of
+      # native — Skia and FreeType pick SIMD paths from runtime CPU feature
+      # detection, so even the right OS and architecture under emulation can
+      # rasterise text differently. This job removes the guesswork.
+      - name: Regenerate
+        run: npx playwright test --project=visual --project=visual-mobile --update-snapshots=all
+        working-directory: web
+
+      # Verify the freshly written files actually match on a second pass,
+      # rather than trusting that writing them was enough.
+      - name: Verify against themselves
+        run: npx playwright test --project=visual --project=visual-mobile
+        working-directory: web
+
+      # Uploaded rather than committed: pushing to the default branch from CI
+      # needs write permissions this workflow should not hold, and a baseline
+      # change deserves a human looking at the images.
+      - name: Upload baselines
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-baselines-linux-x64
+          path: web/e2e/visual.spec.ts-snapshots/*-linux-x64.png
+          retention-days: 14
+
   mutation:
     name: API — mutation score (Stryker ≥85%)
     runs-on: ubuntu-latest

@@ -547,31 +547,30 @@ that is what makes a missing baseline a failure instead of a free pass.
 
 **The architecture suffix is load-bearing.** Playwright's default suffix is the
 platform alone (`-linux`), which is not specific enough: font rasterisation
-differs between CPU architectures. Baselines generated in an **arm64** Linux
-container failed against amd64 CI with a uniform ~1–2% pixel difference on all
-16 screenshots — far past the 0.1% budget, and at a glance indistinguishable
-from a real regression. `snapshotPathTemplate` in playwright.config.ts now
-appends `process.arch`, so a mismatched architecture is a *missing* baseline
-that CI reports loudly, rather than a wrong-renderer comparison.
+differs between CPU architectures. `snapshotPathTemplate` in
+playwright.config.ts appends `process.arch`, so a mismatched architecture is a
+*missing* baseline that CI reports loudly rather than a wrong-renderer
+comparison.
 
-GitHub's ubuntu-latest runners are **linux-x64**. On Apple Silicon that means
-regenerating under emulation — `--platform linux/amd64` is not optional:
+**Generate them on the runner, not locally.** Reproducing CI's renderer from a
+developer machine failed three times in a row:
 
-```
-docker run --rm --platform linux/amd64 -v "$PWD:/w" -w /w/web -e CI=1 \
-  -e NEXT_PUBLIC_SUPABASE_URL=https://placeholder.supabase.co \
-  -e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=placeholder-publishable-key \
-  -e NEXT_PUBLIC_API_BASE_URL=http://localhost:4000 \
-  mcr.microsoft.com/playwright:v1.61.1-noble \
-  bash -c "npm ci && npm run build && \
-    npx playwright test --project=visual --project=visual-mobile \
-      --update-snapshots=all"
-```
+| Attempt | Produced on | Failed because |
+| :--- | :--- | :--- |
+| 1 | macOS arm64 | CI is Linux |
+| 2 | arm64 Linux container | CI is amd64 |
+| 3 | QEMU-emulated amd64 container | Skia/FreeType select SIMD paths from runtime CPU feature detection, which QEMU does not reproduce |
 
-`--update-snapshots=all` is required: the config sets `updateSnapshots: "none"`
-under `CI`, and only the CLI flag overrides it. Always re-run without the flag
-afterwards to confirm the committed files actually match.
+Each attempt looked verified — the suite passed where it was generated — and
+each failed on CI with a uniform 1–2% diff across every screenshot, which is
+easy to mistake for a real regression.
 
-Note the side effect — that `npm ci` writes Linux binaries into the shared
-`web/node_modules` mount, leaving the host with the wrong `@next/swc-*`. Run
-`npm ci` on the host afterwards.
+So the baselines are now produced by the machine that checks them. Run the
+**Regenerate visual baselines** job in `quality-gates.yml`
+(Actions → Quality Gates → Run workflow). It builds, regenerates with
+`--update-snapshots=all`, re-runs *without* the flag to prove the files match,
+and uploads them as the `visual-baselines-linux-x64` artifact. Download,
+replace the `*-linux-x64.png` files, review the images, and commit.
+
+The `-darwin-arm64` set stays committed so the gate still works locally on
+Apple Silicon; it is never used by CI.
