@@ -29,7 +29,7 @@ could be evaluated at all.
 | Solver coverage | ✗ 81% vs 95% (ratcheted) |
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
-| Solver, 2,000 students | ✗ root-caused; fixes reach ~400-500 students, not 2,000 |
+| Solver, 2,000 students | ✗ 300 students validated (was: no size at all); 2,000 unreached |
 | Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | — needs a seeded DB (CI only) |
 | Lighthouse LCP/TTI | — not yet run |
@@ -225,7 +225,7 @@ so these are unblocked — `npm run bench:lighthouse`.
 
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
-| Schedule generation, 2,000 students | < 10s | **0 lessons in 300s; ~400 students after fixes** | ✗ |
+| Schedule generation, 2,000 students | < 10s | **300 students valid in <10s; 2,000 unreached** | ✗ |
 | API P99, reads | ≤ 50ms | **71–86ms** on list endpoints | ✗ |
 | API P99, updates | ≤ 150ms | **83ms** | ✓ |
 
@@ -388,9 +388,18 @@ O(groups × days). Restating it as one variable-start interval per (group, day)
 inside the group's existing `NoOverlap` is exactly equivalent and costs 400
 variables.
 
-**Measured effect of the fixes.** Assumption demotion + interval lunch +
-cumulative room classes + a within-day start domain, at a 10s budget, with every
-schedule independently checked by `benchmarks/validate_schedule.py`:
+**Measured effect of the fixes.** Three of these are now landed in production
+(`530eef3`): assumption demotion, the interval lunch encoding, and the within-day
+start domain. The room redesign is **not** landed — it changes what `room_index`
+means and needs a post-pass — so production keeps the 265k-variable room block
+and its full symmetry.
+
+Landed, through the real `solve()` path with output checked by
+`benchmarks/validate_schedule.py`: **250 students valid in under 10s, 300
+students valid, 350 finds nothing.** Before these changes no size produced a
+valid timetable at all.
+
+With the prototype room encoding added on top, at a 10s budget:
 
 | students | model | first solution | verdict |
 | ---: | ---: | ---: | :--- |
