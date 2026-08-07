@@ -29,7 +29,7 @@ could be evaluated at all.
 | Solver coverage | ✗ 81% vs 95% (ratcheted) |
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
-| Solver, 2,000 students | ✗ 1,300 students validated (~9.5 min); 10s/2,000 unreached |
+| Solver, 2,000 students | ✗ 1,300 validated (~9.5 min); 2,000 now measured honestly: TIMEOUT at 570s |
 | Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | — needs a seeded DB (CI only) |
 | Lighthouse LCP/TTI | — not yet run |
@@ -225,7 +225,7 @@ so these are unblocked — `npm run bench:lighthouse`.
 
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
-| Schedule generation, 2,000 students | < 10s | **400 in <10s; 1,300 in ~9.5 min; 2,000 rejected by the complexity guard** | ✗ |
+| Schedule generation, 2,000 students | < 10s | **400 in <10s; 1,300 in ~9.5 min; 2,000 TIMEOUT at 570s** | ✗ |
 | API P99, reads | ≤ 50ms | **71–86ms** on list endpoints | ✗ |
 | API P99, updates | ≤ 150ms | **83ms** | ✓ |
 
@@ -413,10 +413,15 @@ remaining budget optimising from the winner as a hint. When optimisation
 produces nothing, the existence schedule is returned rather than an empty
 TIMEOUT.
 
-Note that 2,000 students is currently rejected upfront by
-`MAX_MODEL_COMPLEXITY`: the guard's formula predates the room-class and lunch
-re-encodings and overestimates by roughly an order of magnitude. Re-deriving it
-is now the gate to even *measuring* 2,000 through the production path.
+The complexity guard has been re-derived (`523339f`): `_estimate_model_size`
+predicts the variable count per builder (96,700 predicted vs 92,546 measured at
+2,000 students — within 4.5%) against a budget of 1,000,000, replacing a
+formula that charged 2.65M for this school. With the guard fixed, 2,000
+students reaches the solver for the first time and the result is a real
+measurement: **TIMEOUT at both 10s and 570s, zero lessons**. Extrapolating from
+1,300 needing 474s of satisfaction search, 2,000 cold-start needs patience
+beyond ten minutes, a warm start from `previous_lessons`, or decomposition —
+now a measured statement rather than a guess blocked by arithmetic.
 
 Model size at 2,000 students fell from 655,106 variables to 92,546, and build
 from 8.5s to 1.6s. The room block alone went from 264,960 variables to 7,200.
