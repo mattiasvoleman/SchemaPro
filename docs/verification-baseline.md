@@ -29,7 +29,7 @@ could be evaluated at all.
 | Solver coverage | ✗ 81% vs 95% (ratcheted) |
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
-| Solver, 2,000 students | ✗ no feasible schedule at **any** size tested |
+| Solver, 2,000 students | ✗ root-caused; fixes reach ~400-500 students, not 2,000 |
 | Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | — needs a seeded DB (CI only) |
 | Lighthouse LCP/TTI | — not yet run |
@@ -52,6 +52,7 @@ could be evaluated at all.
 | API P99 latency | `scripts/bench/api-latency.mjs` | `quality-gates.yml` → api-latency (nightly) |
 | Solver wall clock | `optimization-engine/benchmarks/solve_2000_students.py` | `quality-gates.yml` → solver-benchmark (nightly) |
 | Solver model diagnosis | `optimization-engine/benchmarks/profile_model.py` (build breakdown, ablation, rules×objective matrix) | not gated — diagnostic, lifts the complexity guard |
+| Schedule correctness | `optimization-engine/benchmarks/validate_schedule.py` — re-derives every rule from the request and checks the response, sharing no code with the model builders | not gated — caught a live day-straddling violation |
 | Dependency audit | `npm audit` / `pip-audit` | `ci.yml` → security |
 | SAST | Semgrep (`p/owasp-top-ten`, `p/nestjs`, `p/react`, …) | `ci.yml` → security |
 
@@ -224,7 +225,7 @@ so these are unblocked — `npm run bench:lighthouse`.
 
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
-| Schedule generation, 2,000 students | < 10s | **0 lessons placed in 300s** | ✗ |
+| Schedule generation, 2,000 students | < 10s | **0 lessons in 300s; ~400 students after fixes** | ✗ |
 | API P99, reads | ≤ 50ms | **71–86ms** on list endpoints | ✗ |
 | API P99, updates | ≤ 150ms | **83ms** | ✓ |
 
@@ -351,22 +352,102 @@ The core model — capacity, teacher/group/room no-overlap, availability — sol
 to optimality. Adding *either* the lunch rules *or* the objective terms
 independently takes it from solved-in-5s to nothing-found-in-10s.
 
-Two candidate causes, neither yet confirmed:
+**Root cause, confirmed.** `AssumptionRegistry.register` calls
+`model.AddAssumption()` (`app/solver/conflict_analyzer.py:39`), and
+`_add_capacity_constraints` calls it **once per lesson instance** — 380
+assumption literals at 250 students, 3,046 at 2,000. CP-SAT's own log, on the
+real 250-student fixture with `num_workers=8` explicitly set:
 
-- **The lunch encoding.** It creates three booleans per (lesson × day ×
-  candidate start) — 7 candidates × 5 days × every lesson in the group — even
-  though a lesson occupies exactly one day. That is 40K variables at 250
-  students and 322K at 2,000, most of them provably irrelevant.
-- **No symmetry breaking.** The 8 interchangeable CLASSROOM rooms at 250
-  students (84 at 2,000) mean the search explores enormous numbers of equivalent
-  assignments. This fits the otherwise odd ablation result where *adding*
-  availability constraints flipped a TIMEOUT to OPTIMAL — extra constraints
-  broke symmetry and pruned the search.
+```
+Forcing sequential search as assumptions are not supported in multi-thread.
+Forcing presolve to keep all feasible solutions in the presence of assumptions.
+Starting search at 0.80s with 1 workers.
+1 full problem subsolver: [main]
+```
 
-Until one of these is addressed, §2's "2,000 students under 10s" is not a
-tuning target. Note also that `Solve()` runs to its time limit whenever
-optimality is not proven, so wall clock is pinned at the budget rather than
-reflecting when a usable answer appeared.
+CP-SAT **overrides `num_workers`**, which is the mechanical reason setting it to
+8 changed nothing. The solver runs on one core with the weakest strategy, no
+LNS portfolio, and solution-losing presolve reductions disabled. Demoting those
+literals to plain unit clauses — an identical feasible set, verified by
+exhaustive enumeration — restores the full portfolio:
+
+| 250 students, core model | with `AddAssumption` | demoted to unit clause |
+| :--- | :--- | :--- |
+| workers | 1 | **8** |
+| subsolvers | `[main]` | 6 full + 2 first-solution + 2 LNS + 2 helpers |
+| result | TIMEOUT | **OPTIMAL** |
+
+This is also why "either rules or objective independently kills it" looked like
+two separate causes. It is one model with no margin: running on 1/8 of the
+machine, anything added tips it over.
+
+The second cost is the lunch encoding, which creates three booleans per
+(group × day × candidate start × lesson) — 302,400 variables at 2,000 students,
+**46% of the whole model** — to express a rule whose information content is
+O(groups × days). Restating it as one variable-start interval per (group, day)
+inside the group's existing `NoOverlap` is exactly equivalent and costs 400
+variables.
+
+**Measured effect of the fixes.** Assumption demotion + interval lunch +
+cumulative room classes + a within-day start domain, at a 10s budget, with every
+schedule independently checked by `benchmarks/validate_schedule.py`:
+
+| students | model | first solution | verdict |
+| ---: | ---: | ---: | :--- |
+| 250 | 12,130 vars | 3.0s | **VALID**, 360/360 |
+| 400 | 19,139 vars | 6.2s | **VALID**, 576/576 |
+| 500 | 23,991 vars | never (60s) | nothing |
+| 2,000 | 95,426 vars | never (120s) | nothing |
+
+At 2,000 students the model shrinks from 655,106 variables to 95,426 (−85%) and
+build from 8.5s to 1.6s — but the search still finds nothing. Dropping the
+objective trades reach for optimality and moves the cliff by one step: 500
+students reaches OPTIMAL 720/720 in 26.9s, 750 finds nothing in 60s.
+
+So the honest position is that these fixes take the engine from **no size at
+all** to roughly **400–500 students**, and 2,000 remains a factor of four away
+behind a hard cliff rather than a gradient. §2's target is not a tuning
+question.
+
+Note also that `Solve()` runs to its time limit whenever optimality is not
+proven, so total wall clock is pinned at the budget and says nothing about when
+a usable answer appeared — hence the separate first-solution column above.
+
+### The solver can emit a lesson that runs past the end of the day
+
+`_create_lesson_decisions` (`app/solver/scheduler_solver.py:210`) gives `start`
+the contiguous domain `[0, horizon - duration]` — the whole week, not one day.
+Nothing constrains a lesson to lie within a single day; `_day_var` only
+*derives* the day by integer division. Twelve start values are invalid:
+
+```
+{37, 38, 39, 77, 78, 79, 117, 118, 119, 157, 158, 159}
+```
+
+Each puts a 60-minute lesson across an 18:00 → 08:00 boundary.
+`_extract_lessons` reports such a lesson as `day_of_week=1, 17:30:00–18:30:00` —
+half an hour past the configured 18:00 day end — while the model has actually
+reserved the teacher, group and room for the *next* morning's first two slots.
+`TimeGrid.decode_absolute` never checks `start_slot + duration <= slots_per_day`.
+
+This is not theoretical: `validate_schedule.py` caught the solver choosing
+start slot 38 on a real 250-student run. Restricting the domain to within-day
+windows fixes it at no measurable cost.
+
+### Corrections to earlier entries in this document
+
+- An earlier revision said the complexity guard was "pessimistic … not the
+  solver's actual capability", implying the solver could hit the target if
+  allowed. Lifting the guard disproves that: 0 of 2,880 lessons in 291s.
+- `_add_capacity_constraints` skipping the constraint when no room is eligible
+  (`if not allowed_indices: continue`) was reported here as a silent-corruption
+  bug. It is not: `_validate_request` (`:186-195`) rejects such a payload
+  upfront with a specific message, so that branch is unreachable defensive code.
+- "Adding the objective destroys the model" is too simple. On the production
+  encoding an objective *helps*, because it unlocks CP-SAT's scheduling LNS
+  subsolvers; on the fixed encoding it *hurts* at 500 students, where pure
+  satisfaction reaches OPTIMAL and the optimising model finds nothing. Both were
+  measured. The unifying explanation is the missing margin, not the objective.
 
 ## Security & accessibility
 
