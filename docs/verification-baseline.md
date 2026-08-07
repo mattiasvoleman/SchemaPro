@@ -545,32 +545,50 @@ Baselines are committed per **platform and CPU architecture** — 32 files, 16
 `updateSnapshots: "none"`, so it fails rather than silently writing its own;
 that is what makes a missing baseline a failure instead of a free pass.
 
-**The architecture suffix is load-bearing.** Playwright's default suffix is the
-platform alone (`-linux`), which is not specific enough: font rasterisation
-differs between CPU architectures. `snapshotPathTemplate` in
-playwright.config.ts appends `process.arch`, so a mismatched architecture is a
-*missing* baseline that CI reports loudly rather than a wrong-renderer
-comparison.
+**What actually decides whether a baseline matches: installed fonts.**
+`globals.css` asks for `"Inter", ui-sans-serif, system-ui, -apple-system,
+"Segoe UI", …` and Chromium resolves that stack to whatever the machine has.
 
-**Generate them on the runner, not locally.** Reproducing CI's renderer from a
-developer machine failed three times in a row:
+| Environment | Font families |
+| :--- | ---: |
+| `mcr.microsoft.com/playwright` image | 29 |
+| bare `ubuntu` (what CI's runner starts from) | 3 |
 
-| Attempt | Produced on | Failed because |
+Same OS, same architecture, same browser build — different glyphs, and a
+uniform ~1–2% diff on every screenshot that is indistinguishable from a real
+regression.
+
+**Generate them on the runner. Nothing else works.** Three local attempts
+failed, and the third disproved the first two:
+
+| Attempt | Produced on | Result |
 | :--- | :--- | :--- |
-| 1 | macOS arm64 | CI is Linux |
-| 2 | arm64 Linux container | CI is amd64 |
-| 3 | QEMU-emulated amd64 container | Skia/FreeType select SIMD paths from runtime CPU feature detection, which QEMU does not reproduce |
+| 1 | macOS arm64 | failed on CI |
+| 2 | arm64 Linux container (Playwright image) | failed on CI |
+| 3 | QEMU-emulated amd64 (Playwright image) | failed on CI with **byte-identical pixel counts to #2** |
 
-Each attempt looked verified — the suite passed where it was generated — and
-each failed on CI with a uniform 1–2% diff across every screenshot, which is
-easy to mistake for a real regression.
+That last row is the diagnosis. The attempt-2 and attempt-3 baselines hash
+identically, so CPU architecture never affected the output at all — both came
+from the Playwright image, and the image's fonts are what differed from CI's.
+The `process.arch` suffix in `snapshotPathTemplate` is still worth keeping as
+hygiene, but it fixed nothing here.
 
-So the baselines are now produced by the machine that checks them. Run the
-**Regenerate visual baselines** job in `quality-gates.yml`
-(Actions → Quality Gates → Run workflow). It builds, regenerates with
-`--update-snapshots=all`, re-runs *without* the flag to prove the files match,
-and uploads them as the `visual-baselines-linux-x64` artifact. Download,
-replace the `*-linux-x64.png` files, review the images, and commit.
+Each attempt also "verified" green where it was generated, which is worthless:
+re-running in the environment that produced the files passes by construction.
+The only meaningful verification is a run in the environment that will check
+them.
+
+So: run the **Regenerate visual baselines** job in `quality-gates.yml`
+(Actions → Quality Gates → Run workflow). It uses ubuntu-latest and
+`npx playwright install --with-deps`, exactly as the `web` job does. It
+regenerates, re-runs *without* the update flag to prove the files match, and
+uploads them as the `visual-baselines-linux-x64` artifact. Download, replace
+the `*-linux-x64.png` files, review the images, commit.
+
+A sturdier option, not taken here because it changes how the app looks: ship
+Inter as a self-hosted font instead of relying on the system stack. The gate
+would then stop depending on the host's font set entirely. That is a design
+decision, not a test fix.
 
 The `-darwin-arm64` set stays committed so the gate still works locally on
 Apple Silicon; it is never used by CI.

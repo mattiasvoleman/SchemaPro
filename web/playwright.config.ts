@@ -27,20 +27,23 @@ export default defineConfig({
   // failed visual gate into a silent pass.
   updateSnapshots: isCI ? "none" : "missing",
 
-  // Playwright's default suffix is the platform only ("-linux"), which is not
-  // specific enough. Font rasterisation differs between CPU architectures, so
-  // baselines generated in an arm64 Linux container fail against amd64 CI with
-  // a uniform ~1-2% pixel difference on every screenshot — well past the 0.1%
-  // budget, and indistinguishable at a glance from a real regression.
+  // Platform + architecture in the filename, so baselines from different
+  // machines cannot silently collide. This is hygiene, not the thing that
+  // makes the gate work — see below.
   //
-  // Including process.arch makes that collision impossible: a mismatched
-  // architecture becomes a *missing* baseline, which CI fails on loudly
-  // (updateSnapshots: "none") instead of silently comparing against the wrong
-  // renderer's output.
+  // What actually determines whether a baseline matches is **which fonts are
+  // installed**. globals.css asks for `"Inter", ui-sans-serif, system-ui,
+  // -apple-system, "Segoe UI", …`, and Chromium resolves that stack to
+  // whatever the machine happens to have. The Playwright Docker image carries
+  // 29 font families; a bare ubuntu runner has 3. Same OS, same architecture,
+  // same browser build — different glyphs, and a uniform ~1-2% diff on every
+  // screenshot that looks exactly like a real regression.
   //
-  // GitHub's ubuntu-latest runners are linux-x64. Regenerate with
-  // `--platform linux/amd64` on an Apple Silicon machine — see
-  // docs/verification-baseline.md.
+  // Baselines must therefore be generated on the machine that verifies them:
+  // run the "Regenerate visual baselines" job in quality-gates.yml, which uses
+  // ubuntu-latest and `npx playwright install --with-deps` exactly as the web
+  // job does. Generating locally — in any container, on any architecture —
+  // produces files that fail on CI.
   snapshotPathTemplate: `{testDir}/{testFileName}-snapshots/{arg}{-projectName}-{platform}-${process.arch}{ext}`,
 
   expect: {
