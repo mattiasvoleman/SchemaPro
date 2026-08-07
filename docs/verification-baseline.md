@@ -413,6 +413,15 @@ remaining budget optimising from the winner as a hint. When optimisation
 produces nothing, the existence schedule is returned rather than an empty
 TIMEOUT.
 
+**Warm starts** (`682f9f0`): a previous schedule's placements now seed the
+phase-1 existence search. Measured on the phase-1 satisfaction solve — 500
+students: 35.6s cold → 2.2s warm; 1,000 students: TIMEOUT at 120s cold → 6.7s
+warm; a perturbation that invalidates part of the previous schedule (the
+most-loaded teacher losing Monday morning) costs nothing. End-to-end at 1,000
+students with a 30s budget: valid, with 1,418 of 1,440 lessons keeping their
+previous slot. Cold generation remains the expensive once-per-school event;
+regeneration is now interactive.
+
 The complexity guard has been re-derived (`523339f`): `_estimate_model_size`
 predicts the variable count per builder (96,700 predicted vs 92,546 measured at
 2,000 students — within 4.5%) against a budget of 1,000,000, replacing a
