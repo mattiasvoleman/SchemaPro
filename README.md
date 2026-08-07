@@ -75,7 +75,9 @@ Want demo data? `npm run db:seed` (with owner credentials in `DIRECT_URL`)
 creates a complete demo school ready for schedule generation.
 
 > Deploying to production? Follow the step-by-step runbook in
-> [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+> [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), or — if you'd rather have every
+> step explained without assuming prior ops experience —
+> [`docs/deployment-walkthrough.md`](docs/deployment-walkthrough.md).
 
 ## Getting started
 

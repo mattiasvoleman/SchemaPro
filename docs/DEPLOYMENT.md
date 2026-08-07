@@ -8,6 +8,11 @@ the **Next.js web app** on Vercel or any Node host.
 Estimated time for a first deployment: **half a day**, most of it in
 verification (step 9).
 
+> **New to this?** [`deployment-walkthrough.md`](deployment-walkthrough.md)
+> covers the same deployment in plain language, with every click spelled out
+> and a "check it worked" after each step. This runbook assumes you already
+> know your way around Postgres, containers and DNS.
+
 ---
 
 ## 0. Prerequisites
