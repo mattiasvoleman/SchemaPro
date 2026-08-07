@@ -29,7 +29,7 @@ could be evaluated at all.
 | Solver coverage | ✗ 81% vs 95% (ratcheted) |
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
-| Solver, 2,000 students | ✗ payload rejected before solving |
+| Solver, 2,000 students | ✗ no feasible schedule at **any** size tested |
 | Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | — needs a seeded DB (CI only) |
 | Lighthouse LCP/TTI | — not yet run |
@@ -51,6 +51,7 @@ could be evaluated at all.
 | Frontend performance | `web/lighthouserc.json` | `quality-gates.yml` → lighthouse (nightly) |
 | API P99 latency | `scripts/bench/api-latency.mjs` | `quality-gates.yml` → api-latency (nightly) |
 | Solver wall clock | `optimization-engine/benchmarks/solve_2000_students.py` | `quality-gates.yml` → solver-benchmark (nightly) |
+| Solver model diagnosis | `optimization-engine/benchmarks/profile_model.py` (build breakdown, ablation, rules×objective matrix) | not gated — diagnostic, lifts the complexity guard |
 | Dependency audit | `npm audit` / `pip-audit` | `ci.yml` → security |
 | SAST | Semgrep (`p/owasp-top-ten`, `p/nestjs`, `p/react`, …) | `ci.yml` → security |
 
@@ -223,7 +224,7 @@ so these are unblocked — `npm run bench:lighthouse`.
 
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
-| Schedule generation, 2,000 students | < 10s | **rejected before solving** | ✗ |
+| Schedule generation, 2,000 students | < 10s | **0 lessons placed in 300s** | ✗ |
 | API P99, reads | ≤ 50ms | **71–86ms** on list endpoints | ✗ |
 | API P99, updates | ≤ 150ms | **83ms** | ✓ |
 
@@ -276,41 +277,96 @@ teacher) the engine refuses the payload before any solving happens:
   model complexity  2,655,360 (budget 2,000,000)
 ```
 
+There are two separate problems here, and the first was hiding the second.
+Reproduce any of what follows with `benchmarks/profile_model.py`, which lifts
+the guard so the model can be measured at sizes the service refuses.
+
+**1. The guard rejects the payload, but its formula measures the wrong thing.**
+
 `SchedulerSolver.MAX_MODEL_COMPLEXITY` is 2,000,000 and the estimate is
-`lessons × rooms + lessons × constraints × days`. That second term multiplies
-every lesson by every constraint, but a constraint only ever applies to the one
-resource it names — so the estimate is pessimistic by a wide margin, and it is
-the binding limit here, not the solver's actual capability. Either the budget or
-the estimate needs revisiting before this row can be closed.
+`lessons × rooms + lessons × constraints × days`. Measuring what the build
+actually costs at 2,000 students shows that formula is not a proxy for anything:
 
-Measurements at reduced density, for the record:
+| builder | build time | share of build | share of the guard's estimate |
+| :--- | ---: | ---: | ---: |
+| `room_no_overlap` | 4.10s | 48.0% | 10% |
+| `rules` (lunch + per-day cap) | 3.12s | 36.6% | **not modelled at all** |
+| `objective` | 0.71s | 8.3% | not modelled |
+| `capacity` | 0.29s | 3.4% | not modelled |
+| `availability` | 0.26s | 3.0% | **90%** |
 
-| Shape | Complexity | Wall clock | Reported status |
-| :--- | :--- | :--- | :--- |
-| 2,000 students, 8 subj, density 0.3 | 647,040 | 13.6s | INFEASIBLE |
-| 2,000 students, 12 subj, density 0.7 | 1,935,360 | 19.6s | INFEASIBLE |
-| 1,000 students, 8 subj, density 0.5 | 240,960 | 11.4s | INFEASIBLE |
-| 500 students, 8 subj, density 0.5 | 59,040 | 10.0s | INFEASIBLE |
+The term contributing 90% of the estimate accounts for 3% of the real cost, and
+the second-largest real cost is absent from the formula. The cause is that
+`_decisions_for_constraint` filters: a TEACHER constraint only ever touches that
+teacher's lessons, never all of them. So `lessons × constraints × days`
+overcounts, and it does so as roughly *n³* while the real model grows about *n²*
+— the estimate drifts from 0.75× the true variable count at 250 students to
+4.05× at 2,000. Larger schools get rejected ever more aggressively for a cost
+they do not incur.
 
-Two things to read from this table. First, wall clock is dominated by **model
-construction**, not search: every run was given a 9s CP-SAT limit yet took 10–20s
-total. Second, every one of those INFEASIBLE verdicts is suspect — see below.
+A proxy that tracks the real model is `lessons × rooms + lessons × days ×
+lunch_candidates × 3`, which stays within 0.79–0.87× of the true variable count
+across an 8× range of school sizes.
 
-### `INFEASIBLE` does not mean infeasible
+**2. Lifting the guard does not produce a schedule.**
 
-`SchedulerSolver._map_status` collapses every non-OPTIMAL, non-FEASIBLE CP-SAT
-status into `"INFEASIBLE"`, including `UNKNOWN` (hit the time limit without
-finding a solution) and `MODEL_INVALID`. A school whose timetable is merely
-hard to find is told its requirements are impossible — and `solve()` then
-attaches a conflict analysis derived from a search state where nothing was ever
-proven.
+Removing the ceiling entirely and running the 2,000-student school:
 
-Demonstration: on one payload, **removing** the lunch rule flipped the reported
-status from FEASIBLE to INFEASIBLE. Removing a constraint cannot make a model
-infeasible, so the status is reporting a timeout, not a proof.
+| | |
+| :--- | :--- |
+| model | 655,106 variables, 1,622,688 constraints |
+| build | 8.5–8.9s — **alone over the 10s budget, before any search** |
+| solve, 9s limit | TIMEOUT, **0 of 2,880 lessons** |
+| solve, 291s limit | TIMEOUT, **0 of 2,880 lessons** |
 
-This has to be fixed before any solver row here means anything, because the
-benchmark's own pass/fail check trusts that status.
+Five minutes of search does not find one feasible timetable. So the guard was
+never the binding limit on capability — it was masking the fact that the model
+does not solve at this scale at all.
+
+Nor is this a large-school problem. Every size tested fails the 10s budget:
+
+| students | variables | build | solve | result |
+| ---: | ---: | ---: | ---: | :--- |
+| 250 | 52,930 | 0.56s | 9.52s | 0 of 360 |
+| 500 | 114,231 | 1.29s | 8.88s | 0 of 720 |
+| 1,000 | 261,313 | 3.20s | 7.22s | 0 of 1,440 |
+| 1,500 | 441,515 | 5.62s | 5.11s | 0 of 2,160 |
+| 2,000 | 655,106 | 8.91s | 1.66s | 0 of 2,880 |
+
+The synthetic school is satisfiable: room utilisation is 63–65%, specialist-room
+demand is well inside supply, and 36 lessons/week/class fits the 8/day cap. This
+is not an over-constrained fixture.
+
+**What actually blocks it.** Adding constraint groups cumulatively isolates the
+cause — at 250 students, with a 10s budget:
+
+| rules | objective | status | scheduled |
+| :--- | :--- | :--- | ---: |
+| off | off | **OPTIMAL in 5.0s** | 360 / 360 |
+| off | on | TIMEOUT | 0 / 360 |
+| on | off | TIMEOUT | 0 / 360 |
+| on | on | TIMEOUT | 0 / 360 |
+
+The core model — capacity, teacher/group/room no-overlap, availability — solves
+to optimality. Adding *either* the lunch rules *or* the objective terms
+independently takes it from solved-in-5s to nothing-found-in-10s.
+
+Two candidate causes, neither yet confirmed:
+
+- **The lunch encoding.** It creates three booleans per (lesson × day ×
+  candidate start) — 7 candidates × 5 days × every lesson in the group — even
+  though a lesson occupies exactly one day. That is 40K variables at 250
+  students and 322K at 2,000, most of them provably irrelevant.
+- **No symmetry breaking.** The 8 interchangeable CLASSROOM rooms at 250
+  students (84 at 2,000) mean the search explores enormous numbers of equivalent
+  assignments. This fits the otherwise odd ablation result where *adding*
+  availability constraints flipped a TIMEOUT to OPTIMAL — extra constraints
+  broke symmetry and pruned the search.
+
+Until one of these is addressed, §2's "2,000 students under 10s" is not a
+tuning target. Note also that `Solve()` runs to its time limit whenever
+optimality is not proven, so wall clock is pinned at the budget rather than
+reflecting when a usable answer appeared.
 
 ## Security & accessibility
 
