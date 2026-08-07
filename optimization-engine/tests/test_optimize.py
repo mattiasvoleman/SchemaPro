@@ -1112,3 +1112,75 @@ def test_clone_satisfaction_rescues_a_failed_clean_phase(
     assert len(response.lessons) == 2, "the clone-phase schedule must be delivered"
     for lesson in response.lessons:
         assert lesson.room_id is not None
+
+
+def test_complexity_guard_tracks_the_model_not_the_old_formula() -> None:
+    """The guard must estimate what the current encoding builds.
+
+    Two payloads, one on each side of the line.
+
+    The first has 450 recurring constraints on teachers who appear nowhere in
+    the requirements. The retired formula charged lessons x constraints x days
+    for them — 2.25M against its 2M budget, a rejection — although constraints
+    that touch no lesson add literally nothing to the model.
+
+    The second is genuinely pathological: 1,000 rooms with 500 distinct
+    capacities. Every capacity tier is its own interchangeability class, so
+    the room allocator would emit a class literal per (lesson, class) —
+    millions of variables the build phase would sit in before any timeout
+    could engage. That is precisely what the guard exists to stop.
+    """
+    from app.exceptions import InvalidScheduleInputError
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+
+    harmless = _sample_payload()
+    harmless["requirements"] = [
+        {
+            **harmless["requirements"][0],  # type: ignore[dict-item]
+            "id": str(uuid4()),
+            "studentGroupId": str(uuid4()),
+            "teacherId": str(uuid4()),
+            "lessonsPerWeek": 40,
+        }
+        for _ in range(25)
+    ]
+    harmless["rooms"] = [{"id": str(uuid4()), "capacity": 30} for _ in range(25)]
+    harmless["constraints"] = [
+        {
+            "id": str(uuid4()),
+            "resourceKind": "TEACHER",
+            "resourceId": str(uuid4()),  # a teacher with no lessons
+            "dayOfWeek": (i % 5) + 1,
+            "date": None,
+            "startTime": "13:00:00",
+            "endTime": "16:00:00",
+            "kind": "UNAVAILABLE",
+        }
+        for i in range(450)
+    ]
+    request = OptimizeScheduleRequest.model_validate(harmless)
+    old_formula = sum(r.lessons_per_week for r in request.requirements) * (
+        len(request.rooms) + len(request.constraints) * 5
+    )
+    assert old_formula > 2_000_000, "the fixture no longer exercises the old rejection"
+    solver._validate_request(request)  # must not raise
+
+    pathological = _sample_payload()
+    pathological["requirements"] = [
+        {
+            **pathological["requirements"][0],  # type: ignore[dict-item]
+            "id": str(uuid4()),
+            "studentGroupId": str(uuid4()),
+            "teacherId": str(uuid4()),
+            "lessonsPerWeek": 40,
+        }
+        for _ in range(100)
+    ]
+    pathological["rooms"] = [
+        {"id": str(uuid4()), "capacity": 41 + i // 2} for i in range(1000)
+    ]
+    with pytest.raises(InvalidScheduleInputError, match="too large to build"):
+        solver._validate_request(OptimizeScheduleRequest.model_validate(pathological))

@@ -169,11 +169,11 @@ def run(shape: SchoolShape, solver_seconds: float) -> dict[str, object]:
     solver = SchedulerSolver(settings)
 
     total_lessons = sum(r.lessons_per_week for r in request.requirements)
-    # Mirrors SchedulerSolver._validate_request so a rejection can be reported
-    # with the arithmetic that caused it rather than just the error string.
-    complexity = total_lessons * len(request.rooms) + total_lessons * len(
-        request.constraints
-    ) * len(solver._grid.schedule_days)
+    # The solver's own estimator, so a rejection is reported with the same
+    # arithmetic that caused it — a private copy here would drift the first
+    # time the model encoding changes, which is exactly how the previous
+    # formula ended up rejecting schools the solver handled with ease.
+    complexity = solver._estimate_model_size(request)
 
     shape_facts: dict[str, object] = {
         "students": shape.students,

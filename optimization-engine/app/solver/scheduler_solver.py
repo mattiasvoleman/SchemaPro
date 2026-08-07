@@ -69,8 +69,20 @@ class SchedulerSolver:
     # constraint creation) runs first and scales multiplicatively with the input
     # list lengths. These budgets reject pathological payloads up front so a
     # single request cannot exhaust CPU/RAM before the timeout can engage.
+    #
+    # MAX_MODEL_COMPLEXITY bounds _estimate_model_size, a per-builder prediction
+    # of the variable count (within ~8% of the real model on the benchmark
+    # school). Build cost is ~17 microseconds per variable single-threaded, so
+    # one million variables is roughly 15-20s of build and one to two GB of
+    # proto — the edge of acceptable for a single request, and an order of
+    # magnitude above a 2,000-student school (~100K).
+    #
+    # An earlier formula (lessons x rooms + lessons x constraints x days)
+    # predated the room-class and interval-lunch encodings: its dominant term
+    # tracked 3% of the real cost, grew ~n^3 against a ~n^2 model, and rejected
+    # the 2,000-student benchmark that actually builds in 1.6s.
     MAX_LESSON_INSTANCES = 5_000
-    MAX_MODEL_COMPLEXITY = 2_000_000
+    MAX_MODEL_COMPLEXITY = 1_000_000
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -352,6 +364,100 @@ class SchedulerSolver:
         # returning nothing. FEASIBLE, deliberately.
         return _phase1_response()
 
+    def _estimate_model_size(self, request: OptimizeScheduleRequest) -> int:
+        """Predict the variable count of the model this request would build.
+
+        Computed in O(requirements + constraints + rooms) without building
+        anything, one term per builder:
+
+            3L              decisions          start, end, room_index per lesson
+            L               capacity           one pinned literal per lesson
+            L x classes     room allocator     one class literal per eligible
+                                               class; bounded by the distinct
+                                               (type, capacity) signatures plus
+                                               the identity-pinned rooms
+            2 x affected    availability +     before/after (or preference)
+                            preference         booleans per touched lesson;
+                                               ROOM-kind constraints touch every
+                                               lesson and add an assignment
+                                               literal each
+            (1 + D)L + GD   rules              day var per lesson, on-day
+                                               boolean per lesson-day, one lunch
+                                               interval per group-day
+            pairs(req)      spread             one boolean per same-requirement
+                                               lesson pair
+            2 x pairs(t)    teacher gap        boolean + gap var per
+                                               same-teacher pair, mirroring the
+                                               builder's own skip of any teacher
+                                               above 600 pairs
+            2P              disruption         per previous lesson
+
+        On the 2,000-student benchmark this predicts ~99.6K against a measured
+        92,546 — an upper bound within 8%. If a builder's encoding changes,
+        change its term here in the same commit; the benchmark check is
+        `benchmarks/solve_2000_students.py --json | grep -i complexity`.
+        """
+        lessons_per_requirement = {
+            requirement.id: requirement.lessons_per_week
+            for requirement in request.requirements
+        }
+        total_lessons = sum(lessons_per_requirement.values())
+        day_count = len(self._grid.schedule_days)
+
+        lessons_by_teacher: dict[UUID, int] = {}
+        lessons_by_group: dict[UUID, int] = {}
+        spread_pairs = 0
+        for requirement in request.requirements:
+            count = requirement.lessons_per_week
+            for teacher_id in (requirement.teacher_id, requirement.co_teacher_id):
+                if teacher_id is not None:
+                    lessons_by_teacher[teacher_id] = (
+                        lessons_by_teacher.get(teacher_id, 0) + count
+                    )
+            lessons_by_group[requirement.student_group_id] = (
+                lessons_by_group.get(requirement.student_group_id, 0) + count
+            )
+            spread_pairs += count * (count - 1) // 2
+
+        # The room-class partition merges rooms whose eligibility signature is
+        # identical, and rooms sharing (type, capacity) always are — so the
+        # class count is bounded by the distinct signatures plus the rooms other
+        # builders pin by identity.
+        distinguished = collect_distinguished_room_ids(
+            request.constraints, request.fixed_lessons,
+        )
+        signature_bound = len(
+            {(room.type, room.capacity) for room in request.rooms},
+        ) + min(len(distinguished), len(request.rooms))
+        room_class_vars = total_lessons * min(signature_bound, len(request.rooms))
+
+        affected_vars = 0
+        for constraint in request.constraints:
+            if constraint.resource_kind == "TEACHER":
+                affected_vars += 2 * lessons_by_teacher.get(constraint.resource_id, 0)
+            elif constraint.resource_kind == "STUDENT_GROUP":
+                affected_vars += 2 * lessons_by_group.get(constraint.resource_id, 0)
+            else:  # ROOM: an assignment literal plus before/after for every lesson
+                affected_vars += 3 * total_lessons
+
+        gap_pair_cap = 600  # mirrors _add_teacher_gap_objective's own guard
+        gap_vars = 0
+        for teacher_lessons in lessons_by_teacher.values():
+            pairs = teacher_lessons * (teacher_lessons - 1) // 2
+            if 0 < pairs <= gap_pair_cap:
+                gap_vars += 2 * pairs
+
+        return (
+            4 * total_lessons
+            + room_class_vars
+            + affected_vars
+            + (1 + day_count) * total_lessons
+            + day_count * len(lessons_by_group)
+            + spread_pairs
+            + gap_vars
+            + 2 * len(request.previous_lessons)
+        )
+
     def _validate_request(self, request: OptimizeScheduleRequest) -> None:
         if not request.requirements:
             raise InvalidScheduleInputError("At least one teaching requirement is required.")
@@ -367,14 +473,14 @@ class SchedulerSolver:
             )
             raise InvalidScheduleInputError(msg)
 
-        estimated_complexity = (
-            total_lessons * len(request.rooms)
-            + total_lessons * len(request.constraints) * len(self._grid.schedule_days)
-        )
-        if estimated_complexity > self.MAX_MODEL_COMPLEXITY:
+        estimated_size = self._estimate_model_size(request)
+        if estimated_size > self.MAX_MODEL_COMPLEXITY:
             msg = (
-                "Scheduling request is too large to solve; "
-                "reduce the number of rooms, requirements, or constraints."
+                f"Scheduling request is too large to build "
+                f"(estimated {estimated_size:,} model variables; "
+                f"limit {self.MAX_MODEL_COMPLEXITY:,}). The usual drivers are "
+                f"rooms with many distinct capacities, constraints that each "
+                f"touch many lessons, and very high per-teacher lesson loads."
             )
             raise InvalidScheduleInputError(msg)
 
