@@ -52,7 +52,7 @@ could be evaluated at all.
 | API P99 latency | `scripts/bench/api-latency.mjs` | `quality-gates.yml` → api-latency (nightly) |
 | Solver wall clock | `optimization-engine/benchmarks/solve_2000_students.py` | `quality-gates.yml` → solver-benchmark (nightly) |
 | Solver model diagnosis | `optimization-engine/benchmarks/profile_model.py` (build breakdown, ablation, rules×objective matrix) | not gated — diagnostic, lifts the complexity guard |
-| Schedule correctness | `optimization-engine/benchmarks/validate_schedule.py` — re-derives every rule from the request and checks the response, sharing no code with the model builders | not gated — caught a live day-straddling violation |
+| Schedule correctness | `optimization-engine/benchmarks/validate_schedule.py` — re-derives every rule from the request and checks the response, sharing no code with the model builders | `quality-gates.yml` → solver-benchmark (nightly, 400 students) |
 | Dependency audit | `npm audit` / `pip-audit` | `ci.yml` → security |
 | SAST | Semgrep (`p/owasp-top-ten`, `p/nestjs`, `p/react`, …) | `ci.yml` → security |
 
