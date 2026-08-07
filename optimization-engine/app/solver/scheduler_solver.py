@@ -235,6 +235,12 @@ class SchedulerSolver:
         def _remaining() -> float:
             return total_budget - (time.monotonic() - started)
 
+        # Warm start: the previous schedule's slots seed the existence search.
+        # Measured on the benchmark school, this is the difference between
+        # minutes of satisfaction search and settling into last term's shape
+        # in seconds — see the warm-start table in verification-baseline.md.
+        self._hint_previous_lessons(feas_model, feas_decisions, request.previous_lessons)
+
         # ---- phase 1a: clean satisfaction build -----------------------------
         phase1 = cp_model.CpSolver()
         phase1.parameters.max_time_in_seconds = min(
@@ -363,6 +369,53 @@ class SchedulerSolver:
         # Phase 2 came up empty: fall back to the phase-1 schedule rather than
         # returning nothing. FEASIBLE, deliberately.
         return _phase1_response()
+
+    def _hint_previous_lessons(
+        self,
+        model: cp_model.CpModel,
+        decisions: list[LessonDecision],
+        previous_lessons: list[PreviousLesson],
+    ) -> int:
+        """Warm-start a model from the previous schedule's placements.
+
+        One hint per previous slot, on one not-yet-hinted lesson instance of
+        the same requirement — the same pairing _add_disruption_objective uses
+        for its penalty terms, so the hint and the objective pull toward the
+        same assignment.
+
+        This exists because the two-phase split silently disabled the warm
+        start: the hints used to ride along inside _add_disruption_objective,
+        which the objective-free phase-1a build never runs, and phase 2 clears
+        all hints in favour of the phase-1 solution. Phase 1a must therefore
+        be hinted explicitly. (Phase 1b needs no call — it clones the full
+        model, inheriting the disruption builder's own hints.)
+
+        Hints are guidance, not constraints: a stale slot — say the teacher it
+        belonged to has a new unavailability — costs nothing beyond the search
+        repairing that part of the schedule.
+
+        Returns the number of hints installed.
+        """
+        by_requirement: dict[UUID, list[LessonDecision]] = {}
+        for decision in decisions:
+            by_requirement.setdefault(decision.lesson.requirement.id, []).append(decision)
+
+        hinted: set[str] = set()
+        for previous in previous_lessons:
+            candidates = by_requirement.get(previous.requirement_id)
+            if not candidates:
+                continue
+            try:
+                start_slot = self._grid.parse_hhmmss(previous.start_time)
+                abs_slot = self._grid.absolute_start(previous.day_of_week, start_slot)
+            except ValueError:
+                continue  # off-grid previous slot — nothing to warm-start from
+            for decision in candidates:
+                if decision.lesson.key() not in hinted:
+                    model.AddHint(decision.start, abs_slot)
+                    hinted.add(decision.lesson.key())
+                    break
+        return len(hinted)
 
     def _estimate_model_size(self, request: OptimizeScheduleRequest) -> int:
         """Predict the variable count of the model this request would build.

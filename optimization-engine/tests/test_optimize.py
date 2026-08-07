@@ -1184,3 +1184,48 @@ def test_complexity_guard_tracks_the_model_not_the_old_formula() -> None:
     ]
     with pytest.raises(InvalidScheduleInputError, match="too large to build"):
         solver._validate_request(OptimizeScheduleRequest.model_validate(pathological))
+
+
+def test_previous_lessons_warm_start_the_feasibility_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The phase-1 model must carry hints from the previous schedule.
+
+    The warm-start hints used to live inside _add_disruption_objective, which
+    the objective-free phase-1a build never runs — and phase 2 clears hints
+    in favour of the phase-1 solution, so previous_lessons silently stopped
+    accelerating anything. Measured cost of losing this: 1,000 students cold
+    is a TIMEOUT at 120s; warm it solves in ~7s. This pins the hint
+    installation on the FIRST model solved.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver import scheduler_solver as solver_module
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    real_solve = solver_module.cp_model.CpSolver.Solve
+    solved_models = []
+
+    def recording_solve(self, model, solution_callback=None):  # noqa: ANN001, ANN202
+        solved_models.append(model)
+        return real_solve(self, model)
+
+    monkeypatch.setattr(solver_module.cp_model.CpSolver, "Solve", recording_solve)
+
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    payload["previousLessons"] = [
+        {
+            "requirementId": requirement["id"],  # type: ignore[index]
+            "dayOfWeek": 3,
+            "startTime": "11:00:00",
+        },
+    ]
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=5.0))
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+
+    hint = solved_models[0].Proto().solution_hint
+    assert len(hint.vars) == 1, "one previous slot must install exactly one hint"
+    # Wednesday 11:00 on the default grid: day index 2 x 40 slots + 12.
+    assert list(hint.values) == [92]
