@@ -29,7 +29,7 @@ could be evaluated at all.
 | Solver coverage | ✗ 81% vs 95% (ratcheted) |
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
-| Solver, 2,000 students | ✗ 400 students validated (was: no size at all); 2,000 unreached |
+| Solver, 2,000 students | ✗ 1,300 students validated (~9.5 min); 10s/2,000 unreached |
 | Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | — needs a seeded DB (CI only) |
 | Lighthouse LCP/TTI | — not yet run |
@@ -225,7 +225,7 @@ so these are unblocked — `npm run bench:lighthouse`.
 
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
-| Schedule generation, 2,000 students | < 10s | **400 students valid in <10s; 2,000 unreached** | ✗ |
+| Schedule generation, 2,000 students | < 10s | **400 in <10s; 1,300 in ~9.5 min; 2,000 rejected by the complexity guard** | ✗ |
 | API P99, reads | ≤ 50ms | **71–86ms** on list endpoints | ✗ |
 | API P99, updates | ≤ 150ms | **83ms** | ✓ |
 
@@ -393,9 +393,30 @@ the interval lunch encoding and the within-day start domain in `530eef3`, and
 the room-class allocator in `a028def`.
 
 Through the real `solve()` path, with every schedule checked by
-`benchmarks/validate_schedule.py` rather than trusting the solver's status:
-**400 students valid in under 10s; 475 finds nothing.** Before this work no
-size produced a valid timetable at all.
+`benchmarks/validate_schedule.py` rather than trusting the solver's status,
+after the two-phase solve landed (`0834832`):
+
+| students | budget | result |
+| ---: | ---: | :--- |
+| 250 | 10s | FEASIBLE, 360/360, VALID |
+| 400 | 10s | FEASIBLE, 576/576, VALID |
+| 500 | 120s | FEASIBLE, 720/720, VALID |
+| 750 | 120s | FEASIBLE, 1,080/1,080, VALID |
+| 1,000 | 180s | FEASIBLE, 1,440/1,440, VALID |
+| 1,300 | 570s | FEASIBLE, 1,872/1,872, VALID |
+
+Before this work no size produced a valid timetable at all. `solve()` now
+proves existence first (a sequential portfolio of two satisfaction encodings —
+neither dominates; the smaller "clean" build wins below ~500 students and the
+cleared-clone build is the only one that works at 1,000+) and spends the
+remaining budget optimising from the winner as a hint. When optimisation
+produces nothing, the existence schedule is returned rather than an empty
+TIMEOUT.
+
+Note that 2,000 students is currently rejected upfront by
+`MAX_MODEL_COMPLEXITY`: the guard's formula predates the room-class and lunch
+re-encodings and overestimates by roughly an order of magnitude. Re-deriving it
+is now the gate to even *measuring* 2,000 through the production path.
 
 Model size at 2,000 students fell from 655,106 variables to 92,546, and build
 from 8.5s to 1.6s. The room block alone went from 264,960 variables to 7,200.
