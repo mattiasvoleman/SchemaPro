@@ -29,7 +29,7 @@ could be evaluated at all.
 | Solver coverage | ✗ 81% vs 95% (ratcheted) |
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
-| Solver, 2,000 students | ✗ 300 students validated (was: no size at all); 2,000 unreached |
+| Solver, 2,000 students | ✗ 400 students validated (was: no size at all); 2,000 unreached |
 | Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | — needs a seeded DB (CI only) |
 | Lighthouse LCP/TTI | — not yet run |
@@ -225,7 +225,7 @@ so these are unblocked — `npm run bench:lighthouse`.
 
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
-| Schedule generation, 2,000 students | < 10s | **300 students valid in <10s; 2,000 unreached** | ✗ |
+| Schedule generation, 2,000 students | < 10s | **400 students valid in <10s; 2,000 unreached** | ✗ |
 | API P99, reads | ≤ 50ms | **71–86ms** on list endpoints | ✗ |
 | API P99, updates | ≤ 150ms | **83ms** | ✓ |
 
@@ -388,18 +388,24 @@ O(groups × days). Restating it as one variable-start interval per (group, day)
 inside the group's existing `NoOverlap` is exactly equivalent and costs 400
 variables.
 
-**Measured effect of the fixes.** Three of these are now landed in production
-(`530eef3`): assumption demotion, the interval lunch encoding, and the within-day
-start domain. The room redesign is **not** landed — it changes what `room_index`
-means and needs a post-pass — so production keeps the 265k-variable room block
-and its full symmetry.
+**Measured effect of the fixes.** All four are now landed: assumption demotion,
+the interval lunch encoding and the within-day start domain in `530eef3`, and
+the room-class allocator in `a028def`.
 
-Landed, through the real `solve()` path with output checked by
-`benchmarks/validate_schedule.py`: **250 students valid in under 10s, 300
-students valid, 350 finds nothing.** Before these changes no size produced a
-valid timetable at all.
+Through the real `solve()` path, with every schedule checked by
+`benchmarks/validate_schedule.py` rather than trusting the solver's status:
+**400 students valid in under 10s; 475 finds nothing.** Before this work no
+size produced a valid timetable at all.
 
-With the prototype room encoding added on top, at a 10s budget:
+Model size at 2,000 students fell from 655,106 variables to 92,546, and build
+from 8.5s to 1.6s. The room block alone went from 264,960 variables to 7,200.
+
+Note a fixture artifact when reading the curve: the benchmark generator cycles
+room types, so at 425 and 450 students a single gymnasium must host 51-54
+lessons against 50 available slots. Those sizes are genuinely infeasible and the
+solver correctly proves it in 0.6s. 475 and above are well-formed again.
+
+Earlier prototype measurements, at a 10s budget:
 
 | students | model | first solution | verdict |
 | ---: | ---: | ---: | :--- |
