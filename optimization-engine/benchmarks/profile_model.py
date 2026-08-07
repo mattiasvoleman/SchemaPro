@@ -95,7 +95,8 @@ def _assemble(shape, enabled, model, solver, request, timings=None):
     step("capacity", lambda: solver._add_capacity_constraints(model, registry, decisions, rooms))
     step("teacher", lambda: solver._add_teacher_no_overlap(model, decisions))
     step("group", lambda: solver._add_group_no_overlap(model, decisions))
-    step("room", lambda: solver._add_room_no_overlap(model, decisions, rooms))
+    step("room", lambda: solver._add_room_allocation(
+        model, decisions, rooms, request.constraints, request.fixed_lessons))
     step("availability", lambda: solver._add_availability_constraints(
         model, registry, decisions, rooms, request.constraints))
     step("fixed", lambda: solver._add_fixed_lesson_constraints(
@@ -130,9 +131,10 @@ def _solve(solver, model, decisions, rooms, budget, build_s, workers):
     t0 = time.perf_counter()
     code = cp.Solve(model)
     solve_s = time.perf_counter() - t0
-    scheduled = 0
-    if code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        scheduled = len(solver._extract_lessons(cp, decisions, rooms))
+    # Every decision carries a start, so a solved model places all of them.
+    # Counting decisions avoids _extract_lessons, which now needs the room plan
+    # that the ablation deliberately omits in some configurations.
+    scheduled = len(decisions) if code in (cp_model.OPTIMAL, cp_model.FEASIBLE) else 0
     return solver._map_status(code), solve_s, scheduled
 
 

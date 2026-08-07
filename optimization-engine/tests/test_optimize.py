@@ -824,8 +824,218 @@ def test_a_feasible_solve_leaves_the_assumptions_field_empty() -> None:
     solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=5.0))
     request = OptimizeScheduleRequest.model_validate(_sample_payload())
 
-    fast, _, _ = solver._build_model(request, use_assumptions=False)
+    fast, _, _, _ = solver._build_model(request, use_assumptions=False)
     assert list(fast.Proto().assumptions) == []
 
-    explained, registry, _ = solver._build_model(request, use_assumptions=True)
+    explained, registry, _, _ = solver._build_model(request, use_assumptions=True)
     assert len(explained.Proto().assumptions) > 0
+
+
+def _two_room_payload(lessons_per_week: int = 4) -> dict[str, object]:
+    """One group, one teacher, two interchangeable rooms."""
+    payload = _sample_payload()
+    payload["requirements"][0]["lessonsPerWeek"] = lessons_per_week  # type: ignore[index]
+    payload["rooms"] = [
+        {"id": str(uuid4()), "capacity": 30},
+        {"id": str(uuid4()), "capacity": 30},
+    ]
+    return payload
+
+
+def _contended_two_room_payload() -> dict[str, object]:
+    """Two rooms, and two requirements that can run at the same time.
+
+    Contention is the point. With slack, the post-pass happens to reproduce
+    whatever room_index the solver chose, so a test built on a quiet payload
+    passes even when room pinning is removed entirely.
+    """
+    payload = _two_room_payload()
+    first = payload["requirements"][0]  # type: ignore[index]
+    first["lessonsPerWeek"] = 20
+    second = {
+        **first,  # type: ignore[dict-item]
+        "id": str(uuid4()),
+        "subjectId": str(uuid4()),
+        "teacherId": str(uuid4()),
+        "studentGroupId": str(uuid4()),
+        "lessonsPerWeek": 20,
+    }
+    payload["requirements"] = [first, second]
+    return payload
+
+
+def test_no_two_lessons_share_a_room_at_the_same_time() -> None:
+    """The class encoding never names a room, so the post-pass must not collide.
+
+    Room capacity is enforced by one cumulative per interchangeability class;
+    concrete rooms come from a sweep afterwards. If that sweep were wrong the
+    solver would still report OPTIMAL while emitting a double-booked timetable —
+    which is worse than no timetable, so it is asserted directly.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    # Two teachers and two groups so lessons CAN run concurrently, which is what
+    # forces the sweep to hand out distinct rooms.
+    payload = _two_room_payload()
+    first = payload["requirements"][0]  # type: ignore[index]
+    second = {
+        **first,  # type: ignore[dict-item]
+        "id": str(uuid4()),
+        "teacherId": str(uuid4()),
+        "studentGroupId": str(uuid4()),
+        "subjectId": str(uuid4()),
+        "lessonsPerWeek": 40,
+    }
+    first["lessonsPerWeek"] = 40  # type: ignore[index]
+    payload["requirements"] = [first, second]
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0))
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 80
+
+    grid = solver._grid
+    occupied: dict[tuple, str] = {}
+    for lesson in response.lessons:
+        day = grid.day_index(lesson.day_of_week)
+        start = grid.parse_hhmmss(lesson.start_time)
+        for slot in range(start, start + grid.minutes_to_slots(60)):
+            marker = (lesson.room_id, day, slot)
+            assert marker not in occupied, (
+                f"room {lesson.room_id} double-booked on day {day} slot {slot}"
+            )
+            occupied[marker] = str(lesson.requirement_id)
+
+
+def test_a_room_scoped_unavailability_is_honoured() -> None:
+    """A ROOM-scoped constraint reifies room_index, which the class encoding
+    only keeps truthful for rooms passed as distinguished. If that wiring were
+    missed, the solver would satisfy the constraint against a room_index the
+    post-pass then overrides — and the emitted schedule would use the room
+    anyway.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _contended_two_room_payload()
+    blocked_room = payload["rooms"][0]["id"]  # type: ignore[index]
+    payload["constraints"] = [
+        {
+            "id": str(uuid4()),
+            "resourceKind": "ROOM",
+            "resourceId": blocked_room,
+            "dayOfWeek": day,
+            "date": None,
+            "startTime": "08:00:00",
+            "endTime": "17:45:00",
+            "kind": "UNAVAILABLE",
+        }
+        for day in (1, 2, 3, 4, 5)
+    ]
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0))
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 40
+    for lesson in response.lessons:
+        assert str(lesson.room_id) != blocked_room, (
+            "a lesson was placed in a room that is unavailable all week"
+        )
+
+
+def test_a_fixed_lesson_blocks_its_own_room() -> None:
+    """A room-bearing fixed lesson must keep generated lessons out of that room."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _contended_two_room_payload()
+    held_room = payload["rooms"][0]["id"]  # type: ignore[index]
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "studentGroupId": str(uuid4()),
+            "teacherId": str(uuid4()),
+            "roomId": held_room,
+            "dayOfWeek": day,
+            "startTime": "08:00:00",
+            "endTime": "17:45:00",
+        }
+        for day in (1, 2, 3, 4, 5)
+    ]
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0))
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 40
+    for lesson in response.lessons:
+        assert str(lesson.room_id) != held_room, (
+            "a lesson was placed in a room a fixed lesson occupies all week"
+        )
+
+
+def test_specialist_room_requirements_are_respected() -> None:
+    """Eligibility must survive the partition into interchangeability classes."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _sample_payload()
+    lab_id = str(uuid4())
+    payload["rooms"] = [
+        {"id": str(uuid4()), "capacity": 30, "type": "CLASSROOM"},
+        {"id": str(uuid4()), "capacity": 30, "type": "CLASSROOM"},
+        {"id": lab_id, "capacity": 30, "type": "LABORATORY"},
+    ]
+    payload["requirements"][0]["requiredRoomType"] = "LABORATORY"  # type: ignore[index]
+    payload["requirements"][0]["lessonsPerWeek"] = 5  # type: ignore[index]
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0))
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 5
+    for lesson in response.lessons:
+        assert str(lesson.room_id) == lab_id, "a LABORATORY lesson landed elsewhere"
+
+
+def test_room_classes_merge_only_truly_interchangeable_rooms() -> None:
+    """Rooms differing in eligibility for ANY requirement must not be merged."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.room_allocator import build_room_classes
+    from app.solver.scheduler_solver import SchedulerSolver
+    from ortools.sat.python import cp_model
+
+    payload = _sample_payload()
+    payload["rooms"] = [
+        {"id": str(uuid4()), "capacity": 30, "type": "CLASSROOM"},
+        {"id": str(uuid4()), "capacity": 30, "type": "CLASSROOM"},
+        {"id": str(uuid4()), "capacity": 30, "type": "LABORATORY"},
+        {"id": str(uuid4()), "capacity": 10, "type": "CLASSROOM"},  # too small
+    ]
+    # Without a requirement that ASKS for a laboratory, the lab is genuinely
+    # interchangeable with a classroom — eligibility is what defines a class,
+    # not the room's label. Add one so the partition has something to separate.
+    lab_requirement = {
+        **payload["requirements"][0],  # type: ignore[dict-item]
+        "id": str(uuid4()),
+        "subjectId": str(uuid4()),
+        "requiredRoomType": "LABORATORY",
+    }
+    payload["requirements"] = [payload["requirements"][0], lab_requirement]  # type: ignore[index]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    solver = SchedulerSolver(_settings())
+    decisions = solver._create_lesson_decisions(
+        cp_model.CpModel(), request.requirements, len(request.rooms),
+    )
+
+    classes = build_room_classes(decisions, request.rooms, set(), solver._room_allowed)
+    sizes = sorted(len(c.room_indices) for c in classes)
+    # {room 0, room 1} interchangeable; the lab and the undersized room differ.
+    assert sizes == [1, 1, 2], f"unexpected partition {sizes}"
+
+    pinned = build_room_classes(
+        decisions, request.rooms, {request.rooms[0].id}, solver._room_allowed,
+    )
+    assert sorted(len(c.room_indices) for c in pinned) == [1, 1, 1, 1], (
+        "a distinguished room must become its own singleton class"
+    )

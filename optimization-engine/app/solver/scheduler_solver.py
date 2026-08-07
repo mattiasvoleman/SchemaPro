@@ -23,6 +23,11 @@ from app.schemas.schedule import (
 
 
 from app.solver.conflict_analyzer import AssumptionRegistry, build_conflict_analysis
+from app.solver.room_allocator import (
+    RoomPlan,
+    add_room_allocation,
+    collect_distinguished_room_ids,
+)
 from app.solver.time_grid import TimeGrid
 
 
@@ -80,7 +85,7 @@ class SchedulerSolver:
         request: OptimizeScheduleRequest,
         *,
         use_assumptions: bool,
-    ) -> tuple[cp_model.CpModel, AssumptionRegistry, list[LessonDecision]]:
+    ) -> tuple[cp_model.CpModel, AssumptionRegistry, list[LessonDecision], RoomPlan]:
         """Construct the CP-SAT model. Called twice only on the INFEASIBLE path.
 
         `use_assumptions` is threaded through to the registry; see its docstring
@@ -94,7 +99,9 @@ class SchedulerSolver:
         self._add_capacity_constraints(model, registry, decisions, rooms)
         self._add_teacher_no_overlap(model, decisions)
         self._add_group_no_overlap(model, decisions)
-        self._add_room_no_overlap(model, decisions, rooms)
+        room_plan = self._add_room_allocation(
+            model, decisions, rooms, request.constraints, request.fixed_lessons,
+        )
         self._add_availability_constraints(model, registry, decisions, rooms, request.constraints)
         self._add_fixed_lesson_constraints(model, decisions, rooms, request.fixed_lessons)
 
@@ -108,7 +115,7 @@ class SchedulerSolver:
             *self._add_teacher_gap_objective(model, decisions, weights, day_vars),
         ]
         model.Minimize(sum(objective_terms) if objective_terms else 0)
-        return model, registry, decisions
+        return model, registry, decisions, room_plan
 
     def _explain_infeasible(
         self,
@@ -125,7 +132,7 @@ class SchedulerSolver:
         stands — it was proved by the first solve — and the response degrades to
         an unexplained INFEASIBLE rather than an invented explanation.
         """
-        model, registry, _ = self._build_model(request, use_assumptions=True)
+        model, registry, _, _ = self._build_model(request, use_assumptions=True)
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self._settings.solver_max_time_seconds
         conflicts = None
@@ -142,7 +149,9 @@ class SchedulerSolver:
         self._validate_request(request)
 
         rooms = request.rooms
-        model, registry, decisions = self._build_model(request, use_assumptions=False)
+        model, registry, decisions, room_plan = self._build_model(
+            request, use_assumptions=False,
+        )
 
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self._settings.solver_max_time_seconds
@@ -182,7 +191,7 @@ class SchedulerSolver:
             msg = "Solver terminated without a usable schedule."
             raise SolverBuildError(msg)
 
-        lessons = self._extract_lessons(solver, decisions, rooms)
+        lessons = self._extract_lessons(solver, decisions, rooms, room_plan)
         return OptimizeScheduleResponse(
             request_id=request.request_id,
             status=status,
@@ -349,29 +358,33 @@ class SchedulerSolver:
             if len(group_decisions) > 1:
                 model.AddNoOverlap([decision.interval for decision in group_decisions])
 
-    def _add_room_no_overlap(
+    def _add_room_allocation(
         self,
         model: cp_model.CpModel,
         decisions: list[LessonDecision],
         rooms: list[AnonymousRoom],
-    ) -> None:
-        for room_idx, room in enumerate(rooms):
-            room_intervals: list[cp_model.IntervalVar] = []
-            for decision in decisions:
-                assigned_here = model.NewBoolVar(f"room_{room.id}_{decision.lesson.key()}")
-                model.Add(decision.room_index == room_idx).OnlyEnforceIf(assigned_here)
-                model.Add(decision.room_index != room_idx).OnlyEnforceIf(assigned_here.Not())
-                optional = model.NewOptionalIntervalVar(
-                    decision.start,
-                    decision.duration,
-                    decision.end,
-                    assigned_here,
-                    f"room_opt_{room.id}_{decision.lesson.key()}",
-                )
-                room_intervals.append(optional)
+        constraints: list[AnonymousConstraint],
+        fixed_lessons: list[FixedLesson],
+    ) -> RoomPlan:
+        """Enforce room capacity by interchangeability class, not by named room.
 
-            if len(room_intervals) > 1:
-                model.AddNoOverlap(room_intervals)
+        The previous encoding reified "lesson L is in room R" for every pair —
+        264,960 booleans at 2,000 students — and made 76 identical classrooms 76
+        distinct search decisions. See app/solver/room_allocator.py for the
+        encoding and the proof that the post-pass always succeeds.
+
+        The returned plan is REQUIRED to read rooms back: room_index is no
+        longer authoritative except for pinned rooms.
+        """
+        return add_room_allocation(
+            model,
+            decisions,
+            rooms,
+            distinguished_room_ids=collect_distinguished_room_ids(
+                constraints, fixed_lessons,
+            ),
+            room_allowed=self._room_allowed,
+        )
 
     def _add_availability_constraints(
         self,
@@ -426,7 +439,12 @@ class SchedulerSolver:
                     if guard is None:
                         model.AddBoolOr([before, after]).OnlyEnforceIf(assumption)
                     else:
-                        model.AddBoolOr([before, after]).OnlyEnforceIf(guard).OnlyEnforceIf(assumption)
+                        # Both literals in ONE call. OnlyEnforceIf returns None
+                        # in ortools 9.15, so chaining a second call raises
+                        # AttributeError — and `guard` is non-None exactly for
+                        # ROOM-scoped constraints, so every "this room is
+                        # unavailable on Wednesday afternoons" payload crashed.
+                        model.AddBoolOr([before, after]).OnlyEnforceIf([guard, assumption])
 
     def _decisions_for_constraint(
         self,
@@ -963,13 +981,17 @@ class SchedulerSolver:
         solver: cp_model.CpSolver,
         decisions: list[LessonDecision],
         rooms: list[AnonymousRoom],
+        room_plan: RoomPlan,
     ) -> list[ScheduledLesson]:
+        # room_index is not authoritative under the class encoding — the
+        # post-pass is. Reading room_index here would double-book rooms.
+        room_by_key = room_plan.assign_rooms(solver)
         lessons: list[ScheduledLesson] = []
         for decision in decisions:
             absolute_start = solver.Value(decision.start)
             day_of_week, start_slot = self._grid.decode_absolute(absolute_start)
             start_time, end_time = self._grid.format_hhmmss(start_slot, decision.duration)
-            room_idx = solver.Value(decision.room_index)
+            room_idx = room_by_key[decision.lesson.key()]
             lessons.append(
                 ScheduledLesson(
                     requirement_id=decision.lesson.requirement.id,
