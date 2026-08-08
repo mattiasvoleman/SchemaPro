@@ -12,7 +12,10 @@
     "test:a11y": "playwright test --project=a11y",
     "test:visual": "playwright test --project=visual --project=visual-mobile",
     "test:visual:update": "playwright test --project=visual --project=visual-mobile --update-snapshots",
-    "lighthouse": "npm exec --yes -- @lhci/cli@^0.14 autorun --config=lighthouserc.json"
+    "lighthouse": "npm exec --yes -- @lhci/cli@^0.14 autorun --config=lighthouserc.json",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:unit:cov": "vitest run --coverage"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.2.2",
@@ -46,13 +49,20 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
     "@playwright/test": "^1.61.1",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.3",
     "@types/node": "^20.16.11",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.5",
+    "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.4.20",
+    "jsdom": "^30.0.1",
     "postcss": "^8.5.10",
     "tailwindcss": "^3.4.13",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.10"
   },
   "overrides": {
     "postcss": "^8.5.10"
