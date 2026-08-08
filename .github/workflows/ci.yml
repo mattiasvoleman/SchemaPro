@@ -106,6 +106,19 @@ jobs:
         run: npm run typecheck
         working-directory: web
 
+      # Vitest unit/component suite with the coverage ratchet. Floors live in
+      # vitest.config.ts; raise them via the WEB_COVERAGE_MIN* repository
+      # variables as coverage grows — same pattern as the API's jest.base.js.
+      - name: Unit tests with coverage
+        run: npm run test:unit:cov
+        working-directory: web
+        env:
+          WEB_COVERAGE_MIN: ${{ vars.WEB_COVERAGE_MIN || '' }}
+          WEB_COVERAGE_MIN_LINES: ${{ vars.WEB_COVERAGE_MIN_LINES || '' }}
+          WEB_COVERAGE_MIN_STATEMENTS: ${{ vars.WEB_COVERAGE_MIN_STATEMENTS || '' }}
+          WEB_COVERAGE_MIN_FUNCTIONS: ${{ vars.WEB_COVERAGE_MIN_FUNCTIONS || '' }}
+          WEB_COVERAGE_MIN_BRANCHES: ${{ vars.WEB_COVERAGE_MIN_BRANCHES || '' }}
+
       - name: Build
         run: npm run build
         working-directory: web

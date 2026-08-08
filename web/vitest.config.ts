@@ -30,7 +30,14 @@ const floor = (name: string, ratchet: number) =>
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { "@": path.resolve(__dirname) },
+    alias: {
+      "@": path.resolve(__dirname),
+      // `import "server-only"` is a virtual module provided by the Next.js
+      // compiler, not an installed package — Vite's import analysis fails on
+      // it before vi.mock can intercept, making any server-only module (e.g.
+      // lib/auth.ts) unimportable in tests. Map it to an empty stub.
+      "server-only": path.resolve(__dirname, "vitest.server-only-stub.ts"),
+    },
   },
   test: {
     environment: "jsdom",
@@ -47,12 +54,14 @@ export default defineConfig({
       exclude: ["**/*.test.*", "lib/types.ts"],
       reporter: ["text-summary", "lcov", "json-summary"],
       thresholds: {
-        // Placeholder floors until the first measured run; raised in the same
-        // commit that lands the test suite.
-        lines: floor("WEB_COVERAGE_MIN_LINES", 0),
-        statements: floor("WEB_COVERAGE_MIN_STATEMENTS", 0),
-        functions: floor("WEB_COVERAGE_MIN_FUNCTIONS", 0),
-        branches: floor("WEB_COVERAGE_MIN_BRANCHES", 0),
+        // Ratchet floors just under what the suite measures (87.07 / 85.33 /
+        // 83.28 / 79.87). §2's 95% remains the target; raise via the
+        // WEB_COVERAGE_MIN* variables as coverage grows, never lower to green
+        // a build.
+        lines: floor("WEB_COVERAGE_MIN_LINES", 87),
+        statements: floor("WEB_COVERAGE_MIN_STATEMENTS", 85),
+        functions: floor("WEB_COVERAGE_MIN_FUNCTIONS", 83),
+        branches: floor("WEB_COVERAGE_MIN_BRANCHES", 79),
       },
     },
   },

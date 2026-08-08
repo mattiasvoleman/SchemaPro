@@ -33,7 +33,7 @@ could be evaluated at all.
 | Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | — needs a seeded DB (CI only) |
 | Lighthouse LCP/TTI | — not yet run |
-| Web unit coverage | — no harness exists |
+| Web unit coverage | ✗ 87.07% vs 95% (ratcheted at 87; harness landed) |
 | INP | — not lab-measurable at all |
 
 ---
@@ -68,7 +68,7 @@ could be evaluated at all.
 | API function coverage | ≥ 95% | 83.86% (369/440) | ✗ | same |
 | Solver line coverage | ≥ 95% | **81%** (922 stmts, 148 missed) | ✗ | `npm run test:engine:cov` |
 | Mutation score, tested files | ≥ 85% | **66.21%** (192 killed / 97 survived) | ✗ | `npm run test:mutation` |
-| Web unit coverage | ≥ 95% | **no harness** | ✗ | — |
+| Web unit coverage | ≥ 95% | **87.07%** lines (930/1068) | ✗ | `npm run test:unit:cov` in `web/` |
 
 The API suite is 568 tests across 33 suites, all passing. The gap from 91.77%
 to 95% is almost entirely `*.module.ts` DI wiring, `main.ts`, and `app.module.ts`
@@ -122,10 +122,21 @@ Not every survivor is a test gap. In `time.ts`, mutating `get('second')` to
 seconds term cannot change the result — an equivalent mutant. Triage survivors
 before writing tests to chase them.
 
-**Web has no unit-test runner at all** — no Vitest/Jest, no component tests. The
-Playwright suites cover routing, accessibility and pixels, not component logic.
-Closing the 95% row for `web/` means standing up a component-test harness first;
-that is a separate piece of work, not a coverage push.
+**Web now has a Vitest + Testing Library harness** (`web/vitest.config.ts`):
+367 tests across 34 files, 87.07% lines / 85.33% statements / 83.28% functions /
+79.87% branches over `lib/`, `components/`, `utils/` and `i18n/`. App-router
+routes (`app/**`) are excluded from unit coverage deliberately — they are server
+components exercised end-to-end by the Playwright suites, and counting them here
+would dilute the number with lines no unit test can honestly execute. Floors are
+ratcheted in `vitest.config.ts` (87/85/83/79), raised via the
+`WEB_COVERAGE_MIN*` repository variables. The remaining gap to 95% is mostly
+`lib/queries.ts` pass-through hooks that are mechanically identical to covered
+representatives, plus `lib/auth.ts` and the Supabase middleware (server-side
+modules, now testable via the `server-only` alias stub). This pass also pinned
+**5 suspected front-end bugs** — unfolded ICS content lines, a missing .catch on
+keyboard undo/redo, a confirm dialog dismissible mid-mutation via Escape, a
+lane-field leak in timetable click callbacks, and double-counted GROUP conflict
+hits.
 
 ## Frontend performance
 

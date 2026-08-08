@@ -1,0 +1,241 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ComponentProps, MouseEvent, ReactNode } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AppShell } from "./app-shell";
+
+// ---------------------------------------------------------------------------
+// Boundary mocks. The four header widgets (locale switcher, theme toggle,
+// bell, user menu) each drag in their own providers (react-query, supabase,
+// next-themes) and have their own specs; here they are stubbed so this file
+// tests only the shell's behaviour: nav-by-role, active highlighting and the
+// mobile drawer.
+// ---------------------------------------------------------------------------
+
+const navState = vi.hoisted(() => ({ pathname: "/admin" }));
+
+vi.mock("@/i18n/navigation", () => ({
+  usePathname: () => navState.pathname,
+  Link: ({
+    href,
+    onClick,
+    className,
+    children,
+  }: {
+    href: string;
+    onClick?: (event: MouseEvent<HTMLAnchorElement>) => void;
+    className?: string;
+    children?: ReactNode;
+  }) => (
+    <a
+      href={href}
+      className={className}
+      onClick={(event) => {
+        // jsdom cannot navigate; the shell's onClick (drawer close) still runs.
+        event.preventDefault();
+        onClick?.(event);
+      }}
+    >
+      {children}
+    </a>
+  ),
+}));
+
+vi.mock("./locale-switcher", () => ({
+  LocaleSwitcher: () => <div data-testid="locale-switcher" />,
+}));
+vi.mock("./theme-toggle", () => ({
+  ThemeToggle: () => <div data-testid="theme-toggle" />,
+}));
+vi.mock("@/components/layout/notification-bell", () => ({
+  NotificationBell: () => <div data-testid="notification-bell" />,
+}));
+vi.mock("./user-menu", () => ({
+  UserMenu: (props: { userName: string; email: string; role: string }) => (
+    <div data-testid="user-menu">{`${props.userName}|${props.email}|${props.role}`}</div>
+  ),
+}));
+
+// Namespace-aware key echo: pins which namespace each label comes from.
+vi.mock("next-intl", () => ({
+  useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}`,
+}));
+
+function renderShell(overrides: Partial<ComponentProps<typeof AppShell>> = {}) {
+  return render(
+    <AppShell
+      role="SCHOOL_ADMIN"
+      userName="Alma Berg"
+      email="alma@example.com"
+      schoolName="Norra Real"
+      {...overrides}
+    >
+      <p>page body</p>
+    </AppShell>,
+  );
+}
+
+const link = (name: string) => screen.getByRole("link", { name });
+
+beforeEach(() => {
+  navState.pathname = "/admin";
+});
+
+// ---------------------------------------------------------------------------
+// Navigation per role
+// ---------------------------------------------------------------------------
+
+describe("AppShell navigation", () => {
+  it("renders the admin sections, branded header and page body", () => {
+    renderShell();
+
+    expect(screen.getByText("common.appName")).toBeInTheDocument();
+    expect(screen.getByText("Norra Real")).toBeInTheDocument();
+    expect(screen.getByText("page body")).toBeInTheDocument();
+
+    expect(screen.getByText("nav.planning")).toBeInTheDocument();
+    expect(screen.getByText("nav.scheduling")).toBeInTheDocument();
+    expect(screen.getByText("nav.operations")).toBeInTheDocument();
+
+    expect(link("nav.dashboard")).toHaveAttribute("href", "/admin");
+    expect(link("nav.subjects")).toHaveAttribute("href", "/admin/subjects");
+    expect(link("nav.generate")).toHaveAttribute("href", "/admin/generate");
+    expect(link("nav.timetable")).toHaveAttribute("href", "/admin/timetable");
+    expect(link("nav.integrations")).toHaveAttribute("href", "/admin/integrations");
+  });
+
+  it("teacher gets the teacher nav, without admin entries or section labels", () => {
+    navState.pathname = "/teacher";
+    renderShell({ role: "TEACHER" });
+
+    expect(link("nav.mySchedule")).toHaveAttribute("href", "/teacher");
+    expect(link("nav.attendance")).toHaveAttribute("href", "/teacher/attendance");
+    expect(link("nav.roomBooking")).toHaveAttribute("href", "/teacher/rooms");
+
+    expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
+    expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link")).toHaveLength(3);
+  });
+
+  it("student gets schedule and attendance links", () => {
+    navState.pathname = "/student";
+    renderShell({ role: "STUDENT" });
+
+    expect(link("nav.mySchedule")).toHaveAttribute("href", "/student");
+    expect(link("nav.myAttendance")).toHaveAttribute("href", "/student/attendance");
+    expect(screen.getAllByRole("link")).toHaveLength(2);
+  });
+
+  it("guardian gets a single my-children link", () => {
+    navState.pathname = "/guardian";
+    renderShell({ role: "GUARDIAN" });
+
+    expect(link("nav.myChildren")).toHaveAttribute("href", "/guardian");
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+  });
+
+  it("forwards identity to the user menu and mounts the header widgets", () => {
+    renderShell();
+
+    expect(
+      screen.getByText("Alma Berg|alma@example.com|SCHOOL_ADMIN"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("locale-switcher")).toBeInTheDocument();
+    expect(screen.getByTestId("theme-toggle")).toBeInTheDocument();
+    expect(screen.getByTestId("notification-bell")).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Active-item highlighting. There is no aria-current, so the computed class is
+// the only observable signal of the active state.
+// ---------------------------------------------------------------------------
+
+describe("AppShell active item", () => {
+  it("marks the dashboard active only on the exact root path", () => {
+    navState.pathname = "/admin";
+    renderShell();
+
+    expect(link("nav.dashboard")).toHaveClass("bg-sidebar-accent");
+    expect(link("nav.subjects")).not.toHaveClass("bg-sidebar-accent");
+  });
+
+  it("keeps the dashboard inactive on sibling routes (no prefix match for the root)", () => {
+    navState.pathname = "/admin/setup";
+    renderShell();
+
+    expect(link("nav.dashboard")).not.toHaveClass("bg-sidebar-accent");
+    expect(link("nav.setup")).toHaveClass("bg-sidebar-accent");
+  });
+
+  it("marks a section item active on its sub-routes", () => {
+    navState.pathname = "/admin/subjects/s-9";
+    renderShell();
+
+    expect(link("nav.subjects")).toHaveClass("bg-sidebar-accent");
+    expect(link("nav.dashboard")).not.toHaveClass("bg-sidebar-accent");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mobile drawer
+// ---------------------------------------------------------------------------
+
+describe("AppShell mobile drawer", () => {
+  it("opens a second sidebar and closes via the close button", async () => {
+    const user = userEvent.setup();
+    renderShell();
+
+    expect(
+      screen.queryByRole("button", { name: "common.close" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("common.appName")).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "common.openMenu" }));
+
+    expect(screen.getByRole("button", { name: "common.close" })).toBeInTheDocument();
+    expect(screen.getAllByText("common.appName")).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: "common.close" }));
+
+    expect(
+      screen.queryByRole("button", { name: "common.close" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText("common.appName")).toHaveLength(1);
+  });
+
+  it("closes when a drawer nav link is clicked", async () => {
+    const user = userEvent.setup();
+    renderShell();
+
+    await user.click(screen.getByRole("button", { name: "common.openMenu" }));
+    const dashboards = screen.getAllByRole("link", { name: "nav.dashboard" });
+    expect(dashboards).toHaveLength(2);
+
+    // Index 1 is the drawer copy (the desktop sidebar renders first).
+    await user.click(dashboards[1]);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "common.close" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("closes when the backdrop is clicked", async () => {
+    const user = userEvent.setup();
+    const { container } = renderShell();
+
+    await user.click(screen.getByRole("button", { name: "common.openMenu" }));
+
+    // The backdrop is a purely decorative overlay with no accessible handle,
+    // so the class token is the only way to reach it.
+    const backdrop = container.querySelector('[class~="bg-black/50"]');
+    expect(backdrop).not.toBeNull();
+    await user.click(backdrop as HTMLElement);
+
+    expect(
+      screen.queryByRole("button", { name: "common.close" }),
+    ).not.toBeInTheDocument();
+  });
+});
