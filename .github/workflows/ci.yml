@@ -84,9 +84,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Node 24, not 20 like the other jobs: the Vitest suite runs jsdom 30,
+      # whose undici 8 does an unguarded
+      #   const { markAsUncloneable } = require('node:worker_threads')
+      # at import time. That binding only exists from Node 22.10, so on Node 20
+      # every jsdom worker dies with "webidl.util.markAsUncloneable is not a
+      # function" before a single test runs. 24 is the active LTS and the
+      # version the suite is developed against.
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
 
