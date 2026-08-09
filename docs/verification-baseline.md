@@ -22,7 +22,7 @@ could be evaluated at all.
 | Gate | Status |
 | :--- | :--- |
 | API dependency audit | ✓ pass (0/0/0) |
-| Mobile dependency audit | ✓ pass (0/0/0) |
+| Mobile dependency audit | ✓ pass (2 unfixable image-size advisories allowlisted, lease expires 2026-11-09) |
 | WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
 | Visual regression | ✓ pass (16/16 on linux-x64 baselines) |
 | API coverage | ✗ 91.77% vs 95% (ratcheted at 91; remainder is module wiring) |
@@ -528,7 +528,7 @@ windows fixes it at no measurable cost.
 | :--- | :--- | :--- | :--- |
 | RLS / tenancy policies | no cross-tenant leak | **all assertions pass** | ✓ |
 | API dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
-| Mobile dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
+| Mobile dependency audit | 0 critical/high/moderate | **0 failing** (2 suppressed — no patched release exists; build-time-only surface; expiring allowlist) | ✓ |
 | Web dependency audit | 0 critical/high/moderate | **0 / 0 / 0** | ✓ |
 | Solver dependency audit (`pip-audit`) | 0 critical/high/moderate | not measured | — |
 | Semgrep SAST | 0 findings | not measured | — |

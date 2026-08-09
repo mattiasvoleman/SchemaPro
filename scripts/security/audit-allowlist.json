@@ -1,0 +1,18 @@
+{
+  "mobile": [
+    {
+      "id": "GHSA-w3rx-r6r6-pgpr",
+      "package": "image-size",
+      "reason": "No patched release exists: the advisory marks <=2.0.2 vulnerable and 2.0.2 is the newest version published. image-size is a build-time dependency of metro (the React Native bundler) and only ever parses this repository's own committed image assets — attacker-supplied ICNS files never reach it, so the DoS has no exposed surface here. Remove this entry as soon as image-size ships a fix and the expo/metro chain picks it up.",
+      "addedAt": "2026-08-09",
+      "expires": "2026-11-09"
+    },
+    {
+      "id": "GHSA-5p2g-fcmc-qvqq",
+      "package": "image-size",
+      "reason": "Same situation and same surface as GHSA-w3rx-r6r6-pgpr: no patched release exists (<=2.0.2 vulnerable, 2.0.2 is the latest), and the JXL/HEIF parse only runs at build time over first-party assets. Remove when upstream ships a fix.",
+      "addedAt": "2026-08-09",
+      "expires": "2026-11-09"
+    }
+  ]
+}

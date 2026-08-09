@@ -312,9 +312,14 @@ jobs:
         run: npm audit --audit-level=moderate
         working-directory: web
 
+      # Same failing threshold as plain `npm audit --audit-level=moderate`,
+      # plus a documented, EXPIRING allowlist for advisories that have no
+      # patched release anywhere (npm audit itself cannot ignore a specific
+      # advisory, and dropping the level would hide future findings too).
+      # Suppressions are printed on every run and go red again at expiry —
+      # see scripts/security/audit-allowlist.json for the justifications.
       - name: npm audit (mobile)
-        run: npm audit --audit-level=moderate
-        working-directory: mobile
+        run: node scripts/security/npm-audit-gate.mjs mobile
 
       - name: pip-audit (solver)
         run: |
