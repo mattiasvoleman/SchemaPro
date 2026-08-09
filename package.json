@@ -2,6 +2,10 @@
   "name": "schemapro-api",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": "^11"
+  },
   "description": "Secure API layer & masking proxy (NestJS) for the AI-driven school scheduling & attendance system. Multi-tenant, RLS-aware Prisma gateway between clients and the Python AI engine.",
   "license": "UNLICENSED",
   "scripts": {

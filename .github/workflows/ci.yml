@@ -31,9 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Node 22+: @supabase/supabase-js needs a native WebSocket global, which
+      # Node 20 lacks — createClient() throws at construction. Matches the
+      # runtime floor in package.json engines and the API Dockerfile.
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # Pin npm explicitly. Node 20 bundles npm 10, but npm 10 and 11 resolve
@@ -226,9 +229,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Node 22+: @supabase/supabase-js needs a native WebSocket global, which
+      # Node 20 lacks — createClient() throws at construction. Matches the
+      # runtime floor in package.json engines and the API Dockerfile.
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # Pin npm explicitly. Node 20 bundles npm 10, but npm 10 and 11 resolve
@@ -286,9 +292,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Node 22+: @supabase/supabase-js needs a native WebSocket global, which
+      # Node 20 lacks — createClient() throws at construction. Matches the
+      # runtime floor in package.json engines and the API Dockerfile.
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       # Pin npm explicitly. Node 20 bundles npm 10, but npm 10 and 11 resolve

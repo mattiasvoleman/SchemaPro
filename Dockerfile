@@ -1,7 +1,15 @@
 # =============================================================================
 # SchemaPro API (NestJS gateway) — multi-stage build
+#
+# Node 22, not 20: @supabase/supabase-js constructs a RealtimeClient inside
+# createClient(), which requires a native WebSocket global — added in Node 22.
+# SupabaseAdminService calls createClient() in its CONSTRUCTOR, so on Node 20 a
+# deployment with Supabase configured throws at boot:
+#   "Node.js detected but native WebSocket not found."
+# Verified directly against node:20-slim and node:22-slim. Do not lower this
+# without checking that call path.
 # =============================================================================
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 
 # OpenSSL is required by the Prisma query engine.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl \
@@ -24,7 +32,7 @@ RUN npm run build \
 # =============================================================================
 # Runtime
 # =============================================================================
-FROM node:20-slim AS runtime
+FROM node:22-slim AS runtime
 
 ENV NODE_ENV=production
 
