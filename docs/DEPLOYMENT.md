@@ -170,17 +170,29 @@ There is intentionally no public signup. One-time, in the Supabase dashboard:
 2. **Create the tenant and profile** (SQL editor, as owner):
 
 ```sql
-insert into "Schools" (name, slug, timezone)
-values ('Demo School', 'demo-school', 'Europe/Stockholm');
+insert into "Schools" (name, slug, timezone, "updatedAt")
+values ('Demo School', 'demo-school', 'Europe/Stockholm', now());
 
-insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email)
+insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
 values (
   (select id from "Schools" where slug = 'demo-school'),
   '<AUTH_USER_UUID>',
   'SCHOOL_ADMIN',
-  'Anna', 'Andersson', '<same email as the auth user>'
+  'Anna', 'Andersson', '<same email as the auth user>',
+  now()
 );
 ```
+
+`"updatedAt"` is mapped with Prisma's `@updatedAt`, which is maintained in the
+application layer and creates **no database default** — every hand-written
+`insert` against these tables must supply it, on all 12 models that carry it.
+`"createdAt"` does default, so only `"updatedAt"` errors. Keep the double
+quotes: unquoted, PostgreSQL folds the identifier to `updatedat`.
+
+`"authId"` is the only link between the Supabase Auth user and this profile —
+`JwtStrategy` resolves the account by it alone. A wrong UUID produces a
+successful sign-in followed by *"No active user profile is linked to this
+account."*
 
 3. Sign in on the web app — you land on the admin dashboard. Every subsequent
    user is invited through **Admin → People** (the API sends the Supabase

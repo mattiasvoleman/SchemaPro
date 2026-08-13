@@ -403,21 +403,40 @@ to be created by hand, and everyone after that is invited from inside the app.
 2. Go to the **SQL Editor** and run this, replacing the four marked values:
 
 ```sql
-insert into "Schools" (name, slug, timezone)
-values ('<SCHOOL NAME>', '<short-name-no-spaces>', 'Europe/Stockholm');
+insert into "Schools" (name, slug, timezone, "updatedAt")
+values ('<SCHOOL NAME>', '<short-name-no-spaces>', 'Europe/Stockholm', now());
 
-insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email)
+insert into "Users" ("schoolId", "authId", role, "firstName", "lastName", email, "updatedAt")
 values (
   (select id from "Schools" where slug = '<short-name-no-spaces>'),
   '<THE UUID YOU COPIED>',
   'SCHOOL_ADMIN',
-  '<FIRST NAME>', '<LAST NAME>', '<THE SAME EMAIL AS ABOVE>'
+  '<FIRST NAME>', '<LAST NAME>', '<THE SAME EMAIL AS ABOVE>',
+  now()
 );
 ```
 
-Use the same short name in both places, and the same email address as the user
-you created. If they do not match, the login will succeed but the app will say
-no profile is linked to the account.
+Replace every `<...>` placeholder, including the short name — leaving one in
+literally is a common slip and the error message does not make it obvious.
+
+Three things that will bite you if you retype this by hand:
+
+- **`"updatedAt"` is required and has no database default.** It is maintained
+  by Prisma at the application level, so a hand-written `insert` has to supply
+  it. Omitting it fails with
+  `null value in column "updatedAt" ... violates not-null constraint`.
+  `"createdAt"` *does* default, which is why only one of them complains.
+- **Keep the double quotes on every camelCase column.** Unquoted, PostgreSQL
+  folds `updatedAt` to `updatedat` and you get
+  `column "updatedat" of relation "Users" does not exist`.
+- **Use the same short name in both statements**, or the sub-select finds no
+  school and the second insert fails on a null `"schoolId"`.
+
+The **UUID** is what links the login to the profile — `JwtStrategy` looks the
+account up by `authId` and nothing else. If it is wrong or mistyped, sign-in
+succeeds and the app then reports *"No active user profile is linked to this
+account."* The email is stored for display and notifications; a mismatch there
+is untidy but will not break sign-in.
 
 **Check it worked**: go to your `WEB_URL`, sign in with that email and
 temporary password. You should land on the admin dashboard. **This is the
