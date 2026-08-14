@@ -274,10 +274,18 @@ GitHub repository.
 4. Under **Settings → Networking**, click **Generate Domain**. Save the address
    as `SOLVER_URL`.
 
+> **About the port**: you should not have to set one. Railway hands the
+> container a port through a `PORT` variable, and the solver binds whatever it
+> is given. If Railway does ask for a target port, or the domain returns "502"
+> while the **Deployments** log looks healthy, set the port to **8000** — that
+> is what the solver falls back to when nothing is injected. Do not add a
+> `PORT` variable of your own unless you are told to; Railway sets it for you.
+
 **Check it worked**: open `<SOLVER_URL>/health` in your browser. You should see
 a short message saying it is OK. If the page does not load, open the
 **Deployments** tab and read the log — a container restarting in a loop almost
-always means the `API_KEY` is too short.
+always means the `API_KEY` is too short. A page that fails to load while the
+log looks *fine* is the port problem described above, not a crash.
 
 ### 6b. The API
 

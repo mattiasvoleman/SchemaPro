@@ -17,9 +17,15 @@ class Settings(BaseSettings):
     )
 
     app_env: str = Field(default="development", alias="APP_ENV")
-    host: str = Field(default="0.0.0.0", alias="HOST")
-    port: int = Field(default=8000, alias="PORT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    # NOTE: there are deliberately no `host` / `port` settings here. Nothing in
+    # this package calls uvicorn.run() — the server is started by the
+    # Dockerfile CMD, which reads ${PORT} from the environment directly and
+    # always binds 0.0.0.0 inside the container. Declaring them as settings
+    # made `PORT` look configurable through this class while having no effect
+    # whatsoever. `extra="ignore"` above means a PORT variable in the
+    # environment is still accepted and simply passed through to the CMD.
 
     api_key: str = Field(alias="API_KEY")
 

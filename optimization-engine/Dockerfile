@@ -56,9 +56,20 @@ COPY app/ ./app/
 # Drop root privileges before starting the process
 USER appuser
 
+# Documentation only, and the default the CMD falls back to. Docker cannot
+# expand ${PORT} here, so a platform-injected port will not match this line —
+# that is expected and harmless; EXPOSE does not publish or bind anything.
 EXPOSE 8000
 
-# Use exec form for proper signal handling (SIGTERM reaches uvicorn)
+# Bind ${PORT} when the platform injects one (Railway, Render, Fly, Cloud Run
+# all do), falling back to 8000 for docker-compose and local runs.
+#
+# "sh -c" is required because the exec form does no variable expansion — an
+# exec-form ${PORT} is passed to uvicorn as the literal string "${PORT}". The
+# leading `exec` then replaces the shell with uvicorn, so uvicorn is still
+# PID 1 and still receives SIGTERM directly; without it the shell would hold
+# PID 1, swallow the signal, and the container would be SIGKILLed after the
+# stop timeout instead of shutting down cleanly.
 #
 # No --log-config: the application owns logging. app.main:create_app calls
 # configure_logging(), which installs structlog's JSON renderer on the root
@@ -66,8 +77,5 @@ EXPOSE 8000
 # disable uvicorn's logging — uvicorn treats the path as a logging.fileConfig
 # file and aborts at startup with "RuntimeError: /dev/null is an empty file",
 # so the container never came up at all.
-CMD ["uvicorn", "app.main:app", \
-     "--host", "0.0.0.0", \
-     "--port", "8000", \
-     "--workers", "1", \
-     "--no-access-log"]
+CMD ["sh", "-c", \
+     "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --no-access-log"]
