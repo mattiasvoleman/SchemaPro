@@ -1,15 +1,21 @@
 #!/usr/bin/env node
 /**
- * Render anvandarmanual.html to a print-ready PDF.
+ * Render the Swedish manuals to print-ready PDFs.
+ *
+ * Each manual is one HTML file sharing manual.css, injected at <!--STYLES-->
+ * so the family stays visually identical from a single source of truth.
  *
  * Two passes, because a table of contents cannot know its own page numbers:
  *   1. render once, then read back which page each section heading landed on;
  *   2. inject those numbers into the placeholders and render again.
+ * The cover is then printed separately without a footer and joined on, so it
+ * carries no page number.
  *
  * Chromium comes from the web package's Playwright install, so no extra
  * browser download is needed.
  *
- * Usage:  node docs/manual/build-pdf.mjs
+ * Usage:  node docs/manual/build-pdf.mjs [anvandarmanual|lararmanual]
+ *         (no argument builds both)
  */
 
 import { execFileSync } from "node:child_process";
@@ -18,45 +24,60 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "../../web/node_modules/playwright/index.mjs";
 
+const DOCS = {
+  anvandarmanual: { html: "anvandarmanual.html", pdf: "SchemaPro-Anvandarmanual.pdf",
+                    footer: "SchemaPro — Användarmanual" },
+  lararmanual:    { html: "lararmanual.html",    pdf: "SchemaPro-Lararmanual.pdf",
+                    footer: "SchemaPro — Lärarmanual" },
+};
+
 const here = path.dirname(fileURLToPath(import.meta.url));
-const source = path.join(here, "anvandarmanual.html");
-const output = path.resolve(here, "..", "SchemaPro-Anvandarmanual.pdf");
+const requested = process.argv[2];
+const targets = requested ? [requested] : Object.keys(DOCS);
+for (const name of targets) {
+  if (!DOCS[name]) {
+    console.error(`Unknown document "${name}". Known: ${Object.keys(DOCS).join(", ")}`);
+    process.exit(2);
+  }
+}
 const scratch = path.join(here, ".pass1.pdf");
 const coverTmp = path.join(here, ".cover.pdf");
 const bodyTmp = path.join(here, ".body.pdf");
 const PYTHON = path.resolve(here, "..", "..", "optimization-engine", ".venv", "bin", "python3");
 
-// Section id -> a string that appears ONLY on that section's opening page.
-const ANCHORS = {
-  ch1: "Om den här manualen",
-  ch2: "Systemet i korthet",
-  s21: "Arbetets fyra faser",
-  s22: "Roller och behörigheter",
-  ch3: "Fas 1 — Kom igång",
-  ch4: "Fas 2 — Planering",
-  s41: "4.1Timplan",
-  s42: "4.2Tillgänglighet",
-  ch5: "Fas 3 — Schemaläggning",
-  s51: "Skolregler och optimeringsprofil",
-  s52: "Kör genereringen",
-  s53: "Granska och justera grundschemat",
-  s54: "5.4Versioner",
-  s55: "Publicera till kalender",
-  ch6: "Fas 4 — Daglig drift",
-  ch7: "Integrationer",
-  ch8: "Årscykel",
-  ch9: "Felsökning",
-  ch10: "Snabbreferens",
-};
 
-const FOOTER = `
+const footerFor = (label) => `
 <div style="width:100%;font-family:Helvetica,Arial,sans-serif;font-size:7.5pt;
             color:#8a8a95;padding:0 18mm;display:flex;justify-content:space-between;">
-  <span>SchemaPro — Användarmanual</span>
+  <span>${label}</span>
   <span class="pageNumber"></span>
 </div>`;
 
-async function render(html, target, { footer = true, pageRanges = "" } = {}) {
+/**
+ * Anchors are derived from the document, not hand-maintained: every TOC entry
+ * carries data-pg="<id>", and the element with that id is either a heading or
+ * a section whose first heading names it. Its text is what to search the
+ * rendered pages for. A renamed heading therefore cannot silently desync.
+ */
+function deriveAnchors(html) {
+  const keys = [...html.matchAll(/data-pg="([^"]+)"/g)].map((m) => m[1]);
+  const anchors = {};
+  for (const key of keys) {
+    const onHeading = html.match(
+      new RegExp(`<h[23][^>]*\\bid="${key}"[^>]*>([\\s\\S]*?)</h[23]>`),
+    );
+    const inSection = onHeading
+      ? null
+      : html.match(
+          new RegExp(`\\bid="${key}"[^>]*>[\\s\\S]*?<h2[^>]*>([\\s\\S]*?)</h2>`),
+        );
+    const raw = (onHeading ?? inSection)?.[1];
+    if (raw) anchors[key] = raw.replace(/<[^>]+>/g, "").replace(/\\s+/g, " ").trim();
+  }
+  return anchors;
+}
+
+async function render(html, target, { footer = null, pageRanges = "" } = {}) {
   const browser = await chromium.launch();
   const page = await browser.newPage();
   await page.setContent(html, { waitUntil: "networkidle" });
@@ -65,9 +86,9 @@ async function render(html, target, { footer = true, pageRanges = "" } = {}) {
     format: "A4",
     printBackground: true,
     pageRanges,
-    displayHeaderFooter: footer,
+    displayHeaderFooter: Boolean(footer),
     headerTemplate: "<div></div>",
-    footerTemplate: footer ? FOOTER : "<div></div>",
+    footerTemplate: footer ?? "<div></div>",
     margin: { top: "20mm", right: "18mm", bottom: "16mm", left: "18mm" },
   });
   await browser.close();
@@ -92,7 +113,7 @@ with open(sys.argv[-1], "wb") as fh:
 const FRONT_MATTER_PAGES = 2;
 
 /** Page number (1-based) each anchor string first appears on, body only. */
-function locate(pdfPath) {
+function locate(pdfPath, ANCHORS) {
   const script = `
 import json, sys, pdfplumber
 anchors = json.loads(sys.argv[2])
@@ -139,27 +160,37 @@ function preflight() {
 }
 
 preflight();
-const html = readFileSync(source, "utf8");
+const css = readFileSync(path.join(here, "manual.css"), "utf8");
 
-console.log("pass 1: rendering to measure page positions…");
-await render(html, scratch);
+for (const name of targets) {
+  const doc = DOCS[name];
+  const output = path.resolve(here, "..", doc.pdf);
+  const html = readFileSync(path.join(here, doc.html), "utf8")
+    .replace("<!--STYLES-->", `<style>\n${css}\n</style>`);
+  const anchors = deriveAnchors(html);
+  const footer = footerFor(doc.footer);
 
-const pages = locate(scratch);
-const missing = Object.keys(ANCHORS).filter((k) => !(k in pages));
-if (missing.length) {
-  console.warn(`  warning: no page found for ${missing.join(", ")} — their TOC entries stay blank`);
+  console.log(`\n${doc.html} → ${doc.pdf}`);
+  console.log("  pass 1: measuring page positions…");
+  await render(html, scratch, { footer });
+
+  const pages = locate(scratch, anchors);
+  const missing = Object.keys(anchors).filter((k) => !(k in pages));
+  if (missing.length) {
+    console.warn(`  warning: no page found for ${missing.join(", ")} — those TOC entries stay blank`);
+  }
+  console.log(`  located ${Object.keys(pages).length}/${Object.keys(anchors).length} sections`);
+
+  const withNumbers = html.replace(
+    /<span class="pg" data-pg="([^"]+)"><\/span>/g,
+    (whole, key) => `<span class="pg" data-pg="${key}">${pages[key] ?? ""}</span>`,
+  );
+
+  console.log("  pass 2: rendering final PDF…");
+  await render(withNumbers, coverTmp, { footer: null, pageRanges: "1" });
+  await render(withNumbers, bodyTmp, { footer, pageRanges: "2-" });
+  joinCoverAndBody(coverTmp, bodyTmp, output);
+  for (const tmp of [scratch, coverTmp, bodyTmp]) unlinkSync(tmp);
+
+  console.log(`  wrote ${path.relative(process.cwd(), output)}`);
 }
-console.log(`  located ${Object.keys(pages).length}/${Object.keys(ANCHORS).length} sections`);
-
-const withNumbers = html.replace(
-  /<span class="pg" data-pg="([^"]+)"><\/span>/g,
-  (whole, key) => `<span class="pg" data-pg="${key}">${pages[key] ?? ""}</span>`,
-);
-
-console.log("pass 2: rendering final PDF…");
-await render(withNumbers, coverTmp, { footer: false, pageRanges: "1" });
-await render(withNumbers, bodyTmp, { footer: true, pageRanges: "2-" });
-joinCoverAndBody(coverTmp, bodyTmp, output);
-for (const tmp of [scratch, coverTmp, bodyTmp]) unlinkSync(tmp);
-
-console.log(`\nWrote ${path.relative(process.cwd(), output)}`);
