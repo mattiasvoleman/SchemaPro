@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<title>SchemaPro — Användarmanual</title>
+<style>
+  :root {
+    --primary: hsl(243 75% 59%);
+    --primary-soft: hsl(243 75% 96%);
+    --primary-line: hsl(243 40% 86%);
+    --ink: hsl(240 12% 14%);
+    --muted: hsl(240 6% 42%);
+    --rule: hsl(240 8% 88%);
+    --warn-bg: hsl(38 92% 96%);
+    --warn-line: hsl(38 70% 72%);
+    --warn-ink: hsl(28 70% 26%);
+  }
+
+  @page { size: A4; margin: 20mm 18mm 18mm 18mm; }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 10.4pt;
+    line-height: 1.58;
+    color: var(--ink);
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  h1, h2, h3, h4, .sans { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+
+  /* ---------- omslag ---------- */
+  .cover {
+    height: 247mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    break-after: page;
+  }
+  .cover-mark {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 11pt; font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--primary);
+  }
+  .cover-main h1 {
+    font-size: 34pt; line-height: 1.1; margin: 0 0 6mm; font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .cover-main .sub {
+    font-size: 14pt; color: var(--muted); margin: 0 0 10mm; font-style: italic;
+  }
+  .cover-rule { height: 3px; background: var(--primary); width: 46mm; margin-bottom: 8mm; }
+  .cover-lede { font-size: 11pt; max-width: 118mm; color: var(--ink); }
+  .cover-foot {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 9pt; color: var(--muted);
+    border-top: 1px solid var(--rule); padding-top: 4mm;
+    display: flex; justify-content: space-between;
+  }
+
+  /* ---------- rubriker ---------- */
+  h2 {
+    font-size: 17pt; margin: 0 0 4mm; padding-bottom: 2.5mm;
+    border-bottom: 2px solid var(--primary); font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  h2 .num { color: var(--primary); margin-right: 3mm; }
+  h3 {
+    font-size: 12pt; margin: 7mm 0 2.5mm; font-weight: 700; color: var(--ink);
+  }
+  h3 .num { color: var(--primary); margin-right: 2mm; font-weight: 700; }
+  h4 { font-size: 10.5pt; margin: 5mm 0 1.5mm; font-weight: 700; }
+
+  section.chapter { break-before: page; }
+  p { margin: 0 0 3mm; }
+  ul, ol { margin: 0 0 3mm; padding-left: 5.5mm; }
+  li { margin-bottom: 1.4mm; }
+  strong { font-weight: 700; }
+  code, .ui {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 9.2pt; font-weight: 600; color: var(--primary);
+    white-space: nowrap;
+  }
+  .lede { font-size: 11pt; color: var(--muted); margin: 0 0 5mm; }
+
+  /* ---------- tabeller ---------- */
+  table {
+    width: 100%; border-collapse: collapse; margin: 3mm 0 5mm;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 9.1pt; break-inside: avoid;
+  }
+  thead th {
+    background: var(--primary); color: #fff; text-align: left;
+    padding: 2.2mm 2.6mm; font-weight: 700; font-size: 8.8pt;
+    letter-spacing: .02em;
+  }
+  tbody td { padding: 2.2mm 2.6mm; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  tbody tr:nth-child(even) td { background: hsl(240 20% 98.5%); }
+  td.k { font-weight: 700; white-space: nowrap; color: var(--ink); }
+
+  /* ---------- block ---------- */
+  .check, .note, .warn {
+    padding: 3mm 4mm; margin: 3mm 0 5mm; break-inside: avoid;
+    font-size: 9.6pt;
+  }
+  .check {
+    background: var(--primary-soft); border-left: 3px solid var(--primary);
+  }
+  .check .label, .warn .label, .note .label {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 8.4pt; font-weight: 700; letter-spacing: .1em;
+    text-transform: uppercase; display: block; margin-bottom: 1.2mm;
+  }
+  .check .label { color: var(--primary); }
+  .warn { background: var(--warn-bg); border-left: 3px solid var(--warn-line); color: var(--warn-ink); }
+  .warn .label { color: var(--warn-ink); }
+  .note { background: hsl(240 12% 97%); border-left: 3px solid var(--rule); color: var(--muted); }
+  .note .label { color: var(--muted); }
+  .check p:last-child, .warn p:last-child, .note p:last-child { margin-bottom: 0; }
+
+  .path {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 9pt; font-weight: 700; color: var(--primary);
+    background: var(--primary-soft); padding: 1mm 2mm; border-radius: 2px;
+    white-space: nowrap;
+  }
+
+  /* ---------- innehåll ---------- */
+  .toc { break-after: page; }
+  .toc h2 { border-bottom-color: var(--rule); }
+  .toc ol { list-style: none; padding: 0; margin: 5mm 0 0; }
+  .toc > ol > li {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt; font-weight: 700; margin: 0 0 1mm;
+    display: flex; align-items: baseline; gap: 2mm;
+  }
+  .toc .dots { flex: 1; border-bottom: 1px dotted var(--rule); transform: translateY(-1mm); }
+  .toc .pg { color: var(--muted); font-weight: 400; font-size: 9.5pt; }
+  .toc ol ol { margin: .8mm 0 3mm 6mm; }
+  .toc ol ol li {
+    font-weight: 400; font-size: 9.4pt; color: var(--muted);
+    display: flex; align-items: baseline; gap: 2mm; margin-bottom: .6mm;
+  }
+
+  /* ---------- fas-översikt ---------- */
+  .phases { display: flex; gap: 3mm; margin: 4mm 0 6mm; break-inside: avoid; }
+  .phase {
+    flex: 1; border: 1px solid var(--primary-line); border-top: 3px solid var(--primary);
+    padding: 3mm; background: hsl(240 30% 99%);
+  }
+  .phase .n {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 8pt; font-weight: 700; color: var(--primary);
+    letter-spacing: .1em; text-transform: uppercase;
+  }
+  .phase .t {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt; font-weight: 700; margin: 1mm 0 1.5mm;
+  }
+  .phase .d { font-size: 8.8pt; color: var(--muted); line-height: 1.4; }
+
+  .avoid { break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<!-- ============================ OMSLAG ============================ -->
+<div class="cover">
+  <div class="cover-mark">SchemaPro</div>
+  <div class="cover-main">
+    <div class="cover-rule"></div>
+    <h1>Användarmanual</h1>
+    <p class="sub">Optimalt arbetsflöde — från tomt system till publicerat schema</p>
+    <p class="cover-lede">
+      Den här manualen beskriver arbetsgången i SchemaPro i den ordning arbetet
+      faktiskt utförs: hur skolan förbereds, hur timplanen byggs, hur AI-motorn
+      genererar grundschemat och hur den dagliga driften sköts under läsåret.
+    </p>
+  </div>
+  <div class="cover-foot">
+    <span>AI-driven schemaläggning &amp; närvaro</span>
+    <span>Utgåva 1.0</span>
+  </div>
+</div>
+
+<!-- ============================ INNEHÅLL ============================ -->
+<div class="toc">
+  <h2>Innehåll</h2>
+  <ol>
+    <li><span>1 · Om den här manualen</span><span class="dots"></span><span class="pg" data-pg="ch1"></span></li>
+    <li><span>2 · Systemet i korthet</span><span class="dots"></span><span class="pg" data-pg="ch2"></span></li>
+    <ol>
+      <li><span>2.1 Arbetets fyra faser</span><span class="dots"></span><span class="pg" data-pg="s21"></span></li>
+      <li><span>2.2 Roller och behörigheter</span><span class="dots"></span><span class="pg" data-pg="s22"></span></li>
+    </ol>
+    <li><span>3 · Fas 1 — Kom igång</span><span class="dots"></span><span class="pg" data-pg="ch3"></span></li>
+    <li><span>4 · Fas 2 — Planering</span><span class="dots"></span><span class="pg" data-pg="ch4"></span></li>
+    <ol>
+      <li><span>4.1 Timplan</span><span class="dots"></span><span class="pg" data-pg="s41"></span></li>
+      <li><span>4.2 Tillgänglighet</span><span class="dots"></span><span class="pg" data-pg="s42"></span></li>
+    </ol>
+    <li><span>5 · Fas 3 — Schemaläggning</span><span class="dots"></span><span class="pg" data-pg="ch5"></span></li>
+    <ol>
+      <li><span>5.1 Skolregler och optimeringsprofil</span><span class="dots"></span><span class="pg" data-pg="s51"></span></li>
+      <li><span>5.2 Kör genereringen</span><span class="dots"></span><span class="pg" data-pg="s52"></span></li>
+      <li><span>5.3 Granska och justera grundschemat</span><span class="dots"></span><span class="pg" data-pg="s53"></span></li>
+      <li><span>5.4 Versioner</span><span class="dots"></span><span class="pg" data-pg="s54"></span></li>
+      <li><span>5.5 Publicera till kalender</span><span class="dots"></span><span class="pg" data-pg="s55"></span></li>
+    </ol>
+    <li><span>6 · Fas 4 — Daglig drift</span><span class="dots"></span><span class="pg" data-pg="ch6"></span></li>
+    <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
+    <li><span>8 · Årscykel</span><span class="dots"></span><span class="pg" data-pg="ch8"></span></li>
+    <li><span>9 · Felsökning</span><span class="dots"></span><span class="pg" data-pg="ch9"></span></li>
+    <li><span>10 · Snabbreferens</span><span class="dots"></span><span class="pg" data-pg="ch10"></span></li>
+  </ol>
+</div>
+
+<!-- ============================ 1 ============================ -->
+<section class="chapter" id="ch1">
+  <h2><span class="num">1</span>Om den här manualen</h2>
+  <p class="lede">Vem manualen är skriven för, och hur den är upplagd.</p>
+
+  <p>
+    Manualen vänder sig i första hand till den som ansvarar för schemat på
+    skolan — oftast rektor, biträdande rektor eller en schemaläggare. Kapitel 6
+    berör även lärare, vårdnadshavare och elever i deras dagliga användning.
+  </p>
+  <p>
+    Till skillnad från en funktionslista är manualen ordnad efter
+    <strong>arbetsgång</strong>. Kapitlen följer den ordning momenten utförs i,
+    därför att ordningen har betydelse: AI-motorn kan inte generera ett schema
+    innan timplanen finns, och ett schema bör inte publiceras innan det
+    granskats. Följ kapitlen i tur och ordning första gången.
+  </p>
+
+  <h3><span class="num">1.1</span>Konventioner</h3>
+  <table>
+    <thead><tr><th style="width:34%">Skrivsätt</th><th>Betydelse</th></tr></thead>
+    <tbody>
+      <tr><td class="k"><span class="path">Planering › Timplan</span></td><td>En sökväg i menyn till vänster. Klicka posterna i angiven ordning.</td></tr>
+      <tr><td class="k"><span class="ui">Generera schema</span></td><td>Namnet på en knapp, ett fält eller en rubrik så som det står i gränssnittet.</td></tr>
+      <tr><td class="k">Kontrollera</td><td>Ett kort test som visar om momentet lyckades. Hoppa inte över dem — de fångar fel medan de fortfarande är billiga att rätta.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <span class="label">Att tänka på</span>
+    <p>
+      SchemaPro hanterar personuppgifter om barn. Behandlingen omfattas av
+      dataskyddsförordningen (GDPR). Se till att skolans
+      personuppgiftsansvarige känner till systemet, och ge inte fler personer
+      administratörsbehörighet än nödvändigt.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ 2 ============================ -->
+<section class="chapter" id="ch2">
+  <h2><span class="num">2</span>Systemet i korthet</h2>
+  <p class="lede">Vad SchemaPro gör, och hur arbetet är indelat.</p>
+
+  <p>
+    SchemaPro bygger skolans veckoschema med en optimeringsmotor. Du beskriver
+    <em>vad</em> som ska undervisas — vilka klasser, vilka ämnen, hur många
+    lektioner per vecka och vilka begränsningar som gäller — och motorn räknar
+    fram <em>när</em> och <em>var</em> varje lektion ska ligga, utan
+    dubbelbokningar av lärare, salar eller klasser.
+  </p>
+  <p>
+    Systemet skiljer på två saker som ofta blandas ihop. <strong>Grundschemat</strong>
+    är den återkommande veckomallen. <strong>Kalendern</strong> är de daterade
+    lektionerna för läsåret, som skapas när du publicerar grundschemat. Närvaro,
+    vikarier och inställda lektioner hör alltid till kalendern, aldrig till mallen.
+  </p>
+
+  <h3 id="s21"><span class="num">2.1</span>Arbetets fyra faser</h3>
+  <div class="phases">
+    <div class="phase">
+      <div class="n">Fas 1</div>
+      <div class="t">Kom igång</div>
+      <div class="d">Läsår, ämnen, salar, klasser och personer. Görs en gång per läsår.</div>
+    </div>
+    <div class="phase">
+      <div class="n">Fas 2</div>
+      <div class="t">Planering</div>
+      <div class="d">Timplan och tillgänglighet. Här avgörs schemats kvalitet.</div>
+    </div>
+    <div class="phase">
+      <div class="n">Fas 3</div>
+      <div class="t">Schemaläggning</div>
+      <div class="d">Generera, granska, justera, publicera.</div>
+    </div>
+    <div class="phase">
+      <div class="n">Fas 4</div>
+      <div class="t">Daglig drift</div>
+      <div class="d">Närvaro, frånvaro, vikarier och rapporter under läsåret.</div>
+    </div>
+  </div>
+
+  <p>
+    Fas 1 och 2 tar mest tid första gången men görs sällan om. Fas 3 kan köras
+    så många gånger du vill — det kostar ingenting att generera ett schema och
+    kasta det. Fas 4 är det löpande arbetet resten av läsåret.
+  </p>
+
+  <h3 id="s22"><span class="num">2.2</span>Roller och behörigheter</h3>
+  <p>
+    Varje person i systemet har en roll. Rollen styr vilka menyval som visas och
+    vilka uppgifter personen kommer åt. Ingen kan se en annan skolas uppgifter.
+  </p>
+  <table>
+    <thead><tr><th style="width:24%">Roll</th><th style="width:38%">Ser och gör</th><th>Kommer åt</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="k">Administratör</td>
+        <td>Allt: grunddata, timplan, schemaläggning, drift och rapporter.</td>
+        <td>Hela skolan</td>
+      </tr>
+      <tr>
+        <td class="k">Lärare</td>
+        <td>Sitt eget schema, registrerar närvaro, bokar lokal.</td>
+        <td>Egna lektioner och elever</td>
+      </tr>
+      <tr>
+        <td class="k">Vårdnadshavare</td>
+        <td>Anmäler frånvaro och ansöker om ledighet för sina barn.</td>
+        <td>Endast egna barn</td>
+      </tr>
+      <tr>
+        <td class="k">Elev</td>
+        <td>Sitt eget schema och sin egen närvaro.</td>
+        <td>Endast sig själv</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="warn">
+    <span class="label">Viktigt</span>
+    <p>
+      Administratörsrollen ger tillgång till samtliga elevers uppgifter. Tilldela
+      den restriktivt, och ta bort behörigheten omgående när någon slutar.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ 3 ============================ -->
+<section class="chapter" id="ch3">
+  <h2><span class="num">3</span>Fas 1 — Kom igång</h2>
+  <p class="lede">Grunddata som allt annat vilar på. Görs en gång per läsår.</p>
+
+  <p>
+    Gå till <span class="path">Kom igång</span>. Guiden leder genom fem steg i
+    tur och ordning. Varje steg bygger på det föregående, så hoppa inte framåt.
+  </p>
+
+  <h3><span class="num">3.1</span>Läsår</h3>
+  <p>
+    Skapa läsåret och ange start- och slutdatum, till exempel <em>2026/2027</em>.
+    Markera det som <span class="ui">Aktivt</span>. Det aktiva läsåret binder
+    ihop klasser, timplan och det genererade schemat — utan ett aktivt läsår kan
+    ingen timplan registreras.
+  </p>
+  <div class="note">
+    <span class="label">Endast ett aktivt läsår</span>
+    <p>
+      När du gör ett läsår aktivt inaktiveras det föregående automatiskt.
+      Föregående års schema finns kvar och går att gå tillbaka till.
+    </p>
+  </div>
+
+  <h3><span class="num">3.2</span>Ämnen</h3>
+  <p>
+    Lägg in skolans ämnen. Varje ämne får en färg som används i alla schemavyer.
+    Välj tydligt åtskilda färger för ämnen som ofta ligger samma dag — det gör
+    schemat läsbart i ett ögonkast, både på skärm och i utskrift.
+  </p>
+
+  <h3><span class="num">3.3</span>Salar</h3>
+  <p>
+    Lägg in salarna med <strong>kapacitet</strong> och <strong>typ</strong>.
+    Båda uppgifterna används av AI-motorn: kapaciteten hindrar att en klass
+    placeras i en för liten sal, och typen styr att laborationer hamnar i
+    laborationssal och idrott i idrottshall.
+  </p>
+  <div class="warn">
+    <span class="label">Vanligaste orsaken till ett omöjligt schema</span>
+    <p>
+      För få specialsalar. Har skolan en idrottshall och tolv klasser som
+      vardera har tre idrottslektioner i veckan behövs 36 pass i en sal som
+      rymmer omkring 40 — det går, men marginalen är minimal. Kontrollera
+      specialsalarna innan du genererar.
+    </p>
+  </div>
+
+  <h3><span class="num">3.4</span>Klasser</h3>
+  <p>
+    Skapa klasserna med årskurs. Varje klass schemaläggs som en enhet: alla
+    elever i klassen följer klassens lektioner, och två lektioner för samma
+    klass kan aldrig ligga samtidigt.
+  </p>
+
+  <h3><span class="num">3.5</span>Personer</h3>
+  <p>
+    Bjud in lärare, elever och vårdnadshavare. Personer loggar in med sin
+    e-postadress och får en inbjudan när de läggs upp. Varje elev måste tillhöra
+    en klass.
+  </p>
+  <p>
+    Har skolan ett elevregister som stöder SS12000 kan personerna importeras i
+    stället för att läggas in för hand — se kapitel 7.
+  </p>
+
+  <div class="check">
+    <span class="label">Kontrollera</span>
+    <p>
+      Öppna <span class="path">Planering › Timplan</span>. Kan du välja klass,
+      ämne och lärare i rullistorna är fas 1 klar. Saknas något i en lista är
+      motsvarande steg i <span class="ui">Kom igång</span> ofullständigt.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ 4 ============================ -->
+<section class="chapter" id="ch4">
+  <h2><span class="num">4</span>Fas 2 — Planering</h2>
+  <p class="lede">Underlaget som avgör hur bra schemat blir.</p>
+
+  <p>
+    Det här är manualens viktigaste kapitel. AI-motorn kan inte kompensera för
+    ett bristfälligt underlag: den räknar fram den bästa lösningen på det problem
+    du beskriver, och beskrivs problemet fel blir också lösningen fel.
+  </p>
+
+  <h3 id="s41"><span class="num">4.1</span>Timplan</h3>
+  <p>
+    Gå till <span class="path">Planering › Timplan</span>. En post beskriver ett
+    undervisningsbehov: <em>klass, ämne, lärare, antal lektioner per vecka och
+    lektionslängd i minuter</em>. Lägg in en post för varje kombination av klass
+    och ämne.
+  </p>
+  <p>
+    Behöver två lärare undervisa tillsammans anger du en
+    <span class="ui">Medlärare</span>. Båda schemaläggs då samtidigt och båda
+    räknas som upptagna under lektionen.
+  </p>
+  <p>
+    Längst ned visas <span class="ui">totalt antal lektioner per vecka</span>.
+    Stäm av den summan mot skolans faktiska timplan innan du går vidare — ett
+    fel här fortplantar sig genom hela schemat.
+  </p>
+  <div class="note">
+    <span class="label">Räkna på utrymmet</span>
+    <p>
+      En klass som har fler lektioner i veckan än vad skoldagarna rymmer kan
+      inte schemaläggas, oavsett hur motorn ställs in. Kontrollera det för
+      klassen med flest lektioner: antal lektioner får inte överstiga antal
+      dagar gånger maximalt antal lektioner per dag, och lunchrasten tar också
+      plats.
+    </p>
+  </div>
+
+  <h3 id="s42"><span class="num">4.2</span>Tillgänglighet</h3>
+  <p>
+    Gå till <span class="path">Planering › Tillgänglighet</span>. Här anges när
+    en lärare, en sal eller en klass <strong>inte</strong> är tillgänglig — till
+    exempel en deltidsanställd lärare som är ledig på fredagar, eller en aula
+    som är bokad för annat på onsdagseftermiddagar.
+  </p>
+  <p>
+    En begränsning kan vara <span class="ui">Återkommande veckodag</span> eller
+    gälla ett <span class="ui">Specifikt datum</span>. Återkommande begränsningar
+    påverkar grundschemat; enstaka datum hanteras bäst i driften (kapitel 6).
+  </p>
+
+  <div class="warn">
+    <span class="label">Lägg inte in fler begränsningar än nödvändigt</span>
+    <p>
+      Varje begränsning tar bort möjliga lösningar. Läggs önskemål in som hårda
+      begränsningar kan resultatet bli att inget schema alls går att bygga —
+      och systemet kan då bara meddela att det är omöjligt, inte vilket önskemål
+      som borde ge vika. Lägg in det som verkligen måste gälla här, och styr
+      önskemål med optimeringsprofilen i avsnitt 5.1 i stället.
+    </p>
+  </div>
+
+  <div class="check">
+    <span class="label">Kontrollera</span>
+    <p>
+      Gå till <span class="path">Schemaläggning › Generera schema</span> och
+      titta på rutan <span class="ui">Förutsättningar</span>. Alla fyra raderna
+      — aktivt läsår, timplansposter, lärare tilldelade och salar tillgängliga —
+      ska vara uppfyllda innan du fortsätter.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ 5 ============================ -->
+<section class="chapter" id="ch5">
+  <h2><span class="num">5</span>Fas 3 — Schemaläggning</h2>
+  <p class="lede">Från underlag till publicerat schema.</p>
+
+  <h3 id="s51"><span class="num">5.1</span>Skolregler och optimeringsprofil</h3>
+  <p>
+    På sidan <span class="path">Schemaläggning › Generera schema</span> finns två
+    inställningar som styr resultatet. Skillnaden mellan dem är avgörande.
+  </p>
+  <p>
+    <strong>Skolregler</strong> är hårda villkor. De <em>måste</em> uppfyllas.
+    Här anges garanterad lunchrast för varje klass — inom vilket tidsfönster och
+    hur många minuter — samt högsta antal lektioner per dag och klass.
+  </p>
+  <p>
+    <strong>Optimeringsprofilen</strong> är mjuka önskemål. De kan väga mot
+    varandra: ju högre värde, desto viktigare. Motorn hittar den bästa
+    kompromissen när önskemålen står i konflikt.
+  </p>
+  <table>
+    <thead><tr><th style="width:38%">Önskemål</th><th>Höj det när …</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Schemastabilitet</td><td>… du gör om schemat mitt under läsåret och vill att så mycket som möjligt ska ligga kvar där det låg.</td></tr>
+      <tr><td class="k">Sprid ämnen över veckan</td><td>… ni vill undvika att samma ämne hamnar flera gånger samma dag.</td></tr>
+      <tr><td class="k">Kompakta lärardagar</td><td>… lärarna har många håltimmar och önskar sammanhängande dagar.</td></tr>
+      <tr><td class="k">Önskad ledig tid</td><td>… ni har lagt in önskemål om ledig tid som bör respekteras men inte måste.</td></tr>
+      <tr><td class="k">Önskad upptagen tid</td><td>… vissa pass helst ska ligga på bestämda tider.</td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <span class="label">Profilen sparas lokalt</span>
+    <p>
+      Optimeringsprofilen sparas i den webbläsare du använder och skickas med
+      varje körning. Arbetar en kollega från en annan dator har den datorn sina
+      egna inställningar.
+    </p>
+  </div>
+
+  <h3 id="s52"><span class="num">5.2</span>Kör genereringen</h3>
+  <p>
+    Klicka <span class="ui">Generera schema</span>. Motorn arbetar i bakgrunden
+    och visar resultatet när den är klar. Vänta tills körningen avslutats innan
+    du navigerar vidare.
+  </p>
+  <table>
+    <thead><tr><th style="width:30%">Resultat</th><th>Innebörd och nästa steg</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Optimal lösning hittad</td><td>Bästa möjliga schema utifrån ditt underlag. Gå vidare till granskning.</td></tr>
+      <tr><td class="k">Fungerande schema hittat</td><td>Ett giltigt schema som uppfyller alla hårda villkor, men som kanske kan förbättras. Fullt användbart — kör gärna om senare med mer tid.</td></tr>
+      <tr><td class="k">Inget giltigt schema möjligt</td><td>Villkoren går inte att uppfylla samtidigt. Läs listan <span class="ui">Upptäckta konflikter</span>, den pekar ut vad som krockar. Se kapitel 9.</td></tr>
+      <tr><td class="k">Lösaren hann inte klart</td><td>Tiden tog slut innan något schema hittades. Det betyder <em>inte</em> att schemat är omöjligt. Se kapitel 9.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    För en normalstor grundskola tar en körning från några sekunder upp till
+    någon minut. Mycket stora skolor tar längre tid — kör i så fall
+    genereringen när du har tid att invänta resultatet, förslagsvis en gång och
+    därefter med små justeringar.
+  </p>
+
+  <h3 id="s53"><span class="num">5.3</span>Granska och justera grundschemat</h3>
+  <p>
+    Gå till <span class="path">Schemaläggning › Grundschema</span>. Här visas
+    veckomallen. Filtrera på <span class="ui">Klass</span> eller
+    <span class="ui">Lärare</span> för att granska ett schema i taget — det är
+    betydligt lättare att bedöma än hela skolan samtidigt.
+  </p>
+  <p>Granska minst följande innan du publicerar:</p>
+  <ul>
+    <li>Varje klass har rimliga dagar — inga extremt tunga eller nästan tomma.</li>
+    <li>Lärarnas dagar ser rimliga ut, särskilt deltidsanställda.</li>
+    <li>Specialsalar används till rätt ämnen.</li>
+    <li>Eventuella markerade konflikter är åtgärdade.</li>
+  </ul>
+  <h4>Justera enskilda lektioner</h4>
+  <p>
+    Klicka på en lektion för att flytta den eller byta sal och lärare. Varje
+    ändring kontrolleras mot resten av schemat, så du kan inte råka skapa en
+    dubbelbokning. Är den valda tiden upptagen föreslår systemet närmaste lediga
+    plats. Du kan även lägga till, duplicera och ta bort lektioner, samt ångra
+    och göra om.
+  </p>
+  <h4>Lås lektioner inför omgenerering</h4>
+  <p>
+    En lektion som ligger rätt kan <span class="ui">låsas</span>. Låsta
+    lektioner överlever en omgenerering — motorn planerar runt dem. Det är det
+    effektivaste sättet att arbeta iterativt: lås det du är nöjd med, generera
+    om, och låt motorn arbeta vidare med resten.
+  </p>
+
+  <h3 id="s54"><span class="num">5.4</span>Versioner</h3>
+  <p>
+    Innan du gör större ändringar: gå till <span class="ui">Versioner</span> och
+    spara en version med ett beskrivande namn, till exempel <em>Före
+    vårjusteringar</em>. En sparad version kan återställas i sin helhet.
+  </p>
+  <div class="check">
+    <span class="label">Vana som lönar sig</span>
+    <p>
+      Spara en version direkt efter en lyckad generering, innan du börjar
+      finjustera. Då finns alltid en fungerande utgångspunkt att gå tillbaka
+      till.
+    </p>
+  </div>
+
+  <h3 id="s55"><span class="num">5.5</span>Publicera till kalender</h3>
+  <p>
+    När grundschemat är granskat och godkänt klickar du
+    <span class="ui">Publicera till kalender</span> och anger en period.
+    Veckomallen omvandlas då till daterade lektioner. Först efter publicering ser
+    lärare och elever sitt schema, och först då kan närvaro registreras.
+  </p>
+  <div class="warn">
+    <span class="label">Publicering ersätter befintliga lektioner</span>
+    <p>
+      Schemalagda lektioner som redan finns i den valda perioden ersätts.
+      Publicera därför bara framåt i tiden när läsåret har startat — väljer du
+      en period som redan varit riskerar du att skriva över lektioner som
+      närvaro registrerats på.
+    </p>
+  </div>
+  <p>
+    Behöver du senare ändra en enskild lektion i grundschemat följer framtida
+    publicerade lektioner automatiskt med, förutsatt att närvaro ännu inte
+    registrerats på dem. Redan genomförda lektioner lämnas orörda.
+  </p>
+
+  <div class="check">
+    <span class="label">Kontrollera</span>
+    <p>
+      Logga in som en lärare, eller be en lärare titta. Under
+      <span class="path">Mitt schema</span> ska veckans lektioner nu synas med
+      rätt tider och salar.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ 6 ============================ -->
+<section class="chapter" id="ch6">
+  <h2><span class="num">6</span>Fas 4 — Daglig drift</h2>
+  <p class="lede">Det löpande arbetet under läsåret.</p>
+
+  <h3><span class="num">6.1</span>Dagsplanering</h3>
+  <p>
+    <span class="path">Drift › Dagsplanering</span> visar en enskild dags
+    lektioner. Härifrån kan du <span class="ui">ställa in</span> en lektion med
+    angiven anledning, <span class="ui">återinsätta</span> en inställd lektion,
+    <span class="ui">tilldela vikarie</span> eller byta sal. En vikarie ersätter
+    ordinarie lärare för just den lektionen och kan registrera närvaro.
+  </p>
+  <p>Använd dagsplaneringen för enstaka händelser under dagen.</p>
+
+  <h3><span class="num">6.2</span>Lärarfrånvaro</h3>
+  <p>
+    Ska en lärare vara borta under flera dagar används
+    <span class="path">Drift › Lärarfrånvaro</span> i stället. Välj lärare och
+    datumintervall, så listas alla lektioner som behöver täckas. Du kan tilldela
+    vikarier lektion för lektion, eller ställa in samtliga visade lektioner på
+    en gång.
+  </p>
+  <div class="note">
+    <span class="label">Välj rätt verktyg</span>
+    <p>
+      Dagsplanering för en enskild dag, Lärarfrånvaro för en period. Att gå
+      igenom en veckas sjukfrånvaro dag för dag i dagsplaneringen är onödigt
+      arbete.
+    </p>
+  </div>
+
+  <h3><span class="num">6.3</span>Närvaro</h3>
+  <p>
+    Läraren registrerar närvaro under <span class="path">Närvaro</span>, som
+    visar dagens lektioner. I lektionsvyn markeras varje elev, med möjlighet att
+    markera alla närvarande och därefter justera undantagen — det är oftast
+    snabbast. Elever som anmälts frånvarande av vårdnadshavare visas redan
+    markerade.
+  </p>
+
+  <h3><span class="num">6.4</span>Frånvaroanmälan och ledighet</h3>
+  <p>
+    Vårdnadshavare anmäler frånvaro och ansöker om ledighet under
+    <span class="path">Mina barn</span>. Frånvaroanmälan gäller omgående.
+    Ledighetsansökningar hamnar hos skolan för beslut under
+    <span class="path">Drift › Ledighetsansökningar</span>, där de beviljas eller
+    avslås med en valfri kommentar. Vid beviljad ledighet registreras
+    frånvarodagarna automatiskt.
+  </p>
+  <div class="note">
+    <span class="label">Om ingen vårdnadshavare ser sina barn</span>
+    <p>
+      Kopplingen mellan vårdnadshavare och barn görs av administratören. Saknas
+      den ser vårdnadshavaren en tom sida.
+    </p>
+  </div>
+
+  <h3><span class="num">6.5</span>Lokalbokningar</h3>
+  <p>
+    Lärare bokar lokaler under <span class="path">Boka lokal</span>. Beroende på
+    salens inställningar godkänns bokningen direkt eller hamnar för granskning
+    under <span class="path">Drift › Lokalbokningar</span>. Bokningar tar hänsyn
+    till schemat, så en sal som redan har lektion går inte att boka.
+  </p>
+
+  <h3><span class="num">6.6</span>Rapporter</h3>
+  <p>
+    <span class="path">Drift › Rapporter</span> visar närvarograd per klass och
+    elev för en vald period, med klassens snitt som jämförelse. Underlaget kan
+    exporteras som CSV för vidare bearbetning eller arkivering.
+  </p>
+</section>
+
+<!-- ============================ 7 ============================ -->
+<section class="chapter" id="ch7">
+  <h2><span class="num">7</span>Integrationer</h2>
+  <p class="lede">Koppla SchemaPro till skolans övriga system.</p>
+
+  <p>
+    SchemaPro har ett externt API inspirerat av <strong>SS12000</strong>, den
+    svenska standarden för informationsutbyte mellan skoladministrativa system.
+    Genom det kan elevregister importeras och aktiviteter och lektioner läsas ut
+    till andra system.
+  </p>
+  <p>
+    Under <span class="path">Integrationer</span> skapar du en API-nyckel per
+    anslutet system, med ett namn som beskriver vad nyckeln används till — till
+    exempel <em>Vklass-synk</em>. Ge varje system sin egen nyckel: då kan en
+    enskild anslutning stängas av utan att övriga påverkas.
+  </p>
+  <div class="warn">
+    <span class="label">Nyckeln visas bara en gång</span>
+    <p>
+      Kopiera nyckeln till det mottagande systemet direkt när den skapats. Den
+      kan inte visas igen. Har en nyckel tappats bort eller kommit i orätta
+      händer: återkalla den och skapa en ny.
+    </p>
+  </div>
+  <p>
+    Listan visar när varje nyckel senast användes. En nyckel som inte använts på
+    länge hör sannolikt till ett system som inte längre är i drift — återkalla
+    den.
+  </p>
+</section>
+
+<!-- ============================ 8 ============================ -->
+<section class="chapter" id="ch8">
+  <h2><span class="num">8</span>Årscykel</h2>
+  <p class="lede">Ett förslag på när under året momenten görs.</p>
+
+  <table>
+    <thead><tr><th style="width:26%">När</th><th style="width:30%">Moment</th><th>Kommentar</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Vårterminen, sent</td><td>Skapa nästa läsår</td><td>Lägg upp läsåret men gör det inte aktivt ännu.</td></tr>
+      <tr><td class="k">Försommar</td><td>Uppdatera grunddata</td><td>Nya salar, ändrade klasser, personal som slutar eller tillkommer.</td></tr>
+      <tr><td class="k">Innan sommaren</td><td>Timplan och tillgänglighet</td><td>Fas 2 i sin helhet. Det tidskrävande momentet — planera in det.</td></tr>
+      <tr><td class="k">Sensommar</td><td>Generera och granska</td><td>Iterera: generera, lås det som är bra, generera om.</td></tr>
+      <tr><td class="k">Före terminsstart</td><td>Spara version och publicera</td><td>Publicera hela terminen eller läsåret.</td></tr>
+      <tr><td class="k">Löpande</td><td>Drift</td><td>Närvaro, vikarier, ledigheter, bokningar.</td></tr>
+      <tr><td class="k">Vid större ändringar</td><td>Spara version, justera, generera om</td><td>Höj <span class="ui">Schemastabilitet</span> så att befintliga placeringar behålls.</td></tr>
+      <tr><td class="k">Terminsslut</td><td>Exportera rapporter</td><td>Närvarostatistik per klass för arkivering.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="check">
+    <span class="label">Om ni ändrar schemat mitt i terminen</span>
+    <p>
+      Spara en version först. Höj sedan <span class="ui">Schemastabilitet</span>
+      i optimeringsprofilen och generera om. Motorn behåller då så mycket som
+      möjligt av det nuvarande schemat, vilket minskar störningen för elever och
+      lärare. Publicera därefter enbart perioden framåt.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ 9 ============================ -->
+<section class="chapter" id="ch9">
+  <h2><span class="num">9</span>Felsökning</h2>
+  <p class="lede">Vanliga symtom, deras orsak och åtgärd.</p>
+
+  <table>
+    <thead><tr><th style="width:27%">Symtom</th><th style="width:33%">Trolig orsak</th><th>Åtgärd</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="k">Knappen Generera schema går inte att klicka</td>
+        <td>En förutsättning saknas.</td>
+        <td>Läs rutan <span class="ui">Förutsättningar</span> — den visar vilken av de fyra som inte är uppfylld.</td>
+      </tr>
+      <tr>
+        <td class="k">Inget giltigt schema möjligt</td>
+        <td>Villkoren motsäger varandra. Oftast för få specialsalar, för snäva tillgänglighetsbegränsningar eller en klass med fler lektioner än dagarna rymmer.</td>
+        <td>Läs <span class="ui">Upptäckta konflikter</span>. Ta bort begränsningar som egentligen är önskemål och lägg in dem i optimeringsprofilen i stället.</td>
+      </tr>
+      <tr>
+        <td class="k">Lösaren hann inte klart</td>
+        <td>Problemet är stort men inte nödvändigtvis olösbart.</td>
+        <td>Kör om. Har ni ett tidigare schema, höj <span class="ui">Schemastabilitet</span> — då utgår motorn från det och blir betydligt snabbare.</td>
+      </tr>
+      <tr>
+        <td class="k">Läraren ser inget schema</td>
+        <td>Grundschemat är inte publicerat, eller läraren har inga timplansposter.</td>
+        <td>Kontrollera att publicering skett för aktuell period, och att läraren är angiven på poster i timplanen.</td>
+      </tr>
+      <tr>
+        <td class="k">Vårdnadshavaren ser inga barn</td>
+        <td>Kopplingen mellan vårdnadshavare och elev saknas.</td>
+        <td>Skapa kopplingen som administratör.</td>
+      </tr>
+      <tr>
+        <td class="k">Ändring i grundschemat slår inte igenom</td>
+        <td>Den berörda lektionen har redan registrerad närvaro, eller ligger bakåt i tiden.</td>
+        <td>Genomförda lektioner ändras avsiktligt inte. Justera i så fall den enskilda lektionen via dagsplaneringen.</td>
+      </tr>
+      <tr>
+        <td class="k">En sal går inte att boka</td>
+        <td>Salen har lektion enligt schemat, eller en godkänd bokning.</td>
+        <td>Välj annan tid eller sal. Bokningar krockar aldrig med undervisning.</td>
+      </tr>
+      <tr>
+        <td class="k">Ett externt system får inte kontakt</td>
+        <td>API-nyckeln är återkallad, felaktigt kopierad eller aldrig sparad.</td>
+        <td>Kontrollera under <span class="path">Integrationer</span> om nyckeln är aktiv och när den senast användes. Skapa vid behov en ny.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================ 10 ============================ -->
+<section class="chapter" id="ch10">
+  <h2><span class="num">10</span>Snabbreferens</h2>
+  <p class="lede">Checklista för ett nytt läsår.</p>
+
+  <table>
+    <thead><tr><th style="width:8%">Steg</th><th style="width:30%">Moment</th><th>Klart när</th></tr></thead>
+    <tbody>
+      <tr><td class="k">1</td><td>Läsår skapat och aktivt</td><td>Läsåret visas som aktivt.</td></tr>
+      <tr><td class="k">2</td><td>Ämnen inlagda</td><td>Samtliga ämnen finns med färg.</td></tr>
+      <tr><td class="k">3</td><td>Salar inlagda</td><td>Kapacitet och typ angivna för varje sal.</td></tr>
+      <tr><td class="k">4</td><td>Klasser skapade</td><td>Alla klasser med rätt årskurs.</td></tr>
+      <tr><td class="k">5</td><td>Personer inbjudna</td><td>Lärare och elever finns; elever tillhör en klass.</td></tr>
+      <tr><td class="k">6</td><td>Timplan ifylld</td><td>Veckosumman stämmer mot skolans timplan.</td></tr>
+      <tr><td class="k">7</td><td>Tillgänglighet inlagd</td><td>Endast verkliga hinder, inte önskemål.</td></tr>
+      <tr><td class="k">8</td><td>Skolregler satta</td><td>Lunchfönster och max lektioner per dag angivna.</td></tr>
+      <tr><td class="k">9</td><td>Schema genererat</td><td>Resultatet är Optimal eller Fungerande.</td></tr>
+      <tr><td class="k">10</td><td>Schemat granskat</td><td>Klass för klass och lärare för lärare.</td></tr>
+      <tr><td class="k">11</td><td>Version sparad</td><td>En namngiven version finns.</td></tr>
+      <tr><td class="k">12</td><td>Publicerat</td><td>Lärare ser sitt schema under Mitt schema.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="check">
+    <span class="label">Tre vanor som sparar mest tid</span>
+    <p>
+      <strong>Lås det som är bra</strong> innan du genererar om — då bygger
+      motorn vidare i stället för att börja om.
+      <strong>Spara en version</strong> före varje större ändring.
+      <strong>Höj schemastabiliteten</strong> när du gör om ett schema mitt
+      under läsåret, så att förändringen för elever och lärare blir så liten som
+      möjligt.
+    </p>
+  </div>
+</section>
+
+</body>
+</html>
