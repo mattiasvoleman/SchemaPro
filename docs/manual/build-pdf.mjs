@@ -29,6 +29,9 @@ const DOCS = {
                     footer: "SchemaPro — Användarmanual" },
   lararmanual:    { html: "lararmanual.html",    pdf: "SchemaPro-Lararmanual.pdf",
                     footer: "SchemaPro — Lärarmanual" },
+  vardnadshavarmanual: { html: "vardnadshavarmanual.html",
+                    pdf: "SchemaPro-For-vardnadshavare.pdf",
+                    footer: "SchemaPro — För vårdnadshavare" },
 };
 
 const here = path.dirname(fileURLToPath(import.meta.url));
