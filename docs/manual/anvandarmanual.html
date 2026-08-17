@@ -272,6 +272,41 @@
     stället för att läggas in för hand — se kapitel 7.
   </p>
 
+  <h3><span class="num">3.6</span>Importera från fil (CSV)</h3>
+  <p>
+    Har skolan sina uppgifter i register eller kalkylblad behöver ingenting
+    skrivas in för hand. Under <span class="path">Planering › Klasser</span>
+    och <span class="path">Planering › Personer</span> finns
+    <span class="ui">Importera CSV</span>: ladda ner mallen, fyll i den i
+    Excel eller motsvarande, och ladda upp den igen. Mallarna är anpassade för
+    svensk Excel (semikolonseparerade) och innehåller en exempelrad som visar
+    formatet.
+  </p>
+  <table>
+    <thead><tr><th style="width:30%">Mall</th><th style="width:34%">Kolumner</th><th>Att veta</th></tr></thead>
+    <tbody>
+      <tr><td class="k">klasser.csv</td><td>namn; arskurs</td><td>Importeras först — eleverna hänvisar till klassnamnen.</td></tr>
+      <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost</td><td>Varje lärare får en inbjudan per e-post.</td></tr>
+      <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas.</td></tr>
+      <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Ordningen är alltså: <strong>klasser → elever och lärare →
+    undervisningsgrupper</strong>. Efter varje uppladdning visas en rapport:
+    hur många rader som skapades, hur många som hoppades över och vilka rader
+    som innehöll fel. Rader som redan finns hoppas över — det är därför
+    riskfritt att rätta felen i filen och ladda upp samma fil igen.
+  </p>
+  <div class="note">
+    <span class="label">Om å, ä och ö ser konstiga ut</span>
+    <p>
+      Spara filen i formatet <em>CSV UTF-8</em> i Excel. Ser rubrikerna
+      trasiga ut vid uppladdning avvisas filen med ett tydligt meddelande i
+      stället för att importera förvanskade namn.
+    </p>
+  </div>
+
   <div class="check">
     <span class="label">Kontrollera</span>
     <p>
