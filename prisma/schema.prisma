@@ -193,6 +193,7 @@ model User {
   // Relations where this user is the student.
   attendanceRecords     AttendanceRecord[]      @relation("AttendanceStudent")
   masterLessonJoins     MasterLessonStudent[]   @relation("MasterLessonParticipant")
+  groupMemberships      StudentGroupMember[]    @relation("TeachingGroupStudent")
   calendarLessonJoins   CalendarLessonStudent[] @relation("CalendarLessonParticipant")
 
   // Guardian <-> student relations.
@@ -296,7 +297,12 @@ model StudentGroup {
   school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
 
+  // Home-class members (User.studentGroupId points here).
   members                 User[]                   @relation("StudentGroupMembers")
+  // Teaching-group members: students whose HOME class is another group but who
+  // take this group's subject lessons (nivågrupper, språkval). A group used as
+  // a plain class has none of these.
+  teachingMembers         StudentGroupMember[]     @relation("TeachingGroupGroup")
   teachingRequirements    TeachingRequirement[]
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
@@ -463,6 +469,22 @@ model MasterLessonStudent {
   @@index([schoolId])
   @@index([studentId])
   @@map("MasterLessonStudents")
+}
+
+model StudentGroupMember {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  studentGroupId String   @db.Uuid
+  studentId      String   @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  studentGroup StudentGroup @relation("TeachingGroupGroup", fields: [studentGroupId], references: [id], onDelete: Cascade)
+  student      User         @relation("TeachingGroupStudent", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentGroupId, studentId])
+  @@index([schoolId])
+  @@index([studentId])
+  @@map("StudentGroupMembers")
 }
 
 model CalendarLessonGroup {
