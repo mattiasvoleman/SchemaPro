@@ -301,7 +301,7 @@ log looks *fine* is the port problem described above, not a crash.
 | `DATABASE_URL` | see the box below |
 | `DIRECT_URL` | the same value as `DATABASE_URL` |
 | `JWT_SECRET` | your `JWT_SECRET` from Step 2 |
-| `JWT_ISSUER` | `<SUPABASE_URL>/auth/v1` — e.g. `https://abcdefgh.supabase.co/auth/v1` |
+| `JWT_ISSUER` | **must be exact** — `<SUPABASE_URL>/auth/v1`, e.g. `https://abcdefgh.supabase.co/auth/v1`. The API downloads Supabase's public signing keys from `<JWT_ISSUER>/.well-known/jwks.json`, so a typo here makes every login fail with 401 |
 | `JWT_AUDIENCE` | `authenticated` |
 | `SUPABASE_URL` | your `SUPABASE_URL` from Step 2 |
 | `SUPABASE_SERVICE_ROLE_KEY` | your `SUPABASE_SERVICE_KEY` from Step 2 |
@@ -478,6 +478,7 @@ If step 3 fails, the solver is the thing to look at — check
 | What you see | What it usually means |
 | :--- | :--- |
 | Login works, then "No active user profile is linked to this account" | The email or UUID in Step 9 does not match the auth user exactly. |
+| Login works, but every save returns a bare 401 | `JWT_ISSUER` is missing or misspelled, so the API cannot fetch Supabase's signing keys. It must be `<SUPABASE_URL>/auth/v1`, with no trailing slash. |
 | Web app loads but nothing saves; console shows CORS errors | `CORS_ORIGINS` on the API is not exactly your `WEB_URL`. |
 | `<API_URL>/health` works, `/health/ready` does not | `DATABASE_URL` is wrong, or the `app_authenticated` password does not match Step 4. |
 | Solver keeps restarting | `API_KEY` is shorter than 32 characters. |

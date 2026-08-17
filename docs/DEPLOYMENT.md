@@ -133,8 +133,8 @@ Run it with (see `.env.example` for the full annotated list):
 | `CORS_ORIGINS` | web origin first (also used for invite links), e.g. `https://app.yourschool.example` |
 | `DATABASE_URL` | the pooled `app_authenticated` string from step 3 |
 | `DIRECT_URL` | same value (migrations are run separately, step 2) |
-| `JWT_SECRET` | Supabase JWT secret |
-| `JWT_ISSUER` | `https://<ref>.supabase.co/auth/v1` |
+| `JWT_SECRET` | Supabase JWT secret (first-party HS256 service tokens only) |
+| `JWT_ISSUER` | **required** — `https://<ref>.supabase.co/auth/v1`; the API reads Supabase's ES256 public keys from `<JWT_ISSUER>/.well-known/jwks.json` |
 | `JWT_AUDIENCE` | `authenticated` |
 | `SUPABASE_URL` | project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key |
@@ -257,9 +257,11 @@ Walk the full product loop once, in order:
 - **Scaling**: one API container is fine for a school. Before running
   multiple instances, move throttling and the optimization job store to Redis
   (see improvements below).
-- **Key rotation**: rotating the Supabase JWT secret invalidates all sessions
-  and requires updating `JWT_SECRET` on the API at the same time. Rotate the
-  service-role key freely (only the API uses it).
+- **Key rotation**: Supabase's ES256 signing keys rotate without any action on
+  the API — it re-fetches them from the JWKS endpoint by `kid`. Rotating the
+  legacy JWT secret invalidates all sessions and requires updating `JWT_SECRET`
+  at the same time, but that key now only covers first-party service tokens.
+  Rotate the service-role key freely (only the API uses it).
 
 ---
 
@@ -315,8 +317,10 @@ Roughly ordered by expected value for a real school.
     when) — often a procurement requirement for schools.
 16. **Observability** — OpenTelemetry traces across web → API → solver,
     plus solver run metrics (solve time, conflict counts).
-17. **Asymmetric JWT verification** — switch from the shared HS256 secret to
-    Supabase's JWKS (RS256/ES256) so the API holds no signing secret.
+17. ~~**Asymmetric JWT verification**~~ — done: Supabase access tokens are
+    verified as ES256 against the project's JWKS, keyed by the token's `kid`.
+    `JWT_SECRET` survives only for first-party service tokens (scripts/bench);
+    retiring those would let the API hold no signing secret at all.
 18. **Mobile hardening** — retire the legacy `secureTokenStore` profile cache
     in favor of the Supabase session as the single source of truth, add
     certificate pinning, and add Detox tests for the offline queue.

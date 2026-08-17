@@ -41,13 +41,24 @@ export class EnvironmentVariables {
   @IsNotEmpty()
   DATABASE_URL!: string;
 
+  /**
+   * Symmetric key for first-party service tokens (see src/auth). Supabase user
+   * tokens are ES256 and verified against the JWKS endpoint instead, so this
+   * signs nothing the API issues — it only verifies tokens minted out-of-band,
+   * such as the benchmark harness in scripts/bench.
+   */
   @IsString()
   @IsNotEmpty()
   JWT_SECRET!: string;
 
-  @IsOptional()
+  /**
+   * Required: the API derives the JWKS URI from it, so an unset value would
+   * mean every Supabase-issued access token fails verification at runtime.
+   * Must be `<SUPABASE_URL>/auth/v1`.
+   */
   @IsString()
-  JWT_ISSUER?: string;
+  @IsNotEmpty()
+  JWT_ISSUER!: string;
 
   @IsOptional()
   @IsString()

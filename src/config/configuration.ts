@@ -12,7 +12,8 @@ export interface DatabaseConfig {
 
 export interface JwtConfig {
   secret: string;
-  issuer?: string;
+  issuer: string;
+  jwksUri: string;
   audience?: string;
 }
 
@@ -63,6 +64,9 @@ export function loadConfiguration(env: EnvironmentVariables): Configuration {
     jwt: {
       secret: env.JWT_SECRET,
       issuer: env.JWT_ISSUER,
+      // Supabase publishes its rotating ES256 signing keys under the issuer,
+      // which is why JWT_ISSUER is required rather than optional.
+      jwksUri: `${env.JWT_ISSUER.replace(/\/+$/, '')}/.well-known/jwks.json`,
       audience: env.JWT_AUDIENCE,
     },
     aiEngine: {

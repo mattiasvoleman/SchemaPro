@@ -214,7 +214,11 @@ jobs:
     timeout-minutes: 40
     env:
       POSTGRES_PASSWORD: postgres_local
+      # The benchmark mints HS256 service tokens, so it never reaches the JWKS
+      # endpoint — but the issuer is required and is verified on every request,
+      # and mint-token.mjs stamps this same value into the `iss` claim.
       JWT_SECRET: ci-benchmark-secret-not-used-anywhere-else
+      JWT_ISSUER: https://ci.invalid/auth/v1
       JWT_AUDIENCE: schemapro-api
       # Must be ≥32 chars: Settings.validate_api_key_strength in the solver
       # rejects anything shorter and the container exits at startup.

@@ -5,6 +5,7 @@ process.env['NODE_ENV'] = 'test';
 process.env['PORT'] = '4000';
 process.env['DATABASE_URL'] = 'postgresql://test:test@localhost:5432/test';
 process.env['JWT_SECRET'] = 'test-secret-not-used-by-the-fake-guard';
+process.env['JWT_ISSUER'] = 'https://test.invalid/auth/v1';
 process.env['AI_ENGINE_URL'] = 'http://localhost:65535';
 process.env['AI_ENGINE_API_KEY'] = 'test-key';
 process.env['AI_ENGINE_TIMEOUT_MS'] = '15000';

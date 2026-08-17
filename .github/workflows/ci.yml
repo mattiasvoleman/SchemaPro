@@ -218,10 +218,11 @@ jobs:
     timeout-minutes: 25
     env:
       POSTGRES_PASSWORD: postgres_local
-      # docker-compose.yml declares JWT_SECRET with `:?`, so compose refuses to
-      # interpolate the file without it — even though only the `db` service is
-      # started here and nothing reads it.
+      # docker-compose.yml declares JWT_SECRET and JWT_ISSUER with `:?`, so
+      # compose refuses to interpolate the file without them — even though only
+      # the `db` service is started here and nothing reads them.
       JWT_SECRET: ci-rls-secret-not-used-anywhere-else
+      JWT_ISSUER: https://ci.invalid/auth/v1
       # Migrations run as the owner; the RLS assertions then connect as
       # app_authenticated, which is the whole point of the gate.
       DATABASE_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro

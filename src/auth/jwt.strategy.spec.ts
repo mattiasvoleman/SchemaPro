@@ -1,5 +1,8 @@
 import { UnauthorizedException } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
+import { generateKeyPairSync } from 'node:crypto';
+import { passportJwtSecret } from 'jwks-rsa';
 import {
   createPrismaMock,
   createTxMock,
@@ -10,6 +13,9 @@ import type { PrismaService } from '../database/prisma.service';
 import { Role } from './enums/role.enum';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
 import { JwtStrategy } from './jwt.strategy';
+import { ACCEPTED_ALGORITHMS } from './signing-key.provider';
+
+jest.mock('jwks-rsa', () => ({ passportJwtSecret: jest.fn() }));
 
 const AUTH_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
@@ -26,7 +32,8 @@ function buildStrategy(jwt: Partial<Record<string, unknown>> = {}) {
   const configService = {
     getOrThrow: jest.fn().mockReturnValue({
       secret: 'a-test-secret-that-is-long-enough-000000',
-      issuer: undefined,
+      issuer: 'https://issuer.test',
+      jwksUri: 'https://issuer.test/.well-known/jwks.json',
       audience: undefined,
       ...jwt,
     }),
@@ -44,9 +51,11 @@ const payload = (overrides: Partial<JwtPayload> = {}): JwtPayload =>
 
 describe('JwtStrategy', () => {
   describe('constructor', () => {
-    it('pins HS256 so the accepted algorithm is never negotiable', () => {
+    it('reads the pinned algorithms and JWKS URI from config', () => {
       const { configService } = buildStrategy();
       expect(configService.getOrThrow).toHaveBeenCalledWith('jwt');
+      // "none" and the RSA family stay unnegotiable; see signing-key.provider.
+      expect([...ACCEPTED_ALGORITHMS]).toEqual(['ES256', 'HS256']);
     });
 
     it('builds without issuer/audience when they are not configured', () => {
@@ -58,6 +67,85 @@ describe('JwtStrategy', () => {
       expect(() =>
         buildStrategy({ issuer: 'https://issuer.test', audience: 'aud' }),
       ).not.toThrow();
+    });
+  });
+
+  // The path that actually broke in production: Supabase rotated to ES256, the
+  // strategy still verified HS256, and every logged-in user got a bare 401.
+  describe('authenticate', () => {
+    const KID = 'f3fe84d5-3e20-4933-864d-81e41e2bfe07';
+    const ec = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const publicKey = ec.publicKey
+      .export({ format: 'pem', type: 'spki' })
+      .toString();
+    const privateKey = ec.privateKey
+      .export({ format: 'pem', type: 'pkcs8' })
+      .toString();
+
+    beforeEach(() => {
+      (passportJwtSecret as jest.Mock).mockReturnValue(
+        (_request: unknown, _token: string, done: (e: unknown, k?: string) => void) =>
+          done(null, publicKey),
+      );
+    });
+
+    const supabaseToken = (keyid = KID) =>
+      new JwtService({}).signAsync(
+        { sub: AUTH_ID, role: 'authenticated' },
+        {
+          algorithm: 'ES256',
+          privateKey,
+          keyid,
+          issuer: 'https://issuer.test',
+        },
+      );
+
+    const run = (strategy: JwtStrategy, token: string) =>
+      new Promise((resolve, reject) => {
+        Object.assign(strategy, {
+          success: resolve,
+          fail: (challenge: unknown) => reject(new Error(String(challenge))),
+          error: reject,
+        });
+        strategy.authenticate({
+          headers: { authorization: `Bearer ${token}` },
+        } as unknown as Parameters<JwtStrategy['authenticate']>[0]);
+      });
+
+    it('accepts an ES256 Supabase token and yields the database principal', async () => {
+      const { strategy, tx } = buildStrategy();
+      tx.user.findUnique.mockResolvedValue({
+        id: USER_ID,
+        schoolId: SCHOOL_ID,
+        role: 'SCHOOL_ADMIN',
+        isActive: true,
+      });
+
+      await expect(run(strategy, await supabaseToken())).resolves.toEqual({
+        authId: AUTH_ID,
+        role: 'SCHOOL_ADMIN',
+        userId: USER_ID,
+        schoolId: SCHOOL_ID,
+      });
+    });
+
+    it('rejects a token signed with a key the JWKS does not serve', async () => {
+      const { strategy, prisma } = buildStrategy();
+      const other = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+      const token = await new JwtService({}).signAsync(
+        { sub: AUTH_ID },
+        {
+          algorithm: 'ES256',
+          privateKey: other.privateKey
+            .export({ format: 'pem', type: 'pkcs8' })
+            .toString(),
+          keyid: KID,
+          issuer: 'https://issuer.test',
+        },
+      );
+
+      await expect(run(strategy, token)).rejects.toThrow();
+      expect(prisma.withVerifiedSubject).not.toHaveBeenCalled();
     });
   });
 

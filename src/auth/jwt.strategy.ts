@@ -7,6 +7,10 @@ import { PrismaService } from '../database/prisma.service';
 import { Role } from './enums/role.enum';
 import type { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 import type { JwtPayload } from './interfaces/jwt-payload.interface';
+import {
+  ACCEPTED_ALGORITHMS,
+  createSigningKeyProvider,
+} from './signing-key.provider';
 
 /**
  * Verifies bearer JWTs. Supports both first-party service tokens (which carry
@@ -21,14 +25,21 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private readonly prisma: PrismaService,
   ) {
     const jwt = configService.getOrThrow<JwtConfig>('jwt');
+    const signingKey = createSigningKeyProvider(jwt);
 
     const options: StrategyOptions = {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: jwt.secret,
-      // Pin the accepted signature algorithm. The secret is a symmetric HS256
-      // key (Supabase JWT secret); pinning removes any algorithm ambiguity.
-      algorithms: ['HS256'],
+      secretOrKeyProvider: (_request, rawToken: string, done) => {
+        signingKey(rawToken).then(
+          (key) => done(null, key),
+          (error: unknown) => done(error),
+        );
+      },
+      // Pin the accepted signature algorithms. Supabase issues ES256 (verified
+      // against its JWKS); HS256 covers first-party service tokens. Pinning
+      // removes any algorithm ambiguity — notably "none".
+      algorithms: [...ACCEPTED_ALGORITHMS],
       ...(jwt.issuer ? { issuer: jwt.issuer } : {}),
       ...(jwt.audience ? { audience: jwt.audience } : {}),
     };

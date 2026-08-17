@@ -2,11 +2,15 @@
 /**
  * Mints a short-lived HS256 JWT for benchmark and load-test runs.
  *
- * The API verifies bearer tokens with `JWT_SECRET` (see src/auth), so a locally
- * signed token is accepted by a local or CI stack without involving Supabase.
+ * The API verifies HS256 tokens with `JWT_SECRET` (see src/auth), so a locally
+ * signed token is accepted by a local or CI stack without involving Supabase —
+ * real user tokens are ES256 and verified against Supabase's JWKS instead.
  * Signing is done with node:crypto — no dependency, nothing to audit.
  *
- *   JWT_SECRET=... node scripts/bench/mint-token.mjs --sub <authId>
+ * `JWT_ISSUER` is required by the API and verified on every request, so pass
+ * the same value here or the minted token is rejected.
+ *
+ *   JWT_SECRET=... JWT_ISSUER=... node scripts/bench/mint-token.mjs --sub <authId>
  *
  * `--sub` must be the `Users.authId` of a seeded, active account. The gateway
  * deliberately resolves the application role, `schoolId` and internal `userId`

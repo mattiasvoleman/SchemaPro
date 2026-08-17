@@ -131,7 +131,9 @@ npm start
 ### Docker (Postgres + API + solver)
 
 ```bash
-JWT_SECRET=<your-supabase-jwt-secret> docker compose up --build
+JWT_SECRET=<your-supabase-jwt-secret> \
+JWT_ISSUER=https://<project-ref>.supabase.co/auth/v1 \
+docker compose up --build
 ```
 
 Boots Postgres (with RLS roles bootstrapped), applies migrations, and starts

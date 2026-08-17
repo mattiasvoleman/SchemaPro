@@ -64,7 +64,7 @@ services:
       DIRECT_URL: ${DIRECT_URL:?Set DIRECT_URL (app_authenticated role, direct)}
 
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (Supabase JWT secret)}
-      JWT_ISSUER: ${JWT_ISSUER:-}
+      JWT_ISSUER: ${JWT_ISSUER:?Set JWT_ISSUER (<SUPABASE_URL>/auth/v1) — the API reads its JWKS from it}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-authenticated}
 
       SUPABASE_URL: ${SUPABASE_URL:?Set SUPABASE_URL}

@@ -58,7 +58,7 @@ services:
       DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@db:5432/schemapro?schema=public
       DIRECT_URL: postgresql://app_authenticated:app_authenticated_local@db:5432/schemapro?schema=public
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (your Supabase JWT secret) in the environment}
-      JWT_ISSUER: ${JWT_ISSUER:-}
+      JWT_ISSUER: ${JWT_ISSUER:?Set JWT_ISSUER (<SUPABASE_URL>/auth/v1) — the API reads its JWKS from it}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-authenticated}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
