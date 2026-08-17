@@ -127,7 +127,12 @@ export function parseCsv(text: string): ParsedCsv {
 // Templates
 // ---------------------------------------------------------------------------
 
-export type ImportKind = "students" | "teachers" | "classes" | "teachingGroups";
+export type ImportKind =
+  | "students"
+  | "teachers"
+  | "classes"
+  | "teachingGroups"
+  | "roomTypes";
 
 interface CsvTemplate {
   filename: string;
@@ -137,6 +142,11 @@ interface CsvTemplate {
 }
 
 export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
+  roomTypes: {
+    filename: "salstyper.csv",
+    headers: ["namn"],
+    exampleRows: [["Hemkunskapssal"], ["Trä- och metallslöjd"], ["Textilslöjd"]],
+  },
   classes: {
     filename: "klasser.csv",
     headers: ["namn", "arskurs"],
@@ -338,6 +348,14 @@ export function mapClassRows(parsed: ParsedCsv): {
     rows.push({ name, gradeLevel: grade });
   });
   return { rows, errors };
+}
+
+export function mapRoomTypeRows(parsed: ParsedCsv) {
+  return mapRows(
+    parsed,
+    [{ field: "name", aliases: ["namn", "name", "salstyp", "typ"], required: true }],
+    requiredMessage,
+  );
 }
 
 export function mapMembershipRows(parsed: ParsedCsv) {

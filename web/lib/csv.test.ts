@@ -12,6 +12,7 @@ import {
   CSV_TEMPLATES,
   mapClassRows,
   mapMembershipRows,
+  mapRoomTypeRows,
   mapStudentRows,
   mapTeacherRows,
   normalizeHeader,
@@ -712,5 +713,55 @@ describe("pinned bugs (documenting current behaviour)", () => {
     expect(parsed.delimiter).toBe(";");
     expect(parsed.headers).toEqual(["multi\nline", "col2"]);
     expect(parsed.rows).toEqual([["v1", "v2"]]);
+  });
+});
+
+describe("room types", () => {
+  it("ships a template a Swedish school can fill in as-is", () => {
+    const content = templateCsvContent("roomTypes");
+
+    expect(content.startsWith("\uFEFF")).toBe(true); // Excel keeps å/ä/ö
+    expect(content).toContain("namn");
+    expect(content).toContain("Trä- och metallslöjd");
+    expect(content.endsWith("\r\n")).toBe(true);
+    expect(CSV_TEMPLATES.roomTypes.filename).toBe("salstyper.csv");
+  });
+
+  it("round-trips its own template through the parser and mapper", () => {
+    const { rows, errors } = mapRoomTypeRows(parseCsv(templateCsvContent("roomTypes")));
+
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      { name: "Hemkunskapssal" },
+      { name: "Trä- och metallslöjd" },
+      { name: "Textilslöjd" },
+    ]);
+  });
+
+  it("accepts the spellings a human would reach for", () => {
+    for (const header of ["namn", "Namn", "salstyp", "Typ", "name"]) {
+      const { rows, errors } = mapRoomTypeRows(parseCsv(`${header}\nTextilslöjd\n`));
+      expect(errors).toEqual([]);
+      expect(rows).toEqual([{ name: "Textilslöjd" }]);
+    }
+  });
+
+  it("names the missing column instead of importing nothing silently", () => {
+    const { rows, errors } = mapRoomTypeRows(parseCsv("kapacitet\n30\n"));
+
+    expect(rows).toEqual([]);
+    expect(errors).toEqual([
+      { row: 0, message: expect.stringContaining("namn") },
+    ]);
+  });
+
+  it("reports an empty cell with its 1-based data row number", () => {
+    const { rows, errors } = mapRoomTypeRows(
+      parseCsv("namn\nBildsal\n\nMusiksal\n"),
+    );
+
+    // The blank line is dropped, so Musiksal is row 2 — not row 3.
+    expect(rows).toEqual([{ name: "Bildsal" }, { name: "Musiksal" }]);
+    expect(errors).toEqual([]);
   });
 });

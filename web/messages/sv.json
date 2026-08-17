@@ -635,7 +635,8 @@
       "students": "Elever",
       "teachers": "Lärare",
       "classes": "Klasser",
-      "teachingGroups": "Undervisningsgrupper"
+      "teachingGroups": "Undervisningsgrupper",
+      "roomTypes": "Salstyper"
     },
     "downloadTemplate": "Ladda ner mall",
     "chooseFile": "Välj fil",

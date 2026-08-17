@@ -16,6 +16,7 @@ import { ImportService } from './import.service';
 
 const YEAR_ID = '99999999-9999-4999-8999-999999999999';
 const GROUP_7A = '66666666-6666-4666-8666-666666666666';
+const schoolless = () => testUser({ schoolId: undefined });
 const STUDENT_ID = 'aaaaaaa1-0000-4000-8000-000000000001';
 
 describe('ImportService', () => {
@@ -201,6 +202,66 @@ describe('ImportService', () => {
     });
   });
 
+  describe('importRoomTypes', () => {
+    it('creates missing types and skips existing ones by normalized name', async () => {
+      tx.roomType.findMany.mockResolvedValue([{ name: 'Klassrum' }]);
+      tx.roomType.create.mockResolvedValue({});
+
+      const report = await service.importRoomTypes(
+        {
+          rows: [
+            { name: ' klassrum ' }, // exists, case- and space-insensitive
+            { name: 'Hemkunskapssal' },
+            { name: 'Hemkunskapssal' }, // duplicated within the file
+            { name: 'Trä- och metallslöjd' },
+          ],
+        },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 2, skipped: 2, errors: [] });
+      expect(tx.roomType.create).toHaveBeenCalledTimes(2);
+      expect(tx.roomType.create).toHaveBeenCalledWith({
+        data: { schoolId: testUser().schoolId, name: 'Hemkunskapssal' },
+      });
+    });
+
+    it('does not scope the lookup to an academic year', async () => {
+      // Room types belong to the school: a slöjdsal outlives any single
+      // läsår. Scoping the existence check to a year would re-create every
+      // type each August.
+      tx.roomType.findMany.mockResolvedValue([]);
+      tx.roomType.create.mockResolvedValue({});
+
+      await service.importRoomTypes({ rows: [{ name: 'Textilslöjd' }] }, testUser());
+
+      expect(tx.roomType.findMany).toHaveBeenCalledWith({
+        select: { name: true },
+      });
+    });
+
+    it('stamps the tenant from the principal, never from the row', async () => {
+      tx.roomType.findMany.mockResolvedValue([]);
+      tx.roomType.create.mockResolvedValue({});
+
+      await service.importRoomTypes(
+        { rows: [{ name: 'Bildsal', schoolId: 'someone-elses' } as never] },
+        testUser(),
+      );
+
+      expect(tx.roomType.create).toHaveBeenCalledWith({
+        data: { schoolId: testUser().schoolId, name: 'Bildsal' },
+      });
+    });
+
+    it('rejects a school-less principal before any DB call', async () => {
+      await expect(
+        service.importRoomTypes({ rows: [{ name: 'Musiksal' }] }, schoolless()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+  });
+
   describe('importMemberships', () => {
     beforeEach(() => {
       tx.user.findMany.mockResolvedValue([
@@ -301,7 +362,6 @@ describe('ImportService', () => {
   // -------------------------------------------------------------------------
 
   describe('tenant honesty (schoolId only ever from the principal)', () => {
-    const schoolless = () => testUser({ schoolId: undefined });
 
     it('importGroups rejects a school-less principal before any DB call', async () => {
       await expect(

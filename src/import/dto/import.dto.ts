@@ -106,6 +106,24 @@ export class ImportGroupsDto {
   rows!: ImportGroupRowDto[];
 }
 
+export class ImportRoomTypeRowDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  name!: string;
+}
+
+export class ImportRoomTypesDto {
+  // No academicYearId: room types belong to the school, not to a year — the
+  // same slöjdsal exists across every läsår.
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => ImportRoomTypeRowDto)
+  rows!: ImportRoomTypeRowDto[];
+}
+
 export class ImportMembershipRowDto {
   /** Teaching-group NAME (Ma71); created on the fly when missing. */
   @IsString()

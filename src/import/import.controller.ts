@@ -10,6 +10,7 @@ import { ImportService } from './import.service';
 import {
   ImportGroupsDto,
   ImportMembershipsDto,
+  ImportRoomTypesDto,
   ImportStudentsDto,
   ImportTeachersDto,
 } from './dto/import.dto';
@@ -40,6 +41,14 @@ export class ImportController {
   @Post('groups')
   importGroups(@Body() dto: ImportGroupsDto, @CurrentUser() user: AuthenticatedUser) {
     return this.imports.importGroups(dto, user);
+  }
+
+  @Post('room-types')
+  importRoomTypes(
+    @Body() dto: ImportRoomTypesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.imports.importRoomTypes(dto, user);
   }
 
   @Post('group-members')

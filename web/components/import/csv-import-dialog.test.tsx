@@ -327,6 +327,37 @@ describe("CsvImportDialog import", () => {
     });
   });
 
+  it("imports room types with no year in the body, even with a year active", async () => {
+    // The API validates with forbidNonWhitelisted, so an academicYearId here
+    // would be a 400 — not an ignored extra field. Room types are school-wide.
+    mockPost.mockResolvedValue({ created: 3, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["roomTypes"] });
+
+    await uploadCsv(user, BOM + "namn\r\nHemkunskapssal\r\nTextilslöjd\r\n");
+    await screen.findByText("rowsReady(count=2)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await screen.findByText("resultSummary(created=3|skipped=0)");
+    expect(supabaseState.years).toEqual([ACTIVE_YEAR]); // a year IS active
+    expect(mockPost).toHaveBeenCalledWith("/api/v1/import/room-types", {
+      rows: [{ name: "Hemkunskapssal" }, { name: "Textilslöjd" }],
+    });
+  });
+
+  it("offers room types even when the school has no academic year yet", async () => {
+    supabaseState.years = [];
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["roomTypes"] });
+
+    await uploadCsv(user, BOM + "namn\r\nBildsal\r\n");
+
+    await screen.findByText("rowsReady(count=1)");
+    expect(screen.queryByText("noActiveYear")).not.toBeInTheDocument();
+    await waitFor(() => expect(importButton()).toBeEnabled());
+  });
+
   it("posts teachers without an academicYearId in the body", async () => {
     mockPost.mockResolvedValue({ created: 1, skipped: 0, errors: [] });
     const user = userEvent.setup();

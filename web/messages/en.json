@@ -635,7 +635,8 @@
       "students": "Students",
       "teachers": "Teachers",
       "classes": "Classes",
-      "teachingGroups": "Teaching groups"
+      "teachingGroups": "Teaching groups",
+      "roomTypes": "Room types"
     },
     "downloadTemplate": "Download template",
     "chooseFile": "Choose file",

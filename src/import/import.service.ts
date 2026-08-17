@@ -7,6 +7,7 @@ import type {
   ImportGroupsDto,
   ImportMembershipsDto,
   ImportReport,
+  ImportRoomTypesDto,
   ImportStudentsDto,
   ImportTeachersDto,
 } from './dto/import.dto';
@@ -111,6 +112,35 @@ export class ImportService {
             gradeLevel: row.gradeLevel ?? null,
           },
         });
+        report.created += 1;
+      }
+      return report;
+    });
+  }
+
+  /**
+   * Room types, matched by normalized name so a re-upload is a no-op. Unlike
+   * classes these are not scoped to an academic year: a school's slöjdsal
+   * outlives any single läsår.
+   */
+  async importRoomTypes(
+    dto: ImportRoomTypesDto,
+    user: AuthenticatedUser,
+  ): Promise<ImportReport> {
+    const schoolId = requireSchoolId(user);
+    return this.prisma.withRls(user, async (tx) => {
+      const existing = await tx.roomType.findMany({ select: { name: true } });
+      const taken = new Set(existing.map((type) => this.normalizeName(type.name)));
+
+      const report: ImportReport = { created: 0, skipped: 0, errors: [] };
+      for (const row of dto.rows) {
+        const key = this.normalizeName(row.name);
+        if (taken.has(key)) {
+          report.skipped += 1; // exists already, or duplicated within the file
+          continue;
+        }
+        taken.add(key);
+        await tx.roomType.create({ data: { schoolId, name: row.name.trim() } });
         report.created += 1;
       }
       return report;

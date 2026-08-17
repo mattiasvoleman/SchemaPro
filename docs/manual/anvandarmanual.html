@@ -218,12 +218,27 @@
     schemat läsbart i ett ögonkast, både på skärm och i utskrift.
   </p>
 
-  <h3><span class="num">3.3</span>Salar</h3>
+  <h3><span class="num">3.3</span>Salar och salstyper</h3>
   <p>
     Lägg in salarna med <strong>kapacitet</strong> och <strong>typ</strong>.
     Båda uppgifterna används av AI-motorn: kapaciteten hindrar att en klass
     placeras i en för liten sal, och typen styr att laborationer hamnar i
     laborationssal och idrott i idrottshall.
+  </p>
+  <p>
+    <strong>Salstyperna är skolans egen lista.</strong> Varje ny skola startar
+    med de vanligaste — klassrum, laborationssal, gymnastiksal,
+    hemkunskapssal, trä- och metallslöjd, textilslöjd, musiksal, bildsal, aula
+    och övrigt — men listan redigeras fritt under
+    <span class="path">Planering › Salar</span>. Saknas en typ som skolan
+    använder, lägg till den där innan salarna registreras; samma lista väljs
+    sedan i ämnets fält <span class="ui">Kräver salstyp</span>.
+  </p>
+  <p>
+    En salstyp som används av en sal eller ett ämne kan inte tas bort — då
+    visas i stället ett meddelande som anger hur många salar och ämnen som
+    pekar på den. Byt typ på dem först. Det skyddet finns därför att ett ämne
+    som kräver en borttagen typ blir omöjligt att schemalägga.
   </p>
   <div class="warn">
     <span class="label">Vanligaste orsaken till ett omöjligt schema</span>
@@ -275,8 +290,9 @@
   <h3><span class="num">3.6</span>Importera från fil (CSV)</h3>
   <p>
     Har skolan sina uppgifter i register eller kalkylblad behöver ingenting
-    skrivas in för hand. Under <span class="path">Planering › Klasser</span>
-    och <span class="path">Planering › Personer</span> finns
+    skrivas in för hand. Under <span class="path">Planering › Klasser</span>,
+    <span class="path">Planering › Personer</span> och
+    <span class="path">Planering › Salar</span> finns
     <span class="ui">Importera CSV</span>: ladda ner mallen, fyll i den i
     Excel eller motsvarande, och ladda upp den igen. Mallarna är anpassade för
     svensk Excel (semikolonseparerade) och innehåller en exempelrad som visar
@@ -285,15 +301,17 @@
   <table>
     <thead><tr><th style="width:30%">Mall</th><th style="width:34%">Kolumner</th><th>Att veta</th></tr></thead>
     <tbody>
-      <tr><td class="k">klasser.csv</td><td>namn; arskurs</td><td>Importeras först — eleverna hänvisar till klassnamnen.</td></tr>
+      <tr><td class="k">salstyper.csv</td><td>namn</td><td>En typ per rad, t.ex. <em>Textilslöjd</em>. Gäller hela skolan, inte ett enskilt läsår.</td></tr>
+      <tr><td class="k">klasser.csv</td><td>namn; arskurs</td><td>Importeras före eleverna — de hänvisar till klassnamnen.</td></tr>
       <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost</td><td>Varje lärare får en inbjudan per e-post.</td></tr>
       <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas.</td></tr>
       <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas.</td></tr>
     </tbody>
   </table>
   <p>
-    Ordningen är alltså: <strong>klasser → elever och lärare →
-    undervisningsgrupper</strong>. Efter varje uppladdning visas en rapport:
+    Ordningen är alltså: <strong>salstyper → klasser → elever och lärare →
+    undervisningsgrupper</strong>. Salstyperna först, eftersom salarna och
+    ämnena väljer bland dem. Efter varje uppladdning visas en rapport:
     hur många rader som skapades, hur många som hoppades över och vilka rader
     som innehöll fel. Rader som redan finns hoppas över — det är därför
     riskfritt att rätta felen i filen och ladda upp samma fil igen.
@@ -732,7 +750,7 @@
     <tbody>
       <tr><td class="k">1</td><td>Läsår skapat och aktivt</td><td>Läsåret visas som aktivt.</td></tr>
       <tr><td class="k">2</td><td>Ämnen inlagda</td><td>Samtliga ämnen finns med färg.</td></tr>
-      <tr><td class="k">3</td><td>Salar inlagda</td><td>Kapacitet och typ angivna för varje sal.</td></tr>
+      <tr><td class="k">3</td><td>Salar inlagda</td><td>Kapacitet och typ angivna för varje sal; specialsalarnas typer finns i listan.</td></tr>
       <tr><td class="k">4</td><td>Klasser skapade</td><td>Alla klasser med rätt årskurs.</td></tr>
       <tr><td class="k">5</td><td>Personer inbjudna</td><td>Lärare och elever finns; elever tillhör en klass.</td></tr>
       <tr><td class="k">6</td><td>Timplan ifylld</td><td>Veckosumman stämmer mot skolans timplan.</td></tr>

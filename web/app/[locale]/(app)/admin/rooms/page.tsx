@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { MapPin, Pencil, Plus, Trash2 } from "lucide-react";
+import { MapPin, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useCrudMutations, useRooms , useRoomTypes } from "@/lib/queries";
+import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import type { Room, RoomType } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,7 @@ const EMPTY_FORM: RoomForm = {
 
 export default function RoomsPage() {
   const t = useTranslations("rooms");
+  const tCsvImport = useTranslations("csvImport");
   const tCommon = useTranslations("common");
   const { data: roomTypes } = useRoomTypes();
   const roomTypeById = useMemo(
@@ -71,6 +73,7 @@ export default function RoomsPage() {
     requiresApproval?: boolean;
   }>("/api/v1/rooms", [["rooms"]]);
 
+  const [importOpen, setImportOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Room | null>(null);
   const [deleting, setDeleting] = useState<Room | null>(null);
@@ -134,10 +137,16 @@ export default function RoomsPage() {
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          <Button onClick={openCreate}>
-            <Plus />
-            {t("addRoom")}
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload />
+              {tCsvImport("button")}
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus />
+              {t("addRoom")}
+            </Button>
+          </>
         }
       />
 
@@ -302,6 +311,12 @@ export default function RoomsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CsvImportDialog
+        kinds={["roomTypes"]}
+        open={importOpen}
+        onOpenChange={setImportOpen}
+      />
 
       <ConfirmDialog
         open={deleting !== null}

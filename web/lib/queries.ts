@@ -1178,6 +1178,7 @@ const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
   teachers: "/api/v1/import/teachers",
   classes: "/api/v1/import/groups",
   teachingGroups: "/api/v1/import/group-members",
+  roomTypes: "/api/v1/import/room-types",
 };
 
 /** Kinds whose payload carries the academic year the rows belong to. */
@@ -1186,6 +1187,9 @@ export const IMPORT_NEEDS_YEAR: Record<ImportKind, boolean> = {
   teachers: false,
   classes: true,
   teachingGroups: true,
+  // Room types belong to the school, not to a läsår — the same slöjdsal
+  // exists across every year.
+  roomTypes: false,
 };
 
 export interface ImportCsvInput {
