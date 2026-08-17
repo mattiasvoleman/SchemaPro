@@ -2,12 +2,14 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -17,7 +19,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { StudentGroupsService } from './student-groups.service';
-import { CreateStudentGroupDto, UpdateStudentGroupDto } from './dto/student-group.dto';
+import {
+  CreateStudentGroupDto,
+  SetGroupMembersDto,
+  UpdateStudentGroupDto,
+} from './dto/student-group.dto';
 
 @Controller('api/v1/student-groups')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -46,5 +52,22 @@ export class StudentGroupsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<void> {
     await this.studentGroups.remove(id, user);
+  }
+
+  @Get(':id/members')
+  listMembers(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.studentGroups.listMembers(id, user);
+  }
+
+  @Put(':id/members')
+  setMembers(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: SetGroupMembersDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.studentGroups.setMembers(id, dto, user);
   }
 }

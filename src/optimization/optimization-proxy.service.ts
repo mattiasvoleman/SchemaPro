@@ -82,6 +82,7 @@ export class OptimizationProxyService {
       constraints,
       fixedLessons,
       previousLessons,
+      groupConflicts,
       roomAnonMap,
       requirementAnonMap,
     } = await this.prisma.withRls(user, (tx) =>
@@ -96,6 +97,7 @@ export class OptimizationProxyService {
       constraints,
       fixedLessons,
       previousLessons,
+      groupConflicts,
       ...(weights ? { weights } : {}),
       ...(rules ? { rules } : {}),
     };
@@ -140,6 +142,7 @@ export class OptimizationProxyService {
     constraints: AnonymousConstraint[];
     fixedLessons: AnonymousFixedLesson[];
     previousLessons: AnonymousPreviousLesson[];
+    groupConflicts: [string, string][];
     roomAnonMap: Map<string, string>;
     requirementAnonMap: Map<string, string>;
   }> {
@@ -175,19 +178,69 @@ export class OptimizationProxyService {
       },
     });
 
-    // Group headcounts (an aggregate, not PII) enable room-capacity checks.
-    const groupSizes = await tx.user.groupBy({
-      by: ['studentGroupId'],
-      where: {
-        role: 'STUDENT',
-        isActive: true,
-        studentGroupId: { in: rawRequirements.map((r) => r.studentGroupId) },
-      },
-      _count: { _all: true },
-    });
+    // Student -> groups, from BOTH membership kinds: the home class
+    // (Users.studentGroupId) and teaching groups (StudentGroupMembers). Only
+    // aggregates and id-relations derived from this ever leave this method —
+    // student ids themselves are never sent to the engine.
+    const scheduledGroupIds = [
+      ...new Set(rawRequirements.map((r) => r.studentGroupId)),
+    ];
+    const [homeMembers, teachingMembers] = await Promise.all([
+      tx.user.findMany({
+        where: {
+          role: 'STUDENT',
+          isActive: true,
+          studentGroupId: { in: scheduledGroupIds },
+        },
+        select: { id: true, studentGroupId: true },
+      }),
+      tx.studentGroupMember.findMany({
+        where: {
+          studentGroupId: { in: scheduledGroupIds },
+          student: { role: 'STUDENT', isActive: true },
+        },
+        select: { studentId: true, studentGroupId: true },
+      }),
+    ]);
+
+    const groupsByStudent = new Map<string, Set<string>>();
+    const membersByGroup = new Map<string, Set<string>>();
+    const link = (studentId: string, groupId: string | null) => {
+      if (!groupId) return;
+      let groups = groupsByStudent.get(studentId);
+      if (!groups) groupsByStudent.set(studentId, (groups = new Set()));
+      groups.add(groupId);
+      let members = membersByGroup.get(groupId);
+      if (!members) membersByGroup.set(groupId, (members = new Set()));
+      members.add(studentId);
+    };
+    for (const row of homeMembers) link(row.id, row.studentGroupId);
+    for (const row of teachingMembers) link(row.studentId, row.studentGroupId);
+
+    // Room-capacity headcount: distinct students per group across both kinds.
     const sizeByGroup = new Map(
-      groupSizes.map((row) => [row.studentGroupId, row._count._all]),
+      [...membersByGroup].map(([groupId, members]) => [groupId, members.size]),
     );
+
+    // Groups sharing at least one student can never hold overlapping lessons —
+    // that is the whole point of teaching groups being real sets of students
+    // rather than labels. One pass over students; each contributes the pairs
+    // among its own groups, deduplicated by ordered key.
+    const conflictPairKeys = new Set<string>();
+    const realGroupConflicts: [string, string][] = [];
+    for (const groups of groupsByStudent.values()) {
+      if (groups.size < 2) continue;
+      const list = [...groups].sort();
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const key = `${list[i]}:${list[j]}`;
+          if (!conflictPairKeys.has(key)) {
+            conflictPairKeys.add(key);
+            realGroupConflicts.push([list[i], list[j]]);
+          }
+        }
+      }
+    }
 
     // Locked master lessons are immovable, and participant lessons
     // (multi-class / individual students) are manual constructs the generator
@@ -354,12 +407,25 @@ export class OptimizationProxyService {
       };
     });
 
+    // Anonymize the conflict pairs with the same group map the requirements
+    // used, so the engine sees a consistent id space. Pairs whose groups never
+    // reached the payload (no requirement and no fixed lesson references them)
+    // are dropped — the engine would have nothing to constrain.
+    const groupConflicts: [string, string][] = realGroupConflicts.flatMap(
+      ([a, b]) => {
+        const anonA = groupAnonMap.get(a);
+        const anonB = groupAnonMap.get(b);
+        return anonA && anonB ? [[anonA, anonB] as [string, string]] : [];
+      },
+    );
+
     return {
       requirements,
       rooms,
       constraints,
       fixedLessons,
       previousLessons,
+      groupConflicts,
       roomAnonMap,
       requirementAnonMap,
     };

@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
@@ -143,6 +143,144 @@ describe('StudentGroupsService', () => {
       await expect(service.remove(GROUP_ID, testUser())).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+});
+
+describe('StudentGroupsService — teaching-group members', () => {
+  let service: StudentGroupsService;
+  let tx: TxMock;
+  let prisma: PrismaMock;
+
+  const STUDENT_A = 'aaaaaaa1-0000-4000-8000-000000000001';
+  const STUDENT_B = 'aaaaaaa2-0000-4000-8000-000000000002';
+
+  beforeEach(() => {
+    tx = createTxMock();
+    prisma = createPrismaMock(tx);
+    service = new StudentGroupsService(prisma as unknown as PrismaService);
+  });
+
+  describe('setMembers', () => {
+    const arrange = () => {
+      tx.studentGroup.findUnique.mockResolvedValue({ id: GROUP_ID });
+      tx.user.findMany.mockResolvedValue([{ id: STUDENT_A }, { id: STUDENT_B }]);
+      tx.studentGroupMember.deleteMany.mockResolvedValue({ count: 0 });
+      tx.studentGroupMember.createMany.mockResolvedValue({ count: 2 });
+    };
+
+    it('replaces the whole membership under the caller RLS session', async () => {
+      arrange();
+
+      const result = await service.setMembers(
+        GROUP_ID,
+        { studentIds: [STUDENT_A, STUDENT_B] },
+        testUser(),
+      );
+
+      expect(result).toEqual({ count: 2 });
+      expect(prisma.withRls).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: testUser().userId }),
+        expect.any(Function),
+      );
+      // Replace semantics: wipe first, then insert exactly the new list with
+      // the tenant taken from the principal — never from the payload.
+      expect(tx.studentGroupMember.deleteMany).toHaveBeenCalledWith({
+        where: { studentGroupId: GROUP_ID },
+      });
+      expect(tx.studentGroupMember.createMany).toHaveBeenCalledWith({
+        data: [
+          { schoolId: testUser().schoolId, studentGroupId: GROUP_ID, studentId: STUDENT_A },
+          { schoolId: testUser().schoolId, studentGroupId: GROUP_ID, studentId: STUDENT_B },
+        ],
+      });
+    });
+
+    it('deduplicates repeated ids before writing', async () => {
+      arrange();
+      tx.user.findMany.mockResolvedValue([{ id: STUDENT_A }]);
+
+      const result = await service.setMembers(
+        GROUP_ID,
+        { studentIds: [STUDENT_A, STUDENT_A] },
+        testUser(),
+      );
+
+      expect(result).toEqual({ count: 1 });
+      expect(tx.studentGroupMember.createMany).toHaveBeenCalledWith({
+        data: [
+          { schoolId: testUser().schoolId, studentGroupId: GROUP_ID, studentId: STUDENT_A },
+        ],
+      });
+    });
+
+    it('clears the membership when given an empty list, inserting nothing', async () => {
+      arrange();
+
+      const result = await service.setMembers(GROUP_ID, { studentIds: [] }, testUser());
+
+      expect(result).toEqual({ count: 0 });
+      expect(tx.studentGroupMember.deleteMany).toHaveBeenCalled();
+      expect(tx.studentGroupMember.createMany).not.toHaveBeenCalled();
+    });
+
+    it('404s on an unknown group before touching memberships', async () => {
+      arrange();
+      tx.studentGroup.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.setMembers(GROUP_ID, { studentIds: [STUDENT_A] }, testUser()),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(tx.studentGroupMember.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects ids that are not active students, naming the offenders, and writes nothing', async () => {
+      arrange();
+      // Only STUDENT_A passes the active-student filter.
+      tx.user.findMany.mockResolvedValue([{ id: STUDENT_A }]);
+
+      await expect(
+        service.setMembers(
+          GROUP_ID,
+          { studentIds: [STUDENT_A, STUDENT_B] },
+          testUser(),
+        ),
+      ).rejects.toMatchObject({
+        constructor: BadRequestException,
+        message: expect.stringContaining(STUDENT_B),
+      });
+      expect(tx.studentGroupMember.deleteMany).not.toHaveBeenCalled();
+      expect(tx.studentGroupMember.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('listMembers', () => {
+    it('returns members with their home group, via the caller RLS session', async () => {
+      tx.studentGroupMember.findMany.mockResolvedValue([
+        {
+          student: {
+            id: STUDENT_A,
+            firstName: 'Alva',
+            lastName: 'Berg',
+            studentGroupId: '77777777-7777-4777-8777-777777777777',
+          },
+        },
+      ]);
+
+      const members = await service.listMembers(GROUP_ID, testUser());
+
+      expect(members).toEqual([
+        {
+          id: STUDENT_A,
+          firstName: 'Alva',
+          lastName: 'Berg',
+          homeGroupId: '77777777-7777-4777-8777-777777777777',
+        },
+      ]);
+      expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { studentGroupId: GROUP_ID } }),
+      );
+      expect(prisma.withRls).toHaveBeenCalled();
     });
   });
 });

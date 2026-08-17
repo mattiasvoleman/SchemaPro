@@ -118,6 +118,14 @@ export interface AiEngineScheduleRequest {
   fixedLessons: AnonymousFixedLesson[];
   /** Previous unlocked placements, for minimal-disruption re-optimization. */
   previousLessons: AnonymousPreviousLesson[];
+  /**
+   * Pairs of (anonymous) group ids that share at least one student — the home
+   * class vs. teaching-group relation (7A vs Ma71, or Ma71 vs Sv73). Lessons
+   * for a conflicting pair must never overlap: every shared student would be
+   * double-booked. Pairwise is exactly the right granularity for the hard
+   * constraint, and it keeps STUDENT data out of the engine entirely.
+   */
+  groupConflicts: [string, string][];
   weights?: ObjectiveWeights | null;
   rules?: ScheduleRules | null;
 }

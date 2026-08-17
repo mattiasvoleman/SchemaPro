@@ -119,12 +119,14 @@ class SchedulerSolver:
 
         self._add_capacity_constraints(model, registry, decisions, rooms)
         self._add_teacher_no_overlap(model, decisions)
-        self._add_group_no_overlap(model, decisions)
+        self._add_group_no_overlap(model, decisions, request.group_conflicts)
         room_plan = self._add_room_allocation(
             model, decisions, rooms, request.constraints, request.fixed_lessons,
         )
         self._add_availability_constraints(model, registry, decisions, rooms, request.constraints)
-        self._add_fixed_lesson_constraints(model, decisions, rooms, request.fixed_lessons)
+        self._add_fixed_lesson_constraints(
+            model, decisions, rooms, request.fixed_lessons, request.group_conflicts,
+        )
 
         day_vars: dict[str, cp_model.IntVar] = {}
         self._add_rules_constraints(model, decisions, request.rules, day_vars)
@@ -660,7 +662,22 @@ class SchedulerSolver:
         self,
         model: cp_model.CpModel,
         decisions: list[LessonDecision],
+        group_conflicts: list[tuple[UUID, UUID]] | None = None,
     ) -> None:
+        """One student group is one set of students: no overlapping lessons.
+
+        Two layers. Within a group, all lessons share every student, so one
+        NoOverlap per group. Across groups, `group_conflicts` lists pairs that
+        share AT LEAST one student — a home class vs a teaching group cut from
+        it (7A vs Ma71), or two teaching groups with common members (Ma71 vs
+        Sv73). Each pair gets a NoOverlap over the union of both groups'
+        lessons: any overlap would double-book every shared student, which is
+        exactly as hard a clash as a within-group one.
+
+        Pairs whose groups have no scheduled lessons are skipped silently —
+        the relation is derived from membership data, which can name groups
+        that have no timplan entries.
+        """
         grouped: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
             group_id = decision.lesson.requirement.student_group_id
@@ -669,6 +686,11 @@ class SchedulerSolver:
         for group_decisions in grouped.values():
             if len(group_decisions) > 1:
                 model.AddNoOverlap([decision.interval for decision in group_decisions])
+
+        for first_id, second_id in group_conflicts or []:
+            combined = grouped.get(first_id, []) + grouped.get(second_id, [])
+            if len(combined) > 1:
+                model.AddNoOverlap([decision.interval for decision in combined])
 
     def _add_room_allocation(
         self,
@@ -804,14 +826,24 @@ class SchedulerSolver:
         decisions: list[LessonDecision],
         rooms: list[AnonymousRoom],
         fixed_lessons: list[FixedLesson],
+        group_conflicts: list[tuple[UUID, UUID]] | None = None,
     ) -> None:
         """Hard-block generated lessons from overlapping locked placements.
 
         A generated lesson may not overlap a fixed lesson that shares its
-        teacher or student group; if the fixed lesson occupies a room, no
-        generated lesson may be assigned that room during the window.
+        teacher or student group — where "shares its group" includes any group
+        that shares STUDENTS with it per `group_conflicts`, so a locked 7A
+        mentor hour also blocks Ma71's generated lessons for the window. If
+        the fixed lesson occupies a room, no generated lesson may be assigned
+        that room during the window.
         """
         room_index_by_id = {room.id: idx for idx, room in enumerate(rooms)}
+
+        # Symmetric lookup: conflicts_with[G] = groups sharing students with G.
+        conflicts_with: dict[UUID, set[UUID]] = {}
+        for first_id, second_id in group_conflicts or []:
+            conflicts_with.setdefault(first_id, set()).add(second_id)
+            conflicts_with.setdefault(second_id, set()).add(first_id)
 
         for fixed in fixed_lessons:
             window = self._fixed_window(fixed)
@@ -837,7 +869,11 @@ class SchedulerSolver:
                 }
                 shares_teacher = bool(fixed_teachers & own_teachers)
                 fixed_groups = {fixed.student_group_id, *fixed.extra_group_ids}
-                shares_group = requirement.student_group_id in fixed_groups
+                own_group = requirement.student_group_id
+                shares_group = own_group in fixed_groups or any(
+                    fixed_group in conflicts_with.get(own_group, ())
+                    for fixed_group in fixed_groups
+                )
 
                 if shares_teacher or shares_group:
                     self._add_window_avoidance(

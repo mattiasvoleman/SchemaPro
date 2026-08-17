@@ -177,6 +177,14 @@ class OptimizeScheduleRequest(CamelModel):
         alias="fixedLessons",
         max_length=5000,
     )
+    # Pairs of group ids that share at least one student (home class vs
+    # teaching group, or two teaching groups with common members). Lessons for
+    # such a pair are hard-forbidden from overlapping — a shared student
+    # cannot be in two rooms. The gateway derives these from real membership
+    # data; the engine never sees student ids.
+    group_conflicts: list[tuple[UUID4, UUID4]] = Field(
+        default_factory=list, alias="groupConflicts", max_length=5000,
+    )
     previous_lessons: list[PreviousLesson] = Field(
         default_factory=list,
         alias="previousLessons",

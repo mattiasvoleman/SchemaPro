@@ -1229,3 +1229,176 @@ def test_previous_lessons_warm_start_the_feasibility_phase(
     assert len(hint.vars) == 1, "one previous slot must install exactly one hint"
     # Wednesday 11:00 on the default grid: day index 2 x 40 slots + 12.
     assert list(hint.values) == [92]
+
+
+def _shared_student_payload() -> dict[str, object]:
+    """Home class 7A and teaching group Ma71 that share students.
+
+    Both groups need 20 hour-lessons in a 40-slot week with two rooms and
+    DIFFERENT teachers, so teacher/room constraints leave plenty of overlap
+    freedom: without the group-conflict pair the solver can (and with 40
+    lessons into 40 slots per group, must) run them in parallel; with the
+    pair, both groups must share one sequence — which still fits, since
+    2 x 20 = 40 slots. The pair is therefore strictly binding but satisfiable.
+    """
+    class_7a = str(uuid4())
+    group_ma71 = str(uuid4())
+    payload = _sample_payload()
+    template = payload["requirements"][0]  # type: ignore[index]
+    payload["requirements"] = [
+        {
+            **template,  # type: ignore[dict-item]
+            "id": str(uuid4()),
+            "subjectId": str(uuid4()),
+            "teacherId": str(uuid4()),
+            "studentGroupId": class_7a,
+            "lessonsPerWeek": 20,
+        },
+        {
+            **template,  # type: ignore[dict-item]
+            "id": str(uuid4()),
+            "subjectId": str(uuid4()),
+            "teacherId": str(uuid4()),
+            "studentGroupId": group_ma71,
+            "lessonsPerWeek": 20,
+        },
+    ]
+    payload["rooms"] = [
+        {"id": str(uuid4()), "capacity": 30},
+        {"id": str(uuid4()), "capacity": 30},
+    ]
+    payload["groupConflicts"] = [[class_7a, group_ma71]]
+    return payload
+
+
+def _absolute_spans(solver, lessons, req_by_id):  # noqa: ANN001, ANN202
+    grid = solver._grid
+    spans = []
+    for lesson in lessons:
+        requirement = req_by_id[lesson.requirement_id]
+        duration = grid.minutes_to_slots(requirement.minutes_per_lesson)
+        start = grid.day_index(lesson.day_of_week) * grid.slots_per_day + grid.parse_hhmmss(
+            lesson.start_time,
+        )
+        spans.append((requirement.student_group_id, start, start + duration))
+    return spans
+
+
+def test_groups_sharing_students_never_overlap() -> None:
+    """A teaching group and a home class with common students must serialise.
+
+    This is the Swedish nivågrupper/språkval case: a student belongs to class
+    7A and to Ma71, so a 7A lesson and an Ma71 lesson at the same time
+    double-books that student. The engine only sees group ids; the
+    groupConflicts pairs carry the shared-students relation.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _shared_student_payload()
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20.0))
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 40
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    req_by_id = {r.id: r for r in request.requirements}
+    spans = _absolute_spans(solver, response.lessons, req_by_id)
+    for i in range(len(spans)):
+        for j in range(i + 1, len(spans)):
+            group_a, start_a, end_a = spans[i]
+            group_b, start_b, end_b = spans[j]
+            if group_a == group_b:
+                continue  # within-group overlap is covered by existing tests
+            assert not (start_a < end_b and start_b < end_a), (
+                f"conflicting groups overlap at slots "
+                f"{max(start_a, start_b)}-{min(end_a, end_b)}"
+            )
+
+
+def test_without_the_conflict_pair_the_groups_do_overlap() -> None:
+    """Non-vacuity twin: drop the pair and the same school MUST overlap.
+
+    Each group needs 20 of the week's 40 slots; two disjoint groups can only
+    fit by running in parallel somewhere. If this test ever starts failing
+    (the solver serialises them anyway), the positive test above has stopped
+    proving anything and both need a harder fixture.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _shared_student_payload()
+    payload["groupConflicts"] = []
+    # 21 + 20 lessons cannot fit 40 slots serially, so SOME overlap is forced.
+    payload["requirements"][0]["lessonsPerWeek"] = 21  # type: ignore[index]
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20.0))
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}, (
+        "without the conflict pair this school is trivially schedulable"
+    )
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    req_by_id = {r.id: r for r in request.requirements}
+    spans = _absolute_spans(solver, response.lessons, req_by_id)
+    cross_overlaps = sum(
+        1
+        for i in range(len(spans))
+        for j in range(i + 1, len(spans))
+        if spans[i][0] != spans[j][0]
+        and spans[i][1] < spans[j][2]
+        and spans[j][1] < spans[i][2]
+    )
+    assert cross_overlaps > 0, (
+        "expected parallel lessons once the conflict pair is removed"
+    )
+
+
+def test_a_fixed_lesson_blocks_conflicting_groups_too() -> None:
+    """A locked 7A lesson must also block Ma71's generated lessons.
+
+    The fixed-lesson builder matches on group identity; with groupConflicts it
+    must widen to groups sharing students. One fixed lesson covering all of
+    Monday 08:00-17:45 for 7A, plus one generated Ma71 lesson and a Monday-only
+    grid, forces the question: without the widening the Ma71 lesson lands on
+    Monday inside the window; with it, the model is INFEASIBLE.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    class_7a = str(uuid4())
+    group_ma71 = str(uuid4())
+    payload = _sample_payload()
+    template = payload["requirements"][0]  # type: ignore[index]
+    payload["requirements"] = [
+        {
+            **template,  # type: ignore[dict-item]
+            "id": str(uuid4()),
+            "studentGroupId": group_ma71,
+            "lessonsPerWeek": 1,
+        },
+    ]
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "studentGroupId": class_7a,
+            "teacherId": str(uuid4()),
+            "dayOfWeek": 1,
+            "startTime": "08:00:00",
+            "endTime": "17:45:00",
+        },
+    ]
+    payload["groupConflicts"] = [[class_7a, group_ma71]]
+
+    solver = SchedulerSolver(
+        _settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"),
+    )
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status == "INFEASIBLE", (
+        "the locked class lesson leaves no Monday room for the teaching group"
+    )
+
+    # Sanity inversion: without the pair the same payload schedules fine.
+    payload["groupConflicts"] = []
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}

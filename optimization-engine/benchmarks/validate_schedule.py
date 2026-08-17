@@ -138,6 +138,30 @@ def validate(grid, request, lessons) -> list[str]:
             problems.append(
                 f"requirement {requirement.id}: {got} lessons placed, {want} requested")
 
+    # Group-conflict pairs (groups sharing students) must never overlap.
+    lessons_by_group: dict = defaultdict(list)
+    for lesson in lessons:
+        requirement = req_by_id.get(lesson.requirement_id)
+        if requirement is None:
+            continue
+        try:
+            duration = grid.minutes_to_slots(requirement.minutes_per_lesson)
+            day_idx, start_slot, _ = _occupied(
+                grid, lesson.day_of_week, lesson.start_time, duration)
+        except ValueError:
+            continue
+        lessons_by_group[requirement.student_group_id].append(
+            (day_idx * grid.slots_per_day + start_slot,
+             day_idx * grid.slots_per_day + start_slot + duration))
+    for first_id, second_id in getattr(request, "group_conflicts", []) or []:
+        for a_start, a_end in lessons_by_group.get(first_id, []):
+            for b_start, b_end in lessons_by_group.get(second_id, []):
+                if a_start < b_end and b_start < a_end:
+                    problems.append(
+                        f"groups {first_id} and {second_id} share students but "
+                        f"overlap at absolute slots {max(a_start, b_start)}-"
+                        f"{min(a_end, b_end)}")
+
     # Recurring UNAVAILABLE windows are hard constraints.
     for constraint in request.constraints:
         if constraint.kind != "UNAVAILABLE" or constraint.date is not None:

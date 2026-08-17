@@ -261,7 +261,10 @@ describe('OptimizationProxyService', () => {
 
     type Arrangement = {
       requirements?: unknown[];
-      groupSizes?: unknown[];
+      /** Rows of { id, studentGroupId }: students whose HOME class is the group. */
+      homeMembers?: unknown[];
+      /** Rows of { studentId, studentGroupId }: teaching-group memberships. */
+      teachingMembers?: unknown[];
       lockedLessons?: unknown[];
       unlockedLessons?: unknown[];
       rooms?: unknown[];
@@ -272,10 +275,17 @@ describe('OptimizationProxyService', () => {
       tx.teachingRequirement.findMany.mockResolvedValue(
         overrides.requirements ?? [requirement()],
       );
-      tx.user.groupBy.mockResolvedValue(
-        overrides.groupSizes ?? [
-          { studentGroupId: GROUP_ID, _count: { _all: 24 } },
-        ],
+      // Group sizes and the group-conflict relation both derive from the two
+      // membership queries: home-class students and teaching-group rows.
+      tx.user.findMany.mockResolvedValue(
+        overrides.homeMembers ??
+          Array.from({ length: 24 }, (_, i) => ({
+            id: `00000000-0000-4000-8000-9000000000${String(i).padStart(2, '0')}`,
+            studentGroupId: GROUP_ID,
+          })),
+      );
+      tx.studentGroupMember.findMany.mockResolvedValue(
+        overrides.teachingMembers ?? [],
       );
       const locked = overrides.lockedLessons ?? [];
       const unlocked = overrides.unlockedLessons ?? [];
@@ -598,12 +608,91 @@ describe('OptimizationProxyService', () => {
     });
 
     it('defaults an empty group to size 1 rather than zero', async () => {
-      arrange({ groupSizes: [] });
+      arrange({ homeMembers: [], teachingMembers: [] });
       echoEngine();
 
       await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
       expect(postedPayload().requirements[0].studentGroupSize).toBe(1);
+    });
+
+    it('derives group-conflict pairs from students shared across groups', async () => {
+      // Two scheduled groups: home class 7A and teaching group Ma71. Student
+      // S1 has 7A as home class AND a Ma71 membership -> exactly one pair.
+      const CLASS_7A = GROUP_ID;
+      const MA71 = '99999999-9999-4999-8999-999999999999';
+      arrange({
+        requirements: [
+          requirement(),
+          requirement({ id: '88888888-8888-4888-8888-888888888888', studentGroupId: MA71 }),
+        ],
+        homeMembers: [
+          { id: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: CLASS_7A },
+          { id: 'aaaaaaa2-0000-4000-8000-000000000002', studentGroupId: CLASS_7A },
+        ],
+        teachingMembers: [
+          { studentId: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: MA71 },
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      const payload = postedPayload();
+      expect(payload.groupConflicts).toHaveLength(1);
+      const [a, b] = payload.groupConflicts[0];
+      // The pair uses the SAME anonymous ids as the requirements do…
+      const anonGroups = payload.requirements.map((r) => r.studentGroupId);
+      expect(anonGroups).toContain(a);
+      expect(anonGroups).toContain(b);
+      expect(a).not.toBe(b);
+      // …and no real id leaks through the pair list.
+      const serialized = JSON.stringify(payload.groupConflicts);
+      expect(serialized).not.toContain(CLASS_7A);
+      expect(serialized).not.toContain(MA71);
+    });
+
+    it('emits no pair for groups without shared students', async () => {
+      const OTHER = '99999999-9999-4999-8999-999999999999';
+      arrange({
+        requirements: [
+          requirement(),
+          requirement({ id: '88888888-8888-4888-8888-888888888888', studentGroupId: OTHER }),
+        ],
+        homeMembers: [
+          { id: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: GROUP_ID },
+          { id: 'aaaaaaa2-0000-4000-8000-000000000002', studentGroupId: OTHER },
+        ],
+        teachingMembers: [],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().groupConflicts).toEqual([]);
+    });
+
+    it('counts a teaching group size as its distinct members, not zero', async () => {
+      // Ma71 has no home-class members at all — its size must come from the
+      // membership rows, and a student in both kinds must not count twice for
+      // the home class either.
+      const MA71 = '99999999-9999-4999-8999-999999999999';
+      arrange({
+        requirements: [
+          requirement({ studentGroupId: MA71 }),
+        ],
+        homeMembers: [],
+        teachingMembers: [
+          { studentId: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: MA71 },
+          { studentId: 'aaaaaaa2-0000-4000-8000-000000000002', studentGroupId: MA71 },
+          { studentId: 'aaaaaaa3-0000-4000-8000-000000000003', studentGroupId: MA71 },
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().requirements[0].studentGroupSize).toBe(3);
     });
 
     it('formats date-bound constraints as YYYY-MM-DD and anonymizes unlinked ones', async () => {
