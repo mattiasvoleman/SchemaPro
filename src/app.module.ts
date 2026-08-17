@@ -18,6 +18,7 @@ import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
 import { FamilyModule } from './family/family.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ImportModule } from './import/import.module';
 import { IntegrationModule } from './integration/integration.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
@@ -70,6 +71,7 @@ import type { ThrottleConfig } from './config/configuration';
     HealthModule,
     FamilyModule,
     NotificationsModule,
+    ImportModule,
     IntegrationModule,
 
     ThrottlerModule.forRootAsync({

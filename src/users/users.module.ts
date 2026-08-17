@@ -10,6 +10,7 @@ import { SupabaseAdminService } from './supabase-admin.service';
  */
 @Module({
   controllers: [UsersController],
+  exports: [UsersService],
   providers: [UsersService, SupabaseAdminService],
 })
 export class UsersModule {}
