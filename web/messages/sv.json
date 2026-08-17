@@ -231,9 +231,13 @@
     "addGroup": "Lägg till klass",
     "editGroup": "Redigera klass",
     "namePlaceholder": "7A",
-    "members": "{count} elever",
+    "members": "Medlemmar",
     "year": "Läsår",
-    "empty": "Inga klasser ännu. Skapa läsåret först, lägg sedan till klasser."
+    "empty": "Inga klasser ännu. Skapa läsåret först, lägg sedan till klasser.",
+    "membersTitle": "Medlemmar i {name}",
+    "membersHint": "Elever i en undervisningsgrupp behåller sin klass och läggs till här. Schemat ser till att gruppens lektioner aldrig krockar med klassens eller andra grupper eleven ingår i.",
+    "membersSave": "Spara ({count})",
+    "membersSaved": "{count} medlemmar sparade"
   },
   "people": {
     "title": "Personer",

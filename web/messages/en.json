@@ -231,9 +231,13 @@
     "addGroup": "Add class",
     "editGroup": "Edit class",
     "namePlaceholder": "7A",
-    "members": "{count} students",
+    "members": "Members",
     "year": "Academic year",
-    "empty": "No classes yet. Create the academic year first, then add classes."
+    "empty": "No classes yet. Create the academic year first, then add classes.",
+    "membersTitle": "Members of {name}",
+    "membersHint": "Students in a teaching group keep their home class and are added here. Scheduling guarantees the group's lessons never clash with the class or other groups the student belongs to.",
+    "membersSave": "Save ({count})",
+    "membersSaved": "{count} members saved"
   },
   "people": {
     "title": "People",

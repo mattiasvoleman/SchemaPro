@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AvailabilityConstraint, MasterLesson } from "@/lib/types";
 import {
+  buildGroupConflictMap,
   conflictKinds,
   detectConflicts,
   findOpenSlots,
@@ -1105,5 +1106,108 @@ describe("findOpenSlots", () => {
         dayEndMinutes: 600,
       }),
     ).toEqual([]);
+  });
+});
+
+describe("teaching-group conflicts (groups sharing students)", () => {
+  const base = {
+    id: null,
+    dayOfWeek: 1,
+    startMinutes: 8 * 60,
+    endMinutes: 9 * 60,
+    teacherId: "t-1",
+    coTeacherId: null,
+    roomId: "r-1",
+    extraGroupIds: [],
+    studentIds: [],
+  };
+  const class7a: Placement = { ...base, id: "l-7a", studentGroupId: "g-7a" };
+  const ma71: Placement = {
+    ...base,
+    id: "l-ma71",
+    studentGroupId: "g-ma71",
+    teacherId: "t-2",
+    roomId: "r-2",
+  };
+
+  it("buildGroupConflictMap pairs a home class with a teaching group via a shared student", () => {
+    const relation = buildGroupConflictMap(
+      new Map([["s-1", "g-7a"]]),
+      [{ studentId: "s-1", studentGroupId: "g-ma71" }],
+    );
+    expect(relation.get("g-7a")?.has("g-ma71")).toBe(true);
+    expect(relation.get("g-ma71")?.has("g-7a")).toBe(true);
+  });
+
+  it("flags overlapping lessons for groups that share students", () => {
+    const relation = buildGroupConflictMap(
+      new Map([["s-1", "g-7a"]]),
+      [{ studentId: "s-1", studentGroupId: "g-ma71" }],
+    );
+    const hits = validatePlacement(ma71, [class7a], [], new Map(), relation);
+    expect(hits.map((hit) => hit.kind)).toContain("GROUP");
+  });
+
+  it("does NOT flag the same overlap without shared students", () => {
+    // Same two lessons, but the membership rows connect nobody: the groups
+    // are disjoint and may run in parallel. This is the non-vacuity twin of
+    // the test above — remove the relation and the hit must disappear.
+    const relation = buildGroupConflictMap(new Map([["s-1", "g-7a"]]), []);
+    const hits = validatePlacement(ma71, [class7a], [], new Map(), relation);
+    expect(hits.map((hit) => hit.kind)).not.toContain("GROUP");
+  });
+
+  it("ignores non-overlapping lessons even for conflicting groups", () => {
+    const relation = buildGroupConflictMap(
+      new Map([["s-1", "g-7a"]]),
+      [{ studentId: "s-1", studentGroupId: "g-ma71" }],
+    );
+    const later = { ...ma71, startMinutes: 9 * 60, endMinutes: 10 * 60 };
+    const hits = validatePlacement(later, [class7a], [], new Map(), relation);
+    expect(hits).toHaveLength(0);
+  });
+
+  it("detectConflicts marks both lessons of a conflicting overlapping pair", () => {
+    const relation = buildGroupConflictMap(
+      new Map([["s-1", "g-7a"]]),
+      [{ studentId: "s-1", studentGroupId: "g-ma71" }],
+    );
+    // detectConflicts takes MasterLesson rows (HH:MM times), not placements.
+    const asLesson = (placement: Placement): MasterLesson =>
+      ({
+        id: placement.id!,
+        academicYearId: "y-1",
+        subjectId: "subj-1",
+        studentGroupId: placement.studentGroupId,
+        teacherId: placement.teacherId,
+        coTeacherId: null,
+        roomId: placement.roomId,
+        dayOfWeek: placement.dayOfWeek,
+        startTime: "08:00",
+        endTime: "09:00",
+        isLocked: false,
+        extraGroupIds: [],
+        studentIds: [],
+      }) as unknown as MasterLesson;
+    const map = detectConflicts(
+      [asLesson(class7a), asLesson(ma71)],
+      [],
+      new Map(),
+      relation,
+    );
+    expect(map.get("l-7a")).toBeTruthy();
+    expect(map.get("l-ma71")).toBeTruthy();
+  });
+
+  it("two teaching groups sharing a student conflict with each other", () => {
+    // Neither group is anyone's home class: Ma71 vs Sv73 with one common
+    // student, connected purely through membership rows.
+    const relation = buildGroupConflictMap(new Map(), [
+      { studentId: "s-1", studentGroupId: "g-ma71" },
+      { studentId: "s-1", studentGroupId: "g-sv73" },
+    ]);
+    const sv73 = { ...class7a, id: "l-sv73", studentGroupId: "g-sv73" };
+    const hits = validatePlacement(ma71, [sv73], [], new Map(), relation);
+    expect(hits.map((hit) => hit.kind)).toContain("GROUP");
   });
 });

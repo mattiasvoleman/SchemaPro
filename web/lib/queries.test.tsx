@@ -13,6 +13,8 @@ import {
   useGuardianLinkActions,
   useLeaveRequestActions,
   useLessonActions,
+  useGroupMembers,
+  useGroupMemberships,
   useLessonRoster,
   useMasterLessons,
   useMyChildren,
@@ -27,6 +29,7 @@ import {
   useScheduleVersionActions,
   useScheduleVersionDetail,
   useScheduleVersions,
+  useSetGroupMembers,
   useStartOptimization,
   useSubjects,
   useSubstituteSuggestions,
@@ -48,10 +51,13 @@ vi.mock("@/utils/supabase/client", () => ({
 }));
 
 vi.mock("@/lib/api", () => ({
-  api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() },
 }));
 
-const mockApi = api as unknown as Record<"get" | "post" | "patch" | "delete", Mock>;
+const mockApi = api as unknown as Record<
+  "get" | "post" | "put" | "patch" | "delete",
+  Mock
+>;
 
 // ---------------------------------------------------------------------------
 // A chainable, awaitable stand-in for the PostgREST query builder. Every
@@ -89,6 +95,7 @@ function makeBuilder(table: string) {
     "gt",
     "lt",
     "or",
+    "in",
     "limit",
     "single",
   ]) {
@@ -330,9 +337,12 @@ describe("useLessonRoster", () => {
     },
   ];
 
-  it("queries students of the primary class, extra classes and named participants", async () => {
+  it("queries students of the primary class, extra classes, teaching-group members and named participants", async () => {
     stubTable("CalendarLessonGroups", ok([{ studentGroupId: "g-2" }]));
     stubTable("CalendarLessonStudents", ok([{ studentId: "st-5" }]));
+    // Teaching-group roster: Ma71-style lessons have their students HERE, not
+    // in Users.studentGroupId — the fix this test pins.
+    stubTable("StudentGroupMembers", ok([{ studentId: "st-9" }]));
     stubTable("Users", ok(students));
     const { wrapper } = createHarness();
     const { result } = renderHook(() => useLessonRoster("cl-1", "g-1"), { wrapper });
@@ -340,7 +350,10 @@ describe("useLessonRoster", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual(students);
     expect(argsFor("Users", "or")).toEqual([
-      ["studentGroupId.in.(g-1,g-2),id.in.(st-5)"],
+      ["studentGroupId.in.(g-1,g-2),id.in.(st-5,st-9)"],
+    ]);
+    expect(argsFor("StudentGroupMembers", "in")).toEqual([
+      ["studentGroupId", ["g-1", "g-2"]],
     ]);
     expect(argsFor("Users", "eq")).toEqual([
       ["role", "STUDENT"],
@@ -348,9 +361,24 @@ describe("useLessonRoster", () => {
     ]);
   });
 
+  it("deduplicates a student who is both a participant and a group member", async () => {
+    stubTable("CalendarLessonGroups", ok([]));
+    stubTable("CalendarLessonStudents", ok([{ studentId: "st-5" }]));
+    stubTable("StudentGroupMembers", ok([{ studentId: "st-5" }]));
+    stubTable("Users", ok(students));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useLessonRoster("cl-1", "g-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(argsFor("Users", "or")).toEqual([
+      ["studentGroupId.in.(g-1),id.in.(st-5)"],
+    ]);
+  });
+
   it("omits the participant filter when no individual students are attached", async () => {
     stubTable("CalendarLessonGroups", ok([]));
     stubTable("CalendarLessonStudents", ok([]));
+    stubTable("StudentGroupMembers", ok([]));
     stubTable("Users", ok(students));
     const { wrapper } = createHarness();
     const { result } = renderHook(() => useLessonRoster("cl-1", "g-1"), { wrapper });
@@ -1103,5 +1131,72 @@ describe("useRoomBookingActions", () => {
       ["roomBookings"],
       ["myRoomBookings"],
     ]);
+  });
+});
+
+describe("teaching-group membership hooks", () => {
+  it("useGroupMembers fetches the member list through the admin API", async () => {
+    const members = [
+      { id: "st-1", firstName: "Alma", lastName: "Berg", homeGroupId: "g-7a" },
+    ];
+    mockApi.get.mockResolvedValue(members);
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useGroupMembers("g-ma71"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(members);
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/student-groups/g-ma71/members");
+  });
+
+  it("useGroupMembers stays idle without a group id", () => {
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useGroupMembers(null), { wrapper });
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(mockApi.get).not.toHaveBeenCalled();
+  });
+
+  it("useGroupMemberships reads the whole school's membership rows", async () => {
+    stubTable("StudentGroupMembers", ok([{ studentId: "st-1", studentGroupId: "g-ma71" }]));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useGroupMemberships(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual([
+      { studentId: "st-1", studentGroupId: "g-ma71" },
+    ]);
+    expect(argsFor("StudentGroupMembers", "select")).toEqual([
+      ["studentId, studentGroupId"],
+    ]);
+  });
+
+  it("useSetGroupMembers PUTs the replacement list and invalidates every reader", async () => {
+    mockApi.put.mockResolvedValue({ count: 2 });
+    const { wrapper, invalidateSpy } = createHarness();
+    const { result } = renderHook(() => useSetGroupMembers(), { wrapper });
+
+    await result.current.mutateAsync({
+      groupId: "g-ma71",
+      studentIds: ["st-1", "st-2"],
+    });
+
+    expect(mockApi.put).toHaveBeenCalledWith("/api/v1/student-groups/g-ma71/members", {
+      studentIds: ["st-1", "st-2"],
+    });
+    const invalidated = invalidateSpy.mock.calls.map((call) => call[0]?.queryKey);
+    expect(invalidated).toContainEqual(["groupMembers", "g-ma71"]);
+    expect(invalidated).toContainEqual(["groupMemberships"]);
+    expect(invalidated).toContainEqual(["groups"]);
+    expect(invalidated).toContainEqual(["lessonRoster"]);
+  });
+
+  it("useSetGroupMembers invalidates nothing when the save fails", async () => {
+    mockApi.put.mockRejectedValue(new Error("boom"));
+    const { wrapper, invalidateSpy } = createHarness();
+    const { result } = renderHook(() => useSetGroupMembers(), { wrapper });
+
+    await expect(
+      result.current.mutateAsync({ groupId: "g-ma71", studentIds: [] }),
+    ).rejects.toThrow("boom");
+    expect(invalidateSpy).not.toHaveBeenCalled();
   });
 });

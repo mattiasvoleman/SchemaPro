@@ -63,6 +63,56 @@ function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): b
 }
 
 /**
+ * groupId → the set of groups sharing at least one student with it. Mirrors
+ * the `groupConflicts` relation the gateway sends to the scheduling engine —
+ * the manual editor must forbid exactly what generation forbids, or a drag
+ * can create the clash the solver just avoided.
+ */
+export type GroupConflictMap = Map<string, Set<string>>;
+
+/** Build the relation from home classes and teaching-group memberships. */
+export function buildGroupConflictMap(
+  studentGroupOf: Map<string, string | null>,
+  memberships: Array<{ studentId: string; studentGroupId: string }>,
+): GroupConflictMap {
+  const groupsByStudent = new Map<string, Set<string>>();
+  const add = (studentId: string, groupId: string | null) => {
+    if (!groupId) return;
+    let set = groupsByStudent.get(studentId);
+    if (!set) groupsByStudent.set(studentId, (set = new Set()));
+    set.add(groupId);
+  };
+  for (const [studentId, homeId] of studentGroupOf) add(studentId, homeId);
+  for (const row of memberships) add(row.studentId, row.studentGroupId);
+
+  const relation: GroupConflictMap = new Map();
+  for (const groups of groupsByStudent.values()) {
+    if (groups.size < 2) continue;
+    for (const a of groups) {
+      for (const b of groups) {
+        if (a === b) continue;
+        let set = relation.get(a);
+        if (!set) relation.set(a, (set = new Set()));
+        set.add(b);
+      }
+    }
+  }
+  return relation;
+}
+
+function groupsShareStudents(
+  aGroups: string[],
+  bGroups: string[],
+  relation?: GroupConflictMap,
+): boolean {
+  if (!relation) return false;
+  return aGroups.some((a) => {
+    const set = relation.get(a);
+    return set !== undefined && bGroups.some((b) => set.has(b));
+  });
+}
+
+/**
  * Validates a single placement against the rest of the timetable and the
  * weekly UNAVAILABLE constraints. `others` should contain all lessons of the
  * academic year; the placement's own id is skipped automatically.
@@ -73,6 +123,8 @@ export function validatePlacement(
   constraints: AvailabilityConstraint[],
   /** studentId → their class id; enables participant-aware validation. */
   studentGroupOf?: Map<string, string | null>,
+  /** Groups sharing students (see buildGroupConflictMap). */
+  groupConflicts?: GroupConflictMap,
 ): ConflictHit[] {
   const hits: ConflictHit[] = [];
 
@@ -101,6 +153,9 @@ export function validatePlacement(
     const candidateGroups = groupsOf(candidate);
     const otherGroups = groupsOf(other);
     if (candidateGroups.some((groupId) => otherGroups.includes(groupId))) {
+      hits.push({ kind: "GROUP", otherLessonId: other.id ?? undefined });
+    } else if (groupsShareStudents(candidateGroups, otherGroups, groupConflicts)) {
+      // Distinct groups, shared students: 7A vs Ma71. Same hard clash.
       hits.push({ kind: "GROUP", otherLessonId: other.id ?? undefined });
     }
 
@@ -164,12 +219,13 @@ export function detectConflicts(
   lessons: MasterLesson[],
   constraints: AvailabilityConstraint[],
   studentGroupOf?: Map<string, string | null>,
+  groupConflicts?: GroupConflictMap,
 ): Map<string, ConflictHit[]> {
   const placements = lessons.map(toPlacement);
   const result = new Map<string, ConflictHit[]>();
 
   for (const placement of placements) {
-    const hits = validatePlacement(placement, placements, constraints, studentGroupOf);
+    const hits = validatePlacement(placement, placements, constraints, studentGroupOf, groupConflicts);
     if (hits.length > 0 && placement.id) {
       result.set(placement.id, hits);
     }

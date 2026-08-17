@@ -41,6 +41,7 @@ import {
   useUpdateMasterLesson,
   type CreateMasterLessonInput,
   type VersionLesson,
+  useGroupMemberships,
 } from "@/lib/queries";
 import { buildIcs, downloadIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
@@ -49,6 +50,7 @@ import { ApiError } from "@/lib/api";
 import type { MasterLesson } from "@/lib/types";
 import { subjectColor, timeToMinutes } from "@/lib/utils";
 import {
+  buildGroupConflictMap,
   detectConflicts,
   findOpenSlots,
   suggestPlacements,
@@ -206,6 +208,12 @@ export default function TimetablePage() {
     () => new Map(students.map((student) => [student.id, student.studentGroupId])),
     [students],
   );
+  const { data: memberships } = useGroupMemberships();
+  /** Groups sharing students — the manual-edit twin of the engine's pairs. */
+  const groupConflictMap = useMemo(
+    () => buildGroupConflictMap(studentGroupOf, memberships ?? []),
+    [studentGroupOf, memberships],
+  );
 
   const subjectById = useMemo(
     () => new Map((subjects ?? []).map((subject) => [subject.id, subject])),
@@ -234,8 +242,8 @@ export default function TimetablePage() {
   // -------------------------------------------------------------------
 
   const conflictMap = useMemo(
-    () => detectConflicts(lessons ?? [], constraints ?? [], studentGroupOf),
-    [lessons, constraints, studentGroupOf],
+    () => detectConflicts(lessons ?? [], constraints ?? [], studentGroupOf, groupConflictMap),
+    [lessons, constraints, studentGroupOf, groupConflictMap],
   );
 
   /** lessonId → collaborator label (soft edit-locks from presence). */
@@ -275,10 +283,11 @@ export default function TimetablePage() {
           placements,
           constraints ?? [],
           studentGroupOf,
+          groupConflictMap,
         ).length === 0
       );
     },
-    [lessonById, placements, constraints, studentGroupOf],
+    [lessonById, placements, constraints, studentGroupOf, groupConflictMap],
   );
 
   const filtered = useMemo(

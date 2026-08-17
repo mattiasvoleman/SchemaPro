@@ -1,14 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Pencil, Plus, Trash2, Users } from "lucide-react";
 import {
   useAcademicYears,
   useCrudMutations,
+  useGroupMembers,
   useGroups,
   usePeople,
+  useSetGroupMembers,
 } from "@/lib/queries";
 import type { StudentGroup } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
@@ -64,6 +66,54 @@ export default function GroupsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<StudentGroup | null>(null);
   const [deleting, setDeleting] = useState<StudentGroup | null>(null);
+  const [membersFor, setMembersFor] = useState<StudentGroup | null>(null);
+  const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
+  const [memberSearch, setMemberSearch] = useState("");
+  const { data: currentMembers } = useGroupMembers(membersFor?.id ?? null);
+  const setMembers = useSetGroupMembers();
+
+  const students = useMemo(
+    () =>
+      (people ?? []).filter(
+        (person) => person.role === "STUDENT" && person.isActive,
+      ),
+    [people],
+  );
+
+  const openMembers = (group: StudentGroup) => {
+    setMemberSearch("");
+    setMembersFor(group);
+  };
+
+  // Preload the checkbox state once the current membership arrives.
+  const membersKey = (currentMembers ?? []).map((m) => m.id).join(",");
+  useEffect(() => {
+    if (membersFor) setMemberIds(new Set((currentMembers ?? []).map((m) => m.id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [membersFor?.id, membersKey]);
+
+  const toggleMember = (id: string) => {
+    setMemberIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const saveMembers = async () => {
+    if (!membersFor) return;
+    try {
+      const { count } = await setMembers.mutateAsync({
+        groupId: membersFor.id,
+        studentIds: [...memberIds],
+      });
+      toast.success(t("membersSaved", { count }));
+      setMembersFor(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tCommon("error"));
+    }
+  };
   const [form, setForm] = useState<GroupForm>({ name: "", gradeLevel: "", academicYearId: "" });
 
   const memberCounts = useMemo(() => {
@@ -262,6 +312,56 @@ export default function GroupsPage() {
               }
             >
               {tCommon("save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={membersFor !== null} onOpenChange={(open) => !open && setMembersFor(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {t("membersTitle", { name: membersFor?.name ?? "" })}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{t("membersHint")}</p>
+          <Input
+            placeholder={tCommon("search")}
+            value={memberSearch}
+            onChange={(event) => setMemberSearch(event.target.value)}
+          />
+          <div className="max-h-72 overflow-y-auto rounded-md border">
+            {students
+              .filter((student) =>
+                `${student.firstName} ${student.lastName}`
+                  .toLowerCase()
+                  .includes(memberSearch.toLowerCase()),
+              )
+              .map((student) => (
+                <label
+                  key={student.id}
+                  className="flex cursor-pointer items-center gap-3 border-b px-3 py-2 text-sm last:border-b-0 hover:bg-muted/50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={memberIds.has(student.id)}
+                    onChange={() => toggleMember(student.id)}
+                  />
+                  <span className="flex-1">
+                    {student.firstName} {student.lastName}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {groups?.find((g) => g.id === student.studentGroupId)?.name ?? ""}
+                  </span>
+                </label>
+              ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMembersFor(null)}>
+              {tCommon("cancel")}
+            </Button>
+            <Button onClick={saveMembers} disabled={setMembers.isPending}>
+              {t("membersSave", { count: memberIds.size })}
             </Button>
           </DialogFooter>
         </DialogContent>

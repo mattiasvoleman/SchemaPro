@@ -276,9 +276,26 @@ export function useLessonRoster(
           (row) => (row as { studentGroupId: string }).studentGroupId,
         ),
       ];
-      const studentIds = (participantsRes.data ?? []).map(
-        (row) => (row as { studentId: string }).studentId,
-      );
+
+      // A teaching group (Ma71) has no home-class members at all — its roster
+      // lives in StudentGroupMembers. Fetch those for every involved group so
+      // the id-filter below picks them up alongside individual participants.
+      const membershipRes = await supabase
+        .from("StudentGroupMembers")
+        .select("studentId")
+        .in("studentGroupId", groupIds);
+      if (membershipRes.error) throw new Error(membershipRes.error.message);
+
+      const studentIds = [
+        ...new Set([
+          ...(participantsRes.data ?? []).map(
+            (row) => (row as { studentId: string }).studentId,
+          ),
+          ...(membershipRes.data ?? []).map(
+            (row) => (row as { studentId: string }).studentId,
+          ),
+        ]),
+      ];
 
       const filters = [`studentGroupId.in.(${groupIds.join(",")})`];
       if (studentIds.length > 0) filters.push(`id.in.(${studentIds.join(",")})`);
@@ -1062,4 +1079,55 @@ export function useRoomBookingActions() {
   });
 
   return { book, cancel, decide };
+}
+
+export interface GroupMembershipRow {
+  studentId: string;
+  studentGroupId: string;
+}
+
+/** Every teaching-group membership in the school (RLS-scoped). */
+export function useGroupMemberships() {
+  return useQuery({
+    queryKey: ["groupMemberships"],
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("StudentGroupMembers")
+        .select("studentId, studentGroupId");
+      if (error) throw new Error(error.message);
+      return (data ?? []) as GroupMembershipRow[];
+    },
+  });
+}
+
+export interface GroupMember {
+  id: string;
+  firstName: string;
+  lastName: string;
+  homeGroupId: string | null;
+}
+
+export function useGroupMembers(groupId: string | null) {
+  return useQuery({
+    queryKey: ["groupMembers", groupId],
+    enabled: groupId !== null,
+    queryFn: () => api.get<GroupMember[]>(`/api/v1/student-groups/${groupId}/members`),
+  });
+}
+
+export function useSetGroupMembers() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ groupId, studentIds }: { groupId: string; studentIds: string[] }) =>
+      api.put<{ count: number }>(`/api/v1/student-groups/${groupId}/members`, {
+        studentIds,
+      }),
+    onSuccess: (_data, { groupId }) => {
+      void queryClient.invalidateQueries({ queryKey: ["groupMembers", groupId] });
+      void queryClient.invalidateQueries({ queryKey: ["groupMemberships"] });
+      void queryClient.invalidateQueries({ queryKey: ["groups"] });
+      void queryClient.invalidateQueries({ queryKey: ["lessonRoster"] });
+    },
+  });
 }
