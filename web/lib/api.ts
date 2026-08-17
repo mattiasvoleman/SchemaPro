@@ -5,7 +5,9 @@ import { createClient } from "@/utils/supabase/client";
  * through this API; reads happen directly against Supabase under RLS.
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
+// Trailing slashes are stripped: every `path` below already starts with one,
+// and the resulting `//api/v1/...` is a different route that the API 404s.
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "");
 
 export class ApiError extends Error {
   constructor(

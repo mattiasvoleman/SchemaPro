@@ -135,6 +135,18 @@ describe("api client", () => {
     });
   });
 
+  it("strips a trailing slash from the base URL rather than building a double slash", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.test/");
+    vi.resetModules();
+    fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
+    const { api } = await loadApi();
+
+    await api.post("/api/v1/academic-years", { name: "2026/2027" });
+
+    const [url] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe("https://api.test/api/v1/academic-years");
+  });
+
   it("rejects with status 0 when the base URL is not configured", async () => {
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "");
     vi.resetModules();
