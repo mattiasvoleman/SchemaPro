@@ -235,12 +235,31 @@
     </p>
   </div>
 
-  <h3><span class="num">3.4</span>Klasser</h3>
+  <h3><span class="num">3.4</span>Klasser och undervisningsgrupper</h3>
   <p>
     Skapa klasserna med årskurs. Varje klass schemaläggs som en enhet: alla
     elever i klassen följer klassens lektioner, och två lektioner för samma
     klass kan aldrig ligga samtidigt.
   </p>
+  <p>
+    Utöver sin klass kan en elev ingå i <strong>undervisningsgrupper</strong> —
+    grupper som skär tvärs över klasserna, till exempel <em>Ma71</em>,
+    <em>Sv73</em> eller ett språkval <em>En74</em>. En undervisningsgrupp
+    skapas på samma sätt som en klass, under
+    <span class="path">Planering › Klasser</span>. Klicka därefter
+    <span class="ui">Medlemmar</span> på gruppens rad och bocka för eleverna;
+    varje elev behåller sin klass och kan ingå i valfritt antal grupper.
+  </p>
+  <div class="check">
+    <span class="label">Schemat skyddar eleverna, inte bara grupperna</span>
+    <p>
+      Motorn vet vilka grupper som delar elever. En lektion för Ma71 kan
+      aldrig läggas samtidigt som en lektion för 7A om någon elev finns i
+      båda — och detsamma gäller två undervisningsgrupper med gemensamma
+      elever. Det kontrolleras också när du flyttar lektioner för hand i
+      grundschemat.
+    </p>
+  </div>
 
   <h3><span class="num">3.5</span>Personer</h3>
   <p>
@@ -285,6 +304,11 @@
     Behöver två lärare undervisa tillsammans anger du en
     <span class="ui">Medlärare</span>. Båda schemaläggs då samtidigt och båda
     räknas som upptagna under lektionen.
+  </p>
+  <p>
+    En timplanspost kan peka på en klass <em>eller</em> en undervisningsgrupp.
+    Matematik i nivågrupper läggs alltså som en post per grupp — <em>Ma71,
+    Ma72, Ma73</em> — i stället för en per klass, med respektive lärare.
   </p>
   <p>
     Längst ned visas <span class="ui">totalt antal lektioner per vecka</span>.
