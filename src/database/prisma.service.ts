@@ -7,6 +7,14 @@ import {
 import { PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 
+/** The connecting role's RLS-relevant privileges, read from `pg_roles`. */
+interface ConnectionRole {
+  name: string;
+  rolsuper: boolean;
+  rolbypassrls: boolean;
+  unforcedOwnedTables: number;
+}
+
 /**
  * Global PrismaService with RLS-aware transaction helper.
  *
@@ -26,6 +34,9 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
  * runs the caller-supplied queries, then commits. This guarantees:
  *   1. Every single application query goes through RLS, because the connection
  *      role is `app_authenticated` (a non-owner) — set via `DATABASE_URL`.
+ *      `onModuleInit` verifies this against the catalog on every boot rather
+ *      than trusting it, because a role that bypasses RLS turns every policy
+ *      below into a silent no-op instead of an error.
  *   2. The session variables are never visible across requests even when the
  *      same pooled connection is reused (SET LOCAL is transaction-scoped).
  *   3. No PII or JWT claims are written to application logs; only the
@@ -40,7 +51,71 @@ export class PrismaService
 
   async onModuleInit(): Promise<void> {
     await this.$connect();
+    await this.assertRlsIsEnforceable();
     this.logger.log('Prisma connected.');
+  }
+
+  /**
+   * Refuses to start unless PostgreSQL will actually apply the policies this
+   * class depends on.
+   *
+   * The privileges are read from the catalog rather than parsed out of the
+   * connection string, because the string only says which role was requested,
+   * not what that role is allowed to do. Either `rolsuper` or `rolbypassrls`
+   * makes PostgreSQL skip policy evaluation altogether, so tenancy silently
+   * stops being enforced — queries keep succeeding and simply return rows
+   * belonging to other schools. Failing to boot is the only honest response:
+   * this is a misconfiguration, not a runtime condition to degrade through.
+   */
+  private async assertRlsIsEnforceable(): Promise<void> {
+    const [role] = await this.$queryRaw<ConnectionRole[]>`
+      SELECT current_user::text AS name,
+             r.rolsuper,
+             r.rolbypassrls,
+             (SELECT count(*)::int
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public'
+                 AND c.relkind = 'r'
+                 AND NOT c.relforcerowsecurity
+                 AND c.relowner = r.oid) AS "unforcedOwnedTables"
+        FROM pg_roles r
+       WHERE r.rolname = current_user
+    `;
+
+    if (!role) {
+      throw new Error(
+        'Refusing to start: could not determine which database role the API ' +
+          'connects as, so there is no way to confirm row-level security ' +
+          'applies to its queries.',
+      );
+    }
+
+    if (role.rolsuper || role.rolbypassrls) {
+      throw new Error(
+        `Refusing to start: the database role "${role.name}" ` +
+          `${role.rolsuper ? 'is a superuser' : 'has the BYPASSRLS attribute'}, ` +
+          'so PostgreSQL skips every row-level-security policy and the ' +
+          'multi-tenant isolation this API relies on is inert. Point ' +
+          'DATABASE_URL at the least-privilege "app_authenticated" role — see ' +
+          'docs/DEPLOYMENT.md §3. Migrations legitimately need owner rights, ' +
+          'so keep those credentials in DIRECT_URL, which is not used at runtime.',
+      );
+    }
+
+    // Ownership is the other way policies stop applying: PostgreSQL exempts a
+    // table's owner unless the table is FORCE ROW LEVEL SECURITY. This warns
+    // instead of throwing because, unlike the attributes above, it depends on
+    // per-table FORCE and the API owning tables is unusual enough that a hard
+    // failure here would more likely be a false alarm than a real finding.
+    if (role.unforcedOwnedTables > 0) {
+      this.logger.warn(
+        `The database role "${role.name}" owns ${role.unforcedOwnedTables} ` +
+          'application table(s) that are not FORCE ROW LEVEL SECURITY, so ' +
+          'policies do not apply to it. DATABASE_URL should use a role that ' +
+          'owns nothing (see docs/DEPLOYMENT.md §3).',
+      );
+    }
   }
 
   async onModuleDestroy(): Promise<void> {

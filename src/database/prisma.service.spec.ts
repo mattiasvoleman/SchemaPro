@@ -188,20 +188,80 @@ describe('PrismaService', () => {
   });
 
   describe('lifecycle', () => {
-    it('connects on module init and disconnects on destroy', async () => {
-      const $connect = jest.fn().mockResolvedValue(undefined);
-      const $disconnect = jest.fn().mockResolvedValue(undefined);
-      Object.assign(service, {
-        $connect,
-        $disconnect,
-        logger: { log: jest.fn() },
-      });
+    /** The privilege probe result for a correctly configured deployment. */
+    const leastPrivilege = {
+      name: 'app_authenticated',
+      rolsuper: false,
+      rolbypassrls: false,
+      unforcedOwnedTables: 0,
+    };
 
-      await service.onModuleInit();
+    let $connect: jest.Mock;
+    let $disconnect: jest.Mock;
+    let $queryRaw: jest.Mock;
+    let logger: { log: jest.Mock; warn: jest.Mock };
+
+    const boot = (role: Partial<typeof leastPrivilege> | null) => {
+      $queryRaw.mockResolvedValue(role ? [{ ...leastPrivilege, ...role }] : []);
+      return service.onModuleInit();
+    };
+
+    beforeEach(() => {
+      $connect = jest.fn().mockResolvedValue(undefined);
+      $disconnect = jest.fn().mockResolvedValue(undefined);
+      $queryRaw = jest.fn();
+      logger = { log: jest.fn(), warn: jest.fn() };
+      Object.assign(service, { $connect, $disconnect, $queryRaw, logger });
+    });
+
+    it('connects on module init and disconnects on destroy', async () => {
+      await boot({});
       expect($connect).toHaveBeenCalledTimes(1);
+      expect(logger.log).toHaveBeenCalledWith('Prisma connected.');
 
       await service.onModuleDestroy();
       expect($disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    // Without these the tenancy model is inert: PostgreSQL skips policy
+    // evaluation entirely and every query silently returns other schools' rows.
+    it('refuses to boot as a role that has BYPASSRLS', async () => {
+      await expect(boot({ name: 'postgres', rolbypassrls: true })).rejects.toThrow(
+        /"postgres" has the BYPASSRLS attribute/,
+      );
+      expect(logger.log).not.toHaveBeenCalled();
+    });
+
+    it('refuses to boot as a superuser', async () => {
+      await expect(boot({ name: 'postgres', rolsuper: true })).rejects.toThrow(
+        /"postgres" is a superuser/,
+      );
+    });
+
+    it('names the variable to change so the message is actionable', async () => {
+      await expect(boot({ rolbypassrls: true })).rejects.toThrow(
+        /DATABASE_URL.*app_authenticated/s,
+      );
+    });
+
+    it('refuses to boot when the role cannot be identified', async () => {
+      await expect(boot(null)).rejects.toThrow(
+        /could not determine which database role/,
+      );
+    });
+
+    it('boots with a warning when the role owns tables that are not forced', async () => {
+      await boot({ name: 'owner_role', unforcedOwnedTables: 26 });
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('owns 26 application table(s)'),
+      );
+      expect(logger.log).toHaveBeenCalledWith('Prisma connected.');
+    });
+
+    it('does not warn when the role owns nothing', async () => {
+      await boot({});
+      expect(logger.warn).not.toHaveBeenCalled();
     });
   });
 });

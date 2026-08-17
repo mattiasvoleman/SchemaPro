@@ -95,6 +95,12 @@ postgresql://app_authenticated.<ref>:<PASSWORD>@aws-0-<region>.pooler.supabase.c
 > `select count(*) from "Schools";` — it must return **0 rows visible** (RLS
 > filters everything for a session with no JWT claims), not an error.
 
+The API enforces this at boot: it reads its own privileges from `pg_roles` and
+**refuses to start** if the role is a superuser or has `BYPASSRLS`, because
+either makes PostgreSQL skip every policy and returns other schools' rows
+instead of erroring. A misconfigured `DATABASE_URL` therefore fails loudly on
+deploy rather than silently disabling tenancy.
+
 ---
 
 ## 4. Deploy the AI engine (solver)

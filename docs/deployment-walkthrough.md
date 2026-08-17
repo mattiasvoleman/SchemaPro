@@ -480,6 +480,7 @@ If step 3 fails, the solver is the thing to look at — check
 | Login works, then "No active user profile is linked to this account" | The email or UUID in Step 9 does not match the auth user exactly. |
 | Login works, but every save returns a bare 401 | `JWT_ISSUER` is missing or misspelled, so the API cannot fetch Supabase's signing keys. It must be `<SUPABASE_URL>/auth/v1`, with no trailing slash. |
 | Web app loads but nothing saves; console shows CORS errors | `CORS_ORIGINS` on the API is not exactly your `WEB_URL`. |
+| API refuses to start: *"the database role ... has the BYPASSRLS attribute"* | `DATABASE_URL` is using the `postgres` owner instead of `app_authenticated`, which would switch off every privacy rule. Fix the role in `DATABASE_URL`; leave `DIRECT_URL` as the owner. |
 | `<API_URL>/health` works, `/health/ready` does not | `DATABASE_URL` is wrong, or the `app_authenticated` password does not match Step 4. |
 | Solver keeps restarting | `API_KEY` is shorter than 32 characters. |
 | "Generate" fails but everything else works | `AI_ENGINE_URL` or `AI_ENGINE_API_KEY` on the API does not match the solver. |
