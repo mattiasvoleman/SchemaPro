@@ -61,15 +61,6 @@ enum RoomBookingStatus {
   CANCELLED
 }
 
-enum RoomType {
-  CLASSROOM
-  LABORATORY
-  GYMNASIUM
-  AUDITORIUM
-  WORKSHOP
-  OTHER
-}
-
 enum LessonStatus {
   SCHEDULED
   CANCELLED
@@ -132,6 +123,7 @@ model School {
 
   users                   User[]
   rooms                   Room[]
+  roomTypes               RoomType[]
   subjects                Subject[]
   academicYears           AcademicYear[]
   studentGroups           StudentGroup[]
@@ -191,22 +183,22 @@ model User {
   availabilityConstraints AvailabilityConstraint[] @relation("ConstraintTeacher")
 
   // Relations where this user is the student.
-  attendanceRecords     AttendanceRecord[]      @relation("AttendanceStudent")
-  masterLessonJoins     MasterLessonStudent[]   @relation("MasterLessonParticipant")
-  groupMemberships      StudentGroupMember[]    @relation("TeachingGroupStudent")
-  calendarLessonJoins   CalendarLessonStudent[] @relation("CalendarLessonParticipant")
+  attendanceRecords   AttendanceRecord[]      @relation("AttendanceStudent")
+  masterLessonJoins   MasterLessonStudent[]   @relation("MasterLessonParticipant")
+  groupMemberships    StudentGroupMember[]    @relation("TeachingGroupStudent")
+  calendarLessonJoins CalendarLessonStudent[] @relation("CalendarLessonParticipant")
 
   // Guardian <-> student relations.
-  guardianLinks  GuardianStudent[] @relation("GuardianSide")
-  studentLinks   GuardianStudent[] @relation("StudentSide")
-  absenceReports AbsenceReport[]   @relation("AbsenceStudent")
-  reportedAbsences AbsenceReport[] @relation("AbsenceReporter")
-  leaveRequests    LeaveRequest[]  @relation("LeaveStudent")
-  requestedLeaves  LeaveRequest[]  @relation("LeaveRequester")
-  decidedLeaves    LeaveRequest[]  @relation("LeaveDecider")
-  notifications    Notification[]  @relation("NotificationRecipient")
-  roomBookings         RoomBooking[] @relation("RoomBookingBooker")
-  decidedRoomBookings  RoomBooking[] @relation("RoomBookingDecider")
+  guardianLinks       GuardianStudent[] @relation("GuardianSide")
+  studentLinks        GuardianStudent[] @relation("StudentSide")
+  absenceReports      AbsenceReport[]   @relation("AbsenceStudent")
+  reportedAbsences    AbsenceReport[]   @relation("AbsenceReporter")
+  leaveRequests       LeaveRequest[]    @relation("LeaveStudent")
+  requestedLeaves     LeaveRequest[]    @relation("LeaveRequester")
+  decidedLeaves       LeaveRequest[]    @relation("LeaveDecider")
+  notifications       Notification[]    @relation("NotificationRecipient")
+  roomBookings        RoomBooking[]     @relation("RoomBookingBooker")
+  decidedRoomBookings RoomBooking[]     @relation("RoomBookingDecider")
 
   @@unique([schoolId, email])
   @@index([schoolId])
@@ -219,20 +211,45 @@ model User {
 // Physical resources
 // -----------------------------------------------------------------------------
 
-model Room {
+/// Room types a school defines for itself. The scheduler matches a subject's
+/// required type against a room's type by identity, so these are rows rather
+/// than free text: a typo cannot make a subject unschedulable.
+model RoomType {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId  String   @db.Uuid
   name      String
-  code      String?
-  capacity  Int?
-  type      RoomType @default(CLASSROOM)
-  /// "Special" rooms (labs, gyms, auditoria) whose self-service bookings need
-  /// admin approval before they're confirmed. Ordinary rooms auto-approve.
-  requiresApproval Boolean @default(false)
+  /// Stable identity for the six values that were enum members before the
+  /// school-owned model; null for types a school created itself.
+  legacyKey String?
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
+  school   School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  rooms    Room[]
+  subjects Subject[]
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+  @@map("RoomTypes")
+}
+
+model Room {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String   @db.Uuid
+  name             String
+  code             String?
+  capacity         Int?
+  /// School-owned type (Klassrum, Hemkunskapssal, Trä- och metallslöjd …).
+  /// Null means "unspecified", which every requirement accepts.
+  roomTypeId       String?  @db.Uuid
+  /// "Special" rooms (labs, gyms, auditoria) whose self-service bookings need
+  /// admin approval before they're confirmed. Ordinary rooms auto-approve.
+  requiresApproval Boolean  @default(false)
+  createdAt        DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @db.Timestamptz(6)
+
   school                  School                   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  roomType                RoomType?                @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
   masterLessons           MasterLesson[]
   calendarLessons         CalendarLesson[]
   availabilityConstraints AvailabilityConstraint[]
@@ -240,21 +257,23 @@ model Room {
 
   @@unique([schoolId, name])
   @@index([schoolId])
+  @@index([roomTypeId])
   @@map("Rooms")
 }
 
 model Subject {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId         String    @db.Uuid
-  name             String
-  code             String?
-  color            String?
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId           String   @db.Uuid
+  name               String
+  code               String?
+  color              String?
   /// When set, the optimizer only places this subject in rooms of this type.
-  requiredRoomType RoomType?
-  createdAt DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+  requiredRoomTypeId String?  @db.Uuid
+  createdAt          DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 
   school               School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  requiredRoomType     RoomType?             @relation(fields: [requiredRoomTypeId], references: [id], onDelete: Restrict)
   teachingRequirements TeachingRequirement[]
   masterLessons        MasterLesson[]
   calendarLessons      CalendarLesson[]

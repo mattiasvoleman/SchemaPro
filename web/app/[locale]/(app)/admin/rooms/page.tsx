@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { MapPin, Pencil, Plus, Trash2 } from "lucide-react";
-import { useCrudMutations, useRooms } from "@/lib/queries";
+import { useCrudMutations, useRooms , useRoomTypes } from "@/lib/queries";
 import type { Room, RoomType } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -38,20 +38,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-const ROOM_TYPES: RoomType[] = [
-  "CLASSROOM",
-  "LABORATORY",
-  "GYMNASIUM",
-  "AUDITORIUM",
-  "WORKSHOP",
-  "OTHER",
-];
-
 interface RoomForm {
   name: string;
   code: string;
   capacity: string;
-  type: RoomType;
+  roomTypeId: string;
   requiresApproval: boolean;
 }
 
@@ -59,20 +50,24 @@ const EMPTY_FORM: RoomForm = {
   name: "",
   code: "",
   capacity: "",
-  type: "CLASSROOM",
+  roomTypeId: "",
   requiresApproval: false,
 };
 
 export default function RoomsPage() {
   const t = useTranslations("rooms");
   const tCommon = useTranslations("common");
-  const tTypes = useTranslations("roomTypes");
+  const { data: roomTypes } = useRoomTypes();
+  const roomTypeById = useMemo(
+    () => new Map((roomTypes ?? []).map((rt: RoomType) => [rt.id, rt] as const)),
+    [roomTypes],
+  );
   const { data: rooms, isLoading } = useRooms();
   const mutations = useCrudMutations<{
     name: string;
     code?: string | null;
     capacity?: number | null;
-    type?: RoomType;
+    roomTypeId?: string | null;
     requiresApproval?: boolean;
   }>("/api/v1/rooms", [["rooms"]]);
 
@@ -93,7 +88,7 @@ export default function RoomsPage() {
       name: room.name,
       code: room.code ?? "",
       capacity: room.capacity !== null ? String(room.capacity) : "",
-      type: room.type,
+      roomTypeId: room.roomTypeId ?? "",
       requiresApproval: room.requiresApproval,
     });
     setDialogOpen(true);
@@ -105,7 +100,7 @@ export default function RoomsPage() {
       name: form.name.trim(),
       code: form.code.trim() || null,
       capacity: capacity !== null && Number.isFinite(capacity) ? capacity : null,
-      type: form.type,
+      roomTypeId: form.roomTypeId === "" ? null : form.roomTypeId,
       requiresApproval: form.requiresApproval,
     };
     try {
@@ -190,7 +185,9 @@ export default function RoomsPage() {
                   <TableCell>
                     {room.code ? <Badge variant="secondary">{room.code}</Badge> : "—"}
                   </TableCell>
-                  <TableCell>{tTypes(room.type)}</TableCell>
+                  <TableCell>
+                    {roomTypeById.get(room.roomTypeId ?? "")?.name ?? "—"}
+                  </TableCell>
                   <TableCell className="tabular-nums">{room.capacity ?? "—"}</TableCell>
                   <TableCell className="text-right">
                     <Button
@@ -259,16 +256,16 @@ export default function RoomsPage() {
             <div className="space-y-2">
               <Label>{tCommon("type")}</Label>
               <Select
-                value={form.type}
-                onValueChange={(value) => setForm({ ...form, type: value as RoomType })}
+                value={form.roomTypeId}
+                onValueChange={(value) => setForm({ ...form, roomTypeId: value })}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ROOM_TYPES.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {tTypes(type)}
+                  {(roomTypes ?? []).map((roomType: RoomType) => (
+                    <SelectItem key={roomType.id} value={roomType.id}>
+                      {roomType.name}
                     </SelectItem>
                   ))}
                 </SelectContent>

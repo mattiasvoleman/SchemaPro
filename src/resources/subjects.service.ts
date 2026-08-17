@@ -20,7 +20,7 @@ export class SubjectsService {
             name: dto.name,
             code: dto.code ?? null,
             color: dto.color ?? null,
-            requiredRoomType: dto.requiredRoomType ?? null,
+            requiredRoomTypeId: dto.requiredRoomTypeId ?? null,
           },
         }),
       );
@@ -42,9 +42,9 @@ export class SubjectsService {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
             ...(dto.code !== undefined ? { code: dto.code } : {}),
             ...(dto.color !== undefined ? { color: dto.color } : {}),
-            ...(dto.requiredRoomType !== undefined
-              ? { requiredRoomType: dto.requiredRoomType }
-              : {}),
+            ...(dto.requiredRoomTypeId !== undefined
+              ? { requiredRoomTypeId: dto.requiredRoomTypeId }
+            : {}),
           },
         }),
       );

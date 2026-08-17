@@ -27,7 +27,6 @@ import type {
   DayOfWeek,
   ObjectiveWeights,
   ResourceKind,
-  RoomTypeKind,
   ScheduleRules,
 } from './interfaces/ai-engine-payload.interface';
 
@@ -152,6 +151,11 @@ export class OptimizationProxyService {
     const groupAnonMap = new Map<string, string>();
     const subjectAnonMap = new Map<string, string>();
     const requirementAnonMap = new Map<string, string>();
+    // Room types are school-authored names ("Trä- och metallslöjd"), so they
+    // are anonymised like every other identifier: the solver only ever needs
+    // to know that a room's type and a requirement's required type are the
+    // SAME token, never what the school calls it.
+    const roomTypeAnonMap = new Map<string, string>();
 
     const anonId = (map: Map<string, string>, realId: string): string => {
       const existing = map.get(realId);
@@ -174,7 +178,7 @@ export class OptimizationProxyService {
         coTeacherId: true,
         lessonsPerWeek: true,
         minutesPerLesson: true,
-        subject: { select: { requiredRoomType: true } },
+        subject: { select: { requiredRoomTypeId: true } },
       },
     });
 
@@ -291,7 +295,9 @@ export class OptimizationProxyService {
           lessonsPerWeek: remaining,
           minutesPerLesson: r.minutesPerLesson,
           studentGroupSize: Math.max(1, sizeByGroup.get(r.studentGroupId) ?? 1),
-          requiredRoomType: (r.subject.requiredRoomType ?? null) as RoomTypeKind | null,
+          requiredRoomType: r.subject.requiredRoomTypeId
+            ? anonId(roomTypeAnonMap, r.subject.requiredRoomTypeId)
+            : null,
           coTeacherId: r.coTeacherId ? anonId(teacherAnonMap, r.coTeacherId) : null,
         },
       ];
@@ -353,13 +359,13 @@ export class OptimizationProxyService {
           academicYears: { some: { id: academicYearId } },
         },
       },
-      select: { id: true, capacity: true, type: true },
+      select: { id: true, capacity: true, roomTypeId: true },
     });
 
     const rooms: AnonymousRoom[] = rawRooms.map((r) => ({
       id: anonId(roomAnonMap, r.id),
       capacity: r.capacity,
-      type: (r.type ?? null) as RoomTypeKind | null,
+      type: r.roomTypeId ? anonId(roomTypeAnonMap, r.roomTypeId) : null,
     }));
 
     // Fetch availability constraints (drop reason text field).

@@ -1,22 +1,12 @@
 import {
   IsHexColor,
-  IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   ValidateIf,
 } from 'class-validator';
-
-const ROOM_TYPES = [
-  'CLASSROOM',
-  'LABORATORY',
-  'GYMNASIUM',
-  'AUDITORIUM',
-  'WORKSHOP',
-  'OTHER',
-] as const;
-type RoomTypeValue = (typeof ROOM_TYPES)[number];
 
 export class CreateSubjectDto {
   @IsString()
@@ -34,10 +24,10 @@ export class CreateSubjectDto {
   color?: string | null;
 
   /** When set, the optimizer only places this subject in rooms of this type. */
-  @ValidateIf((dto: CreateSubjectDto) => dto.requiredRoomType !== null)
+  @ValidateIf((dto) => dto.requiredRoomTypeId !== null)
   @IsOptional()
-  @IsIn(ROOM_TYPES)
-  requiredRoomType?: RoomTypeValue | null;
+  @IsUUID('4')
+  requiredRoomTypeId?: string | null;
 }
 
 export class UpdateSubjectDto {
@@ -56,8 +46,8 @@ export class UpdateSubjectDto {
   @IsHexColor()
   color?: string | null;
 
-  @ValidateIf((dto: UpdateSubjectDto) => dto.requiredRoomType !== null)
+  @ValidateIf((dto) => dto.requiredRoomTypeId !== null)
   @IsOptional()
-  @IsIn(ROOM_TYPES)
-  requiredRoomType?: RoomTypeValue | null;
+  @IsUUID('4')
+  requiredRoomTypeId?: string | null;
 }

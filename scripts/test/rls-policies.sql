@@ -181,4 +181,72 @@ BEGIN
 END
 $$;
 
+-- ---------------------------------------------------------------------------
+-- 5. RoomTypes: school-owned rows, isolated like every other tenant table.
+--
+-- Room types carry a school's own vocabulary (Hemkunskapssal, Trä- och
+-- metallslöjd). A new table starts with NO policies and NO grants — the two
+-- failure modes this file exists to catch. A missing grant makes every request
+-- 500; a missing policy leaks one school's setup into another's picker.
+--
+-- These act as a real signed-in ADMIN of school A, which is the principal the
+-- room-type endpoints run under, by setting the JWT claims app.current_*()
+-- reads. The service principal is deliberately not used: SS12000 has no
+-- business with room types and is granted none, which the last block asserts.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint; other bigint;
+BEGIN
+  -- The grant exists at all: without it this SELECT raises "permission denied".
+  SELECT count(*) INTO n FROM "RoomTypes";
+  IF n = 0 THEN
+    RAISE EXCEPTION
+      'room-types: admin of school A sees no types (missing rows, missing grant, or a policy that denies everything)';
+  END IF;
+
+  -- No WHERE clause: the policy, not the query, must do the scoping.
+  SELECT count(*) INTO other FROM "RoomTypes"
+   WHERE "schoolId" <> app.current_school_id();
+  IF other <> 0 THEN
+    RAISE EXCEPTION
+      'room-types: % row(s) from another school visible — tenant isolation is not enforced', other;
+  END IF;
+
+  -- An admin may write its own school's types.
+  INSERT INTO "RoomTypes" ("schoolId", "name")
+  VALUES (app.current_school_id(), 'RLS-testtyp');
+  DELETE FROM "RoomTypes" WHERE "name" = 'RLS-testtyp';
+END
+$$;
+ROLLBACK;
+
+-- The SS12000 service principal has no room-type policy and must see nothing.
+--
+-- Claims are reset to an empty object rather than left alone: a ROLLBACK
+-- restores the setting to '' rather than unsetting it, and auth.uid() cannot
+-- parse an empty string as JSON. '{}' is the honest encoding of "no user".
+BEGIN;
+SELECT set_config('request.jwt.claims', '{}', true);
+SELECT set_config('app.service_school_id', :'school_a', true);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "RoomTypes";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'room-types: the integration principal sees % type(s); it is granted none', n;
+  END IF;
+END
+$$;
+COMMIT;
+
 SELECT 'rls-policies: all assertions passed' AS result;

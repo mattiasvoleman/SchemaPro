@@ -21,7 +21,7 @@ const subject: Subject = {
   name: "Mathematics",
   code: "MA",
   color: "#123456",
-  requiredRoomType: null,
+  requiredRoomTypeId: null,
 };
 const group: StudentGroup = {
   id: "grp-1",
@@ -34,7 +34,7 @@ const room: Room = {
   name: "R12",
   code: null,
   capacity: 30,
-  type: "CLASSROOM",
+  roomTypeId: null,
   requiresApproval: false,
 };
 

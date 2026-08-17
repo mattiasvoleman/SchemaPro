@@ -77,14 +77,6 @@
     "SCHOOL_ADMIN": "Administratör",
     "GUARDIAN": "Vårdnadshavare"
   },
-  "roomTypes": {
-    "CLASSROOM": "Klassrum",
-    "LABORATORY": "Laboratorium",
-    "GYMNASIUM": "Gymnastiksal",
-    "AUDITORIUM": "Aula",
-    "WORKSHOP": "Verkstad",
-    "OTHER": "Övrigt"
-  },
   "lessonStatus": {
     "SCHEDULED": "Schemalagd",
     "CANCELLED": "Inställd",
@@ -211,7 +203,10 @@
     "empty": "Inga ämnen ännu. Lägg till det första för att komma igång.",
     "requiredRoomType": "Kräver saltyp",
     "anyRoomType": "Valfri sal",
-    "requiredRoomTypeHint": "Optimeraren placerar bara ämnet i salar av vald typ."
+    "requiredRoomTypeHint": "Optimeraren placerar bara ämnet i salar av vald typ.",
+    "addRoomType": "+ Lägg till salstyp…",
+    "roomTypeName": "Namn på salstyp",
+    "roomTypePlaceholder": "t.ex. Hemkunskapssal"
   },
   "rooms": {
     "title": "Salar",

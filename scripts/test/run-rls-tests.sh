@@ -44,10 +44,26 @@ if [ -z "$school_a" ]; then
 fi
 echo "    primary school: ${school_a}"
 
+# The authenticated policies key off auth.uid(), so the assertions need a real
+# admin authId to act as. Like the school id, the unprivileged role cannot look
+# it up — with no principal set it sees zero users — so the owner reads it here.
+admin_auth_id="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT \"authId\" FROM \"Users\" WHERE \"schoolId\" = '${school_a}' \
+       AND role = 'SCHOOL_ADMIN' AND \"authId\" IS NOT NULL LIMIT 1" \
+  | tr -d '[:space:]'
+)"
+
+if [ -z "$admin_auth_id" ]; then
+  echo "FAIL: no SCHOOL_ADMIN with an authId in the primary school." >&2
+  exit 1
+fi
+
 echo "==> Running policy assertions as ${APP_ROLE} (the role the API uses)"
 compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   psql -U "$APP_ROLE" -h localhost -d "$DB_NAME" \
-  -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -tA -f /dev/stdin \
+  -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -v "admin_auth_id=${admin_auth_id}" -tA -f /dev/stdin \
   < scripts/test/rls-policies.sql
 
 echo "==> RLS policy tests passed"

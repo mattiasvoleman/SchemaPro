@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { SubjectsController } from './subjects.controller';
 import { SubjectsService } from './subjects.service';
+import { RoomTypesController } from './room-types.controller';
+import { RoomTypesService } from './room-types.service';
 import { RoomsController } from './rooms.controller';
 import { RoomsService } from './rooms.service';
 import { AcademicYearsController } from './academic-years.controller';
@@ -19,6 +21,7 @@ import { AvailabilityConstraintsService } from './availability-constraints.servi
  */
 @Module({
   controllers: [
+    RoomTypesController,
     SubjectsController,
     RoomsController,
     AcademicYearsController,
@@ -27,6 +30,7 @@ import { AvailabilityConstraintsService } from './availability-constraints.servi
     AvailabilityConstraintsController,
   ],
   providers: [
+    RoomTypesService,
     SubjectsService,
     RoomsService,
     AcademicYearsService,

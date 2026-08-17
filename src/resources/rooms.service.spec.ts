@@ -13,6 +13,7 @@ import type { CreateRoomDto } from './dto/room.dto';
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const ROOM_ID = '55555555-5555-4555-8555-555555555555';
+const ROOM_TYPE_ID = '88888888-8888-4888-8888-888888888888';
 
 const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
@@ -57,14 +58,14 @@ describe('RoomsService', () => {
       });
     });
 
-    it('persists explicit type and approval requirement', async () => {
+    it('persists the chosen room type and approval requirement', async () => {
       tx.room.create.mockResolvedValue({ id: ROOM_ID });
 
       await service.create(
         dto({
           code: 'LAB1',
           capacity: 24,
-          type: RoomType.LABORATORY,
+          roomTypeId: ROOM_TYPE_ID,
           requiresApproval: true,
         }),
         testUser(),
@@ -75,7 +76,7 @@ describe('RoomsService', () => {
           data: expect.objectContaining({
             code: 'LAB1',
             capacity: 24,
-            type: RoomType.LABORATORY,
+            roomTypeId: ROOM_TYPE_ID,
             requiresApproval: true,
           }),
         }),

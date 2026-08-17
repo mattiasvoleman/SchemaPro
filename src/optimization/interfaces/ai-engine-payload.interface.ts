@@ -11,13 +11,13 @@
 export type DayOfWeek = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 export type ConstraintKind = 'UNAVAILABLE' | 'PREFERRED_FREE' | 'PREFERRED_BUSY';
 export type ResourceKind = 'TEACHER' | 'ROOM' | 'STUDENT_GROUP';
-export type RoomTypeKind =
-  | 'CLASSROOM'
-  | 'LABORATORY'
-  | 'GYMNASIUM'
-  | 'AUDITORIUM'
-  | 'WORKSHOP'
-  | 'OTHER';
+/**
+ * An opaque room-type token. Room types are school-owned rows whose names the
+ * school authors, so what crosses to the solver is an anonymised id: the
+ * engine only needs to know that a room's type and a requirement's required
+ * type are the SAME token, never what the school calls it.
+ */
+export type RoomTypeKind = string;
 
 export interface AnonymousRequirement {
   /** Opaque anonymous id for this requirement (NOT the real DB UUID). */

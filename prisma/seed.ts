@@ -19,6 +19,7 @@
  *   user and update the row's authId (see docs/DEPLOYMENT.md §7).
  */
 import { randomUUID } from 'node:crypto';
+import { DEFAULT_ROOM_TYPES } from '../src/resources/default-room-types';
 import { PrismaClient } from '@prisma/client';
 
 const databaseUrl = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
@@ -42,14 +43,17 @@ const SUBJECTS = [
   { name: 'Slöjd', code: 'SL', color: '#65a30d' },
 ] as const;
 
+// Room types are rows the school owns, so the seed names them the way a
+// Swedish school would. "Musiksalen" gets a real Musiksal type instead of the
+// catch-all the old enum forced it into.
 const ROOMS = [
-  { name: 'Sal A1', code: 'A1', capacity: 30, type: 'CLASSROOM' },
-  { name: 'Sal A2', code: 'A2', capacity: 30, type: 'CLASSROOM' },
-  { name: 'Sal B1', code: 'B1', capacity: 28, type: 'CLASSROOM' },
-  { name: 'Sal B2', code: 'B2', capacity: 28, type: 'CLASSROOM' },
-  { name: 'NO-labbet', code: 'LAB', capacity: 24, type: 'LABORATORY' },
-  { name: 'Gympasalen', code: 'GYM', capacity: 60, type: 'GYMNASIUM' },
-  { name: 'Musiksalen', code: 'MUS', capacity: 25, type: 'OTHER' },
+  { name: 'Sal A1', code: 'A1', capacity: 30, type: 'Klassrum' },
+  { name: 'Sal A2', code: 'A2', capacity: 30, type: 'Klassrum' },
+  { name: 'Sal B1', code: 'B1', capacity: 28, type: 'Klassrum' },
+  { name: 'Sal B2', code: 'B2', capacity: 28, type: 'Klassrum' },
+  { name: 'NO-labbet', code: 'LAB', capacity: 24, type: 'Laborationssal' },
+  { name: 'Gympasalen', code: 'GYM', capacity: 60, type: 'Gymnastiksal' },
+  { name: 'Musiksalen', code: 'MUS', capacity: 25, type: 'Musiksal' },
 ] as const;
 
 const GROUPS = ['7A', '7B', '8A', '8B'] as const;
@@ -153,10 +157,19 @@ async function main(): Promise<void> {
   );
   const subjectByCode = new Map(subjects.map((subject) => [subject.code!, subject]));
 
+  // Every school starts with the standard set; the rooms below then reference
+  // them by id.
+  await prisma.roomType.createMany({
+    data: DEFAULT_ROOM_TYPES.map((name) => ({ schoolId, name })),
+    skipDuplicates: true,
+  });
+  const roomTypes = await prisma.roomType.findMany({ where: { schoolId } });
+  const roomTypeByName = new Map(roomTypes.map((rt) => [rt.name, rt.id]));
+
   await Promise.all(
-    ROOMS.map((room) =>
+    ROOMS.map(({ type, ...room }) =>
       prisma.room.create({
-        data: { schoolId, ...room, type: room.type as never },
+        data: { schoolId, ...room, roomTypeId: roomTypeByName.get(type) ?? null },
       }),
     ),
   );

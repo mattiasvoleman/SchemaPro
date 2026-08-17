@@ -92,7 +92,7 @@ describe('Resource CRUD (e2e)', () => {
       await request(harness.app.getHttpServer())
         .post('/api/v1/rooms')
         .set('x-test-user', asUser({}))
-        .send({ name: 'B12', capacity: 30, type: 'CLASSROOM' })
+        .send({ name: 'B12', capacity: 30 })
         .expect(201);
     });
   });

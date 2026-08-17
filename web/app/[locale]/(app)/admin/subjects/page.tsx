@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { BookOpen, Pencil, Plus, Trash2 } from "lucide-react";
-import { useCrudMutations, useSubjects } from "@/lib/queries";
+import { useCrudMutations, useSubjects , useRoomTypes, useRoomTypeActions } from "@/lib/queries";
 import type { RoomType, Subject } from "@/lib/types";
 import {
   Select,
@@ -41,24 +41,17 @@ interface SubjectForm {
   name: string;
   code: string;
   color: string;
-  requiredRoomType: string;
+  requiredRoomTypeId: string;
 }
 
 const ANY_ROOM = "__any__";
-const ROOM_TYPES: RoomType[] = [
-  "CLASSROOM",
-  "LABORATORY",
-  "GYMNASIUM",
-  "AUDITORIUM",
-  "WORKSHOP",
-  "OTHER",
-];
+const ADD_NEW = "__add__";
 
 const EMPTY_FORM: SubjectForm = {
   name: "",
   code: "",
   color: "#6366f1",
-  requiredRoomType: ANY_ROOM,
+  requiredRoomTypeId: ANY_ROOM,
 };
 
 export default function SubjectsPage() {
@@ -69,9 +62,13 @@ export default function SubjectsPage() {
     name: string;
     code?: string | null;
     color?: string | null;
-    requiredRoomType?: RoomType | null;
+    requiredRoomTypeId?: string | null;
   }>("/api/v1/subjects", [["subjects"]]);
-  const tRoomTypes = useTranslations("roomTypes");
+
+  const { data: roomTypes } = useRoomTypes();
+  const roomTypeActions = useRoomTypeActions();
+  const [creatingType, setCreatingType] = useState(false);
+  const [newTypeName, setNewTypeName] = useState("");
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Subject | null>(null);
@@ -90,7 +87,7 @@ export default function SubjectsPage() {
       name: subject.name,
       code: subject.code ?? "",
       color: subject.color ?? "#6366f1",
-      requiredRoomType: subject.requiredRoomType ?? ANY_ROOM,
+      requiredRoomTypeId: subject.requiredRoomTypeId ?? ANY_ROOM,
     });
     setDialogOpen(true);
   };
@@ -100,10 +97,8 @@ export default function SubjectsPage() {
       name: form.name.trim(),
       code: form.code.trim() || null,
       color: form.color,
-      requiredRoomType:
-        form.requiredRoomType === ANY_ROOM
-          ? null
-          : (form.requiredRoomType as RoomType),
+      requiredRoomTypeId:
+        form.requiredRoomTypeId === ANY_ROOM ? null : form.requiredRoomTypeId,
     };
     try {
       if (editing) {
@@ -255,21 +250,29 @@ export default function SubjectsPage() {
                 <span className="text-muted-foreground">({tCommon("optional")})</span>
               </Label>
               <Select
-                value={form.requiredRoomType}
-                onValueChange={(value) =>
-                  setForm({ ...form, requiredRoomType: value })
-                }
+                value={form.requiredRoomTypeId}
+                onValueChange={(value) => {
+                  // The picker doubles as the place to coin a missing type,
+                  // which is where an administrator actually notices one is
+                  // missing: while saying "Slöjd needs a slöjdsal".
+                  if (value === ADD_NEW) {
+                    setCreatingType(true);
+                    return;
+                  }
+                  setForm({ ...form, requiredRoomTypeId: value });
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={ANY_ROOM}>{t("anyRoomType")}</SelectItem>
-                  {ROOM_TYPES.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {tRoomTypes(type)}
+                  {(roomTypes ?? []).map((roomType: RoomType) => (
+                    <SelectItem key={roomType.id} value={roomType.id}>
+                      {roomType.name}
                     </SelectItem>
                   ))}
+                  <SelectItem value={ADD_NEW}>{t("addRoomType")}</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">{t("requiredRoomTypeHint")}</p>
@@ -288,6 +291,50 @@ export default function SubjectsPage() {
               }
             >
               {tCommon("save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Coining a room type without leaving the subject form. */}
+      <Dialog open={creatingType} onOpenChange={setCreatingType}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("addRoomType")}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="new-room-type">{t("roomTypeName")}</Label>
+            <Input
+              id="new-room-type"
+              value={newTypeName}
+              onChange={(event) => setNewTypeName(event.target.value)}
+              placeholder={t("roomTypePlaceholder")}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreatingType(false)}>
+              {tCommon("cancel")}
+            </Button>
+            <Button
+              disabled={!newTypeName.trim() || roomTypeActions.create.isPending}
+              onClick={async () => {
+                try {
+                  const created = (await roomTypeActions.create.mutateAsync({
+                    name: newTypeName.trim(),
+                  })) as RoomType;
+                  // Select what was just created, so the administrator is back
+                  // exactly where they were interrupted.
+                  setForm({ ...form, requiredRoomTypeId: created.id });
+                  setNewTypeName("");
+                  setCreatingType(false);
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error ? error.message : tCommon("error"),
+                  );
+                }
+              }}
+            >
+              {tCommon("create")}
             </Button>
           </DialogFooter>
         </DialogContent>

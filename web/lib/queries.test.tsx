@@ -155,8 +155,8 @@ beforeEach(() => {
 
 describe("useSubjects", () => {
   const rows = [
-    { id: "sub-1", name: "Biology", code: "BI", color: null, requiredRoomType: "LABORATORY" },
-    { id: "sub-2", name: "Maths", code: "MA", color: "#123456", requiredRoomType: null },
+    { id: "sub-1", name: "Biology", code: "BI", color: null, requiredRoomTypeId: "rt-lab" },
+    { id: "sub-2", name: "Maths", code: "MA", color: "#123456", requiredRoomTypeId: null },
   ];
 
   it("stores the rows under the ['subjects'] key with the documented column set", async () => {
@@ -169,7 +169,7 @@ describe("useSubjects", () => {
     expect(queryClient.getQueryData(["subjects"])).toEqual(rows);
     expect(supabaseMocks.from).toHaveBeenCalledWith("Subjects");
     expect(argsFor("Subjects", "select")).toEqual([
-      ["id, name, code, color, requiredRoomType"],
+      ["id, name, code, color, requiredRoomTypeId"],
     ]);
     expect(argsFor("Subjects", "order")).toEqual([["name"]]);
   });

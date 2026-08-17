@@ -7,14 +7,12 @@ from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
 DayOfWeek = Literal[1, 2, 3, 4, 5, 6, 7]
 ConstraintKind = Literal["UNAVAILABLE", "PREFERRED_FREE", "PREFERRED_BUSY"]
 ResourceKind = Literal["TEACHER", "ROOM", "STUDENT_GROUP"]
-RoomTypeKind = Literal[
-    "CLASSROOM",
-    "LABORATORY",
-    "GYMNASIUM",
-    "AUDITORIUM",
-    "WORKSHOP",
-    "OTHER",
-]
+# An opaque room-type token, not a fixed vocabulary. Room types are rows a
+# school owns and names itself (Hemkunskapssal, Trä- och metallslöjd), and the
+# gateway anonymises the id before it reaches here. The solver only ever
+# compares tokens for equality — see SchedulerSolver._room_allowed — so it
+# needs no knowledge of what any of them mean.
+RoomTypeKind = str
 # INFEASIBLE is a *proof*: CP-SAT searched the whole space and showed no
 # timetable exists. TIMEOUT means the solver ran out of wall-clock budget
 # without finding a schedule and without proving anything — the same request

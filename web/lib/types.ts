@@ -3,13 +3,14 @@
 export type UserRole = "STUDENT" | "TEACHER" | "SCHOOL_ADMIN" | "GUARDIAN";
 export type AbsenceReportType = "SICK" | "APPOINTMENT" | "OTHER";
 export type LeaveRequestStatus = "PENDING" | "APPROVED" | "REJECTED";
-export type RoomType =
-  | "CLASSROOM"
-  | "LABORATORY"
-  | "GYMNASIUM"
-  | "AUDITORIUM"
-  | "WORKSHOP"
-  | "OTHER";
+/** A room type the school owns and names itself. */
+export interface RoomType {
+  id: string;
+  name: string;
+  /** Present only for the six values that predate school-owned types. */
+  legacyKey?: string | null;
+  _count?: { rooms: number; subjects: number };
+}
 export type LessonStatus = "SCHEDULED" | "CANCELLED" | "COMPLETED" | "RESCHEDULED";
 export type AttendanceStatus = "UNKNOWN" | "PRESENT" | "ABSENT" | "LATE" | "EXCUSED";
 export type ConstraintResource = "TEACHER" | "ROOM" | "STUDENT_GROUP";
@@ -39,7 +40,7 @@ export interface Subject {
   code: string | null;
   color: string | null;
   /** When set, the optimizer only places this subject in rooms of this type. */
-  requiredRoomType: RoomType | null;
+  requiredRoomTypeId: string | null;
 }
 
 export interface Room {
@@ -47,7 +48,7 @@ export interface Room {
   name: string;
   code: string | null;
   capacity: number | null;
-  type: RoomType;
+  roomTypeId: string | null;
   requiresApproval: boolean;
 }
 

@@ -227,7 +227,7 @@ describe('OptimizationProxyService', () => {
       coTeacherId: null,
       lessonsPerWeek: 3,
       minutesPerLesson: 60,
-      subject: { requiredRoomType: 'LABORATORY' },
+      subject: { requiredRoomTypeId: 'room-type-lab' },
       ...overrides,
     });
 
@@ -366,9 +366,15 @@ describe('OptimizationProxyService', () => {
         lessonsPerWeek: 3,
         minutesPerLesson: 60,
         studentGroupSize: 24,
-        requiredRoomType: 'LABORATORY',
         coTeacherId: null,
       });
+
+      // Room types are school-authored words ("Trä- och metallslöjd"), so the
+      // token that crosses to the engine must be anonymised like every other
+      // id — never the real row id, and never the name.
+      const posted = postedPayload().requirements[0].requiredRoomType;
+      expect(posted).toEqual(expect.any(String));
+      expect(posted).not.toBe('room-type-lab');
     });
 
     it('maps each real resource to one stable anonymous id across the payload', async () => {

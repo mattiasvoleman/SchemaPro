@@ -20,7 +20,7 @@ export class RoomsService {
             name: dto.name,
             code: dto.code ?? null,
             capacity: dto.capacity ?? null,
-            ...(dto.type !== undefined ? { type: dto.type } : {}),
+            ...(dto.roomTypeId !== undefined ? { roomTypeId: dto.roomTypeId } : {}),
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
               : {}),
@@ -41,7 +41,7 @@ export class RoomsService {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
             ...(dto.code !== undefined ? { code: dto.code } : {}),
             ...(dto.capacity !== undefined ? { capacity: dto.capacity } : {}),
-            ...(dto.type !== undefined ? { type: dto.type } : {}),
+            ...(dto.roomTypeId !== undefined ? { roomTypeId: dto.roomTypeId } : {}),
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
               : {}),

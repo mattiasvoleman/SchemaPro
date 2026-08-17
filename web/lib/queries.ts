@@ -9,6 +9,7 @@ import {
 import { createClient } from "@/utils/supabase/client";
 import { api } from "@/lib/api";
 import type {
+  RoomType,
   AbsenceReport,
   AcademicYear,
   AttendanceRecordRow,
@@ -40,8 +41,32 @@ export function useSubjects() {
   return useQuery({
     queryKey: ["subjects"],
     queryFn: () =>
-      selectAll<Subject>("Subjects", "id, name, code, color, requiredRoomType", "name"),
+      selectAll<Subject>(
+        "Subjects",
+        "id, name, code, color, requiredRoomTypeId",
+        "name",
+      ),
   });
+}
+
+/**
+ * Room types the school defined. Read through the API rather than Supabase so
+ * the usage counts (_count) that gate deletion come with the row.
+ */
+export function useRoomTypes() {
+  return useQuery({
+    queryKey: ["roomTypes"],
+    queryFn: () => api.get<RoomType[]>("/api/v1/room-types"),
+  });
+}
+
+/** Room types touch both rooms and subjects, so both caches are refreshed. */
+export function useRoomTypeActions() {
+  return useCrudMutations<{ name: string }>("/api/v1/room-types", [
+    ["roomTypes"],
+    ["rooms"],
+    ["subjects"],
+  ]);
 }
 
 export function useRooms() {
@@ -50,7 +75,7 @@ export function useRooms() {
     queryFn: () =>
       selectAll<Room>(
         "Rooms",
-        "id, name, code, capacity, type, requiresApproval",
+        "id, name, code, capacity, roomTypeId, requiresApproval",
         "name",
       ),
   });
