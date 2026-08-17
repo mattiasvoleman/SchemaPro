@@ -62,20 +62,35 @@ could be evaluated at all.
 
 | Metric | Target | Measured | Status | How to measure |
 | :--- | :--- | :--- | :--- | :--- |
-| API line coverage | ≥ 95% | **91.77%** (1831/1995) | ✗ | `npm run test:cov` |
-| API statement coverage | ≥ 95% | 91.44% (2000/2187) | ✗ | same |
-| API branch coverage | ≥ 95% | 83.44% (1003/1202) | ✗ | same |
-| API function coverage | ≥ 95% | 83.86% (369/440) | ✗ | same |
+| API line coverage | ≥ 95% | **95.16%** (2186/2297) | ✓ | `npm run test:cov` |
+| API statement coverage | ≥ 95% | 95.11% (2393/2516) | ✓ | same |
+| API branch coverage | ≥ 95% | 84.00% (1092/1300) | ✗ | same |
+| API function coverage | ≥ 95% | 90.99% (465/511) | ✗ | same |
 | Solver line coverage | ≥ 95% | **81%** (922 stmts, 148 missed) | ✗ | `npm run test:engine:cov` |
 | Mutation score, tested files | ≥ 85% | **66.21%** (192 killed / 97 survived) | ✗ | `npm run test:mutation` |
 | Web unit coverage | ≥ 95% | **87.07%** lines (930/1068) | ✗ | `npm run test:unit:cov` in `web/` |
 
-The API suite is 568 tests across 33 suites, all passing. The gap from 91.77%
-to 95% is almost entirely `*.module.ts` DI wiring, `main.ts`, and `app.module.ts`
-(~90 statements) — deliberately untested as unit tests, per the convention that
-wiring smoke tests assert nothing behaviour-shaped. Closing the §2 row therefore
-means either e2e-bootstrapping the real module graph or excluding wiring from
-collection; both are decisions, not test-writing.
+The API suite is 739 tests across 43 suites, all passing.
+
+The line and statement rows were closed by taking the first of the two options
+this section used to describe: the e2e harness (`test/utils/test-app.ts`) now
+boots **every** feature module rather than five, so `*.module.ts` DI wiring is
+exercised as a graph instead of being excluded from collection. That moved
+lines 91.77% → 95.16% and functions 83.86% → 90.99% without a single test
+written against wiring itself.
+
+What the harness buys is not the number. Six specs (`import`, `planning`,
+`scheduling`, `portal`, `resources`, `attendance`) now drive routes over HTTP
+through the real routing table, ValidationPipe, RBAC guard and RFC-7807 filter,
+which is where the failures a unit spec cannot see live: a route that does not
+resolve at all, a DTO that rejects the payload the browser actually sends, a
+missing `@Roles`. `route-guards.e2e-spec.ts` asserts over the whole routing
+table at once — every route is either `@Roles`-gated or explicitly `@Public`,
+and the public surface is exactly the health probes and SS12000 — so a
+controller added later is covered the moment it is registered.
+
+Branches remain below target; they are dominated by defensive null-handling in
+the solver proxy and calendar services.
 
 The test-writing pass also pinned **11 suspected production bugs** — each has a
 test documenting current behaviour with a "suspected bug" comment (unhandled

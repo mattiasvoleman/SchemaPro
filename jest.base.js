@@ -84,10 +84,13 @@ const asNumber = (value) => {
 const floor = (name, ratchet) =>
   asNumber(process.env[name]) ?? asNumber(process.env.COVERAGE_MIN) ?? ratchet;
 
+// Ratcheted to just under what the suite achieves, so CI blocks a regression
+// instead of failing permanently on a known gap. Raised when the e2e harness
+// grew to boot every feature module: lines 91 → 95, functions 83 → 90.
 const coverageMin = {
-  lines: floor('COVERAGE_MIN_LINES', 91),
-  statements: floor('COVERAGE_MIN_STATEMENTS', 91),
-  functions: floor('COVERAGE_MIN_FUNCTIONS', 83),
+  lines: floor('COVERAGE_MIN_LINES', 95),
+  statements: floor('COVERAGE_MIN_STATEMENTS', 95),
+  functions: floor('COVERAGE_MIN_FUNCTIONS', 90),
   branches: floor('COVERAGE_MIN_BRANCHES', 83),
 };
 

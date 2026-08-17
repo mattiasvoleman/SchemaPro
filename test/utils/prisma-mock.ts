@@ -26,7 +26,7 @@ export function createTxMock(): TxMock {
   // Symbol lookups must fall through untouched. Vivifying them hands jest a
   // `jest.Mock` for `Symbol.iterator` / `Symbol.toStringTag`, which makes any
   // `toHaveBeenCalledWith(tx, ...)` assertion die inside the equality check.
-  const vivify = <T>(make: () => T) =>
+  const vivify = <T>(make: (key: string) => T) =>
     new Proxy<Record<string, T>>(
       {},
       {
@@ -34,13 +34,21 @@ export function createTxMock(): TxMock {
           if (typeof key !== 'string') {
             return (target as Record<string | symbol, unknown>)[key];
           }
-          target[key] = target[key] ?? make();
+          target[key] = target[key] ?? make(key);
           return target[key];
         },
       },
     );
 
-  return vivify(() => vivify(() => jest.fn())) as TxMock;
+  // An unstubbed `findMany` resolves to `[]` — an empty table, which is what a
+  // fresh database would give. Left as a bare jest.fn() it resolves undefined,
+  // and a service that iterates the result dies with "x is not iterable": a
+  // crash that says nothing about the code under test, only about the mock.
+  return vivify(() =>
+    vivify((method) =>
+      method === 'findMany' ? jest.fn().mockResolvedValue([]) : jest.fn(),
+    ),
+  ) as TxMock;
 }
 
 /**
@@ -49,8 +57,11 @@ export function createTxMock(): TxMock {
  * their real transaction bodies without a database.
  */
 export function createPrismaMock(tx: TxMock): PrismaMock {
+  // Always a promise, as every real method is: callers chain `.catch(...)` on
+  // the result (see IntegrationKeyGuard's best-effort lastUsedAt update), and
+  // an unstubbed inner call would otherwise hand them `undefined`.
   const run = <T>(fn: (client: PrismaClient) => Promise<T>) =>
-    fn(tx as unknown as PrismaClient);
+    Promise.resolve(fn(tx as unknown as PrismaClient));
 
   return {
     onModuleInit: jest.fn(),
