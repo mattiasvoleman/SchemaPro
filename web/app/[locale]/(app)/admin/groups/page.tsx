@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2, Users } from "lucide-react";
+import { Pencil, Plus, Trash2, Upload, Users } from "lucide-react";
+import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import {
   useAcademicYears,
   useCrudMutations,
@@ -54,6 +55,7 @@ export default function GroupsPage() {
   const t = useTranslations("groups");
   const tCommon = useTranslations("common");
   const tSetup = useTranslations("setup");
+  const tCsvImport = useTranslations("csvImport");
   const { data: groups, isLoading } = useGroups();
   const { data: years } = useAcademicYears();
   const { data: people } = usePeople();
@@ -64,6 +66,7 @@ export default function GroupsPage() {
   }>("/api/v1/student-groups", [["groups"]]);
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<StudentGroup | null>(null);
   const [deleting, setDeleting] = useState<StudentGroup | null>(null);
   const [membersFor, setMembersFor] = useState<StudentGroup | null>(null);
@@ -183,10 +186,16 @@ export default function GroupsPage() {
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          <Button onClick={openCreate} disabled={!years || years.length === 0}>
-            <Plus />
-            {t("addGroup")}
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload />
+              {tCsvImport("button")}
+            </Button>
+            <Button onClick={openCreate} disabled={!years || years.length === 0}>
+              <Plus />
+              {t("addGroup")}
+            </Button>
+          </>
         }
       />
 
@@ -366,6 +375,12 @@ export default function GroupsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CsvImportDialog
+        kinds={["classes", "teachingGroups"]}
+        open={importOpen}
+        onOpenChange={setImportOpen}
+      />
 
       <ConfirmDialog
         open={deleting !== null}

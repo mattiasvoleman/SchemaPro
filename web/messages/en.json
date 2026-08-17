@@ -631,5 +631,26 @@
     "created": "Created",
     "lastUsed": "Last used",
     "neverUsed": "Never used"
+  },
+  "csvImport": {
+    "title": "Import CSV",
+    "button": "Import CSV",
+    "kindLabel": "What do you want to import?",
+    "kinds": {
+      "students": "Students",
+      "teachers": "Teachers",
+      "classes": "Classes",
+      "teachingGroups": "Teaching groups"
+    },
+    "downloadTemplate": "Download template",
+    "chooseFile": "Choose file",
+    "noActiveYear": "No active academic year. Activate a year before importing.",
+    "mappingErrors": "Problems in the file",
+    "rowsReady": "{count, plural, one {# row ready to import} other {# rows ready to import}}",
+    "import": "Import",
+    "importing": "Importing…",
+    "resultSummary": "{created} created, {skipped} skipped",
+    "rowErrors": "Errors per row",
+    "rowError": "Row {row}: {message}"
   }
 }

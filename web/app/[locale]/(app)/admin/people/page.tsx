@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Link2, Pencil, Plus, Trash2, UserCheck } from "lucide-react";
+import { Link2, Pencil, Plus, Trash2, Upload, UserCheck } from "lucide-react";
+import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import {
   useCrudMutations,
   useGroups,
@@ -70,6 +71,7 @@ export default function PeoplePage() {
   const t = useTranslations("people");
   const tCommon = useTranslations("common");
   const tRoles = useTranslations("roles");
+  const tCsvImport = useTranslations("csvImport");
   const { data: people, isLoading } = usePeople();
   const { data: groups } = useGroups();
   const [guardiansFor, setGuardiansFor] = useState<Person | null>(null);
@@ -88,6 +90,7 @@ export default function PeoplePage() {
 
   const [filter, setFilter] = useState<"ALL" | UserRole>("ALL");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<Person | null>(null);
   const [deleting, setDeleting] = useState<Person | null>(null);
   const [form, setForm] = useState<PersonForm>(EMPTY_FORM);
@@ -161,10 +164,16 @@ export default function PeoplePage() {
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          <Button onClick={openCreate}>
-            <Plus />
-            {t("addPerson")}
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload />
+              {tCsvImport("button")}
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus />
+              {t("addPerson")}
+            </Button>
+          </>
         }
       />
 
@@ -452,6 +461,12 @@ export default function PeoplePage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <CsvImportDialog
+        kinds={["students", "teachers"]}
+        open={importOpen}
+        onOpenChange={setImportOpen}
+      />
 
       <ConfirmDialog
         open={deleting !== null}

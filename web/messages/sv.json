@@ -631,5 +631,26 @@
     "created": "Skapad",
     "lastUsed": "Senast använd",
     "neverUsed": "Aldrig använd"
+  },
+  "csvImport": {
+    "title": "Importera CSV",
+    "button": "Importera CSV",
+    "kindLabel": "Vad vill du importera?",
+    "kinds": {
+      "students": "Elever",
+      "teachers": "Lärare",
+      "classes": "Klasser",
+      "teachingGroups": "Undervisningsgrupper"
+    },
+    "downloadTemplate": "Ladda ner mall",
+    "chooseFile": "Välj fil",
+    "noActiveYear": "Inget aktivt läsår. Aktivera ett läsår innan du importerar.",
+    "mappingErrors": "Fel i filen",
+    "rowsReady": "{count, plural, one {# rad klar att importera} other {# rader klara att importera}}",
+    "import": "Importera",
+    "importing": "Importerar…",
+    "resultSummary": "{created} skapade, {skipped} överhoppade",
+    "rowErrors": "Fel per rad",
+    "rowError": "Rad {row}: {message}"
   }
 }

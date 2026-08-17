@@ -1131,3 +1131,65 @@ export function useSetGroupMembers() {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// CSV import — browser-parsed rows (web/lib/csv.ts) posted to the typed
+// import endpoints (src/import). ESM hoists this import; it lives down here
+// so the section stays a pure append.
+// ---------------------------------------------------------------------------
+
+import type { ImportKind } from "@/lib/csv";
+
+/** Mirror of the API's ImportReport (src/import/dto/import.dto.ts). */
+export interface ImportReport {
+  created: number;
+  skipped: number;
+  /** 1-based DATA row numbers (the header row is not counted). */
+  errors: { row: number; message: string }[];
+}
+
+const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
+  students: "/api/v1/import/students",
+  teachers: "/api/v1/import/teachers",
+  classes: "/api/v1/import/groups",
+  teachingGroups: "/api/v1/import/group-members",
+};
+
+/** Kinds whose payload carries the academic year the rows belong to. */
+export const IMPORT_NEEDS_YEAR: Record<ImportKind, boolean> = {
+  students: true,
+  teachers: false,
+  classes: true,
+  teachingGroups: true,
+};
+
+export interface ImportCsvInput {
+  kind: ImportKind;
+  /** Required for students/classes/teachingGroups; stripped for teachers. */
+  academicYearId?: string;
+  /** Typed rows from the map*Rows helpers in web/lib/csv.ts. */
+  rows: Array<Record<string, unknown>>;
+}
+
+/**
+ * One mutation for all four import kinds: the kind picks the endpoint and the
+ * body shape (teachers is the only year-less payload). Every reader an import
+ * can affect is refreshed — people (students/teachers), groups (classes and
+ * on-the-fly teaching groups), and both membership views.
+ */
+export function useImportCsv() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ kind, academicYearId, rows }: ImportCsvInput) =>
+      api.post<ImportReport>(
+        IMPORT_ENDPOINTS[kind],
+        IMPORT_NEEDS_YEAR[kind] ? { academicYearId, rows } : { rows },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["people"] });
+      void queryClient.invalidateQueries({ queryKey: ["groups"] });
+      void queryClient.invalidateQueries({ queryKey: ["groupMemberships"] });
+      void queryClient.invalidateQueries({ queryKey: ["groupMembers"] });
+    },
+  });
+}

@@ -11,6 +11,7 @@ import {
   useCrudMutations,
   useDeleteMasterLesson,
   useGuardianLinkActions,
+  useImportCsv,
   useLeaveRequestActions,
   useLessonActions,
   useGroupMembers,
@@ -35,6 +36,7 @@ import {
   useSubstituteSuggestions,
   useTeacherLessons,
   useUpdateMasterLesson,
+  type ImportReport,
   type OptimizationJob,
 } from "./queries";
 
@@ -1198,5 +1200,100 @@ describe("teaching-group membership hooks", () => {
       result.current.mutateAsync({ groupId: "g-ma71", studentIds: [] }),
     ).rejects.toThrow("boom");
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CSV import
+// ---------------------------------------------------------------------------
+
+describe("useImportCsv", () => {
+  // Every reader an import can touch: people (students/teachers), groups
+  // (classes + teaching groups created on the fly), and both membership views.
+  const importKeys = [["people"], ["groups"], ["groupMemberships"], ["groupMembers"]];
+
+  it("students POST /import/students with the academic year in the body", async () => {
+    const report: ImportReport = { created: 2, skipped: 0, errors: [] };
+    mockApi.post.mockResolvedValue(report);
+    const harness = createHarness();
+    const { result } = renderHook(() => useImportCsv(), { wrapper: harness.wrapper });
+    const rows = [
+      { firstName: "Alma", lastName: "Berg", email: "alma@example.com", className: "7A" },
+    ];
+
+    let outcome: ImportReport | undefined;
+    await act(async () => {
+      outcome = await result.current.mutateAsync({
+        kind: "students",
+        academicYearId: "y-1",
+        rows,
+      });
+    });
+    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/import/students", {
+      academicYearId: "y-1",
+      rows,
+    });
+    expect(outcome).toEqual(report);
+    expect(invalidatedKeys(harness)).toEqual(importKeys);
+  });
+
+  it("teachers POST /import/teachers with rows only — a passed year is stripped", async () => {
+    const harness = createHarness();
+    const { result } = renderHook(() => useImportCsv(), { wrapper: harness.wrapper });
+    const rows = [{ firstName: "Karin", lastName: "Ek", email: "karin.ek@example.com" }];
+
+    await act(async () => {
+      await result.current.mutateAsync({ kind: "teachers", academicYearId: "y-1", rows });
+    });
+    // The teachers endpoint takes no academicYearId; the hook owns that shape.
+    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/import/teachers", { rows });
+    expect(invalidatedKeys(harness)).toEqual(importKeys);
+  });
+
+  it("classes POST /import/groups with the academic year", async () => {
+    const harness = createHarness();
+    const { result } = renderHook(() => useImportCsv(), { wrapper: harness.wrapper });
+    const rows = [{ name: "7A", gradeLevel: 7 }, { name: "8B" }];
+
+    await act(async () => {
+      await result.current.mutateAsync({ kind: "classes", academicYearId: "y-1", rows });
+    });
+    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/import/groups", {
+      academicYearId: "y-1",
+      rows,
+    });
+    expect(invalidatedKeys(harness)).toEqual(importKeys);
+  });
+
+  it("teachingGroups POST /import/group-members with the academic year", async () => {
+    const harness = createHarness();
+    const { result } = renderHook(() => useImportCsv(), { wrapper: harness.wrapper });
+    const rows = [{ groupName: "Ma71", email: "alma@example.com" }];
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        kind: "teachingGroups",
+        academicYearId: "y-1",
+        rows,
+      });
+    });
+    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/import/group-members", {
+      academicYearId: "y-1",
+      rows,
+    });
+    expect(invalidatedKeys(harness)).toEqual(importKeys);
+  });
+
+  it("invalidates nothing when the import fails", async () => {
+    mockApi.post.mockRejectedValueOnce(new Error("HTTP 429"));
+    const harness = createHarness();
+    const { result } = renderHook(() => useImportCsv(), { wrapper: harness.wrapper });
+
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync({ kind: "teachers", rows: [{}] }),
+      ).rejects.toThrow("HTTP 429");
+    });
+    expect(harness.invalidateSpy).not.toHaveBeenCalled();
   });
 });
