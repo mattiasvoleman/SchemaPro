@@ -238,7 +238,8 @@
     "kindTeachingGroup": "Undervisningsgrupp",
     "kindClassHelp": "En hemklass, t.ex. 7A. Alla elever i klassen följer klassens lektioner.",
     "kindTeachingGroupHelp": "En grupp som skär tvärs över klasserna, t.ex. Ma71 eller språkvalet En74. Lägg till eleverna med knappen Medlemmar.",
-    "filterAll": "Alla"
+    "filterAll": "Alla",
+    "searchPlaceholder": "Sök på gruppens namn eller läsår…"
   },
   "people": {
     "title": "Personer",
@@ -272,7 +273,8 @@
     "invitationAlreadyRegistered": "{name} har redan ett konto — inget nytt e-postmeddelande skickades.",
     "invitationsSent": "{sent} inbjudningar skickade. {skipped} hade redan konto.",
     "invitationsFailed": "{count} inbjudningar kunde inte skickas.",
-    "inviteAll": "Bjud in {count} ej inbjudna"
+    "inviteAll": "Bjud in {count} ej inbjudna",
+    "searchPlaceholder": "Sök på namn, e-post eller klass…"
   },
   "requirements": {
     "title": "Timplan",

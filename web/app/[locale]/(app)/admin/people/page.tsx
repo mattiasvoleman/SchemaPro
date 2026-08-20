@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Link2, Mail, Pencil, Plus, Trash2, Upload, UserCheck } from "lucide-react";
+import { Link2, Mail, Pencil, Plus, Search, Trash2, Upload, UserCheck } from "lucide-react";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import {
   useCrudMutations,
@@ -17,6 +17,7 @@ import type { Person, UserRole } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { filterByQuery } from "@/lib/search";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -93,6 +94,10 @@ export default function PeoplePage() {
   }>("/api/v1/users", [["people"]]);
 
   const [filter, setFilter] = useState<"ALL" | UserRole>("ALL");
+  const [search, setSearch] = useState("");
+
+  const groupName = (id: string | null) =>
+    id ? (groups?.find((group) => group.id === id)?.name ?? "—") : "—";
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<Person | null>(null);
@@ -103,17 +108,30 @@ export default function PeoplePage() {
 
   const filtered = useMemo(() => {
     if (!people) return [];
-    return filter === "ALL" ? people : people.filter((person) => person.role === filter);
-  }, [people, filter]);
+    const byRole =
+      filter === "ALL" ? people : people.filter((person) => person.role === filter);
+    // Name, email and class: the three things an admin actually has to hand
+    // when they are looking for somebody.
+    return filterByQuery(byRole, search, (person) => [
+      person.firstName,
+      person.lastName,
+      person.email,
+      groupName(person.studentGroupId),
+    ]);
+  }, [people, filter, search, groups]);
 
-  /** Active people who have never been contacted — what "invite all" targets. */
+  /**
+   * Active people who have never been contacted — what "invite all" targets.
+   *
+   * Derived from the FILTERED list on purpose: with a role tab or a search
+   * active, the button invites exactly the people on screen, which is how an
+   * admin invites one class at a time. The count in its label is what makes
+   * that honest, so it must keep coming from the same list.
+   */
   const uninvited = useMemo(
     () => filtered.filter((person) => person.invitedAt === null && person.isActive),
     [filtered],
   );
-
-  const groupName = (id: string | null) =>
-    id ? (groups?.find((group) => group.id === id)?.name ?? "—") : "—";
 
   const openCreate = () => {
     setEditing(null);
@@ -254,6 +272,17 @@ export default function PeoplePage() {
           ))}
         </TabsList>
       </Tabs>
+
+      <div className="relative mb-4 max-w-sm">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder={t("searchPlaceholder")}
+          aria-label={t("searchPlaceholder")}
+          className="pl-9"
+        />
+      </div>
 
       {isLoading ? (
         <div className="space-y-2">

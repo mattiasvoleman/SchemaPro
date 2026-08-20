@@ -238,7 +238,8 @@
     "kindTeachingGroup": "Teaching group",
     "kindClassHelp": "A home class such as 7A. Every student in it follows the class's lessons.",
     "kindTeachingGroupHelp": "A group cutting across classes, such as Ma71 or the language option En74. Add its students with the Members button.",
-    "filterAll": "All"
+    "filterAll": "All",
+    "searchPlaceholder": "Search by group name or academic year…"
   },
   "people": {
     "title": "People",
@@ -272,7 +273,8 @@
     "invitationAlreadyRegistered": "{name} already has an account — no new email was sent.",
     "invitationsSent": "{sent} invitations sent. {skipped} already had an account.",
     "invitationsFailed": "{count} invitations could not be sent.",
-    "inviteAll": "Invite {count} not yet invited"
+    "inviteAll": "Invite {count} not yet invited",
+    "searchPlaceholder": "Search by name, email or class…"
   },
   "requirements": {
     "title": "Curriculum",

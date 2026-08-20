@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2, Upload, UserPlus, Users } from "lucide-react";
+import { Pencil, Plus, Search, Trash2, Upload, UserPlus, Users } from "lucide-react";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import {
   useAcademicYears,
@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { countGroupMembers } from "@/lib/group-sections";
+import { filterByQuery } from "@/lib/search";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -78,6 +79,7 @@ export default function GroupsPage() {
   const [kindFilter, setKindFilter] = useState<"ALL" | "CLASS" | "TEACHING_GROUP">(
     "ALL",
   );
+  const [search, setSearch] = useState("");
   const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
   const [memberSearch, setMemberSearch] = useState("");
   const { data: currentMembers } = useGroupMembers(membersFor?.id ?? null);
@@ -140,13 +142,17 @@ export default function GroupsPage() {
     [people, memberships],
   );
 
-  const visibleGroups = useMemo(
-    () =>
-      (groups ?? []).filter(
-        (group) => kindFilter === "ALL" || group.kind === kindFilter,
-      ),
-    [groups, kindFilter],
-  );
+  const visibleGroups = useMemo(() => {
+    const byKind = (groups ?? []).filter(
+      (group) => kindFilter === "ALL" || group.kind === kindFilter,
+    );
+    // The year is searchable too, so "ma71 2026" narrows a group that exists
+    // in several läsår down to the one being planned.
+    return filterByQuery(byKind, search, (group) => [
+      group.name,
+      yearName(group.academicYearId),
+    ]);
+  }, [groups, kindFilter, search, years]);
 
   const yearName = (id: string) => years?.find((year) => year.id === id)?.name ?? "—";
   const defaultYearId = years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? "";
@@ -240,6 +246,16 @@ export default function GroupsPage() {
             <TabsTrigger value="TEACHING_GROUP">{t("kindTeachingGroup")}</TabsTrigger>
           </TabsList>
         </Tabs>
+        <div className="relative mb-4 max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t("searchPlaceholder")}
+            aria-label={t("searchPlaceholder")}
+            className="pl-9"
+          />
+        </div>
         <div className="rounded-lg border bg-card">
           <Table>
             <TableHeader>
@@ -251,6 +267,16 @@ export default function GroupsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {visibleGroups.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={4}
+                    className="py-8 text-center text-muted-foreground"
+                  >
+                    {tCommon("noResults")}
+                  </TableCell>
+                </TableRow>
+              ) : null}
               {visibleGroups.map((group) => (
                 <TableRow key={group.id}>
                   <TableCell className="font-medium">
