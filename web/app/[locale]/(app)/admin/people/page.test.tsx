@@ -13,6 +13,13 @@ import PeoplePage from "./page";
 const groups = [
   { id: "g-7a", academicYearId: "year-1", name: "7A", kind: "CLASS", gradeLevel: 7 },
   { id: "g-7b", academicYearId: "year-1", name: "7B", kind: "CLASS", gradeLevel: 7 },
+  {
+    id: "g-ma71",
+    academicYearId: "year-1",
+    name: "Ma71",
+    kind: "TEACHING_GROUP",
+    gradeLevel: null,
+  },
 ];
 
 const person = (
@@ -40,9 +47,29 @@ const people = [
   person("t-1", "Karin", "Ek", "TEACHER", null, "2026-08-01T10:00:00.000Z"),
 ];
 
+/** Alma takes Ma71 on top of her home class; Nils takes nothing extra. */
+const memberships = [{ studentId: "st-1", studentGroupId: "g-ma71" }];
+
+const requirements = [
+  {
+    id: "req-1",
+    academicYearId: "year-1",
+    subjectId: "sub-ma",
+    studentGroupId: "g-ma71",
+    teacherId: "t-1",
+    coTeacherId: null,
+    lessonsPerWeek: 3,
+    minutesPerLesson: 60,
+  },
+];
+
 vi.mock("@/lib/queries", () => ({
   usePeople: () => ({ data: people, isLoading: false }),
   useGroups: () => ({ data: groups }),
+  useGroupMemberships: () => ({ data: memberships }),
+  useAcademicYears: () => ({ data: [{ id: "year-1", name: "2026/2027", isActive: true }] }),
+  useRequirements: () => ({ data: requirements }),
+  useSubjects: () => ({ data: [{ id: "sub-ma", name: "Matematik", code: "MA", color: "#123456", requiredRoomTypeId: null }] }),
   useStudentGuardians: () => ({ data: [] }),
   useGuardianLinkActions: () => ({
     create: { mutateAsync: vi.fn(), isPending: false },
@@ -139,5 +166,83 @@ describe("People page", () => {
 
     await user.type(searchBox(), "alma");
     expect(screen.getByText("inviteAll(1)")).toBeInTheDocument();
+  });
+  describe("clicking a person's name", () => {
+    const nameButton = (name: string) =>
+      screen.getByRole("button", { name: new RegExp(name) });
+
+    it("reveals nothing until the name is clicked", () => {
+      render(<PeoplePage />);
+
+      expect(screen.queryByText("teachingGroupsLabel")).not.toBeInTheDocument();
+    });
+
+    it("shows a student's home class and teaching groups", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(nameButton("Alma Berg"));
+
+      // Scoped to the panel the button says it controls: "7A" also appears in
+      // her class column, so an unscoped query would pass without the panel.
+      const detail = document.getElementById("person-detail-st-1");
+      expect(detail).not.toBeNull();
+      expect(within(detail!).getByText("homeClassLabel")).toBeInTheDocument();
+      expect(within(detail!).getByText("7A")).toBeInTheDocument();
+      expect(within(detail!).getByText("Ma71")).toBeInTheDocument();
+    });
+
+    it("says plainly when a student is in no teaching group", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(nameButton("Nils Ek"));
+
+      expect(screen.getByText("noTeachingGroups")).toBeInTheDocument();
+    });
+
+    it("shows what a teacher teaches instead — the same question, staff side", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(nameButton("Karin Ek"));
+
+      expect(screen.getByText("teachesLabel")).toBeInTheDocument();
+      expect(screen.getByText(/Ma71 · Matematik/)).toBeInTheDocument();
+    });
+
+    it("closes again on a second click", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(nameButton("Alma Berg"));
+      expect(screen.getByText("teachingGroupsLabel")).toBeInTheDocument();
+
+      await user.click(nameButton("Alma Berg"));
+      expect(screen.queryByText("teachingGroupsLabel")).not.toBeInTheDocument();
+    });
+
+    it("keeps only one row open at a time", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(nameButton("Alma Berg"));
+      await user.click(nameButton("Nils Ek"));
+
+      // Alma's groups are gone; Nils's empty-state line is what shows now.
+      expect(screen.queryByText("Ma71")).not.toBeInTheDocument();
+      expect(screen.getByText("noTeachingGroups")).toBeInTheDocument();
+    });
+
+    it("marks the control as expanded for screen readers", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      const button = nameButton("Alma Berg");
+      expect(button).toHaveAttribute("aria-expanded", "false");
+
+      await user.click(button);
+      expect(nameButton("Alma Berg")).toHaveAttribute("aria-expanded", "true");
+    });
   });
 });

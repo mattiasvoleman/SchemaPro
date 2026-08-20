@@ -3,6 +3,8 @@ import {
   buildGroupMemberNames,
   countGroupMembers,
   splitGroupsByKind,
+  taughtGroupsOf,
+  teachingGroupsOf,
 } from "@/lib/group-sections";
 import type { StudentGroup } from "@/lib/types";
 
@@ -188,5 +190,90 @@ describe("buildGroupMemberNames", () => {
 
   it("leaves a group nobody belongs to out of the index entirely", () => {
     expect(buildGroupMemberNames([], []).size).toBe(0);
+  });
+});
+
+describe("teachingGroupsOf", () => {
+  const ma71 = group("Ma71", "TEACHING_GROUP");
+  const en74 = group("En74", "TEACHING_GROUP");
+  const klass = group("7A", "CLASS", 7);
+
+  it("returns every teaching group the student is a member of", () => {
+    const result = teachingGroupsOf(
+      "st-1",
+      [klass, ma71, en74],
+      [
+        { studentId: "st-1", studentGroupId: "id-Ma71" },
+        { studentId: "st-1", studentGroupId: "id-En74" },
+        { studentId: "st-2", studentGroupId: "id-Ma71" },
+      ],
+    );
+
+    expect(result.map((g) => g.name)).toEqual(["Ma71", "En74"]);
+  });
+
+  it("returns nothing for a student in no teaching group at all", () => {
+    expect(teachingGroupsOf("st-9", [klass, ma71], [])).toEqual([]);
+  });
+
+  it("ignores a membership row pointing at a group that is not loaded", () => {
+    const result = teachingGroupsOf("st-1", [ma71], [
+      { studentId: "st-1", studentGroupId: "id-gone" },
+    ]);
+
+    expect(result).toEqual([]);
+  });
+});
+
+describe("taughtGroupsOf", () => {
+  const ma71 = group("Ma71", "TEACHING_GROUP");
+  const klass = group("7A", "CLASS", 7);
+  const requirement = (
+    studentGroupId: string,
+    teacherId: string | null,
+    coTeacherId: string | null = null,
+  ) => ({
+    id: `req-${studentGroupId}-${teacherId}`,
+    academicYearId: "year-1",
+    subjectId: "sub-ma",
+    studentGroupId,
+    teacherId,
+    coTeacherId,
+    lessonsPerWeek: 3,
+    minutesPerLesson: 60,
+  });
+
+  it("lists the groups a teacher leads", () => {
+    const result = taughtGroupsOf(
+      "t-1",
+      [requirement("id-Ma71", "t-1"), requirement("id-7A", "t-2")],
+      [ma71, klass],
+    );
+
+    expect(result.map((entry) => entry.group.name)).toEqual(["Ma71"]);
+    expect(result[0]?.isCoTeacher).toBe(false);
+  });
+
+  it("counts co-teaching, and says which it is", () => {
+    // A co-teacher is scheduled and occupied exactly like the lead; omitting
+    // these would show them as freer than they are.
+    const result = taughtGroupsOf(
+      "t-2",
+      [requirement("id-Ma71", "t-1", "t-2")],
+      [ma71],
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.isCoTeacher).toBe(true);
+  });
+
+  it("drops a requirement whose group belongs to another year", () => {
+    const result = taughtGroupsOf("t-1", [requirement("id-old", "t-1")], [ma71]);
+
+    expect(result).toEqual([]);
+  });
+
+  it("returns nothing for somebody who teaches nothing", () => {
+    expect(taughtGroupsOf("t-9", [requirement("id-Ma71", "t-1")], [ma71])).toEqual([]);
   });
 });

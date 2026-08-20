@@ -275,7 +275,14 @@
     "invitationsSent": "{sent} invitations sent. {skipped} already had an account.",
     "invitationsFailed": "{count} invitations could not be sent.",
     "inviteAll": "Invite {count} not yet invited",
-    "searchPlaceholder": "Search by name, email or class…"
+    "searchPlaceholder": "Search by name, email or class…",
+    "homeClassLabel": "Class",
+    "teachingGroupsLabel": "Teaching groups",
+    "noTeachingGroups": "This student is not in any teaching group.",
+    "teachesLabel": "Teaches",
+    "teachesNothing": "No timplan entry for the active academic year.",
+    "asCoTeacher": "co-teacher",
+    "noGroupInfo": "No group membership to show for this role."
   },
   "requirements": {
     "title": "Curriculum",

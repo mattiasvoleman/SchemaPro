@@ -1,4 +1,8 @@
-import type { StudentGroup, StudentGroupKind } from "@/lib/types";
+import type {
+  StudentGroup,
+  StudentGroupKind,
+  TeachingRequirement,
+} from "@/lib/types";
 
 export interface GroupSection {
   kind: StudentGroupKind;
@@ -110,4 +114,65 @@ export function buildGroupMemberNames(
   }
 
   return names;
+}
+
+/**
+ * The teaching groups a student belongs to, in the order the groups are listed.
+ *
+ * The inverse of buildGroupMemberNames: that one answers "who is in this
+ * group?" for the group list, this one answers "which groups is this person
+ * in?" for the person's own row. Home class is deliberately excluded — it
+ * lives on the person record itself and is shown next to it.
+ */
+export function teachingGroupsOf(
+  personId: string,
+  groups: StudentGroup[],
+  memberships: { studentId: string; studentGroupId: string }[],
+): StudentGroup[] {
+  const memberOf = new Set(
+    memberships
+      .filter((row) => row.studentId === personId)
+      .map((row) => row.studentGroupId),
+  );
+
+  return groups.filter((group) => memberOf.has(group.id));
+}
+
+export interface TaughtGroup {
+  group: StudentGroup;
+  subjectId: string;
+  /** True when this teacher is the second teacher on a co-taught lesson. */
+  isCoTeacher: boolean;
+}
+
+/**
+ * What a teacher teaches, from the timplan: the same question as a student's
+ * groups, asked from the staff side.
+ *
+ * Co-teaching counts — a second teacher is scheduled and occupied exactly like
+ * the lead, so leaving those out would show a teacher as freer than they are.
+ */
+export function taughtGroupsOf(
+  teacherId: string,
+  requirements: TeachingRequirement[],
+  groups: StudentGroup[],
+): TaughtGroup[] {
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+
+  return requirements
+    .filter(
+      (requirement) =>
+        requirement.teacherId === teacherId || requirement.coTeacherId === teacherId,
+    )
+    .flatMap((requirement) => {
+      const group = groupById.get(requirement.studentGroupId);
+      if (!group) return []; // a group from another year, or since deleted
+      return [
+        {
+          group,
+          subjectId: requirement.subjectId,
+          isCoTeacher: requirement.coTeacherId === teacherId,
+        },
+      ];
+    });
 }

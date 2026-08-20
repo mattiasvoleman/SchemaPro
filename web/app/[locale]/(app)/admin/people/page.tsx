@@ -1,23 +1,42 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Link2, Mail, Pencil, Plus, Search, Trash2, Upload, UserCheck } from "lucide-react";
+import {
+  ChevronRight,
+  Link2,
+  Mail,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  Upload,
+  UserCheck,
+} from "lucide-react";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import {
   useCrudMutations,
+  useAcademicYears,
+  useGroupMemberships,
   useGroups,
   useGuardianLinkActions,
   useInvitations,
   usePeople,
+  useRequirements,
+  useSubjects,
   useStudentGuardians,
 } from "@/lib/queries";
-import type { Person, UserRole } from "@/lib/types";
+import type { Person, StudentGroup, UserRole } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { filterByQuery } from "@/lib/search";
+import {
+  taughtGroupsOf,
+  teachingGroupsOf,
+  type TaughtGroup,
+} from "@/lib/group-sections";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -70,6 +89,88 @@ const EMPTY_FORM: PersonForm = {
   studentGroupId: NO_GROUP,
 };
 
+/**
+ * What is only worth seeing for one person at a time.
+ *
+ * A student's teaching groups and a teacher's assignments are both answers to
+ * the same question from opposite sides, and neither belongs in a column: a
+ * student can be in half a dozen groups, which would either be truncated into
+ * uselessness or turn every row into three. Behind a click they can be shown
+ * in full.
+ */
+function PersonDetail({
+  person,
+  homeClass,
+  teachingGroups,
+  taught,
+  subjectName,
+  t,
+}: {
+  person: Person;
+  homeClass: string;
+  teachingGroups: StudentGroup[];
+  taught: TaughtGroup[];
+  subjectName: (id: string) => string;
+  t: (key: string, values?: Record<string, string | number>) => string;
+}) {
+  if (person.role === "TEACHER") {
+    return (
+      <div className="space-y-1.5">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {t("teachesLabel")}
+        </p>
+        {taught.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("teachesNothing")}</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {taught.map((entry) => (
+              <Badge
+                key={`${entry.group.id}-${entry.subjectId}`}
+                variant="outline"
+                className="font-normal"
+              >
+                {entry.group.name} · {subjectName(entry.subjectId)}
+                {entry.isCoTeacher ? ` (${t("asCoTeacher")})` : ""}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (person.role !== "STUDENT") {
+    return <p className="text-sm text-muted-foreground">{t("noGroupInfo")}</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {t("homeClassLabel")}
+        </p>
+        <p className="text-sm">{homeClass}</p>
+      </div>
+      <div className="space-y-1.5">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {t("teachingGroupsLabel")}
+        </p>
+        {teachingGroups.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("noTeachingGroups")}</p>
+        ) : (
+          <div className="flex flex-wrap gap-1.5">
+            {teachingGroups.map((group) => (
+              <Badge key={group.id} variant="outline" className="font-normal">
+                {group.name}
+              </Badge>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function PeoplePage() {
   const t = useTranslations("people");
   const tCommon = useTranslations("common");
@@ -77,6 +178,11 @@ export default function PeoplePage() {
   const tCsvImport = useTranslations("csvImport");
   const { data: people, isLoading } = usePeople();
   const { data: groups } = useGroups();
+  const { data: memberships } = useGroupMemberships();
+  const { data: subjects } = useSubjects();
+  const { data: years } = useAcademicYears();
+  const activeYearId = years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
+  const { data: requirements } = useRequirements(activeYearId);
   const [guardiansFor, setGuardiansFor] = useState<Person | null>(null);
   const { data: studentGuardians } = useStudentGuardians(guardiansFor?.id ?? null);
   const guardianLinks = useGuardianLinkActions();
@@ -95,6 +201,11 @@ export default function PeoplePage() {
 
   const [filter, setFilter] = useState<"ALL" | UserRole>("ALL");
   const [search, setSearch] = useState("");
+  /** Which person's detail row is open; one at a time keeps the table readable. */
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const subjectName = (id: string) =>
+    subjects?.find((subject) => subject.id === id)?.name ?? "—";
 
   const groupName = (id: string | null) =>
     id ? (groups?.find((group) => group.id === id)?.name ?? "—") : "—";
@@ -308,9 +419,27 @@ export default function PeoplePage() {
             </TableHeader>
             <TableBody>
               {filtered.map((person) => (
-                <TableRow key={person.id}>
+                <Fragment key={person.id}>
+                <TableRow>
                   <TableCell className="font-medium">
-                    {person.firstName} {person.lastName}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedId(expandedId === person.id ? null : person.id)
+                      }
+                      aria-expanded={expandedId === person.id}
+                      aria-controls={`person-detail-${person.id}`}
+                      className="flex items-center gap-1.5 text-left hover:underline"
+                    >
+                      <ChevronRight
+                        className={
+                          expandedId === person.id
+                            ? "h-3.5 w-3.5 rotate-90 transition-transform"
+                            : "h-3.5 w-3.5 transition-transform"
+                        }
+                      />
+                      {person.firstName} {person.lastName}
+                    </button>
                   </TableCell>
                   <TableCell className="text-muted-foreground">{person.email}</TableCell>
                   <TableCell>
@@ -380,6 +509,29 @@ export default function PeoplePage() {
                     </Button>
                   </TableCell>
                 </TableRow>
+                {expandedId === person.id ? (
+                  <TableRow id={`person-detail-${person.id}`} className="bg-muted/30">
+                    <TableCell colSpan={6} className="py-3">
+                      <PersonDetail
+                        person={person}
+                        homeClass={groupName(person.studentGroupId)}
+                        teachingGroups={teachingGroupsOf(
+                          person.id,
+                          groups ?? [],
+                          memberships ?? [],
+                        )}
+                        taught={taughtGroupsOf(
+                          person.id,
+                          requirements ?? [],
+                          groups ?? [],
+                        )}
+                        subjectName={subjectName}
+                        t={t}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+                </Fragment>
               ))}
             </TableBody>
           </Table>

@@ -275,7 +275,14 @@
     "invitationsSent": "{sent} inbjudningar skickade. {skipped} hade redan konto.",
     "invitationsFailed": "{count} inbjudningar kunde inte skickas.",
     "inviteAll": "Bjud in {count} ej inbjudna",
-    "searchPlaceholder": "Sök på namn, e-post eller klass…"
+    "searchPlaceholder": "Sök på namn, e-post eller klass…",
+    "homeClassLabel": "Klass",
+    "teachingGroupsLabel": "Undervisningsgrupper",
+    "noTeachingGroups": "Eleven ingår inte i någon undervisningsgrupp.",
+    "teachesLabel": "Undervisar",
+    "teachesNothing": "Ingen timplanspost för det aktiva läsåret.",
+    "asCoTeacher": "medlärare",
+    "noGroupInfo": "Ingen grupptillhörighet att visa för den här rollen."
   },
   "requirements": {
     "title": "Timplan",
