@@ -237,7 +237,8 @@
     "kindClass": "Class",
     "kindTeachingGroup": "Teaching group",
     "kindClassHelp": "A home class such as 7A. Every student in it follows the class's lessons.",
-    "kindTeachingGroupHelp": "A group cutting across classes, such as Ma71 or the language option En74. Add its students with the Members button."
+    "kindTeachingGroupHelp": "A group cutting across classes, such as Ma71 or the language option En74. Add its students with the Members button.",
+    "filterAll": "All"
   },
   "people": {
     "title": "People",

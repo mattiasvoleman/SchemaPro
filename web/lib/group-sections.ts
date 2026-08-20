@@ -43,3 +43,27 @@ export function splitGroupsByKind(
 
   return { sections, memberCounts };
 }
+
+/**
+ * How many students a group holds, counted from the right place for its kind.
+ *
+ * The two live apart: a home class is what `Users.studentGroupId` points at,
+ * while a teaching group's students are rows in StudentGroupMembers. Counting
+ * only the first is why every imported teaching group read "0 students" and
+ * looked empty even with 5400 memberships behind it.
+ */
+export function countGroupMembers(
+  people: { studentGroupId: string | null }[],
+  memberships: { studentGroupId: string }[],
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  const add = (groupId: string) =>
+    counts.set(groupId, (counts.get(groupId) ?? 0) + 1);
+
+  for (const person of people) {
+    if (person.studentGroupId) add(person.studentGroupId);
+  }
+  for (const row of memberships) add(row.studentGroupId);
+
+  return counts;
+}

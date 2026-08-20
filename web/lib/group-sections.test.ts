@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitGroupsByKind } from "@/lib/group-sections";
+import { countGroupMembers, splitGroupsByKind } from "@/lib/group-sections";
 import type { StudentGroup } from "@/lib/types";
 
 const group = (
@@ -77,5 +77,48 @@ describe("splitGroupsByKind", () => {
 
   it("returns nothing at all for a year with no groups", () => {
     expect(splitGroupsByKind([], []).sections).toEqual([]);
+  });
+});
+
+describe("countGroupMembers", () => {
+  it("counts a home class from the students who belong to it", () => {
+    const counts = countGroupMembers(
+      [{ studentGroupId: "7A" }, { studentGroupId: "7A" }, { studentGroupId: "7B" }],
+      [],
+    );
+
+    expect(counts.get("7A")).toBe(2);
+    expect(counts.get("7B")).toBe(1);
+  });
+
+  it("counts a teaching group from its membership rows", () => {
+    // The regression this guards: teaching-group members are not home-class
+    // members, so counting only the latter showed every imported group as 0.
+    const counts = countGroupMembers(
+      [],
+      [{ studentGroupId: "Ma71" }, { studentGroupId: "Ma71" }],
+    );
+
+    expect(counts.get("Ma71")).toBe(2);
+  });
+
+  it("counts both kinds in one pass", () => {
+    const counts = countGroupMembers(
+      [{ studentGroupId: "7A" }],
+      [{ studentGroupId: "Ma71" }],
+    );
+
+    expect([...counts.entries()].sort()).toEqual([
+      ["7A", 1],
+      ["Ma71", 1],
+    ]);
+  });
+
+  it("ignores people with no group at all", () => {
+    expect(countGroupMembers([{ studentGroupId: null }], []).size).toBe(0);
+  });
+
+  it("reports nothing for a group nobody is in", () => {
+    expect(countGroupMembers([], []).get("Sv73")).toBeUndefined();
   });
 });

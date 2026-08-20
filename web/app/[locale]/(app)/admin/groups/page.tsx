@@ -3,12 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2, Upload, Users } from "lucide-react";
+import { Pencil, Plus, Trash2, Upload, UserPlus, Users } from "lucide-react";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import {
   useAcademicYears,
   useCrudMutations,
   useGroupMembers,
+  useGroupMemberships,
   useGroups,
   usePeople,
   useSetGroupMembers,
@@ -18,7 +19,9 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { countGroupMembers } from "@/lib/group-sections";
 import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -72,9 +75,13 @@ export default function GroupsPage() {
   const [editing, setEditing] = useState<StudentGroup | null>(null);
   const [deleting, setDeleting] = useState<StudentGroup | null>(null);
   const [membersFor, setMembersFor] = useState<StudentGroup | null>(null);
+  const [kindFilter, setKindFilter] = useState<"ALL" | "CLASS" | "TEACHING_GROUP">(
+    "ALL",
+  );
   const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
   const [memberSearch, setMemberSearch] = useState("");
   const { data: currentMembers } = useGroupMembers(membersFor?.id ?? null);
+  const { data: memberships } = useGroupMemberships();
   const setMembers = useSetGroupMembers();
 
   const students = useMemo(
@@ -126,15 +133,20 @@ export default function GroupsPage() {
     academicYearId: "",
   });
 
-  const memberCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const person of people ?? []) {
-      if (person.studentGroupId) {
-        counts.set(person.studentGroupId, (counts.get(person.studentGroupId) ?? 0) + 1);
-      }
-    }
-    return counts;
-  }, [people]);
+  // Sizes come from two different places depending on the kind of group —
+  // see lib/group-sections.ts, where the rule and its tests live.
+  const memberCounts = useMemo(
+    () => countGroupMembers(people ?? [], memberships ?? []),
+    [people, memberships],
+  );
+
+  const visibleGroups = useMemo(
+    () =>
+      (groups ?? []).filter(
+        (group) => kindFilter === "ALL" || group.kind === kindFilter,
+      ),
+    [groups, kindFilter],
+  );
 
   const yearName = (id: string) => years?.find((year) => year.id === id)?.name ?? "—";
   const defaultYearId = years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? "";
@@ -216,6 +228,18 @@ export default function GroupsPage() {
       ) : !groups || groups.length === 0 ? (
         <EmptyState icon={Users} title={tCommon("noResults")} description={t("empty")} />
       ) : (
+        <>
+        <Tabs
+          value={kindFilter}
+          onValueChange={(value) => setKindFilter(value as typeof kindFilter)}
+          className="mb-4"
+        >
+          <TabsList>
+            <TabsTrigger value="ALL">{t("filterAll")}</TabsTrigger>
+            <TabsTrigger value="CLASS">{t("kindClass")}</TabsTrigger>
+            <TabsTrigger value="TEACHING_GROUP">{t("kindTeachingGroup")}</TabsTrigger>
+          </TabsList>
+        </Tabs>
         <div className="rounded-lg border bg-card">
           <Table>
             <TableHeader>
@@ -227,7 +251,7 @@ export default function GroupsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {groups.map((group) => (
+              {visibleGroups.map((group) => (
                 <TableRow key={group.id}>
                   <TableCell className="font-medium">
                     {group.name}
@@ -248,6 +272,17 @@ export default function GroupsPage() {
                     {memberCounts.get(group.id) ?? 0}
                   </TableCell>
                   <TableCell className="text-right">
+                    {group.kind === "TEACHING_GROUP" ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => openMembers(group)}
+                        aria-label={t("members")}
+                        title={t("members")}
+                      >
+                        <UserPlus />
+                      </Button>
+                    ) : null}
                     <Button
                       variant="ghost"
                       size="icon"
@@ -270,6 +305,7 @@ export default function GroupsPage() {
             </TableBody>
           </Table>
         </div>
+        </>
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
