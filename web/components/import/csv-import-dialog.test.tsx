@@ -44,7 +44,8 @@ vi.mock("@/utils/supabase/client", () => ({
   createClient: () => ({
     from: () => {
       const builder: Record<string, unknown> = {};
-      for (const method of ["select", "order", "eq", "limit"]) {
+      // `range` included because full-list reads are paged — see selectAll.
+      for (const method of ["select", "order", "eq", "limit", "range"]) {
         builder[method] = () => builder;
       }
       builder.then = (

@@ -30,11 +30,52 @@ import type {
 // Reads — straight from Supabase under RLS.
 // ---------------------------------------------------------------------------
 
+/**
+ * PostgREST caps a response at 1000 rows, and Supabase does not say so — the
+ * body simply arrives short. A school with 5400 teaching-group memberships got
+ * the first thousand and nothing else: some groups showed their students,
+ * every group after the cut showed zero, and the schedule editor's clash
+ * checks silently stopped covering the missing ones.
+ */
+const PAGE_SIZE = 1000;
+
+/**
+ * Runs a windowed query until it returns a short page.
+ *
+ * Every caller must order by something unique last — paging relies on a total
+ * order, and rows tying on the primary sort column are free to shuffle between
+ * requests, which duplicates some rows and loses others.
+ *
+ * The page ceiling is a runaway guard, not a limit anyone should reach: 50
+ * pages is 50 000 rows, well past any single Swedish school.
+ */
+async function fetchAllPages<T>(
+  page: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+): Promise<T[]> {
+  const rows: T[] = [];
+
+  for (let index = 0; index < 50; index++) {
+    const from = index * PAGE_SIZE;
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    if (error) throw new Error(error.message);
+
+    const batch = (data ?? []) as T[];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) break;
+  }
+
+  return rows;
+}
+
+/** Fetches an entire table, one page at a time. */
 async function selectAll<T>(table: string, columns: string, orderBy: string): Promise<T[]> {
   const supabase = createClient();
-  const { data, error } = await supabase.from(table).select(columns).order(orderBy);
-  if (error) throw new Error(error.message);
-  return (data ?? []) as T[];
+  return fetchAllPages<T>((from, to) =>
+    supabase.from(table).select(columns).order(orderBy).order("id").range(from, to),
+  );
 }
 
 export function useSubjects() {
@@ -128,14 +169,18 @@ export function useRequirements(academicYearId: string | null) {
     enabled: academicYearId !== null,
     queryFn: async () => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("TeachingRequirements")
-        .select(
-          "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson",
-        )
-        .eq("academicYearId", academicYearId!);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as TeachingRequirement[];
+      // A secondary school's timplan is one row per group per subject —
+      // ninety groups and a dozen subjects already passes the page cap.
+      return fetchAllPages<TeachingRequirement>((from, to) =>
+        supabase
+          .from("TeachingRequirements")
+          .select(
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson",
+          )
+          .eq("academicYearId", academicYearId!)
+          .order("id")
+          .range(from, to),
+      );
     },
   });
 }
@@ -158,21 +203,26 @@ export function useMasterLessons(academicYearId: string | null) {
     enabled: academicYearId !== null,
     queryFn: async () => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("MasterLessons")
-        .select(
-          "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
-        )
-        .eq("academicYearId", academicYearId!)
-        .order("dayOfWeek")
-        .order("startTime");
-      if (error) throw new Error(error.message);
-      const rows = (data ?? []) as unknown as Array<
+      // The base timetable itself. A partial answer here is the worst kind:
+      // the grid renders, looks complete, and quietly omits lessons — which
+      // then get "rescheduled" on top of slots that were never free.
+      const rows = await fetchAllPages<
         Omit<MasterLesson, "extraGroupIds" | "studentIds"> & {
           extraGroups: Array<{ studentGroupId: string }>;
           participants: Array<{ studentId: string }>;
         }
-      >;
+      >((from, to) =>
+        supabase
+          .from("MasterLessons")
+          .select(
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
+          )
+          .eq("academicYearId", academicYearId!)
+          .order("dayOfWeek")
+          .order("startTime")
+          .order("id")
+          .range(from, to),
+      );
       return rows.map(({ extraGroups, participants, ...lesson }) => ({
         ...lesson,
         extraGroupIds: extraGroups.map((entry) => entry.studentGroupId),
@@ -1112,17 +1162,22 @@ export interface GroupMembershipRow {
 }
 
 /** Every teaching-group membership in the school (RLS-scoped). */
+/**
+ * Every teaching-group membership in the school.
+ *
+ * Paged, because this is the table that actually exceeds a thousand rows: it
+ * holds one row per student per group, so an ordinary secondary school passes
+ * the cap several times over.
+ */
 export function useGroupMemberships() {
   return useQuery({
     queryKey: ["groupMemberships"],
-    queryFn: async () => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("StudentGroupMembers")
-        .select("studentId, studentGroupId");
-      if (error) throw new Error(error.message);
-      return (data ?? []) as GroupMembershipRow[];
-    },
+    queryFn: () =>
+      selectAll<GroupMembershipRow>(
+        "StudentGroupMembers",
+        "studentId, studentGroupId",
+        "studentGroupId",
+      ),
   });
 }
 

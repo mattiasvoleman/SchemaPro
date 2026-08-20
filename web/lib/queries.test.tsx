@@ -16,6 +16,7 @@ import {
   useLessonActions,
   useGroupMembers,
   useGroupMemberships,
+  usePeople,
   useLessonRoster,
   useMasterLessons,
   useMyChildren,
@@ -100,6 +101,7 @@ function makeBuilder(table: string) {
     "or",
     "in",
     "limit",
+    "range",
     "single",
   ]) {
     builder[method] = (...args: unknown[]) => {
@@ -172,7 +174,8 @@ describe("useSubjects", () => {
     expect(argsFor("Subjects", "select")).toEqual([
       ["id, name, code, color, requiredRoomTypeId"],
     ]);
-    expect(argsFor("Subjects", "order")).toEqual([["name"]]);
+    // Paged reads sort by a tie-break column as well; see selectAll.
+    expect(argsFor("Subjects", "order")).toEqual([["name"], ["id"]]);
   });
 
   it("surfaces a Supabase error as the query error", async () => {
@@ -1169,6 +1172,79 @@ describe("teaching-group membership hooks", () => {
     ]);
     expect(argsFor("StudentGroupMembers", "select")).toEqual([
       ["studentId, studentGroupId"],
+    ]);
+  });
+
+  it("keeps paging past PostgREST's 1000-row cap until the table runs out", async () => {
+    // The failure this pins: a school with 5400 memberships got the first
+    // thousand rows and nothing else, so every group after the cut read "0
+    // students" and the schedule editor stopped seeing their clashes. The cap
+    // is invisible — the body simply arrives short — so only a test that
+    // returns a full page can catch a regression here.
+    const page = (count: number, offset: number) =>
+      ok(
+        Array.from({ length: count }, (_, i) => ({
+          studentId: `st-${offset + i}`,
+          studentGroupId: "g-ma71",
+        })),
+      );
+    stubTable("StudentGroupMembers", page(1000, 0), page(1000, 1000), page(400, 2000));
+
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useGroupMemberships(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toHaveLength(2400);
+    // Three windows, and it stops at the short page rather than asking again.
+    expect(argsFor("StudentGroupMembers", "range")).toEqual([
+      [0, 999],
+      [1000, 1999],
+      [2000, 2999],
+    ]);
+  });
+
+  it("orders by a tie-break column so pages cannot overlap or skip rows", async () => {
+    stubTable("StudentGroupMembers", ok([]));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useGroupMemberships(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    // Ties on studentGroupId would otherwise be free to shuffle between
+    // requests, which duplicates some rows and loses others.
+    expect(argsFor("StudentGroupMembers", "order")).toEqual([
+      ["studentGroupId"],
+      ["id"],
+    ]);
+  });
+
+  it("pages the people list too — a big school has more than 1000 rows", async () => {
+    stubTable(
+      "Users",
+      ok(
+        Array.from({ length: 1000 }, (_, i) => ({
+          id: `u-${i}`,
+          role: "STUDENT",
+          firstName: "A",
+          lastName: "B",
+          email: `a${i}@s.se`,
+          phone: null,
+          isActive: true,
+          invitedAt: null,
+          studentGroupId: null,
+        })),
+      ),
+      ok([]),
+    );
+
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => usePeople(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(argsFor("Users", "range")).toEqual([
+      [0, 999],
+      [1000, 1999],
     ]);
   });
 
