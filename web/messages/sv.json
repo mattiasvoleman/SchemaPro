@@ -206,7 +206,8 @@
     "requiredRoomTypeHint": "Optimeraren placerar bara ämnet i salar av vald typ.",
     "addRoomType": "+ Lägg till salstyp…",
     "roomTypeName": "Namn på salstyp",
-    "roomTypePlaceholder": "t.ex. Hemkunskapssal"
+    "roomTypePlaceholder": "t.ex. Hemkunskapssal",
+    "exportCsv": "Exportera CSV"
   },
   "rooms": {
     "title": "Salar",
@@ -667,7 +668,8 @@
       "teachers": "Lärare",
       "classes": "Klasser",
       "teachingGroups": "Undervisningsgrupper",
-      "roomTypes": "Salstyper"
+      "roomTypes": "Salstyper",
+      "subjects": "Ämnen"
     },
     "downloadTemplate": "Ladda ner mall",
     "chooseFile": "Välj fil",

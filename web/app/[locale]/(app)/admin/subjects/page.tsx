@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { BookOpen, Pencil, Plus, Trash2 } from "lucide-react";
+import { BookOpen, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useCrudMutations, useSubjects , useRoomTypes, useRoomTypeActions } from "@/lib/queries";
 import type { RoomType, Subject } from "@/lib/types";
+import { CsvImportDialog } from "@/components/import/csv-import-dialog";
+import { CSV_TEMPLATES, downloadCsv, subjectsToCsv } from "@/lib/csv";
 import {
   Select,
   SelectContent,
@@ -57,6 +59,7 @@ const EMPTY_FORM: SubjectForm = {
 export default function SubjectsPage() {
   const t = useTranslations("subjects");
   const tCommon = useTranslations("common");
+  const tCsvImport = useTranslations("csvImport");
   const { data: subjects, isLoading } = useSubjects();
   const mutations = useCrudMutations<{
     name: string;
@@ -67,9 +70,23 @@ export default function SubjectsPage() {
 
   const { data: roomTypes } = useRoomTypes();
   const roomTypeActions = useRoomTypeActions();
+  /**
+   * Exports what is on screen, in the importer's own format, so the file can
+   * be edited and uploaded straight back.
+   */
+  const exportCsv = () => {
+    const named = (id: string | null) =>
+      id ? (roomTypes?.find((type) => type.id === id)?.name ?? "") : "";
+    downloadCsv(
+      CSV_TEMPLATES.subjects.filename,
+      subjectsToCsv(subjects ?? [], named),
+    );
+  };
+
   const [creatingType, setCreatingType] = useState(false);
   const [newTypeName, setNewTypeName] = useState("");
 
+  const [importOpen, setImportOpen] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Subject | null>(null);
   const [deleting, setDeleting] = useState<Subject | null>(null);
@@ -131,10 +148,24 @@ export default function SubjectsPage() {
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          <Button onClick={openCreate}>
-            <Plus />
-            {t("addSubject")}
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              onClick={exportCsv}
+              disabled={!subjects || subjects.length === 0}
+            >
+              <Download />
+              {t("exportCsv")}
+            </Button>
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload />
+              {tCsvImport("button")}
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus />
+              {t("addSubject")}
+            </Button>
+          </>
         }
       />
 
@@ -339,6 +370,12 @@ export default function SubjectsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CsvImportDialog
+        kinds={["subjects"]}
+        open={importOpen}
+        onOpenChange={setImportOpen}
+      />
 
       <ConfirmDialog
         open={deleting !== null}

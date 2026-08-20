@@ -35,6 +35,7 @@ describe("importCsvInBatches", () => {
 
   it("mirrors the row caps the API DTOs declare", () => {
     expect(IMPORT_MAX_ROWS).toEqual({
+      subjects: 500,
       students: 500,
       teachers: 500,
       classes: 500,

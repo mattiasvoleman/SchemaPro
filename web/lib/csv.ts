@@ -128,6 +128,7 @@ export function parseCsv(text: string): ParsedCsv {
 // ---------------------------------------------------------------------------
 
 export type ImportKind =
+  | "subjects"
   | "students"
   | "teachers"
   | "classes"
@@ -142,6 +143,14 @@ interface CsvTemplate {
 }
 
 export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
+  subjects: {
+    filename: "amnen.csv",
+    headers: ["namn", "kod", "farg", "salstyp"],
+    exampleRows: [
+      ["Matematik", "MA", "#4f46e5", ""],
+      ["Textilslöjd", "SLTX", "#db2777", "Textilslöjd"],
+    ],
+  },
   roomTypes: {
     filename: "salstyper.csv",
     headers: ["namn"],
@@ -175,13 +184,38 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
   },
 };
 
+/**
+ * Quotes a field only when it needs it, per RFC 4180.
+ *
+ * Export carries a school's real data, where a subject may legitimately be
+ * called "Idrott; hälsa" — unquoted, that semicolon would split it into two
+ * columns and the file would no longer import back.
+ */
+function escapeField(value: string): string {
+  if (!/[";\r\n]/.test(value)) return value;
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
 /** Semicolon + CRLF + BOM: exactly what Swedish Excel round-trips cleanly. */
+export function serializeCsv(headers: string[], rows: string[][]): string {
+  const lines = [headers, ...rows].map((row) => row.map(escapeField).join(";"));
+  return BOM + lines.join("\r\n") + "\r\n";
+}
+
 export function templateCsvContent(kind: ImportKind): string {
   const template = CSV_TEMPLATES[kind];
-  const lines = [template.headers, ...template.exampleRows].map((row) =>
-    row.join(";"),
-  );
-  return BOM + lines.join("\r\n") + "\r\n";
+  return serializeCsv(template.headers, template.exampleRows);
+}
+
+/** Hands the browser a finished CSV file under the given name. */
+export function downloadCsv(filename: string, content: string): void {
+  const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export function downloadTemplate(kind: ImportKind): void {
@@ -350,6 +384,30 @@ export function mapClassRows(parsed: ParsedCsv): {
   return { rows, errors };
 }
 
+/**
+ * Subject rows. The room type is a NAME here, resolved server-side against the
+ * school's own list — a CSV never carries uuids.
+ *
+ * Only the name is required: colour and code are cosmetic, and most subjects
+ * need no particular kind of room.
+ */
+export function mapSubjectRows(parsed: ParsedCsv) {
+  return mapRows(
+    parsed,
+    [
+      { field: "name", aliases: ["namn", "name", "amne"], required: true },
+      { field: "code", aliases: ["kod", "code", "forkortning"], required: false },
+      { field: "color", aliases: ["farg", "color"], required: false },
+      {
+        field: "roomType",
+        aliases: ["salstyp", "kraver_salstyp", "roomtype"],
+        required: false,
+      },
+    ],
+    requiredMessage,
+  );
+}
+
 export function mapRoomTypeRows(parsed: ParsedCsv) {
   return mapRows(
     parsed,
@@ -366,5 +424,28 @@ export function mapMembershipRows(parsed: ParsedCsv) {
       { field: "email", aliases: ["epost", "email", "epostadress", "elev"], required: true },
     ],
     requiredMessage,
+  );
+}
+
+/**
+ * A school's subjects as a CSV in exactly the shape the importer accepts.
+ *
+ * Round-tripping is the point: export, edit in Excel, upload again. That only
+ * holds if the columns match the template and the room type is written as its
+ * NAME — the same thing the importer resolves — so the two are built from one
+ * definition here rather than kept in step by hand.
+ */
+export function subjectsToCsv(
+  subjects: { name: string; code: string | null; color: string | null; requiredRoomTypeId: string | null }[],
+  roomTypeName: (id: string | null) => string,
+): string {
+  return serializeCsv(
+    CSV_TEMPLATES.subjects.headers,
+    subjects.map((subject) => [
+      subject.name,
+      subject.code ?? "",
+      subject.color ?? "",
+      roomTypeName(subject.requiredRoomTypeId),
+    ]),
   );
 }

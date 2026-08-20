@@ -9,6 +9,7 @@ import {
   mapClassRows,
   mapMembershipRows,
   mapRoomTypeRows,
+  mapSubjectRows,
   mapStudentRows,
   mapTeacherRows,
   parseCsv,
@@ -58,6 +59,7 @@ const MAPPERS: Record<
   classes: mapClassRows,
   teachingGroups: mapMembershipRows,
   roomTypes: mapRoomTypeRows,
+  subjects: mapSubjectRows,
 };
 
 const PREVIEW_ROWS = 5;

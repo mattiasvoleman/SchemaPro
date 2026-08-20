@@ -206,7 +206,8 @@
     "requiredRoomTypeHint": "The optimizer will only place this subject in rooms of the selected type.",
     "addRoomType": "+ Add room type…",
     "roomTypeName": "Room type name",
-    "roomTypePlaceholder": "e.g. Home economics room"
+    "roomTypePlaceholder": "e.g. Home economics room",
+    "exportCsv": "Export CSV"
   },
   "rooms": {
     "title": "Rooms",
@@ -667,7 +668,8 @@
       "teachers": "Teachers",
       "classes": "Classes",
       "teachingGroups": "Teaching groups",
-      "roomTypes": "Room types"
+      "roomTypes": "Room types",
+      "subjects": "Subjects"
     },
     "downloadTemplate": "Download template",
     "chooseFile": "Choose file",

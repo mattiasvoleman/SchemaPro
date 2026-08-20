@@ -118,6 +118,44 @@ describe('CSV import (e2e)', () => {
         .expect(201);
     });
 
+    it('imports subjects, resolving the room type by name', async () => {
+      harness.tx['subject']!['findMany']!.mockResolvedValue([]);
+      harness.tx['roomType']!['findMany']!.mockResolvedValue([
+        { id: 'rt-tx', name: 'Textilslöjd' },
+      ]);
+      harness.tx['subject']!['create']!.mockResolvedValue({ id: 'sub-1' });
+
+      const response = await post(harness, 'subjects')
+        .send({
+          rows: [
+            { name: 'Textilslöjd', code: 'SLTX', color: '#db2777', roomType: 'Textilslöjd' },
+            { name: 'Matematik', code: 'MA', color: '#4f46e5', roomType: '' },
+          ],
+        })
+        .expect(201);
+
+      expect(response.body).toMatchObject({ created: 2, errors: [] });
+      const first = harness.tx['subject']!['create']!.mock.calls[0]?.[0] as {
+        data: { requiredRoomTypeId: string | null; schoolId: string };
+      };
+      expect(first.data.requiredRoomTypeId).toBe('rt-tx');
+      expect(first.data.schoolId).toBe(SCHOOL_ID);
+    });
+
+    it('rejects a colour that is not a hex colour', async () => {
+      const response = await post(harness, 'subjects')
+        .send({ rows: [{ name: 'Bild', color: 'rosa' }] })
+        .expect(400);
+
+      expect(JSON.stringify(response.body)).toContain('color');
+    });
+
+    it('400s if a client sends a year to the subject route', async () => {
+      await post(harness, 'subjects')
+        .send({ academicYearId: YEAR_ID, rows: [{ name: 'Bild' }] })
+        .expect(400);
+    });
+
     it('imports room types with no year in the body at all', async () => {
       // The web dialog omits academicYearId for this kind. With
       // forbidNonWhitelisted validation, sending one anyway would be a 400 —
@@ -197,6 +235,7 @@ describe('CSV import (e2e)', () => {
       'denies %s on every import route',
       async (role) => {
         for (const path of [
+          'subjects',
           'teachers',
           'students',
           'groups',

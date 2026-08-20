@@ -8,6 +8,7 @@ import type {
   ImportMembershipsDto,
   ImportReport,
   ImportRoomTypesDto,
+  ImportSubjectsDto,
   ImportStudentsDto,
   ImportTeachersDto,
 } from './dto/import.dto';
@@ -113,6 +114,68 @@ export class ImportService {
             // creates teaching groups.
             kind: 'CLASS',
             gradeLevel: row.gradeLevel ?? null,
+          },
+        });
+        report.created += 1;
+      }
+      return report;
+    });
+  }
+
+  /**
+   * Subjects, matched by normalized name so a re-upload is a no-op.
+   *
+   * The room-type requirement arrives as a NAME and is resolved against the
+   * school's own list. An unknown name fails the row rather than creating the
+   * subject without its requirement: a silently dropped requirement leaves the
+   * subject schedulable in any room at all, which surfaces much later as
+   * slöjden placed in a vanlig klassrum and is far harder to trace back to the
+   * import than a line in the report.
+   */
+  async importSubjects(
+    dto: ImportSubjectsDto,
+    user: AuthenticatedUser,
+  ): Promise<ImportReport> {
+    const schoolId = requireSchoolId(user);
+    return this.prisma.withRls(user, async (tx) => {
+      const existing = await tx.subject.findMany({ select: { name: true } });
+      const taken = new Set(existing.map((subject) => this.normalizeName(subject.name)));
+
+      const roomTypes = await tx.roomType.findMany({ select: { id: true, name: true } });
+      const roomTypeByName = new Map(
+        roomTypes.map((type) => [this.normalizeName(type.name), type.id]),
+      );
+
+      const report: ImportReport = { created: 0, skipped: 0, errors: [] };
+      for (const [index, row] of dto.rows.entries()) {
+        const rowNumber = index + 1;
+        const key = this.normalizeName(row.name);
+        if (taken.has(key)) {
+          report.skipped += 1; // exists already, or duplicated within the file
+          continue;
+        }
+
+        let requiredRoomTypeId: string | null = null;
+        if (row.roomType && row.roomType.trim() !== '') {
+          const resolved = roomTypeByName.get(this.normalizeName(row.roomType));
+          if (!resolved) {
+            report.errors.push({
+              row: rowNumber,
+              message: `Salstypen "${row.roomType}" finns inte. Lägg till den under Salar, eller lämna kolumnen tom.`,
+            });
+            continue;
+          }
+          requiredRoomTypeId = resolved;
+        }
+
+        taken.add(key);
+        await tx.subject.create({
+          data: {
+            schoolId,
+            name: row.name.trim(),
+            code: row.code?.trim() || null,
+            color: row.color?.trim() || null,
+            requiredRoomTypeId,
           },
         });
         report.created += 1;

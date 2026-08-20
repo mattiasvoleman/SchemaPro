@@ -1229,6 +1229,7 @@ export interface ImportReport {
 }
 
 const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
+  subjects: "/api/v1/import/subjects",
   students: "/api/v1/import/students",
   teachers: "/api/v1/import/teachers",
   classes: "/api/v1/import/groups",
@@ -1238,6 +1239,8 @@ const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
 
 /** Kinds whose payload carries the academic year the rows belong to. */
 export const IMPORT_NEEDS_YEAR: Record<ImportKind, boolean> = {
+  // Subjects belong to the school, like room types — not to a läsår.
+  subjects: false,
   students: true,
   teachers: false,
   classes: true,
@@ -1308,6 +1311,7 @@ export interface ImportCsvInput {
  * school may import.
  */
 export const IMPORT_MAX_ROWS: Record<ImportKind, number> = {
+  subjects: 500,
   students: 500,
   teachers: 500,
   classes: 500,

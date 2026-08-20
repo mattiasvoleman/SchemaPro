@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsEmail,
+  IsHexColor,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -104,6 +105,45 @@ export class ImportGroupsDto {
   @ValidateNested({ each: true })
   @Type(() => ImportGroupRowDto)
   rows!: ImportGroupRowDto[];
+}
+
+export class ImportSubjectRowDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  code?: string | null;
+
+  /** Hex colour as the schedule views render it (#4f46e5). */
+  @IsOptional()
+  @IsHexColor()
+  color?: string | null;
+
+  /**
+   * Room type by NAME, not id — a CSV a school edits in Excel carries
+   * "Textilslöjd", never a uuid. Resolved server-side against the school's own
+   * list; an unknown name is reported as a row error rather than silently
+   * dropping the requirement, which would leave the subject schedulable
+   * anywhere.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  roomType?: string | null;
+}
+
+export class ImportSubjectsDto {
+  // No academicYearId: subjects belong to the school, not to a year.
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => ImportSubjectRowDto)
+  rows!: ImportSubjectRowDto[];
 }
 
 export class ImportRoomTypeRowDto {

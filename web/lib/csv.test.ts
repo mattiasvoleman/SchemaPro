@@ -13,6 +13,9 @@ import {
   mapClassRows,
   mapMembershipRows,
   mapRoomTypeRows,
+  mapSubjectRows,
+  serializeCsv,
+  subjectsToCsv,
   mapStudentRows,
   mapTeacherRows,
   normalizeHeader,
@@ -763,5 +766,126 @@ describe("room types", () => {
     // The blank line is dropped, so Musiksal is row 2 — not row 3.
     expect(rows).toEqual([{ name: "Bildsal" }, { name: "Musiksal" }]);
     expect(errors).toEqual([]);
+  });
+});
+
+describe("subjects", () => {
+  const subject = (
+    name: string,
+    code: string | null,
+    color: string | null,
+    requiredRoomTypeId: string | null,
+  ) => ({ name, code, color, requiredRoomTypeId });
+
+  const named = (id: string | null) =>
+    id === "rt-tx" ? "Textilslöjd" : id === "rt-lab" ? "Laborationssal" : "";
+
+  it("ships a template with the columns the importer reads", () => {
+    const { rows, errors } = mapSubjectRows(parseCsv(templateCsvContent("subjects")));
+
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      { name: "Matematik", code: "MA", color: "#4f46e5", roomType: "" },
+      {
+        name: "Textilslöjd",
+        code: "SLTX",
+        color: "#db2777",
+        roomType: "Textilslöjd",
+      },
+    ]);
+  });
+
+  it("requires only the name — colour and room type are optional", () => {
+    const { rows, errors } = mapSubjectRows(parseCsv("namn\nBild\n"));
+
+    expect(errors).toEqual([]);
+    expect(rows[0]).toMatchObject({ name: "Bild" });
+  });
+
+  it("names the missing column when the name is absent", () => {
+    const { rows, errors } = mapSubjectRows(parseCsv("kod;farg\nMA;#fff\n"));
+
+    expect(rows).toEqual([]);
+    expect(errors[0]?.message).toContain("namn");
+  });
+
+  it("exports the room type by name, never by id", () => {
+    // A uuid in a spreadsheet is unreadable and unimportable — the name is
+    // what the school edits and what the API resolves.
+    const csv = subjectsToCsv([subject("Slöjd", "SL", "#db2777", "rt-tx")], named);
+
+    expect(csv).toContain("Textilslöjd");
+    expect(csv).not.toContain("rt-tx");
+  });
+
+  it("writes empty cells for a subject with no code, colour or room type", () => {
+    const csv = subjectsToCsv([subject("Bild", null, null, null)], named);
+
+    expect(csv.trimEnd().split("\r\n").at(-1)).toBe("Bild;;;");
+  });
+
+  it("round-trips: an exported file imports back to what was exported", () => {
+    const exported = subjectsToCsv(
+      [
+        subject("Matematik", "MA", "#4f46e5", null),
+        subject("Slöjd", "SL", "#db2777", "rt-tx"),
+        subject("Kemi", null, null, "rt-lab"),
+      ],
+      named,
+    );
+
+    const { rows, errors } = mapSubjectRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      { name: "Matematik", code: "MA", color: "#4f46e5", roomType: "" },
+      { name: "Slöjd", code: "SL", color: "#db2777", roomType: "Textilslöjd" },
+      { name: "Kemi", code: "", color: "", roomType: "Laborationssal" },
+    ]);
+  });
+
+  it("survives a subject name containing the delimiter", () => {
+    // "Idrott; hälsa" unquoted would become two columns, and the file would
+    // no longer import back — the one case plain join(';') gets wrong.
+    const exported = subjectsToCsv([subject("Idrott; hälsa", "IDH", null, null)], named);
+    const { rows, errors } = mapSubjectRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    expect(rows[0]?.name).toBe("Idrott; hälsa");
+  });
+
+  it("survives a name containing a quote", () => {
+    const exported = subjectsToCsv([subject('Teknik "fördjupning"', null, null, null)], named);
+    const { rows } = mapSubjectRows(parseCsv(exported));
+
+    expect(rows[0]?.name).toBe('Teknik "fördjupning"');
+  });
+
+  it("starts the export with the BOM Excel needs for å, ä and ö", () => {
+    expect(subjectsToCsv([subject("Slöjd", null, null, null)], named).startsWith("\uFEFF")).toBe(
+      true,
+    );
+  });
+});
+
+describe("serializeCsv", () => {
+  it("leaves ordinary fields unquoted", () => {
+    expect(serializeCsv(["a", "b"], [["1", "2"]])).toBe("\uFEFFa;b\r\n1;2\r\n");
+  });
+
+  it("quotes only the fields that need it", () => {
+    const csv = serializeCsv(["a", "b"], [["plain", "has;delimiter"]]);
+
+    expect(csv).toContain('plain;"has;delimiter"');
+  });
+
+  it("doubles embedded quotes, as RFC 4180 requires", () => {
+    expect(serializeCsv(["a"], [['say "hi"']])).toContain('"say ""hi"""');
+  });
+
+  it("quotes a field containing a newline so the row stays one row", () => {
+    const csv = serializeCsv(["a"], [["two\nlines"]]);
+
+    expect(csv).toContain('"two\nlines"');
   });
 });

@@ -11,6 +11,7 @@ import {
   ImportGroupsDto,
   ImportMembershipsDto,
   ImportRoomTypesDto,
+  ImportSubjectsDto,
   ImportStudentsDto,
   ImportTeachersDto,
 } from './dto/import.dto';
@@ -41,6 +42,11 @@ export class ImportController {
   @Post('groups')
   importGroups(@Body() dto: ImportGroupsDto, @CurrentUser() user: AuthenticatedUser) {
     return this.imports.importGroups(dto, user);
+  }
+
+  @Post('subjects')
+  importSubjects(@Body() dto: ImportSubjectsDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.imports.importSubjects(dto, user);
   }
 
   @Post('room-types')

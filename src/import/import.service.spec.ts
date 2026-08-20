@@ -203,6 +203,115 @@ describe('ImportService', () => {
     });
   });
 
+  describe('importSubjects', () => {
+    const rows = (overrides: Record<string, unknown>[] = [{}]) =>
+      overrides.map((override) => ({ name: 'Matematik', ...override })) as never;
+
+    it('creates a subject, resolving the room type by name', async () => {
+      tx.subject.findMany.mockResolvedValue([]);
+      tx.roomType.findMany.mockResolvedValue([
+        { id: 'rt-slojd', name: 'Trä- och metallslöjd' },
+      ]);
+      tx.subject.create.mockResolvedValue({ id: 'sub-1' });
+
+      const report = await service.importSubjects(
+        { rows: rows([{ name: 'Slöjd', code: 'SL', color: '#4f46e5', roomType: 'trä- och metallslöjd' }]) },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 1, skipped: 0, errors: [] });
+      expect(tx.subject.create).toHaveBeenCalledWith({
+        data: {
+          schoolId: testUser().schoolId,
+          name: 'Slöjd',
+          code: 'SL',
+          color: '#4f46e5',
+          // Matched case-insensitively: a school types the name as it reads,
+          // not as it was stored.
+          requiredRoomTypeId: 'rt-slojd',
+        },
+      });
+    });
+
+    it('accepts a subject with no room-type requirement at all', async () => {
+      tx.subject.findMany.mockResolvedValue([]);
+      tx.roomType.findMany.mockResolvedValue([]);
+      tx.subject.create.mockResolvedValue({ id: 'sub-1' });
+
+      await service.importSubjects({ rows: rows([{ roomType: '' }]) }, testUser());
+
+      const { data } = tx.subject.create.mock.calls[0][0] as {
+        data: { requiredRoomTypeId: string | null };
+      };
+      expect(data.requiredRoomTypeId).toBeNull();
+    });
+
+    it('fails the row on an unknown room type instead of dropping the requirement', async () => {
+      // Creating the subject anyway would leave it schedulable in any room,
+      // which surfaces much later as slöjden in an ordinary classroom.
+      tx.subject.findMany.mockResolvedValue([]);
+      tx.roomType.findMany.mockResolvedValue([]);
+
+      const report = await service.importSubjects(
+        { rows: rows([{ name: 'Slöjd', roomType: 'Slöjdsal' }]) },
+        testUser(),
+      );
+
+      expect(report.created).toBe(0);
+      expect(tx.subject.create).not.toHaveBeenCalled();
+      expect(report.errors).toEqual([
+        { row: 1, message: expect.stringContaining('Slöjdsal') },
+      ]);
+    });
+
+    it('skips a subject that already exists, so a re-upload is a no-op', async () => {
+      tx.subject.findMany.mockResolvedValue([{ name: 'Matematik' }]);
+      tx.roomType.findMany.mockResolvedValue([]);
+
+      const report = await service.importSubjects(
+        { rows: rows([{ name: ' matematik ' }]) },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 0, skipped: 1, errors: [] });
+      expect(tx.subject.create).not.toHaveBeenCalled();
+    });
+
+    it('collapses names that differ only by case or whitespace within one file', async () => {
+      tx.subject.findMany.mockResolvedValue([]);
+      tx.roomType.findMany.mockResolvedValue([]);
+      tx.subject.create.mockResolvedValue({ id: 'sub-1' });
+
+      const report = await service.importSubjects(
+        { rows: rows([{ name: 'Biologi' }, { name: ' biologi ' }]) },
+        testUser(),
+      );
+
+      expect(report).toMatchObject({ created: 1, skipped: 1 });
+      expect(tx.subject.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('stores empty code and colour as null rather than empty strings', async () => {
+      tx.subject.findMany.mockResolvedValue([]);
+      tx.roomType.findMany.mockResolvedValue([]);
+      tx.subject.create.mockResolvedValue({ id: 'sub-1' });
+
+      await service.importSubjects({ rows: rows([{ code: '  ', color: '' }]) }, testUser());
+
+      const { data } = tx.subject.create.mock.calls[0][0] as {
+        data: { code: string | null; color: string | null };
+      };
+      expect(data).toMatchObject({ code: null, color: null });
+    });
+
+    it('403s a principal with no school before reading anything', async () => {
+      await expect(
+        service.importSubjects({ rows: rows() }, schoolless()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+  });
+
   describe('importRoomTypes', () => {
     it('creates missing types and skips existing ones by normalized name', async () => {
       tx.roomType.findMany.mockResolvedValue([{ name: 'Klassrum' }]);
