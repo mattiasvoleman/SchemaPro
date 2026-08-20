@@ -239,7 +239,8 @@
     "kindClassHelp": "En hemklass, t.ex. 7A. Alla elever i klassen följer klassens lektioner.",
     "kindTeachingGroupHelp": "En grupp som skär tvärs över klasserna, t.ex. Ma71 eller språkvalet En74. Lägg till eleverna med knappen Medlemmar.",
     "filterAll": "Alla",
-    "searchPlaceholder": "Sök på gruppens namn eller läsår…"
+    "searchPlaceholder": "Sök på grupp, läsår eller elev…",
+    "andMore": " + {count} till"
   },
   "people": {
     "title": "Personer",

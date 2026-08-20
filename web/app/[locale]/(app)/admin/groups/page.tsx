@@ -19,8 +19,11 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { countGroupMembers } from "@/lib/group-sections";
-import { filterByQuery } from "@/lib/search";
+import {
+  buildGroupMemberNames,
+  countGroupMembers,
+} from "@/lib/group-sections";
+import { filterByQuery, matchesQuery } from "@/lib/search";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -137,6 +140,15 @@ export default function GroupsPage() {
 
   // Sizes come from two different places depending on the kind of group —
   // see lib/group-sections.ts, where the rule and its tests live.
+  const yearName = (id: string) => years?.find((year) => year.id === id)?.name ?? "—";
+
+  // Group id → the people in it, so the search below can find a group by the
+  // name of a student in it. See lib/group-sections.ts.
+  const memberNames = useMemo(
+    () => buildGroupMemberNames(people ?? [], memberships ?? []),
+    [people, memberships],
+  );
+
   const memberCounts = useMemo(
     () => countGroupMembers(people ?? [], memberships ?? []),
     [people, memberships],
@@ -146,16 +158,29 @@ export default function GroupsPage() {
     const byKind = (groups ?? []).filter(
       (group) => kindFilter === "ALL" || group.kind === kindFilter,
     );
-    // The year is searchable too, so "ma71 2026" narrows a group that exists
-    // in several läsår down to the one being planned.
+    // Searchable by group name, by year — "ma71 2026" narrows a name that
+    // recurs across läsår — and by the names of its students, which is how an
+    // admin answers "which teaching group is Alma in?".
     return filterByQuery(byKind, search, (group) => [
       group.name,
       yearName(group.academicYearId),
+      ...(memberNames.get(group.id) ?? []).map((member) => member.name),
     ]);
-  }, [groups, kindFilter, search, years]);
+  }, [groups, kindFilter, search, years, memberNames]);
 
-  const yearName = (id: string) => years?.find((year) => year.id === id)?.name ?? "—";
   const defaultYearId = years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? "";
+
+  /**
+   * The students in this group that the current search matched — shown under
+   * the group name so "which group is Alma in?" is answered on screen, not
+   * merely implied by the row appearing.
+   */
+  const matchingMembers = (groupId: string) => {
+    if (search.trim() === "") return [];
+    return (memberNames.get(groupId) ?? []).filter((member) =>
+      matchesQuery([member.name], search),
+    );
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -281,6 +306,19 @@ export default function GroupsPage() {
                 <TableRow key={group.id}>
                   <TableCell className="font-medium">
                     {group.name}
+                    {matchingMembers(group.id).length > 0 ? (
+                      <div className="mt-0.5 text-xs font-normal text-muted-foreground">
+                        {matchingMembers(group.id)
+                          .slice(0, 3)
+                          .map((member) => member.name)
+                          .join(", ")}
+                        {matchingMembers(group.id).length > 3
+                          ? t("andMore", {
+                              count: matchingMembers(group.id).length - 3,
+                            })
+                          : ""}
+                      </div>
+                    ) : null}
                     <Badge
                       variant={group.kind === "CLASS" ? "secondary" : "outline"}
                       className="mr-2"

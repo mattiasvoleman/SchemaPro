@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { countGroupMembers, splitGroupsByKind } from "@/lib/group-sections";
+import {
+  buildGroupMemberNames,
+  countGroupMembers,
+  splitGroupsByKind,
+} from "@/lib/group-sections";
 import type { StudentGroup } from "@/lib/types";
 
 const group = (
@@ -120,5 +124,69 @@ describe("countGroupMembers", () => {
 
   it("reports nothing for a group nobody is in", () => {
     expect(countGroupMembers([], []).get("Sv73")).toBeUndefined();
+  });
+});
+
+describe("buildGroupMemberNames", () => {
+  const alma = {
+    id: "st-1",
+    firstName: "Alma",
+    lastName: "Berg",
+    studentGroupId: "7A",
+  };
+  const nils = {
+    id: "st-2",
+    firstName: "Nils",
+    lastName: "Ek",
+    studentGroupId: "7B",
+  };
+
+  it("lists a home class's students", () => {
+    const names = buildGroupMemberNames([alma, nils], []);
+
+    expect(names.get("7A")).toEqual([{ id: "st-1", name: "Alma Berg" }]);
+  });
+
+  it("lists a teaching group's students, so a search can find the group by person", () => {
+    const names = buildGroupMemberNames(
+      [alma, nils],
+      [
+        { studentId: "st-1", studentGroupId: "Ma71" },
+        { studentId: "st-2", studentGroupId: "Ma71" },
+      ],
+    );
+
+    expect(names.get("Ma71")?.map((entry) => entry.name)).toEqual([
+      "Alma Berg",
+      "Nils Ek",
+    ]);
+  });
+
+  it("puts one student in every group they belong to", () => {
+    const names = buildGroupMemberNames(
+      [alma],
+      [
+        { studentId: "st-1", studentGroupId: "Ma71" },
+        { studentId: "st-1", studentGroupId: "En74" },
+      ],
+    );
+
+    expect(names.get("7A")).toHaveLength(1);
+    expect(names.get("Ma71")).toHaveLength(1);
+    expect(names.get("En74")).toHaveLength(1);
+  });
+
+  it("skips a membership whose student is not in the loaded list", () => {
+    // Otherwise the group would advertise an "undefined undefined" member,
+    // which is both wrong and searchable.
+    const names = buildGroupMemberNames([], [
+      { studentId: "gone", studentGroupId: "Ma71" },
+    ]);
+
+    expect(names.get("Ma71")).toBeUndefined();
+  });
+
+  it("leaves a group nobody belongs to out of the index entirely", () => {
+    expect(buildGroupMemberNames([], []).size).toBe(0);
   });
 });

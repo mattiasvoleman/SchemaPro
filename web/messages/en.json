@@ -239,7 +239,8 @@
     "kindClassHelp": "A home class such as 7A. Every student in it follows the class's lessons.",
     "kindTeachingGroupHelp": "A group cutting across classes, such as Ma71 or the language option En74. Add its students with the Members button.",
     "filterAll": "All",
-    "searchPlaceholder": "Search by group name or academic year…"
+    "searchPlaceholder": "Search by group, academic year or student…",
+    "andMore": " + {count} more"
   },
   "people": {
     "title": "People",

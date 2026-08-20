@@ -67,3 +67,47 @@ export function countGroupMembers(
 
   return counts;
 }
+
+export interface GroupMemberName {
+  id: string;
+  name: string;
+}
+
+/**
+ * The people in each group, by group id.
+ *
+ * Lets an admin search the group list by STUDENT: typing a name answers
+ * "which teaching group is this student in?", which is otherwise a question
+ * the app cannot answer at all — a student's home class is on their person
+ * row, but their teaching groups are only visible by opening every group in
+ * turn.
+ *
+ * Both kinds of membership count: the home class from `studentGroupId`, and
+ * the teaching groups from the membership rows.
+ */
+export function buildGroupMemberNames(
+  people: { id: string; firstName: string; lastName: string; studentGroupId: string | null }[],
+  memberships: { studentId: string; studentGroupId: string }[],
+): Map<string, GroupMemberName[]> {
+  const byId = new Map(people.map((person) => [person.id, person]));
+  const names = new Map<string, GroupMemberName[]>();
+
+  const add = (groupId: string, person: { id: string; firstName: string; lastName: string }) => {
+    const entry = { id: person.id, name: `${person.firstName} ${person.lastName}` };
+    const existing = names.get(groupId);
+    if (existing) existing.push(entry);
+    else names.set(groupId, [entry]);
+  };
+
+  for (const person of people) {
+    if (person.studentGroupId) add(person.studentGroupId, person);
+  }
+  for (const row of memberships) {
+    const person = byId.get(row.studentId);
+    // A membership whose student is not in the loaded list (deactivated, or
+    // filtered away) contributes no name rather than an "undefined undefined".
+    if (person) add(row.studentGroupId, person);
+  }
+
+  return names;
+}
