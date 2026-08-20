@@ -186,7 +186,7 @@ describe('Portal and platform surfaces (e2e)', () => {
   });
 
   describe('user administration', () => {
-    it('creates a user, inviting the identity first', async () => {
+    it('creates a user quietly — no invitation unless one is asked for', async () => {
       harness.tx['user']!['create']!.mockResolvedValue({ id: STUDENT_ID });
 
       await request(http())
@@ -200,9 +200,86 @@ describe('Portal and platform surfaces (e2e)', () => {
         })
         .expect(201);
 
+      expect(harness.supabase.inviteUser).not.toHaveBeenCalled();
+    });
+
+    it('invites on creation when the admin ticks the box', async () => {
+      harness.tx['user']!['create']!.mockResolvedValue({ id: STUDENT_ID });
+
+      await request(http())
+        .post('/api/v1/users')
+        .set('x-test-user', admin())
+        .send({
+          role: 'TEACHER',
+          firstName: 'Karin',
+          lastName: 'Ek',
+          email: 'karin.ek@example.com',
+          sendInvitation: true,
+        })
+        .expect(201);
+
       expect(harness.supabase.inviteUser).toHaveBeenCalledWith(
         'karin.ek@example.com',
       );
+    });
+
+    it('invites one person on demand, and says whether mail actually went out', async () => {
+      harness.tx['user']!['findUnique']!.mockResolvedValue({
+        id: STUDENT_ID,
+        email: 'karin.ek@example.com',
+        isActive: true,
+      });
+      harness.tx['user']!['update']!.mockResolvedValue({ id: STUDENT_ID });
+
+      const response = await request(http())
+        .post(`/api/v1/users/${STUDENT_ID}/invite`)
+        .set('x-test-user', admin())
+        .expect(200);
+
+      expect(response.body).toEqual({ id: STUDENT_ID, emailSent: true });
+      expect(harness.supabase.inviteUser).toHaveBeenCalledWith(
+        'karin.ek@example.com',
+      );
+    });
+
+    it('invites a whole selection in one request', async () => {
+      harness.tx['user']!['findUnique']!.mockResolvedValue({
+        id: STUDENT_ID,
+        email: 'elev@example.com',
+        isActive: true,
+      });
+      harness.tx['user']!['update']!.mockResolvedValue({ id: STUDENT_ID });
+
+      const response = await request(http())
+        .post('/api/v1/users/invitations')
+        .set('x-test-user', admin())
+        .send({
+          userIds: [STUDENT_ID, GUARDIAN_ID, ROOM_ID],
+        })
+        .expect(200);
+
+      expect(response.body).toMatchObject({ sent: 3, errors: [] });
+    });
+
+    it('rejects a bulk invitation carrying something that is not an id', async () => {
+      await request(http())
+        .post('/api/v1/users/invitations')
+        .set('x-test-user', admin())
+        .send({ userIds: ['karin.ek@example.com'] })
+        .expect(400);
+    });
+
+    it('denies a teacher sending invitations', async () => {
+      for (const path of [
+        `/api/v1/users/${STUDENT_ID}/invite`,
+        '/api/v1/users/invitations',
+      ]) {
+        await request(http())
+          .post(path)
+          .set('x-test-user', teacher())
+          .send({ userIds: [STUDENT_ID] })
+          .expect(403);
+      }
     });
 
     it('rejects a role that does not exist', async () => {

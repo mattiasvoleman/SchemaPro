@@ -10,6 +10,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
@@ -17,7 +18,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { UsersService } from './users.service';
-import { CreateUserDto, UpdateUserDto } from './dto/user.dto';
+import { CreateUserDto, InviteUsersDto, UpdateUserDto } from './dto/user.dto';
 
 @Controller('api/v1/users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -28,6 +29,28 @@ export class UsersController {
   @Post()
   create(@Body() dto: CreateUserDto, @CurrentUser() user: AuthenticatedUser) {
     return this.users.create(dto, user);
+  }
+
+  /**
+   * Sends the invitation for one person. Separate from creation on purpose:
+   * an admin decides when a school's people are contacted.
+   */
+  @Post(':id/invite')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  invite(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.users.invite(id, user);
+  }
+
+  /** Sends invitations to a selected set — the whole class, a whole year. */
+  @Post('invitations')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  inviteMany(@Body() dto: InviteUsersDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.users.inviteMany(dto.userIds, user);
   }
 
   @Patch(':id')

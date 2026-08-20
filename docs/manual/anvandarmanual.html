@@ -276,12 +276,35 @@
     </p>
   </div>
 
-  <h3><span class="num">3.5</span>Personer</h3>
+  <h3><span class="num">3.5</span>Personer och inbjudningar</h3>
   <p>
-    Bjud in lärare, elever och vårdnadshavare. Personer loggar in med sin
-    e-postadress och får en inbjudan när de läggs upp. Varje elev måste tillhöra
-    en klass.
+    Lägg upp lärare, elever och vårdnadshavare. Varje elev måste tillhöra en
+    klass. Personer loggar in med sin e-postadress.
   </p>
+  <p>
+    <strong>Att lägga upp någon skickar inget e-postmeddelande.</strong> Du
+    bygger alltså upp hela listan i lugn och ro — gärna veckor före
+    terminsstart — utan att någon får en inbjudan hen inte väntar sig. I
+    kolumnen <span class="ui">Inbjudan</span> ser du vilka som ännu inte
+    kontaktats.
+  </p>
+  <p>
+    När du är redo skickar du inbjudan: kuvertikonen på personens rad, eller
+    knappen <span class="ui">Bjud in … ej inbjudna</span> högst upp som tar
+    alla på en gång. Först då får personen ett mejl med en länk för att välja
+    lösenord, och först då kan hen logga in. Vill du bjuda in direkt när du
+    lägger upp någon finns reglaget <span class="ui">Skicka inbjudan</span> i
+    dialogen.
+  </p>
+  <div class="note">
+    <span class="label">Om någon redan har ett konto</span>
+    <p>
+      Har adressen redan ett konto sedan tidigare skickas inget nytt
+      meddelande, och SchemaPro säger det rakt ut i kvittensen i stället för
+      att påstå att ett mejl gått ut. Personen loggar in som vanligt med sitt
+      befintliga lösenord.
+    </p>
+  </div>
   <p>
     Har skolan ett elevregister som stöder SS12000 kan personerna importeras i
     stället för att läggas in för hand — se kapitel 7.
@@ -303,7 +326,7 @@
     <tbody>
       <tr><td class="k">salstyper.csv</td><td>namn</td><td>En typ per rad, t.ex. <em>Textilslöjd</em>. Gäller hela skolan, inte ett enskilt läsår.</td></tr>
       <tr><td class="k">klasser.csv</td><td>namn; arskurs</td><td>Importeras före eleverna — de hänvisar till klassnamnen.</td></tr>
-      <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost</td><td>Varje lärare får en inbjudan per e-post.</td></tr>
+      <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5.</td></tr>
       <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas.</td></tr>
       <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas.</td></tr>
     </tbody>
@@ -768,7 +791,7 @@
       <tr><td class="k">2</td><td>Ämnen inlagda</td><td>Samtliga ämnen finns med färg.</td></tr>
       <tr><td class="k">3</td><td>Salar inlagda</td><td>Kapacitet och typ angivna för varje sal; specialsalarnas typer finns i listan.</td></tr>
       <tr><td class="k">4</td><td>Klasser skapade</td><td>Alla klasser med rätt årskurs.</td></tr>
-      <tr><td class="k">5</td><td>Personer inbjudna</td><td>Lärare och elever finns; elever tillhör en klass.</td></tr>
+      <tr><td class="k">5</td><td>Personer upplagda</td><td>Lärare och elever finns; elever tillhör en klass. Inbjudningarna kan skickas senare.</td></tr>
       <tr><td class="k">6</td><td>Timplan ifylld</td><td>Veckosumman stämmer mot skolans timplan.</td></tr>
       <tr><td class="k">7</td><td>Tillgänglighet inlagd</td><td>Endast verkliga hinder, inte önskemål.</td></tr>
       <tr><td class="k">8</td><td>Skolregler satta</td><td>Lunchfönster och max lektioner per dag angivna.</td></tr>

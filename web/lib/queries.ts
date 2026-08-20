@@ -1192,6 +1192,45 @@ export const IMPORT_NEEDS_YEAR: Record<ImportKind, boolean> = {
   roomTypes: false,
 };
 
+/** Result of inviting one person. */
+export interface InvitationResult {
+  id: string;
+  /** False when the address already had an account — no mail was sent. */
+  emailSent: boolean;
+}
+
+/** Result of inviting a selection. */
+export interface BulkInvitationReport {
+  sent: number;
+  alreadyRegistered: number;
+  errors: { userId: string; message: string }[];
+}
+
+/**
+ * Sending invitations is deliberately separate from creating people: a school
+ * builds its roster long before term starts, and adding somebody to the
+ * catalog must not put mail in their inbox.
+ */
+export function useInvitations() {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["people"] });
+  };
+
+  return {
+    inviteOne: useMutation({
+      mutationFn: (userId: string) =>
+        api.post<InvitationResult>(`/api/v1/users/${userId}/invite`, {}),
+      onSuccess: invalidate,
+    }),
+    inviteMany: useMutation({
+      mutationFn: (userIds: string[]) =>
+        api.post<BulkInvitationReport>("/api/v1/users/invitations", { userIds }),
+      onSuccess: invalidate,
+    }),
+  };
+}
+
 export interface ImportCsvInput {
   kind: ImportKind;
   /** Required for students/classes/teachingGroups; stripped for teachers. */

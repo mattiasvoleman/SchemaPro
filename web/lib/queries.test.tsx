@@ -32,6 +32,7 @@ import {
   useScheduleVersions,
   useSetGroupMembers,
   useStartOptimization,
+  useInvitations,
   useSubjects,
   useSubstituteSuggestions,
   useTeacherLessons,
@@ -1295,5 +1296,87 @@ describe("useImportCsv", () => {
       ).rejects.toThrow("HTTP 429");
     });
     expect(harness.invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("useInvitations", () => {
+  it("posts to the invite route for one person and reports what happened", async () => {
+    mockApi.post.mockResolvedValue({ id: "u-1", emailSent: true });
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useInvitations(), { wrapper });
+
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await result.current.inviteOne.mutateAsync("u-1");
+    });
+
+    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/users/u-1/invite", {});
+    // emailSent is the honest bit: false means the address already had an
+    // account and no mail was sent at all.
+    expect(outcome).toEqual({ id: "u-1", emailSent: true });
+  });
+
+  it("refreshes the people list so the invitation status stops being stale", async () => {
+    mockApi.post.mockResolvedValue({ id: "u-1", emailSent: true });
+    const harness = createHarness();
+    const { result } = renderHook(() => useInvitations(), {
+      wrapper: harness.wrapper,
+    });
+
+    await act(async () => {
+      await result.current.inviteOne.mutateAsync("u-1");
+    });
+
+    await waitFor(() => {
+      expect(invalidatedKeys(harness)).toContainEqual(["people"]);
+    });
+  });
+
+  it("sends a whole selection in a single request", async () => {
+    mockApi.post.mockResolvedValue({ sent: 3, alreadyRegistered: 0, errors: [] });
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useInvitations(), { wrapper });
+
+    await act(async () => {
+      await result.current.inviteMany.mutateAsync(["u-1", "u-2", "u-3"]);
+    });
+
+    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/users/invitations", {
+      userIds: ["u-1", "u-2", "u-3"],
+    });
+  });
+});
+
+describe("useCrudMutations for people", () => {
+  it("carries sendInvitation only when it is set", async () => {
+    // The whole point of the feature: creating a person is silent unless the
+    // admin says otherwise, so the flag must reach the API verbatim.
+    mockApi.post.mockResolvedValue({ id: "u-1" });
+    const { wrapper } = createHarness();
+    const { result } = renderHook(
+      () => useCrudMutations<Record<string, unknown>>("/api/v1/users", [["people"]]),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.create.mutateAsync({
+        firstName: "Alma",
+        lastName: "Berg",
+        email: "alma@example.com",
+        role: "STUDENT",
+      });
+    });
+    expect(mockApi.post.mock.calls[0]?.[1]).not.toHaveProperty("sendInvitation");
+
+    await act(async () => {
+      await result.current.create.mutateAsync({
+        firstName: "Nils",
+        lastName: "Ek",
+        email: "nils@example.com",
+        role: "STUDENT",
+        sendInvitation: true,
+      });
+    });
+    expect(mockApi.post.mock.calls[1]?.[1]).toMatchObject({ sendInvitation: true });
   });
 });

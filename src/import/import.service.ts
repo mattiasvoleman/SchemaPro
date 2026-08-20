@@ -259,6 +259,10 @@ export class ImportService {
             email: row.email.trim(),
             phone: null,
             studentGroupId: row.studentGroupId,
+            // An import never emails anybody. Uploading a class list is
+            // roster preparation, often weeks before term starts; the school
+            // decides separately when those people are invited.
+            sendInvitation: false,
           },
           user,
         );

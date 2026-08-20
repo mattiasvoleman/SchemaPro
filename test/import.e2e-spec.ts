@@ -35,7 +35,10 @@ describe('CSV import (e2e)', () => {
   });
 
   describe('routes accept what the browser sends', () => {
-    it('imports teachers, inviting one identity per created row', async () => {
+    it('imports teachers without emailing a single one of them', async () => {
+      // Uploading a staff list is roster preparation, often weeks before term
+      // starts. Inviting is a separate, deliberate act — see the invitation
+      // routes in portal.e2e-spec.ts.
       harness.tx['user']!['findFirst']!.mockResolvedValue(null);
       harness.tx['user']!['create']!.mockResolvedValue({ id: 'u-1' });
 
@@ -48,9 +51,12 @@ describe('CSV import (e2e)', () => {
         .expect(201);
 
       expect(response.body).toEqual({ created: 1, skipped: 0, errors: [] });
-      expect(harness.supabase.inviteUser).toHaveBeenCalledWith(
-        'karin.ek@example.com',
-      );
+      expect(harness.supabase.inviteUser).not.toHaveBeenCalled();
+
+      const { data } = harness.tx['user']!['create']!.mock.calls[0]?.[0] as {
+        data: { invitedAt: Date | null };
+      };
+      expect(data.invitedAt).toBeNull();
     });
 
     it('imports students, resolving the class by name for the posted year', async () => {

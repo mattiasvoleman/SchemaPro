@@ -45,7 +45,7 @@ describe('UsersService', () => {
     prisma = createPrismaMock(tx);
     supabaseAdmin = {
       isConfigured: true,
-      inviteUser: jest.fn().mockResolvedValue(AUTH_ID),
+      inviteUser: jest.fn().mockResolvedValue({ authId: AUTH_ID, emailSent: true }),
       deleteUser: jest.fn().mockResolvedValue(undefined),
     };
     service = new UsersService(
@@ -67,7 +67,7 @@ describe('UsersService', () => {
   });
 
   describe('create', () => {
-    it('invites the identity first, then persists the row inside the caller RLS transaction', async () => {
+    it('emails nobody by default — adding a person is not contacting them', async () => {
       tx.user.create.mockResolvedValue({ id: USER_ID });
       const user = testUser();
 
@@ -75,21 +75,38 @@ describe('UsersService', () => {
         id: USER_ID,
       });
 
-      expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se');
+      expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
       // Tenancy: the write must run under withRls with the acting principal.
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
-      expect(tx.user.create).toHaveBeenCalledWith({
-        data: {
-          schoolId: SCHOOL_ID,
-          authId: AUTH_ID,
-          role: UserRole.TEACHER,
-          firstName: 'Anna',
-          lastName: 'Svensson',
-          email: 'anna@school.se',
-          phone: null,
-          studentGroupId: null,
-        },
+
+      const { data } = tx.user.create.mock.calls[0][0] as {
+        data: { authId: string; invitedAt: Date | null };
+      };
+      expect(data).toMatchObject({
+        schoolId: SCHOOL_ID,
+        role: UserRole.TEACHER,
+        email: 'anna@school.se',
+        invitedAt: null,
       });
+      // A placeholder identity: a real uuid, matching no Supabase user, so
+      // auth.uid() resolves to nothing and this person cannot sign in.
+      expect(data.authId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      expect(data.authId).not.toBe(AUTH_ID);
+    });
+
+    it('invites first and stamps invitedAt when the admin asks for it', async () => {
+      tx.user.create.mockResolvedValue({ id: USER_ID });
+
+      await service.create(createDto({ sendInvitation: true }), testUser());
+
+      expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se');
+      const { data } = tx.user.create.mock.calls[0][0] as {
+        data: { authId: string; invitedAt: Date | null };
+      };
+      expect(data.authId).toBe(AUTH_ID);
+      expect(data.invitedAt).toBeInstanceOf(Date);
     });
 
     it('persists the tenant from the principal, never from the payload', async () => {
@@ -144,26 +161,33 @@ describe('UsersService', () => {
       jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
       supabaseAdmin.inviteUser.mockRejectedValue(new Error('gotrue down'));
 
-      await expect(service.create(createDto(), testUser())).rejects.toThrow(
-        ServiceUnavailableException,
-      );
+      await expect(
+        service.create(createDto({ sendInvitation: true }), testUser()),
+      ).rejects.toThrow(ServiceUnavailableException);
 
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
-    it('falls back to a placeholder auth id when Supabase is not configured', async () => {
+    it('refuses an explicit invitation when Supabase is not configured', async () => {
+      // Silently creating the row instead would tell the admin an invitation
+      // went out when the deployment cannot send one at all.
+      supabaseAdmin.isConfigured = false;
+
+      await expect(
+        service.create(createDto({ sendInvitation: true }), testUser()),
+      ).rejects.toThrow(ServiceUnavailableException);
+
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('still creates people without invitations when Supabase is absent', async () => {
       supabaseAdmin.isConfigured = false;
       tx.user.create.mockResolvedValue({ id: USER_ID });
 
       await service.create(createDto(), testUser());
 
+      expect(tx.user.create).toHaveBeenCalled();
       expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
-      const { data } = tx.user.create.mock.calls[0][0] as {
-        data: { authId: string };
-      };
-      expect(data.authId).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-      );
     });
 
     it('maps a duplicate email (P2002) to 409', async () => {
@@ -172,6 +196,148 @@ describe('UsersService', () => {
       await expect(service.create(createDto(), testUser())).rejects.toThrow(
         ConflictException,
       );
+    });
+  });
+
+  describe('invite', () => {
+    const target = (overrides: Record<string, unknown> = {}) => ({
+      id: USER_ID,
+      email: 'anna@school.se',
+      isActive: true,
+      ...overrides,
+    });
+
+    it('adopts the real identity, replacing the placeholder that blocked sign-in', async () => {
+      tx.user.findUnique.mockResolvedValue(target());
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+
+      await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
+        id: USER_ID,
+        emailSent: true,
+      });
+
+      expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se');
+      const args = tx.user.update.mock.calls[0][0] as {
+        where: { id: string };
+        data: { authId: string; invitedAt: Date };
+      };
+      expect(args.where).toEqual({ id: USER_ID });
+      expect(args.data.authId).toBe(AUTH_ID);
+      expect(args.data.invitedAt).toBeInstanceOf(Date);
+    });
+
+    it('reports honestly when the address already had an identity', async () => {
+      // No email leaves GoTrue in this case; claiming one did would send the
+      // admin waiting for a message that is never coming.
+      tx.user.findUnique.mockResolvedValue(target());
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+      supabaseAdmin.inviteUser.mockResolvedValue({
+        authId: AUTH_ID,
+        emailSent: false,
+      });
+
+      await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
+        id: USER_ID,
+        emailSent: false,
+      });
+    });
+
+    it('404s an id the caller cannot see', async () => {
+      tx.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
+    });
+
+    it('refuses to invite a deactivated person', async () => {
+      tx.user.findUnique.mockResolvedValue(target({ isActive: false }));
+
+      await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
+    });
+
+    it('leaves the row untouched when the provider fails', async () => {
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      tx.user.findUnique.mockResolvedValue(target());
+      supabaseAdmin.inviteUser.mockRejectedValue(new Error('gotrue down'));
+
+      await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('503s before any lookup when invitations are not configured', async () => {
+      supabaseAdmin.isConfigured = false;
+
+      await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('inviteMany', () => {
+    const ids = ['id-1', 'id-2', 'id-3'];
+
+    beforeEach(() => {
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+    });
+
+    it('counts sent and already-registered separately', async () => {
+      tx.user.findUnique.mockResolvedValue({
+        id: USER_ID,
+        email: 'anna@school.se',
+        isActive: true,
+      });
+      supabaseAdmin.inviteUser
+        .mockResolvedValueOnce({ authId: AUTH_ID, emailSent: true })
+        .mockResolvedValueOnce({ authId: AUTH_ID, emailSent: false })
+        .mockResolvedValueOnce({ authId: AUTH_ID, emailSent: true });
+
+      await expect(service.inviteMany(ids, testUser())).resolves.toEqual({
+        sent: 2,
+        alreadyRegistered: 1,
+        errors: [],
+      });
+    });
+
+    it('keeps going after a failure and names who it was', async () => {
+      // Each invitation is an external side effect no transaction can undo,
+      // so one bad address must not discard the invitations already sent.
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      tx.user.findUnique.mockResolvedValue({
+        id: USER_ID,
+        email: 'anna@school.se',
+        isActive: true,
+      });
+      supabaseAdmin.inviteUser
+        .mockResolvedValueOnce({ authId: AUTH_ID, emailSent: true })
+        .mockRejectedValueOnce(new Error('gotrue down'))
+        .mockResolvedValueOnce({ authId: AUTH_ID, emailSent: true });
+
+      const report = await service.inviteMany(ids, testUser());
+
+      expect(report.sent).toBe(2);
+      expect(report.errors).toHaveLength(1);
+      expect(report.errors[0]?.userId).toBe('id-2');
+    });
+
+    it('reports a deactivated person as an error rather than skipping silently', async () => {
+      tx.user.findUnique.mockResolvedValue({
+        id: USER_ID,
+        email: 'anna@school.se',
+        isActive: false,
+      });
+
+      const report = await service.inviteMany(['id-1'], testUser());
+
+      expect(report).toMatchObject({ sent: 0, alreadyRegistered: 0 });
+      expect(report.errors).toHaveLength(1);
     });
   });
 

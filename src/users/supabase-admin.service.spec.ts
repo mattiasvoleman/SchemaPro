@@ -113,7 +113,10 @@ describe('SupabaseAdminService', () => {
       const service = makeService();
       expect(service.isConfigured).toBe(true);
 
-      await expect(service.inviteUser(EMAIL)).resolves.toBe(AUTH_ID);
+      await expect(service.inviteUser(EMAIL)).resolves.toEqual({
+        authId: AUTH_ID,
+        emailSent: true,
+      });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const { url, init } = call(0);
@@ -158,7 +161,12 @@ describe('SupabaseAdminService', () => {
           }),
         );
 
-      await expect(makeService().inviteUser(EMAIL)).resolves.toBe(AUTH_ID);
+      // GoTrue answers 422 for an address it already knows and sends nothing,
+      // so the caller must not be told an invitation went out.
+      await expect(makeService().inviteUser(EMAIL)).resolves.toEqual({
+        authId: AUTH_ID,
+        emailSent: false,
+      });
 
       const { url } = call(1);
       expect(url.pathname).toBe('/auth/v1/admin/users');
@@ -185,7 +193,12 @@ describe('SupabaseAdminService', () => {
           }),
         );
 
-      await expect(makeService().inviteUser(EMAIL)).resolves.toBe(AUTH_ID);
+      // GoTrue answers 422 for an address it already knows and sends nothing,
+      // so the caller must not be told an invitation went out.
+      await expect(makeService().inviteUser(EMAIL)).resolves.toEqual({
+        authId: AUTH_ID,
+        emailSent: false,
+      });
 
       expect(fetchMock).toHaveBeenCalledTimes(3);
       expect(call(2).url.searchParams.get('page')).toBe('2');

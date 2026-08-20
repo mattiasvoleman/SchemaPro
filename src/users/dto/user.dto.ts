@@ -1,5 +1,8 @@
 import { UserRole } from '@prisma/client';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsEmail,
   IsEnum,
@@ -39,6 +42,25 @@ export class CreateUserDto {
   @IsOptional()
   @IsUUID('4')
   studentGroupId?: string | null;
+
+  /**
+   * Send the invitation email as part of creating this person.
+   *
+   * Defaults to false: a school builds its roster long before term starts, and
+   * adding someone to the catalog should not put mail in their inbox. Invite
+   * them later via POST /api/v1/users/:id/invite.
+   */
+  @IsOptional()
+  @IsBoolean()
+  sendInvitation?: boolean;
+}
+
+export class InviteUsersDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @IsUUID('4', { each: true })
+  userIds!: string[];
 }
 
 export class UpdateUserDto {

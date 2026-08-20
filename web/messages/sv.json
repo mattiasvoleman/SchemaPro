@@ -254,7 +254,19 @@
     "guardiansTitle": "Vårdnadshavare för {name}",
     "guardiansEmpty": "Inga vårdnadshavare kopplade ännu.",
     "selectGuardian": "Välj vårdnadshavare…",
-    "linkGuardian": "Koppla"
+    "linkGuardian": "Koppla",
+    "sendInvitation": "Skicka inbjudan",
+    "sendInvitationHelp": "Personen får ett e-postmeddelande med en länk för att välja lösenord. Lämna av om du bara lägger upp listan nu och bjuder in senare.",
+    "resendInvitation": "Skicka inbjudan igen",
+    "invitationState": "Inbjudan",
+    "invited": "Inbjuden",
+    "notInvited": "Ej inbjuden",
+    "createdAndInvited": "Personen är tillagd och inbjudan skickad.",
+    "invitationSent": "Inbjudan skickad till {name}.",
+    "invitationAlreadyRegistered": "{name} har redan ett konto — inget nytt e-postmeddelande skickades.",
+    "invitationsSent": "{sent} inbjudningar skickade. {skipped} hade redan konto.",
+    "invitationsFailed": "{count} inbjudningar kunde inte skickas.",
+    "inviteAll": "Bjud in {count} ej inbjudna"
   },
   "requirements": {
     "title": "Timplan",

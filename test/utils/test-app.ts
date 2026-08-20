@@ -249,7 +249,10 @@ export async function createTestApp(
   };
   const supabase: SupabaseAdminMock = {
     isConfigured: true,
-    inviteUser: jest.fn(async () => '11111111-1111-4111-8111-111111111111'),
+    inviteUser: jest.fn(async () => ({
+      authId: '11111111-1111-4111-8111-111111111111',
+      emailSent: true,
+    })),
     deleteUser: jest.fn(async () => undefined),
   };
 

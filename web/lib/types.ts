@@ -91,6 +91,12 @@ export interface Person {
   email: string;
   phone: string | null;
   isActive: boolean;
+  /**
+   * When the invitation email was last sent, or null for somebody who has
+   * been added to the roster but never contacted. They cannot sign in until
+   * an admin invites them.
+   */
+  invitedAt: string | null;
   studentGroupId: string | null;
 }
 

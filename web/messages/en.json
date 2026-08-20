@@ -254,7 +254,19 @@
     "guardiansTitle": "Guardians of {name}",
     "guardiansEmpty": "No guardians linked yet.",
     "selectGuardian": "Select guardian…",
-    "linkGuardian": "Link"
+    "linkGuardian": "Link",
+    "sendInvitation": "Send invitation",
+    "sendInvitationHelp": "The person receives an email with a link to choose a password. Leave off if you are only building the roster now and will invite later.",
+    "resendInvitation": "Send invitation again",
+    "invitationState": "Invitation",
+    "invited": "Invited",
+    "notInvited": "Not invited",
+    "createdAndInvited": "Person added and invitation sent.",
+    "invitationSent": "Invitation sent to {name}.",
+    "invitationAlreadyRegistered": "{name} already has an account — no new email was sent.",
+    "invitationsSent": "{sent} invitations sent. {skipped} already had an account.",
+    "invitationsFailed": "{count} invitations could not be sent.",
+    "inviteAll": "Invite {count} not yet invited"
   },
   "requirements": {
     "title": "Curriculum",

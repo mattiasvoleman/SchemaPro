@@ -3,12 +3,13 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Link2, Pencil, Plus, Trash2, Upload, UserCheck } from "lucide-react";
+import { Link2, Mail, Pencil, Plus, Trash2, Upload, UserCheck } from "lucide-react";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import {
   useCrudMutations,
   useGroups,
   useGuardianLinkActions,
+  useInvitations,
   usePeople,
   useStudentGuardians,
 } from "@/lib/queries";
@@ -17,6 +18,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -86,6 +88,8 @@ export default function PeoplePage() {
     role?: UserRole;
     studentGroupId?: string | null;
     isActive?: boolean;
+    /** Opt-in only; see the toggle in the create dialog. */
+    sendInvitation?: boolean;
   }>("/api/v1/users", [["people"]]);
 
   const [filter, setFilter] = useState<"ALL" | UserRole>("ALL");
@@ -94,11 +98,19 @@ export default function PeoplePage() {
   const [editing, setEditing] = useState<Person | null>(null);
   const [deleting, setDeleting] = useState<Person | null>(null);
   const [form, setForm] = useState<PersonForm>(EMPTY_FORM);
+  const [sendInvitation, setSendInvitation] = useState(false);
+  const invitations = useInvitations();
 
   const filtered = useMemo(() => {
     if (!people) return [];
     return filter === "ALL" ? people : people.filter((person) => person.role === filter);
   }, [people, filter]);
+
+  /** Active people who have never been contacted — what "invite all" targets. */
+  const uninvited = useMemo(
+    () => filtered.filter((person) => person.invitedAt === null && person.isActive),
+    [filtered],
+  );
 
   const groupName = (id: string | null) =>
     id ? (groups?.find((group) => group.id === id)?.name ?? "—") : "—";
@@ -106,6 +118,9 @@ export default function PeoplePage() {
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY_FORM);
+    // Off every time the dialog opens: an invitation is a decision, never a
+    // setting that quietly carries over from the last person added.
+    setSendInvitation(false);
     setDialogOpen(true);
   };
 
@@ -138,10 +153,48 @@ export default function PeoplePage() {
         await mutations.update.mutateAsync({ id: editing.id, ...body });
         toast.success(tCommon("updated"));
       } else {
-        await mutations.create.mutateAsync({ ...body, email: form.email.trim() });
-        toast.success(tCommon("created"));
+        await mutations.create.mutateAsync({
+          ...body,
+          email: form.email.trim(),
+          sendInvitation,
+        });
+        toast.success(sendInvitation ? t("createdAndInvited") : tCommon("created"));
       }
       setDialogOpen(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tCommon("error"));
+    }
+  };
+
+  const inviteOne = async (person: Person) => {
+    try {
+      const result = await invitations.inviteOne.mutateAsync(person.id);
+      toast.success(
+        result.emailSent
+          ? t("invitationSent", { name: person.firstName })
+          : t("invitationAlreadyRegistered", { name: person.firstName }),
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tCommon("error"));
+    }
+  };
+
+  const inviteAllUninvited = async () => {
+    try {
+      const report = await invitations.inviteMany.mutateAsync(
+        uninvited.map((person) => person.id),
+      );
+      // Report what actually happened rather than the count asked for: some
+      // addresses already have accounts and receive nothing.
+      toast.success(
+        t("invitationsSent", {
+          sent: report.sent,
+          skipped: report.alreadyRegistered,
+        }),
+      );
+      if (report.errors.length > 0) {
+        toast.error(t("invitationsFailed", { count: report.errors.length }));
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
@@ -165,6 +218,16 @@ export default function PeoplePage() {
         subtitle={t("subtitle")}
         actions={
           <>
+            {uninvited.length > 0 ? (
+              <Button
+                variant="outline"
+                onClick={() => void inviteAllUninvited()}
+                disabled={invitations.inviteMany.isPending}
+              >
+                <Mail />
+                {t("inviteAll", { count: uninvited.length })}
+              </Button>
+            ) : null}
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload />
               {tCsvImport("button")}
@@ -210,6 +273,7 @@ export default function PeoplePage() {
                 <TableHead>{t("role")}</TableHead>
                 <TableHead>{t("class")}</TableHead>
                 <TableHead>{tCommon("status")}</TableHead>
+                <TableHead>{t("invitationState")}</TableHead>
                 <TableHead className="w-24 text-right">{tCommon("actions")}</TableHead>
               </TableRow>
             </TableHeader>
@@ -231,7 +295,30 @@ export default function PeoplePage() {
                       <Badge variant="outline">{t("inactive")}</Badge>
                     )}
                   </TableCell>
+                  <TableCell>
+                    {person.invitedAt ? (
+                      <Badge variant="secondary">{t("invited")}</Badge>
+                    ) : (
+                      <Badge variant="outline">{t("notInvited")}</Badge>
+                    )}
+                  </TableCell>
                   <TableCell className="text-right">
+                    {person.isActive ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => void inviteOne(person)}
+                        disabled={invitations.inviteOne.isPending}
+                        aria-label={
+                          person.invitedAt ? t("resendInvitation") : t("sendInvitation")
+                        }
+                        title={
+                          person.invitedAt ? t("resendInvitation") : t("sendInvitation")
+                        }
+                      >
+                        <Mail />
+                      </Button>
+                    ) : null}
                     {person.role === "STUDENT" ? (
                       <Button
                         variant="ghost"
@@ -355,6 +442,22 @@ export default function PeoplePage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            ) : null}
+
+            {!editing ? (
+              <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+                <div className="space-y-1">
+                  <Label htmlFor="send-invitation">{t("sendInvitation")}</Label>
+                  <p className="text-sm text-muted-foreground">
+                    {t("sendInvitationHelp")}
+                  </p>
+                </div>
+                <Switch
+                  id="send-invitation"
+                  checked={sendInvitation}
+                  onCheckedChange={setSendInvitation}
+                />
               </div>
             ) : null}
           </div>

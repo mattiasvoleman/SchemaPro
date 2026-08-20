@@ -48,10 +48,16 @@ export class SupabaseAdminService {
   }
 
   /**
-   * Invites a user by email and returns the new Supabase Auth user id
+   * Invites a user by email and returns the Supabase Auth user id
    * (`auth.users.id`), which becomes `Users.authId`.
+   *
+   * `emailSent` is false when the address already had an identity: GoTrue
+   * answers 422 for those and sends nothing, so we look the id up instead of
+   * failing. Reporting that honestly matters — an admin pressing "send
+   * invitation" on someone who already has an account must not be told an
+   * email went out when none did.
    */
-  async inviteUser(email: string): Promise<string> {
+  async inviteUser(email: string): Promise<{ authId: string; emailSent: boolean }> {
     if (!this.client) {
       throw new Error('Supabase admin client is not configured.');
     }
@@ -62,10 +68,10 @@ export class SupabaseAdminService {
     if (error || !data.user) {
       // 422 "already registered" → look the auth user up instead of failing.
       const existing = await this.findUserIdByEmail(email);
-      if (existing) return existing;
+      if (existing) return { authId: existing, emailSent: false };
       throw new Error(`Supabase invite failed: ${error?.message ?? 'unknown error'}`);
     }
-    return data.user.id;
+    return { authId: data.user.id, emailSent: true };
   }
 
   /** Deletes a Supabase Auth user. Missing users are treated as success. */
