@@ -232,7 +232,12 @@
     "membersTitle": "Medlemmar i {name}",
     "membersHint": "Elever i en undervisningsgrupp behåller sin klass och läggs till här. Schemat ser till att gruppens lektioner aldrig krockar med klassens eller andra grupper eleven ingår i.",
     "membersSave": "Spara ({count})",
-    "membersSaved": "{count} medlemmar sparade"
+    "membersSaved": "{count} medlemmar sparade",
+    "kindLabel": "Sorts grupp",
+    "kindClass": "Klass",
+    "kindTeachingGroup": "Undervisningsgrupp",
+    "kindClassHelp": "En hemklass, t.ex. 7A. Alla elever i klassen följer klassens lektioner.",
+    "kindTeachingGroupHelp": "En grupp som skär tvärs över klasserna, t.ex. Ma71 eller språkvalet En74. Lägg till eleverna med knappen Medlemmar."
   },
   "people": {
     "title": "Personer",
@@ -279,7 +284,10 @@
     "empty": "Ingen timplan ännu. AI-motorn behöver den för att bygga ett schema.",
     "noYear": "Skapa och aktivera ett läsår först.",
     "coTeacher": "Medlärare",
-    "coTeacherHint": "Båda lärarna schemaläggs tillsammans; publicerade lektioner får ett LEAD + ASSISTANT-par."
+    "coTeacherHint": "Båda lärarna schemaläggs tillsammans; publicerade lektioner får ett LEAD + ASSISTANT-par.",
+    "classesSection": "Klasser",
+    "teachingGroupsSection": "Undervisningsgrupper",
+    "memberCount": "{count} elever"
   },
   "constraints": {
     "title": "Tillgänglighet",

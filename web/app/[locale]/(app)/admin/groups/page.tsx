@@ -48,6 +48,7 @@ import {
 interface GroupForm {
   name: string;
   gradeLevel: string;
+  kind: "CLASS" | "TEACHING_GROUP";
   academicYearId: string;
 }
 
@@ -62,6 +63,7 @@ export default function GroupsPage() {
   const mutations = useCrudMutations<{
     name: string;
     gradeLevel?: number | null;
+    kind?: "CLASS" | "TEACHING_GROUP";
     academicYearId: string;
   }>("/api/v1/student-groups", [["groups"]]);
 
@@ -117,7 +119,12 @@ export default function GroupsPage() {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };
-  const [form, setForm] = useState<GroupForm>({ name: "", gradeLevel: "", academicYearId: "" });
+  const [form, setForm] = useState<GroupForm>({
+    name: "",
+    gradeLevel: "",
+    kind: "CLASS",
+    academicYearId: "",
+  });
 
   const memberCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -134,7 +141,7 @@ export default function GroupsPage() {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ name: "", gradeLevel: "", academicYearId: defaultYearId });
+    setForm({ name: "", gradeLevel: "", kind: "CLASS", academicYearId: defaultYearId });
     setDialogOpen(true);
   };
 
@@ -143,6 +150,7 @@ export default function GroupsPage() {
     setForm({
       name: group.name,
       gradeLevel: group.gradeLevel !== null ? String(group.gradeLevel) : "",
+      kind: group.kind,
       academicYearId: group.academicYearId,
     });
     setDialogOpen(true);
@@ -153,6 +161,7 @@ export default function GroupsPage() {
     const body = {
       name: form.name.trim(),
       gradeLevel: gradeLevel !== null && Number.isFinite(gradeLevel) ? gradeLevel : null,
+      kind: form.kind,
       academicYearId: form.academicYearId,
     };
     try {
@@ -222,6 +231,12 @@ export default function GroupsPage() {
                 <TableRow key={group.id}>
                   <TableCell className="font-medium">
                     {group.name}
+                    <Badge
+                      variant={group.kind === "CLASS" ? "secondary" : "outline"}
+                      className="mr-2"
+                    >
+                      {group.kind === "CLASS" ? t("kindClass") : t("kindTeachingGroup")}
+                    </Badge>
                     {group.gradeLevel !== null ? (
                       <Badge variant="secondary" className="ml-2">
                         {group.gradeLevel}
@@ -263,6 +278,26 @@ export default function GroupsPage() {
             <DialogTitle>{editing ? t("editGroup") : t("addGroup")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="group-kind">{t("kindLabel")}</Label>
+              <Select
+                value={form.kind}
+                onValueChange={(value) =>
+                  setForm({ ...form, kind: value as GroupForm["kind"] })
+                }
+              >
+                <SelectTrigger id="group-kind">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CLASS">{t("kindClass")}</SelectItem>
+                  <SelectItem value="TEACHING_GROUP">{t("kindTeachingGroup")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-sm text-muted-foreground">
+                {form.kind === "CLASS" ? t("kindClassHelp") : t("kindTeachingGroupHelp")}
+              </p>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="group-name">{tCommon("name")}</Label>

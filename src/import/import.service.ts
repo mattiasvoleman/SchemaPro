@@ -109,6 +109,9 @@ export class ImportService {
             schoolId,
             academicYearId: dto.academicYearId,
             name: row.name.trim(),
+            // klasser.csv is the class list; the membership file is what
+            // creates teaching groups.
+            kind: 'CLASS',
             gradeLevel: row.gradeLevel ?? null,
           },
         });
@@ -203,6 +206,10 @@ export class ImportService {
               schoolId,
               academicYearId: dto.academicYearId,
               name: row.groupName.trim(),
+              // A group named by a membership file is a teaching group by
+              // definition: the file exists to say which students cut across
+              // their home classes to attend it.
+              kind: 'TEACHING_GROUP',
               gradeLevel: null,
             },
             select: { id: true },

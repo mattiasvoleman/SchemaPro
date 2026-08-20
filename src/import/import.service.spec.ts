@@ -196,6 +196,7 @@ describe('ImportService', () => {
           schoolId: testUser().schoolId,
           academicYearId: YEAR_ID,
           name: '7B',
+          kind: 'CLASS',
           gradeLevel: 7,
         },
       });
@@ -426,6 +427,7 @@ describe('ImportService', () => {
           schoolId: testUser().schoolId,
           academicYearId: YEAR_ID,
           name: '7C',
+          kind: 'CLASS',
           gradeLevel: null,
         },
       });
@@ -701,6 +703,7 @@ describe('ImportService', () => {
           schoolId: testUser().schoolId,
           academicYearId: YEAR_ID,
           name: '7B', // trimmed before persisting
+          kind: 'CLASS',
           gradeLevel: null,
         },
       });

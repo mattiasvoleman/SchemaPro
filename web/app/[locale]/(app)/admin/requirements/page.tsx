@@ -1,12 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
+import { splitGroupsByKind } from "@/lib/group-sections";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Grid3x3, Plus } from "lucide-react";
 import {
   useAcademicYears,
   useCrudMutations,
+  useGroupMemberships,
   useGroups,
   usePeople,
   useRequirements,
@@ -61,6 +63,7 @@ export default function RequirementsPage() {
   const { data: subjects, isLoading: subjectsLoading } = useSubjects();
   const { data: groups } = useGroups();
   const { data: people } = usePeople();
+  const { data: memberships } = useGroupMemberships();
   const { data: requirements } = useRequirements(activeYearId);
 
   const mutations = useCrudMutations<{
@@ -89,6 +92,13 @@ export default function RequirementsPage() {
   const yearGroups = useMemo(
     () => (groups ?? []).filter((group) => group.academicYearId === activeYearId),
     [groups, activeYearId],
+  );
+
+  // Two sections rather than one alphabetical wall — see lib/group-sections.ts
+  // for why, and for the tests that pin the ordering and the counts.
+  const { sections, memberCounts } = useMemo(
+    () => splitGroupsByKind(yearGroups, memberships ?? []),
+    [yearGroups, memberships],
   );
 
   const requirementIndex = useMemo(() => {
@@ -231,10 +241,34 @@ export default function RequirementsPage() {
                 </tr>
               </thead>
               <tbody>
-                {yearGroups.map((group) => (
+                {sections.map((section) => (
+                  <Fragment key={section.kind}>
+                    <tr className="border-b bg-muted/40">
+                      <td
+                        colSpan={subjects.length + 1}
+                        className="sticky left-0 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                      >
+                        {section.kind === "CLASS"
+                          ? t("classesSection")
+                          : t("teachingGroupsSection")}{" "}
+                        ({section.groups.length})
+                      </td>
+                    </tr>
+                    {section.groups.map((group) => (
                   <tr key={group.id} className="border-b last:border-0">
                     <td className="sticky left-0 z-10 bg-card px-3 py-2 font-medium">
-                      {group.name}
+                      <span>{group.name}</span>
+                      {section.kind === "TEACHING_GROUP" ? (
+                        <span
+                          className={
+                            (memberCounts.get(group.id) ?? 0) === 0
+                              ? "ml-2 text-xs font-normal text-destructive"
+                              : "ml-2 text-xs font-normal text-muted-foreground"
+                          }
+                        >
+                          {t("memberCount", { count: memberCounts.get(group.id) ?? 0 })}
+                        </span>
+                      ) : null}
                     </td>
                     {subjects.map((subject) => {
                       const requirement = requirementIndex.get(`${group.id}:${subject.id}`);
@@ -268,6 +302,8 @@ export default function RequirementsPage() {
                       );
                     })}
                   </tr>
+                    ))}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

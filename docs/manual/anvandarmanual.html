@@ -259,11 +259,17 @@
   <p>
     Utöver sin klass kan en elev ingå i <strong>undervisningsgrupper</strong> —
     grupper som skär tvärs över klasserna, till exempel <em>Ma71</em>,
-    <em>Sv73</em> eller ett språkval <em>En74</em>. En undervisningsgrupp
-    skapas på samma sätt som en klass, under
-    <span class="path">Planering › Klasser</span>. Klicka därefter
+    <em>Sv73</em> eller ett språkval <em>En74</em>. Du skapar dem under
+    <span class="path">Planering › Klasser</span> och väljer
+    <span class="ui">Undervisningsgrupp</span> i fältet
+    <span class="ui">Sorts grupp</span>. Klicka därefter
     <span class="ui">Medlemmar</span> på gruppens rad och bocka för eleverna;
     varje elev behåller sin klass och kan ingå i valfritt antal grupper.
+  </p>
+  <p>
+    Valet av sort är inte kosmetiskt. Det avgör hur gruppen presenteras i
+    timplanen, och en nivågrupp kan mycket väl ha en årskurs utan att för den
+    skull vara en klass — därför frågar SchemaPro i stället för att gissa.
   </p>
   <div class="check">
     <span class="label">Schemat skyddar eleverna, inte bara grupperna</span>
@@ -401,6 +407,20 @@
     En timplanspost kan peka på en klass <em>eller</em> en undervisningsgrupp.
     Matematik i nivågrupper läggs alltså som en post per grupp — <em>Ma71,
     Ma72, Ma73</em> — i stället för en per klass, med respektive lärare.
+  </p>
+  <p>
+    Matrisen är därför delad i två avsnitt: <span class="ui">Klasser</span>
+    överst och <span class="ui">Undervisningsgrupper</span> under, med antalet
+    grupper i varje rubrik. Bakom varje undervisningsgrupps namn står hur många
+    elever den har. <strong>Står det 0 elever är siffran röd</strong> — en
+    timplanspost på en tom grupp genererar lektioner som ingen elev går på.
+    Lägg till medlemmarna under <span class="path">Planering › Klasser ›
+    Medlemmar</span> först.
+  </p>
+  <p>
+    Lägger du ämnet både på klassen och på nivågrupperna får eleverna dubbelt.
+    Välj det ena: antingen <em>7A – matematik</em> eller <em>Ma71, Ma72,
+    Ma73</em>.
   </p>
   <p>
     Längst ned visas <span class="ui">totalt antal lektioner per vecka</span>.

@@ -33,6 +33,7 @@ export class StudentGroupsService {
             schoolId,
             academicYearId: dto.academicYearId,
             name: dto.name,
+            kind: dto.kind ?? 'CLASS',
             gradeLevel: dto.gradeLevel ?? null,
           },
         }),
@@ -56,6 +57,7 @@ export class StudentGroupsService {
               ? { academicYearId: dto.academicYearId }
               : {}),
             ...(dto.name !== undefined ? { name: dto.name } : {}),
+            ...(dto.kind !== undefined ? { kind: dto.kind } : {}),
             ...(dto.gradeLevel !== undefined ? { gradeLevel: dto.gradeLevel } : {}),
           },
         }),

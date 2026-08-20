@@ -1,4 +1,6 @@
+import { StudentGroupKind } from '@prisma/client';
 import {
+  IsEnum,
   ArrayMaxSize,
   IsArray,
   IsInt,
@@ -14,6 +16,15 @@ import {
 export class CreateStudentGroupDto {
   @IsUUID('4')
   academicYearId!: string;
+
+  /**
+   * CLASS by default: the common case, and the safe one — a group wrongly
+   * marked as a teaching group would silently stop being every member's home
+   * class.
+   */
+  @IsOptional()
+  @IsEnum(StudentGroupKind)
+  kind?: StudentGroupKind;
 
   @IsString()
   @IsNotEmpty()
@@ -31,6 +42,10 @@ export class UpdateStudentGroupDto {
   @IsOptional()
   @IsUUID('4')
   academicYearId?: string;
+
+  @IsOptional()
+  @IsEnum(StudentGroupKind)
+  kind?: StudentGroupKind;
 
   @IsOptional()
   @IsString()

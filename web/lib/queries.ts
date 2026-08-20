@@ -104,7 +104,7 @@ export function useGroups() {
     queryFn: () =>
       selectAll<StudentGroup>(
         "StudentGroups",
-        "id, academicYearId, name, gradeLevel",
+        "id, academicYearId, name, kind, gradeLevel",
         "name",
       ),
   });

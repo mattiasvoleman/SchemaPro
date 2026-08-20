@@ -54,6 +54,9 @@ describe('StudentGroupsService', () => {
           schoolId: SCHOOL_ID,
           academicYearId: YEAR_ID,
           name: '7A',
+          // A group is a home class unless somebody says otherwise: mislabelling
+          // one as a teaching group would stop it being its members' home class.
+          kind: 'CLASS',
           gradeLevel: null,
         },
       });

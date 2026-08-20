@@ -232,7 +232,12 @@
     "membersTitle": "Members of {name}",
     "membersHint": "Students in a teaching group keep their home class and are added here. Scheduling guarantees the group's lessons never clash with the class or other groups the student belongs to.",
     "membersSave": "Save ({count})",
-    "membersSaved": "{count} members saved"
+    "membersSaved": "{count} members saved",
+    "kindLabel": "Group type",
+    "kindClass": "Class",
+    "kindTeachingGroup": "Teaching group",
+    "kindClassHelp": "A home class such as 7A. Every student in it follows the class's lessons.",
+    "kindTeachingGroupHelp": "A group cutting across classes, such as Ma71 or the language option En74. Add its students with the Members button."
   },
   "people": {
     "title": "People",
@@ -279,7 +284,10 @@
     "empty": "No curriculum yet. The AI engine needs this to build a schedule.",
     "noYear": "Create and activate an academic year first.",
     "coTeacher": "Co-teacher",
-    "coTeacherHint": "Both teachers are scheduled together; published lessons get a LEAD + ASSISTANT pair."
+    "coTeacherHint": "Both teachers are scheduled together; published lessons get a LEAD + ASSISTANT pair.",
+    "classesSection": "Classes",
+    "teachingGroupsSection": "Teaching groups",
+    "memberCount": "{count} students"
   },
   "constraints": {
     "title": "Availability",

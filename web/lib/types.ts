@@ -76,10 +76,14 @@ export interface AcademicYear {
   isActive: boolean;
 }
 
+/** A home class (7A) or a teaching group cutting across classes (Ma71). */
+export type StudentGroupKind = "CLASS" | "TEACHING_GROUP";
+
 export interface StudentGroup {
   id: string;
   academicYearId: string;
   name: string;
+  kind: StudentGroupKind;
   gradeLevel: number | null;
 }
 

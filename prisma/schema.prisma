@@ -309,11 +309,25 @@ model AcademicYear {
   @@map("AcademicYears")
 }
 
+/// What a group IS, rather than what it happens to contain right now.
+///
+/// The two were previously told apart by guesswork — "no gradeLevel, so
+/// probably a teaching group" — which misfiles a nivågrupp that does carry a
+/// year, and files every freshly created teaching group under classes until
+/// somebody adds its first member.
+enum StudentGroupKind {
+  /// A home class: every member follows all of its lessons (7A, 8B).
+  CLASS
+  /// A teaching group cutting across classes (Ma71, språkval En74).
+  TEACHING_GROUP
+}
+
 model StudentGroup {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId       String   @db.Uuid
   academicYearId String   @db.Uuid
   name           String
+  kind           StudentGroupKind @default(CLASS)
   gradeLevel     Int?
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @db.Timestamptz(6)

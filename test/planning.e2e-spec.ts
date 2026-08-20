@@ -156,6 +156,51 @@ describe('Planning surface (e2e)', () => {
         .expect(201);
     });
 
+    it('creates a teaching group, which the timplan lists separately', async () => {
+      harness.tx['studentGroup']!['create']!.mockResolvedValue({ id: GROUP_ID });
+
+      await request(http())
+        .post('/api/v1/student-groups')
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: YEAR_ID,
+          name: 'Ma71',
+          kind: 'TEACHING_GROUP',
+          // A level group legitimately carries a year — the old "no gradeLevel
+          // means teaching group" guess got exactly this case wrong.
+          gradeLevel: 7,
+        })
+        .expect(201);
+
+      const args = harness.tx['studentGroup']!['create']!.mock.calls[0]?.[0] as {
+        data: { kind: string; gradeLevel: number };
+      };
+      expect(args.data).toMatchObject({ kind: 'TEACHING_GROUP', gradeLevel: 7 });
+    });
+
+    it('defaults to a home class when no kind is given', async () => {
+      harness.tx['studentGroup']!['create']!.mockResolvedValue({ id: GROUP_ID });
+
+      await request(http())
+        .post('/api/v1/student-groups')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, name: '7A', gradeLevel: 7 })
+        .expect(201);
+
+      const args = harness.tx['studentGroup']!['create']!.mock.calls[0]?.[0] as {
+        data: { kind: string };
+      };
+      expect(args.data.kind).toBe('CLASS');
+    });
+
+    it('rejects a kind that is not one of the two', async () => {
+      await request(http())
+        .post('/api/v1/student-groups')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, name: 'Ma71', kind: 'NIVÅGRUPP' })
+        .expect(400);
+    });
+
     it('rejects a grade level outside the Swedish 0–12 range', async () => {
       await request(http())
         .post('/api/v1/student-groups')

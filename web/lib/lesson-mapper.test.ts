@@ -27,6 +27,7 @@ const group: StudentGroup = {
   id: "grp-1",
   academicYearId: "year-1",
   name: "9A",
+  kind: "CLASS",
   gradeLevel: 9,
 };
 const room: Room = {
