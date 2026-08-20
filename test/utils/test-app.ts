@@ -19,6 +19,8 @@ import {
 } from '@nestjs/core';
 import { DiscoveryModule } from '@nestjs/core';
 import { HttpService } from '@nestjs/axios';
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import { configureBodyParsers } from '../../src/common/http-defaults';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import { of } from 'rxjs';
@@ -266,7 +268,10 @@ export async function createTestApp(
 
   const moduleRef = await builder.compile();
 
-  const app = moduleRef.createNestApplication();
+  const app = moduleRef.createNestApplication<NestExpressApplication>();
+  // Production's body limits, applied the same way main.ts applies them: a
+  // harness with different limits cannot see a payload the real API rejects.
+  configureBodyParsers(app);
   await app.init();
 
   return {

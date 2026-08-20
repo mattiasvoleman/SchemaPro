@@ -19,6 +19,23 @@ const BOOKING_ID = '55555555-5555-4555-8555-555555555555';
 const RECORD_ID = '66666666-6666-4666-8666-666666666666';
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 
+/**
+ * Dates are computed, never written out. A hard-coded "next week" is a test
+ * that passes until the day it silently becomes the past — which is exactly
+ * how the booking spec below started failing a day after it was written.
+ */
+const daysFromNow = (days: number): Date =>
+  new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+const isoAt = (days: number, hour: number): string => {
+  const date = daysFromNow(days);
+  date.setUTCHours(hour, 0, 0, 0);
+  return date.toISOString();
+};
+
+const dateOnly = (days: number): string =>
+  daysFromNow(days).toISOString().slice(0, 10);
+
 describe('Portal and platform surfaces (e2e)', () => {
   let harness: TestHarness;
   const http = () => harness.app.getHttpServer();
@@ -56,7 +73,7 @@ describe('Portal and platform surfaces (e2e)', () => {
       await request(http())
         .post('/api/v1/absence-reports')
         .set('x-test-user', guardian())
-        .send({ studentId: STUDENT_ID, date: '2026-08-18', type: 'SICK' })
+        .send({ studentId: STUDENT_ID, date: dateOnly(1), type: 'SICK' })
         .expect(201);
     });
 
@@ -64,7 +81,7 @@ describe('Portal and platform surfaces (e2e)', () => {
       await request(http())
         .post('/api/v1/absence-reports')
         .set('x-test-user', guardian())
-        .send({ studentId: STUDENT_ID, date: '2026-08-18', type: 'HOLIDAY' })
+        .send({ studentId: STUDENT_ID, date: dateOnly(1), type: 'HOLIDAY' })
         .expect(400);
     });
 
@@ -85,8 +102,8 @@ describe('Portal and platform surfaces (e2e)', () => {
         .set('x-test-user', guardian())
         .send({
           studentId: STUDENT_ID,
-          startDate: '2026-10-26',
-          endDate: '2026-10-30',
+          startDate: dateOnly(60),
+          endDate: dateOnly(64),
           reason: 'Familjeresa',
         })
         .expect(201);
@@ -125,8 +142,8 @@ describe('Portal and platform surfaces (e2e)', () => {
         .send({
           roomId: ROOM_ID,
           title: 'Föräldramöte 7A',
-          startsAt: '2026-08-18T17:00:00.000Z',
-          endsAt: '2026-08-18T18:30:00.000Z',
+          startsAt: isoAt(7, 15),
+          endsAt: isoAt(7, 17),
         })
         .expect(201);
     });
@@ -139,7 +156,7 @@ describe('Portal and platform surfaces (e2e)', () => {
           roomId: ROOM_ID,
           title: 'Möte',
           startsAt: '18/8 kl 17',
-          endsAt: '2026-08-18T18:30:00.000Z',
+          endsAt: isoAt(7, 17),
         })
         .expect(400);
     });
@@ -160,8 +177,8 @@ describe('Portal and platform surfaces (e2e)', () => {
           .send({
             roomId: ROOM_ID,
             title: 'Möte',
-            startsAt: '2026-08-18T17:00:00.000Z',
-            endsAt: '2026-08-18T18:30:00.000Z',
+            startsAt: isoAt(7, 15),
+            endsAt: isoAt(7, 17),
           })
           .expect(403);
       }

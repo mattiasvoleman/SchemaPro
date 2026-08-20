@@ -70,11 +70,57 @@ export class HttpExceptionFilter implements ExceptionFilter {
       };
     }
 
+    const bodyParser = this.fromBodyParserError(exception);
+    if (bodyParser) {
+      return bodyParser;
+    }
+
     return {
       status: HttpStatus.INTERNAL_SERVER_ERROR,
       title: 'Internal Server Error',
       detail: 'An unexpected error occurred. Please try again later.',
     };
+  }
+
+  /**
+   * body-parser rejects a malformed or oversized body with a plain `Error`
+   * carrying a `type` discriminator — not an `HttpException`. Without this it
+   * fell through to the catch-all above, so a CSV import one row too large
+   * came back as "an unexpected error occurred" with a 500, sending the caller
+   * looking for a server fault that did not exist.
+   *
+   * Matched on `type` rather than on the `status` property these errors also
+   * carry: an arbitrary thrown object must never be able to pick its own
+   * response status.
+   */
+  private fromBodyParserError(exception: unknown): NormalizedError | null {
+    if (!(exception instanceof Error)) return null;
+    const type = (exception as Error & { type?: unknown }).type;
+
+    switch (type) {
+      case 'entity.too.large':
+        return {
+          status: HttpStatus.PAYLOAD_TOO_LARGE,
+          title: this.titleFor(HttpStatus.PAYLOAD_TOO_LARGE),
+          detail:
+            'The request body is too large. Split the import into smaller ' +
+            'files and upload them one at a time.',
+        };
+      case 'entity.parse.failed':
+        return {
+          status: HttpStatus.BAD_REQUEST,
+          title: this.titleFor(HttpStatus.BAD_REQUEST),
+          detail: 'The request body is not valid JSON.',
+        };
+      case 'encoding.unsupported':
+        return {
+          status: HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+          title: this.titleFor(HttpStatus.UNSUPPORTED_MEDIA_TYPE),
+          detail: 'The request body uses an unsupported content encoding.',
+        };
+      default:
+        return null;
+    }
   }
 
   private fromHttpException(exception: HttpException): NormalizedError {
@@ -166,6 +212,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
       [HttpStatus.FORBIDDEN]: 'Forbidden',
       [HttpStatus.NOT_FOUND]: 'Not Found',
       [HttpStatus.CONFLICT]: 'Conflict',
+      [HttpStatus.PAYLOAD_TOO_LARGE]: 'Payload Too Large',
+      [HttpStatus.UNSUPPORTED_MEDIA_TYPE]: 'Unsupported Media Type',
       [HttpStatus.TOO_MANY_REQUESTS]: 'Too Many Requests',
       [HttpStatus.SERVICE_UNAVAILABLE]: 'Service Unavailable',
       [HttpStatus.INTERNAL_SERVER_ERROR]: 'Internal Server Error',

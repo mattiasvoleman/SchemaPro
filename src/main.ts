@@ -4,6 +4,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { configureBodyParsers } from './common/http-defaults';
 import { CorsIoAdapter } from './realtime/cors-io.adapter';
 import type { AppConfig } from './config/configuration';
 
@@ -13,6 +14,9 @@ async function bootstrap(): Promise<void> {
     // is handled by the exception filter and service-level Logger calls.
     logger: ['error', 'warn', 'log'],
   });
+
+  // Body size limits — shared with the e2e harness so both run identically.
+  configureBodyParsers(app);
 
   const configService = app.get(ConfigService);
   const appConfig = configService.getOrThrow<AppConfig>('app');

@@ -1206,14 +1206,84 @@ export interface ImportCsvInput {
  * can affect is refreshed — people (students/teachers), groups (classes and
  * on-the-fly teaching groups), and both membership views.
  */
+/**
+ * Rows the API accepts in one request, per kind — the @ArrayMaxSize on each
+ * import DTO. A school's real file routinely exceeds these (5400 teaching-group
+ * memberships is an ordinary secondary school), so uploads are split here
+ * rather than refused: the caps exist to bound one request, not to cap what a
+ * school may import.
+ */
+export const IMPORT_MAX_ROWS: Record<ImportKind, number> = {
+  students: 500,
+  teachers: 500,
+  classes: 500,
+  teachingGroups: 2000,
+  roomTypes: 200,
+};
+
+/**
+ * Uploads `rows` in sequential batches and merges the reports into one.
+ *
+ * Sequential, not parallel: people imports send one invitation per created row
+ * and the endpoint is rate-limited, so overlapping batches would trade a
+ * working import for a 429.
+ *
+ * A failing batch does not discard the ones before it. Every import is
+ * row-wise idempotent — re-uploading the same file skips what already
+ * exists — so reporting the partial result and what stopped it lets the admin
+ * simply upload the file again, rather than wondering which half landed.
+ *
+ * If the FIRST batch fails there is no partial result to preserve, and the
+ * error is rethrown: a small file that failed outright is a failure, not a
+ * report saying nothing was imported.
+ */
+export async function importCsvInBatches({
+  kind,
+  academicYearId,
+  rows,
+}: ImportCsvInput): Promise<ImportReport> {
+  const size = IMPORT_MAX_ROWS[kind];
+  const merged: ImportReport = { created: 0, skipped: 0, errors: [] };
+
+  for (let offset = 0; offset < rows.length; offset += size) {
+    const batch = rows.slice(offset, offset + size);
+    try {
+      const report = await api.post<ImportReport>(
+        IMPORT_ENDPOINTS[kind],
+        IMPORT_NEEDS_YEAR[kind]
+          ? { academicYearId, rows: batch }
+          : { rows: batch },
+      );
+      // Tolerant of a sparse body: a proxy or an older API build may answer
+      // without every field, and losing the whole import over a missing
+      // counter would be a worse failure than an under-reported one.
+      merged.created += report?.created ?? 0;
+      merged.skipped += report?.skipped ?? 0;
+      // Row numbers come back 1-based within the batch; shift them so they
+      // point at the line the admin actually has to fix in their file.
+      for (const error of report?.errors ?? []) {
+        merged.errors.push({ ...error, row: error.row + offset });
+      }
+    } catch (error) {
+      if (offset === 0) throw error;
+      merged.errors.push({
+        row: offset + 1,
+        message:
+          error instanceof Error
+            ? error.message
+            : "Importen avbröts. Ladda upp filen igen — rader som redan lagts in hoppas över.",
+      });
+      break;
+    }
+  }
+
+  return merged;
+}
+
 export function useImportCsv() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ kind, academicYearId, rows }: ImportCsvInput) =>
-      api.post<ImportReport>(
-        IMPORT_ENDPOINTS[kind],
-        IMPORT_NEEDS_YEAR[kind] ? { academicYearId, rows } : { rows },
-      ),
+    mutationFn: importCsvInBatches,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["people"] });
       void queryClient.invalidateQueries({ queryKey: ["groups"] });
