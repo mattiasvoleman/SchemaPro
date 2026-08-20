@@ -680,6 +680,7 @@
     "importing": "Importerar…",
     "resultSummary": "{created} skapade, {skipped} överhoppade",
     "rowErrors": "Fel per rad",
-    "rowError": "Rad {row}: {message}"
+    "rowError": "Rad {row}: {message}",
+    "exportButton": "Exportera CSV"
   }
 }

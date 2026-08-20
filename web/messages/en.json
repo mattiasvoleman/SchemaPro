@@ -680,6 +680,7 @@
     "importing": "Importing…",
     "resultSummary": "{created} created, {skipped} skipped",
     "rowErrors": "Errors per row",
-    "rowError": "Row {row}: {message}"
+    "rowError": "Row {row}: {message}",
+    "exportButton": "Export CSV"
   }
 }

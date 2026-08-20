@@ -15,6 +15,8 @@ import {
   UserCheck,
 } from "lucide-react";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
+import { CsvExportButton } from "@/components/import/csv-export-button";
+import { studentsToCsv, teachersToCsv } from "@/lib/csv";
 import {
   useCrudMutations,
   useAcademicYears,
@@ -207,6 +209,10 @@ export default function PeoplePage() {
   const subjectName = (id: string) =>
     subjects?.find((subject) => subject.id === id)?.name ?? "—";
 
+  /** Class name for export: blank rather than an em dash when there is none. */
+  const exportClassName = (id: string | null) =>
+    id ? (groups?.find((group) => group.id === id)?.name ?? "") : "";
+
   const groupName = (id: string | null) =>
     id ? (groups?.find((group) => group.id === id)?.name ?? "—") : "—";
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -357,6 +363,23 @@ export default function PeoplePage() {
                 {t("inviteAll", { count: uninvited.length })}
               </Button>
             ) : null}
+            <CsvExportButton
+              exports={[
+                {
+                  kind: "teachers",
+                  build: () => teachersToCsv(people ?? []),
+                  empty: !people?.some((person) => person.role === "TEACHER"),
+                },
+                {
+                  kind: "students",
+                  // Not `groupName`: that renders an em dash for "no class",
+                  // and an exported file saying "—" is one the importer would
+                  // reject on the way back in.
+                  build: () => studentsToCsv(people ?? [], exportClassName),
+                  empty: !people?.some((person) => person.role === "STUDENT"),
+                },
+              ]}
+            />
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload />
               {tCsvImport("button")}

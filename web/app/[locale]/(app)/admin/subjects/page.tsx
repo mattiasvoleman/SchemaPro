@@ -3,11 +3,12 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { BookOpen, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { BookOpen, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useCrudMutations, useSubjects , useRoomTypes, useRoomTypeActions } from "@/lib/queries";
 import type { RoomType, Subject } from "@/lib/types";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
-import { CSV_TEMPLATES, downloadCsv, subjectsToCsv } from "@/lib/csv";
+import { subjectsToCsv } from "@/lib/csv";
+import { CsvExportButton } from "@/components/import/csv-export-button";
 import {
   Select,
   SelectContent,
@@ -77,10 +78,7 @@ export default function SubjectsPage() {
   const exportCsv = () => {
     const named = (id: string | null) =>
       id ? (roomTypes?.find((type) => type.id === id)?.name ?? "") : "";
-    downloadCsv(
-      CSV_TEMPLATES.subjects.filename,
-      subjectsToCsv(subjects ?? [], named),
-    );
+    return subjectsToCsv(subjects ?? [], named);
   };
 
   const [creatingType, setCreatingType] = useState(false);
@@ -149,14 +147,15 @@ export default function SubjectsPage() {
         subtitle={t("subtitle")}
         actions={
           <>
-            <Button
-              variant="outline"
-              onClick={exportCsv}
-              disabled={!subjects || subjects.length === 0}
-            >
-              <Download />
-              {t("exportCsv")}
-            </Button>
+            <CsvExportButton
+              exports={[
+                {
+                  kind: "subjects",
+                  build: exportCsv,
+                  empty: !subjects || subjects.length === 0,
+                },
+              ]}
+            />
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload />
               {tCsvImport("button")}

@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { MapPin, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useCrudMutations, useRooms , useRoomTypes } from "@/lib/queries";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
+import { CsvExportButton } from "@/components/import/csv-export-button";
+import { roomTypesToCsv } from "@/lib/csv";
 import type { Room, RoomType } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -138,6 +140,15 @@ export default function RoomsPage() {
         subtitle={t("subtitle")}
         actions={
           <>
+            <CsvExportButton
+              exports={[
+                {
+                  kind: "roomTypes",
+                  build: () => roomTypesToCsv(roomTypes ?? []),
+                  empty: !roomTypes || roomTypes.length === 0,
+                },
+              ]}
+            />
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload />
               {tCsvImport("button")}

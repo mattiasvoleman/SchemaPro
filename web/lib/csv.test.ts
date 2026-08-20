@@ -14,6 +14,11 @@ import {
   mapMembershipRows,
   mapRoomTypeRows,
   mapSubjectRows,
+  classesToCsv,
+  membershipsToCsv,
+  roomTypesToCsv,
+  studentsToCsv,
+  teachersToCsv,
   serializeCsv,
   subjectsToCsv,
   mapStudentRows,
@@ -887,5 +892,163 @@ describe("serializeCsv", () => {
     const csv = serializeCsv(["a"], [["two\nlines"]]);
 
     expect(csv).toContain('"two\nlines"');
+  });
+});
+
+describe("export round trips", () => {
+  it("room types survive a trip out and back", () => {
+    const exported = roomTypesToCsv([{ name: "Textilslöjd" }, { name: "Aula" }]);
+    const { rows, errors } = mapRoomTypeRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([{ name: "Textilslöjd" }, { name: "Aula" }]);
+  });
+
+  it("classes survive, keeping the grade level a number again", () => {
+    const exported = classesToCsv([
+      { name: "7A", kind: "CLASS", gradeLevel: 7 },
+      { name: "F-klass", kind: "CLASS", gradeLevel: 0 },
+    ]);
+    const { rows, errors } = mapClassRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    // Year 0 must survive as 0, not be lost to a falsy check somewhere.
+    expect(rows).toEqual([
+      { name: "7A", gradeLevel: 7 },
+      { name: "F-klass", gradeLevel: 0 },
+    ]);
+  });
+
+  it("leaves a class without a grade level blank, and reads back without one", () => {
+    const exported = classesToCsv([{ name: "Förberedelse", kind: "CLASS", gradeLevel: null }]);
+    const { rows, errors } = mapClassRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    expect(rows[0]).toEqual({ name: "Förberedelse" });
+  });
+
+  it("keeps teaching groups out of the class export", () => {
+    // They have their own file; re-importing them here would turn every
+    // teaching group into a home class.
+    const exported = classesToCsv([
+      { name: "7A", kind: "CLASS", gradeLevel: 7 },
+      { name: "Ma71", kind: "TEACHING_GROUP", gradeLevel: null },
+    ]);
+
+    expect(mapClassRows(parseCsv(exported)).rows).toEqual([
+      { name: "7A", gradeLevel: 7 },
+    ]);
+  });
+
+  it("teachers survive, and students are left out of their file", () => {
+    const exported = teachersToCsv([
+      { role: "TEACHER", firstName: "Karin", lastName: "Ek", email: "karin@s.se" },
+      { role: "STUDENT", firstName: "Alma", lastName: "Berg", email: "alma@s.se" },
+    ]);
+    const { rows, errors } = mapTeacherRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      { firstName: "Karin", lastName: "Ek", email: "karin@s.se" },
+    ]);
+  });
+
+  it("students survive with their class written as a name", () => {
+    const exported = studentsToCsv(
+      [
+        {
+          role: "STUDENT",
+          firstName: "Alma",
+          lastName: "Berg",
+          email: "alma@s.se",
+          studentGroupId: "g-7a",
+        },
+      ],
+      (id) => (id === "g-7a" ? "7A" : ""),
+    );
+    const { rows, errors } = mapStudentRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      { firstName: "Alma", lastName: "Berg", email: "alma@s.se", className: "7A" },
+    ]);
+  });
+
+  it("writes a blank class for a student who has none, not a placeholder", () => {
+    // An em dash or "—" would come back as a class name the importer cannot
+    // resolve, turning every classless student into a row error.
+    const exported = studentsToCsv(
+      [
+        {
+          role: "STUDENT",
+          firstName: "Alma",
+          lastName: "Berg",
+          email: "alma@s.se",
+          studentGroupId: null,
+        },
+      ],
+      () => "",
+    );
+
+    expect(exported.trimEnd().split("\r\n").at(-1)).toBe("Alma;Berg;alma@s.se;");
+  });
+
+  it("memberships survive as one row per membership", () => {
+    const exported = membershipsToCsv(
+      [
+        { id: "g-ma71", name: "Ma71" },
+        { id: "g-en74", name: "En74" },
+      ],
+      [
+        { id: "st-1", email: "alma@s.se" },
+        { id: "st-2", email: "nils@s.se" },
+      ],
+      [
+        { studentGroupId: "g-ma71", studentId: "st-1" },
+        { studentGroupId: "g-ma71", studentId: "st-2" },
+        { studentGroupId: "g-en74", studentId: "st-1" },
+      ],
+    );
+    const { rows, errors } = mapMembershipRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      { groupName: "Ma71", email: "alma@s.se" },
+      { groupName: "Ma71", email: "nils@s.se" },
+      { groupName: "En74", email: "alma@s.se" },
+    ]);
+  });
+
+  it("skips a membership it cannot name rather than exporting a blank cell", () => {
+    // A blank group name is a row the importer rejects — writing it would
+    // produce a file that cannot be uploaded back.
+    const exported = membershipsToCsv(
+      [{ id: "g-ma71", name: "Ma71" }],
+      [{ id: "st-1", email: "alma@s.se" }],
+      [
+        { studentGroupId: "g-ma71", studentId: "st-1" },
+        { studentGroupId: "g-gone", studentId: "st-1" },
+        { studentGroupId: "g-ma71", studentId: "st-gone" },
+      ],
+    );
+
+    expect(mapMembershipRows(parseCsv(exported)).rows).toEqual([
+      { groupName: "Ma71", email: "alma@s.se" },
+    ]);
+  });
+
+  it("writes a header-only file when there is nothing to export", () => {
+    const exported = roomTypesToCsv([]);
+
+    expect(exported).toBe("\uFEFFnamn\r\n");
+    expect(mapRoomTypeRows(parseCsv(exported)).rows).toEqual([]);
+  });
+
+  it("quotes a name containing the delimiter in every kind", () => {
+    const exported = classesToCsv([
+      { name: "7A; parallell", kind: "CLASS", gradeLevel: 7 },
+    ]);
+
+    expect(mapClassRows(parseCsv(exported)).rows[0]?.name).toBe("7A; parallell");
   });
 });

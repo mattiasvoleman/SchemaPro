@@ -449,3 +449,92 @@ export function subjectsToCsv(
     ]),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Export
+//
+// Every builder writes the columns of the matching template, so an exported
+// file imports straight back — that round trip is what makes export useful
+// (pull the list out, fix it in Excel, upload it again) and it is asserted per
+// kind in lib/csv.test.ts. Ids never appear: a spreadsheet carries names.
+// ---------------------------------------------------------------------------
+
+export function roomTypesToCsv(roomTypes: { name: string }[]): string {
+  return serializeCsv(
+    CSV_TEMPLATES.roomTypes.headers,
+    roomTypes.map((type) => [type.name]),
+  );
+}
+
+export function classesToCsv(
+  groups: { name: string; kind: string; gradeLevel: number | null }[],
+): string {
+  return serializeCsv(
+    CSV_TEMPLATES.classes.headers,
+    groups
+      // Teaching groups have their own file, and a class list containing them
+      // would re-import them as classes.
+      .filter((group) => group.kind === "CLASS")
+      .map((group) => [group.name, group.gradeLevel === null ? "" : String(group.gradeLevel)]),
+  );
+}
+
+export function teachersToCsv(
+  people: { role: string; firstName: string; lastName: string; email: string }[],
+): string {
+  return serializeCsv(
+    CSV_TEMPLATES.teachers.headers,
+    people
+      .filter((person) => person.role === "TEACHER")
+      .map((person) => [person.firstName, person.lastName, person.email]),
+  );
+}
+
+export function studentsToCsv(
+  people: {
+    role: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    studentGroupId: string | null;
+  }[],
+  className: (groupId: string | null) => string,
+): string {
+  return serializeCsv(
+    CSV_TEMPLATES.students.headers,
+    people
+      .filter((person) => person.role === "STUDENT")
+      .map((person) => [
+        person.firstName,
+        person.lastName,
+        person.email,
+        className(person.studentGroupId),
+      ]),
+  );
+}
+
+/**
+ * One row per membership — the same shape the import reads.
+ *
+ * A membership whose group or student is not in the loaded lists is skipped
+ * rather than written with a blank column: a row with an empty group name is
+ * one the importer would reject on re-upload, which would make the export a
+ * file that cannot round-trip.
+ */
+export function membershipsToCsv(
+  groups: { id: string; name: string }[],
+  people: { id: string; email: string }[],
+  memberships: { studentGroupId: string; studentId: string }[],
+): string {
+  const groupName = new Map(groups.map((group) => [group.id, group.name]));
+  const email = new Map(people.map((person) => [person.id, person.email]));
+
+  const rows: string[][] = [];
+  for (const row of memberships) {
+    const name = groupName.get(row.studentGroupId);
+    const address = email.get(row.studentId);
+    if (name && address) rows.push([name, address]);
+  }
+
+  return serializeCsv(CSV_TEMPLATES.teachingGroups.headers, rows);
+}

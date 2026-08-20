@@ -5,6 +5,8 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Pencil, Plus, Search, Trash2, Upload, UserPlus, Users } from "lucide-react";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
+import { CsvExportButton } from "@/components/import/csv-export-button";
+import { classesToCsv, membershipsToCsv } from "@/lib/csv";
 import {
   useAcademicYears,
   useCrudMutations,
@@ -239,6 +241,21 @@ export default function GroupsPage() {
         subtitle={t("subtitle")}
         actions={
           <>
+            <CsvExportButton
+              exports={[
+                {
+                  kind: "classes",
+                  build: () => classesToCsv(groups ?? []),
+                  empty: !groups?.some((group) => group.kind === "CLASS"),
+                },
+                {
+                  kind: "teachingGroups",
+                  build: () =>
+                    membershipsToCsv(groups ?? [], people ?? [], memberships ?? []),
+                  empty: !memberships || memberships.length === 0,
+                },
+              ]}
+            />
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload />
               {tCsvImport("button")}
