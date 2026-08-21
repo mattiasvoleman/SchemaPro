@@ -448,7 +448,18 @@
     "slotFinderAssigned": "ordinarie",
     "slotFinderFallback": "reserv",
     "participantStudents": "Enskilda elever (valfri klass):",
-    "participantSearch": "Sök elever att lägga till…"
+    "participantSearch": "Sök elever att lägga till…",
+    "recurrenceLabel": "Veckor",
+    "recurrenceAll": "Varje vecka",
+    "recurrenceOdd": "Udda veckor",
+    "recurrenceEven": "Jämna veckor",
+    "recurrenceHint": "Udda och jämna följer veckonumret i kalendern, alltså det du säger till eleverna. Två ämnen kan dela samma tid om det ena ligger udda och det andra jämna veckor.",
+    "periodFrom": "Från och med",
+    "periodTo": "Till och med",
+    "periodHint": "Lämna tomt för hela läsåret. Fyll i för ett ämne som bara läses en del av året, till exempel en halv termin.",
+    "badgeOdd": "udda",
+    "badgeEven": "jämna",
+    "badgePeriod": "period"
   },
   "dayPlanner": {
     "title": "Dagsplanering",

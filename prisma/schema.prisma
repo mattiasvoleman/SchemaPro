@@ -389,6 +389,22 @@ model TeachingRequirement {
 // Master timetable (recurring weekly template the AI engine produces)
 // -----------------------------------------------------------------------------
 
+/// Which weeks a lesson actually runs.
+///
+/// Anchored to ISO week numbers rather than counted from a start date, because
+/// that is what a Swedish school says out loud — "slöjd udda veckor" — and it
+/// means the same thing whenever anyone looks. A count from the start date
+/// would leave nobody able to tell, from a week number alone, whether a given
+/// week is an "on" week.
+enum LessonRecurrence {
+  /// Every week the lesson's period covers.
+  ALL_WEEKS
+  /// Odd ISO week numbers only.
+  ODD_WEEKS
+  /// Even ISO week numbers only.
+  EVEN_WEEKS
+}
+
 model MasterLesson {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId       String   @db.Uuid
@@ -403,6 +419,14 @@ model MasterLesson {
   dayOfWeek      Int
   startTime      DateTime @db.Time(0)
   endTime        DateTime @db.Time(0)
+
+  recurrence LessonRecurrence @default(ALL_WEEKS)
+  /// First date the lesson runs; null means "from the start of the year".
+  /// With endDate this expresses a subject read for half a term.
+  startDate  DateTime?        @db.Date
+  /// Last date the lesson runs; null means "until the year ends".
+  endDate    DateTime?        @db.Date
+
   // Locked lessons survive regeneration untouched: the optimizer treats them
   // as fixed placements and schedules the remaining demand around them.
   isLocked       Boolean  @default(false)

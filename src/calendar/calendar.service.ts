@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { runsOn } from './lesson-recurrence';
 import { requireSchoolId } from '../common/utils/request-context';
 import { zonedTimeToUtc } from '../common/utils/time';
 import type { PublishScheduleDto } from './dto/publish-schedule.dto';
@@ -76,6 +77,9 @@ export class CalendarService {
         extraGroups: { select: { studentGroupId: true } },
         participants: { select: { studentId: true } },
             roomId: true,
+            recurrence: true,
+            startDate: true,
+            endDate: true,
             dayOfWeek: true,
             startTime: true,
             endTime: true,
@@ -132,6 +136,11 @@ export class CalendarService {
           if (!templates) continue;
 
           for (const template of templates) {
+            // Alternating weeks and half-term subjects are decided here, when
+            // the weekly template becomes dated lessons — see
+            // lesson-recurrence.ts for the rule the conflict checker shares.
+            if (!runsOn(template, parseUtcDate(date))) continue;
+
             if (existingKeys.has(`${template.id}:${date}`)) {
               skipped++;
               continue;

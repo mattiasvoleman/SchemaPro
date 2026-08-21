@@ -21,6 +21,14 @@ export interface TimetableLesson {
   locked?: boolean;
   /** Existing clash detected by the client conflict engine. */
   conflicted?: boolean;
+  /**
+   * Short note about which weeks the lesson runs ("udda", "jämna", "period").
+   *
+   * A weekly grid cannot show it any other way: a lesson that runs every other
+   * week, or stops in October, occupies the same rectangle as one that runs
+   * all year, and without a mark the grid quietly claims more than is true.
+   */
+  recurrenceNote?: string;
   /** Label of a collaborator currently editing this lesson (soft lock). */
   remoteEditor?: string;
 }
@@ -565,6 +573,11 @@ export function TimetableGrid({
                       ) : null}
                       {lesson.room ? (
                         <div className="truncate text-muted-foreground">{lesson.room}</div>
+                      ) : null}
+                      {lesson.recurrenceNote ? (
+                        <div className="truncate font-medium uppercase tracking-wide text-[9px] text-muted-foreground">
+                          {lesson.recurrenceNote}
+                        </div>
                       ) : null}
                       {editable ? (
                         <div className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />

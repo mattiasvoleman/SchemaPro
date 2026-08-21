@@ -448,7 +448,18 @@
     "slotFinderAssigned": "assigned",
     "slotFinderFallback": "fallback",
     "participantStudents": "Individual students (any class):",
-    "participantSearch": "Search students to add…"
+    "participantSearch": "Search students to add…",
+    "recurrenceLabel": "Weeks",
+    "recurrenceAll": "Every week",
+    "recurrenceOdd": "Odd weeks",
+    "recurrenceEven": "Even weeks",
+    "recurrenceHint": "Odd and even follow the calendar week number — what you tell the students. Two subjects can share a slot when one runs odd weeks and the other even.",
+    "periodFrom": "From",
+    "periodTo": "Until",
+    "periodHint": "Leave empty for the whole academic year. Fill in for a subject read for part of it, such as half a term.",
+    "badgeOdd": "odd",
+    "badgeEven": "even",
+    "badgePeriod": "period"
   },
   "dayPlanner": {
     "title": "Day planner",

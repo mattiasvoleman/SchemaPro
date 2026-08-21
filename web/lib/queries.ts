@@ -9,6 +9,7 @@ import {
 import { createClient } from "@/utils/supabase/client";
 import { api } from "@/lib/api";
 import type {
+  LessonRecurrence,
   RoomType,
   AbsenceReport,
   AcademicYear,
@@ -215,7 +216,7 @@ export function useMasterLessons(academicYearId: string | null) {
         supabase
           .from("MasterLessons")
           .select(
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
           )
           .eq("academicYearId", academicYearId!)
           .order("dayOfWeek")
@@ -574,6 +575,10 @@ export interface CreateMasterLessonInput {
   startTime: string;
   endTime: string;
   isLocked?: boolean;
+  /** Which weeks the lesson runs; omitted means every week. */
+  recurrence?: LessonRecurrence;
+  startDate?: string | null;
+  endDate?: string | null;
   extraGroupIds?: string[];
   studentIds?: string[];
 }

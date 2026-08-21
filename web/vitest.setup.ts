@@ -11,3 +11,17 @@ import { afterEach } from "vitest";
 afterEach(() => {
   cleanup();
 });
+
+// jsdom implements neither the Pointer Capture API nor scrollIntoView, and
+// Radix's Select calls both while opening. Without them the listbox never
+// mounts and every option query fails with a message about the option rather
+// than about the missing DOM method — so the gap is patched once, here,
+// instead of being rediscovered in each spec that opens a dropdown.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = () => undefined;
+  Element.prototype.releasePointerCapture = () => undefined;
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => undefined;
+}

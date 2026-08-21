@@ -6,7 +6,11 @@
 // *during* a drag, before anything is saved. The server remains the source of
 // truth — every mutation is still validated there.
 
-import type { AvailabilityConstraint, MasterLesson } from "@/lib/types";
+import type {
+  AvailabilityConstraint,
+  LessonRecurrence,
+  MasterLesson,
+} from "@/lib/types";
 import { timeToMinutes } from "@/lib/utils";
 
 export type ConflictKind = "TEACHER" | "ROOM" | "GROUP" | "AVAILABILITY";
@@ -31,6 +35,36 @@ export interface Placement {
   extraGroupIds?: string[];
   /** Individual participating students. */
   studentIds?: string[];
+  /** Which weeks the lesson runs; absent means every week. */
+  recurrence?: LessonRecurrence;
+  startDate?: string | null;
+  endDate?: string | null;
+}
+
+/**
+ * Whether two placements can ever fall in the same week.
+ *
+ * The browser mirror of the API's weeksCanOverlap: a lesson on odd weeks and
+ * one on even weeks may share a slot, a room and a teacher. The two must agree
+ * — if the grid says a slot is free and the API disagrees, the drag is
+ * rejected after the fact; if the grid is the lenient one, the school is shown
+ * a schedule the API will never accept.
+ */
+export function weeksCanOverlap(a: Placement, b: Placement): boolean {
+  const first = a.recurrence ?? "ALL_WEEKS";
+  const second = b.recurrence ?? "ALL_WEEKS";
+  if (
+    (first === "ODD_WEEKS" && second === "EVEN_WEEKS") ||
+    (first === "EVEN_WEEKS" && second === "ODD_WEEKS")
+  ) {
+    return false;
+  }
+
+  // Dates are YYYY-MM-DD, so a string comparison is a date comparison.
+  if (a.endDate && b.startDate && a.endDate < b.startDate) return false;
+  if (b.endDate && a.startDate && b.endDate < a.startDate) return false;
+
+  return true;
 }
 
 function groupsOf(placement: Placement): string[] {
@@ -55,6 +89,9 @@ export function toPlacement(lesson: MasterLesson): Placement {
     studentGroupId: lesson.studentGroupId,
     extraGroupIds: lesson.extraGroupIds,
     studentIds: lesson.studentIds,
+    recurrence: lesson.recurrence,
+    startDate: lesson.startDate,
+    endDate: lesson.endDate,
   };
 }
 
@@ -141,6 +178,10 @@ export function validatePlacement(
     ) {
       continue;
     }
+
+    // Sharing a time slot is only a clash if some week holds both: slöjd on
+    // odd weeks and hemkunskap on even weeks may share slot, room and teacher.
+    if (!weeksCanOverlap(candidate, other)) continue;
 
     const candidateTeachers = teacherIdsOf(candidate);
     const otherTeachers = teacherIdsOf(other);

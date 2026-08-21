@@ -1,7 +1,10 @@
+import { LessonRecurrence } from '@prisma/client';
 import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsDateString,
+  IsEnum,
   IsInt,
   IsOptional,
   IsUUID,
@@ -54,6 +57,26 @@ export class CreateMasterLessonDto {
   @IsOptional()
   @IsBoolean()
   isLocked?: boolean;
+
+  /**
+   * Which weeks the lesson runs. Alternating weeks are anchored to ISO week
+   * numbers — "udda veckor" — because that is what a school tells its
+   * students and it reads the same whenever anyone checks.
+   */
+  @IsOptional()
+  @IsEnum(LessonRecurrence)
+  recurrence?: LessonRecurrence;
+
+  /** First date the lesson runs; omit for "from the start of the year". */
+  @IsOptional()
+  @IsDateString({ strict: true })
+  startDate?: string | null;
+
+  /** Last date the lesson runs; omit for "until the year ends". */
+  @IsOptional()
+  @IsDateString({ strict: true })
+  endDate?: string | null;
+
 
   /** Additional classes attending this lesson (beyond the primary group). */
   @IsOptional()

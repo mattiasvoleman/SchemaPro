@@ -8,6 +8,8 @@ import {
 import type { PrismaClient, Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { weeksCanOverlap } from './lesson-recurrence';
+import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { parseTimeString, zonedTimeToUtc } from '../common/utils/time';
@@ -33,6 +35,10 @@ export interface MasterLessonResult {
   teacherId: string | null;
   coTeacherId: string | null;
   isLocked: boolean;
+  recurrence: LessonRecurrence;
+  /** YYYY-MM-DD, or null for "the academic year's own boundary". */
+  startDate: string | null;
+  endDate: string | null;
   extraGroupIds: string[];
   studentIds: string[];
 }
@@ -102,6 +108,9 @@ export class MasterLessonsService {
           (groupId) => groupId !== dto.studentGroupId,
         ),
         studentIds: dto.studentIds ?? [],
+        recurrence: dto.recurrence ?? 'ALL_WEEKS',
+        startDate: parseDateOrNull(dto.startDate),
+        endDate: parseDateOrNull(dto.endDate),
       };
       if (candidate.startMinutes >= candidate.endMinutes) {
         throw new BadRequestException('startTime must be before endTime.');
@@ -133,6 +142,9 @@ export class MasterLessonsService {
           startTime: parseTimeString(dto.startTime),
           endTime: parseTimeString(dto.endTime),
           isLocked: dto.isLocked ?? false,
+          recurrence: dto.recurrence ?? 'ALL_WEEKS',
+          startDate: parseDateOrNull(dto.startDate),
+          endDate: parseDateOrNull(dto.endDate),
           extraGroups: {
             create: candidate.extraGroupIds.map((studentGroupId) => ({
               schoolId: year.schoolId,
@@ -209,6 +221,13 @@ export class MasterLessonsService {
           dto.studentIds !== undefined
             ? dto.studentIds
             : lesson.participants.map((entry) => entry.studentId),
+        // A field the caller left out keeps the lesson's current value, so a
+        // move never silently widens the weeks it occupies.
+        recurrence: dto.recurrence ?? lesson.recurrence,
+        startDate:
+          dto.startDate !== undefined ? parseDateOrNull(dto.startDate) : lesson.startDate,
+        endDate:
+          dto.endDate !== undefined ? parseDateOrNull(dto.endDate) : lesson.endDate,
       };
       if (candidate.startMinutes >= candidate.endMinutes) {
         throw new BadRequestException('startTime must be before endTime.');
@@ -243,6 +262,13 @@ export class MasterLessonsService {
           ...(dto.roomId !== undefined ? { roomId: dto.roomId } : {}),
           ...(dto.teacherId !== undefined ? { teacherId: dto.teacherId } : {}),
           ...(dto.isLocked !== undefined ? { isLocked: dto.isLocked } : {}),
+          ...(dto.recurrence !== undefined ? { recurrence: dto.recurrence } : {}),
+          ...(dto.startDate !== undefined
+            ? { startDate: parseDateOrNull(dto.startDate) }
+            : {}),
+          ...(dto.endDate !== undefined
+            ? { endDate: parseDateOrNull(dto.endDate) }
+            : {}),
           ...(dto.extraGroupIds !== undefined
             ? {
                 extraGroups: {
@@ -394,6 +420,10 @@ export class MasterLessonsService {
       extraGroupIds?: string[];
       /** Individual participating students. */
       studentIds?: string[];
+      /** Which weeks the candidate runs; defaults to every week. */
+      recurrence?: LessonRecurrence;
+      startDate?: Date | null;
+      endDate?: Date | null;
     },
   ): Promise<MasterLessonConflict[]> {
     const conflicts: MasterLessonConflict[] = [];
@@ -432,17 +462,31 @@ export class MasterLessonsService {
         studentGroupId: true,
         startTime: true,
         endTime: true,
+        recurrence: true,
+        startDate: true,
+        endDate: true,
         subject: { select: { name: true } },
         extraGroups: { select: { studentGroupId: true } },
         participants: { select: { studentId: true } },
       },
     });
 
+    const candidateWeeks = {
+      recurrence: candidate.recurrence ?? 'ALL_WEEKS',
+      startDate: candidate.startDate ?? null,
+      endDate: candidate.endDate ?? null,
+    };
+
     for (const other of sameDay) {
       const overlaps =
         toMinutes(other.startTime) < candidate.endMinutes &&
         candidate.startMinutes < toMinutes(other.endTime);
       if (!overlaps) continue;
+
+      // Sharing a time slot is only a clash if some week holds both lessons.
+      // Slöjd on odd weeks and hemkunskap on even weeks may share the slot,
+      // the room and the teacher — that is the point of alternating weeks.
+      if (!weeksCanOverlap(candidateWeeks, other)) continue;
 
       const otherTeachers = [other.teacherId, other.coTeacherId].filter(Boolean);
       if (candidateTeachers.some((id) => otherTeachers.includes(id))) {
@@ -671,6 +715,9 @@ const LESSON_SELECT = {
   startTime: true,
   endTime: true,
   isLocked: true,
+  recurrence: true,
+  startDate: true,
+  endDate: true,
   extraGroups: { select: { studentGroupId: true } },
   participants: { select: { studentId: true } },
 } as const;
@@ -687,6 +734,9 @@ interface LessonRecord {
   startTime: Date;
   endTime: Date;
   isLocked: boolean;
+  recurrence: LessonRecurrence;
+  startDate: Date | null;
+  endDate: Date | null;
   extraGroups: Array<{ studentGroupId: string }>;
   participants: Array<{ studentId: string }>;
 }
@@ -704,9 +754,24 @@ function toResult(lesson: LessonRecord): MasterLessonResult {
     teacherId: lesson.teacherId,
     coTeacherId: lesson.coTeacherId,
     isLocked: lesson.isLocked,
+    recurrence: lesson.recurrence,
+    // Dates go out as YYYY-MM-DD: the column is a DATE, and an ISO timestamp
+    // would invite a timezone shift on the way back in.
+    startDate: toDateStringOrNull(lesson.startDate),
+    endDate: toDateStringOrNull(lesson.endDate),
     extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
     studentIds: lesson.participants.map((entry) => entry.studentId),
   };
+}
+
+function toDateStringOrNull(value: Date | null): string | null {
+  return value ? value.toISOString().slice(0, 10) : null;
+}
+
+/** `YYYY-MM-DD` (or null/undefined) to the midnight-UTC date a DATE column holds. */
+function parseDateOrNull(value: string | null | undefined): Date | null {
+  if (value === null || value === undefined || value === '') return null;
+  return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
 }
 
 function toMinutes(time: Date): number {

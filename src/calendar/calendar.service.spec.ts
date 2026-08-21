@@ -94,6 +94,100 @@ describe('CalendarService', () => {
   });
 
   describe('publish', () => {
+    describe('lessons that do not run every week', () => {
+      /** August 2026: w32 Mon = 08-03, w33 = 08-10, w34 = 08-17, w35 = 08-24. */
+      const wholeMonth = { fromDate: '2026-08-01', toDate: '2026-08-31' };
+
+      const createdDates = () =>
+        tx.calendarLesson.create.mock.calls.map(
+          (call) => (call[0] as { data: { date: Date } }).data.date.toISOString().slice(0, 10),
+        );
+
+      it('materializes an odd-week lesson only on odd ISO weeks', async () => {
+        arrangePublish([template({ recurrence: 'ODD_WEEKS' })]);
+        arrangeYear({ startDate: day('2026-08-01'), endDate: day('2026-08-31') });
+
+        await service.publish({ academicYearId: YEAR_ID, ...wholeMonth }, testUser());
+
+        // Mondays in August 2026 fall in weeks 32, 33, 34, 35 and 36.
+        expect(createdDates()).toEqual(['2026-08-10', '2026-08-24']);
+      });
+
+      it('materializes an even-week lesson on exactly the other weeks', async () => {
+        arrangePublish([template({ recurrence: 'EVEN_WEEKS' })]);
+        arrangeYear({ startDate: day('2026-08-01'), endDate: day('2026-08-31') });
+
+        await service.publish({ academicYearId: YEAR_ID, ...wholeMonth }, testUser());
+
+        expect(createdDates()).toEqual(['2026-08-03', '2026-08-17', '2026-08-31']);
+      });
+
+      it('together they cover every week exactly once — the point of alternating', async () => {
+        // Slöjd on odd weeks and hemkunskap on even weeks share the slot and
+        // between them fill it every week, with no week holding both.
+        arrangePublish([
+          template({ id: 'odd', recurrence: 'ODD_WEEKS' }),
+          template({ id: 'even', recurrence: 'EVEN_WEEKS' }),
+        ]);
+        arrangeYear({ startDate: day('2026-08-01'), endDate: day('2026-08-31') });
+
+        await service.publish({ academicYearId: YEAR_ID, ...wholeMonth }, testUser());
+
+        const perDate = new Map<string, number>();
+        for (const date of createdDates()) {
+          perDate.set(date, (perDate.get(date) ?? 0) + 1);
+        }
+        expect([...perDate.keys()].sort()).toEqual([
+          '2026-08-03',
+          '2026-08-10',
+          '2026-08-17',
+          '2026-08-24',
+          '2026-08-31',
+        ]);
+        expect([...new Set(perDate.values())]).toEqual([1]);
+      });
+
+      it('stops a half-term subject after its end date', async () => {
+        arrangePublish([template({ endDate: day('2026-08-17') })]);
+        arrangeYear({ startDate: day('2026-08-01'), endDate: day('2026-08-31') });
+
+        await service.publish({ academicYearId: YEAR_ID, ...wholeMonth }, testUser());
+
+        expect(createdDates()).toEqual(['2026-08-03', '2026-08-10', '2026-08-17']);
+      });
+
+      it('does not start one before its start date', async () => {
+        arrangePublish([template({ startDate: day('2026-08-17') })]);
+        arrangeYear({ startDate: day('2026-08-01'), endDate: day('2026-08-31') });
+
+        await service.publish({ academicYearId: YEAR_ID, ...wholeMonth }, testUser());
+
+        expect(createdDates()).toEqual(['2026-08-17', '2026-08-24', '2026-08-31']);
+      });
+
+      it('creates nothing at all when the period misses the window entirely', async () => {
+        arrangePublish([template({ startDate: day('2027-01-11') })]);
+        arrangeYear({ startDate: day('2026-08-01'), endDate: day('2027-06-11') });
+
+        const result = await service.publish(
+          { academicYearId: YEAR_ID, ...wholeMonth },
+          testUser(),
+        );
+
+        expect(tx.calendarLesson.create).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ created: 0 });
+      });
+
+      it('leaves a lesson with no recurrence set running every week', async () => {
+        arrangePublish([template()]);
+        arrangeYear({ startDate: day('2026-08-01'), endDate: day('2026-08-31') });
+
+        await service.publish({ academicYearId: YEAR_ID, ...wholeMonth }, testUser());
+
+        expect(createdDates()).toHaveLength(5);
+      });
+    });
+
     it('materializes one dated lesson per matching weekday in the window', async () => {
       arrangePublish();
       const user = testUser();

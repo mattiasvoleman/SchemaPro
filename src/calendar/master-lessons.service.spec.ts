@@ -89,6 +89,9 @@ describe('MasterLessonsService', () => {
     startTime: t('10:00'),
     endTime: t('11:00'),
     isLocked: false,
+    recurrence: 'ALL_WEEKS' as const,
+    startDate: null as Date | null,
+    endDate: null as Date | null,
     extraGroups: [] as Array<{ studentGroupId: string }>,
     participants: [] as Array<{ studentId: string }>,
     ...overrides,
@@ -157,6 +160,10 @@ describe('MasterLessonsService', () => {
         teacherId: TEACHER_ID,
         coTeacherId: null,
         isLocked: false,
+        // Defaults: every week, and the academic year's own boundaries.
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
         extraGroupIds: [EXTRA_GROUP_ID],
         studentIds: [STUDENT_ID],
       });
@@ -189,6 +196,9 @@ describe('MasterLessonsService', () => {
           startTime: new Date('1970-01-01T10:00:00.000Z'),
           endTime: new Date('1970-01-01T11:00:00.000Z'),
           isLocked: false,
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
           extraGroups: {
             create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
           },
@@ -667,6 +677,10 @@ describe('MasterLessonsService', () => {
         teacherId: TEACHER_ID,
         coTeacherId: null,
         isLocked: false,
+        // Untouched by a move: the lesson keeps the weeks it ran before.
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
         extraGroupIds: [],
         studentIds: [],
         propagatedLessons: 1,

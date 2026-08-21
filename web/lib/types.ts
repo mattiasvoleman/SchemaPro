@@ -130,6 +130,8 @@ export interface AvailabilityConstraint {
   reason: string | null;
 }
 
+export type LessonRecurrence = "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";
+
 export interface MasterLesson {
   id: string;
   academicYearId: string;
@@ -144,6 +146,11 @@ export interface MasterLesson {
   endTime: string;
   /** Locked lessons survive regeneration and are pinned on the grid. */
   isLocked: boolean;
+  /** Which weeks the lesson runs; ISO week parity, not a count from the start. */
+  recurrence: LessonRecurrence;
+  /** YYYY-MM-DD, or null for the academic year's own boundary. */
+  startDate: string | null;
+  endDate: string | null;
   /** Additional classes attending (beyond the primary group). */
   extraGroupIds: string[];
   /** Individual participating students (electives across classes). */

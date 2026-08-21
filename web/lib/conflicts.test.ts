@@ -7,6 +7,7 @@ import {
   findOpenSlots,
   suggestPlacements,
   toPlacement,
+  weeksCanOverlap,
   validatePlacement,
   type Placement,
 } from "./conflicts";
@@ -64,6 +65,9 @@ function makeLesson(overrides: Partial<MasterLesson> = {}): MasterLesson {
     startTime: "09:00",
     endTime: "10:00",
     isLocked: false,
+    recurrence: "ALL_WEEKS",
+    startDate: null,
+    endDate: null,
     extraGroupIds: [],
     studentIds: [],
     ...overrides,
@@ -100,6 +104,9 @@ describe("toPlacement", () => {
       studentGroupId: "gA",
       extraGroupIds: ["gB"],
       studentIds: ["s1", "s2"],
+      recurrence: "ALL_WEEKS",
+      startDate: null,
+      endDate: null,
     });
   });
 });
@@ -1209,5 +1216,84 @@ describe("teaching-group conflicts (groups sharing students)", () => {
     const sv73 = { ...class7a, id: "l-sv73", studentGroupId: "g-sv73" };
     const hits = validatePlacement(ma71, [sv73], [], new Map(), relation);
     expect(hits.map((hit) => hit.kind)).toContain("GROUP");
+  });
+});
+
+describe("alternating weeks", () => {
+  const at = (overrides: Partial<MasterLesson>) =>
+    toPlacement(makeLesson({ dayOfWeek: 1, startTime: "09:00", endTime: "10:00", ...overrides }));
+
+  it("lets opposite parities share a slot, room and teacher", () => {
+    // Slöjd udda veckor and hemkunskap jämna veckor in the same slot is the
+    // whole point of the feature, and the grid must not refuse the drag.
+    const slojd = at({ id: "L1", recurrence: "ODD_WEEKS", roomId: "r1", teacherId: "t1" });
+    const hemkunskap = at({
+      id: "L2",
+      recurrence: "EVEN_WEEKS",
+      roomId: "r1",
+      teacherId: "t1",
+      studentGroupId: slojd.studentGroupId,
+    });
+
+    expect(validatePlacement(hemkunskap, [slojd], [])).toEqual([]);
+  });
+
+  it("still reports a clash when both run the same weeks", () => {
+    const first = at({ id: "L1", recurrence: "ODD_WEEKS", roomId: "r1" });
+    const second = at({ id: "L2", recurrence: "ODD_WEEKS", roomId: "r1" });
+
+    expect(conflictKinds(validatePlacement(second, [first], []))).toContain(
+      "ROOM",
+    );
+  });
+
+  it("still reports a clash when one of them runs every week", () => {
+    const weekly = at({ id: "L1", roomId: "r1" });
+    const odd = at({ id: "L2", recurrence: "ODD_WEEKS", roomId: "r1" });
+
+    expect(conflictKinds(validatePlacement(odd, [weekly], []))).toContain(
+      "ROOM",
+    );
+  });
+
+  it("lets two consecutive half-terms share a slot", () => {
+    const autumn = at({ id: "L1", roomId: "r1", endDate: "2026-10-30" });
+    const winter = at({ id: "L2", roomId: "r1", startDate: "2026-11-02" });
+
+    expect(validatePlacement(winter, [autumn], [])).toEqual([]);
+  });
+
+  it("reports a clash when the periods touch", () => {
+    const first = at({ id: "L1", roomId: "r1", endDate: "2026-10-30" });
+    const second = at({ id: "L2", roomId: "r1", startDate: "2026-10-30" });
+
+    expect(conflictKinds(validatePlacement(second, [first], []))).toContain(
+      "ROOM",
+    );
+  });
+
+  it("agrees with the API rule on every combination", () => {
+    // The two implementations must not drift: a lenient grid shows a schedule
+    // the API rejects, a strict one refuses a placement the API allows.
+    const kinds = ["ALL_WEEKS", "ODD_WEEKS", "EVEN_WEEKS"] as const;
+    const expected: Record<string, boolean> = {
+      "ALL_WEEKS|ALL_WEEKS": true,
+      "ALL_WEEKS|ODD_WEEKS": true,
+      "ALL_WEEKS|EVEN_WEEKS": true,
+      "ODD_WEEKS|ALL_WEEKS": true,
+      "ODD_WEEKS|ODD_WEEKS": true,
+      "ODD_WEEKS|EVEN_WEEKS": false,
+      "EVEN_WEEKS|ALL_WEEKS": true,
+      "EVEN_WEEKS|ODD_WEEKS": false,
+      "EVEN_WEEKS|EVEN_WEEKS": true,
+    };
+
+    for (const a of kinds) {
+      for (const b of kinds) {
+        expect(weeksCanOverlap(at({ recurrence: a }), at({ recurrence: b }))).toBe(
+          expected[`${a}|${b}`],
+        );
+      }
+    }
   });
 });

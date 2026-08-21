@@ -47,7 +47,8 @@ import { buildIcs, downloadIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
-import type { MasterLesson } from "@/lib/types";
+import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
+import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { subjectColor, timeToMinutes } from "@/lib/utils";
 import {
   buildGroupConflictMap,
@@ -113,6 +114,9 @@ interface LessonSnapshot {
   roomId: string | null;
   teacherId: string | null;
   isLocked: boolean;
+  recurrence: LessonRecurrence;
+  startDate: string | null;
+  endDate: string | null;
 }
 
 function snapshotOf(lesson: MasterLesson): LessonSnapshot {
@@ -123,6 +127,9 @@ function snapshotOf(lesson: MasterLesson): LessonSnapshot {
     roomId: lesson.roomId,
     teacherId: lesson.teacherId,
     isLocked: lesson.isLocked,
+    recurrence: lesson.recurrence,
+    startDate: lesson.startDate,
+    endDate: lesson.endDate,
   };
 }
 
@@ -139,6 +146,9 @@ interface CreateDraft {
   roomId: string;
   teacherId: string;
   isLocked: boolean;
+  recurrence: LessonRecurrence;
+  startDate: string;
+  endDate: string;
 }
 
 type GroupBy = "none" | "teacher" | "room" | "group";
@@ -175,6 +185,9 @@ export default function TimetablePage() {
   const [editRoom, setEditRoom] = useState(NONE);
   const [editTeacher, setEditTeacher] = useState(NONE);
   const [editLocked, setEditLocked] = useState(false);
+  const [editRecurrence, setEditRecurrence] = useState<LessonRecurrence>("ALL_WEEKS");
+  const [editStartDate, setEditStartDate] = useState("");
+  const [editEndDate, setEditEndDate] = useState("");
 
   const [creating, setCreating] = useState<CreateDraft | null>(null);
   const [slotMatches, setSlotMatches] = useState<OpenSlotMatch[] | null>(null);
@@ -327,6 +340,7 @@ export default function TimetablePage() {
         room: room?.name,
         color: subjectColor(lesson.subjectId, subject?.color),
         locked: lesson.isLocked,
+        recurrenceNote: recurrenceBadge(lesson, t) ?? undefined,
         conflicted: conflictMap.has(lesson.id),
         remoteEditor: remoteEditors.get(lesson.id),
       };
@@ -437,6 +451,11 @@ export default function TimetablePage() {
         startTime: toHHMM(lesson.startTime),
         endTime: toHHMM(lesson.endTime),
         isLocked: lesson.isLocked,
+        // Without these, undoing a delete would quietly turn an odd-week
+        // lesson into a weekly one.
+        recurrence: lesson.recurrence,
+        startDate: lesson.startDate,
+        endDate: lesson.endDate,
         extraGroupIds: lesson.extraGroupIds,
         studentIds: lesson.studentIds,
       };
@@ -673,6 +692,9 @@ export default function TimetablePage() {
       extraGroupIds: [],
       studentIds: [],
       dayOfWeek: String(dayOfWeek),
+      recurrence: "ALL_WEEKS",
+      startDate: "",
+      endDate: "",
       startTime: minutesToHHMM(startMinutes),
       endTime: minutesToHHMM(Math.min(startMinutes + 60, 23 * 60 + 45)),
       roomId: NONE,
@@ -696,6 +718,9 @@ export default function TimetablePage() {
     setEditRoom(lesson.roomId ?? NONE);
     setEditTeacher(lesson.teacherId ?? NONE);
     setEditLocked(lesson.isLocked);
+    setEditRecurrence(lesson.recurrence);
+    setEditStartDate(lesson.startDate ?? "");
+    setEditEndDate(lesson.endDate ?? "");
   };
 
   const doSaveEdit = async () => {
@@ -708,6 +733,11 @@ export default function TimetablePage() {
         roomId: editRoom === NONE ? null : editRoom,
         teacherId: editTeacher === NONE ? null : editTeacher,
         isLocked: editLocked,
+        recurrence: editRecurrence,
+        // An empty field means "the academic year's own boundary", which the
+        // API stores as null — not as an empty string.
+        startDate: editStartDate === "" ? null : editStartDate,
+        endDate: editEndDate === "" ? null : editEndDate,
       });
       toast.success(t("editSaved", { count: result.propagatedLessons }));
       setEditing(null);
@@ -740,6 +770,11 @@ export default function TimetablePage() {
       extraGroupIds: lesson.extraGroupIds,
       studentIds: lesson.studentIds,
       dayOfWeek: String(lesson.dayOfWeek),
+      // Duplicating a lesson keeps the weeks it runs — the common case is a
+      // second slöjd group on the same alternating schedule.
+      recurrence: lesson.recurrence,
+      startDate: lesson.startDate ?? "",
+      endDate: lesson.endDate ?? "",
       startTime: toHHMM(lesson.startTime),
       endTime: toHHMM(lesson.endTime),
       roomId: lesson.roomId ?? NONE,
@@ -823,6 +858,9 @@ export default function TimetablePage() {
         startTime: creating.startTime,
         endTime: creating.endTime,
         isLocked: creating.isLocked,
+        recurrence: creating.recurrence,
+        startDate: creating.startDate === "" ? null : creating.startDate,
+        endDate: creating.endDate === "" ? null : creating.endDate,
         extraGroupIds: creating.extraGroupIds,
         studentIds: creating.studentIds,
       });
@@ -1255,6 +1293,19 @@ export default function TimetablePage() {
                 </SelectContent>
               </Select>
             </div>
+            <RecurrenceFields
+              idPrefix="edit"
+              value={{
+                recurrence: editRecurrence,
+                startDate: editStartDate,
+                endDate: editEndDate,
+              }}
+              onChange={(next) => {
+                setEditRecurrence(next.recurrence);
+                setEditStartDate(next.startDate);
+                setEditEndDate(next.endDate);
+              }}
+            />
             <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
               <div className="flex items-center gap-2">
                 <Lock className="h-4 w-4 text-muted-foreground" />
@@ -1609,6 +1660,15 @@ export default function TimetablePage() {
                   </SelectContent>
                 </Select>
               </div>
+              <RecurrenceFields
+                idPrefix="create"
+                value={{
+                  recurrence: creating.recurrence,
+                  startDate: creating.startDate,
+                  endDate: creating.endDate,
+                }}
+                onChange={(next) => setCreating({ ...creating, ...next })}
+              />
               <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
                 <div className="flex items-center gap-2">
                   <Lock className="h-4 w-4 text-muted-foreground" />
