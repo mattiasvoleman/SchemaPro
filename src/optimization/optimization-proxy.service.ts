@@ -23,6 +23,7 @@ import type {
   AnonymousPreviousLesson,
   AnonymousRequirement,
   AnonymousRoom,
+  AnonymousRoomPreference,
   ConstraintKind,
   DayOfWeek,
   ObjectiveWeights,
@@ -79,6 +80,7 @@ export class OptimizationProxyService {
       requirements,
       rooms,
       constraints,
+      roomPreferences,
       fixedLessons,
       previousLessons,
       groupConflicts,
@@ -94,6 +96,7 @@ export class OptimizationProxyService {
       requirements,
       rooms,
       constraints,
+      roomPreferences,
       fixedLessons,
       previousLessons,
       groupConflicts,
@@ -139,6 +142,7 @@ export class OptimizationProxyService {
     requirements: AnonymousRequirement[];
     rooms: AnonymousRoom[];
     constraints: AnonymousConstraint[];
+    roomPreferences: AnonymousRoomPreference[];
     fixedLessons: AnonymousFixedLesson[];
     previousLessons: AnonymousPreviousLesson[];
     groupConflicts: [string, string][];
@@ -424,12 +428,36 @@ export class OptimizationProxyService {
       },
     });
 
+    // Soft room wishes. Anonymised like everything else: the engine sees ids
+    // it cannot resolve, and the weights that order them.
+    const rawPreferences = await tx.roomPreference.findMany({
+      select: {
+        id: true,
+        subjectId: true,
+        roomTypeId: true,
+        weight: true,
+        rooms: { select: { roomId: true } },
+      },
+    });
+
     const rooms: AnonymousRoom[] = rawRooms.map((r) => ({
       id: anonId(roomAnonMap, r.id),
       capacity: r.capacity,
       type: r.roomTypeId ? anonId(roomTypeAnonMap, r.roomTypeId) : null,
       minGradeLevel: r.minGradeLevel,
       maxGradeLevel: r.maxGradeLevel,
+    }));
+
+    const roomPreferences: AnonymousRoomPreference[] = rawPreferences.map((p) => ({
+      id: anonId(requirementAnonMap, p.id),
+      subjectId: anonId(subjectAnonMap, p.subjectId),
+      roomType: p.roomTypeId ? anonId(roomTypeAnonMap, p.roomTypeId) : null,
+      // Only rooms the payload actually carries: a wish naming a room that is
+      // no longer scheduled would point at nothing the engine can see.
+      roomIds: p.rooms
+        .map((entry) => roomAnonMap.get(entry.roomId))
+        .filter((id): id is string => Boolean(id)),
+      weight: p.weight,
     }));
 
     // Fetch availability constraints (drop reason text field).
@@ -493,6 +521,7 @@ export class OptimizationProxyService {
       requirements,
       rooms,
       constraints,
+      roomPreferences,
       fixedLessons,
       previousLessons,
       groupConflicts,

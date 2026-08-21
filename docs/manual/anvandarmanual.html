@@ -569,13 +569,44 @@
   </p>
 
   <div class="warn">
-    <span class="label">Lägg inte in fler begränsningar än nödvändigt</span>
+    <span class="label">Lägg inte in fler hårda begränsningar än nödvändigt</span>
     <p>
       Varje begränsning tar bort möjliga lösningar. Läggs önskemål in som hårda
       begränsningar kan resultatet bli att inget schema alls går att bygga —
       och systemet kan då bara meddela att det är omöjligt, inte vilket önskemål
-      som borde ge vika. Lägg in det som verkligen måste gälla här, och styr
-      önskemål med optimeringsprofilen i avsnitt 5.1 i stället.
+      som borde ge vika. Lägg in det som verkligen måste gälla här, och
+      använd de mjuka reglerna nedan för det som helst ska gälla.
+    </p>
+  </div>
+
+  <h4>Mjuka regler för salar</h4>
+  <p>
+    Längst ned på samma sida finns <span class="ui">Mjuka regler för
+    salar</span>. Här anger du vad som <em>helst</em> ska gälla:
+    <em>NO helst i laborationssal</em>, eller <em>slöjd helst i A12 eller
+    A14</em>. En regel pekar antingen på en salstyp eller på en uppsättning
+    namngivna salar.
+  </p>
+  <p>
+    Skillnaden mot begränsningarna ovan är hur de går sönder. En hård
+    begränsning som inte kan uppfyllas gör veckan omöjlig att schemalägga och
+    måste rättas. En mjuk regel som inte kan uppfyllas ger i stället ett schema
+    där någon enstaka lektion hamnat i fel sal — motorn bryter hellre ett
+    önskemål än ger upp.
+  </p>
+  <p>
+    <span class="ui">Styrkan</span> avgör hur mycket motorn får offra av annat
+    för att uppfylla önskemålet. 50 är lagom. Höj den för något som nästan
+    alltid ska gälla, men var medveten om att en mycket hög styrka kan tränga
+    undan andra mål, som att sprida ämnena över veckan.
+  </p>
+  <div class="note">
+    <span class="label">Hård eller mjuk?</span>
+    <p>
+      Kräver ämnet utrustningen i en viss sorts sal — slöjd, hemkunskap, kemi —
+      sätt <span class="ui">Kräver salstyp</span> på ämnet (3.2). Det är ett
+      hårt krav och ska vara det. Handlar det om vana, närhet eller bekvämlighet
+      hör det hemma bland de mjuka reglerna.
     </p>
   </div>
 

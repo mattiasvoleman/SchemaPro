@@ -67,6 +67,14 @@ class Settings(BaseSettings):
         alias="WEIGHT_TEACHER_GAP",
         description="Penalty per idle slot between two same-day lessons of a teacher.",
     )
+    weight_room_preference: int = Field(
+        default=5,
+        alias="WEIGHT_ROOM_PREFERENCE",
+        description=(
+            "Default penalty per lesson placed outside its subject's preferred "
+            "rooms, when a preference carries no weight of its own."
+        ),
+    )
     weight_date_unavailable: int = Field(
         default=2,
         alias="WEIGHT_DATE_UNAVAILABLE",

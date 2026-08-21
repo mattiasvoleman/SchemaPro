@@ -1294,6 +1294,59 @@ export function useInvitations() {
   };
 }
 
+export interface RoomPreference {
+  id: string;
+  subjectId: string;
+  roomTypeId: string | null;
+  weight: number;
+  rooms: { roomId: string }[];
+}
+
+export interface RoomPreferenceInput {
+  subjectId: string;
+  roomTypeId?: string | null;
+  roomIds?: string[];
+  weight?: number;
+}
+
+/**
+ * Soft room wishes — "NO helst i labbet".
+ *
+ * Read through the API rather than straight from Supabase like the other
+ * lists: the rule spans two tables, and the join belongs on the server rather
+ * than in every page that wants to show it.
+ */
+export function useRoomPreferences() {
+  return useQuery({
+    queryKey: ["roomPreferences"],
+    queryFn: () => api.get<RoomPreference[]>("/api/v1/room-preferences"),
+  });
+}
+
+export function useRoomPreferenceActions() {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["roomPreferences"] });
+  };
+
+  return {
+    create: useMutation({
+      mutationFn: (input: RoomPreferenceInput) =>
+        api.post<RoomPreference>("/api/v1/room-preferences", input),
+      onSuccess: invalidate,
+    }),
+    update: useMutation({
+      mutationFn: ({ id, ...input }: RoomPreferenceInput & { id: string }) =>
+        api.patch<RoomPreference>(`/api/v1/room-preferences/${id}`, input),
+      onSuccess: invalidate,
+    }),
+    remove: useMutation({
+      mutationFn: (id: string) => api.delete(`/api/v1/room-preferences/${id}`),
+      onSuccess: invalidate,
+    }),
+  };
+}
+
 export interface ImportCsvInput {
   kind: ImportKind;
   /** Required for students/classes/teachingGroups; stripped for teachers. */

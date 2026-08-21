@@ -60,7 +60,8 @@
     "friday": "Fri",
     "saturday": "Sat",
     "sunday": "Sun",
-    "copied": "Copied to clipboard"
+    "copied": "Copied to clipboard",
+    "select": "Select…"
   },
   "days": {
     "1": "Monday",
@@ -330,7 +331,21 @@
     "endTime": "End",
     "reason": "Reason",
     "reasonPlaceholder": "Part-time, maintenance…",
-    "empty": "No constraints. The AI engine will treat every resource as always available."
+    "empty": "No constraints. The AI engine will treat every resource as always available.",
+    "preferencesTitle": "Soft room rules",
+    "preferencesHint": "State what should preferably happen, as opposed to the absolute rules above. The engine tries to honour these but will break a wish rather than make the week unschedulable.",
+    "preferencesEmpty": "No soft rules yet.",
+    "addPreference": "Add preference",
+    "preferenceSubject": "Subject",
+    "preferenceTarget": "Applies to",
+    "preferenceByType": "A room type",
+    "preferenceByRooms": "Specific rooms",
+    "preferenceRoomType": "Room type",
+    "preferenceRooms": "Rooms",
+    "preferenceWeight": "Strength",
+    "preferenceWeightHint": "How much the engine may give up elsewhere to honour the wish. 50 is a sensible default; raise it for something that should almost always hold.",
+    "preferenceSummary": "{subject} preferably in {rooms}",
+    "preferenceWeightBadge": "strength {weight}"
   },
   "generate": {
     "title": "Generate schedule",

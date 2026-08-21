@@ -271,6 +271,8 @@ describe('OptimizationProxyService', () => {
       constraints?: unknown[];
       /** Rows of { id, gradeLevel }: the year each group belongs to. */
       groups?: unknown[];
+      /** Soft room wishes, as stored. */
+      roomPreferences?: unknown[];
     };
 
     const arrange = (overrides: Arrangement = {}) => {
@@ -304,6 +306,7 @@ describe('OptimizationProxyService', () => {
       );
       // Year spans for rooms limited to a stage are derived from these.
       tx.studentGroup.findMany.mockResolvedValue(overrides.groups ?? []);
+      tx.roomPreference.findMany.mockResolvedValue(overrides.roomPreferences ?? []);
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 2 });
       tx.masterLesson.count.mockResolvedValue(1);
       tx.masterLesson.create.mockResolvedValue({});
@@ -680,6 +683,81 @@ describe('OptimizationProxyService', () => {
       await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
       expect(postedPayload().groupConflicts).toEqual([]);
+    });
+
+    describe('soft room wishes', () => {
+      it('anonymises the subject, type and rooms a wish names', async () => {
+        arrange({
+          roomPreferences: [
+            {
+              id: 'pref-1',
+              subjectId: SUBJECT_ID,
+              roomTypeId: null,
+              weight: 200,
+              rooms: [{ roomId: ROOM_ID }],
+            },
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const [wish] = postedPayload().roomPreferences;
+        expect(wish.weight).toBe(200);
+        // Nothing recognisable leaves the gateway: every id is a stand-in.
+        expect(wish.subjectId).not.toBe(SUBJECT_ID);
+        expect(JSON.stringify(wish)).not.toContain(ROOM_ID);
+      });
+
+      it('maps a wish to the same anonymous room the payload uses', async () => {
+        arrange({
+          roomPreferences: [
+            {
+              id: 'pref-1',
+              subjectId: SUBJECT_ID,
+              roomTypeId: null,
+              weight: 50,
+              rooms: [{ roomId: ROOM_ID }],
+            },
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        // A wish pointing at an id the rooms list does not contain would be a
+        // rule about a room the engine cannot see.
+        expect(payload.roomPreferences[0].roomIds).toEqual([payload.rooms[0].id]);
+      });
+
+      it('drops a room the payload does not carry', async () => {
+        arrange({
+          roomPreferences: [
+            {
+              id: 'pref-1',
+              subjectId: SUBJECT_ID,
+              roomTypeId: null,
+              weight: 50,
+              rooms: [{ roomId: 'ffffffff-ffff-4fff-8fff-ffffffffffff' }],
+            },
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().roomPreferences[0].roomIds).toEqual([]);
+      });
+
+      it('sends an empty list when the school has stated no wishes', async () => {
+        arrange();
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().roomPreferences).toEqual([]);
+      });
     });
 
     describe('year spans for stage-limited rooms', () => {

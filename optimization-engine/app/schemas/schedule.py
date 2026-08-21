@@ -93,6 +93,25 @@ class AnonymousRoom(CamelModel):
     )
 
 
+class AnonymousRoomPreference(CamelModel):
+    """A soft wish that a subject's lessons land in particular rooms.
+
+    Soft on purpose: a school would rather have NO in the lab, but not at the
+    price of an unschedulable week. The solver pays `weight` per lesson placed
+    elsewhere and trades that against the other objectives.
+
+    Either a room type or an explicit set of rooms — the gateway sends exactly
+    one of them, and a preference naming neither would be a rule that can never
+    be violated or satisfied.
+    """
+
+    id: UUID4
+    subject_id: UUID4 = Field(alias="subjectId")
+    room_type: RoomTypeKind | None = Field(default=None, alias="roomType")
+    room_ids: list[UUID4] = Field(default_factory=list, alias="roomIds")
+    weight: int = Field(default=50, ge=1, le=1000)
+
+
 class AnonymousConstraint(CamelModel):
     id: UUID4
     resource_kind: ResourceKind = Field(alias="resourceKind")
@@ -161,6 +180,10 @@ class ObjectiveWeights(CamelModel):
     disruption: int | None = Field(default=None, ge=0, le=1000)
     spread: int | None = Field(default=None, ge=0, le=1000)
     teacher_gap: int | None = Field(default=None, alias="teacherGap", ge=0, le=1000)
+    #: Paid per lesson that misses its subject's preferred rooms.
+    room_preference: int | None = Field(
+        default=None, alias="roomPreference", ge=0, le=1000,
+    )
 
 
 class ScheduleRules(CamelModel):
@@ -187,6 +210,12 @@ class OptimizeScheduleRequest(CamelModel):
     requirements: list[AnonymousRequirement] = Field(min_length=1, max_length=2000)
     rooms: list[AnonymousRoom] = Field(min_length=1, max_length=1000)
     constraints: list[AnonymousConstraint] = Field(default_factory=list, max_length=5000)
+    room_preferences: list[AnonymousRoomPreference] = Field(
+        default_factory=list,
+        alias="roomPreferences",
+        max_length=500,
+        description="Soft wishes that a subject's lessons land in particular rooms.",
+    )
     fixed_lessons: list[FixedLesson] = Field(
         default_factory=list,
         alias="fixedLessons",

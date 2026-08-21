@@ -60,7 +60,8 @@
     "friday": "Fre",
     "saturday": "Lör",
     "sunday": "Sön",
-    "copied": "Kopierat till urklipp"
+    "copied": "Kopierat till urklipp",
+    "select": "Välj…"
   },
   "days": {
     "1": "Måndag",
@@ -330,7 +331,21 @@
     "endTime": "Slut",
     "reason": "Anledning",
     "reasonPlaceholder": "Deltid, underhåll…",
-    "empty": "Inga begränsningar. AI-motorn behandlar alla resurser som alltid tillgängliga."
+    "empty": "Inga begränsningar. AI-motorn behandlar alla resurser som alltid tillgängliga.",
+    "preferencesTitle": "Mjuka regler för salar",
+    "preferencesHint": "Här anger du vad som helst ska gälla, till skillnad från reglerna ovan som är absoluta. Motorn försöker uppfylla dem men bryter hellre en önskan än gör veckan omöjlig att schemalägga.",
+    "preferencesEmpty": "Inga mjuka regler ännu.",
+    "addPreference": "Lägg till önskemål",
+    "preferenceSubject": "Ämne",
+    "preferenceTarget": "Gäller",
+    "preferenceByType": "En salstyp",
+    "preferenceByRooms": "Vissa salar",
+    "preferenceRoomType": "Salstyp",
+    "preferenceRooms": "Salar",
+    "preferenceWeight": "Styrka",
+    "preferenceWeightHint": "Hur mycket motorn får offra av annat för att uppfylla önskemålet. 50 är lagom; höj för något som nästan alltid ska gälla.",
+    "preferenceSummary": "{subject} helst i {rooms}",
+    "preferenceWeightBadge": "styrka {weight}"
   },
   "generate": {
     "title": "Generera schema",

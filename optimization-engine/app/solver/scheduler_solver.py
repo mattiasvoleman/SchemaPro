@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date as date_type
 from uuid import UUID
@@ -10,6 +11,7 @@ from ortools.sat.python import cp_model
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError, SolverBuildError
 from app.schemas.schedule import (
+    AnonymousRoomPreference,
     AnonymousConstraint,
     AnonymousRequirement,
     AnonymousRoom,
@@ -36,6 +38,7 @@ from app.solver.time_grid import TimeGrid
 class ResolvedWeights:
     preferred_free: int
     preferred_busy: int
+    room_preference: int
     disruption: int
     spread: int
     teacher_gap: int
@@ -121,7 +124,12 @@ class SchedulerSolver:
         self._add_teacher_no_overlap(model, decisions)
         self._add_group_no_overlap(model, decisions, request.group_conflicts)
         room_plan = self._add_room_allocation(
-            model, decisions, rooms, request.constraints, request.fixed_lessons,
+            model,
+            decisions,
+            rooms,
+            request.constraints,
+            request.fixed_lessons,
+            request.room_preferences,
         )
         self._add_availability_constraints(model, registry, decisions, rooms, request.constraints)
         self._add_fixed_lesson_constraints(
@@ -141,6 +149,9 @@ class SchedulerSolver:
                 ),
                 *self._add_spread_objective(model, decisions, weights, day_vars),
                 *self._add_teacher_gap_objective(model, decisions, weights, day_vars),
+                *self._add_room_preference_objective(
+                    model, decisions, rooms, room_plan, request.room_preferences, weights,
+                ),
             ]
             model.Minimize(sum(objective_terms) if objective_terms else 0)
         return model, registry, decisions, room_plan
@@ -705,6 +716,7 @@ class SchedulerSolver:
         rooms: list[AnonymousRoom],
         constraints: list[AnonymousConstraint],
         fixed_lessons: list[FixedLesson],
+        room_preferences: list[AnonymousRoomPreference] | None = None,
     ) -> RoomPlan:
         """Enforce room capacity by interchangeability class, not by named room.
 
@@ -716,6 +728,10 @@ class SchedulerSolver:
         The returned plan is REQUIRED to read rooms back: room_index is no
         longer authoritative except for pinned rooms.
         """
+        preference_sets = [
+            _preference_room_ids(preference, rooms)
+            for preference in (room_preferences or [])
+        ]
         return add_room_allocation(
             model,
             decisions,
@@ -724,6 +740,7 @@ class SchedulerSolver:
                 constraints, fixed_lessons,
             ),
             room_allowed=self._room_allowed,
+            preference_sets=preference_sets,
         )
 
     def _add_availability_constraints(
@@ -982,6 +999,11 @@ class SchedulerSolver:
                 if override and override.teacher_gap is not None
                 else self._settings.weight_teacher_gap
             ),
+            room_preference=(
+                override.room_preference
+                if override and override.room_preference is not None
+                else self._settings.weight_room_preference
+            ),
             date_unavailable=self._settings.weight_date_unavailable,
         )
 
@@ -1071,6 +1093,63 @@ class SchedulerSolver:
                     else:
                         weight = weights.preferred_busy
                     penalties.append(violation * weight)
+
+        return penalties
+
+    def _add_room_preference_objective(
+        self,
+        model: cp_model.CpModel,
+        decisions: list[LessonDecision],
+        rooms: list[AnonymousRoom],
+        room_plan: RoomPlan,
+        preferences: list[AnonymousRoomPreference],
+        weights: _Weights,
+    ) -> list[cp_model.LinearExpr]:
+        """Pay per lesson that misses its subject's preferred rooms.
+
+        The class literals do the work: a lesson picks exactly one class, and a
+        preference's rooms form classes of their own (see build_room_classes),
+        so "landed somewhere preferred" is the sum of the literals of those
+        classes — 0 or 1, never more, because AddExactlyOne holds across every
+        eligible class.
+
+        A lesson with only one eligible class has no literal at all. Its
+        placement is already decided, so whether it satisfies the wish is a
+        constant, and a constant term cannot change which timetable wins.
+        Adding it would only inflate the objective value.
+        """
+        if not preferences:
+            return []
+
+        penalties: list[cp_model.LinearExpr] = []
+        by_subject: dict[UUID, list[AnonymousRoomPreference]] = defaultdict(list)
+        for preference in preferences:
+            by_subject[preference.subject_id].append(preference)
+
+        for decision in decisions:
+            requirement = decision.lesson.requirement
+            wanted = by_subject.get(requirement.subject_id)
+            if not wanted:
+                continue
+
+            key = decision.lesson.key()
+            literals = room_plan.literals.get(key)
+            if not literals:
+                continue
+
+            for preference in wanted:
+                preferred_rooms = _preference_room_ids(preference, rooms)
+                satisfied = [
+                    literal
+                    for class_index, literal in literals.items()
+                    if _class_is_preferred(room_plan, class_index, rooms, preferred_rooms)
+                ]
+                if not satisfied or len(satisfied) == len(literals):
+                    # Impossible or unavoidable: either way the term is a
+                    # constant and steers nothing.
+                    continue
+                weight = preference.weight or weights.room_preference
+                penalties.append((1 - sum(satisfied)) * weight)
 
         return penalties
 
@@ -1408,3 +1487,29 @@ def _grade_allowed(room: AnonymousRoom, requirement: AnonymousRequirement) -> bo
         room.max_grade_level is not None
         and requirement.max_grade_level > room.max_grade_level
     )
+
+
+def _preference_room_ids(
+    preference: AnonymousRoomPreference,
+    rooms: list[AnonymousRoom],
+) -> set[UUID]:
+    """The rooms a preference points at, whether by type or by name."""
+    if preference.room_type is not None:
+        return {room.id for room in rooms if room.type == preference.room_type}
+    return set(preference.room_ids)
+
+
+def _class_is_preferred(
+    room_plan: RoomPlan,
+    class_index: int,
+    rooms: list[AnonymousRoom],
+    preferred_rooms: set[UUID],
+) -> bool:
+    """Whether a class sits inside the preferred set.
+
+    Every room of a class shares the preference bits that built it, so testing
+    the first member decides the class — the same argument that makes the
+    eligibility signature sound.
+    """
+    room_class = room_plan.classes[class_index]
+    return rooms[room_class.room_indices[0]].id in preferred_rooms

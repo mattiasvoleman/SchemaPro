@@ -55,6 +55,18 @@ export interface AnonymousRoom {
   maxGradeLevel: number | null;
 }
 
+/** A soft wish that a subject's lessons land in particular rooms. */
+export interface AnonymousRoomPreference {
+  id: string;
+  subjectId: string;
+  /** Either a type… */
+  roomType: string | null;
+  /** …or named rooms. The gateway sends exactly one of the two. */
+  roomIds: string[];
+  /** Paid per lesson placed elsewhere, relative to the other objectives. */
+  weight: number;
+}
+
 export interface AnonymousConstraint {
   id: string;
   resourceKind: ResourceKind;
@@ -141,6 +153,7 @@ export interface AiEngineScheduleRequest {
   groupConflicts: [string, string][];
   weights?: ObjectiveWeights | null;
   rules?: ScheduleRules | null;
+  roomPreferences: AnonymousRoomPreference[];
 }
 
 export type ConflictCategory =

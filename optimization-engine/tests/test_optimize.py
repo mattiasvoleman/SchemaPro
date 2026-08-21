@@ -1538,3 +1538,151 @@ def test_no_room_for_the_years_is_reported_as_such(client: TestClient) -> None:
     # has nowhere to be — a configuration error, not a solver failure.
     assert response.status_code == 400
     assert "years 9-9" in str(response.json())
+
+
+def _lessons_in_preferred_room(client: TestClient, *, with_preference: bool) -> int:
+    """Schedule a week where many lessons want one scarce room; count the wins.
+
+    Both runs solve the same school. The only difference is whether the wish is
+    stated, so the difference in how often it is granted is the wish's doing —
+    unlike asserting which of two interchangeable rooms was picked, where
+    merely restating the model changes a deterministic tie-break and the test
+    passes without the objective doing anything at all.
+    """
+    payload = _sample_payload()
+    subject_id = payload["requirements"][0]["subjectId"]  # type: ignore[index]
+    preferred_id = str(uuid4())
+
+    payload["requirements"] = [
+        {
+            "id": str(uuid4()),
+            "subjectId": subject_id,
+            "studentGroupId": str(uuid4()),
+            "teacherId": str(uuid4()),
+            "lessonsPerWeek": 4,
+            "minutesPerLesson": 60,
+            "studentGroupSize": 20,
+        }
+        for _ in range(3)
+    ]
+    payload["rooms"] = [
+        {"id": preferred_id, "capacity": 30},
+        {"id": str(uuid4()), "capacity": 30},
+        {"id": str(uuid4()), "capacity": 30},
+    ]
+    if with_preference:
+        payload["roomPreferences"] = [
+            {
+                "id": str(uuid4()),
+                "subjectId": subject_id,
+                "roomIds": [preferred_id],
+                "weight": 300,
+            }
+        ]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    lessons = response.json()["lessons"]
+    assert len(lessons) == 12
+    return sum(1 for lesson in lessons if lesson["roomId"] == preferred_id)
+
+
+def test_a_stated_preference_wins_the_preferred_room_more_often(
+    client: TestClient,
+) -> None:
+    without = _lessons_in_preferred_room(client, with_preference=False)
+    with_wish = _lessons_in_preferred_room(client, with_preference=True)
+
+    assert with_wish > without
+
+
+def test_room_preference_yields_rather_than_making_a_week_impossible(
+    client: TestClient,
+) -> None:
+    """Soft means soft.
+
+    Three simultaneous lessons prefer the one room that can hold only one of
+    them. A hard rule would make the week infeasible; the wish must instead be
+    paid for and the other two placed elsewhere.
+    """
+    payload = _sample_payload()
+    subject_id = payload["requirements"][0]["subjectId"]  # type: ignore[index]
+    teacher_a, teacher_b, teacher_c = str(uuid4()), str(uuid4()), str(uuid4())
+    groups = [str(uuid4()) for _ in range(3)]
+
+    payload["requirements"] = [
+        {
+            "id": str(uuid4()),
+            "subjectId": subject_id,
+            "studentGroupId": group,
+            "teacherId": teacher,
+            "lessonsPerWeek": 5,
+            "minutesPerLesson": 60,
+            "studentGroupSize": 20,
+        }
+        for group, teacher in zip(groups, [teacher_a, teacher_b, teacher_c])
+    ]
+
+    preferred_id = str(uuid4())
+    payload["rooms"] = [
+        {"id": preferred_id, "capacity": 30},
+        {"id": str(uuid4()), "capacity": 30},
+        {"id": str(uuid4()), "capacity": 30},
+    ]
+    payload["roomPreferences"] = [
+        {
+            "id": str(uuid4()),
+            "subjectId": subject_id,
+            "roomIds": [preferred_id],
+            "weight": 1000,
+        }
+    ]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] in {"OPTIMAL", "FEASIBLE"}
+    # All 15 lessons scheduled — the wish bent, the week did not break.
+    assert len(body["lessons"]) == 15
+
+
+def test_a_preference_for_another_subject_does_not_move_this_one(
+    client: TestClient,
+) -> None:
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+
+    preferred_id = str(uuid4())
+    payload["rooms"] = [
+        {"id": payload["rooms"][0]["id"], "capacity": 30},  # type: ignore[index]
+        {"id": preferred_id, "capacity": 30},
+    ]
+    payload["roomPreferences"] = [
+        {
+            "id": str(uuid4()),
+            "subjectId": str(uuid4()),  # some other subject
+            "roomIds": [preferred_id],
+            "weight": 1000,
+        }
+    ]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+
+    assert response.status_code == 200
+    # Nothing to satisfy for this subject: the run succeeds and the lesson is
+    # placed wherever the other objectives put it.
+    assert len(response.json()["lessons"]) == 1

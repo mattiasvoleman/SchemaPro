@@ -173,6 +173,7 @@ def build_room_classes(
     rooms: list[AnonymousRoom],
     distinguished_room_ids: set[UUID],
     room_allowed: Callable[[AnonymousRoom, object], bool],
+    preference_sets: list[set[UUID]] | None = None,
 ) -> list[RoomClass]:
     """Partition rooms so that every lesson's eligible set is a union of classes."""
     # One representative requirement per distinct eligibility profile: room
@@ -186,13 +187,23 @@ def build_room_classes(
         )
     profiles = list(representatives.values())
 
+    # Soft room preferences join the signature rather than pinning rooms: two
+    # otherwise identical rooms where only one is preferred must not be
+    # interchangeable, or the wish could never be expressed. Splitting only
+    # where a preference actually distinguishes keeps the partition coarse —
+    # naming three rooms costs three-way splits, not one class per room.
+    wanted = preference_sets or []
+
     grouped: dict[tuple, list[int]] = {}
     for index, room in enumerate(rooms):
         if room.id in distinguished_room_ids:
             # Its own class, so room_index can be pinned to it exactly.
             signature: tuple = ("pinned", index)
         else:
-            signature = tuple(room_allowed(room, profile) for profile in profiles)
+            signature = (
+                tuple(room_allowed(room, profile) for profile in profiles)
+                + tuple(room.id in preferred for preferred in wanted)
+            )
         grouped.setdefault(signature, []).append(index)
 
     return [
@@ -208,9 +219,12 @@ def add_room_allocation(
     *,
     distinguished_room_ids: set[UUID],
     room_allowed: Callable[[AnonymousRoom, object], bool],
+    preference_sets: list[set[UUID]] | None = None,
 ) -> RoomPlan:
     """Enforce room capacity without naming rooms. Replaces per-room NoOverlap."""
-    classes = build_room_classes(decisions, rooms, distinguished_room_ids, room_allowed)
+    classes = build_room_classes(
+        decisions, rooms, distinguished_room_ids, room_allowed, preference_sets,
+    )
     plan = RoomPlan(classes=classes)
     pools: dict[int, list[cp_model.IntervalVar]] = defaultdict(list)
 
