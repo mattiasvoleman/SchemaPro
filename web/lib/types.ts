@@ -13,7 +13,18 @@ export interface RoomType {
 }
 export type LessonStatus = "SCHEDULED" | "CANCELLED" | "COMPLETED" | "RESCHEDULED";
 export type AttendanceStatus = "UNKNOWN" | "PRESENT" | "ABSENT" | "LATE" | "EXCUSED";
-export type ConstraintResource = "TEACHER" | "ROOM" | "STUDENT_GROUP";
+/**
+ * GRADE_LEVEL is the one target that is not a row anywhere: there is no
+ * "årskurs 5" to point at, so such a rule carries a year range instead of an
+ * id. One rule covers a whole stage, and it also reaches a teaching group whose
+ * own year is unset but whose members are in that stage — which a rule aimed at
+ * a single group never could.
+ */
+export type ConstraintResource =
+  | "TEACHER"
+  | "ROOM"
+  | "STUDENT_GROUP"
+  | "GRADE_LEVEL";
 export type ConstraintType = "UNAVAILABLE" | "PREFERRED_FREE" | "PREFERRED_BUSY";
 
 export interface Profile {
@@ -125,12 +136,35 @@ export interface AvailabilityConstraint {
   userId: string | null;
   roomId: string | null;
   studentGroupId: string | null;
+  /** Inclusive year range for a GRADE_LEVEL rule; null at an open end. */
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
   dayOfWeek: number | null;
   date: string | null;
   startTime: string;
   endTime: string;
   type: ConstraintType;
   reason: string | null;
+}
+
+/**
+ * The school's lunch rules and the size of its dining hall — one row, so the
+ * hooks read and write it as a single value rather than a collection.
+ *
+ * These used to live in one administrator's browser under
+ * `schemapro.scheduleRules`, which meant a colleague pressing "generera" ran
+ * under different rules and nothing anywhere said so.
+ */
+export interface LunchSettings {
+  id: string;
+  lunchEnabled: boolean;
+  /** HH:MM:SS as PostgreSQL returns a `time` column. */
+  lunchStartTime: string;
+  lunchEndTime: string;
+  lunchMinutes: number;
+  /** Null means the school has no seat limit worth modelling. */
+  diningSeats: number | null;
+  maxLessonsPerDayPerGroup: number | null;
 }
 
 export type LessonRecurrence = "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";

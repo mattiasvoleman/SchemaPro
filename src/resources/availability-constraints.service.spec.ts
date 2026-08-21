@@ -70,6 +70,8 @@ describe('AvailabilityConstraintsService', () => {
           userId: TEACHER_ID,
           roomId: null,
           studentGroupId: null,
+          minGradeLevel: null,
+          maxGradeLevel: null,
           dayOfWeek: 2,
           date: null,
           startTime: new Date('1970-01-01T08:00:00.000Z'),
@@ -77,6 +79,81 @@ describe('AvailabilityConstraintsService', () => {
           reason: null,
         },
       });
+    });
+
+    it('creates a year-range lock that names no resource at all', async () => {
+      // The one target that is not a row in any table: there is no "årskurs 5"
+      // to point at, so the rule carries its own bounds. A school reserving a
+      // lunch sitting for åk 4-6 writes this once instead of once per class.
+      tx.availabilityConstraint.create.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await service.create(
+        weeklyDto({
+          resourceType: ConstraintResource.GRADE_LEVEL,
+          userId: undefined,
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          reason: 'Lunch',
+        }),
+        testUser(),
+      );
+
+      expect(tx.availabilityConstraint.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            resourceType: ConstraintResource.GRADE_LEVEL,
+            userId: null,
+            roomId: null,
+            studentGroupId: null,
+            minGradeLevel: 4,
+            maxGradeLevel: 6,
+          }),
+        }),
+      );
+    });
+
+    it('refuses a year-range lock with no bounds', async () => {
+      await expect(
+        service.create(
+          weeklyDto({
+            resourceType: ConstraintResource.GRADE_LEVEL,
+            userId: undefined,
+          }),
+          testUser(),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(tx.availabilityConstraint.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses an inverted year range', async () => {
+      // Accepted by the wire schema, and it would match nothing — the same
+      // silent no-op the resource-shape check exists to prevent.
+      await expect(
+        service.create(
+          weeklyDto({
+            resourceType: ConstraintResource.GRADE_LEVEL,
+            userId: undefined,
+            minGradeLevel: 9,
+            maxGradeLevel: 3,
+          }),
+          testUser(),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('refuses a year-range lock that also names a group', async () => {
+      await expect(
+        service.create(
+          weeklyDto({
+            resourceType: ConstraintResource.GRADE_LEVEL,
+            userId: undefined,
+            studentGroupId: GROUP_ID,
+            minGradeLevel: 4,
+          }),
+          testUser(),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('stores a one-off room constraint for a specific date', async () => {
@@ -228,6 +305,43 @@ describe('AvailabilityConstraintsService', () => {
         where: { id: CONSTRAINT_ID },
         data: { reason: 'Away' },
       });
+    });
+
+    it('refuses a PATCH that would leave the rule pointing at nothing', async () => {
+      // create() has always checked the shape; update() never did, so a PATCH
+      // could switch a teacher rule to STUDENT_GROUP without supplying a group
+      // and leave a rule that validates, saves, lists — and constrains nothing.
+      await expect(
+        service.update(
+          CONSTRAINT_ID,
+          { resourceType: ConstraintResource.STUDENT_GROUP },
+          testUser(),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(tx.availabilityConstraint.update).not.toHaveBeenCalled();
+    });
+
+    it('lets a PATCH that supplies the matching id through', async () => {
+      tx.availabilityConstraint.update.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await service.update(
+        CONSTRAINT_ID,
+        { resourceType: ConstraintResource.STUDENT_GROUP, studentGroupId: GROUP_ID },
+        testUser(),
+      );
+
+      expect(tx.availabilityConstraint.update).toHaveBeenCalled();
+    });
+
+    it('leaves a PATCH that does not touch the resource type alone', async () => {
+      // The shape check must not demand fields the caller never mentioned —
+      // changing only the reason is the most common edit there is.
+      tx.availabilityConstraint.update.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await service.update(CONSTRAINT_ID, { reason: 'Sjuk' }, testUser());
+
+      expect(tx.availabilityConstraint.update).toHaveBeenCalled();
     });
 
     it('parses a new startTime and clears the date with null', async () => {

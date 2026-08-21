@@ -351,7 +351,16 @@
       "normal": "Lagom",
       "strong": "Starkt",
       "veryStrong": "Mycket starkt"
-    }
+    },
+    "resourceGrade": "Årskurs",
+    "gradeSpan": "Årskurser",
+    "gradeFromLabel": "Från årskurs",
+    "gradeToLabel": "Till och med årskurs",
+    "gradeHint": "Regeln gäller varje klass och undervisningsgrupp med elever i spannet.",
+    "gradeOne": "Åk {grade}",
+    "gradeRange": "Åk {min}–{max}",
+    "gradeFrom": "Åk {min} och uppåt",
+    "gradeUpTo": "Till och med åk {max}"
   },
   "generate": {
     "title": "Generera schema",
@@ -385,19 +394,16 @@
     "historyHint": "Tidigare optimeringskörningar för detta läsår.",
     "weightTeacherGap": "Kompakta lärardagar (färre håltimmar)",
     "rulesTitle": "Skolregler",
-    "rulesHint": "Hårda villkor som det genererade schemat måste uppfylla.",
-    "ruleLunch": "Garanterad lunchrast för varje klass",
-    "ruleLunchStart": "Fönster från",
-    "ruleLunchEnd": "Fönster till",
-    "ruleLunchMinutes": "Minuter",
-    "ruleMaxPerDay": "Max lektioner per dag och klass"
+    "rulesHint": "Reglerna gäller hela skolan och ställs in under Tillgänglighet.",
+    "ruleMaxPerDay": "Max lektioner per dag och klass",
+    "rulesEdit": "Ändra"
   },
   "timetable": {
     "title": "Grundschema",
     "subtitle": "Den återkommande veckomallen som AI-motorn tagit fram",
     "publish": "Publicera till kalender",
     "publishTitle": "Publicera schema",
-    "publishBody": "Omvandlar veckomallen till daterade lektioner för hela läsåret. Befintliga schemalagda lektioner i perioden ersätts.",
+    "publishBody": "Omvandlar veckomallen till daterade lektioner för hela läsåret. Lektioner som redan ligger i kalendern lämnas orörda — vill du ersätta dem behöver du ta bort dem först.",
     "publishFrom": "Från",
     "publishTo": "Till",
     "publishConfirm": "Publicera",
@@ -727,5 +733,39 @@
     "rowErrors": "Fel per rad",
     "rowError": "Rad {row}: {message}",
     "exportButton": "Exportera CSV"
+  },
+  "grades": {
+    "grade": "{grade, plural, =0 {Förskoleklass} other {Åk #}}"
+  },
+  "lunch": {
+    "title": "Lunch och matsal",
+    "hint": "Solvern håller en lunchlucka fri för varje klass och sprider ut sittningarna så att matsalen räcker till.",
+    "enabled": "Reservera tid för lunch",
+    "windowStart": "Tidigast",
+    "windowEnd": "Senast",
+    "minutes": "Lunchens längd (min)",
+    "seats": "Platser i matsalen",
+    "seatsPlaceholder": "Ingen gräns",
+    "seatsHint": "Lämnas fältet tomt antar solvern att alla får plats samtidigt.",
+    "maxPerDay": "Max lektioner per dag",
+    "maxPerDayPlaceholder": "Ingen gräns",
+    "maxPerDayHint": "Gäller per klass och undervisningsgrupp.",
+    "notDefined": "Lunchen är inte definierad ännu",
+    "publishWarning": "Ingen lunchtid är reserverad. Schemat kan publiceras ändå, men eleverna kan få lektioner mitt i lunchen.",
+    "publishWarningLink": "Ställ in lunch",
+    "summary": "Lunch {start}–{end}, {minutes} min",
+    "summarySeats": "{seats} platser i matsalen",
+    "summaryNoSeats": "ingen platsgräns"
+  },
+  "conflictCategories": {
+    "AVAILABILITY": "Tillgänglighet",
+    "DINING_CAPACITY": "Matsalskapacitet",
+    "GROUP_OVERLAP": "Krock för grupp",
+    "INSUFFICIENT_RESOURCES": "Otillräckliga resurser",
+    "LUNCH_WINDOW": "Lunchfönstret",
+    "REQUIREMENT_DEMAND": "För många lektioner",
+    "ROOM_CAPACITY": "Salskapacitet",
+    "ROOM_OVERLAP": "Krock i sal",
+    "TEACHER_OVERLAP": "Krock för lärare"
   }
 }

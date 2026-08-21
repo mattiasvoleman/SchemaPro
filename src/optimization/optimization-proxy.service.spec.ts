@@ -251,6 +251,8 @@ describe('OptimizationProxyService', () => {
       userId: null,
       roomId: null,
       studentGroupId: null,
+      minGradeLevel: null,
+      maxGradeLevel: null,
       dayOfWeek: 1,
       date: null,
       startTime: eightAm,
@@ -273,6 +275,8 @@ describe('OptimizationProxyService', () => {
       groups?: unknown[];
       /** Soft room wishes, as stored. */
       roomPreferences?: unknown[];
+      /** The school's saved lunch rules, or null when nobody has defined them. */
+      lunchSettings?: unknown;
     };
 
     const arrange = (overrides: Arrangement = {}) => {
@@ -307,6 +311,7 @@ describe('OptimizationProxyService', () => {
       // Year spans for rooms limited to a stage are derived from these.
       tx.studentGroup.findMany.mockResolvedValue(overrides.groups ?? []);
       tx.roomPreference.findMany.mockResolvedValue(overrides.roomPreferences ?? []);
+      tx.lunchSetting.findUnique.mockResolvedValue(overrides.lunchSettings ?? null);
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 2 });
       tx.masterLesson.count.mockResolvedValue(1);
       tx.masterLesson.create.mockResolvedValue({});
@@ -901,10 +906,13 @@ describe('OptimizationProxyService', () => {
       expect(postedPayload().requirements[0].studentGroupSize).toBe(3);
     });
 
-    it('formats date-bound constraints as YYYY-MM-DD and anonymizes unlinked ones', async () => {
+    it('formats date-bound constraints as YYYY-MM-DD', async () => {
       arrange({
         constraints: [
-          constraintRow({ date: new Date('2026-12-24T00:00:00.000Z') }),
+          constraintRow({
+            userId: TEACHER_ID,
+            date: new Date('2026-12-24T00:00:00.000Z'),
+          }),
         ],
       });
       echoEngine();
@@ -919,8 +927,206 @@ describe('OptimizationProxyService', () => {
         kind: 'UNAVAILABLE',
       });
       expect(constraint.id).not.toBe('constraint-real-id');
-      // No linked user/room/group: the resource still gets a fresh UUID.
-      expect(constraint.resourceId).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it('sends the school’s saved lunch rules, so every admin generates the same week', async () => {
+      // They used to live in one browser's localStorage: a colleague pressing
+      // generate ran under different rules and nothing said so.
+      arrange({
+        lunchSettings: {
+          lunchEnabled: true,
+          lunchStartTime: eightAm,
+          lunchEndTime: nineAm,
+          lunchMinutes: 30,
+          diningSeats: 180,
+          maxLessonsPerDayPerGroup: 7,
+        },
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().rules).toEqual({
+        lunchStartTime: '08:00:00',
+        lunchEndTime: '09:00:00',
+        lunchMinutes: 30,
+        diningSeats: 180,
+        maxLessonsPerDayPerGroup: 7,
+      });
+    });
+
+    it('reads a switched-off lunch as no lunch rule, not as a zero-minute one', async () => {
+      arrange({
+        lunchSettings: {
+          lunchEnabled: false,
+          lunchStartTime: eightAm,
+          lunchEndTime: nineAm,
+          lunchMinutes: 30,
+          diningSeats: 180,
+          maxLessonsPerDayPerGroup: null,
+        },
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      // Nothing left to say once lunch is off, so no rules key at all rather
+      // than an empty object that reads as "considered, came to nothing".
+      expect(postedPayload()).not.toHaveProperty('rules');
+    });
+
+    it('omits the seat count when the school has no limit worth modelling', async () => {
+      arrange({
+        lunchSettings: {
+          lunchEnabled: true,
+          lunchStartTime: eightAm,
+          lunchEndTime: nineAm,
+          lunchMinutes: 30,
+          diningSeats: null,
+          maxLessonsPerDayPerGroup: null,
+        },
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().rules).not.toHaveProperty('diningSeats');
+    });
+
+    it('lets a caller’s own rules win over the stored ones', async () => {
+      arrange({
+        lunchSettings: {
+          lunchEnabled: true,
+          lunchStartTime: eightAm,
+          lunchEndTime: nineAm,
+          lunchMinutes: 30,
+          diningSeats: 180,
+          maxLessonsPerDayPerGroup: null,
+        },
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser(), null, {
+        lunchMinutes: 45,
+      });
+
+      // Body wins whole, not field by field: two half-specified rule sets
+      // combining into a third nobody wrote would be worse than either.
+      expect(postedPayload().rules).toEqual({ lunchMinutes: 45 });
+    });
+
+    it('counts a home class once for the dining hall and a teaching group not at all', async () => {
+      // A child eats once. Ma71's students are already counted in 7A, so
+      // sending its size too would fill the hall twice with the same children.
+      const MA71 = '99999999-9999-4999-8999-999999999999';
+      arrange({
+        requirements: [requirement(), requirement({ studentGroupId: MA71 })],
+        homeMembers: [
+          { id: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: GROUP_ID },
+          { id: 'aaaaaaa2-0000-4000-8000-000000000002', studentGroupId: GROUP_ID },
+        ],
+        teachingMembers: [
+          { studentId: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: MA71 },
+        ],
+        groups: [
+          { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS' },
+          { id: MA71, gradeLevel: null, kind: 'TEACHING_GROUP' },
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(
+        postedPayload()
+          .groups.map((g: any) => g.lunchHeadcount)
+          .sort(),
+      ).toEqual([0, 2]);
+      // The fact belongs to the group, and is carried in exactly one place.
+      expect(postedPayload().requirements[0]).not.toHaveProperty("lunchHeadcount");
+    });
+
+    it('counts a class that reaches the payload only through a locked lesson', async () => {
+      // Its every lesson is placed by hand, so the subtraction leaves it no
+      // requirement at all — and it used to fall out of the payload with them,
+      // while its thirty children kept eating.
+      const HANDPLACED = '77777777-7777-4777-8777-777777777777';
+      arrange({
+        requirements: [requirement()],
+        lockedLessons: [
+          {
+            id: 'ml-1',
+            subjectId: SUBJECT_ID,
+            studentGroupId: HANDPLACED,
+            teacherId: null,
+            coTeacherId: null,
+            roomId: null,
+            dayOfWeek: 1,
+            startTime: eightAm,
+            endTime: nineAm,
+            extraGroups: [],
+          },
+        ],
+        homeMembers: [
+          { id: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: GROUP_ID },
+          { id: 'aaaaaaa2-0000-4000-8000-000000000002', studentGroupId: HANDPLACED },
+          { id: 'aaaaaaa3-0000-4000-8000-000000000003', studentGroupId: HANDPLACED },
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(
+        postedPayload()
+          .groups.map((g: any) => g.lunchHeadcount)
+          .sort(),
+      ).toEqual([1, 2]);
+    });
+
+    it('drops a constraint whose declared type names no resource', async () => {
+      // This used to be forwarded with a freshly minted uuid, which the engine
+      // could never match against anything: the rule was saved, listed and
+      // enforced nowhere, with no error at any layer. The API refuses to write
+      // such a row now, and a survivor from before it is dropped rather than
+      // sent as something the engine will silently ignore.
+      arrange({
+        constraints: [
+          constraintRow({ userId: null, roomId: null, studentGroupId: null }),
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().constraints).toEqual([]);
+    });
+
+    it('sends a year-range lock with its bounds and no resource id', async () => {
+      // The one target that is not a row anywhere: the engine matches the range
+      // against each group's own span, which is how a lock on åk 4-6 also
+      // catches a teaching group whose own gradeLevel is null.
+      arrange({
+        constraints: [
+          constraintRow({
+            resourceType: 'GRADE_LEVEL',
+            userId: null,
+            minGradeLevel: 4,
+            maxGradeLevel: 6,
+          }),
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+      const [constraint] = postedPayload().constraints;
+
+      expect(constraint).toMatchObject({
+        resourceKind: 'GRADE_LEVEL',
+        minGradeLevel: 4,
+        maxGradeLevel: 6,
+      });
+      expect(constraint.resourceId).toBeUndefined();
     });
   });
 

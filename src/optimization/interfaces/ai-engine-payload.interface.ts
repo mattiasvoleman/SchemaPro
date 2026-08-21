@@ -10,7 +10,16 @@
 
 export type DayOfWeek = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 export type ConstraintKind = 'UNAVAILABLE' | 'PREFERRED_FREE' | 'PREFERRED_BUSY';
-export type ResourceKind = 'TEACHER' | 'ROOM' | 'STUDENT_GROUP';
+/**
+ * GRADE_LEVEL is the one target that is not a row in any table: there is no
+ * "årskurs 5" to point at, so such a constraint carries a year range instead of
+ * a resource id and the engine matches it against each group's own year span.
+ * A school reserving a lunch sitting for åk 4-6 authors one rule rather than
+ * one per class — and the rule then also catches a teaching group whose own
+ * gradeLevel is null but whose members are year 5, which a group-targeted rule
+ * never could.
+ */
+export type ResourceKind = 'TEACHER' | 'ROOM' | 'STUDENT_GROUP' | 'GRADE_LEVEL';
 /**
  * An opaque room-type token. Room types are school-owned rows whose names the
  * school authors, so what crosses to the solver is an anonymised id: the
@@ -42,6 +51,20 @@ export interface AnonymousRequirement {
   maxGradeLevel: number | null;
 }
 
+/**
+ * A group the week concerns, and how many children it brings to lunch.
+ *
+ * Zero for a teaching group: its students eat with their home class, and
+ * counting them again would fill the hall twice over with the same children.
+ * Sent as its own list rather than as a field on each requirement, because a
+ * class whose lessons are all placed by hand has no requirement left — and it
+ * still eats.
+ */
+export interface AnonymousGroup {
+  id: string;
+  lunchHeadcount: number;
+}
+
 export interface AnonymousRoom {
   id: string;
   capacity: number | null;
@@ -70,7 +93,15 @@ export interface AnonymousRoomPreference {
 export interface AnonymousConstraint {
   id: string;
   resourceKind: ResourceKind;
-  resourceId: string;
+  /**
+   * Absent for GRADE_LEVEL, which names a year range instead. Optional rather
+   * than a minted throwaway id: an id nothing can match is a rule that
+   * validates, saves, lists and constrains nothing, with no error anywhere.
+   */
+  resourceId?: string;
+  /** Inclusive year range for a GRADE_LEVEL rule; null at an open end. */
+  minGradeLevel?: number | null;
+  maxGradeLevel?: number | null;
   dayOfWeek: DayOfWeek | null;
   /** ISO date string (YYYY-MM-DD) or null for recurring weekly constraints. */
   date: string | null;
@@ -129,6 +160,11 @@ export interface ScheduleRules {
   /** HH:MM:SS */
   lunchEndTime?: string;
   lunchMinutes?: number;
+  /**
+   * Seats in the dining hall. Omitted when the school has no limit worth
+   * modelling, and the engine then places lunch exactly as it did before.
+   */
+  diningSeats?: number;
   maxLessonsPerDayPerGroup?: number;
 }
 
@@ -141,6 +177,8 @@ export interface AiEngineScheduleRequest {
   constraints: AnonymousConstraint[];
   /** Locked master lessons the solver must plan around (never re-placed). */
   fixedLessons: AnonymousFixedLesson[];
+  /** Every group the week concerns, with its dining-hall headcount. */
+  groups: AnonymousGroup[];
   /** Previous unlocked placements, for minimal-disruption re-optimization. */
   previousLessons: AnonymousPreviousLesson[];
   /**
@@ -163,6 +201,7 @@ export type ConflictCategory =
   | 'GROUP_OVERLAP'
   | 'ROOM_CAPACITY'
   | 'AVAILABILITY'
+  | 'DINING_CAPACITY'
   | 'INSUFFICIENT_RESOURCES';
 
 export interface AiEngineConflictDetail {

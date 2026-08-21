@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from uuid import UUID
 
 from ortools.sat.python import cp_model
@@ -82,11 +82,28 @@ class AssumptionRegistry:
         return literal
 
     def resolve(self, indices: list[int]) -> list[AssumptionRecord]:
-        resolved: list[AssumptionRecord] = []
-        for index in indices:
-            if 0 <= index < len(self._records):
-                resolved.append(self._records[index])
-        return resolved
+        """Find the records behind a conflict core.
+
+        ``indices`` are LITERAL REFERENCES — the same encoding ``CpModel``
+        stores in its ``assumptions`` field — and not offsets into
+        ``self._records``. A reference counts every variable built before the
+        literal, and the builders make thousands of those, so the two agree
+        only by coincidence. On the payloads exercised here a real core of
+        ``[6, 7, 8]`` fell past the end of a three-record list and resolved to
+        nothing, and the response degraded to the INSUFFICIENT_RESOURCES
+        fallback — which does reach the school, and sends it to look at rooms
+        and teacher time whatever the true cause was. Where the numbers happen
+        to land *inside* the list the offsets reading is worse than the
+        fallback: unrelated records resolve and name a cause with confidence.
+
+        Every literal handed out by ``register`` is a fresh positive variable,
+        so its reference is its own non-negative variable index. A negative
+        reference is the *negation* of a variable, which this registry never
+        assumes; it is skipped like any other index it did not register, which
+        keeps the original contract that unknown indices contribute nothing.
+        """
+        by_reference = {record.literal.Index(): record for record in self._records}
+        return [by_reference[index] for index in indices if index in by_reference]
 
 
 def build_conflict_analysis(
@@ -99,7 +116,7 @@ def build_conflict_analysis(
 
     if not records:
         return ConflictAnalysis(
-            summary="The timetable is infeasible, but no minimal conflict core was returned.",
+            summary="The timetable is infeasible, but no conflict core was returned.",
             conflicts=[
                 ConflictDetail(
                     category="INSUFFICIENT_RESOURCES",
@@ -111,6 +128,50 @@ def build_conflict_analysis(
             ],
         )
 
+    # One cause, one line. Several builders register per lesson instance rather
+    # than per cause — _add_capacity_constraints does it once for every lesson
+    # of a requirement — so a requirement with forty lessons a week put forty
+    # word-for-word identical details in front of an administrator, and a real
+    # payload buried the other causes under them. The category and the message
+    # together are what identify a cause: the message already names the
+    # requirement, the constraint, the seat count or the group and day, so two
+    # records that agree on both are the same sentence about the same thing.
+    #
+    # Merged rather than dropped, though on today's builders the two are
+    # equivalent. Every message written here names the ids of what it is about,
+    # so records that agree on the message agree on their ids as well — the
+    # copies _add_capacity_constraints registers per lesson instance all carry
+    # the one requirement its own sentence quotes. That equivalence is a
+    # property of how the messages happen to be phrased and not of this
+    # function, and the first builder to register one sentence about several
+    # resources would, under a drop, show an administrator an arbitrary member
+    # of the set. A dict and four appends buy not having to notice.
+    merged: dict[tuple[str, str], AssumptionRecord] = {}
+    for record in records:
+        key = (record.category, record.message)
+        existing = merged.get(key)
+        if existing is None:
+            # A copy with id lists of its own, so appending below cannot reach
+            # back into the registry's records. `literal` rides along unused —
+            # the merged record is a local accumulator, never a return value.
+            merged[key] = replace(
+                record,
+                requirement_ids=list(record.requirement_ids),
+                room_ids=list(record.room_ids),
+                constraint_ids=list(record.constraint_ids),
+                resource_ids=list(record.resource_ids),
+            )
+            continue
+        for target, extra in (
+            (existing.requirement_ids, record.requirement_ids),
+            (existing.room_ids, record.room_ids),
+            (existing.constraint_ids, record.constraint_ids),
+            (existing.resource_ids, record.resource_ids),
+        ):
+            for identifier in extra:
+                if identifier not in target:
+                    target.append(identifier)
+
     conflicts = [
         ConflictDetail(
             category=record.category,
@@ -120,13 +181,23 @@ def build_conflict_analysis(
             constraint_ids=record.constraint_ids,
             resource_ids=record.resource_ids,
         )
-        for record in records
+        for record in merged.values()
     ]
 
-    categories = sorted({conflict.category for conflict in conflicts})
+    categories = ", ".join(
+        sorted({conflict.category.lower().replace("_", " ") for conflict in conflicts}),
+    )
+    # Not "infeasible because of these". SufficientAssumptionsForInfeasibility
+    # returns a core that is SUFFICIENT, not minimal: it routinely carries
+    # literals that constrain nothing here, and the solver never claimed
+    # otherwise. Saying they caused the failure states as fact something
+    # nothing proved — and this text is read by a school, which will go and
+    # change whatever it names. So: where to look, what is actually
+    # established, and the caveat, in that order.
     summary = (
-        "Scheduling is infeasible due to conflicting constraints: "
-        + ", ".join(category.lower().replace("_", " ") for category in categories)
-        + "."
+        f"No timetable satisfies every rule. Start with these: {categories}. "
+        "Together they are enough to make the week impossible, but the solver "
+        "reports a sufficient set rather than the smallest one, so some of "
+        "them may carry no blame."
     )
     return ConflictAnalysis(summary=summary, conflicts=conflicts)

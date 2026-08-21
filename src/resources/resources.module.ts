@@ -3,6 +3,8 @@ import { SubjectsController } from './subjects.controller';
 import { SubjectsService } from './subjects.service';
 import { RoomPreferencesController } from './room-preferences.controller';
 import { RoomPreferencesService } from './room-preferences.service';
+import { LunchSettingsController } from './lunch-settings.controller';
+import { LunchSettingsService } from './lunch-settings.service';
 import { RoomTypesController } from './room-types.controller';
 import { RoomTypesService } from './room-types.service';
 import { RoomsController } from './rooms.controller';
@@ -25,6 +27,7 @@ import { AvailabilityConstraintsService } from './availability-constraints.servi
   controllers: [
     RoomTypesController,
     RoomPreferencesController,
+    LunchSettingsController,
     SubjectsController,
     RoomsController,
     AcademicYearsController,
@@ -35,6 +38,7 @@ import { AvailabilityConstraintsService } from './availability-constraints.servi
   providers: [
     RoomTypesService,
     RoomPreferencesService,
+    LunchSettingsService,
     SubjectsService,
     RoomsService,
     AcademicYearsService,

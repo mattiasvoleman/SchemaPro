@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date as date_type
 from uuid import UUID
@@ -13,6 +14,7 @@ from app.exceptions import InvalidScheduleInputError, SolverBuildError
 from app.schemas.schedule import (
     AnonymousRoomPreference,
     AnonymousConstraint,
+    AnonymousGroup,
     AnonymousRequirement,
     AnonymousRoom,
     FixedLesson,
@@ -137,7 +139,10 @@ class SchedulerSolver:
         )
 
         day_vars: dict[str, cp_model.IntVar] = {}
-        self._add_rules_constraints(model, decisions, request.rules, day_vars)
+        self._add_rules_constraints(
+            model, registry, decisions, request.rules, day_vars,
+            request.fixed_lessons, request.groups, request.group_conflicts,
+        )
         if include_objective:
             weights = self._resolve_weights(request)
             objective_terms = [
@@ -446,10 +451,31 @@ class SchedulerSolver:
                             preference         booleans per touched lesson;
                                                ROOM-kind constraints touch every
                                                lesson and add an assignment
-                                               literal each
+                                               literal each, and a GRADE_LEVEL
+                                               one is charged as if every group
+                                               shared the year
             (1 + D)L + GD   rules              day var per lesson, on-day
-                                               boolean per lesson-day, one lunch
-                                               interval per group-day
+                            + GD if locks      boolean per lesson-day, one lunch
+                            + 1 if seats       start per group-day. G counts
+                                               every group that eats — the ones
+                                               with lessons plus the ones only
+                                               `groups` names, since a class
+                                               whose week is locked still gets a
+                                               break. Locked lessons add one
+                                               literal per group-day whose lunch
+                                               they narrow; which pairs those
+                                               are needs a fixed-lessons x
+                                               groups scan, so the worst case is
+                                               charged instead, as the ROOM
+                                               branch above also does. A seat
+                                               limit adds exactly one variable
+                                               however big the school: its
+                                               cumulative reuses those same
+                                               starts through optional
+                                               intervals, and every one of them
+                                               is present on the single
+                                               registered dining literal, so the
+                                               literal is the whole cost
             pairs(req)      spread             one boolean per same-requirement
                                                lesson pair
             2 x pairs(t)    teacher gap        boolean + gap var per
@@ -503,8 +529,38 @@ class SchedulerSolver:
                 affected_vars += 2 * lessons_by_teacher.get(constraint.resource_id, 0)
             elif constraint.resource_kind == "STUDENT_GROUP":
                 affected_vars += 2 * lessons_by_group.get(constraint.resource_id, 0)
+            elif constraint.resource_kind == "GRADE_LEVEL":
+                # Reaches every group whose own years overlap the reservation,
+                # which is knowable only by scanning every group per constraint
+                # — an O(constraints x groups) pass in a function that is
+                # deliberately linear. Charged at its worst case instead, the
+                # same bound the ROOM branch settles for, so the estimate stays
+                # an upper bound and stays cheap.
+                affected_vars += 2 * total_lessons
             else:  # ROOM: an assignment literal plus before/after for every lesson
                 affected_vars += 3 * total_lessons
+
+        # Everyone who gets a lunch start, which is more than the groups with
+        # lessons: a class whose week is entirely hand-placed reaches the
+        # engine only through `groups` and still eats.
+        lunch_groups = len(
+            _lunch_group_ids(
+                (requirement.student_group_id for requirement in request.requirements),
+                request.groups,
+            ),
+        )
+        # One literal per group-day whose lunch a locked lesson narrows, at its
+        # worst case. Nothing is charged for a payload with no locked lessons,
+        # which is every payload the benchmarks build.
+        lunch_lock_vars = day_count * lunch_groups if request.fixed_lessons else 0
+        # The seat rule's entire variable cost, charged whether or not the lunch
+        # window that would build it is set — an estimate that is high by one is
+        # still an upper bound.
+        dining_vars = (
+            1
+            if request.rules is not None and request.rules.dining_seats is not None
+            else 0
+        )
 
         gap_pair_cap = 600  # mirrors _add_teacher_gap_objective's own guard
         gap_vars = 0
@@ -518,7 +574,9 @@ class SchedulerSolver:
             + room_class_vars
             + affected_vars
             + (1 + day_count) * total_lessons
-            + day_count * len(lessons_by_group)
+            + day_count * lunch_groups
+            + lunch_lock_vars
+            + dining_vars
             + spread_pairs
             + gap_vars
             + 2 * len(request.previous_lessons)
@@ -573,6 +631,79 @@ class SchedulerSolver:
                     f"{requirement.id} (group size "
                     f"{requirement.student_group_size}, required type "
                     f"{requirement.required_room_type or 'any'}, years {grades})."
+                )
+                raise InvalidScheduleInputError(msg)
+
+        rules = request.rules
+        if rules is None or not _lunch_window_is_set(rules):
+            # Nothing below exists without a lunch window. A school that has
+            # typed a seat count and not yet decided when lunch is has made no
+            # error and must not be told it has.
+            return
+
+        window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
+
+        if rules.dining_seats is not None and request.groups:
+            # One class that does not fit in the hall makes the cumulative
+            # unsatisfiable on every day of the week, whatever else the
+            # timetable does. CP-SAT would spend the whole budget proving that
+            # and answer INFEASIBLE without naming a class or a number.
+            #
+            # Reads `groups`, the same list the cumulative's demands come from.
+            # Reading the requirements instead is exactly how a class whose
+            # week is entirely locked slipped past both. The largest class is
+            # named rather than the first one over, because its headcount is
+            # the number the hall has to reach.
+            largest = max(request.groups, key=lambda group: group.lunch_headcount)
+            if largest.lunch_headcount > rules.dining_seats:
+                msg = (
+                    f"Student group {largest.id} brings "
+                    f"{largest.lunch_headcount} students to lunch, more than the "
+                    f"dining hall's {rules.dining_seats} seats."
+                )
+                raise InvalidScheduleInputError(msg)
+
+        # Whether locked lessons leave a group any admissible lunch start is
+        # arithmetic on constants — no search decides it. Left to the model it
+        # becomes an empty variable domain, and an empty domain is a proof of
+        # infeasibility CP-SAT can reach without touching one assumption
+        # literal, which returns an empty conflict core and takes every other
+        # cause in the payload down with it. Answering here spends no solve
+        # budget and names the group and the day.
+        #
+        # The same window arithmetic and the same reachability rule the builder
+        # uses, through the same two helpers — a second rounding rule here
+        # would eventually disagree with the model about when lunch is. The
+        # groups that get a break are knowable without building anything:
+        # every requirement carries lessons_per_week >= 1, so each one's group
+        # is in `by_group` there exactly as it is in this list here.
+        lunch_group_ids = _lunch_group_ids(
+            (requirement.student_group_id for requirement in request.requirements),
+            request.groups,
+        )
+        blocked_starts = self._lunch_starts_blocked_by_fixed_lessons(
+            request.fixed_lessons,
+            set(lunch_group_ids),
+            _groups_sharing_students(request.group_conflicts),
+            window_start,
+            window_end - lunch_slots,
+            lunch_slots,
+        )
+        slots_per_day = self._grid.slots_per_day
+        for (group_id, day_index), forbidden in blocked_starts.items():
+            allowed = self._admissible_lunch_starts(
+                day_index * slots_per_day,
+                window_start,
+                window_end,
+                lunch_slots,
+                forbidden,
+            )
+            if allowed.is_empty():
+                msg = (
+                    f"Locked lessons leave student group {group_id} no "
+                    f"{rules.lunch_minutes}-minute lunch break inside "
+                    f"{rules.lunch_start_time}-{rules.lunch_end_time} on day "
+                    f"{self._grid.schedule_days[day_index]}."
                 )
                 raise InvalidScheduleInputError(msg)
 
@@ -776,7 +907,10 @@ class SchedulerSolver:
                 category="AVAILABILITY",
                 message=f"Availability constraint {constraint.id} blocks required lesson placement.",
                 constraint_ids=[constraint.id],
-                resource_ids=[constraint.resource_id],
+                # A year reservation names no resource, and a conflict detail
+                # carries UUIDs only — the constraint id is what the admin has
+                # to look up anyway.
+                resource_ids=[constraint.resource_id] if constraint.resource_id else [],
                 requirement_ids=[decision.lesson.requirement.id for decision, _ in affected],
             )
 
@@ -825,6 +959,17 @@ class SchedulerSolver:
         if constraint.resource_kind == "STUDENT_GROUP":
             for decision in decisions:
                 if decision.lesson.requirement.student_group_id == constraint.resource_id:
+                    affected.append((decision, None))
+            return affected
+
+        if constraint.resource_kind == "GRADE_LEVEL":
+            # One row, every group of those years — including the teaching
+            # groups, whose own grade level is null but whose members are year
+            # 7 all the same. Fanning this out into one constraint per group in
+            # the gateway would turn "year 7 eats at 11:30" into sixty rows
+            # against a payload capped at five thousand.
+            for decision in decisions:
+                if _grade_span_overlaps(constraint, decision.lesson.requirement):
                     affected.append((decision, None))
             return affected
 
@@ -1304,14 +1449,148 @@ class SchedulerSolver:
 
         return penalties
 
+    def _lunch_window_slots(self, rules: ScheduleRules) -> tuple[int, int, int]:
+        """The lunch window and break length in slots: (start, end, length).
+
+        One rounding rule, read from two places. _validate_request needs the
+        same arithmetic the builder does — it settles up front what locked
+        lessons leave a group, so the solve budget is not spent proving a
+        subtraction — and two copies of "which slot is 11:30" would eventually
+        disagree about a school's lunch.
+
+        Every rejection here is bad input, not a solver verdict. In particular
+        a 40-minute break is off the 15-minute grid and minutes_to_slots says
+        so with a bare ValueError, which outside this block escapes to
+        main.py's generic handler and becomes a 500. Now that lunch is a saved
+        setting rather than a value retyped per run, that 500 would come back
+        on every run.
+        """
+        try:
+            window_start = self._grid.parse_hhmmss(rules.lunch_start_time)
+            window_end = self._grid.parse_hhmmss(rules.lunch_end_time)
+            lunch_slots = self._grid.minutes_to_slots(rules.lunch_minutes)
+        except ValueError as exc:
+            raise InvalidScheduleInputError(str(exc)) from exc
+        if window_end - window_start < lunch_slots:
+            raise InvalidScheduleInputError(
+                "Lunch window is shorter than the required lunch break.",
+            )
+        return window_start, window_end, lunch_slots
+
+    def _admissible_lunch_starts(
+        self,
+        day_offset: int,
+        window_start: int,
+        window_end: int,
+        lunch_slots: int,
+        forbidden: list[tuple[int, int]],
+    ) -> cp_model.Domain:
+        """What is left of one group's lunch window on one day, in absolute slots.
+
+        A domain, not a NoOverlap against constant intervals: one variable's
+        domain is the strongest and cheapest form the fact has. Shared with
+        _validate_request, which asks the same question and only wants to know
+        whether the answer is empty.
+        """
+        allowed = cp_model.Domain(
+            day_offset + window_start,
+            day_offset + window_end - lunch_slots,
+        )
+        for first_bad, last_bad in forbidden:
+            allowed = allowed.intersection_with(
+                cp_model.Domain(first_bad, last_bad).complement(),
+            )
+        return allowed
+
+    def _lunch_starts_blocked_by_fixed_lessons(
+        self,
+        fixed_lessons: list[FixedLesson],
+        lunch_group_ids: set[UUID],
+        shares_students: dict[UUID, list[UUID]],
+        earliest_start: int,
+        latest_start: int,
+        lunch_slots: int,
+    ) -> dict[tuple[UUID, int], list[tuple[int, int]]]:
+        """Lunch starts a group may not take, because a human already booked it.
+
+        A locked lesson exists in the model only as a window the *generated*
+        lessons steer around (_add_fixed_lesson_constraints); it is never an
+        interval, so the free-window guarantee below has always been free to
+        drop a class's lunch straight on top of a lesson somebody placed by
+        hand. Now that the same interval also books seats, that puts the class
+        in the hall at a time it is demonstrably sitting in a classroom.
+
+        Both windows are constant, so the answer is arithmetic rather than a
+        constraint: a break of `lunch_slots` starting at s clashes with a
+        locked window [a, b) exactly for s in [a - lunch_slots + 1, b - 1].
+        Handing that back as a domain to subtract costs no boolean, no
+        interval and no propagator — and unlike a NoOverlap over constant
+        intervals it stays quiet about two locked lessons that overlap each
+        other, which is a school's own data problem and not a reason to refuse
+        the whole week.
+
+        `earliest_start` and `latest_start` bound an admissible lunch start
+        within its day. A locked lesson that clears the window entirely is
+        dropped here rather than carried down to subtract nothing.
+
+        Which locked lessons reach a group is the rule
+        _add_fixed_lesson_constraints already applies: the groups the lesson
+        names (extra_group_ids included, since a lesson two classes attend
+        holds both of them), plus every group sharing students with one of
+        them. `lunch_group_ids` is the set that will actually get a break, so
+        a lesson naming a group nobody is feeding subtracts nothing.
+        """
+        blocked: dict[tuple[UUID, int], list[tuple[int, int]]] = {}
+        slots_per_day = self._grid.slots_per_day
+        for fixed in fixed_lessons:
+            window = self._fixed_window(fixed)
+            if window is None:
+                # Outside the grid: it falls on no day a lunch falls on.
+                continue
+            abs_start, abs_end = window
+            day_index = abs_start // slots_per_day
+            day_offset = day_index * slots_per_day
+            # Starts this locked lesson rules out, in the day's own coordinates
+            # so they can be compared with the lunch window straight off.
+            first_bad = abs_start - day_offset - lunch_slots + 1
+            last_bad = abs_end - day_offset - 1
+            if last_bad < earliest_start or first_bad > latest_start:
+                # Wholly outside the lunch window: every start it forbids was
+                # inadmissible to begin with.
+                continue
+
+            reached: list[UUID] = []
+            for named_id in (fixed.student_group_id, *fixed.extra_group_ids):
+                for group_id in (named_id, *shares_students.get(named_id, ())):
+                    if group_id in lunch_group_ids and group_id not in reached:
+                        reached.append(group_id)
+            for group_id in reached:
+                blocked.setdefault((group_id, day_index), []).append(
+                    (day_offset + first_bad, day_offset + last_bad),
+                )
+        return blocked
+
     def _add_rules_constraints(
         self,
         model: cp_model.CpModel,
+        registry: AssumptionRegistry,
         decisions: list[LessonDecision],
         rules: ScheduleRules | None,
         day_vars: dict[str, cp_model.IntVar],
+        fixed_lessons: list[FixedLesson],
+        groups: list[AnonymousGroup],
+        group_conflicts: list[tuple[UUID, UUID]] | None = None,
     ) -> None:
-        """Hard school rules: guaranteed lunch break, max lessons per day."""
+        """Hard school rules: lunch break, dining hall seats, lessons per day.
+
+        `fixed_lessons` and `groups` are required, unlike `group_conflicts`,
+        which follows its siblings in defaulting to None. The difference is
+        what a caller that forgets one gets: an omitted `group_conflicts` is a
+        payload that genuinely has none, while an omitted `fixed_lessons` or
+        `groups` would build a model with no locked-lesson blocking and an
+        empty dining hall and say nothing about it. A TypeError names the
+        caller; a default would have let it profile the wrong model in silence.
+        """
         if rules is None:
             return
 
@@ -1320,6 +1599,8 @@ class SchedulerSolver:
             by_group.setdefault(
                 decision.lesson.requirement.student_group_id, [],
             ).append(decision)
+
+        shares_students = _groups_sharing_students(group_conflicts)
 
         # --- Max lessons per day per student group -------------------------
         max_per_day = rules.max_lessons_per_day_per_group
@@ -1341,21 +1622,52 @@ class SchedulerSolver:
                     model.Add(sum(on_day) <= max_per_day)
 
         # --- Guaranteed lunch break per student group per day ---------------
-        if (
-            rules.lunch_start_time is not None
-            and rules.lunch_end_time is not None
-            and rules.lunch_minutes is not None
-        ):
-            try:
-                window_start = self._grid.parse_hhmmss(rules.lunch_start_time)
-                window_end = self._grid.parse_hhmmss(rules.lunch_end_time)
-            except ValueError as exc:
-                raise InvalidScheduleInputError(str(exc)) from exc
-            lunch_slots = self._grid.minutes_to_slots(rules.lunch_minutes)
-            if window_end - window_start < lunch_slots:
-                raise InvalidScheduleInputError(
-                    "Lunch window is shorter than the required lunch break.",
+        if _lunch_window_is_set(rules):
+            window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
+
+            seats = rules.dining_seats
+            seats_literal = None
+            if seats is not None:
+                # A cumulative takes no OnlyEnforceIf, so the only way a full
+                # dining hall can reach a conflict core is to be the PRESENCE
+                # of the sittings in it: assume the literal and the seat rule
+                # is in force, drop it and every sitting vanishes and the
+                # cumulative says nothing. One literal serves every sitting —
+                # they stand or fall together — so the whole mechanism costs a
+                # single boolean. Without it the response degrades to the
+                # INSUFFICIENT_RESOURCES fallback, which tells a school to
+                # look at its rooms and teacher time for a problem that is
+                # neither.
+                seats_literal = registry.register(
+                    model,
+                    name="dining_capacity",
+                    category="DINING_CAPACITY",
+                    message=(
+                        f"Lunch cannot be staggered within the dining hall's "
+                        f"{seats} seats."
+                    ),
                 )
+
+            # Everyone who gets a break, and what each of them needs in chairs.
+            # Both read the payload's `groups` rather than the decisions, which
+            # is the whole of the fix for a class whose week is hand-placed:
+            # such a class has no requirement left and so no decisions, and
+            # while these came off the requirements it was invisible at lunch
+            # while being plainly visible everywhere else.
+            lunch_group_ids = _lunch_group_ids(by_group, groups)
+            headcount_by_group = _lunch_headcounts(groups)
+
+            # Lunch starts a locked lesson has already taken away. Computed
+            # once for the whole model: the windows are constant, so this is
+            # arithmetic on the payload rather than anything in the model.
+            blocked_starts = self._lunch_starts_blocked_by_fixed_lessons(
+                fixed_lessons,
+                set(lunch_group_ids),
+                shares_students,
+                window_start,
+                window_end - lunch_slots,
+                lunch_slots,
+            )
 
             # "There is a contiguous free window of `lunch_slots` inside the
             # lunch window" is exactly "a mandatory task of that length can be
@@ -1376,8 +1688,59 @@ class SchedulerSolver:
             # The NoOverlap below spans the group's lessons *and* its lunch
             # intervals, so it also covers single-lesson groups, which
             # _add_group_no_overlap skips.
+
+            # --- The dining hall's seats ----------------------------------
+            #
+            # EVERY HOME CLASS EATS EVERY SCHOOL DAY. The demand is
+            # unconditional: the class's headcount, on the lunch interval it
+            # already has, on every day of the grid. Two rounds of review
+            # killed the alternative, which asked a presence literal whether
+            # the group was "in the building" that day. The payload carries one
+            # headcount per group and no finer grain — it cannot say "eight of
+            # 7A are here" — so that question has no honest answer. Asking only
+            # about the group's own lessons booked nought seats for a class at
+            # school through a teaching group. Widening it to every group
+            # sharing its students booked all N home classes in full the moment
+            # one nivågrupp met, an over-count unbounded in N that refuses a
+            # timetable and blames the hall. Locked lessons were invisible to
+            # both. Unconditional demand has neither error: a day's total is
+            # exactly the size of the school.
+            #
+            # What it costs, said plainly rather than buried: a class with a
+            # completely empty day still books seats it will not use. That is
+            # the only inexactness left, it errs towards a hall held for
+            # children who stayed at home rather than children sent to a room
+            # with no chairs in it, and a school can be told it in one
+            # sentence — every class eats every school day.
+            sittings: list[cp_model.IntervalVar] = []
+            headcounts: list[int] = []
+
             slots_per_day = self._grid.slots_per_day
-            for group_id, group in by_group.items():
+            for group_id in lunch_group_ids:
+                # Empty for a class whose whole week is locked. Its NoOverlap
+                # below then spans nothing but its own five lunch intervals,
+                # one per day, which are disjoint by construction — a vacuous
+                # constraint, and deliberately not special-cased. The interval
+                # is still worth building: it is what the locked-lesson domain
+                # restriction narrows and what books the class's chairs.
+                lessons = by_group.get(group_id, [])
+                # Partners with lessons to dodge. The relation itself keeps the
+                # ones the timplan never mentions, because their locked lessons
+                # still count; here there is nothing to put in a NoOverlap.
+                sharing = [
+                    other_id
+                    for other_id in shares_students.get(group_id, ())
+                    if other_id in by_group
+                ]
+                # Home classes only. The gateway sends a teaching group's
+                # headcount as 0 because its students already eat with their
+                # home class, and a group contributing nothing is left out of
+                # the cumulative rather than added with demand 0: an interval
+                # that occupies no seat is pure propagator work. A group the
+                # gateway has not listed at all reads the same way — "nobody
+                # has told us who eats" — which is what the engine sees until
+                # the gateway that sends `groups` is deployed.
+                headcount = headcount_by_group.get(group_id, 0)
                 lunch_intervals: list[cp_model.IntervalVar] = []
                 for day_index in range(len(self._grid.schedule_days)):
                     day_offset = day_index * slots_per_day
@@ -1388,6 +1751,61 @@ class SchedulerSolver:
                         day_offset + window_end - lunch_slots,
                         f"lunchstart_{group_id}_{day_index}",
                     )
+                    forbidden = blocked_starts.get((group_id, day_index))
+                    if forbidden:
+                        # UNDER AN ASSUMPTION LITERAL, not bare. A bare domain
+                        # subtraction lets CP-SAT prove infeasibility without
+                        # touching a single assumption, and
+                        # SufficientAssumptionsForInfeasibility then returns an
+                        # empty core — which does not merely lose this cause,
+                        # it erases every other cause in the payload and hands
+                        # the school the INSUFFICIENT_RESOURCES fallback,
+                        # telling it to go and look at rooms and teacher time.
+                        # One lock anywhere silently blinded the whole
+                        # diagnosis. AddLinearExpressionInDomain takes
+                        # OnlyEnforceIf (verified on ortools 9.15: the proto
+                        # carries an enforcement_literal on the linear
+                        # constraint), so the fact costs one boolean and
+                        # nothing else. In the fast build the literal is pinned
+                        # by AddBoolAnd and presolve folds the enforcement
+                        # away, so the encoding is unchanged there.
+                        #
+                        # GROUP_OVERLAP, deliberately not AVAILABILITY: in this
+                        # engine AVAILABILITY means an AvailabilityConstraint
+                        # row and its message names one, so an admin sent there
+                        # would open the reservations page and find nothing to
+                        # change. Nor DINING_CAPACITY, which would be a lie —
+                        # this fails with no seat limit set at all. What
+                        # actually collides is the group's mandatory break and
+                        # lessons its own children are sitting in, which is a
+                        # group double-booked.
+                        #
+                        # Per (group, day) rather than one literal for the
+                        # school, because "7A on Tuesday" is the whole content
+                        # of the answer. The count is bounded by groups x days,
+                        # an order of magnitude under what
+                        # _add_capacity_constraints already registers per lesson.
+                        lunch_literal = registry.register(
+                            model,
+                            name=f"lunchlock_{group_id}_{day_index}",
+                            category="GROUP_OVERLAP",
+                            message=(
+                                f"Locked lessons block student group {group_id}'s "
+                                f"lunch break on day "
+                                f"{self._grid.schedule_days[day_index]}."
+                            ),
+                            resource_ids=[group_id],
+                        )
+                        model.AddLinearExpressionInDomain(
+                            lunch_start,
+                            self._admissible_lunch_starts(
+                                day_offset,
+                                window_start,
+                                window_end,
+                                lunch_slots,
+                                forbidden,
+                            ),
+                        ).OnlyEnforceIf(lunch_literal)
                     lunch_intervals.append(
                         model.NewFixedSizeIntervalVar(
                             lunch_start,
@@ -1395,10 +1813,60 @@ class SchedulerSolver:
                             f"lunch_{group_id}_{day_index}",
                         ),
                     )
+                    if seats_literal is not None and headcount > 0:
+                        # The same start and the same length as the mandatory
+                        # interval beside it, so the two views of one lunch can
+                        # never disagree — but a SECOND interval object, because
+                        # its presence is the dining assumption. Relaxing that
+                        # assumption must empty the hall without also giving up
+                        # the free-window guarantee, and it would give it up if
+                        # the interval in the NoOverlap were the optional one.
+                        sittings.append(
+                            model.NewOptionalFixedSizeIntervalVar(
+                                lunch_start,
+                                lunch_slots,
+                                seats_literal,
+                                f"sitting_{group_id}_{day_index}",
+                            ),
+                        )
+                        headcounts.append(headcount)
                 if lunch_intervals:
                     model.AddNoOverlap(
-                        [decision.interval for decision in group] + lunch_intervals,
+                        [decision.interval for decision in lessons] + lunch_intervals,
                     )
+                    # The break also has to be free of the lessons this group's
+                    # own children sit in elsewhere. 7A cannot be eating while
+                    # Ma71 is taught: those are the same thirty pupils, and the
+                    # model would otherwise record a lunch that nobody had.
+                    #
+                    # One NoOverlap per sharing group, deliberately NOT one
+                    # over the union of them all. Ma71 and Sp71 are both cut
+                    # out of 7A but share no student with each other, and a
+                    # single set containing both would forbid them from running
+                    # at the same time — which is precisely what a school cuts
+                    # parallel groups in order to do.
+                    #
+                    # Nothing lesson-against-lesson is added here: the partner's
+                    # own lessons are already pairwise disjoint through
+                    # _add_group_no_overlap, and so is every lesson pair across
+                    # a sharing pair. The one new fact is lunch-against-lesson,
+                    # so do not "simplify" this by folding it into the pair
+                    # NoOverlap over there — that one carries no lunch.
+                    for other_id in sharing:
+                        model.AddNoOverlap(
+                            [decision.interval for decision in by_group[other_id]]
+                            + lunch_intervals,
+                        )
+
+            if sittings:
+                # One cumulative for the whole week, not one per day. Every
+                # sitting's start is confined to its own day by day_offset —
+                # TimeGrid addresses day d as [d * slots_per_day, (d+1) *
+                # slots_per_day) and the interval ends inside the lunch window —
+                # so two sittings on different days provably cannot overlap and
+                # five per-day cumulatives would only cost five times the
+                # constraints to say the same thing.
+                model.AddCumulative(sittings, headcounts, seats)
 
     @staticmethod
     def _room_allowed(room: AnonymousRoom, requirement: AnonymousRequirement) -> bool:
@@ -1463,13 +1931,139 @@ def _hhmmss_to_minutes(value: str) -> int:
     return hours * 60 + minutes
 
 
+def _lunch_window_is_set(rules: ScheduleRules) -> bool:
+    """Whether the school actually asked for a lunch break.
+
+    All three fields or none: a window with no length, or a length with no
+    window, describes nothing the solver can build. Seats alone do not make a
+    lunch rule either, which is why the seat check reads this too.
+    """
+    return (
+        rules.lunch_start_time is not None
+        and rules.lunch_end_time is not None
+        and rules.lunch_minutes is not None
+    )
+
+
+def _lunch_group_ids(
+    with_lessons: Iterable[UUID],
+    groups: list[AnonymousGroup],
+) -> list[UUID]:
+    """Every group the solver owes a lunch break, in a stable order.
+
+    The union, not the groups list on its own. The gateway sends an entry per
+    group that has a requirement or a locked lesson, so in contract the list
+    already covers everything here — but the engine deploys before the gateway
+    that fills it, and a groups-only reading would quietly withdraw the
+    free-window guarantee from the whole school for the length of that window.
+    A group with lessons and no entry keeps its break and books no seats,
+    which is the honest reading of "nobody told us who eats".
+
+    Ordered rather than a set because both builds of the model iterate this
+    and `solve` refuses to hint one from the other unless they agree
+    structurally.
+    """
+    ordered: list[UUID] = []
+    seen: set[UUID] = set()
+    for group_id in (*with_lessons, *(group.id for group in groups)):
+        if group_id not in seen:
+            seen.add(group_id)
+            ordered.append(group_id)
+    return ordered
+
+
+def _lunch_headcounts(groups: list[AnonymousGroup]) -> dict[UUID, int]:
+    """Seats each group needs, keyed by group id.
+
+    The largest of any duplicates, never the last one seen: two entries for
+    one group is the gateway contradicting itself, and the whole point of
+    counting every home class every day is that this number must not come out
+    low.
+    """
+    headcounts: dict[UUID, int] = {}
+    for group in groups:
+        headcounts[group.id] = max(
+            headcounts.get(group.id, 0), group.lunch_headcount,
+        )
+    return headcounts
+
+
+def _groups_sharing_students(
+    group_conflicts: list[tuple[UUID, UUID]] | None,
+) -> dict[UUID, list[UUID]]:
+    """Which groups put a given group's children in a classroom.
+
+    The teaching groups cut out of a class, and the class a teaching group was
+    cut from. That is exactly `group_conflicts`, the relation
+    _add_group_no_overlap already uses to keep their lessons apart, and lunch
+    needs it in both directions — each side's break has to reckon with the
+    other side's lessons.
+
+    Groups the timplan never mentions are kept, unlike in
+    _add_group_no_overlap: a class whose every lesson is locked has no
+    generated lessons, and its locked lessons still have to keep the teaching
+    groups cut out of it from eating while its children are being taught.
+    Callers that need decisions filter on `by_group` themselves.
+    """
+    shares_students: dict[UUID, list[UUID]] = {}
+    for first_id, second_id in group_conflicts or []:
+        for owner_id, other_id in ((first_id, second_id), (second_id, first_id)):
+            if owner_id == other_id:
+                continue
+            partners = shares_students.setdefault(owner_id, [])
+            if other_id not in partners:
+                partners.append(other_id)
+    return shares_students
+
+
+def _grade_span_overlaps(
+    constraint: AnonymousConstraint,
+    requirement: AnonymousRequirement,
+) -> bool:
+    """Whether a reservation for a span of years reaches this group.
+
+    OVERLAP, and deliberately the opposite test to _grade_allowed's
+    containment a few lines below. Reserving 11:30 for years 4-6 holds those
+    students free; a group spanning years 6-7 has year-6 students in it, so it
+    has to be held free too. Holding a handful of year-7 students free as well
+    costs the timetable a little room, whereas letting the lesson stand puts
+    year-6 pupils in a classroom during their own lunch. One of those errors a
+    school can live with and the other it cannot, so the rule is written to
+    make the survivable one. Rooms reason the other way round because there
+    half a group in an allowed year is still not an allowed placement.
+
+    A group whose own years are unknown cannot be matched at all: with nothing
+    to compare against, "overlaps" has no answer, and answering yes would
+    sweep every group with no member years into a reservation meant for one
+    stage of the school.
+
+    A missing bound on the constraint is open at that end — "up to year 3" and
+    "from year 7" are both a school's own way of saying stage.
+    """
+    if requirement.min_grade_level is None or requirement.max_grade_level is None:
+        return False
+
+    if (
+        constraint.min_grade_level is not None
+        and requirement.max_grade_level < constraint.min_grade_level
+    ):
+        return False
+    return not (
+        constraint.max_grade_level is not None
+        and requirement.min_grade_level > constraint.max_grade_level
+    )
+
+
 def _grade_allowed(room: AnonymousRoom, requirement: AnonymousRequirement) -> bool:
     """Whether a room limited to a stage may host this group.
 
     The group's whole year span has to fit inside the room's range: half a
     group being in an allowed year is not an allowed placement, since the
     other half would be sitting in a room the school reserved for somebody
-    else.
+    else. Containment, not the overlap _grade_span_overlaps uses for time
+    reservations — the two rules read the same data and answer differently on
+    purpose, because a room decides where a group may go while a reservation
+    only decides who must be left alone.
 
     A group whose years are unknown — no members carrying a year — is let
     through. There is nothing to check it against, and refusing every limited

@@ -330,6 +330,163 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('lunch och matsalens platser', () => {
+    it('returns null before anyone has defined lunch', async () => {
+      harness.tx['lunchSetting']!['findUnique']!.mockResolvedValue(null);
+
+      const response = await request(http())
+        .get('/api/v1/lunch-settings')
+        .set('x-test-user', admin())
+        .expect(200);
+
+      // Not an invented default: the publish warning turns on being able to
+      // tell "not decided yet" from "decided to be 11:00".
+      expect(response.body).toEqual({});
+    });
+
+    it('saves the window, the break and the number of seats', async () => {
+      harness.tx['lunchSetting']!['upsert']!.mockResolvedValue({ id: TYPE_ID });
+
+      await request(http())
+        .put('/api/v1/lunch-settings')
+        .set('x-test-user', admin())
+        .send({
+          lunchEnabled: true,
+          lunchStartTime: '10:45',
+          lunchEndTime: '12:30',
+          lunchMinutes: 30,
+          diningSeats: 180,
+        })
+        .expect(200);
+
+      const args = harness.tx['lunchSetting']!['upsert']!.mock.calls[0]?.[0] as {
+        where: { schoolId: string };
+        create: { diningSeats: number };
+      };
+      expect(args.where.schoolId).toBe(SCHOOL_ID);
+      expect(args.create.diningSeats).toBe(180);
+    });
+
+    it.each([
+      ['a break that is not a whole quarter', { lunchMinutes: 40 }],
+      ['a window ending after the school day', { lunchEndTime: '18:30' }],
+      ['a start off the quarter grid', { lunchStartTime: '10:50' }],
+      ['a window too short for the break', { lunchEndTime: '11:00' }],
+    ])('400s on %s, before it can be replayed on every run', async (_label, patch) => {
+      // A saved setting is replayed on every generation, and the gateway throws
+      // the engine's explanation away — so the only place these can still be
+      // explained is the moment they are typed.
+      await request(http())
+        .put('/api/v1/lunch-settings')
+        .set('x-test-user', admin())
+        .send({
+          lunchEnabled: true,
+          lunchStartTime: '10:45',
+          lunchEndTime: '12:30',
+          lunchMinutes: 30,
+          ...patch,
+        })
+        .expect(400);
+
+      expect(harness.tx['lunchSetting']!['upsert']).not.toHaveBeenCalled();
+    });
+
+    it('400s on a seat count sent as a string', async () => {
+      // enableImplicitConversion is off, so "180" is not 180 anywhere.
+      await request(http())
+        .put('/api/v1/lunch-settings')
+        .set('x-test-user', admin())
+        .send({
+          lunchEnabled: true,
+          lunchStartTime: '10:45',
+          lunchEndTime: '12:30',
+          lunchMinutes: 30,
+          diningSeats: '180',
+        })
+        .expect(400);
+    });
+
+    it('denies a teacher on both verbs', async () => {
+      for (const send of [
+        () => request(http()).get('/api/v1/lunch-settings'),
+        () => request(http()).put('/api/v1/lunch-settings'),
+      ]) {
+        await send()
+          .set('x-test-user', asUser({ role: 'TEACHER' as never }))
+          .send({})
+          .expect(403);
+      }
+    });
+  });
+
+  describe('låsta tider för en årskurs', () => {
+    it('creates a year-range lock that names no resource', async () => {
+      harness.tx['availabilityConstraint']!['create']!.mockResolvedValue({
+        id: TYPE_ID,
+      });
+
+      await request(http())
+        .post('/api/v1/availability-constraints')
+        .set('x-test-user', admin())
+        .send({
+          resourceType: 'GRADE_LEVEL',
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          dayOfWeek: 3,
+          startTime: '11:30',
+          endTime: '12:00',
+          reason: 'Lunch',
+        })
+        .expect(201);
+
+      const args = harness.tx['availabilityConstraint']!['create']!.mock
+        .calls[0]?.[0] as { data: { minGradeLevel: number; userId: null } };
+      expect(args.data).toMatchObject({ minGradeLevel: 4, userId: null });
+    });
+
+    it('400s a year-range lock with no bounds', async () => {
+      await request(http())
+        .post('/api/v1/availability-constraints')
+        .set('x-test-user', admin())
+        .send({
+          resourceType: 'GRADE_LEVEL',
+          dayOfWeek: 3,
+          startTime: '11:30',
+          endTime: '12:00',
+        })
+        .expect(400);
+    });
+
+    it('400s a year outside the Swedish 0-12 range', async () => {
+      await request(http())
+        .post('/api/v1/availability-constraints')
+        .set('x-test-user', admin())
+        .send({
+          resourceType: 'GRADE_LEVEL',
+          minGradeLevel: 13,
+          dayOfWeek: 3,
+          startTime: '11:30',
+          endTime: '12:00',
+        })
+        .expect(400);
+    });
+
+    it('400s a year-range lock that also names a group', async () => {
+      await request(http())
+        .post('/api/v1/availability-constraints')
+        .set('x-test-user', admin())
+        .send({
+          resourceType: 'GRADE_LEVEL',
+          minGradeLevel: 4,
+          studentGroupId: GROUP_ID,
+          dayOfWeek: 3,
+          startTime: '11:30',
+          endTime: '12:00',
+        })
+        .expect(400);
+    });
+  });
+
   describe('RBAC', () => {
     const adminOnly = [
       ['POST', '/api/v1/academic-years'],

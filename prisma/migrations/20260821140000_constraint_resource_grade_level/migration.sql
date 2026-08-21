@@ -1,0 +1,14 @@
+-- Låsta tider för en hel årskurs.
+--
+-- A school that wants year 4-6 free between 11:30 and 12:15 has to author one
+-- constraint per class today, and the moment a nivågrupp is cut out of those
+-- classes it is missed entirely — a teaching group carries no year of its own.
+-- "Årskurs" therefore becomes a resource kind, and unlike the other three it
+-- points at no row at all: a year is not an entity here, it is a property of
+-- a group's members. The range it targets lives on the constraint itself.
+--
+-- Kept in its own migration with nothing that uses the value: PostgreSQL
+-- forbids using a new enum value in the same transaction that adds it, and
+-- Prisma wraps each migration in one. The columns and the CHECKs that quote
+-- 'GRADE_LEVEL' follow in the next one.
+ALTER TYPE "ConstraintResource" ADD VALUE IF NOT EXISTS 'GRADE_LEVEL';

@@ -42,6 +42,8 @@ function makeConstraint(
     userId: null,
     roomId: null,
     studentGroupId: null,
+    minGradeLevel: null,
+    maxGradeLevel: null,
     dayOfWeek: 1,
     date: null,
     startTime: "08:00",

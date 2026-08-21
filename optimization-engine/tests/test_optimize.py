@@ -56,33 +56,6 @@ def _sample_payload() -> dict[str, object]:
     }
 
 
-def _large_but_satisfiable_payload() -> dict[str, object]:
-    """100 lessons across 8 rooms — comfortably satisfiable, not instant to solve.
-
-    Room capacity is 8 rooms x 50 hour-slots = 400 lesson-slots for 100 lessons,
-    so a solution provably exists; the model is just big enough that a
-    millisecond budget expires before CP-SAT finds one.
-    """
-    return {
-        "requestId": str(uuid4()),
-        "academicYearId": str(uuid4()),
-        "requirements": [
-            {
-                "id": str(uuid4()),
-                "subjectId": str(uuid4()),
-                "studentGroupId": str(uuid4()),
-                "teacherId": str(uuid4()),
-                "lessonsPerWeek": 5,
-                "minutesPerLesson": 60,
-                "studentGroupSize": 24,
-            }
-            for _ in range(20)
-        ],
-        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(8)],
-        "constraints": [],
-    }
-
-
 def test_healthcheck(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
@@ -165,6 +138,15 @@ def test_provably_infeasible_request_still_reports_infeasible(client: TestClient
 
     Guards the other side of the timeout fix: only CP-SAT's INFEASIBLE maps to
     "INFEASIBLE", and it still must.
+
+    The analysis this returns changed once `AssumptionRegistry.resolve` began
+    reading the conflict core as literal references. It used to resolve two
+    records by list position — a reading that happened to land on availability
+    records here and told the truth by coincidence. Now the five blocking
+    reservations are named individually, by the ids the payload sent, which is
+    the whole point of registering an assumption per constraint. That is worth
+    asserting rather than counting: the school's next move is to open one of
+    those five rows, and it can only do that if the id reaches the response.
     """
     payload = _sample_payload()
     requirement = payload["requirements"][0]  # type: ignore[index]
@@ -172,7 +154,7 @@ def test_provably_infeasible_request_still_reports_infeasible(client: TestClient
     # Block the group across the whole grid. 17:45 is the last representable
     # time (the 18:00 day end is exclusive), leaving only a 15-minute tail —
     # too short for the 60-minute lesson, so no placement exists.
-    payload["constraints"] = [
+    blocked_days = [
         {
             "id": str(uuid4()),
             "resourceKind": "STUDENT_GROUP",
@@ -185,6 +167,7 @@ def test_provably_infeasible_request_still_reports_infeasible(client: TestClient
         }
         for day in (1, 2, 3, 4, 5)
     ]
+    payload["constraints"] = blocked_days
 
     response = client.post(
         "/api/v1/optimize",
@@ -196,34 +179,20 @@ def test_provably_infeasible_request_still_reports_infeasible(client: TestClient
     assert body["status"] == "INFEASIBLE"
     assert body["lessons"] == []
     assert body["conflicts"] is not None
-    assert body["conflicts"]["conflicts"], "infeasible responses must explain why"
+    conflicts = body["conflicts"]["conflicts"]
+    assert conflicts, "infeasible responses must explain why"
 
-
-def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible() -> None:
-    """A budget too small to solve in must not be reported as "no schedule exists".
-
-    CP-SAT returns UNKNOWN when it exhausts its budget without finding a
-    solution — that is not a proof of infeasibility. The gateway treats
-    INFEASIBLE as final and writes no lessons, so conflating the two would tell
-    a school its timetable is impossible when the solver merely ran out of time.
-    """
-    payload = _large_but_satisfiable_payload()
-    headers = {"X-API-Key": API_KEY}
-
-    generous = TestClient(create_app(_settings(SOLVER_MAX_TIME_SECONDS=30.0)))
-    baseline = generous.post("/api/v1/optimize", json=payload, headers=headers)
-    assert baseline.status_code == 200
-    assert baseline.json()["status"] in {"OPTIMAL", "FEASIBLE"}, (
-        "payload must be satisfiable for this test to mean anything"
+    blamed = {
+        constraint_id
+        for conflict in conflicts
+        if conflict["category"] == "AVAILABILITY"
+        for constraint_id in conflict["constraintIds"]
+    }
+    assert blamed == {constraint["id"] for constraint in blocked_days}, (
+        "every reservation that helped make the week impossible has to be "
+        "nameable, or the admin has nothing to open"
     )
-
-    starved = TestClient(create_app(_settings(SOLVER_MAX_TIME_SECONDS=0.001)))
-    response = starved.post("/api/v1/optimize", json=payload, headers=headers)
-
-    assert response.status_code == 503
-    body = response.json()
-    assert body["code"] == "SOLVER_TIMEOUT"
-    assert "INFEASIBLE" not in str(body)
+    assert "availability" in body["conflicts"]["summary"]
 
 
 def test_short_api_key_is_rejected_at_config() -> None:
@@ -569,19 +538,61 @@ def test_map_status_only_reports_infeasible_when_cp_sat_proved_it() -> None:
 
 
 def test_proven_infeasible_reports_infeasible_with_conflicts(client: TestClient) -> None:
+    """A proof happened, so the school gets an explanation — a NAMED one.
+
+    This used to come back as the INSUFFICIENT_RESOURCES fallback ("no minimal
+    conflict core was returned"), because `AssumptionRegistry.resolve` read the
+    core as offsets into its own record list and every real literal reference
+    fell outside it. Nothing about the payload changed; the core was always
+    there and always said room capacity. Asserting the category rather than
+    "at least one conflict" is the difference between a test that noticed and
+    a test that did not.
+
+    The count IS pinned, and pinning it is the second thing this test does.
+    `_add_capacity_constraints` registers one literal per lesson INSTANCE, so
+    all forty of this requirement's lessons answered with the same sentence and
+    an administrator opened the response to forty identical lines. One cause is
+    one line: records agreeing on category and message are the same statement
+    about the same thing, and forty copies of it bury whatever else the core
+    found.
+
+    The summary is quoted in full because every word of it is a claim about
+    what CP-SAT proved. SufficientAssumptionsForInfeasibility returns a
+    sufficient set, not a minimal one, so "these caused it" would state as fact
+    something nothing established — and a school acts on this sentence.
+    """
+    payload = _oversubscribed_payload()
+    requirement_id = payload["requirements"][0]["id"]  # type: ignore[index]
     response = client.post(
         "/api/v1/optimize",
-        json=_oversubscribed_payload(),
+        json=payload,
         headers={"X-API-Key": "test-api-key-000000000000000000000000"},
     )
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "INFEASIBLE"
     assert body["lessons"] == []
-    # A proof happened, so the school gets an explanation.
     assert body["conflicts"] is not None
-    assert len(body["conflicts"]["conflicts"]) >= 1
-    assert body["conflicts"]["summary"]
+    conflicts = body["conflicts"]["conflicts"]
+    assert {conflict["category"] for conflict in conflicts} == {"ROOM_CAPACITY"}, (
+        "the core names room capacity; falling back on INSUFFICIENT_RESOURCES "
+        "sends the school to look at teacher hours as well, for no reason"
+    )
+    assert len(conflicts) == 1, (
+        f"one requirement, one cause, one line — {len(conflicts)} came back, "
+        f"which is one per lesson instance the capacity builder registered"
+    )
+    # Folded together, not thinned out. The forty records all name this one
+    # requirement, and the surviving line still has to name it: an admin whose
+    # response lost the id has been told a room is too small and not which
+    # lesson wanted it.
+    assert conflicts[0]["requirementIds"] == [requirement_id]
+    assert body["conflicts"]["summary"] == (
+        "No timetable satisfies every rule. Start with these: room capacity. "
+        "Together they are enough to make the week impossible, but the solver "
+        "reports a sufficient set rather than the smallest one, so some of "
+        "them may carry no blame."
+    )
 
 
 def test_timed_out_solve_reports_timeout_not_infeasible(
@@ -651,6 +662,15 @@ def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible() -> N
     still called the lru_cached `get_settings()`, this Settings instance was
     silently ignored and the test had to set SOLVER_MAX_TIME_SECONDS in the
     environment and clear the cache around it.
+
+    Running out of budget is a VERDICT, not a transport failure: the request
+    was answered, so it is a 200 carrying "TIMEOUT" and no lessons. A second
+    copy of this test used to sit further up the file under the same name —
+    shadowed, therefore never run — asserting a 503 with code SOLVER_TIMEOUT.
+    Nothing raises SolverTimeoutError anywhere in the engine, so that copy
+    described a behaviour that does not exist and would have failed the moment
+    it was collected. Its one honest claim, that the caller is not handed an
+    error, is folded into the status-code assertion here.
     """
     settings = Settings(
         API_KEY="test-api-key-000000000000000000000000",
@@ -666,6 +686,11 @@ def test_tiny_time_budget_never_reports_a_satisfiable_model_as_infeasible() -> N
     )
     assert response.status_code == 200
     body = response.json()
+    # The two claims the response can make about infeasibility, and there are
+    # only two: `status` and `conflicts` are the whole of what
+    # OptimizeScheduleResponse carries besides the lessons. A third assertion
+    # searching the serialised body for the word added nothing — it could only
+    # fail where one of these two already had.
     assert body["status"] != "INFEASIBLE"
     assert body["conflicts"] is None
 
@@ -809,6 +834,1191 @@ def test_every_group_keeps_a_free_lunch_window() -> None:
         ), f"day {day} has no free 30-minute window inside 11:00-13:00"
 
 
+# ---------------------------------------------------------------------------
+# The dining hall
+#
+# The lunch rule above guarantees every group a free window; on its own it is
+# perfectly happy to send the whole school in at 11:30. Seats are what make the
+# solver spread lunch out, and they are the one lunch preference a school
+# cannot express as a time.
+# ---------------------------------------------------------------------------
+
+
+def _dining_payload(headcounts: list[int], lessons_per_week: int = 1) -> dict[str, object]:
+    """One 30-student class per headcount, each with its own teacher and room.
+
+    Nothing in a payload built this way is scarce except seats — every group
+    has a teacher and a room to itself and the week is nearly empty — so one
+    that fails to schedule fails because of the hall.
+
+    `lunchHeadcount` is how many children eat *as* this group. It rides on the
+    `groups` list rather than on the requirement, and is deliberately
+    independent of `studentGroupSize`: a teaching group is thirty students
+    large and nought students hungry, because those thirty already have seats
+    with their home classes.
+    """
+    payload = _sample_payload()
+    template = payload["requirements"][0]  # type: ignore[index]
+    group_ids = [str(uuid4()) for _ in headcounts]
+    payload["requirements"] = [
+        {
+            **template,  # type: ignore[dict-item]
+            "id": str(uuid4()),
+            "subjectId": str(uuid4()),
+            "teacherId": str(uuid4()),
+            "studentGroupId": group_id,
+            "lessonsPerWeek": lessons_per_week,
+            "studentGroupSize": 30,
+        }
+        for group_id in group_ids
+    ]
+    payload["groups"] = [
+        {"id": group_id, "lunchHeadcount": headcount}
+        for group_id, headcount in zip(group_ids, headcounts)
+    ]
+    payload["rooms"] = [{"id": str(uuid4()), "capacity": 30} for _ in headcounts]
+    return payload
+
+
+def _lunch_rules(**overrides: object) -> dict[str, object]:
+    """11:00-12:00 with a 60-minute break: one sitting wide, and no wider.
+
+    The lunch start then has a single admissible value, so every group in the
+    model sits down at 11:00 and the seat count alone decides whether they fit.
+    Widening `lunchEndTime` to 13:00 buys a second sitting — which is how a
+    test asks whether staggering is *possible* rather than whether it is
+    needed.
+    """
+    return {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "12:00:00",
+        "lunchMinutes": 60,
+        **overrides,
+    }
+
+
+def test_a_dining_hall_smaller_than_the_school_forces_lunch_to_be_staggered() -> None:
+    """The seat limit binds, and a school can pay for it in seats or in time.
+
+    Two classes of 30 on a Monday-only week. The window is one sitting wide, so
+    both sit down at 11:00 whatever the timetable does, and 30 seats do not
+    hold 60 children: INFEASIBLE. The same week schedules again either with 60
+    seats or — the entire point of the rule — with the same 30 seats and a
+    window two sittings wide, which is the only currency a school that already
+    owns its hall has left to spend.
+
+    The chosen sitting time never reaches the response (`ScheduledLesson` has
+    no field for it), so the proof has to be the verdict rather than two times
+    read back off the timetable.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"))
+
+    def _solve(seats: int, lunch_end: str):  # noqa: ANN202
+        payload = _dining_payload([30, 30])
+        payload["rules"] = _lunch_rules(diningSeats=seats, lunchEndTime=lunch_end)
+        return solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    crowded = _solve(30, "12:00:00")
+    assert crowded.status == "INFEASIBLE", (
+        "sixty children cannot sit down at once in a thirty-seat hall; "
+        "reporting anything else means the seat limit is not enforced"
+    )
+
+    bigger_hall = _solve(60, "12:00:00")
+    assert bigger_hall.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(bigger_hall.lessons) == 2
+
+    longer_window = _solve(30, "13:00:00")
+    assert longer_window.status in {"OPTIMAL", "FEASIBLE"}, (
+        "two sittings put sixty children through a thirty-seat hall; refusing "
+        "this means the hall is counted per week rather than per instant"
+    )
+    assert len(longer_window.lessons) == 2
+
+
+def test_a_teaching_group_does_not_take_its_students_seats_a_second_time() -> None:
+    """Ma71 is cut out of 7A, and at lunch they are the same thirty children.
+
+    The gateway says so by sending the teaching group a lunchHeadcount of 0
+    while its studentGroupSize stays 30 — it is still a class-sized group that
+    needs a class-sized room. Read the size instead of the headcount and a
+    thirty-seat hall is asked for sixty places, and a week that is genuinely
+    fine collapses.
+
+    The twin below is the same payload with Ma71 turned into a second home
+    class of its own thirty children, and that one MUST collapse. Without it
+    this test would pass just as happily against a solver that had forgotten
+    about seats altogether.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"))
+
+    def _solve(ma71_headcount: int):  # noqa: ANN202
+        payload = _dining_payload([30, ma71_headcount])
+        class_7a = payload["requirements"][0]["studentGroupId"]  # type: ignore[index]
+        group_ma71 = payload["requirements"][1]["studentGroupId"]  # type: ignore[index]
+        payload["groupConflicts"] = [[class_7a, group_ma71]]
+        payload["rules"] = _lunch_rules(diningSeats=30)
+        return solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    shared_students = _solve(0)
+    assert shared_students.status in {"OPTIMAL", "FEASIBLE"}, (
+        "7A's thirty students were seated twice, once as 7A and once as Ma71"
+    )
+    assert len(shared_students.lessons) == 2
+
+    two_home_classes = _solve(30)
+    assert two_home_classes.status == "INFEASIBLE", (
+        "sixty distinct children still do not fit thirty seats; if this "
+        "schedules, the case above is proving nothing"
+    )
+
+
+def test_a_teaching_group_cut_from_two_classes_does_not_multiply_the_hall() -> None:
+    """A day's demand is exactly the size of the school. Not more, not less.
+
+    Ma71 is drawn from 7A and 7B, so it shares students with both. The rule is
+    that every home class eats every school day and a teaching group eats
+    nothing, which makes the hall's load on any day 30 + 30 = 60 — the number
+    of children the school actually has.
+
+    Both bounds are asserted, and they are what makes the number exact rather
+    than merely safe. Sixty seats fit, so nothing may inflate the count: the
+    encoding that read `studentGroupSize` instead of `lunchHeadcount` asked for
+    ninety, and the one that booked every class sharing students with a
+    teaching group the moment that group met asked for more again, growing with
+    the number of classes the nivågrupp was cut from. Fifty-nine do not fit, so
+    nothing may deflate it either: a version that let a class slip out of the
+    count would schedule this week happily.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"))
+
+    def _solve(seats: int):  # noqa: ANN202
+        payload = _dining_payload([30, 30, 0])
+        class_7a = payload["requirements"][0]["studentGroupId"]  # type: ignore[index]
+        class_7b = payload["requirements"][1]["studentGroupId"]  # type: ignore[index]
+        group_ma71 = payload["requirements"][2]["studentGroupId"]  # type: ignore[index]
+        payload["groupConflicts"] = [
+            [class_7a, group_ma71],
+            [class_7b, group_ma71],
+        ]
+        # One sitting wide, so the whole school is in the hall at once and the
+        # seat count is the only thing being asked about.
+        payload["rules"] = _lunch_rules(diningSeats=seats)
+        return solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    exactly_enough = _solve(60)
+    assert exactly_enough.status in {"OPTIMAL", "FEASIBLE"}, (
+        "sixty children were charged for more than sixty seats — the "
+        "nivågrupp was counted, or the classes it draws from were counted "
+        "once each per lesson of it"
+    )
+    assert len(exactly_enough.lessons) == 3
+
+    one_short = _solve(59)
+    assert one_short.status == "INFEASIBLE", (
+        "fifty-nine seats held sixty children, so somebody was not counted "
+        "and the test above is proving nothing"
+    )
+
+
+def _blocks_the_whole_day(group_id: str, day_of_week: int) -> dict[str, object]:
+    """A reservation that leaves this group nowhere to be taught on that day.
+
+    17:45 is the last representable time — the 18:00 day end is exclusive — so
+    what survives is a 15-minute tail no 60-minute lesson fits into. Pinning a
+    group's day this way is the only way to state "7A is not taught on Tuesday"
+    in a payload, and STUDENT_GROUP reservations deliberately do not propagate
+    across groupConflicts, so blocking 7A leaves Ma71 free.
+    """
+    return {
+        "id": str(uuid4()),
+        "resourceKind": "STUDENT_GROUP",
+        "resourceId": group_id,
+        "dayOfWeek": day_of_week,
+        "date": None,
+        "startTime": "08:00:00",
+        "endTime": "17:45:00",
+        "kind": "UNAVAILABLE",
+    }
+
+
+def test_a_class_with_a_completely_empty_day_still_books_seats_it_will_not_use() -> None:
+    """The one inexactness left in the seat count, stated out loud.
+
+    Every home class eats every school day. A class that is reserved out of
+    Tuesday altogether is not in the building on Tuesday and will not eat, and
+    the model books its thirty seats regardless. That is deliberate: the
+    payload carries one headcount per group and nothing finer, so "is 7A here
+    today" has no honest answer once a nivågrupp can bring half a class in on
+    its own — and of the two ways to be wrong, holding chairs for children who
+    stayed at home beats sending children to a room with no chairs in it. It is
+    also the one sentence a school needs to hear: every class eats every school
+    day.
+
+    An accepted inexactness with no test is indistinguishable from a bug
+    nobody has noticed yet, so it is pinned here rather than left to the
+    docstrings. 7A is reserved out of Tuesday and so is taught on Monday; 8A
+    has both days to choose from. Thirty seats hold neither day, because both
+    classes book on both. Sixty seats and the same week schedules, which is
+    what makes this a statement about the count rather than about the
+    reservation.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1,2"))
+
+    def _solve(seats: int):  # noqa: ANN202
+        payload = _dining_payload([30, 30])
+        class_7a = payload["requirements"][0]["studentGroupId"]  # type: ignore[index]
+        payload["constraints"] = [_blocks_the_whole_day(class_7a, 2)]
+        payload["rules"] = _lunch_rules(diningSeats=seats)
+        return solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    roomy = _solve(60)
+    assert roomy.status in {"OPTIMAL", "FEASIBLE"}, (
+        "two classes fit a sixty-seat hall on either day; if they do not, the "
+        "verdict below is about something other than seats"
+    )
+    assert len(roomy.lessons) == 2
+
+    crowded = _solve(30)
+    assert crowded.status == "INFEASIBLE", (
+        "8A was given Tuesday on the grounds that 7A is reserved out of it — "
+        "which is true, and which the seat count deliberately does not know"
+    )
+
+
+def test_a_class_in_school_only_through_a_teaching_group_still_books_its_seats() -> None:
+    """7A's children eat on Tuesday if Tuesday is the day Ma71 is taught.
+
+    A class whose own Tuesday column is empty is not thereby at home: the half
+    of it that goes to the nivågrupp is in a classroom, and children in the
+    building eat. That was the under-count that killed the presence encoding —
+    asking only whether the group had a lesson of its own that day booked 7A
+    nought seats on Tuesday, and a hall with room for one class seated two and
+    reported OPTIMAL.
+
+    Unconditional demand cannot under-count, and the fixture is kept in the
+    shape that would catch it if it ever could. 7A is reserved out of Tuesday
+    and Ma71 out of Monday, so 7A is taught on Monday, its children sit in Ma71
+    on Tuesday, and both days are therefore days 7A eats. 8A is a second full
+    class with one lesson and both days to put it on — and with thirty seats
+    there is no day left for it, whichever it picks. A model that let 7A off
+    Tuesday would hand 8A that day and call the week fine.
+
+    Sixty seats and the same week schedules, which is what makes the hall the
+    binding thing rather than the reservations.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1,2"))
+
+    def _solve(seats: int):  # noqa: ANN202
+        # Ma71 is a teaching group cut out of 7A: class-sized, but nought
+        # hungry, because those thirty already have seats as 7A.
+        payload = _dining_payload([30, 0, 30])
+        class_7a = payload["requirements"][0]["studentGroupId"]  # type: ignore[index]
+        group_ma71 = payload["requirements"][1]["studentGroupId"]  # type: ignore[index]
+        payload["groupConflicts"] = [[class_7a, group_ma71]]
+        payload["constraints"] = [
+            _blocks_the_whole_day(class_7a, 2),
+            _blocks_the_whole_day(group_ma71, 1),
+        ]
+        payload["rules"] = _lunch_rules(diningSeats=seats)
+        return solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    roomy = _solve(60)
+    assert roomy.status in {"OPTIMAL", "FEASIBLE"}, (
+        "with room for two classes at a sitting this week is fine; if it is "
+        "not, the verdict below is about something other than seats"
+    )
+    assert len(roomy.lessons) == 3
+
+    crowded = _solve(30)
+    assert crowded.status == "INFEASIBLE", (
+        "8A was seated on a day 7A already fills, because 7A was counted as "
+        "absent on the day its own children were sitting in Ma71"
+    )
+
+
+def _lunch_no_overlap_count(model) -> int:  # noqa: ANN001
+    """How many NoOverlap sets the lunch rule built, and only those.
+
+    A lunch interval belongs to no other builder, so "contains an interval
+    named lunch_* or sitting_*" separates this rule's sets from the ones
+    _add_group_no_overlap and the room allocator put in the same model.
+    """
+    proto = model.Proto()
+    lunch = {
+        index
+        for index, constraint in enumerate(proto.constraints)
+        if constraint.name.startswith(("lunch_", "sitting_"))
+    }
+    return sum(
+        1
+        for constraint in proto.constraints
+        if constraint.has_no_overlap()
+        and lunch.intersection(constraint.no_overlap.intervals)
+    )
+
+
+def test_a_shared_student_pair_the_timplan_never_heard_of_is_skipped() -> None:
+    """groupConflicts is membership data, and membership is untidier than a week.
+
+    It can name a group with no lessons at all — every one of them locked, or
+    simply no timplan entry this year — and it can name the same pair twice,
+    once from each side. Neither is a fact about the week, and the lunch rule
+    reads the relation to decide whose lessons its breaks must dodge, so both
+    have to fall away: the first is otherwise a KeyError and a 500 for a school
+    whose data is merely old, and the second quietly builds every NoOverlap
+    twice for as long as the relation stays messy.
+
+    A third kind of noise — a group named as its own partner — is NOT exercised
+    here, and deliberately so. The lunch builder drops it, but
+    _add_group_no_overlap puts that group's lessons into one NoOverlap set
+    twice over, which asks every lesson not to overlap itself and refuses the
+    whole week. That is a live defect older than the dining hall and it is not
+    this file's to hide behind a passing test.
+
+    Counting the rule's own NoOverlap sets is what makes the second observable:
+    three groups, one real pair between them, five sets whatever noise the
+    relation carries — one per group for its own lessons, plus one on each side
+    of the pair.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1,2"))
+
+    def _build(noisy: bool):  # noqa: ANN202, FBT001
+        payload = _dining_payload([30, 0, 30])
+        class_7a = str(payload["requirements"][0]["studentGroupId"])  # type: ignore[index]
+        group_ma71 = str(payload["requirements"][1]["studentGroupId"])  # type: ignore[index]
+        pairs = [[class_7a, group_ma71]]
+        if noisy:
+            pairs += [
+                [group_ma71, class_7a],  # the same pair, read from the other side
+                [class_7a, str(uuid4())],  # a group with nothing on the timetable
+            ]
+        payload["groupConflicts"] = pairs
+        # Two home classes of thirty, and a hall that holds both: this test is
+        # about how many NoOverlap sets get built, so the seat count must not
+        # be the thing that decides the verdict.
+        payload["rules"] = _lunch_rules(diningSeats=60)
+        request = OptimizeScheduleRequest.model_validate(payload)
+        model, _, _, _ = solver._build_model(request, use_assumptions=False)
+        return _lunch_no_overlap_count(model), solver.solve(request)
+
+    clean_sets, clean = _build(noisy=False)
+    noisy_sets, noisy = _build(noisy=True)
+
+    assert clean_sets == 5, "three groups and one pair: 3 + 2 sets"
+    assert noisy_sets == clean_sets, (
+        f"the noise built {noisy_sets - clean_sets} NoOverlap sets of its own"
+    )
+    assert (noisy.status, len(noisy.lessons)) == (clean.status, len(clean.lessons))
+    assert clean.status in {"OPTIMAL", "FEASIBLE"}
+
+
+def _solved_spans(solver, request):  # noqa: ANN001, ANN202
+    """Every lesson AND every sitting the model chose, as absolute slot spans.
+
+    The response cannot answer this. `ScheduledLesson` is the only row
+    `OptimizeScheduleResponse` carries and there is no field for a sitting, so
+    the chosen lunch start exists nowhere outside the model — a known gap that
+    also leaves `benchmarks/validate_schedule.py` unable to check the rule.
+    Reading `lunchstart_<group>_<day>` off the solved proto is therefore the
+    only way to assert WHEN a group eats rather than merely that a week did or
+    did not schedule.
+
+    Both halves come out of ONE solve, so the lessons and the sittings are the
+    same timetable and can be compared to each other.
+    """
+    from ortools.sat.python import cp_model
+
+    model, _registry, decisions, _plan = solver._build_model(
+        request, use_assumptions=False,
+    )
+    cp_solver = cp_model.CpSolver()
+    cp_solver.parameters.max_time_in_seconds = 10.0
+    status = cp_solver.Solve(model)
+    assert status in {cp_model.OPTIMAL, cp_model.FEASIBLE}, cp_solver.StatusName(status)
+
+    lessons: dict[str, list[tuple[int, int]]] = {}
+    for decision in decisions:
+        group_id = str(decision.lesson.requirement.student_group_id)
+        start = cp_solver.Value(decision.start)
+        lessons.setdefault(group_id, []).append((start, start + decision.duration))
+
+    lunch_slots = solver._grid.minutes_to_slots(request.rules.lunch_minutes)
+    solution = cp_solver.ResponseProto().solution
+    sittings: dict[str, list[tuple[int, int]]] = {}
+    for index, variable in enumerate(model.Proto().variables):
+        if not variable.name.startswith("lunchstart_"):
+            continue
+        _prefix, group_id, _day_index = variable.name.split("_")
+        start = solution[index]
+        sittings.setdefault(group_id, []).append((start, start + lunch_slots))
+    return lessons, sittings
+
+
+def test_a_class_never_eats_while_its_own_children_sit_in_a_teaching_group() -> None:
+    """7A cannot be at lunch during a Ma71 lesson — same thirty pupils.
+
+    The lunch NoOverlap spanned the group's own lessons only, so the model was
+    free to record a break for 7A at the exact hour its children were being
+    taught mathematics. Nobody ate; the timetable said they had.
+
+    Two halves, because neither is enough on its own.
+
+    The tight day proves the rule BINDS. 11:00-13:15 holds nine slots, and 7A's
+    lesson, Ma71's lesson and 7A's break are three hours that must now be
+    disjoint: twelve slots do not fit into nine, so the week has no answer.
+    Before the fix this scheduled, with 7A's sitting laid exactly over the Ma71
+    lesson — the arrangement the rule exists to forbid.
+
+    The roomy day proves the rule is HONEST. One hour longer and the arrangement
+    that respects it exists, so the fix cannot be passing by refusing
+    everything; and this is the half that states the rule outright, by reading
+    the sitting back out of the model and checking it against both lessons.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    def _request(lunch_end: str):  # noqa: ANN202
+        payload = _dining_payload([30, 0, 30])
+        class_7a = payload["requirements"][0]["studentGroupId"]  # type: ignore[index]
+        group_ma71 = payload["requirements"][1]["studentGroupId"]  # type: ignore[index]
+        payload["groupConflicts"] = [[class_7a, group_ma71]]
+        payload["rules"] = _lunch_rules(lunchEndTime=lunch_end, diningSeats=30)
+        return (
+            OptimizeScheduleRequest.model_validate(payload),
+            str(class_7a),
+            str(group_ma71),
+        )
+
+    def _solver(day_end_minutes: int):  # noqa: ANN202
+        # A day that starts at 11:00 and ends where the test needs it to, so
+        # the arithmetic above is the whole of what the week can hold.
+        return SchedulerSolver(
+            _settings(
+                SCHEDULE_DAYS="1",
+                SOLVER_MAX_TIME_SECONDS=10.0,
+                SCHEDULE_DAY_START_MINUTES=660,
+                SCHEDULE_DAY_END_MINUTES=day_end_minutes,
+            ),
+        )
+
+    tight_request, _, _ = _request("13:00:00")
+    tight = _solver(795).solve(tight_request)
+    assert tight.status == "INFEASIBLE", (
+        "three hours that must not overlap were fitted into a nine-slot day, "
+        "which only works if 7A is allowed to eat during the Ma71 lesson"
+    )
+
+    roomy_solver = _solver(855)
+    roomy_request, class_7a, group_ma71 = _request("14:00:00")
+    lessons, sittings = _solved_spans(roomy_solver, roomy_request)
+
+    (sitting_start, sitting_end) = sittings[class_7a][0]
+    for owner in (class_7a, group_ma71):
+        for lesson_start, lesson_end in lessons[owner]:
+            assert not (sitting_start < lesson_end and lesson_start < sitting_end), (
+                f"7A eats at slots {sitting_start}-{sitting_end} while a lesson "
+                f"of {'its own' if owner == class_7a else 'Ma71'} runs at "
+                f"{lesson_start}-{lesson_end}"
+            )
+
+
+def _locked_lesson(
+    group_id: str,
+    start_time: str,
+    end_time: str,
+    day_of_week: int = 1,
+    extra_group_ids: list = None,  # noqa: RUF013
+) -> dict[str, object]:
+    """A hand-placed lesson: no teacher, no room, only a group and a window.
+
+    Stripping it to the group is what keeps the tests below about lunch. A
+    locked lesson with a teacher or a room blocks generated lessons through
+    those as well, and a week that failed to schedule would no longer be
+    evidence about anybody's break.
+    """
+    return {
+        "id": str(uuid4()),
+        "studentGroupId": group_id,
+        "extraGroupIds": extra_group_ids or [],
+        "dayOfWeek": day_of_week,
+        "startTime": start_time,
+        "endTime": end_time,
+    }
+
+
+def test_a_class_is_never_sent_to_lunch_on_top_of_a_locked_lesson() -> None:
+    """A break laid over a lesson a human placed by hand is not a break.
+
+    Locked lessons enter the model only as windows the GENERATED lessons steer
+    around; they are never intervals, so nothing ever stopped the free-window
+    guarantee from putting a class's lunch exactly where somebody had already
+    put a lesson. Now that the same interval also books a seat, the model would
+    have the class in the dining hall at an hour it is demonstrably in a
+    classroom.
+
+    The window here is one sitting wide, so the class has exactly one
+    admissible lunch start and a locked lesson covering it leaves none. That is
+    pure arithmetic on constants, so it is refused before the solver runs, with
+    the group and the day named — an unexplained INFEASIBLE after the whole
+    time budget would leave a school reading about rooms and teacher time for a
+    problem that is neither.
+
+    Four ways a locked lesson reaches a class, and three ways it does not. The
+    reach is the rule _add_fixed_lesson_constraints already uses — the group
+    the lesson names, the extra classes attending it, and any group sharing
+    students with either — because a lesson that keeps a class out of a
+    classroom keeps it out of the hall for the same reason. The controls are
+    what stop this from passing against an implementation that simply refuses
+    every week containing a locked lesson.
+    """
+    from app.exceptions import InvalidScheduleInputError
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"))
+    ma71 = str(uuid4())
+    class_7b = str(uuid4())
+    stranger = str(uuid4())
+
+    def _solve(arrange) -> str:  # noqa: ANN001
+        payload = _dining_payload([30])
+        class_7a = str(payload["requirements"][0]["studentGroupId"])  # type: ignore[index]
+        fixed_lessons, conflicts = arrange(class_7a)
+        payload["fixedLessons"] = fixed_lessons
+        payload["groupConflicts"] = conflicts
+        payload["rules"] = _lunch_rules(diningSeats=30)
+        return solver.solve(OptimizeScheduleRequest.model_validate(payload)).status
+
+    def _refusal(arrange) -> str:  # noqa: ANN001
+        """The rejection message, so the reach can be read off the group it names."""
+        with pytest.raises(InvalidScheduleInputError) as raised:
+            _solve(arrange)
+        return str(raised.value)
+
+    lunch_hour = ("11:00:00", "12:00:00")
+
+    assert "no 60-minute lunch break" in _refusal(
+        lambda g: ([_locked_lesson(g, *lunch_hour)], []),
+    ), "7A would have been sent to the hall during a lesson of its own"
+    assert "on day 1" in _refusal(
+        # 11:05-11:50 is inside the same slots once _fixed_window rounds it
+        # outward, and locked lessons are hand-typed times that rarely land on
+        # the grid.
+        lambda g: ([_locked_lesson(g, "11:05:00", "11:50:00")], []),
+    ), "the blocked window must be the rounded-out one"
+    assert "no 60-minute lunch break" in _refusal(
+        lambda g: ([_locked_lesson(class_7b, *lunch_hour, extra_group_ids=[g])], []),
+    ), "a lesson two classes attend holds both of them, so it holds 7A"
+    assert "no 60-minute lunch break" in _refusal(
+        lambda g: ([_locked_lesson(ma71, *lunch_hour)], [[g, ma71]]),
+    ), "the nivågrupp's locked lesson has 7A's own children in it"
+
+    feasible = {"OPTIMAL", "FEASIBLE"}
+    assert _solve(
+        lambda g: ([_locked_lesson(stranger, *lunch_hour)], []),
+    ) in feasible, (
+        "a locked lesson for a class that shares nobody with 7A took 7A's "
+        "lunch away — the reach rule is blocking everyone"
+    )
+    assert _solve(
+        lambda g: ([_locked_lesson(g, "08:00:00", "09:00:00")], []),
+    ) in feasible, "a locked lesson clear of the lunch window forbids no start"
+    assert _solve(
+        lambda g: ([_locked_lesson(g, *lunch_hour, day_of_week=6)], []),
+    ) in feasible, (
+        "a Saturday lesson on a Monday-only grid falls on no day a lunch falls "
+        "on"
+    )
+
+
+def test_a_class_whose_week_is_entirely_hand_placed_still_books_its_seats() -> None:
+    """Being at school has nothing to do with having lessons left to place.
+
+    The gateway subtracts locked lessons from a requirement's weekly demand and
+    drops the requirement when the remainder reaches zero, so a class whose week
+    is entirely hand-placed arrives carrying only fixed lessons. While the
+    headcount rode on the requirement, that class ate nothing and took no
+    chairs — and the model was not merely ignorant of it, it was demonstrably
+    aware, because those same locked lessons were pushing other groups' lunches
+    around. Thirty children in the building, and the hall told about none.
+
+    One 30-seat hall, one sitting, one class with a requirement and one present
+    only as a locked lesson: sixty children, and the honest answer is that they
+    do not fit.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"))
+    hand_placed = str(uuid4())
+
+    payload = _dining_payload([30])
+    payload["groups"] = [
+        *payload["groups"],  # type: ignore[misc]
+        {"id": hand_placed, "lunchHeadcount": 30},
+    ]
+    payload["fixedLessons"] = [
+        _locked_lesson(hand_placed, "08:00:00", "09:00:00"),
+    ]
+    payload["rules"] = _lunch_rules(diningSeats=30)
+
+    assert (
+        solver.solve(OptimizeScheduleRequest.model_validate(payload)).status
+        == "INFEASIBLE"
+    ), "the hand-placed class ate nothing and its thirty chairs went unbooked"
+
+    # The control: the same week with room for both classes schedules, so the
+    # refusal above is the seat count and not the mere presence of a group that
+    # owns no requirement.
+    payload["rules"] = _lunch_rules(diningSeats=60)
+    assert solver.solve(
+        OptimizeScheduleRequest.model_validate(payload),
+    ).status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_a_lunch_blocked_by_locked_lessons_is_named_even_with_no_seat_limit() -> None:
+    """The regression a school already using the lunch rule would have hit.
+
+    Making the break steer around hand-placed lessons is right — before it, a
+    class was quietly sent to lunch during a lesson somebody had put there. But
+    the restriction was written bare, and a bare domain subtraction lets CP-SAT
+    prove infeasibility without touching a single assumption. The core comes
+    back empty, and an empty core does not merely lose this cause: it erases
+    every other cause in the payload and hands the school the
+    INSUFFICIENT_RESOURCES fallback, telling it to go and look at rooms and
+    teacher time. One lock anywhere blinded the whole diagnosis — with no seat
+    limit set at all, so on every school already using this rule.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    # A two-hour day, so the one admissible lunch start is also the only place
+    # the lesson can go: impossible in combination, which is exactly the case
+    # the up-front arithmetic cannot settle and the literal has to carry.
+    solver = SchedulerSolver(
+        _settings(
+            SOLVER_MAX_TIME_SECONDS=10.0,
+            SCHEDULE_DAYS="1",
+            SCHEDULE_DAY_START_MINUTES=630,
+            SCHEDULE_DAY_END_MINUTES=765,
+        ),
+    )
+    payload = _dining_payload([30], lessons_per_week=1)
+    group_id = str(payload["groups"][0]["id"])  # type: ignore[index]
+    payload["fixedLessons"] = [_locked_lesson(group_id, "10:30:00", "11:30:00")]
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00",
+        "lunchEndTime": "12:30:00",
+        "lunchMinutes": 30,
+    }  # no diningSeats at all
+
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    categories = {conflict.category for conflict in response.conflicts.conflicts}
+    assert "INSUFFICIENT_RESOURCES" not in categories, (
+        "the empty core swallowed the diagnosis and blamed rooms and teacher time"
+    )
+    assert any(
+        "lunch break" in conflict.message for conflict in response.conflicts.conflicts
+    ), "nothing in the answer says the lunch window is what cannot be satisfied"
+
+    # And the literal must actually GATE the restriction, which the response
+    # above cannot show: CP-SAT returns a sufficient core, not a minimal one, so
+    # a literal that gates nothing at all is still reported in it. Dropping the
+    # enforcement therefore leaves every assertion above passing while the bare
+    # constraint quietly reacquires the power to prove infeasibility on its own,
+    # which is what emptied the core in the first place. Read off the model.
+    model, _, _ = SchedulerSolver(
+        _settings(
+            SOLVER_MAX_TIME_SECONDS=10.0,
+            SCHEDULE_DAYS="1",
+            SCHEDULE_DAY_START_MINUTES=630,
+            SCHEDULE_DAY_END_MINUTES=765,
+        ),
+    )._build_model(
+        OptimizeScheduleRequest.model_validate(payload),
+        use_assumptions=True,
+        include_objective=False,
+    )[:3]
+    proto = model.Proto()
+    lock_indices = {
+        index
+        for index, variable in enumerate(proto.variables)
+        if variable.name.startswith("lunchlock_")
+    }
+    assert lock_indices, "no lunch-lock literal was registered at all"
+    enforced = {
+        literal
+        for constraint in proto.constraints
+        for literal in constraint.enforcement_literal
+    }
+    assert lock_indices & enforced, (
+        "the lunch-start restriction is bare again: it can prove the week "
+        "impossible without touching an assumption, which empties the core"
+    )
+
+
+def test_a_locked_lesson_moves_the_break_rather_than_only_refusing_the_week() -> None:
+    """The class eats in the gap the locked lessons leave, and it is a real gap.
+
+    The test above proves the rule binds by making it impossible to satisfy,
+    which on its own would also be satisfied by an implementation that refused
+    everything. This one states the rule outright: a two-hour window, two
+    locked lessons eating one end each, and exactly one 60-minute break that
+    fits between them.
+
+    11:00-13:00 admits starts at 11:00, 11:15, ... 12:00. A locked 11:00-11:45
+    rules out every start before 11:45, and a locked 12:45-13:00 rules out
+    12:00 (and everything from 11:45 up would have been fine but for the first
+    one). What survives is 11:45 alone, so the chosen sitting is not a matter
+    of which solution the solver happened to find.
+
+    The start is read off the solved model because the response has no field
+    for it — `ScheduledLesson` is the only row a response carries, which is
+    also why `benchmarks/validate_schedule.py` cannot check this rule.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"))
+    payload = _dining_payload([30])
+    class_7a = str(payload["requirements"][0]["studentGroupId"])  # type: ignore[index]
+    payload["fixedLessons"] = [
+        _locked_lesson(class_7a, "11:00:00", "11:45:00"),
+        _locked_lesson(class_7a, "12:45:00", "13:00:00"),
+    ]
+    payload["rules"] = _lunch_rules(lunchEndTime="13:00:00", diningSeats=30)
+    request = OptimizeScheduleRequest.model_validate(payload)
+
+    def _slot(hhmmss: str) -> int:
+        return (_minutes(hhmmss) - solver._grid.day_start_minutes) // solver._grid.slot_minutes
+
+    _lessons, sittings = _solved_spans(solver, request)
+    assert sittings[class_7a] == [(_slot("11:45:00"), _slot("12:45:00"))], (
+        "the only hour of the window the locked lessons leave free is "
+        "11:45-12:45, and that is where the class has to eat"
+    )
+
+
+def _lunch_encoding(rules: dict[str, object]) -> dict[str, int]:
+    """Count what the lunch builder actually put in the model for `rules`."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _dining_payload([30, 30])
+    payload["rules"] = rules
+    request = OptimizeScheduleRequest.model_validate(payload)
+    model, _, _, _ = solver._build_model(request, use_assumptions=False)
+
+    proto = model.Proto()
+    variables = [variable.name for variable in proto.variables]
+    return {
+        "variables": len(variables),
+        "lunch_starts": sum(1 for name in variables if name.startswith("lunchstart_")),
+        "dining_literals": sum(1 for name in variables if name == "dining_capacity"),
+        "sittings": sum(
+            1 for constraint in proto.constraints if constraint.name.startswith("sitting_")
+        ),
+        "cumulatives": sum(
+            1 for constraint in proto.constraints if constraint.has_cumulative()
+        ),
+        "estimate": solver._estimate_model_size(request),
+    }
+
+
+def test_without_a_seat_limit_the_lunch_encoding_is_the_one_it_always_was() -> None:
+    """Most schools have room to spare and must not pay for counting who sits.
+
+    A payload naming no seats has to build exactly what it built before the
+    hall existed: one lunch start per group-day, no sittings, no literal
+    standing for the hall, and no cumulative beyond the one the room allocator
+    owns. Nothing is conditional on a seat count that is not there.
+
+    What naming seats costs is ONE BOOLEAN for the whole model, at any size of
+    school, and that is the claim worth pinning because it is the one that
+    sounds untrue. The cumulative reuses the lunch starts that already exist;
+    an optional fixed-size interval over an existing start variable adds none
+    of its own, because its end is an affine expression rather than a variable;
+    and every sitting is present on the same shared literal, so the literal is
+    the whole cost. Counting the model's variables end to end is the only
+    assertion that would notice if any of those three stopped holding.
+
+    `_estimate_model_size` has to charge for that difference and nothing else,
+    or the complexity guard stops describing the model it guards.
+    """
+    open_hall = _lunch_encoding(_lunch_rules())
+    limited = _lunch_encoding(_lunch_rules(diningSeats=60))
+
+    assert open_hall["lunch_starts"] == 10, "2 groups x 5 days of free windows"
+    assert open_hall["sittings"] == 0
+    assert open_hall["dining_literals"] == 0
+
+    assert limited["lunch_starts"] == open_hall["lunch_starts"], (
+        "the free-window guarantee must not change shape when seats appear"
+    )
+    assert limited["sittings"] == 10, "one sitting per group-day, over 2 x 5"
+    assert limited["dining_literals"] == 1, (
+        "one literal for every sitting in the school — they stand or fall "
+        "together, so a second one would buy nothing and cost a search"
+    )
+    assert limited["cumulatives"] == open_hall["cumulatives"] + 1, (
+        "one cumulative for the whole week — the days cannot overlap"
+    )
+    assert limited["variables"] - open_hall["variables"] == 1, (
+        f"ten sittings cost {limited['variables'] - open_hall['variables']} "
+        f"variables; the whole seat rule is meant to cost one"
+    )
+    assert limited["estimate"] - open_hall["estimate"] == 1
+    for encoding in (open_hall, limited):
+        assert encoding["estimate"] >= encoding["variables"], (
+            "the complexity guard has to bound the model it predicts"
+        )
+
+
+def test_a_seat_limit_with_no_headcounts_yet_seats_nobody() -> None:
+    """The engine ships before the gateway that fills the new field.
+
+    In the window between the two deploys a school can already have saved a
+    seat count while every requirement still arrives with lunchHeadcount at its
+    default of 0. That has to mean "nobody has told us who eats" and build no
+    sittings at all — not a hall closed to the entire school, which is what a
+    demand of zero read as a real number would come to.
+
+    A group of nought is also what every teaching group looks like once the
+    gateway does fill the field, so this is the same guard that keeps a
+    nivågrupp out of the cumulative rather than in it demanding nothing: an
+    interval that occupies no seat is pure propagator work.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _dining_payload([0, 0])
+    payload["rules"] = _lunch_rules(diningSeats=60)
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0))
+    request = OptimizeScheduleRequest.model_validate(payload)
+    model, _, _, _ = solver._build_model(request, use_assumptions=False)
+    proto = model.Proto()
+
+    assert not [
+        constraint.name
+        for constraint in proto.constraints
+        if constraint.name.startswith("sitting_")
+    ]
+    assert [
+        variable.name
+        for variable in proto.variables
+        if variable.name.startswith("lunchstart_")
+    ], "the free-window guarantee is not conditional on anybody eating"
+    assert solver.solve(request).status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_seats_without_a_lunch_window_are_inert_and_deliberately_so() -> None:
+    """A seat count on its own is a number about a room nobody is sent to.
+
+    The whole dining-hall mechanism hangs off the lunch interval, and there is
+    no lunch interval until the school has given a window and a length. So a
+    settings row carrying `diningSeats` and no lunch window builds nothing:
+    no lunch starts, no sittings, no literal for the hall, no cumulative — and,
+    just as importantly, no rejection. A school that types a seat count before
+    it has decided when lunch is has made no error and must not be told it has.
+
+    That is reachable today. The three lunch fields and the seat count live on
+    one settings form, and the engine ships before the gateway that fills any
+    of them, so "seats but no window" is an ordinary intermediate state rather
+    than a corner case.
+
+    Both halves are asserted because they fail apart. The fail-fast check that
+    refuses a class larger than the hall reads the same window test; drop it
+    from there and a school with a class of thirty and twenty seats gets a 400
+    for a rule that is not switched on.
+    """
+    seats_only = _lunch_encoding({"diningSeats": 30})
+
+    assert seats_only["lunch_starts"] == 0
+    assert seats_only["sittings"] == 0
+    assert seats_only["dining_literals"] == 0
+    assert seats_only["cumulatives"] == _lunch_encoding(_lunch_rules())["cumulatives"], (
+        "the only cumulative in the model belongs to the room allocator"
+    )
+
+    # ... and a class the hall could never hold is not an error either, because
+    # there is no sitting for it to fail to fit into.
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"))
+    too_big = _dining_payload([30])
+    too_big["rules"] = {"diningSeats": 20}
+    response = solver.solve(OptimizeScheduleRequest.model_validate(too_big))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 1
+
+
+def test_a_full_dining_hall_is_named_in_the_infeasible_response() -> None:
+    """The school is told the hall is full, in the hall's own numbers.
+
+    A cumulative takes no OnlyEnforceIf, so the seat rule reaches a conflict
+    core only through the literal every sitting's presence implies. What that
+    buys is one sentence in the response: a DINING_CAPACITY conflict quoting
+    the seat count the school typed in. Without it the answer degrades to the
+    INSUFFICIENT_RESOURCES fallback, which sends an administrator to look at
+    rooms and teachers' hours for a problem that is neither.
+
+    The earlier version of this test asserted only that a variable named
+    "dining_capacity" appeared in `CpModel.assumptions`. That was true of the
+    model and false of the product: the core came back and was thrown away by
+    `AssumptionRegistry.resolve`, so no response ever carried the category, and
+    the test passed throughout. Assert what the school reads.
+
+    Sixty children, thirty seats, a window one sitting wide. The same week with
+    sixty seats schedules, which is what makes the hall the cause rather than
+    some incidental scarcity in the fixture.
+    """
+    one_day = TestClient(
+        create_app(_settings(SCHEDULE_DAYS="1", SOLVER_MAX_TIME_SECONDS=10.0)),
+    )
+
+    def _post(payload: dict[str, object]) -> dict:
+        response = one_day.post(
+            "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    def _crowd(seats: int) -> dict[str, object]:
+        payload = _dining_payload([30, 30])
+        payload["rules"] = _lunch_rules(diningSeats=seats)
+        return payload
+
+    assert _post(_crowd(60))["status"] in {"OPTIMAL", "FEASIBLE"}, (
+        "the fixture must be schedulable once the hall is big enough, or the "
+        "verdict below says nothing about seats"
+    )
+
+    body = _post(_crowd(30))
+    assert body["status"] == "INFEASIBLE"
+    assert body["conflicts"] is not None
+    categories = {conflict["category"] for conflict in body["conflicts"]["conflicts"]}
+    # AMONG the causes, not the only one. CP-SAT also hands back the
+    # room-capacity assumptions of two requirements that fit their rooms
+    # perfectly well: the core it returns is sufficient, not minimal, and "a
+    # category is in the core" is not "that category is the cause".
+    assert "DINING_CAPACITY" in categories, f"got {sorted(categories)}"
+    named = next(
+        conflict
+        for conflict in body["conflicts"]["conflicts"]
+        if conflict["category"] == "DINING_CAPACITY"
+    )
+    assert named["message"] == (
+        "Lunch cannot be staggered within the dining hall's 30 seats."
+    )
+    assert "dining capacity" in body["conflicts"]["summary"]
+
+    # And a school that never named a seat count is never told about seats. The
+    # hall is a rule the model does not contain, so an assumption standing for
+    # it could only ever name an innocent. Blocking the whole of the one
+    # scheduled day is an impossibility with nothing to do with lunch.
+    unlimited = _dining_payload([30, 30])
+    unlimited["rules"] = _lunch_rules()
+    unlimited["constraints"] = [
+        _blocks_the_whole_day(
+            unlimited["requirements"][0]["studentGroupId"],  # type: ignore[index]
+            1,
+        ),
+    ]
+    open_hall = _post(unlimited)
+    assert open_hall["status"] == "INFEASIBLE"
+    # The exact set, not merely "DINING_CAPACITY is absent": an analysis that
+    # named nothing at all would satisfy the weaker form without saying a word
+    # about the hall either way.
+    assert {conflict["category"] for conflict in open_hall["conflicts"]["conflicts"]} == {
+        "AVAILABILITY",
+        "ROOM_CAPACITY",
+    }
+
+
+def test_a_class_too_big_for_the_hall_is_refused_before_the_solver_runs(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Thirty children never fit twenty places, on any timetable at all.
+
+    CP-SAT would spend the whole budget proving that and answer INFEASIBLE
+    without naming a class or a number — a verdict nobody can act on, at full
+    price. So the arithmetic belongs beside the other impossibilities in
+    _validate_request, and the way to say that is that no solve happens.
+    """
+    from app.solver import scheduler_solver as solver_module
+
+    solves: list[object] = []
+    real_solve = solver_module.cp_model.CpSolver.Solve
+
+    def recording_solve(self, model, solution_callback=None):  # noqa: ANN001, ANN202
+        solves.append(model)
+        return real_solve(self, model)
+
+    monkeypatch.setattr(solver_module.cp_model.CpSolver, "Solve", recording_solve)
+
+    payload = _dining_payload([30])
+    payload["rules"] = _lunch_rules(diningSeats=20)
+    group_id = payload["requirements"][0]["studentGroupId"]  # type: ignore[index]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "INVALID_SCHEDULE_INPUT"
+    assert body["message"] == (
+        f"Student group {group_id} brings 30 students to lunch, more than the "
+        f"dining hall's 20 seats."
+    )
+    assert solves == [], "the seat check must reject before any model is solved"
+
+
+def test_an_off_grid_lunch_break_is_a_400_not_a_500(client: TestClient) -> None:
+    """A saved setting that breaks every run has to say which setting.
+
+    minutes_to_slots refuses 40 minutes with a bare ValueError, and that call
+    used to sit outside the block turning those into InvalidScheduleInputError,
+    so main.py's catch-all answered 500 for plain bad input. 40 is reachable:
+    the field is an int between 15 and 120 and the web input steps by 5. Now
+    that lunch is a stored preference rather than a number retyped per run, the
+    same 500 would come back on every generation until somebody guessed which
+    of the settings was wrong.
+
+    The neighbouring rejection — a window too short to hold the break it asks
+    for — already answered 400 and has to keep doing so.
+    """
+    payload = _sample_payload()
+    payload["rules"] = _lunch_rules(lunchEndTime="13:00:00", lunchMinutes=40)
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "INVALID_SCHEDULE_INPUT"
+    assert body["message"] == (
+        "Lesson duration 40 minutes is not aligned to 15-minute slots."
+    )
+
+    payload["rules"] = _lunch_rules(lunchEndTime="11:30:00")
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 400
+    assert response.json()["message"] == (
+        "Lunch window is shorter than the required lunch break."
+    )
+
+
+def test_a_per_day_lesson_cap_and_a_seat_limit_hold_at_the_same_time() -> None:
+    """Two rules in one settings form, and neither may cost the other anything.
+
+    The cap reifies "is this group taught on this day" once per group-day-
+    lesson, and those literals are its own. An earlier seat encoding asked the
+    same question — it wanted to know whether a class was in the building
+    before charging it a sitting — and the two rules had to be made to share
+    them or the term the complexity guard charges once would have been paid
+    twice. Unconditional demand does not ask at all: every class eats every
+    school day whatever the timetable does with it. So the hall now adds NO
+    on-day literals rather than sharing them, and the way to say that is that
+    a payload with both rules reifies exactly what the cap alone reifies.
+
+    The cap is made to bind on its own first (seven lessons will not fit three
+    days at two a day), because a cap that is never reached would let this test
+    pass against a solver that had dropped it.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(
+        _settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1,2,3"),
+    )
+
+    def _request(lessons: int, rules: dict[str, object]):  # noqa: ANN202
+        payload = _dining_payload([30], lessons_per_week=lessons)
+        payload["rules"] = rules
+        return OptimizeScheduleRequest.model_validate(payload)
+
+    cap_only: dict[str, object] = {"maxLessonsPerDayPerGroup": 2}
+    overloaded = solver.solve(_request(7, cap_only))
+    assert overloaded.status == "INFEASIBLE", (
+        "seven lessons at two a day need four days; a three-day week cannot "
+        "hold them unless the cap is being ignored"
+    )
+
+    def _named(request, prefix: str) -> list[str]:  # noqa: ANN001
+        model, _, _, _ = solver._build_model(request, use_assumptions=False)
+        return [
+            variable.name
+            for variable in model.Proto().variables
+            if variable.name.startswith(prefix)
+        ]
+
+    # Rules that mention no lunch must not build one — the whole lunch block is
+    # conditional on the window, not on `rules` being present at all.
+    capped = _request(6, cap_only)
+    assert _named(capped, "lunchstart_") == []
+    assert solver.solve(capped).status in {"OPTIMAL", "FEASIBLE"}
+
+    both = _request(6, _lunch_rules(diningSeats=30, maxLessonsPerDayPerGroup=2))
+    cap_only_literals = _named(capped, "onday_")
+    both_literals = _named(both, "onday_")
+    assert len(cap_only_literals) == 3 * 6, (
+        "one literal per group-day-lesson, 3 days x 6 lessons"
+    )
+    # Counts, not names: every fixture mints its own ids and the literals are
+    # named after them.
+    assert len(both_literals) == len(cap_only_literals), (
+        f"the seat limit reified {len(both_literals) - len(cap_only_literals)} "
+        f"on-day literals of its own; unconditional demand needs none"
+    )
+    assert len(both_literals) == len(set(both_literals)), (
+        "the same on-day literal was reified twice"
+    )
+
+    response = solver.solve(both)
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 6
+    per_day: dict[int, int] = {}
+    for lesson in response.lessons:
+        per_day[lesson.day_of_week] = per_day.get(lesson.day_of_week, 0) + 1
+    assert sorted(per_day.values()) == [2, 2, 2], (
+        f"the cap of two a day was not honoured alongside the seat limit: {per_day}"
+    )
+
+
 def test_a_feasible_solve_leaves_the_assumptions_field_empty() -> None:
     """The fast path must not populate CpModel.assumptions.
 
@@ -829,6 +2039,160 @@ def test_a_feasible_solve_leaves_the_assumptions_field_empty() -> None:
 
     explained, registry, _, _ = solver._build_model(request, use_assumptions=True)
     assert len(explained.Proto().assumptions) > 0
+
+
+def test_a_conflict_core_is_read_as_literal_references_not_list_positions() -> None:
+    """What OR-Tools returns are variable indices. They are not list offsets.
+
+    Reading them as offsets is why no category ever reached a response: on any
+    real payload the room and availability builders have claimed hundreds of
+    variable indices before the first assumption literal exists, so every
+    reference fell off the end of a short record list, resolved to nothing, and
+    the whole analysis degraded to the INSUFFICIENT_RESOURCES fallback. On a
+    payload long enough for the numbers to land INSIDE the list it is worse
+    than a fallback: the positions name unrelated records, confidently.
+
+    The padding below is what makes the two readings distinguishable, and is
+    the only reason this test can tell them apart at all.
+    """
+    from ortools.sat.python import cp_model
+
+    from app.solver.conflict_analyzer import AssumptionRegistry
+
+    model = cp_model.CpModel()
+    for position in range(5):
+        model.NewBoolVar(f"padding_{position}")
+
+    registry = AssumptionRegistry(use_assumptions=True)
+    literals = [
+        registry.register(model, name=name, category=category, message=name)
+        for name, category in (
+            ("full_room", "ROOM_CAPACITY"),
+            ("blocked_window", "AVAILABILITY"),
+            ("full_hall", "DINING_CAPACITY"),
+        )
+    ]
+
+    references = [literal.Index() for literal in literals]
+    assert references == [5, 6, 7], "the padding must push literals off position"
+    assert [record.category for record in registry.resolve(references)] == [
+        "ROOM_CAPACITY",
+        "AVAILABILITY",
+        "DINING_CAPACITY",
+    ]
+
+    assert registry.resolve([0, 1, 2]) == [], (
+        "positions 0-2 are padding variables this registry never assumed; "
+        "resolving them to its first three records is the original bug"
+    )
+    # A negated literal is a negative reference (-index - 1). This registry only
+    # ever assumes fresh positive variables, so a core naming one belongs to
+    # somebody else and must be skipped — never folded back onto its variable.
+    assert registry.resolve([literals[0].Not().Index()]) == []
+
+
+def test_an_infeasibility_no_assumption_explains_still_says_something() -> None:
+    """An empty core must not come back as an empty explanation.
+
+    CP-SAT returns no core when the proof needed nothing it was told to assume,
+    and a school reading "INFEASIBLE" with no conflicts at all has been told
+    less than nothing. The fallback is deliberately vague because it is a
+    guess, and it says so in its own summary.
+
+    This used to be the answer to almost every infeasible payload, since
+    `resolve` threw away every real core. Now that cores resolve, the fallback
+    is reachable only where it belongs — an infeasibility genuinely outside the
+    registered assumptions, which is what the arithmetic below is. No payload
+    in this suite reaches it any more, so this test is the whole of its
+    coverage and the arithmetic is built rather than found for that reason.
+
+    "No CONFLICT core", not "no MINIMAL conflict core". CP-SAT never promised a
+    minimal one, the sibling summary now says so outright, and a word left
+    standing here would have gone on teaching the misconception next door.
+    """
+    from ortools.sat.python import cp_model
+
+    from app.solver.conflict_analyzer import AssumptionRegistry, build_conflict_analysis
+
+    model = cp_model.CpModel()
+    registry = AssumptionRegistry(use_assumptions=True)
+    registry.register(
+        model,
+        name="innocent",
+        category="ROOM_CAPACITY",
+        message="a rule that has nothing to do with what follows",
+    )
+    hours = model.NewIntVar(0, 5, "hours")
+    model.Add(hours >= 4)
+    model.Add(hours <= 2)
+
+    solver = cp_model.CpSolver()
+    assert solver.Solve(model) == cp_model.INFEASIBLE
+    assert list(solver.SufficientAssumptionsForInfeasibility()) == [], (
+        "the impossibility must be independent of the assumption, or this is "
+        "testing the resolved path instead of the fallback"
+    )
+
+    analysis = build_conflict_analysis(solver, registry)
+    assert [conflict.category for conflict in analysis.conflicts] == [
+        "INSUFFICIENT_RESOURCES",
+    ]
+    assert analysis.summary == (
+        "The timetable is infeasible, but no conflict core was returned."
+    )
+    assert analysis.conflicts[0].message, "a guess still has to say something"
+
+
+def test_one_sentence_twice_becomes_one_line_that_names_both_causes() -> None:
+    """De-duplication merges the ids; it does not pick a survivor.
+
+    Two records can carry the same sentence and different ids — a year
+    reservation registers once per requirement it blocks, and every one of
+    those registrations says the same thing about a different lesson. Showing
+    an administrator one of them and silently dropping the rest points at an
+    arbitrary member of the set, which is worse than the forty duplicate lines
+    de-duplication exists to remove: those at least agreed.
+
+    The end-to-end test above cannot see this. Its forty duplicates all come
+    from one requirement and therefore all carry the identical id, so the union
+    below is never exercised by any payload in this file.
+    """
+    from ortools.sat.python import cp_model
+
+    from app.solver.conflict_analyzer import AssumptionRegistry, build_conflict_analysis
+
+    first_requirement = uuid4()
+    second_requirement = uuid4()
+    same_sentence = "Requirement needs a room with capacity >= 30."
+
+    model = cp_model.CpModel()
+    registry = AssumptionRegistry(use_assumptions=True)
+    hours = model.NewIntVar(0, 5, "hours")
+    for requirement_id, bound in (
+        (first_requirement, hours >= 4),
+        (second_requirement, hours <= 2),
+    ):
+        literal = registry.register(
+            model,
+            name=f"capacity_{requirement_id}",
+            category="ROOM_CAPACITY",
+            message=same_sentence,
+            requirement_ids=[requirement_id],
+        )
+        model.Add(bound).OnlyEnforceIf(literal)
+
+    solver = cp_model.CpSolver()
+    assert solver.Solve(model) == cp_model.INFEASIBLE
+    assert len(solver.SufficientAssumptionsForInfeasibility()) == 2, (
+        "both assumptions have to be in the core, or there is nothing to merge"
+    )
+
+    analysis = build_conflict_analysis(solver, registry)
+    assert len(analysis.conflicts) == 1, "one sentence, one line"
+    assert analysis.conflicts[0].requirement_ids == [
+        first_requirement,
+        second_requirement,
+    ], "the merged line has to name every requirement the duplicates named"
 
 
 def _two_room_payload(lessons_per_week: int = 4) -> dict[str, object]:
@@ -1117,7 +2481,8 @@ def test_clone_satisfaction_rescues_a_failed_clean_phase(
 def test_complexity_guard_tracks_the_model_not_the_old_formula() -> None:
     """The guard must estimate what the current encoding builds.
 
-    Two payloads, one on each side of the line.
+    Two payloads, one on each side of the line, then the two terms this
+    release added.
 
     The first has 450 recurring constraints on teachers who appear nowhere in
     the requirements. The retired formula charged lessons x constraints x days
@@ -1129,6 +2494,22 @@ def test_complexity_guard_tracks_the_model_not_the_old_formula() -> None:
     the room allocator would emit a class literal per (lesson, class) —
     millions of variables the build phase would sit in before any timeout
     could engage. That is precisely what the guard exists to stop.
+
+    Then the new terms. A GRADE_LEVEL constraint reaches whichever groups its
+    years overlap, which the estimator cannot enumerate without an
+    O(constraints x groups) scan it is written to avoid, so it is charged the
+    worst case: every lesson, twice. It must not fall through to the ROOM
+    branch, which charges a third literal per lesson for a room assignment a
+    year reservation never reifies.
+
+    The rules term is (1 + D)L + GD, plus ONE for a seat limit — a day var per
+    lesson, an on-day boolean per lesson-day, a lunch start per group-day, and
+    the single literal every sitting is present on. Not one per group-day: the
+    cumulative reuses the lunch starts, an optional fixed-size interval over an
+    existing start adds no variable of its own, and one shared literal serves
+    the whole school. The one is charged whenever a seat count is set, lunch
+    window or no lunch window, because an estimate that is high by one is still
+    an upper bound and the alternative is reading three more fields to save it.
     """
     from app.exceptions import InvalidScheduleInputError
     from app.schemas.schedule import OptimizeScheduleRequest
@@ -1184,6 +2565,66 @@ def test_complexity_guard_tracks_the_model_not_the_old_formula() -> None:
     ]
     with pytest.raises(InvalidScheduleInputError, match="too large to build"):
         solver._validate_request(OptimizeScheduleRequest.model_validate(pathological))
+
+    seated = _dining_payload([30, 30], lessons_per_week=3)
+    unlocked = OptimizeScheduleRequest.model_validate(seated)
+    total_lessons = sum(r.lessons_per_week for r in unlocked.requirements)
+
+    seated["constraints"] = [
+        {
+            "id": str(uuid4()),
+            "resourceKind": "GRADE_LEVEL",
+            "resourceId": None,
+            "minGradeLevel": 4,
+            "maxGradeLevel": 6,
+            "dayOfWeek": 1,
+            "date": None,
+            "startTime": "11:00:00",
+            "endTime": "12:00:00",
+            "kind": "UNAVAILABLE",
+        },
+    ]
+    year_locked = OptimizeScheduleRequest.model_validate(seated)
+    assert solver._estimate_model_size(year_locked) - solver._estimate_model_size(
+        unlocked,
+    ) == 2 * total_lessons
+
+    seated["constraints"] = []
+    seated["rules"] = _lunch_rules()
+    open_hall = OptimizeScheduleRequest.model_validate(seated)
+    seated["rules"] = _lunch_rules(diningSeats=60)
+    limited = OptimizeScheduleRequest.model_validate(seated)
+    assert solver._estimate_model_size(limited) - solver._estimate_model_size(
+        open_hall,
+    ) == 1, "one literal for the whole hall, at any size of school"
+
+    # The seat literal is the ONLY rules-dependent variable in the estimate.
+    # (1 + D)L and GD are charged whether or not the school set a single rule,
+    # which is an upper bound taken deliberately rather than by oversight: it
+    # costs an over-estimate on a payload with no lunch and saves the estimator
+    # from reading the rules to decide what to charge.
+    seated["rules"] = None
+    ruleless = OptimizeScheduleRequest.model_validate(seated)
+    assert solver._estimate_model_size(open_hall) == solver._estimate_model_size(
+        ruleless,
+    ), "the day, on-day and lunch-start terms do not depend on the rules"
+    assert solver._estimate_model_size(limited) - solver._estimate_model_size(
+        ruleless,
+    ) == 1
+
+    # Seats with no window to spend them on are charged all the same. The
+    # builder makes nothing in that case, so the estimate is high by one — the
+    # safe direction for a bound, and cheaper than reading three more fields.
+    seated["rules"] = {"diningSeats": 60}
+    seats_only = OptimizeScheduleRequest.model_validate(seated)
+    assert solver._estimate_model_size(seats_only) - solver._estimate_model_size(
+        ruleless,
+    ) == 1
+
+    # The property all of this exists for: whatever the terms say, the estimate
+    # has to bound the model it predicts.
+    model, _, _, _ = solver._build_model(limited, use_assumptions=False)
+    assert solver._estimate_model_size(limited) >= len(model.Proto().variables)
 
 
 def test_previous_lessons_warm_start_the_feasibility_phase(
@@ -1540,6 +2981,210 @@ def test_no_room_for_the_years_is_reported_as_such(client: TestClient) -> None:
     assert "years 9-9" in str(response.json())
 
 
+# ---------------------------------------------------------------------------
+# Times reserved for a span of years
+#
+# A school that keeps 11:30 free for years 4-6 owns no row called "year 5", so
+# the reservation names a range instead of a resource and the solver matches it
+# against the years each group's own members carry. That is the same data the
+# room limits just above read, asked the opposite question: a room decides
+# where a group may go, a reservation only decides who must be left alone.
+# ---------------------------------------------------------------------------
+
+
+def _year_lock(min_grade, max_grade):  # noqa: ANN001, ANN202
+    """A whole-Monday UNAVAILABLE window aimed at a span of years.
+
+    08:00-17:45 is the widest window the grid can express — 18:00 is the
+    exclusive day end — so on a Monday-only week a group the reservation
+    reaches has nowhere left to be, and the verdict answers "reached?"
+    directly instead of through a timetable that has to be read.
+    """
+    return {
+        "id": str(uuid4()),
+        "resourceKind": "GRADE_LEVEL",
+        "resourceId": None,
+        "minGradeLevel": min_grade,
+        "maxGradeLevel": max_grade,
+        "dayOfWeek": 1,
+        "date": None,
+        "startTime": "08:00:00",
+        "endTime": "17:45:00",
+        "kind": "UNAVAILABLE",
+    }
+
+
+def _reservation_reaches(solver, lock, group_years) -> bool:  # noqa: ANN001
+    """Whether a one-lesson Monday survives the reservation `lock`."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+    requirement["minGradeLevel"] = group_years[0]  # type: ignore[index]
+    requirement["maxGradeLevel"] = group_years[1]  # type: ignore[index]
+    payload["constraints"] = [_year_lock(*lock)]
+
+    status = solver.solve(OptimizeScheduleRequest.model_validate(payload)).status
+    assert status in {"OPTIMAL", "FEASIBLE", "INFEASIBLE"}, (
+        f"the probe has to be decided one way or the other, not {status}"
+    )
+    return status == "INFEASIBLE"
+
+
+def test_a_year_reservation_reaches_every_group_whose_years_overlap_it() -> None:
+    """Keeping Monday free for years 4-6 is a rule about children, not groups.
+
+    Year 5 is reached outright. Years 6-7 are reached too — OVERLAP, not the
+    containment the room limits use: part of that group is in year 6, and
+    holding the rest of it free as well costs the timetable a little room,
+    where letting the lesson stand would put year-6 pupils in a classroom
+    during their own lunch. A school can live with the first mistake and not
+    with the second, so the rule is written to make the survivable one.
+
+    Year 8 is untouched, or a reservation for one stage of the school would be
+    a school-wide closure with extra steps.
+    """
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"))
+
+    assert _reservation_reaches(solver, (4, 6), (5, 5))
+    assert _reservation_reaches(solver, (4, 6), (6, 7)), (
+        "a group spanning years 6-7 has year-6 children in it; containment "
+        "would leave them in a lesson during a break reserved for them"
+    )
+    assert not _reservation_reaches(solver, (4, 6), (8, 8))
+
+
+def test_an_open_ended_year_reservation_stops_at_the_stage_it_names() -> None:
+    """"From year 7" and "up to year 3" are how a school says a stage.
+
+    A missing bound is open at that end rather than absent, so each of these is
+    checked against the year just inside the edge and the year just outside it.
+
+    A group whose members carry no year at all is never reached: with nothing
+    to compare against, "overlaps" has no answer, and answering yes would sweep
+    every yearless group into a reservation meant for one part of the school.
+    """
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"))
+
+    assert _reservation_reaches(solver, (7, None), (6, 7))
+    assert not _reservation_reaches(solver, (7, None), (4, 6))
+
+    assert _reservation_reaches(solver, (None, 3), (0, 2))
+    assert not _reservation_reaches(solver, (None, 3), (4, 6))
+
+    assert not _reservation_reaches(solver, (None, 3), (None, None)), (
+        "a group with no member years is not a group in every year"
+    )
+
+
+def test_a_year_reservation_reaches_a_teaching_group_no_group_lock_can() -> None:
+    """Ma51 has no year of its own; its members do, and that is enough.
+
+    A nivågrupp is cut across the classes, so the group register carries no
+    gradeLevel for it and there is no single row a lock could name that covers
+    both it and the classes it came from. Locking class 5A's window leaves
+    Ma51's lessons free to land inside it — the model believes those children
+    are at lunch and they are in a maths lesson.
+
+    The year rule is the only shape that reaches them, and it reaches them
+    through the same member-derived span the room limits already read.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1"))
+    class_5a = str(uuid4())  # the home class; its own lessons are elsewhere
+
+    def _solve(constraint: dict[str, object]):  # noqa: ANN202
+        payload = _sample_payload()
+        requirement = payload["requirements"][0]  # type: ignore[index]
+        requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+        requirement["minGradeLevel"] = 5  # type: ignore[index]
+        requirement["maxGradeLevel"] = 5  # type: ignore[index]
+        payload["constraints"] = [constraint]
+        return solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    named_the_class = _solve(
+        {
+            "id": str(uuid4()),
+            "resourceKind": "STUDENT_GROUP",
+            "resourceId": class_5a,
+            "dayOfWeek": 1,
+            "date": None,
+            "startTime": "08:00:00",
+            "endTime": "17:45:00",
+            "kind": "UNAVAILABLE",
+        },
+    )
+    assert named_the_class.status in {"OPTIMAL", "FEASIBLE"}, (
+        "a lock naming 5A cannot reach a group cut out of 5A — which is the "
+        "gap the year rule exists to close"
+    )
+
+    named_the_years = _solve(_year_lock(4, 6))
+    assert named_the_years.status == "INFEASIBLE"
+
+
+def test_a_reservation_that_cannot_say_what_it_holds_free_is_refused(
+    client: TestClient,
+) -> None:
+    """A lock nobody can act on is worse than no lock, because it looks saved.
+
+    The gateway builds resourceId from whichever of teacher, room or group the
+    row carries. A year rule carries none of the three, so before the field
+    could be null something had to be minted there — and a minted id names a
+    resource the engine has never heard of: the rule is accepted, validated,
+    matches no lesson, and no layer says a word about it. 422 is the only place
+    that silence becomes a noise.
+
+    The mirror case is a year rule with no bound at either end. It reads as
+    "every year", but a range was far more likely lost on the way here than
+    deliberately left out.
+    """
+    window: dict[str, object] = {
+        "dayOfWeek": 1,
+        "date": None,
+        "startTime": "11:00:00",
+        "endTime": "12:00:00",
+        "kind": "UNAVAILABLE",
+    }
+
+    def _rejection(constraint: dict[str, object]) -> str:
+        payload = _sample_payload()
+        payload["constraints"] = [{"id": str(uuid4()), **window, **constraint}]
+        response = client.post(
+            "/api/v1/optimize",
+            json=payload,
+            headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+        )
+        assert response.status_code == 422
+        return " ".join(
+            error["msg"] for error in response.json()["details"]["errors"]
+        )
+
+    assert "target a year range, not a resourceId" in _rejection(
+        {
+            "resourceKind": "GRADE_LEVEL",
+            "resourceId": str(uuid4()),
+            "minGradeLevel": 4,
+            "maxGradeLevel": 6,
+        },
+    )
+    assert "need minGradeLevel or maxGradeLevel" in _rejection(
+        {"resourceKind": "GRADE_LEVEL", "resourceId": None},
+    )
+    # And the same door in the other direction: making resourceId optional must
+    # not let a group lock through without the group it locks.
+    assert "STUDENT_GROUP constraints need a resourceId" in _rejection(
+        {"resourceKind": "STUDENT_GROUP", "resourceId": None},
+    )
+
+
 def _lessons_in_preferred_room(client: TestClient, *, with_preference: bool) -> int:
     """Schedule a week where many lessons want one scarce room; count the wins.
 
@@ -1743,3 +3388,83 @@ def test_a_preference_for_another_subject_does_not_move_this_one(
     # Nothing to satisfy for this subject: the run succeeds and the lesson is
     # placed wherever the other objectives put it.
     assert len(response.json()["lessons"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# The three-sided wire contract, pinned from the engine's side.
+#
+# CamelModel sets extra="forbid", so a field the gateway sends and these models
+# have not heard of is a 422 for the WHOLE optimize request. The mirror of this
+# test lives in src/optimization/ai-engine-contract.spec.ts and asserts the same
+# names against what the gateway actually emits; either half failing means the
+# two sides have parted company. Fix the code, not the list — and change both
+# halves in the same commit as the engine deploy, because the engine has to be
+# out first for a new field to be accepted at all.
+#
+# Evidence this drifts unnoticed: ObjectiveWeights carries a room_preference
+# weight the gateway has never had a way to send.
+# ---------------------------------------------------------------------------
+
+
+def _field_names(model: type) -> set[str]:
+    return {
+        field.alias or name for name, field in model.model_fields.items()
+    }
+
+
+def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
+    from app.schemas.schedule import (
+        AnonymousConstraint,
+        AnonymousGroup,
+        AnonymousRequirement,
+        OptimizeScheduleRequest,
+        ScheduleRules,
+    )
+
+    assert _field_names(OptimizeScheduleRequest) == {
+        "requestId",
+        "academicYearId",
+        "requirements",
+        "groups",
+        "rooms",
+        "constraints",
+        "roomPreferences",
+        "fixedLessons",
+        "groupConflicts",
+        "previousLessons",
+        "weights",
+        "rules",
+    }
+    assert _field_names(AnonymousGroup) == {"id", "lunchHeadcount"}
+    assert _field_names(AnonymousRequirement) == {
+        "id",
+        "subjectId",
+        "studentGroupId",
+        "teacherId",
+        "coTeacherId",
+        "lessonsPerWeek",
+        "minutesPerLesson",
+        "studentGroupSize",
+        "minGradeLevel",
+        "maxGradeLevel",
+        "requiredRoomType",
+    }
+    assert _field_names(AnonymousConstraint) == {
+        "id",
+        "resourceKind",
+        "resourceId",
+        "minGradeLevel",
+        "maxGradeLevel",
+        "dayOfWeek",
+        "date",
+        "startTime",
+        "endTime",
+        "kind",
+    }
+    assert _field_names(ScheduleRules) == {
+        "lunchStartTime",
+        "lunchEndTime",
+        "lunchMinutes",
+        "diningSeats",
+        "maxLessonsPerDayPerGroup",
+    }

@@ -2,9 +2,10 @@
  * Demo-school seed for staging / local testing.
  *
  * Creates one fully configured school ("Demo Skola") with subjects, rooms,
- * classes, teachers, students, a current academic year, the teaching
- * requirements matrix and a few availability constraints — everything the AI
- * engine needs to generate a schedule.
+ * classes, a nivågrupp cut across two of them, teachers, students, a current
+ * academic year, the teaching requirements matrix, lunch settings and a few
+ * availability constraints — everything the AI engine needs to generate a
+ * schedule.
  *
  * Usage:
  *   npm run db:seed
@@ -150,6 +151,25 @@ async function main(): Promise<void> {
     data: { schoolId, ...yearSpec, isActive: true },
   });
 
+  // Lunch belongs to the building, not to the läsår, so there is exactly one
+  // of these rows per school. 60 seats against 80 pupils is deliberate: the
+  // demo school cannot feed everyone at once, which is the only way the
+  // capacity rule shows up in a generated schedule. A 30-minute break inside
+  // an 11:00-13:00 window leaves room for four sittings, and every number here
+  // is a multiple of the solver's 15-minute grid.
+  const lunch = { start: '11:00', end: '13:00', minutes: 30, seats: 60 };
+  await prisma.lunchSetting.create({
+    data: {
+      schoolId,
+      lunchEnabled: true,
+      lunchStartTime: time(lunch.start),
+      lunchEndTime: time(lunch.end),
+      lunchMinutes: lunch.minutes,
+      diningSeats: lunch.seats,
+      maxLessonsPerDayPerGroup: 8,
+    },
+  });
+
   const subjects = await Promise.all(
     SUBJECTS.map((subject) =>
       prisma.subject.create({ data: { schoolId, ...subject } }),
@@ -215,11 +235,14 @@ async function main(): Promise<void> {
   );
 
   let studentCount = 0;
+  // Kept per class so a teaching group can be cut out of one below.
+  const studentsByClass = new Map<string, string[]>();
   for (const group of groups) {
+    const classmates: string[] = [];
     for (let i = 0; i < 20; i++) {
       const firstName = STUDENT_FIRST[i % STUDENT_FIRST.length];
       const lastName = STUDENT_LAST[(i + studentCount) % STUDENT_LAST.length];
-      await prisma.user.create({
+      const student = await prisma.user.create({
         data: {
           schoolId,
           authId: randomUUID(),
@@ -230,8 +253,10 @@ async function main(): Promise<void> {
           studentGroupId: group.id,
         },
       });
+      classmates.push(student.id);
       studentCount++;
     }
+    studentsByClass.set(group.id, classmates);
   }
 
   // Curriculum: every class needs every subject; teachers are assigned
@@ -262,7 +287,51 @@ async function main(): Promise<void> {
     }
   }
 
-  // A couple of availability constraints so generation is non-trivial.
+  // A nivågrupp cut across both year-7 classes: eight pupils from 7A and eight
+  // from 7B take extra maths together and stay in their home class for
+  // everything else. Every seeded group was a plain CLASS until now, which
+  // meant the demo school could not show either of the two things that only go
+  // wrong for teaching groups:
+  //
+  //   * it carries no `gradeLevel` of its own — a year is a property of its
+  //     members' home classes — so a rule written per class never reaches it,
+  //     and an årskurs rule does;
+  //   * its members already eat with 7A and 7B, so a dining hall that adds up
+  //     every group's headcount counts them twice.
+  const teachingGroup = await prisma.studentGroup.create({
+    data: {
+      schoolId,
+      academicYearId: year.id,
+      name: 'Ma71',
+      kind: 'TEACHING_GROUP',
+    },
+  });
+
+  const teachingMembers = groups
+    .filter((group) => group.gradeLevel === 7)
+    .flatMap((group) => (studentsByClass.get(group.id) ?? []).slice(0, 8));
+  await prisma.studentGroupMember.createMany({
+    data: teachingMembers.map((studentId) => ({
+      schoolId,
+      studentGroupId: teachingGroup.id,
+      studentId,
+    })),
+  });
+
+  await prisma.teachingRequirement.create({
+    data: {
+      schoolId,
+      academicYearId: year.id,
+      subjectId: subjectByCode.get('MA')!.id,
+      studentGroupId: teachingGroup.id,
+      teacherId: teacherForSubject('MA', 0).id,
+      lessonsPerWeek: 2,
+      minutesPerLesson: 60,
+    },
+  });
+  requirementCount++;
+
+  // A few availability constraints so generation is non-trivial.
   await prisma.availabilityConstraint.createMany({
     data: [
       {
@@ -287,6 +356,20 @@ async function main(): Promise<void> {
         type: 'UNAVAILABLE',
         reason: 'Föreningsverksamhet',
       },
+      // Points at no row at all: it holds every year-7 group free, which is
+      // 7A, 7B *and* Ma71 — the last one being precisely what the same rule
+      // written per class would have missed.
+      {
+        schoolId,
+        resourceType: 'GRADE_LEVEL',
+        minGradeLevel: 7,
+        maxGradeLevel: 7,
+        dayOfWeek: 2,
+        startTime: time('11:00'),
+        endTime: time('11:45'),
+        type: 'UNAVAILABLE',
+        reason: 'Åk 7 äter tidig lunch — hela skolan får inte plats samtidigt',
+      },
     ],
   });
 
@@ -298,9 +381,11 @@ async function main(): Promise<void> {
       `  subjects:     ${subjects.length}`,
       `  rooms:        ${ROOMS.length}`,
       `  classes:      ${groups.length}`,
+      `  nivågrupp:    ${teachingGroup.name} (${teachingMembers.length} elever)`,
       `  teachers:     ${teachers.length}`,
       `  students:     ${studentCount}`,
       `  requirements: ${requirementCount}`,
+      `  lunch:        ${lunch.start}-${lunch.end}, ${lunch.minutes} min, ${lunch.seats} platser i matsalen`,
       '',
       'Next: link a Supabase Auth user to the admin row, then generate a schedule.',
     ].join('\n'),

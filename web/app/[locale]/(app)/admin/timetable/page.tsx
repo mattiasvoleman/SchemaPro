@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
 import {
   CalendarDays,
@@ -31,6 +32,7 @@ import {
   useGroups,
   useMasterLessons,
   usePeople,
+  useLunchSettings,
   usePublishSchedule,
   useRequirements,
   useRooms,
@@ -155,6 +157,7 @@ type GroupBy = "none" | "teacher" | "room" | "group";
 
 export default function TimetablePage() {
   const t = useTranslations("timetable");
+  const tLunch = useTranslations("lunch");
   const tCommon = useTranslations("common");
   const tDays = useTranslations("days");
   const { activeYear } = useActiveYear();
@@ -166,6 +169,7 @@ export default function TimetablePage() {
   const { data: constraints } = useConstraints();
   const { data: requirements } = useRequirements(activeYear?.id ?? null);
   const publish = usePublishSchedule();
+  const { data: lunchSettings } = useLunchSettings();
   const updateLesson = useUpdateMasterLesson();
   const createLesson = useCreateMasterLesson();
   const deleteLesson = useDeleteMasterLesson();
@@ -1874,6 +1878,20 @@ export default function TimetablePage() {
             <DialogTitle>{t("publishTitle")}</DialogTitle>
             <DialogDescription>{t("publishBody")}</DialogDescription>
           </DialogHeader>
+          {lunchSettings?.lunchEnabled ? null : (
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
+              <div className="space-y-1">
+                <p>{tLunch("publishWarning")}</p>
+                <Link
+                  href="/admin/constraints"
+                  className="font-medium underline underline-offset-4"
+                >
+                  {tLunch("publishWarningLink")}
+                </Link>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="publish-from">{t("publishFrom")}</Label>

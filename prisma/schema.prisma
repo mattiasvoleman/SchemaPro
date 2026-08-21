@@ -86,6 +86,10 @@ enum ConstraintResource {
   TEACHER
   ROOM
   STUDENT_GROUP
+  /// Not a row anywhere: a year is a property of a group's members, so a
+  /// GRADE_LEVEL constraint points at no resource at all and carries
+  /// `minGradeLevel`/`maxGradeLevel` instead.
+  GRADE_LEVEL
 }
 
 enum ConstraintType {
@@ -143,6 +147,7 @@ model School {
   integrationApiKeys      IntegrationApiKey[]
   roomBookings            RoomBooking[]
   roomPreferences         RoomPreference[]
+  lunchSetting            LunchSetting?
 
   @@map("Schools")
 }
@@ -230,9 +235,9 @@ model RoomType {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
-  school         School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  rooms          Room[]
-  subjects       Subject[]
+  school          School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  rooms           Room[]
+  subjects        Subject[]
   roomPreferences RoomPreference[]
 
   @@unique([schoolId, name])
@@ -705,6 +710,13 @@ model OptimizationJob {
   error            String?
   /// Objective weights used for this run (null = server defaults).
   weights          Json?
+  /// Effective schedule rules used for this run — the lunch window, the dining
+  /// hall's seat count and the daily lesson cap, after the stored settings and
+  /// any per-run override were merged. Snapshotted for the same reason
+  /// `weights` is, and it became necessary the moment lunch stopped being a
+  /// per-request blob: the settings row is edited in place, so without this a
+  /// timetable generated in September cannot be explained in November.
+  rules            Json?
   createdAt        DateTime              @default(now()) @db.Timestamptz(6)
   finishedAt       DateTime?             @db.Timestamptz(6)
 
@@ -871,6 +883,13 @@ model AvailabilityConstraint {
   userId         String?            @db.Uuid
   roomId         String?            @db.Uuid
   studentGroupId String?            @db.Uuid
+  // A GRADE_LEVEL constraint has none of the three ids above and this range
+  // instead — "håll åk 4-6 fria 11:30-12:15" is a rule about every group whose
+  // members sit in those years, and there is no row to point at. Both bounds
+  // are 0-12 and ordered; the DB enforces that, plus that they are set for
+  // GRADE_LEVEL rows and only for those (see the migration).
+  minGradeLevel  Int?
+  maxGradeLevel  Int?
   // Either a recurring weekday (1-7) or a one-off `date` may be set.
   dayOfWeek      Int?
   date           DateTime?          @db.Date
@@ -892,6 +911,43 @@ model AvailabilityConstraint {
   @@index([studentGroupId, dayOfWeek])
   @@index([date])
   @@map("AvailabilityConstraints")
+}
+
+/// Lunch, and how many pupils the dining hall can seat at once.
+///
+/// One row per school (`@@unique([schoolId])`), which is the one scheduling
+/// model here that is NOT keyed on `academicYearId`. That is deliberate: the
+/// dining hall belongs to the building and the kitchen, not to the curriculum,
+/// and its seats do not reset in August. Keyed per year, the setting would be
+/// missing every new school year — at exactly the moment publishing is meant
+/// to warn that lunch has not been defined.
+///
+/// `maxLessonsPerDayPerGroup` is not a lunch rule and lives here anyway,
+/// because it sits in the same form. Both halves used to live in one browser's
+/// `localStorage`, so a second administrator generated the schedule under
+/// different rules without knowing it; persisting half the form on the server
+/// and leaving the other half in one browser would keep that bug alive for the
+/// half that stayed behind.
+model LunchSetting {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId                 String   @db.Uuid
+  lunchEnabled             Boolean  @default(false)
+  lunchStartTime           DateTime @db.Time(0)
+  lunchEndTime             DateTime @db.Time(0)
+  lunchMinutes             Int
+  /// Seats in the dining hall. Null means the school has no seat limit worth
+  /// modelling — the solver then places lunch exactly as it did before.
+  diningSeats              Int?
+  maxLessonsPerDayPerGroup Int?
+  createdAt                DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  // One row per school. No separate @@index([schoolId]) — this unique index
+  // already is one, and a second would only be a duplicate to maintain.
+  @@unique([schoolId])
+  @@map("LunchSettings")
 }
 
 /// A soft wish that a subject's lessons land in particular rooms.

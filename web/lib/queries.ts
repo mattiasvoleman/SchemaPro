@@ -11,6 +11,7 @@ import { api } from "@/lib/api";
 import { sortByName, sortByPersonName } from "@/lib/sorting";
 import type {
   LessonRecurrence,
+  LunchSettings,
   RoomType,
   AbsenceReport,
   AcademicYear,
@@ -223,9 +224,47 @@ export function useConstraints() {
     queryFn: () =>
       selectAll<AvailabilityConstraint>(
         "AvailabilityConstraints",
-        "id, resourceType, userId, roomId, studentGroupId, dayOfWeek, date, startTime, endTime, type, reason",
+        "id, resourceType, userId, roomId, studentGroupId, minGradeLevel, maxGradeLevel, dayOfWeek, date, startTime, endTime, type, reason",
         "createdAt",
       ),
+  });
+}
+
+/**
+ * The school's lunch rules. One row, so one value — null until somebody defines
+ * it, which is a different fact from "defined and switched off" and the reason
+ * the publish warning can tell them apart.
+ *
+ * Read through the API rather than Supabase: the row is admin-only, and the
+ * validation that keeps a window on the solver's quarter-hour grid lives on the
+ * same endpoint that writes it.
+ */
+export function useLunchSettings() {
+  return useQuery({
+    queryKey: ["lunchSettings"],
+    queryFn: async () =>
+      (await api.get<LunchSettings | null>("/api/v1/lunch-settings")) ?? null,
+  });
+}
+
+export interface LunchSettingsInput {
+  lunchEnabled: boolean;
+  /** HH:MM as the form holds it; the API accepts both HH:MM and HH:MM:SS. */
+  lunchStartTime: string;
+  lunchEndTime: string;
+  lunchMinutes: number;
+  diningSeats: number | null;
+  maxLessonsPerDayPerGroup: number | null;
+}
+
+export function useSaveLunchSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: LunchSettingsInput) =>
+      api.put<LunchSettings>("/api/v1/lunch-settings", input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["lunchSettings"] });
+    },
   });
 }
 

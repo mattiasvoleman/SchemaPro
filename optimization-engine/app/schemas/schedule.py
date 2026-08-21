@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator
+from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 DayOfWeek = Literal[1, 2, 3, 4, 5, 6, 7]
 ConstraintKind = Literal["UNAVAILABLE", "PREFERRED_FREE", "PREFERRED_BUSY"]
-ResourceKind = Literal["TEACHER", "ROOM", "STUDENT_GROUP"]
+# GRADE_LEVEL is the odd one out: it names no resource at all, only a span of
+# years. A school that reserves 11:30 for years 4-6 owns no row called "year 5",
+# and the groups the reservation must hold free are the ones whose own years
+# overlap the span — a match the solver makes per requirement, which is why the
+# gateway sends one rule rather than one rule per group.
+ResourceKind = Literal["TEACHER", "ROOM", "STUDENT_GROUP", "GRADE_LEVEL"]
 # An opaque room-type token, not a fixed vocabulary. Room types are rows a
 # school owns and names itself (Hemkunskapssal, Trä- och metallslöjd), and the
 # gateway anonymises the id before it reaches here. The solver only ever
@@ -26,6 +31,7 @@ ConflictCategory = Literal[
     "ROOM_OVERLAP",
     "GROUP_OVERLAP",
     "ROOM_CAPACITY",
+    "DINING_CAPACITY",
     "AVAILABILITY",
     "INSUFFICIENT_RESOURCES",
 ]
@@ -79,6 +85,33 @@ class AnonymousRequirement(CamelModel):
     )
 
 
+class AnonymousGroup(CamelModel):
+    """A student group that is in the building, and the chairs it needs.
+
+    Its own entry rather than a field on AnonymousRequirement, because being
+    at school has nothing to do with having lessons left for the solver to
+    place. The gateway subtracts locked lessons from a requirement's weekly
+    demand and drops the requirement when the remainder reaches zero, so a
+    class whose week is entirely hand-placed arrives carrying no requirement
+    at all — only fixed lessons. While the headcount rode on the requirement
+    that class ate nothing and took no chairs, though its locked lessons were
+    visibly pushing every other group's lunch around. Thirty children were in
+    the building and the hall was told about none of them.
+
+    The gateway sends one entry per group with at least one requirement OR a
+    locked lesson naming it.
+    """
+
+    id: UUID4
+    #: How many students eat lunch *as* this group. Only home classes carry a
+    #: number: a Ma71 student eats with 7A, so adding the teaching group's own
+    #: headcount would seat the same child twice and shrink the hall for
+    #: everyone else. 0 therefore means "already counted under another group",
+    #: not "nobody eats" — and it is also what the whole payload looks like
+    #: until the gateway that fills this field is deployed.
+    lunch_headcount: int = Field(default=0, alias="lunchHeadcount", ge=0, le=1000)
+
+
 class AnonymousRoom(CamelModel):
     id: UUID4
     capacity: int | None = Field(default=None, ge=1, le=10000)
@@ -117,7 +150,19 @@ class AnonymousRoomPreference(CamelModel):
 class AnonymousConstraint(CamelModel):
     id: UUID4
     resource_kind: ResourceKind = Field(alias="resourceKind")
-    resource_id: UUID4 = Field(alias="resourceId")
+    #: None only for GRADE_LEVEL, which targets a span of years instead — see
+    #: validate_resource_target for why the field is optional rather than a
+    #: placeholder id.
+    resource_id: UUID4 | None = Field(default=None, alias="resourceId")
+    #: The inclusive years a GRADE_LEVEL reservation holds free; a missing bound
+    #: is open at that end, so "up to year 3" needs only maxGradeLevel. The
+    #: other kinds name their resource outright and leave both unset.
+    min_grade_level: int | None = Field(
+        default=None, alias="minGradeLevel", ge=0, le=12,
+    )
+    max_grade_level: int | None = Field(
+        default=None, alias="maxGradeLevel", ge=0, le=12,
+    )
     day_of_week: DayOfWeek | None = Field(default=None, alias="dayOfWeek")
     date: str | None = Field(
         default=None,
@@ -136,6 +181,35 @@ class AnonymousConstraint(CamelModel):
             msg = "date must be an ISO-8601 calendar date (YYYY-MM-DD)."
             raise ValueError(msg)
         return value
+
+    @model_validator(mode="after")
+    def validate_resource_target(self) -> AnonymousConstraint:
+        """A reservation must say what it holds free — exactly one way.
+
+        Making resourceId optional is what closes the gap this feature would
+        otherwise open. The gateway builds the id from whichever of teacher,
+        room or group the row carries; a year rule carries none of them, so
+        the field would have had to be filled with something. Anything minted
+        there points at a resource the engine has never heard of: the lock is
+        accepted, validated and matches no lesson, and no layer reports a
+        thing. Rejecting the shape here is the only place that failure becomes
+        loud.
+
+        For the same reason a year rule with no bound at either end is
+        refused: it reads as "every year" but the gateway that built it almost
+        certainly lost the range on the way.
+        """
+        if self.resource_kind == "GRADE_LEVEL":
+            if self.resource_id is not None:
+                msg = "GRADE_LEVEL constraints target a year range, not a resourceId."
+                raise ValueError(msg)
+            if self.min_grade_level is None and self.max_grade_level is None:
+                msg = "GRADE_LEVEL constraints need minGradeLevel or maxGradeLevel."
+                raise ValueError(msg)
+        elif self.resource_id is None:
+            msg = f"{self.resource_kind} constraints need a resourceId."
+            raise ValueError(msg)
+        return self
 
 
 class FixedLesson(CamelModel):
@@ -198,6 +272,14 @@ class ScheduleRules(CamelModel):
         default=None, alias="lunchEndTime", pattern=r"^\d{2}:\d{2}:\d{2}$",
     )
     lunch_minutes: int | None = Field(default=None, alias="lunchMinutes", ge=15, le=120)
+    #: Seats in the dining hall, which is what forces lunch to be staggered:
+    #: without it the solver only guarantees every group a free window and is
+    #: free to send the whole school in at 11:30. None means the school has not
+    #: defined a limit, and then the seat machinery is not built at all — no
+    #: sittings, no cumulative, no literal standing for the hall. Most schools
+    #: have room to spare and should not pay a search for counting who sits
+    #: when.
+    dining_seats: int | None = Field(default=None, alias="diningSeats", ge=1, le=5000)
     max_lessons_per_day_per_group: int | None = Field(
         default=None, alias="maxLessonsPerDayPerGroup", ge=1, le=20,
     )
@@ -210,6 +292,11 @@ class OptimizeScheduleRequest(CamelModel):
     # unbounded CP-SAT model construction before the solver timeout applies.
     # See also SchedulerSolver._validate_request for the aggregate complexity budget.
     requirements: list[AnonymousRequirement] = Field(min_length=1, max_length=2000)
+    # Who is in the building, which is not the same list as who has lessons to
+    # place — see AnonymousGroup. Optional so the engine can ship before the
+    # gateway that fills it: until then the lunch guarantee still reaches every
+    # group with requirements, and the hall simply hears about nobody.
+    groups: list[AnonymousGroup] = Field(default_factory=list, max_length=2000)
     rooms: list[AnonymousRoom] = Field(min_length=1, max_length=1000)
     constraints: list[AnonymousConstraint] = Field(default_factory=list, max_length=5000)
     room_preferences: list[AnonymousRoomPreference] = Field(

@@ -15,11 +15,13 @@ import { timeout, catchError } from 'rxjs/operators';
 import type { AiEngineConfig } from '../config/configuration';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { requireSchoolId } from '../common/utils/request-context';
 import type {
   AiEngineScheduleRequest,
   AiEngineScheduleResponse,
   AnonymousConstraint,
   AnonymousFixedLesson,
+  AnonymousGroup,
   AnonymousPreviousLesson,
   AnonymousRequirement,
   AnonymousRoom,
@@ -82,13 +84,20 @@ export class OptimizationProxyService {
       constraints,
       roomPreferences,
       fixedLessons,
+      groups,
       previousLessons,
       groupConflicts,
       roomAnonMap,
       requirementAnonMap,
+      storedRules,
     } = await this.prisma.withRls(user, (tx) =>
-      this.fetchAndAnonymize(tx, academicYearId),
+      this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user)),
     );
+
+    // The school's saved lunch rules, unless this caller brought their own.
+    // Body-wins rather than merge-per-field: two half-specified rule sets
+    // silently combining into a third nobody wrote is worse than either.
+    const effectiveRules = rules ?? storedRules;
 
     const payload: AiEngineScheduleRequest = {
       requestId,
@@ -98,10 +107,11 @@ export class OptimizationProxyService {
       constraints,
       roomPreferences,
       fixedLessons,
+      groups,
       previousLessons,
       groupConflicts,
       ...(weights ? { weights } : {}),
-      ...(rules ? { rules } : {}),
+      ...(effectiveRules ? { rules: effectiveRules } : {}),
     };
 
     // Step 2: Call the AI engine with the stripped payload. When every
@@ -138,16 +148,19 @@ export class OptimizationProxyService {
   private async fetchAndAnonymize(
     tx: PrismaClient,
     academicYearId: string,
+    schoolId: string,
   ): Promise<{
     requirements: AnonymousRequirement[];
     rooms: AnonymousRoom[];
     constraints: AnonymousConstraint[];
     roomPreferences: AnonymousRoomPreference[];
     fixedLessons: AnonymousFixedLesson[];
+    groups: AnonymousGroup[];
     previousLessons: AnonymousPreviousLesson[];
     groupConflicts: [string, string][];
     roomAnonMap: Map<string, string>;
     requirementAnonMap: Map<string, string>;
+    storedRules: ScheduleRules | null;
   }> {
     // Anonymous-id lookup tables: realId → anonId.
     const teacherAnonMap = new Map<string, string>();
@@ -186,12 +199,56 @@ export class OptimizationProxyService {
       },
     });
 
+    // Locked master lessons are immovable, and participant lessons
+    // (multi-class / individual students) are manual constructs the generator
+    // never recreates — both are forwarded to the engine as fixed placements
+    // and preserved by regeneration. Their count is subtracted from the
+    // weekly demand of the matching requirement so the solver only re-places
+    // the machine-owned remainder.
+    const lockedLessons = await tx.masterLesson.findMany({
+      where: {
+        academicYearId,
+        OR: [
+          { isLocked: true },
+          { extraGroups: { some: {} } },
+          { participants: { some: {} } },
+        ],
+      },
+      select: {
+        id: true,
+        subjectId: true,
+        studentGroupId: true,
+        teacherId: true,
+        coTeacherId: true,
+        roomId: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+        extraGroups: { select: { studentGroupId: true } },
+      },
+    });
+
     // Student -> groups, from BOTH membership kinds: the home class
     // (Users.studentGroupId) and teaching groups (StudentGroupMembers). Only
     // aggregates and id-relations derived from this ever leave this method —
     // student ids themselves are never sent to the engine.
+    /*
+     * Every group the week concerns — not only the ones with a requirement.
+     *
+     * A class whose lessons are every one of them placed by hand has no
+     * requirement left after the subtraction below, and used to fall out of the
+     * payload entirely. Its children are still in the building, and a class that
+     * books no seats while its children eat is the one error direction the seat
+     * rule cannot afford.
+     */
     const scheduledGroupIds = [
-      ...new Set(rawRequirements.map((r) => r.studentGroupId)),
+      ...new Set([
+        ...rawRequirements.map((r) => r.studentGroupId),
+        ...lockedLessons.map((lesson) => lesson.studentGroupId),
+        ...lockedLessons.flatMap((lesson) =>
+          lesson.extraGroups.map((entry) => entry.studentGroupId),
+        ),
+      ]),
     ];
     const [homeMembers, teachingMembers] = await Promise.all([
       tx.user.findMany({
@@ -229,6 +286,30 @@ export class OptimizationProxyService {
     const sizeByGroup = new Map(
       [...membersByGroup].map(([groupId, members]) => [groupId, members.size]),
     );
+
+    /*
+     * Dining-hall headcount, which is deliberately NOT the same number.
+     *
+     * A child eats once. Ma71's students are already counted in 7A, where their
+     * home class is, so Ma71 itself brings nobody to the hall — send its size
+     * here and the hall fills up twice over with the same children, and the
+     * school is told to build a bigger one.
+     *
+     * Home-class membership only, therefore: Users.studentGroupId, never
+     * StudentGroupMembers. That alone is the whole rule — a teaching group is
+     * nobody's home class, so it counts nought without being asked about its
+     * kind. Checking the kind as well was strictly worse: it would count a
+     * student whose home class had been set to a teaching group nowhere at all,
+     * and an undercounted hall sends children to a room with no chairs in it.
+     */
+    const homeCountByGroup = new Map<string, number>();
+    for (const row of homeMembers) {
+      if (!row.studentGroupId) continue;
+      homeCountByGroup.set(
+        row.studentGroupId,
+        (homeCountByGroup.get(row.studentGroupId) ?? 0) + 1,
+      );
+    }
 
     /*
      * Year span per scheduled group, for rooms limited to a stage.
@@ -303,35 +384,6 @@ export class OptimizationProxyService {
         }
       }
     }
-
-    // Locked master lessons are immovable, and participant lessons
-    // (multi-class / individual students) are manual constructs the generator
-    // never recreates — both are forwarded to the engine as fixed placements
-    // and preserved by regeneration. Their count is subtracted from the
-    // weekly demand of the matching requirement so the solver only re-places
-    // the machine-owned remainder.
-    const lockedLessons = await tx.masterLesson.findMany({
-      where: {
-        academicYearId,
-        OR: [
-          { isLocked: true },
-          { extraGroups: { some: {} } },
-          { participants: { some: {} } },
-        ],
-      },
-      select: {
-        id: true,
-        subjectId: true,
-        studentGroupId: true,
-        teacherId: true,
-        coTeacherId: true,
-        roomId: true,
-        dayOfWeek: true,
-        startTime: true,
-        endTime: true,
-        extraGroups: { select: { studentGroupId: true } },
-      },
-    });
 
     const lockedCountByDemand = new Map<string, number>();
     for (const lesson of lockedLessons) {
@@ -412,6 +464,20 @@ export class OptimizationProxyService {
       ),
     }));
 
+    /*
+     * Who the dining hall has to seat.
+     *
+     * One entry per group the week concerns, carrying only how many children it
+     * brings to lunch. Its own list rather than a field on each requirement,
+     * because the fact belongs to the group: hanging it off requirements meant a
+     * class whose lessons were all placed by hand disappeared from the count
+     * along with its requirements, while its children kept eating.
+     */
+    const groups: AnonymousGroup[] = scheduledGroupIds.map((groupId) => ({
+      id: anonId(groupAnonMap, groupId),
+      lunchHeadcount: homeCountByGroup.get(groupId) ?? 0,
+    }));
+
     // Fetch rooms (drop name, code — capacity and type are non-PII enums/numbers).
     const rawRooms = await tx.room.findMany({
       where: {
@@ -427,6 +493,47 @@ export class OptimizationProxyService {
         maxGradeLevel: true,
       },
     });
+
+    /*
+     * The school's lunch rules, read inside this same RLS transaction.
+     *
+     * They used to live in one administrator's browser, so a colleague
+     * generating the schedule ran under different rules without knowing it. A
+     * disabled row is read as no rule at all rather than as a lunch of zero
+     * minutes — "we have not decided" and "we decided against" both mean the
+     * engine should not reserve anything.
+     */
+    const lunchSettings = await tx.lunchSetting.findUnique({
+      where: { schoolId },
+      select: {
+        lunchEnabled: true,
+        lunchStartTime: true,
+        lunchEndTime: true,
+        lunchMinutes: true,
+        diningSeats: true,
+        maxLessonsPerDayPerGroup: true,
+      },
+    });
+    const storedRules: ScheduleRules | null = !lunchSettings
+      ? null
+      : {
+          ...(lunchSettings.lunchEnabled
+            ? {
+                lunchStartTime: this.timeToString(lunchSettings.lunchStartTime),
+                lunchEndTime: this.timeToString(lunchSettings.lunchEndTime),
+                lunchMinutes: lunchSettings.lunchMinutes,
+                ...(lunchSettings.diningSeats !== null
+                  ? { diningSeats: lunchSettings.diningSeats }
+                  : {}),
+              }
+            : {}),
+          ...(lunchSettings.maxLessonsPerDayPerGroup !== null
+            ? {
+                maxLessonsPerDayPerGroup:
+                  lunchSettings.maxLessonsPerDayPerGroup,
+              }
+            : {}),
+        };
 
     // Soft room wishes. Anonymised like everything else: the engine sees ids
     // it cannot resolve, and the weights that order them.
@@ -473,6 +580,8 @@ export class OptimizationProxyService {
         userId: true,
         roomId: true,
         studentGroupId: true,
+        minGradeLevel: true,
+        maxGradeLevel: true,
         dayOfWeek: true,
         date: true,
         startTime: true,
@@ -481,29 +590,56 @@ export class OptimizationProxyService {
       },
     });
 
-    const constraints: AnonymousConstraint[] = rawConstraints.map((c) => {
-      let resourceId: string;
-      if (c.userId) {
-        resourceId = anonId(teacherAnonMap, c.userId);
-      } else if (c.roomId) {
-        resourceId = anonId(roomAnonMap, c.roomId);
-      } else if (c.studentGroupId) {
-        resourceId = anonId(groupAnonMap, c.studentGroupId);
-      } else {
-        resourceId = randomUUID();
-      }
+    const constraints: AnonymousConstraint[] = rawConstraints.flatMap(
+      (c): AnonymousConstraint[] => {
+        const common = {
+          id: randomUUID(),
+          resourceKind: c.resourceType as ResourceKind,
+          dayOfWeek: c.dayOfWeek as DayOfWeek | null,
+          date: c.date ? c.date.toISOString().slice(0, 10) : null,
+          startTime: this.timeToString(c.startTime),
+          endTime: this.timeToString(c.endTime),
+          kind: c.type as ConstraintKind,
+        };
 
-      return {
-        id: randomUUID(),
-        resourceKind: c.resourceType as ResourceKind,
-        resourceId,
-        dayOfWeek: c.dayOfWeek as DayOfWeek | null,
-        date: c.date ? c.date.toISOString().slice(0, 10) : null,
-        startTime: this.timeToString(c.startTime),
-        endTime: this.timeToString(c.endTime),
-        kind: c.type as ConstraintKind,
-      };
-    });
+        // A year range names no resource, so it carries its bounds instead and
+        // the engine matches them against each group's own span. Fanning it out
+        // to one rule per class here was the alternative: twelve classes across
+        // five weekdays is sixty rows for what an admin wrote as one line, and
+        // the payload is capped at five thousand.
+        if (c.resourceType === 'GRADE_LEVEL') {
+          return [
+            {
+              ...common,
+              minGradeLevel: c.minGradeLevel,
+              maxGradeLevel: c.maxGradeLevel,
+            },
+          ];
+        }
+
+        const resourceId = c.userId
+          ? anonId(teacherAnonMap, c.userId)
+          : c.roomId
+            ? anonId(roomAnonMap, c.roomId)
+            : c.studentGroupId
+              ? anonId(groupAnonMap, c.studentGroupId)
+              : null;
+
+        // A row whose declared type has no matching id used to be forwarded
+        // with a freshly minted uuid the engine could never match against
+        // anything: the rule saved, listed and constrained nothing, silently.
+        // The API refuses to write one now; a survivor from before that check
+        // is dropped here rather than sent as a lie.
+        if (resourceId === null) {
+          this.logger.warn(
+            `Skipping constraint ${c.id}: ${c.resourceType} names no resource.`,
+          );
+          return [];
+        }
+
+        return [{ ...common, resourceId }];
+      },
+    );
 
     // Anonymize the conflict pairs with the same group map the requirements
     // used, so the engine sees a consistent id space. Pairs whose groups never
@@ -523,10 +659,18 @@ export class OptimizationProxyService {
       constraints,
       roomPreferences,
       fixedLessons,
+      groups,
       previousLessons,
       groupConflicts,
       roomAnonMap,
       requirementAnonMap,
+      // An empty object would send `rules: {}` and read as "rules were
+      // considered and came to nothing", which the engine treats the same but
+      // a reader of the payload would not.
+      storedRules:
+        storedRules !== null && Object.keys(storedRules).length > 0
+          ? storedRules
+          : null,
     };
   }
 

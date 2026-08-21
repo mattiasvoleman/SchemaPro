@@ -60,8 +60,16 @@ _SETTINGS = Settings(
     SOLVER_MAX_TIME_SECONDS=1.0,
 )
 
-# Cumulative order matches SchedulerSolver.solve().
-GROUPS = ("capacity", "teacher", "group", "room", "availability", "rules", "objective")
+# Cumulative order matches SchedulerSolver._build_model(). "fixed" was missing
+# from this tuple, which made `step("fixed", ...)` below unreachable in all
+# three modes — the ablation claimed to add every constraint group and never
+# added that one. Invisible until now because the generated school has no
+# locked lessons; the lunch rule reading them is what makes the omission worth
+# noticing.
+GROUPS = (
+    "capacity", "teacher", "group", "room", "availability", "fixed", "rules",
+    "objective",
+)
 
 
 def _assemble(shape, enabled, model, solver, request, timings=None):
@@ -94,18 +102,27 @@ def _assemble(shape, enabled, model, solver, request, timings=None):
     )
     step("capacity", lambda: solver._add_capacity_constraints(model, registry, decisions, rooms))
     step("teacher", lambda: solver._add_teacher_no_overlap(model, decisions))
-    step("group", lambda: solver._add_group_no_overlap(model, decisions))
+    step("group", lambda: solver._add_group_no_overlap(
+        model, decisions, request.group_conflicts))
     step("room", lambda: solver._add_room_allocation(
-        model, decisions, rooms, request.constraints, request.fixed_lessons))
+        model, decisions, rooms, request.constraints, request.fixed_lessons,
+        request.room_preferences))
     step("availability", lambda: solver._add_availability_constraints(
         model, registry, decisions, rooms, request.constraints))
     step("fixed", lambda: solver._add_fixed_lesson_constraints(
-        model, decisions, rooms, request.fixed_lessons))
+        model, decisions, rooms, request.fixed_lessons, request.group_conflicts))
 
     weights = solver._resolve_weights(request)
     day_vars: dict = {}
+    # Every argument _build_model passes, in its order. The lunch rule reads
+    # locked lessons (which starts they take away) and `groups` (who eats and
+    # how many chairs they need), so a call that omits them measures a model
+    # the service never builds — which is why the builder gives neither a
+    # default and this call broke loudly instead of quietly profiling the
+    # wrong thing.
     step("rules", lambda: solver._add_rules_constraints(
-        model, decisions, request.rules, day_vars))
+        model, registry, decisions, request.rules, day_vars,
+        request.fixed_lessons, request.groups, request.group_conflicts))
 
     def objective():
         terms = [

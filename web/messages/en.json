@@ -351,7 +351,16 @@
       "normal": "Normal",
       "strong": "Strong",
       "veryStrong": "Very strong"
-    }
+    },
+    "resourceGrade": "Year group",
+    "gradeSpan": "Year groups",
+    "gradeFromLabel": "From year",
+    "gradeToLabel": "Up to and including year",
+    "gradeHint": "The rule applies to every class and teaching group with students in the range.",
+    "gradeOne": "Year {grade}",
+    "gradeRange": "Years {min}–{max}",
+    "gradeFrom": "Year {min} and above",
+    "gradeUpTo": "Up to year {max}"
   },
   "generate": {
     "title": "Generate schedule",
@@ -385,19 +394,16 @@
     "historyHint": "Previous optimization runs for this academic year.",
     "weightTeacherGap": "Compact teacher days (fewer gaps)",
     "rulesTitle": "School rules",
-    "rulesHint": "Hard constraints the generated schedule must respect.",
-    "ruleLunch": "Guaranteed lunch break for every class",
-    "ruleLunchStart": "Window from",
-    "ruleLunchEnd": "Window to",
-    "ruleLunchMinutes": "Minutes",
-    "ruleMaxPerDay": "Max lessons per day per class"
+    "rulesHint": "The rules apply to the whole school and are set under Availability.",
+    "ruleMaxPerDay": "Max lessons per day per class",
+    "rulesEdit": "Change"
   },
   "timetable": {
     "title": "Master timetable",
     "subtitle": "The recurring weekly template produced by the AI engine",
     "publish": "Publish to calendar",
     "publishTitle": "Publish schedule",
-    "publishBody": "Materializes the weekly template into dated lessons for the entire academic year. Existing scheduled lessons in the range are replaced.",
+    "publishBody": "Turns the weekly template into dated lessons for the whole year. Lessons already in the calendar are left untouched — to replace them, delete them first.",
     "publishFrom": "From",
     "publishTo": "To",
     "publishConfirm": "Publish",
@@ -727,5 +733,39 @@
     "rowErrors": "Errors per row",
     "rowError": "Row {row}: {message}",
     "exportButton": "Export CSV"
+  },
+  "grades": {
+    "grade": "{grade, plural, =0 {Reception} other {Year #}}"
+  },
+  "lunch": {
+    "title": "Lunch and dining hall",
+    "hint": "The solver keeps a lunch break free for every class and staggers the sittings so the dining hall is never over-filled.",
+    "enabled": "Reserve time for lunch",
+    "windowStart": "No earlier than",
+    "windowEnd": "No later than",
+    "minutes": "Lunch length (min)",
+    "seats": "Seats in the dining hall",
+    "seatsPlaceholder": "No limit",
+    "seatsHint": "Left empty, the solver assumes everyone can eat at once.",
+    "maxPerDay": "Max lessons per day",
+    "maxPerDayPlaceholder": "No limit",
+    "maxPerDayHint": "Applies per class and teaching group.",
+    "notDefined": "Lunch has not been defined yet",
+    "publishWarning": "No lunch break is reserved. You can still publish, but students may be given lessons in the middle of lunch.",
+    "publishWarningLink": "Set up lunch",
+    "summary": "Lunch {start}–{end}, {minutes} min",
+    "summarySeats": "{seats} seats in the dining hall",
+    "summaryNoSeats": "no seat limit"
+  },
+  "conflictCategories": {
+    "AVAILABILITY": "Availability",
+    "DINING_CAPACITY": "Dining capacity",
+    "GROUP_OVERLAP": "Group clash",
+    "INSUFFICIENT_RESOURCES": "Insufficient resources",
+    "LUNCH_WINDOW": "Lunch window",
+    "REQUIREMENT_DEMAND": "Too many lessons",
+    "ROOM_CAPACITY": "Room capacity",
+    "ROOM_OVERLAP": "Room clash",
+    "TEACHER_OVERLAP": "Teacher clash"
   }
 }

@@ -34,6 +34,28 @@ export class CreateAvailabilityConstraintDto {
   @IsUUID('4')
   studentGroupId?: string | null;
 
+  /**
+   * A year range instead of a named resource, for a GRADE_LEVEL lock.
+   *
+   * A school reserving a lunch sitting for åk 4-6 authors one rule, not one per
+   * class. The solver matches a group when its own year span OVERLAPS this
+   * range, so a class spanning 6-7 is caught by a 4-6 lock: a reservation holds
+   * students free, and holding someone free needlessly is the safe error.
+   */
+  @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.minGradeLevel !== null)
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  minGradeLevel?: number | null;
+
+  @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.maxGradeLevel !== null)
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  maxGradeLevel?: number | null;
+
   @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.dayOfWeek !== null)
   @IsOptional()
   @IsInt()
@@ -82,6 +104,28 @@ export class UpdateAvailabilityConstraintDto {
   @IsOptional()
   @IsUUID('4')
   studentGroupId?: string | null;
+
+  /**
+   * A year range instead of a named resource, for a GRADE_LEVEL lock.
+   *
+   * A school reserving a lunch sitting for åk 4-6 authors one rule, not one per
+   * class. The solver matches a group when its own year span OVERLAPS this
+   * range, so a class spanning 6-7 is caught by a 4-6 lock: a reservation holds
+   * students free, and holding someone free needlessly is the safe error.
+   */
+  @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.minGradeLevel !== null)
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  minGradeLevel?: number | null;
+
+  @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.maxGradeLevel !== null)
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  maxGradeLevel?: number | null;
 
   @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.dayOfWeek !== null)
   @IsOptional()

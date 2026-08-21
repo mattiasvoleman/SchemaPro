@@ -25,15 +25,15 @@ could be evaluated at all.
 | Mobile dependency audit | ✓ pass (2 unfixable image-size advisories allowlisted, lease expires 2026-11-09) |
 | WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
 | Visual regression | ✓ pass (16/16 on linux-x64 baselines) |
-| API coverage | ✗ 91.77% vs 95% (ratcheted at 91; remainder is module wiring) |
-| Solver coverage | ✗ 81% vs 95% (ratcheted) |
+| API coverage | ✗ 95.09% vs 95% (ratcheted at 95; remainder is module wiring) |
+| Solver coverage | ✗ 89.50% vs 95% (ratcheted at 81) |
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
 | Solver, 2,000 students | ✗ 1,300 validated (~9.5 min); 2,000 now measured honestly: TIMEOUT at 570s |
 | Web dependency audit | ✓ pass (0/0/0) |
 | API P99 latency | — needs a seeded DB (CI only) |
 | Lighthouse LCP/TTI | — not yet run |
-| Web unit coverage | ✗ 87.07% vs 95% (ratcheted at 87; harness landed) |
+| Web unit coverage | ✗ 88.98% vs 95% (ratcheted at 87; harness landed) |
 | INP | — not lab-measurable at all |
 
 ---
@@ -62,15 +62,16 @@ could be evaluated at all.
 
 | Metric | Target | Measured | Status | How to measure |
 | :--- | :--- | :--- | :--- | :--- |
-| API line coverage | ≥ 95% | **95.16%** (2186/2297) | ✓ | `npm run test:cov` |
-| API statement coverage | ≥ 95% | 95.11% (2393/2516) | ✓ | same |
-| API branch coverage | ≥ 95% | 84.00% (1092/1300) | ✗ | same |
-| API function coverage | ≥ 95% | 90.99% (465/511) | ✗ | same |
-| Solver line coverage | ≥ 95% | **81%** (922 stmts, 148 missed) | ✗ | `npm run test:engine:cov` |
+| API line coverage | ≥ 95% | **95.10%** (2485/2613) | ✓ | `npm run test:cov` |
+| API statement coverage | ≥ 95% | 95.09% (2717/2857) | ✓ | same |
+| API branch coverage | ≥ 95% | 84.98% (1313/1545) | ✗ | same |
+| API function coverage | ≥ 95% | 90.59% (520/574) | ✗ | same |
+| Solver line coverage | ≥ 95% | **89.50%** (1333 stmts, 125 missed) | ✗ | `npm run test:engine:cov` |
 | Mutation score, tested files | ≥ 85% | **66.21%** (192 killed / 97 survived) | ✗ | `npm run test:mutation` |
-| Web unit coverage | ≥ 95% | **87.07%** lines (930/1068) | ✗ | `npm run test:unit:cov` in `web/` |
+| Web unit coverage | ≥ 95% | **88.98%** lines (1397/1570) | ✗ | `npm run test:unit:cov` in `web/` |
 
-The API suite is 739 tests across 43 suites, all passing.
+The API suite is 868 tests across 47 suites, all passing. The solver suite is
+73 tests; the web unit suite 685 across 51 files.
 
 The line and statement rows were closed by taking the first of the two options
 this section used to describe: the e2e harness (`test/utils/test-app.ts`) now
@@ -817,3 +818,12 @@ decision, not a test fix.
 
 The `-darwin-arm64` set stays committed so the gate still works locally on
 Apple Silicon; it is never used by CI.
+
+## Known-failing gate, older than the work above
+
+`npm run bench:solver` fails: 11.56 s against a 10 s budget on a 2,000-student
+payload. Measured at `4916a39` as well, so it predates the lunch and time-lock
+work and is not a regression from it. The benchmark payload carries neither
+`groupConflicts` nor `diningSeats`, so it cannot see that work at all — which is
+also why it is a poor guard for it. Worth its own investigation, and worth a
+payload that exercises what schools actually send.

@@ -36,6 +36,8 @@ export class AvailabilityConstraintsService {
             userId: dto.userId ?? null,
             roomId: dto.roomId ?? null,
             studentGroupId: dto.studentGroupId ?? null,
+            minGradeLevel: dto.minGradeLevel ?? null,
+            maxGradeLevel: dto.maxGradeLevel ?? null,
             dayOfWeek: dto.dayOfWeek ?? null,
             date: dto.date ? parseDateString(dto.date) : null,
             startTime: parseTimeString(dto.startTime),
@@ -58,6 +60,10 @@ export class AvailabilityConstraintsService {
     if (dto.startTime && dto.endTime && dto.startTime >= dto.endTime) {
       throw new BadRequestException('startTime must be before endTime.');
     }
+    // create() has always checked this; update() never did, so a PATCH could
+    // change a rule's resource type without supplying the matching id and
+    // leave behind exactly the shapeless row create() refuses to make.
+    this.assertResourceShape(dto);
     try {
       return await this.prisma.withRls(user, (tx) =>
         tx.availabilityConstraint.update({
@@ -68,6 +74,12 @@ export class AvailabilityConstraintsService {
             ...(dto.roomId !== undefined ? { roomId: dto.roomId } : {}),
             ...(dto.studentGroupId !== undefined
               ? { studentGroupId: dto.studentGroupId }
+              : {}),
+            ...(dto.minGradeLevel !== undefined
+              ? { minGradeLevel: dto.minGradeLevel }
+              : {}),
+            ...(dto.maxGradeLevel !== undefined
+              ? { maxGradeLevel: dto.maxGradeLevel }
               : {}),
             ...(dto.dayOfWeek !== undefined ? { dayOfWeek: dto.dayOfWeek } : {}),
             ...(dto.date !== undefined
@@ -99,12 +111,51 @@ export class AvailabilityConstraintsService {
     }
   }
 
-  /** The referenced resource id must match the declared resource type. */
-  private assertResourceShape(dto: CreateAvailabilityConstraintDto): void {
+  /**
+   * The declared resource type must match what the row actually carries.
+   *
+   * A constraint that names no resource is not a harmless no-op: the proxy
+   * would mint an anonymous id for it and forward a rule pointing at something
+   * the solver has never heard of, so it validates, saves, appears in the list
+   * and constrains nothing.
+   */
+  private assertResourceShape(
+    dto: CreateAvailabilityConstraintDto | UpdateAvailabilityConstraintDto,
+  ): void {
+    if (dto.resourceType === undefined) return;
+
+    // A year range is the one target that is not a row in any table — there is
+    // no "årskurs 5" to point at, so it carries its own bounds instead.
+    if (dto.resourceType === ConstraintResource.GRADE_LEVEL) {
+      if (dto.minGradeLevel == null && dto.maxGradeLevel == null) {
+        throw new BadRequestException(
+          'A GRADE_LEVEL constraint must state at least one year bound.',
+        );
+      }
+      if (
+        dto.minGradeLevel != null &&
+        dto.maxGradeLevel != null &&
+        dto.minGradeLevel > dto.maxGradeLevel
+      ) {
+        throw new BadRequestException(
+          'minGradeLevel must not be greater than maxGradeLevel.',
+        );
+      }
+      if (dto.userId || dto.roomId || dto.studentGroupId) {
+        throw new BadRequestException(
+          'A GRADE_LEVEL constraint must not reference a teacher, room or group.',
+        );
+      }
+      return;
+    }
+
     const expectations: Record<ConstraintResource, string | null | undefined> = {
       [ConstraintResource.TEACHER]: dto.userId,
       [ConstraintResource.ROOM]: dto.roomId,
       [ConstraintResource.STUDENT_GROUP]: dto.studentGroupId,
+      // Handled above; listed so a resource type added later fails to compile
+      // here rather than falling through as an accepted shapeless row.
+      [ConstraintResource.GRADE_LEVEL]: undefined,
     };
     if (!expectations[dto.resourceType]) {
       throw new BadRequestException(
