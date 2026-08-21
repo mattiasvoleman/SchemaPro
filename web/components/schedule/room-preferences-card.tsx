@@ -13,7 +13,13 @@ import {
 } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import {
+  STRENGTH_DEFAULT,
+  STRENGTH_STEP,
+  clampStrength,
+  strengthBand,
+  strengthBounds,
+} from "@/lib/preference-strength";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -49,7 +55,7 @@ export function RoomPreferencesCard() {
   const [target, setTarget] = useState<typeof BY_TYPE | typeof BY_ROOMS>(BY_TYPE);
   const [roomTypeId, setRoomTypeId] = useState("");
   const [roomIds, setRoomIds] = useState<string[]>([]);
-  const [weight, setWeight] = useState("50");
+  const [weight, setWeight] = useState(STRENGTH_DEFAULT);
 
   const subjectName = useMemo(
     () => new Map((subjects ?? []).map((subject) => [subject.id, subject.name])),
@@ -64,13 +70,17 @@ export function RoomPreferencesCard() {
     [roomTypes],
   );
 
+  // Bounds follow the value: a rule saved above the usual band still shows,
+  // rather than being dragged down the moment the form opens.
+  const bounds = strengthBounds(weight);
+
   const reset = () => {
     setAdding(false);
     setSubjectId("");
     setTarget(BY_TYPE);
     setRoomTypeId("");
     setRoomIds([]);
-    setWeight("50");
+    setWeight(STRENGTH_DEFAULT);
   };
 
   const submit = async () => {
@@ -81,7 +91,7 @@ export function RoomPreferencesCard() {
         // must not be the place where that becomes a 400 the admin has to
         // decode.
         ...(target === BY_TYPE ? { roomTypeId } : { roomIds }),
-        weight: Number(weight) || 50,
+        weight: clampStrength(weight),
       });
       toast.success(tCommon("created"));
       reset();
@@ -196,15 +206,26 @@ export function RoomPreferencesCard() {
           )}
 
           <div className="space-y-2">
-            <Label htmlFor="pref-weight">{t("preferenceWeight")}</Label>
-            <Input
+            <div className="flex items-center justify-between">
+              <Label htmlFor="pref-weight">{t("preferenceWeight")}</Label>
+              <span className="text-xs text-muted-foreground">
+                {t(`strength.${strengthBand(weight)}`)}{" "}
+                <span className="tabular-nums">({weight})</span>
+              </span>
+            </div>
+            <input
               id="pref-weight"
-              type="number"
-              min={1}
-              max={1000}
+              type="range"
+              min={bounds.min}
+              max={bounds.max}
+              step={STRENGTH_STEP}
+              // Without this a screen reader announces "50", which is exactly
+              // the number that means nothing on its own — the word beside the
+              // slider is visual only and never reaches it.
+              aria-valuetext={`${t(`strength.${strengthBand(weight)}`)} (${weight})`}
               value={weight}
-              onChange={(event) => setWeight(event.target.value)}
-              className="max-w-32"
+              onChange={(event) => setWeight(clampStrength(Number(event.target.value)))}
+              className="w-full accent-primary"
             />
             <p className="text-xs text-muted-foreground">{t("preferenceWeightHint")}</p>
           </div>

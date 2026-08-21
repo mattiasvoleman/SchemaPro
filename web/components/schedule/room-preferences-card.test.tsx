@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RoomPreferencesCard } from "./room-preferences-card";
@@ -126,4 +126,74 @@ describe("RoomPreferencesCard", () => {
 
     expect(remove).toHaveBeenCalledWith("p1");
   });
+  it("offers the strength as a slider, not a number to type", async () => {
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard />);
+    await openForm(user);
+
+    const slider = screen.getByLabelText("preferenceWeight");
+    expect(slider).toHaveAttribute("type", "range");
+    expect(slider).toHaveValue("50");
+  });
+
+  it("announces the word to a screen reader, not just the number", async () => {
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard />);
+    await openForm(user);
+
+    // The visible word sits in a separate span the input never references, so
+    // without aria-valuetext the announcement is a bare "50".
+    expect(screen.getByLabelText("preferenceWeight")).toHaveAttribute(
+      "aria-valuetext",
+      "strength.normal (50)",
+    );
+
+    fireEvent.change(screen.getByLabelText("preferenceWeight"), {
+      target: { value: "200" },
+    });
+    expect(screen.getByLabelText("preferenceWeight")).toHaveAttribute(
+      "aria-valuetext",
+      "strength.veryStrong (200)",
+    );
+  });
+
+  it("says in words what the number means", async () => {
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard />);
+    await openForm(user);
+
+    // A bare "50" tells an admin nothing about whether that is a lot.
+    expect(screen.getByText(/strength\.normal/)).toBeInTheDocument();
+  });
+
+  it("moves the wording and the value together as the slider moves", async () => {
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard />);
+    await openForm(user);
+
+    // A range input is driven by change events, not typing.
+    fireEvent.change(screen.getByLabelText("preferenceWeight"), {
+      target: { value: "200" },
+    });
+
+    expect(screen.getByText(/strength\.veryStrong/)).toBeInTheDocument();
+    expect(screen.queryByText(/strength\.normal/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("preferenceWeight")).toHaveValue("200");
+  });
+
+  it("sends the value the slider was dragged to", async () => {
+    const user = userEvent.setup();
+    render(<RoomPreferencesCard />);
+    await openForm(user);
+
+    await choose(user, "preferenceSubject", "NO");
+    await choose(user, "preferenceRoomType", "Laborationssal");
+    fireEvent.change(screen.getByLabelText("preferenceWeight"), {
+      target: { value: "120" },
+    });
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ weight: 120 }));
+  });
+
 });

@@ -343,9 +343,15 @@
     "preferenceRoomType": "Salstyp",
     "preferenceRooms": "Salar",
     "preferenceWeight": "Styrka",
-    "preferenceWeightHint": "Hur mycket motorn får offra av annat för att uppfylla önskemålet. 50 är lagom; höj för något som nästan alltid ska gälla.",
+    "preferenceWeightHint": "Hur mycket motorn får offra av annat för att uppfylla önskemålet. Dra åt höger för något som nästan alltid ska gälla — men ett mycket starkt önskemål kan tränga undan andra mål, som att sprida ämnena över veckan.",
     "preferenceSummary": "{subject} helst i {rooms}",
-    "preferenceWeightBadge": "styrka {weight}"
+    "preferenceWeightBadge": "styrka {weight}",
+    "strength": {
+      "weak": "Svagt",
+      "normal": "Lagom",
+      "strong": "Starkt",
+      "veryStrong": "Mycket starkt"
+    }
   },
   "generate": {
     "title": "Generera schema",
