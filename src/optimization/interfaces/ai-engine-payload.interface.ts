@@ -33,6 +33,13 @@ export interface AnonymousRequirement {
   requiredRoomType: RoomTypeKind | null;
   /** Optional second teacher scheduled together with the lead (co-teaching). */
   coTeacherId: string | null;
+  /**
+   * The years this group's students actually belong to, derived from their
+   * home classes. Null when the group has no members with a year at all —
+   * then no room limit can be checked against it.
+   */
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
 }
 
 export interface AnonymousRoom {
@@ -40,6 +47,12 @@ export interface AnonymousRoom {
   capacity: number | null;
   /** Room category (an enum, not PII) enabling type eligibility checks. */
   type: RoomTypeKind | null;
+  /**
+   * Inclusive year range the room may host; null means no limit at that end.
+   * Keeps a stage's rooms to that stage.
+   */
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
 }
 
 export interface AnonymousConstraint {

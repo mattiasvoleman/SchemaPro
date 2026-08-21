@@ -247,6 +247,15 @@ model Room {
   /// School-owned type (Klassrum, Hemkunskapssal, Trä- och metallslöjd …).
   /// Null means "unspecified", which every requirement accepts.
   roomTypeId       String?  @db.Uuid
+  /// Lowest and highest year group allowed in this room, inclusive. Both null
+  /// means every year may use it. A school uses these to keep a stage's rooms
+  /// to that stage: lågstadiet 0–3, mellanstadiet 4–6, högstadiet 7–9.
+  ///
+  /// A group's own years are derived from its students' home classes, so a
+  /// teaching group carrying no gradeLevel of its own is still held to the
+  /// years its members actually belong to.
+  minGradeLevel    Int?
+  maxGradeLevel    Int?
   /// "Special" rooms (labs, gyms, auditoria) whose self-service bookings need
   /// admin approval before they're confirmed. Ordinary rooms auto-approve.
   requiresApproval Boolean  @default(false)

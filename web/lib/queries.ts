@@ -117,7 +117,7 @@ export function useRooms() {
     queryFn: () =>
       selectAll<Room>(
         "Rooms",
-        "id, name, code, capacity, roomTypeId, requiresApproval",
+        "id, name, code, capacity, roomTypeId, minGradeLevel, maxGradeLevel, requiresApproval",
         "name",
       ),
   });

@@ -269,6 +269,8 @@ describe('OptimizationProxyService', () => {
       unlockedLessons?: unknown[];
       rooms?: unknown[];
       constraints?: unknown[];
+      /** Rows of { id, gradeLevel }: the year each group belongs to. */
+      groups?: unknown[];
     };
 
     const arrange = (overrides: Arrangement = {}) => {
@@ -300,6 +302,8 @@ describe('OptimizationProxyService', () => {
       tx.availabilityConstraint.findMany.mockResolvedValue(
         overrides.constraints ?? [],
       );
+      // Year spans for rooms limited to a stage are derived from these.
+      tx.studentGroup.findMany.mockResolvedValue(overrides.groups ?? []);
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 2 });
       tx.masterLesson.count.mockResolvedValue(1);
       tx.masterLesson.create.mockResolvedValue({});
@@ -678,6 +682,124 @@ describe('OptimizationProxyService', () => {
       expect(postedPayload().groupConflicts).toEqual([]);
     });
 
+    describe('year spans for stage-limited rooms', () => {
+      /** A second group, for the teaching-group cases. */
+      const OTHER = '99999999-9999-4999-8999-999999999999';
+      const student = (n: number, groupId: string) => ({
+        id: `00000000-0000-4000-8000-90000000${String(n).padStart(4, '0')}`,
+        studentGroupId: groupId,
+      });
+
+      it('derives the span from the students home classes', async () => {
+        arrange({
+          homeMembers: [student(1, GROUP_ID), student(2, GROUP_ID)],
+          groups: [{ id: GROUP_ID, gradeLevel: 5 }],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().requirements[0]).toMatchObject({
+          minGradeLevel: 5,
+          maxGradeLevel: 5,
+        });
+      });
+
+      it('gives a teaching group the years of its members, not its own blank', async () => {
+        // The case the whole derivation exists for: Ma71 carries no gradeLevel,
+        // but its students are year 7 and it must not be let into a 4-6 room.
+        arrange({
+          requirements: [requirement({ studentGroupId: OTHER })],
+          homeMembers: [student(1, GROUP_ID)],
+          teachingMembers: [{ studentId: student(1, GROUP_ID).id, studentGroupId: OTHER }],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 7 },
+            { id: OTHER, gradeLevel: null },
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().requirements[0]).toMatchObject({
+          minGradeLevel: 7,
+          maxGradeLevel: 7,
+        });
+      });
+
+      it('spans every year its members come from', async () => {
+        arrange({
+          requirements: [requirement({ studentGroupId: OTHER })],
+          homeMembers: [student(1, GROUP_ID), student(2, 'gggggggg-0000-4000-8000-000000000003')],
+          teachingMembers: [
+            { studentId: student(1, GROUP_ID).id, studentGroupId: OTHER },
+            {
+              studentId: student(2, 'gggggggg-0000-4000-8000-000000000003').id,
+              studentGroupId: OTHER,
+            },
+          ],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 6 },
+            { id: 'gggggggg-0000-4000-8000-000000000003', gradeLevel: 7 },
+            { id: OTHER, gradeLevel: null },
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().requirements[0]).toMatchObject({
+          minGradeLevel: 6,
+          maxGradeLevel: 7,
+        });
+      });
+
+      it('falls back to the group own year when no member carries one', async () => {
+        arrange({
+          homeMembers: [{ id: student(1, GROUP_ID).id, studentGroupId: null }],
+          groups: [{ id: GROUP_ID, gradeLevel: 4 }],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().requirements[0]).toMatchObject({
+          minGradeLevel: 4,
+          maxGradeLevel: 4,
+        });
+      });
+
+      it('sends no span at all when nothing carries a year', async () => {
+        // Null, not a guess: the engine reads it as "nothing to check against"
+        // and lets the group into any room rather than none.
+        arrange({ groups: [{ id: GROUP_ID, gradeLevel: null }] });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().requirements[0]).toMatchObject({
+          minGradeLevel: null,
+          maxGradeLevel: null,
+        });
+      });
+
+      it('passes each room own limits through untouched', async () => {
+        arrange({
+          rooms: [
+            { id: ROOM_ID, capacity: 30, type: 'CLASSROOM', minGradeLevel: 4, maxGradeLevel: 6 },
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().rooms[0]).toMatchObject({
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+        });
+      });
+    });
+
     it('counts a teaching group size as its distinct members, not zero', async () => {
       // Ma71 has no home-class members at all — its size must come from the
       // membership rows, and a student in both kinds must not count twice for
@@ -723,4 +845,6 @@ describe('OptimizationProxyService', () => {
       expect(constraint.resourceId).toMatch(/^[0-9a-f-]{36}$/);
     });
   });
+
+
 });

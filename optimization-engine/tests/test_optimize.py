@@ -1402,3 +1402,139 @@ def test_a_fixed_lesson_blocks_conflicting_groups_too() -> None:
     payload["groupConflicts"] = []
     response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
     assert response.status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_rooms_limited_to_a_stage_reject_other_years(client: TestClient) -> None:
+    """A 4-6 room must not take a year 8 group, even when nothing else fits.
+
+    The room a school reserves for mellanstadiet is reserved for a reason —
+    it is in their building, or sized for them. Letting a högstadie group in
+    because it happened to be free defeats the setting entirely.
+    """
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+    requirement["minGradeLevel"] = 8  # type: ignore[index]
+    requirement["maxGradeLevel"] = 8  # type: ignore[index]
+
+    upper_id = str(uuid4())
+    payload["rooms"] = [
+        {
+            "id": payload["rooms"][0]["id"],  # type: ignore[index]
+            "capacity": 100,
+            "minGradeLevel": 4,
+            "maxGradeLevel": 6,
+        },
+        {"id": upper_id, "capacity": 30, "minGradeLevel": 7, "maxGradeLevel": 9},
+    ]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] in {"OPTIMAL", "FEASIBLE"}
+    assert body["lessons"][0]["roomId"] == upper_id
+
+
+def test_a_group_spanning_two_years_needs_a_room_covering_both(
+    client: TestClient,
+) -> None:
+    """Half a group being in an allowed year is not an allowed placement."""
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+    requirement["minGradeLevel"] = 6  # type: ignore[index]
+    requirement["maxGradeLevel"] = 7  # type: ignore[index]
+
+    wide_id = str(uuid4())
+    payload["rooms"] = [
+        {
+            "id": payload["rooms"][0]["id"],  # type: ignore[index]
+            "capacity": 100,
+            "minGradeLevel": 4,
+            "maxGradeLevel": 6,
+        },
+        {"id": wide_id, "capacity": 30, "minGradeLevel": 4, "maxGradeLevel": 9},
+    ]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["lessons"][0]["roomId"] == wide_id
+
+
+def test_a_room_with_no_limits_takes_any_year(client: TestClient) -> None:
+    """The default has to stay "every year", or existing schools break."""
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+    requirement["minGradeLevel"] = 9  # type: ignore[index]
+    requirement["maxGradeLevel"] = 9  # type: ignore[index]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_a_group_with_unknown_years_is_not_locked_out(client: TestClient) -> None:
+    """No members carrying a year means nothing to check — not "refuse all"."""
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+    payload["rooms"] = [
+        {
+            "id": payload["rooms"][0]["id"],  # type: ignore[index]
+            "capacity": 100,
+            "minGradeLevel": 4,
+            "maxGradeLevel": 6,
+        },
+    ]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_no_room_for_the_years_is_reported_as_such(client: TestClient) -> None:
+    """The message has to name the years, or a school cannot act on it."""
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["minGradeLevel"] = 9  # type: ignore[index]
+    requirement["maxGradeLevel"] = 9  # type: ignore[index]
+    payload["rooms"] = [
+        {
+            "id": payload["rooms"][0]["id"],  # type: ignore[index]
+            "capacity": 100,
+            "minGradeLevel": 4,
+            "maxGradeLevel": 6,
+        },
+    ]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+
+    # 400: the request is well-formed but describes a school where this group
+    # has nowhere to be — a configuration error, not a solver failure.
+    assert response.status_code == 400
+    assert "years 9-9" in str(response.json())

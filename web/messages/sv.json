@@ -219,7 +219,20 @@
     "empty": "Inga salar ännu. Lägg till den första för att komma igång.",
     "requiresApproval": "Kräver godkännande",
     "requiresApprovalHint": "Självbokningar av denna sal måste godkännas av en administratör innan de bekräftas.",
-    "approvalBadge": "Godkännande"
+    "approvalBadge": "Godkännande",
+    "stageLabel": "Årskurser",
+    "stageNone": "Alla årskurser",
+    "stageCustom": "Eget intervall",
+    "stageFrom": "Från årskurs",
+    "stageTo": "Till årskurs",
+    "stageColumn": "Årskurser",
+    "stageHint": "Begränsa salen till ett stadium om den bara ska användas av vissa årskurser. Motorn placerar då inga andra lektioner där.",
+    "stages": {
+      "lower": "Lågstadiet (F–3)",
+      "middle": "Mellanstadiet (4–6)",
+      "upper": "Högstadiet (7–9)",
+      "primary": "F–6"
+    }
   },
   "groups": {
     "title": "Klasser",

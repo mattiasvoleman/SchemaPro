@@ -552,10 +552,16 @@ class SchedulerSolver:
                 room for room in request.rooms if self._room_allowed(room, requirement)
             ]
             if not eligible_rooms:
+                grades = (
+                    "any"
+                    if requirement.min_grade_level is None
+                    else f"{requirement.min_grade_level}-{requirement.max_grade_level}"
+                )
                 msg = (
-                    f"No room satisfies capacity/type for requirement {requirement.id} "
-                    f"(group size {requirement.student_group_size}, "
-                    f"required type {requirement.required_room_type or 'any'})."
+                    f"No room satisfies capacity/type/years for requirement "
+                    f"{requirement.id} (group size "
+                    f"{requirement.student_group_size}, required type "
+                    f"{requirement.required_room_type or 'any'}, years {grades})."
                 )
                 raise InvalidScheduleInputError(msg)
 
@@ -1322,7 +1328,7 @@ class SchedulerSolver:
             requirement.required_room_type is None
             or room.type == requirement.required_room_type
         )
-        return capacity_ok and type_ok
+        return capacity_ok and type_ok and _grade_allowed(room, requirement)
 
     def _extract_lessons(
         self,
@@ -1376,3 +1382,29 @@ class SchedulerSolver:
 def _hhmmss_to_minutes(value: str) -> int:
     hours, minutes, _seconds = (int(part) for part in value.split(":"))
     return hours * 60 + minutes
+
+
+def _grade_allowed(room: AnonymousRoom, requirement: AnonymousRequirement) -> bool:
+    """Whether a room limited to a stage may host this group.
+
+    The group's whole year span has to fit inside the room's range: half a
+    group being in an allowed year is not an allowed placement, since the
+    other half would be sitting in a room the school reserved for somebody
+    else.
+
+    A group whose years are unknown — no members carrying a year — is let
+    through. There is nothing to check it against, and refusing every limited
+    room instead would make an unremarkable group unschedulable for a reason
+    no message could explain.
+    """
+    if room.min_grade_level is None and room.max_grade_level is None:
+        return True
+    if requirement.min_grade_level is None or requirement.max_grade_level is None:
+        return True
+
+    if room.min_grade_level is not None and requirement.min_grade_level < room.min_grade_level:
+        return False
+    return not (
+        room.max_grade_level is not None
+        and requirement.max_grade_level > room.max_grade_level
+    )

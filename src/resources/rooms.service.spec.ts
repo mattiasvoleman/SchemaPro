@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Prisma, RoomType } from '@prisma/client';
 import {
   createPrismaMock,
@@ -54,6 +54,9 @@ describe('RoomsService', () => {
           name: 'Sal 101',
           code: null,
           capacity: null,
+          // No stage limit by default — every year may use the room.
+          minGradeLevel: null,
+          maxGradeLevel: null,
         },
       });
     });
@@ -159,4 +162,71 @@ describe('RoomsService', () => {
       );
     });
   });
+
+  describe('year range', () => {
+    it('stores a stage limit', async () => {
+      tx.room.create.mockResolvedValue({ id: ROOM_ID });
+
+      await service.create(
+        { name: 'B12', minGradeLevel: 4, maxGradeLevel: 6 },
+        testUser(),
+      );
+
+      expect(tx.room.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ minGradeLevel: 4, maxGradeLevel: 6 }),
+      });
+    });
+
+    it('allows a one-year room', async () => {
+      tx.room.create.mockResolvedValue({ id: ROOM_ID });
+
+      await service.create(
+        { name: 'Förskoleklassrum', minGradeLevel: 0, maxGradeLevel: 0 },
+        testUser(),
+      );
+
+      const { data } = tx.room.create.mock.calls[0][0] as {
+        data: { minGradeLevel: number; maxGradeLevel: number };
+      };
+      // Year 0 is förskoleklass, a real year — it must survive a falsy check.
+      expect(data).toMatchObject({ minGradeLevel: 0, maxGradeLevel: 0 });
+    });
+
+    it('refuses an inverted range instead of storing an unusable room', async () => {
+      await expect(
+        service.create({ name: 'B12', minGradeLevel: 7, maxGradeLevel: 4 }, testUser()),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('refuses an inverted range on update too', async () => {
+      await expect(
+        service.update(ROOM_ID, { minGradeLevel: 9, maxGradeLevel: 1 }, testUser()),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('clears a limit with an explicit null', async () => {
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { minGradeLevel: null, maxGradeLevel: null }, testUser());
+
+      expect(tx.room.update).toHaveBeenCalledWith({
+        where: { id: ROOM_ID },
+        data: { minGradeLevel: null, maxGradeLevel: null },
+      });
+    });
+
+    it('leaves an untouched limit alone on a partial update', async () => {
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { name: 'B13' }, testUser());
+
+      expect(tx.room.update).toHaveBeenCalledWith({
+        where: { id: ROOM_ID },
+        data: { name: 'B13' },
+      });
+    });
+  });
+
 });

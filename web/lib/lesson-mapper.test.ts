@@ -36,6 +36,8 @@ const room: Room = {
   code: null,
   capacity: 30,
   roomTypeId: null,
+  minGradeLevel: null,
+  maxGradeLevel: null,
   requiresApproval: false,
 };
 

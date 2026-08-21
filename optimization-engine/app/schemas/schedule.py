@@ -58,6 +58,15 @@ class AnonymousRequirement(CamelModel):
         le=1000,
         description="Headcount used for room capacity checks when provided by the gateway.",
     )
+    #: The years this group's students actually belong to, derived by the
+    #: gateway from their home classes. None when the group has no members
+    #: carrying a year, in which case no room limit can be checked against it.
+    min_grade_level: int | None = Field(
+        default=None, alias="minGradeLevel", ge=0, le=12,
+    )
+    max_grade_level: int | None = Field(
+        default=None, alias="maxGradeLevel", ge=0, le=12,
+    )
     required_room_type: RoomTypeKind | None = Field(
         default=None,
         alias="requiredRoomType",
@@ -74,6 +83,14 @@ class AnonymousRoom(CamelModel):
     id: UUID4
     capacity: int | None = Field(default=None, ge=1, le=10000)
     type: RoomTypeKind | None = Field(default=None)
+    #: Inclusive year range the room may host; None means no limit at that end.
+    #: A school uses this to keep a stage's rooms to that stage.
+    min_grade_level: int | None = Field(
+        default=None, alias="minGradeLevel", ge=0, le=12,
+    )
+    max_grade_level: int | None = Field(
+        default=None, alias="maxGradeLevel", ge=0, le=12,
+    )
 
 
 class AnonymousConstraint(CamelModel):

@@ -32,6 +32,22 @@ export class CreateRoomDto {
   @IsUUID('4')
   roomTypeId?: string | null;
 
+  /**
+   * Inclusive year range this room may host; omit or null for no limit.
+   * A school uses these to keep a stage's rooms to that stage.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  minGradeLevel?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  maxGradeLevel?: number | null;
+
   @IsOptional()
   @IsBoolean()
   requiresApproval?: boolean;
@@ -59,6 +75,22 @@ export class UpdateRoomDto {
   @IsOptional()
   @IsUUID('4')
   roomTypeId?: string | null;
+
+  /**
+   * Inclusive year range this room may host; omit or null for no limit.
+   * A school uses these to keep a stage's rooms to that stage.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  minGradeLevel?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  maxGradeLevel?: number | null;
 
   @IsOptional()
   @IsBoolean()

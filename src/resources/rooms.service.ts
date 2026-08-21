@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import type { Room } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -12,6 +12,7 @@ export class RoomsService {
 
   async create(dto: CreateRoomDto, user: AuthenticatedUser): Promise<Room> {
     const schoolId = requireSchoolId(user);
+    assertOrderedGradeRange(dto.minGradeLevel, dto.maxGradeLevel);
     try {
       return await this.prisma.withRls(user, (tx) =>
         tx.room.create({
@@ -20,6 +21,8 @@ export class RoomsService {
             name: dto.name,
             code: dto.code ?? null,
             capacity: dto.capacity ?? null,
+            minGradeLevel: dto.minGradeLevel ?? null,
+            maxGradeLevel: dto.maxGradeLevel ?? null,
             ...(dto.roomTypeId !== undefined ? { roomTypeId: dto.roomTypeId } : {}),
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
@@ -33,6 +36,7 @@ export class RoomsService {
   }
 
   async update(id: string, dto: UpdateRoomDto, user: AuthenticatedUser): Promise<Room> {
+    assertOrderedGradeRange(dto.minGradeLevel, dto.maxGradeLevel);
     try {
       return await this.prisma.withRls(user, (tx) =>
         tx.room.update({
@@ -41,6 +45,12 @@ export class RoomsService {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
             ...(dto.code !== undefined ? { code: dto.code } : {}),
             ...(dto.capacity !== undefined ? { capacity: dto.capacity } : {}),
+            ...(dto.minGradeLevel !== undefined
+              ? { minGradeLevel: dto.minGradeLevel }
+              : {}),
+            ...(dto.maxGradeLevel !== undefined
+              ? { maxGradeLevel: dto.maxGradeLevel }
+              : {}),
             ...(dto.roomTypeId !== undefined ? { roomTypeId: dto.roomTypeId } : {}),
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
@@ -59,5 +69,22 @@ export class RoomsService {
     } catch (error) {
       rethrowPrismaError(error);
     }
+  }
+}
+
+/**
+ * An inverted range excludes every year, leaving the room unusable while
+ * looking configured — a slip worth refusing at the door rather than
+ * discovering as "no room satisfies capacity/type/years" after a generation
+ * run. The database enforces it too; this is what turns it into a sentence.
+ */
+function assertOrderedGradeRange(
+  min: number | null | undefined,
+  max: number | null | undefined,
+): void {
+  if (typeof min === 'number' && typeof max === 'number' && min > max) {
+    throw new BadRequestException(
+      'Lägsta årskurs kan inte vara högre än högsta årskurs.',
+    );
   }
 }

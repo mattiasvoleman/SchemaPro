@@ -219,7 +219,20 @@
     "empty": "No rooms yet. Add the first one to get started.",
     "requiresApproval": "Requires approval",
     "requiresApprovalHint": "Self-service bookings for this room need admin approval before they're confirmed.",
-    "approvalBadge": "Approval"
+    "approvalBadge": "Approval",
+    "stageLabel": "Year groups",
+    "stageNone": "All years",
+    "stageCustom": "Custom range",
+    "stageFrom": "From year",
+    "stageTo": "To year",
+    "stageColumn": "Years",
+    "stageHint": "Limit the room to a stage if only certain years should use it. The engine then places no other lessons there.",
+    "stages": {
+      "lower": "Lower (F–3)",
+      "middle": "Middle (4–6)",
+      "upper": "Upper (7–9)",
+      "primary": "F–6"
+    }
   },
   "groups": {
     "title": "Classes",

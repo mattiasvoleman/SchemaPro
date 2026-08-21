@@ -49,6 +49,9 @@ export interface Room {
   code: string | null;
   capacity: number | null;
   roomTypeId: string | null;
+  /** Inclusive year range the room may host; null at either end means no limit. */
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
   requiresApproval: boolean;
 }
 

@@ -8,6 +8,7 @@ import { useCrudMutations, useRooms , useRoomTypes } from "@/lib/queries";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import { roomTypesToCsv } from "@/lib/csv";
+import { SCHOOL_STAGES, gradeRangeLabel, stageOf } from "@/lib/school-stages";
 import type { Room, RoomType } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -46,16 +47,58 @@ interface RoomForm {
   code: string;
   capacity: string;
   roomTypeId: string;
+  /** "" = no limit; otherwise a stage key or "custom". */
+  stage: string;
+  minGradeLevel: string;
+  maxGradeLevel: string;
   requiresApproval: boolean;
 }
+
+const NO_LIMIT = "none";
+const CUSTOM_RANGE = "custom";
 
 const EMPTY_FORM: RoomForm = {
   name: "",
   code: "",
   capacity: "",
   roomTypeId: "",
+  stage: NO_LIMIT,
+  minGradeLevel: "",
+  maxGradeLevel: "",
   requiresApproval: false,
 };
+
+/**
+ * The year range a form describes.
+ *
+ * A preset writes both ends; "eget intervall" takes whatever the two fields
+ * hold, with an empty field meaning "open at that end" rather than zero —
+ * year 0 is förskoleklass and a real answer.
+ */
+function gradeRangeFromForm(form: RoomForm): {
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+} {
+  if (form.stage === NO_LIMIT) return { minGradeLevel: null, maxGradeLevel: null };
+
+  const preset = SCHOOL_STAGES.find((stage) => stage.key === form.stage);
+  if (preset) {
+    return {
+      minGradeLevel: preset.minGradeLevel,
+      maxGradeLevel: preset.maxGradeLevel,
+    };
+  }
+
+  const parse = (value: string) => {
+    if (value.trim() === "") return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  return {
+    minGradeLevel: parse(form.minGradeLevel),
+    maxGradeLevel: parse(form.maxGradeLevel),
+  };
+}
 
 export default function RoomsPage() {
   const t = useTranslations("rooms");
@@ -93,6 +136,12 @@ export default function RoomsPage() {
       name: room.name,
       code: room.code ?? "",
       capacity: room.capacity !== null ? String(room.capacity) : "",
+      stage:
+        room.minGradeLevel === null && room.maxGradeLevel === null
+          ? NO_LIMIT
+          : (stageOf(room.minGradeLevel, room.maxGradeLevel)?.key ?? CUSTOM_RANGE),
+      minGradeLevel: room.minGradeLevel !== null ? String(room.minGradeLevel) : "",
+      maxGradeLevel: room.maxGradeLevel !== null ? String(room.maxGradeLevel) : "",
       roomTypeId: room.roomTypeId ?? "",
       requiresApproval: room.requiresApproval,
     });
@@ -106,6 +155,7 @@ export default function RoomsPage() {
       code: form.code.trim() || null,
       capacity: capacity !== null && Number.isFinite(capacity) ? capacity : null,
       roomTypeId: form.roomTypeId === "" ? null : form.roomTypeId,
+      ...gradeRangeFromForm(form),
       requiresApproval: form.requiresApproval,
     };
     try {
@@ -188,6 +238,7 @@ export default function RoomsPage() {
                 <TableHead>{tCommon("code")}</TableHead>
                 <TableHead>{tCommon("type")}</TableHead>
                 <TableHead>{tCommon("capacity")}</TableHead>
+                <TableHead>{t("stageColumn")}</TableHead>
                 <TableHead className="w-24 text-right">{tCommon("actions")}</TableHead>
               </TableRow>
             </TableHeader>
@@ -209,6 +260,11 @@ export default function RoomsPage() {
                     {roomTypeById.get(room.roomTypeId ?? "")?.name ?? "—"}
                   </TableCell>
                   <TableCell className="tabular-nums">{room.capacity ?? "—"}</TableCell>
+                  <TableCell>
+                    {gradeRangeLabel(room.minGradeLevel, room.maxGradeLevel, (key) =>
+                      t(`stages.${key}`),
+                    ) ?? "—"}
+                  </TableCell>
                   <TableCell className="text-right">
                     <Button
                       variant="ghost"
@@ -291,6 +347,55 @@ export default function RoomsPage() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="room-stage">{t("stageLabel")}</Label>
+              <Select
+                value={form.stage}
+                onValueChange={(value) => setForm({ ...form, stage: value })}
+              >
+                <SelectTrigger id="room-stage" aria-label={t("stageLabel")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_LIMIT}>{t("stageNone")}</SelectItem>
+                  {SCHOOL_STAGES.map((stage) => (
+                    <SelectItem key={stage.key} value={stage.key}>
+                      {t(`stages.${stage.key}`)}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={CUSTOM_RANGE}>{t("stageCustom")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t("stageHint")}</p>
+            </div>
+
+            {form.stage === CUSTOM_RANGE ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="room-min-grade">{t("stageFrom")}</Label>
+                  <Input
+                    id="room-min-grade"
+                    type="number"
+                    min={0}
+                    max={12}
+                    value={form.minGradeLevel}
+                    onChange={(e) => setForm({ ...form, minGradeLevel: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="room-max-grade">{t("stageTo")}</Label>
+                  <Input
+                    id="room-max-grade"
+                    type="number"
+                    min={0}
+                    max={12}
+                    value={form.maxGradeLevel}
+                    onChange={(e) => setForm({ ...form, maxGradeLevel: e.target.value })}
+                  />
+                </div>
+              </div>
+            ) : null}
+
             <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
               <div className="space-y-0.5">
                 <Label htmlFor="room-approval">{t("requiresApproval")}</Label>

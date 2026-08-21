@@ -226,6 +226,60 @@ export class OptimizationProxyService {
       [...membersByGroup].map(([groupId, members]) => [groupId, members.size]),
     );
 
+    /*
+     * Year span per scheduled group, for rooms limited to a stage.
+     *
+     * Derived from the students' HOME classes rather than read off the group:
+     * a teaching group carries no gradeLevel of its own, and treating it as
+     * unrestricted would let a nionde-group into lågstadiets rooms. A group
+     * spanning several years takes the whole span, so a room must cover all of
+     * it — half a group in an allowed year is not an allowed placement.
+     */
+    const involvedStudentIds = [...groupsByStudent.keys()];
+    const [studentHomeClasses, allGroups] = await Promise.all([
+      involvedStudentIds.length > 0
+        ? tx.user.findMany({
+            where: { id: { in: involvedStudentIds } },
+            select: { id: true, studentGroupId: true },
+          })
+        : Promise.resolve([] as { id: string; studentGroupId: string | null }[]),
+      tx.studentGroup.findMany({
+        where: { academicYearId },
+        select: { id: true, gradeLevel: true },
+      }),
+    ]);
+    const gradeOfGroup = new Map(allGroups.map((g) => [g.id, g.gradeLevel]));
+    const homeClassOf = new Map(
+      studentHomeClasses.map((student) => [student.id, student.studentGroupId]),
+    );
+
+    const gradeSpanByGroup = new Map<string, { min: number; max: number }>();
+    // Every scheduled group, not only those with members: a class created
+    // before its students are enrolled still carries its own year, and
+    // skipping it would let 7B into lågstadiets rooms until somebody adds the
+    // first student.
+    for (const groupId of scheduledGroupIds) {
+      const members = membersByGroup.get(groupId) ?? new Set<string>();
+      const grades: number[] = [];
+      for (const studentId of members) {
+        const homeClass = homeClassOf.get(studentId);
+        const grade = homeClass ? gradeOfGroup.get(homeClass) : null;
+        if (typeof grade === 'number') grades.push(grade);
+      }
+      // No members with a year — fall back to the group's own, and leave it
+      // unset when there is none at all rather than inventing one.
+      if (grades.length === 0) {
+        const own = gradeOfGroup.get(groupId);
+        if (typeof own === 'number') grades.push(own);
+      }
+      if (grades.length > 0) {
+        gradeSpanByGroup.set(groupId, {
+          min: Math.min(...grades),
+          max: Math.max(...grades),
+        });
+      }
+    }
+
     // Groups sharing at least one student can never hold overlapping lessons —
     // that is the whole point of teaching groups being real sets of students
     // rather than labels. One pass over students; each contributes the pairs
@@ -295,6 +349,8 @@ export class OptimizationProxyService {
           lessonsPerWeek: remaining,
           minutesPerLesson: r.minutesPerLesson,
           studentGroupSize: Math.max(1, sizeByGroup.get(r.studentGroupId) ?? 1),
+          minGradeLevel: gradeSpanByGroup.get(r.studentGroupId)?.min ?? null,
+          maxGradeLevel: gradeSpanByGroup.get(r.studentGroupId)?.max ?? null,
           requiredRoomType: r.subject.requiredRoomTypeId
             ? anonId(roomTypeAnonMap, r.subject.requiredRoomTypeId)
             : null,
@@ -359,13 +415,21 @@ export class OptimizationProxyService {
           academicYears: { some: { id: academicYearId } },
         },
       },
-      select: { id: true, capacity: true, roomTypeId: true },
+      select: {
+        id: true,
+        capacity: true,
+        roomTypeId: true,
+        minGradeLevel: true,
+        maxGradeLevel: true,
+      },
     });
 
     const rooms: AnonymousRoom[] = rawRooms.map((r) => ({
       id: anonId(roomAnonMap, r.id),
       capacity: r.capacity,
       type: r.roomTypeId ? anonId(roomTypeAnonMap, r.roomTypeId) : null,
+      minGradeLevel: r.minGradeLevel,
+      maxGradeLevel: r.maxGradeLevel,
     }));
 
     // Fetch availability constraints (drop reason text field).
