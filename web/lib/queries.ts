@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-query";
 import { createClient } from "@/utils/supabase/client";
 import { api } from "@/lib/api";
+import { sortByName } from "@/lib/sorting";
 import type {
   LessonRecurrence,
   RoomType,
@@ -82,11 +83,18 @@ async function selectAll<T>(table: string, columns: string, orderBy: string): Pr
 export function useSubjects() {
   return useQuery({
     queryKey: ["subjects"],
-    queryFn: () =>
-      selectAll<Subject>(
-        "Subjects",
-        "id, name, code, color, requiredRoomTypeId",
-        "name",
+    queryFn: async () =>
+      // Re-sorted in Swedish. The database orders by name too, but under its
+      // own collation — which puts Övrigt in the middle of the list and
+      // Ämnesval before Bild. Every consumer reads this hook, so the subject
+      // page, the timplan columns and every subject dropdown agree.
+      sortByName(
+        await selectAll<Subject>(
+          "Subjects",
+          "id, name, code, color, requiredRoomTypeId",
+          "name",
+        ),
+        (subject) => subject.name,
       ),
   });
 }
@@ -143,11 +151,18 @@ export function useActiveYear() {
 export function useGroups() {
   return useQuery({
     queryKey: ["groups"],
-    queryFn: () =>
-      selectAll<StudentGroup>(
-        "StudentGroups",
-        "id, academicYearId, name, kind, gradeLevel",
-        "name",
+    queryFn: async () =>
+      // Swedish order, like useSubjects. The timplan puts these two lists at
+      // right angles to each other — groups down the side, subjects across the
+      // top — so sorting one and not the other makes a single table disagree
+      // with itself about where å, ä and ö belong.
+      sortByName(
+        await selectAll<StudentGroup>(
+          "StudentGroups",
+          "id, academicYearId, name, kind, gradeLevel",
+          "name",
+        ),
+        (group) => group.name,
       ),
   });
 }

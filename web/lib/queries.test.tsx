@@ -16,6 +16,7 @@ import {
   useLessonActions,
   useGroupMembers,
   useGroupMemberships,
+  useGroups,
   usePeople,
   useLessonRoster,
   useMasterLessons,
@@ -1454,5 +1455,95 @@ describe("useCrudMutations for people", () => {
       });
     });
     expect(mockApi.post.mock.calls[1]?.[1]).toMatchObject({ sendInvitation: true });
+  });
+});
+
+
+describe("useSubjects ordering", () => {
+  it("returns subjects in Swedish alphabetical order, whatever the database sent", async () => {
+    // The rows arrive in the database's own collation order — here the C
+    // ordering, which puts the accented letters before B. The hook is what
+    // every consumer reads, so this is where the order has to be right: the
+    // subject page, the timplan's columns and every subject dropdown.
+    stubTable(
+      "Subjects",
+      ok([
+        { id: "1", name: "Ämnesval", code: null, color: null, requiredRoomTypeId: null },
+        { id: "2", name: "Ångström", code: null, color: null, requiredRoomTypeId: null },
+        { id: "3", name: "Bild", code: null, color: null, requiredRoomTypeId: null },
+        { id: "4", name: "Övrigt", code: null, color: null, requiredRoomTypeId: null },
+        { id: "5", name: "Slöjd", code: null, color: null, requiredRoomTypeId: null },
+      ]),
+    );
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useSubjects(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data?.map((subject) => subject.name)).toEqual([
+      "Bild",
+      "Slöjd",
+      "Ångström",
+      "Ämnesval",
+      "Övrigt",
+    ]);
+  });
+
+  it("still asks the database for a name order", async () => {
+    // Belt and braces: the client sort is what makes it Swedish, but a
+    // paged read needs a stable server-side order or pages could overlap.
+    stubTable("Subjects", ok([]));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useSubjects(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(argsFor("Subjects", "order")).toEqual([["name"], ["id"]]);
+  });
+});
+
+
+describe("useGroups ordering", () => {
+  it("returns classes and teaching groups in Swedish order", async () => {
+    stubTable(
+      "StudentGroups",
+      ok([
+        { id: "1", academicYearId: "y", name: "Ämnesval", kind: "TEACHING_GROUP", gradeLevel: null },
+        { id: "2", academicYearId: "y", name: "Öst 7A", kind: "CLASS", gradeLevel: 7 },
+        { id: "3", academicYearId: "y", name: "Bygg 9C", kind: "CLASS", gradeLevel: 9 },
+      ]),
+    );
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useGroups(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data?.map((group) => group.name)).toEqual([
+      "Bygg 9C",
+      "Ämnesval",
+      "Öst 7A",
+    ]);
+  });
+
+  it("orders class numbers by value, so 7A comes before 10A", async () => {
+    // A school with more than nine year groups reads 10A as ten, not as
+    // one-followed-by-zero.
+    stubTable(
+      "StudentGroups",
+      ok([
+        { id: "1", academicYearId: "y", name: "10A", kind: "CLASS", gradeLevel: null },
+        { id: "2", academicYearId: "y", name: "7A", kind: "CLASS", gradeLevel: 7 },
+        { id: "3", academicYearId: "y", name: "9A", kind: "CLASS", gradeLevel: 9 },
+      ]),
+    );
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useGroups(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data?.map((group) => group.name)).toEqual([
+      "7A",
+      "9A",
+      "10A",
+    ]);
   });
 });

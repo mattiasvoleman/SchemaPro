@@ -17,9 +17,11 @@ const groups = [
   { id: "g-ma71", academicYearId: "y1", name: "Ma71", kind: "TEACHING_GROUP", gradeLevel: null },
 ];
 
+/** Ordered as the hook delivers them — Swedish, so Övrigt comes last. */
 const subjects = [
-  { id: "s-ma", name: "Matematik", code: "MA", color: "#4f46e5", requiredRoomTypeId: null },
-  { id: "s-sv", name: "Svenska", code: "SV", color: "#db2777", requiredRoomTypeId: null },
+  { id: "s-bi", name: "Bild", code: "BI", color: "#4f46e5", requiredRoomTypeId: null },
+  { id: "s-sl", name: "Slöjd", code: "SL", color: "#db2777", requiredRoomTypeId: null },
+  { id: "s-ov", name: "Övrigt", code: "ÖV", color: "#059669", requiredRoomTypeId: null },
 ];
 
 vi.mock("@/lib/queries", () => ({
@@ -49,14 +51,27 @@ vi.mock("next-intl", () => ({
 const matrix = () => screen.getByRole("table");
 
 describe("Timplan matrix", () => {
+  it("keeps the columns in the order the subject hook delivers", () => {
+    // The hook sorts in Swedish; the matrix must not reorder behind it, or the
+    // two views a school ticks boxes across would disagree.
+    render(<RequirementsPage />);
+
+    const codes = within(matrix())
+      .getAllByRole("columnheader")
+      .slice(1)
+      .map((cell) => cell.textContent?.trim());
+    expect(codes).toEqual(["BI", "SL", "ÖV"]);
+  });
+
   it("renders a column per subject and a row per group", () => {
     render(<RequirementsPage />);
 
     const headers = within(matrix()).getAllByRole("columnheader");
     expect(headers.map((cell) => cell.textContent?.trim())).toEqual([
       "group",
-      "MA",
-      "SV",
+      "BI",
+      "SL",
+      "ÖV",
     ]);
   });
 
