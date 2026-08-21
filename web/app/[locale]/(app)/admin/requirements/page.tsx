@@ -218,15 +218,30 @@ export default function RequirementsPage() {
           <p className="mb-3 text-sm text-muted-foreground">
             {t("totalWeekly", { count: totalWeekly })}
           </p>
-          <div className="overflow-x-auto rounded-lg border bg-card">
+          {/*
+            Its own scroll area, not the page's.
+
+            The subject row has to stay visible while an admin scrolls through
+            a hundred groups — ticking a cell without seeing its column is how
+            a lesson lands on the wrong subject. `position: sticky` resolves
+            against the nearest scrolling ancestor, and `overflow-x: auto`
+            already makes this element one (the spec computes overflow-y to
+            auto alongside it), so a sticky header only works if this container
+            is also what scrolls vertically. Hence the height cap and
+            overflow-auto rather than page scrolling.
+          */}
+          <div className="max-h-[70vh] overflow-auto rounded-lg border bg-card">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b">
-                  <th className="sticky left-0 z-10 bg-card px-3 py-2.5 text-left font-medium text-muted-foreground">
+                  <th className="sticky left-0 top-0 z-30 bg-card px-3 py-2.5 text-left font-medium text-muted-foreground">
                     {tCommon("group")}
                   </th>
                   {subjects.map((subject) => (
-                    <th key={subject.id} className="border-l px-2 py-2.5 text-center">
+                    <th
+                      key={subject.id}
+                      className="sticky top-0 z-20 border-l bg-card px-2 py-2.5 text-center"
+                    >
                       <div className="flex flex-col items-center gap-1">
                         <span
                           className="h-2 w-2 rounded-full"
@@ -246,12 +261,20 @@ export default function RequirementsPage() {
                     <tr className="border-b bg-muted/40">
                       <td
                         colSpan={subjects.length + 1}
-                        className="sticky left-0 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                        className="bg-muted px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                       >
-                        {section.kind === "CLASS"
-                          ? t("classesSection")
-                          : t("teachingGroupsSection")}{" "}
-                        ({section.groups.length})
+                        {/*
+                          The label sticks, not the cell: a cell spanning the
+                          whole table is already at x=0, so making it sticky
+                          does nothing and the text scrolls away with the
+                          columns.
+                        */}
+                        <span className="sticky left-3 inline-block">
+                          {section.kind === "CLASS"
+                            ? t("classesSection")
+                            : t("teachingGroupsSection")}{" "}
+                          ({section.groups.length})
+                        </span>
                       </td>
                     </tr>
                     {section.groups.map((group) => (
