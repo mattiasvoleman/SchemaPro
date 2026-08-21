@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { sortByDisplayName } from '../../utils/sorting';
 import {
   ActivityIndicator,
   RefreshControl,
@@ -103,12 +104,14 @@ async function cacheLessonForAttendance(row: ScheduleRow): Promise<CalendarLesso
     .order('lastName');
   if (error) throw new Error(error.message);
 
-  const students = (data ?? []).map((student) => ({
-    id: student.id as string,
-    // displayName stays on-device only (encrypted SQLite) — never sent to APIs.
-    displayName: `${student.firstName as string} ${student.lastName as string}`,
-    photoUri: null,
-  }));
+  const students = sortByDisplayName(
+    (data ?? []).map((student) => ({
+      id: student.id as string,
+      // displayName stays on-device only (encrypted SQLite) — never sent to APIs.
+      displayName: `${student.firstName as string} ${student.lastName as string}`,
+      photoUri: null,
+    })),
+  );
 
   const lesson: CalendarLesson = {
     id: row.id,

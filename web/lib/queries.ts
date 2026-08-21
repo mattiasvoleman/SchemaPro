@@ -8,7 +8,7 @@ import {
 } from "@tanstack/react-query";
 import { createClient } from "@/utils/supabase/client";
 import { api } from "@/lib/api";
-import { sortByName } from "@/lib/sorting";
+import { sortByName, sortByPersonName } from "@/lib/sorting";
 import type {
   LessonRecurrence,
   RoomType,
@@ -106,7 +106,12 @@ export function useSubjects() {
 export function useRoomTypes() {
   return useQuery({
     queryKey: ["roomTypes"],
-    queryFn: () => api.get<RoomType[]>("/api/v1/room-types"),
+    // The API sorts these in PostgreSQL too, so they arrive with Övrigt in the
+    // middle of the list — the same symptom subjects had. Re-sorted here for
+    // the same reason: the collation belongs to the reader's language, not to
+    // the server's locale settings.
+    queryFn: async () =>
+      sortByName(await api.get<RoomType[]>("/api/v1/room-types"), (type) => type.name),
   });
 }
 
@@ -122,11 +127,16 @@ export function useRoomTypeActions() {
 export function useRooms() {
   return useQuery({
     queryKey: ["rooms"],
-    queryFn: () =>
-      selectAll<Room>(
-        "Rooms",
-        "id, name, code, capacity, roomTypeId, minGradeLevel, maxGradeLevel, requiresApproval",
-        "name",
+    queryFn: async () =>
+      // Room names are where a Swedish school actually puts its accented
+      // letters: Ängen, Åsen, Örnen, Slöjdsalen.
+      sortByName(
+        await selectAll<Room>(
+          "Rooms",
+          "id, name, code, capacity, roomTypeId, minGradeLevel, maxGradeLevel, requiresApproval",
+          "name",
+        ),
+        (room) => room.name,
       ),
   });
 }
@@ -170,11 +180,17 @@ export function useGroups() {
 export function usePeople() {
   return useQuery({
     queryKey: ["people"],
-    queryFn: () =>
-      selectAll<Person>(
-        "Users",
-        "id, role, firstName, lastName, email, phone, isActive, studentGroupId",
-        "lastName",
+    queryFn: async () =>
+      // The school's largest list, and the one an admin scrolls most. Sorted
+      // in Swedish here rather than in each of its dozen consumers — the
+      // register, every teacher and student dropdown, the group-member picker
+      // and the people CSV export all read this array as it comes.
+      sortByPersonName(
+        await selectAll<Person>(
+          "Users",
+          "id, role, firstName, lastName, email, phone, isActive, studentGroupId, invitedAt",
+          "lastName",
+        ),
       ),
   });
 }
@@ -399,7 +415,10 @@ export function useLessonRoster(
         .or(filters.join(","))
         .order("lastName");
       if (error) throw new Error(error.message);
-      return (data ?? []) as Person[];
+      // The list a teacher ticks down, lesson by lesson. Out of Swedish order
+      // it is worse than unsorted: the teacher scans for Åkesson where the
+      // A-names are and does not find her.
+      return sortByPersonName((data ?? []) as Person[]);
     },
   });
 }

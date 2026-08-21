@@ -10,31 +10,33 @@ import {
   useCreateMasterLesson,
   useCrudMutations,
   useDeleteMasterLesson,
-  useGuardianLinkActions,
-  useImportCsv,
-  useLeaveRequestActions,
-  useLessonActions,
   useGroupMembers,
   useGroupMemberships,
   useGroups,
-  usePeople,
+  useGuardianLinkActions,
+  useImportCsv,
+  useInvitations,
+  useLeaveRequestActions,
+  useLessonActions,
   useLessonRoster,
   useMasterLessons,
   useMyChildren,
   useOptimizationHistory,
   useOptimizationJob,
+  usePeople,
   usePublishSchedule,
   useReportAttendance,
   useRequirements,
   useRoomBookingActions,
   useRoomBookingRequests,
   useRoomBookings,
+  useRooms,
+  useRoomTypes,
   useScheduleVersionActions,
   useScheduleVersionDetail,
   useScheduleVersions,
   useSetGroupMembers,
   useStartOptimization,
-  useInvitations,
   useSubjects,
   useSubstituteSuggestions,
   useTeacherLessons,
@@ -392,6 +394,35 @@ describe("useLessonRoster", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(argsFor("Users", "or")).toEqual([["studentGroupId.in.(g-1)"]]);
+  });
+
+  it("orders the roster in Swedish, whatever order the rows arrive in", async () => {
+    // This is the list a teacher ticks off names in. The Supabase query cannot
+    // produce it: PostgreSQL's collation puts Åberg and Öberg in the wrong
+    // place, and a roster assembled from three separate id sets has no single
+    // ORDER BY to lean on anyway.
+    stubTable("CalendarLessonGroups", ok([]));
+    stubTable("CalendarLessonStudents", ok([]));
+    stubTable("StudentGroupMembers", ok([]));
+    stubTable(
+      "Users",
+      ok([
+        { ...students[0], id: "st-1", firstName: "Nils", lastName: "Öberg" },
+        { ...students[0], id: "st-2", firstName: "Alma", lastName: "Berg" },
+        { ...students[0], id: "st-3", firstName: "Sara", lastName: "Åkesson" },
+        { ...students[0], id: "st-4", firstName: "Ali", lastName: "Ahmed" },
+      ]),
+    );
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useLessonRoster("cl-1", "g-1"), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.map((student) => student.lastName)).toEqual([
+      "Ahmed",
+      "Berg",
+      "Åkesson",
+      "Öberg",
+    ]);
   });
 
   it("requires both the lesson and its primary class before fetching", () => {
@@ -1544,6 +1575,91 @@ describe("useGroups ordering", () => {
       "7A",
       "9A",
       "10A",
+    ]);
+  });
+});
+
+
+describe("Swedish ordering across the remaining lists", () => {
+  it("orders people by surname, then given name", async () => {
+    stubTable(
+      "Users",
+      ok([
+        { id: "1", role: "TEACHER", firstName: "Alma", lastName: "Öberg", email: "a@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
+        { id: "2", role: "TEACHER", firstName: "Örjan", lastName: "Andersson", email: "o@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
+        { id: "3", role: "TEACHER", firstName: "Alma", lastName: "Andersson", email: "al@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
+        { id: "4", role: "TEACHER", firstName: "Nils", lastName: "Åkesson", email: "n@s.se", phone: null, isActive: true, invitedAt: null, studentGroupId: null },
+      ]),
+    );
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => usePeople(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(
+      result.current.data?.map((person) => `${person.lastName} ${person.firstName}`),
+    ).toEqual([
+      "Andersson Alma",
+      "Andersson Örjan",
+      "Åkesson Nils",
+      "Öberg Alma",
+    ]);
+  });
+
+  it("fetches invitedAt, which the people page renders invitation state from", async () => {
+    // The page reads person.invitedAt to decide between "Skicka inbjudan" and
+    // "Skicka igen", and to build the "not yet invited" bulk selection. The
+    // column was missing from this select, so every already-invited person
+    // read as un-invited — and the page's own tests could not see it, because
+    // they stub the hook with a Person that has the field.
+    stubTable("Users", ok([]));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => usePeople(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(argsFor("Users", "select")[0]?.[0]).toContain("invitedAt");
+  });
+
+  it("orders rooms in Swedish — the names schools give them", async () => {
+    stubTable(
+      "Rooms",
+      ok([
+        { id: "1", name: "Ängen", code: null, capacity: null, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, requiresApproval: false },
+        { id: "2", name: "Bagaren", code: null, capacity: null, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, requiresApproval: false },
+        { id: "3", name: "Örnen", code: null, capacity: null, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, requiresApproval: false },
+        { id: "4", name: "Åsen", code: null, capacity: null, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, requiresApproval: false },
+      ]),
+    );
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useRooms(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data?.map((room) => room.name)).toEqual([
+      "Bagaren",
+      "Åsen",
+      "Ängen",
+      "Örnen",
+    ]);
+  });
+
+  it("orders room types even though the API already sorted them", async () => {
+    // The API sorts in PostgreSQL, which is exactly the collation that puts
+    // Övrigt in the middle. The client is the only place that knows Swedish.
+    mockApi.get.mockResolvedValue([
+      { id: "1", name: "Övrigt" },
+      { id: "2", name: "Ämnesrum" },
+      { id: "3", name: "Bildsal" },
+    ]);
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useRoomTypes(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data?.map((type) => type.name)).toEqual([
+      "Bildsal",
+      "Ämnesrum",
+      "Övrigt",
     ]);
   });
 });

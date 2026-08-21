@@ -1,4 +1,5 @@
 import * as Crypto from 'expo-crypto';
+import { sortByDisplayName } from '../../utils/sorting';
 import * as SecureStore from 'expo-secure-store';
 import * as SQLite from 'expo-sqlite';
 import type { AttendanceStatus, CalendarLesson, PendingAttendanceRecord, Student } from '../../types';
@@ -125,14 +126,19 @@ export async function getStudentsByIds(ids: readonly string[]): Promise<Student[
     display_name: string;
     photo_uri: string | null;
   }>(
-    `SELECT id, display_name, photo_uri FROM students WHERE id IN (${placeholders})`,
+    // ORDER BY on the way out too: without it SQLite returns rows in whatever
+    // order it stored them, so the roster changed shape between syncs. The
+    // Swedish order is applied below — SQLite's own collation is ASCII.
+    `SELECT id, display_name, photo_uri FROM students WHERE id IN (${placeholders}) ORDER BY display_name`,
     [...ids],
   );
-  return rows.map((r) => ({
-    id: r.id,
-    displayName: r.display_name,
-    photoUri: r.photo_uri,
-  }));
+  return sortByDisplayName(
+    rows.map((r) => ({
+      id: r.id,
+      displayName: r.display_name,
+      photoUri: r.photo_uri,
+    })),
+  );
 }
 
 // ─── Calendar Lessons ─────────────────────────────────────────────────────────

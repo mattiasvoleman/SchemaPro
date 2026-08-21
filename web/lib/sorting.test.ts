@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareSwedish, sortByName } from "@/lib/sorting";
+import { compareSwedish, sortByName, sortByPersonName } from "@/lib/sorting";
 
 const order = (names: string[]) =>
   sortByName(
@@ -65,5 +65,42 @@ describe("sortByName", () => {
 
   it("handles an empty list", () => {
     expect(sortByName([], (item: { name: string }) => item.name)).toEqual([]);
+  });
+});
+
+describe("sortByPersonName", () => {
+  const person = (firstName: string, lastName: string) => ({ firstName, lastName });
+
+  it("orders by surname, as a Swedish register is read", () => {
+    const sorted = sortByPersonName([
+      person("Alma", "Öberg"),
+      person("Nils", "Bergström"),
+      person("Karin", "Åkesson"),
+    ]);
+
+    expect(sorted.map((p) => p.lastName)).toEqual([
+      "Bergström",
+      "Åkesson",
+      "Öberg",
+    ]);
+  });
+
+  it("separates two of the same surname by given name", () => {
+    // Without the tie-break the two Anderssons come out in whatever order the
+    // database happened to return, which changes between page loads.
+    const sorted = sortByPersonName([
+      person("Örjan", "Andersson"),
+      person("Alma", "Andersson"),
+      person("Åsa", "Andersson"),
+    ]);
+
+    expect(sorted.map((p) => p.firstName)).toEqual(["Alma", "Åsa", "Örjan"]);
+  });
+
+  it("leaves the caller's array alone", () => {
+    const input = [person("Alma", "Öberg"), person("Nils", "Bergström")];
+    sortByPersonName(input);
+
+    expect(input[0]?.lastName).toBe("Öberg");
   });
 });

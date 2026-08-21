@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { compareSwedish } from "@/lib/sorting";
 import { useTranslations } from "next-intl";
 import { BarChart3, Download } from "lucide-react";
 import {
@@ -134,7 +135,10 @@ export default function ReportsPage() {
         entry.total > 0 ? (entry.present + entry.late) / entry.total : null;
     }
 
-    return [...byStudent.values()].sort((a, b) => a.name.localeCompare(b.name));
+    // Not localeCompare(): with no locale argument it follows the browser's
+    // language, so two admins looking at the same report could see the rows in
+    // different orders — and on an English browser Öberg folds in with Olsson.
+    return [...byStudent.values()].sort((a, b) => compareSwedish(a.name, b.name));
   }, [records, people, groupId]);
 
   const classAverage = useMemo(() => {

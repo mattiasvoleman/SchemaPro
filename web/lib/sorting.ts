@@ -28,3 +28,18 @@ export function compareSwedish(a: string, b: string): number {
 export function sortByName<T>(items: T[], nameOf: (item: T) => string): T[] {
   return [...items].sort((a, b) => compareSwedish(nameOf(a), nameOf(b)));
 }
+
+/**
+ * Sorts people the way a Swedish register is read: surname first, then given
+ * name, so two Anderssons stay together and are told apart by their first
+ * names rather than by whatever order the rows arrived in.
+ */
+export function sortByPersonName<T extends { firstName: string; lastName: string }>(
+  people: T[],
+): T[] {
+  return [...people].sort(
+    (a, b) =>
+      compareSwedish(a.lastName, b.lastName) ||
+      compareSwedish(a.firstName, b.firstName),
+  );
+}
