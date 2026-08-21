@@ -10,10 +10,21 @@ import {
 
 describe("strengthBand", () => {
   it("names the band a weight falls in", () => {
-    expect(strengthBand(10)).toBe("weak");
-    expect(strengthBand(50)).toBe("normal");
-    expect(strengthBand(100)).toBe("strong");
-    expect(strengthBand(200)).toBe("veryStrong");
+    expect(strengthBand(1)).toBe("weak");
+    expect(strengthBand(5)).toBe("normal");
+    expect(strengthBand(15)).toBe("strong");
+    expect(strengthBand(50)).toBe("veryStrong");
+  });
+
+  it("is anchored to the objectives it competes with, not to the slider span", () => {
+    // The engine sums every objective into one expression, so these numbers
+    // are directly comparable: spread 3, preferred_busy 5, disruption 8,
+    // preferred_free 10. A band that ignored them would describe a weight as
+    // "weak" while it outweighed the entire rest of the objective.
+    expect(strengthBand(2)).toBe("weak"); // under spread (3)
+    expect(strengthBand(8)).toBe("normal"); // level with disruption
+    expect(strengthBand(10)).toBe("strong"); // level with preferred_free
+    expect(strengthBand(25)).toBe("veryStrong"); // multiples of everything
   });
 
   it("puts the default in the middle band", () => {
@@ -22,12 +33,12 @@ describe("strengthBand", () => {
   });
 
   it("has no gaps or overlaps at the boundaries", () => {
-    expect(strengthBand(29)).toBe("weak");
-    expect(strengthBand(30)).toBe("normal");
-    expect(strengthBand(79)).toBe("normal");
-    expect(strengthBand(80)).toBe("strong");
-    expect(strengthBand(149)).toBe("strong");
-    expect(strengthBand(150)).toBe("veryStrong");
+    expect(strengthBand(2)).toBe("weak");
+    expect(strengthBand(3)).toBe("normal");
+    expect(strengthBand(9)).toBe("normal");
+    expect(strengthBand(10)).toBe("strong");
+    expect(strengthBand(24)).toBe("strong");
+    expect(strengthBand(25)).toBe("veryStrong");
   });
 
   it("still answers for weights outside the slider's band", () => {
@@ -38,17 +49,18 @@ describe("strengthBand", () => {
 
 describe("strengthBounds", () => {
   it("uses the usual band for an ordinary weight", () => {
-    expect(strengthBounds(50)).toEqual({ min: STRENGTH_MIN, max: STRENGTH_MAX });
+    expect(strengthBounds(5)).toEqual({ min: STRENGTH_MIN, max: STRENGTH_MAX });
   });
 
   it("stretches to show a weight above the band rather than dragging it down", () => {
-    // A rule saved at 500 must not become 200 just because someone opened the
-    // form: the slider would silently rewrite a setting nobody touched.
+    // Rules created on the earlier 10-200 scale all sit above this maximum;
+    // opening one must not silently rewrite a setting nobody touched.
+    expect(strengthBounds(200)).toEqual({ min: STRENGTH_MIN, max: 200 });
     expect(strengthBounds(500)).toEqual({ min: STRENGTH_MIN, max: 500 });
   });
 
   it("stretches downward too", () => {
-    expect(strengthBounds(1)).toEqual({ min: 1, max: STRENGTH_MAX });
+    expect(strengthBounds(0)).toEqual({ min: 0, max: STRENGTH_MAX });
   });
 });
 

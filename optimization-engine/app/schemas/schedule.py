@@ -109,7 +109,9 @@ class AnonymousRoomPreference(CamelModel):
     subject_id: UUID4 = Field(alias="subjectId")
     room_type: RoomTypeKind | None = Field(default=None, alias="roomType")
     room_ids: list[UUID4] = Field(default_factory=list, alias="roomIds")
-    weight: int = Field(default=50, ge=1, le=1000)
+    #: Same scale as the other objective weights (spread 3, disruption 8,
+    #: preferred_free 10). Defaults to the engine's own weight_room_preference.
+    weight: int = Field(default=5, ge=1, le=1000)
 
 
 class AnonymousConstraint(CamelModel):

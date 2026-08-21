@@ -343,7 +343,7 @@
     "preferenceRoomType": "Room type",
     "preferenceRooms": "Rooms",
     "preferenceWeight": "Strength",
-    "preferenceWeightHint": "How much the engine may give up elsewhere to honour the wish. Drag right for something that should almost always hold — but a very strong wish can crowd out other goals, such as spreading subjects across the week.",
+    "preferenceWeightHint": "How much the engine may give up elsewhere to honour the wish. The scale is the one the optimization profile uses: 5 weighs the same as the other preferences, above 10 the wish starts overriding goals such as spreading subjects across the week.",
     "preferenceSummary": "{subject} preferably in {rooms}",
     "preferenceWeightBadge": "strength {weight}",
     "strength": {

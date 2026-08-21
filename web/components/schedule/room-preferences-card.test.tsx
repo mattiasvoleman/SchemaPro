@@ -82,7 +82,7 @@ describe("RoomPreferencesCard", () => {
     expect(create).toHaveBeenCalledWith({
       subjectId: "s-no",
       roomTypeId: "rt-lab",
-      weight: 50,
+      weight: 5,
     });
   });
 
@@ -101,23 +101,23 @@ describe("RoomPreferencesCard", () => {
     expect(create).toHaveBeenCalledWith({
       subjectId: "s-no",
       roomIds: ["r-a12", "r-a14"],
-      weight: 50,
+      weight: 5,
     });
   });
 
   it("lists a stated wish in words, not ids", async () => {
     preferences.data = [
-      { id: "p1", subjectId: "s-no", roomTypeId: null, weight: 200, rooms: [{ roomId: "r-a12" }] },
+      { id: "p1", subjectId: "s-no", roomTypeId: null, weight: 12, rooms: [{ roomId: "r-a12" }] },
     ];
     render(<RoomPreferencesCard />);
 
     expect(screen.getByText(/preferenceSummary\(NO\|A12\)/)).toBeInTheDocument();
-    expect(screen.getByText("preferenceWeightBadge(200)")).toBeInTheDocument();
+    expect(screen.getByText("preferenceWeightBadge(12)")).toBeInTheDocument();
   });
 
   it("deletes the wish the button belongs to", async () => {
     preferences.data = [
-      { id: "p1", subjectId: "s-no", roomTypeId: "rt-lab", weight: 50, rooms: [] },
+      { id: "p1", subjectId: "s-no", roomTypeId: "rt-lab", weight: 5, rooms: [] },
     ];
     const user = userEvent.setup();
     render(<RoomPreferencesCard />);
@@ -133,7 +133,7 @@ describe("RoomPreferencesCard", () => {
 
     const slider = screen.getByLabelText("preferenceWeight");
     expect(slider).toHaveAttribute("type", "range");
-    expect(slider).toHaveValue("50");
+    expect(slider).toHaveValue("5");
   });
 
   it("announces the word to a screen reader, not just the number", async () => {
@@ -145,15 +145,15 @@ describe("RoomPreferencesCard", () => {
     // without aria-valuetext the announcement is a bare "50".
     expect(screen.getByLabelText("preferenceWeight")).toHaveAttribute(
       "aria-valuetext",
-      "strength.normal (50)",
+      "strength.normal (5)",
     );
 
     fireEvent.change(screen.getByLabelText("preferenceWeight"), {
-      target: { value: "200" },
+      target: { value: "30" },
     });
     expect(screen.getByLabelText("preferenceWeight")).toHaveAttribute(
       "aria-valuetext",
-      "strength.veryStrong (200)",
+      "strength.veryStrong (30)",
     );
   });
 
@@ -173,12 +173,12 @@ describe("RoomPreferencesCard", () => {
 
     // A range input is driven by change events, not typing.
     fireEvent.change(screen.getByLabelText("preferenceWeight"), {
-      target: { value: "200" },
+      target: { value: "30" },
     });
 
     expect(screen.getByText(/strength\.veryStrong/)).toBeInTheDocument();
     expect(screen.queryByText(/strength\.normal/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText("preferenceWeight")).toHaveValue("200");
+    expect(screen.getByLabelText("preferenceWeight")).toHaveValue("30");
   });
 
   it("sends the value the slider was dragged to", async () => {
@@ -189,11 +189,11 @@ describe("RoomPreferencesCard", () => {
     await choose(user, "preferenceSubject", "NO");
     await choose(user, "preferenceRoomType", "Laborationssal");
     fireEvent.change(screen.getByLabelText("preferenceWeight"), {
-      target: { value: "120" },
+      target: { value: "12" },
     });
     await user.click(screen.getByRole("button", { name: "save" }));
 
-    expect(create).toHaveBeenCalledWith(expect.objectContaining({ weight: 120 }));
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ weight: 12 }));
   });
 
 });

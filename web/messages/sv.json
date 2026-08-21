@@ -343,7 +343,7 @@
     "preferenceRoomType": "Salstyp",
     "preferenceRooms": "Salar",
     "preferenceWeight": "Styrka",
-    "preferenceWeightHint": "Hur mycket motorn får offra av annat för att uppfylla önskemålet. Dra åt höger för något som nästan alltid ska gälla — men ett mycket starkt önskemål kan tränga undan andra mål, som att sprida ämnena över veckan.",
+    "preferenceWeightHint": "Hur mycket motorn får offra av annat för att uppfylla önskemålet. Skalan är densamma som optimeringsprofilens vikter: 5 väger lika tungt som andra önskemål, över 10 tar önskemålet över från mål som att sprida ämnena över veckan.",
     "preferenceSummary": "{subject} helst i {rooms}",
     "preferenceWeightBadge": "styrka {weight}",
     "strength": {

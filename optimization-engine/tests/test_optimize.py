@@ -1600,6 +1600,63 @@ def test_a_stated_preference_wins_the_preferred_room_more_often(
     assert with_wish > without
 
 
+def _lessons_in_preferred_type(client: TestClient, *, with_preference: bool) -> int:
+    """Same measurement as above, but the wish names a TYPE rather than rooms.
+
+    Worth its own test: the two travel different paths through
+    `_preference_room_ids` — one reads `room_ids` straight, the other resolves
+    a type against the payload's rooms — and only the room-id path was covered
+    when this feature shipped.
+    """
+    payload = _sample_payload()
+    subject_id = payload["requirements"][0]["subjectId"]  # type: ignore[index]
+    lab_id = str(uuid4())
+
+    payload["requirements"] = [
+        {
+            "id": str(uuid4()),
+            "subjectId": subject_id,
+            "studentGroupId": str(uuid4()),
+            "teacherId": str(uuid4()),
+            "lessonsPerWeek": 4,
+            "minutesPerLesson": 60,
+            "studentGroupSize": 20,
+        }
+        for _ in range(3)
+    ]
+    payload["rooms"] = [
+        {"id": lab_id, "capacity": 30, "type": "LABORATORY"},
+        {"id": str(uuid4()), "capacity": 30, "type": "CLASSROOM"},
+        {"id": str(uuid4()), "capacity": 30, "type": "CLASSROOM"},
+    ]
+    if with_preference:
+        payload["roomPreferences"] = [
+            {
+                "id": str(uuid4()),
+                "subjectId": subject_id,
+                "roomType": "LABORATORY",
+                "weight": 300,
+            }
+        ]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+    assert response.status_code == 200
+    lessons = response.json()["lessons"]
+    assert len(lessons) == 12
+    return sum(1 for lesson in lessons if lesson["roomId"] == lab_id)
+
+
+def test_a_wish_for_a_room_type_wins_that_type_more_often(client: TestClient) -> None:
+    without = _lessons_in_preferred_type(client, with_preference=False)
+    with_wish = _lessons_in_preferred_type(client, with_preference=True)
+
+    assert with_wish > without
+
+
 def test_room_preference_yields_rather_than_making_a_week_impossible(
     client: TestClient,
 ) -> None:
