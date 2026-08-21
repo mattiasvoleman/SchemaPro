@@ -239,3 +239,21 @@ describe("AppShell mobile drawer", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("AppShell content width", () => {
+  it("lets the content column shrink to the viewport", () => {
+    // A flex item defaults to min-width: auto and will not shrink below its
+    // content's min-content width. Without min-w-0 a single wide page — the
+    // timplan with two dozen subjects — stretched this column past the
+    // viewport, and everything anchored to its right edge (the academic-year
+    // picker, the user menu) sat off-screen until you scrolled sideways.
+    // jsdom computes no layout, so the class is what can be asserted; the
+    // behaviour itself was verified in a browser against the same structure.
+    const { container } = renderShell();
+
+    const column = container.querySelector("main")?.parentElement;
+    expect(column).not.toBeNull();
+    expect(column?.className).toContain("flex-1");
+    expect(column?.className).toContain("min-w-0");
+  });
+});

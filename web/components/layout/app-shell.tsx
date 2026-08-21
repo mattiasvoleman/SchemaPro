@@ -217,7 +217,19 @@ export function AppShell({ role, userName, email, schoolName, children }: AppShe
         </div>
       ) : null}
 
-      <div className="flex min-h-screen flex-1 flex-col lg:pl-64">
+      {/*
+        min-w-0 is load-bearing.
+
+        This column is a flex item, and a flex item defaults to
+        `min-width: auto` — it refuses to shrink below its content's
+        min-content width. One wide page (the timplan matrix with two dozen
+        subjects) therefore stretched the whole column past the viewport, and
+        everything anchored to its right edge — the academic-year picker, the
+        header's user menu — sat off-screen until you scrolled sideways. With
+        min-w-0 the column keeps the viewport's width and the wide content
+        scrolls inside its own container instead.
+      */}
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col lg:pl-64">
         <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b bg-background/80 px-4 backdrop-blur sm:px-6">
           <Button
             variant="ghost"
