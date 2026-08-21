@@ -693,7 +693,11 @@ class SchedulerSolver:
 
         Pairs whose groups have no scheduled lessons are skipped silently —
         the relation is derived from membership data, which can name groups
-        that have no timplan entries.
+        that have no timplan entries. A self-pair (A, A) is skipped for the
+        same reason: it states a truth the per-group NoOverlap above already
+        enforces, and taking it literally would put every one of A's intervals
+        into a single NoOverlap TWICE — asking each interval not to overlap
+        itself, which turns the whole request INFEASIBLE.
         """
         grouped: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
@@ -705,6 +709,8 @@ class SchedulerSolver:
                 model.AddNoOverlap([decision.interval for decision in group_decisions])
 
         for first_id, second_id in group_conflicts or []:
+            if first_id == second_id:
+                continue
             combined = grouped.get(first_id, []) + grouped.get(second_id, [])
             if len(combined) > 1:
                 model.AddNoOverlap([decision.interval for decision in combined])

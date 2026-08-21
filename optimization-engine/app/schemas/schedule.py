@@ -239,6 +239,23 @@ class OptimizeScheduleRequest(CamelModel):
     weights: ObjectiveWeights | None = None
     rules: ScheduleRules | None = None
 
+    @field_validator("group_conflicts")
+    @classmethod
+    def drop_self_pairs(
+        cls, value: list[tuple[UUID4, UUID4]],
+    ) -> list[tuple[UUID4, UUID4]]:
+        """Strip (A, A) pairs — a group always shares students with itself.
+
+        Membership-derived data can emit a self-pair (an unfiltered self-join
+        on the gateway side); it states nothing the per-group NoOverlap does
+        not already enforce. Dropping it here rather than rejecting the
+        request keeps one vacuous pair from 422-ing an entire optimisation
+        run, and keeps every consumer of the list honest: read literally, a
+        self-pair makes the solver INFEASIBLE and makes the benchmark
+        validator report every lesson as overlapping itself.
+        """
+        return [(first, second) for first, second in value if first != second]
+
 
 class ScheduledLesson(CamelModel):
     requirement_id: UUID4 = Field(alias="requirementId")

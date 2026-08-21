@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1402,6 +1402,55 @@ def test_a_fixed_lesson_blocks_conflicting_groups_too() -> None:
     payload["groupConflicts"] = []
     response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
     assert response.status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_a_group_paired_with_itself_is_dropped_at_the_boundary() -> None:
+    """(A, A) says nothing, so it must not survive into the request.
+
+    The pairs are derived from membership data; an unfiltered self-join on the
+    gateway side emits (A, A). It is vacuous — a group always shares students
+    with itself — but read literally it is poison, so the schema strips it
+    while leaving every genuine pair alone.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+
+    payload = _shared_student_payload()
+    class_7a, group_ma71 = payload["groupConflicts"][0]  # type: ignore[index]
+    payload["groupConflicts"] = [  # type: ignore[assignment]
+        [class_7a, class_7a],
+        [class_7a, group_ma71],
+        [group_ma71, group_ma71],
+    ]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    assert [tuple(map(str, pair)) for pair in request.group_conflicts] == [
+        (class_7a, group_ma71)
+    ], "self-pairs must be dropped, genuine pairs kept"
+
+
+def test_a_self_pair_reaching_the_solver_is_not_infeasible() -> None:
+    """A group paired with itself must not sink the whole request.
+
+    _add_group_no_overlap used to concatenate both sides of every pair, so
+    (A, A) put each of A's intervals into one NoOverlap TWICE — asking every
+    interval not to overlap itself. CP-SAT answered INFEASIBLE for the entire
+    school over a pair that states a truth the per-group NoOverlap already
+    enforces. The schema now strips such pairs, so this pins the solver guard
+    directly by re-injecting one after validation.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _sample_payload()
+    group_id = payload["requirements"][0]["studentGroupId"]  # type: ignore[index]
+    request = OptimizeScheduleRequest.model_validate(payload)
+    request.group_conflicts = [(UUID(group_id), UUID(group_id))]  # type: ignore[arg-type]
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0))
+    response = solver.solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 2
 
 
 def test_rooms_limited_to_a_stage_reject_other_years(client: TestClient) -> None:
