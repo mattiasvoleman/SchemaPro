@@ -55,6 +55,20 @@ admin_auth_id="$(
   | tr -d '[:space:]'
 )"
 
+# The other school's pupil, for the cross-tenant guardian assertion. Read as the
+# owner: the app role cannot see the second tenant at all, which is the point.
+student_b="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT id FROM \"Users\" WHERE \"authId\" = '00000000-0000-4000-8000-000000000002'" \
+  | tr -d '[:space:]'
+)"
+
+if [ -z "$student_b" ]; then
+  echo "==> could not read the second school's pupil; fixtures did not run" >&2
+  exit 1
+fi
+
 if [ -z "$admin_auth_id" ]; then
   echo "FAIL: no SCHOOL_ADMIN with an authId in the primary school." >&2
   exit 1
@@ -63,7 +77,8 @@ fi
 echo "==> Running policy assertions as ${APP_ROLE} (the role the API uses)"
 compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   psql -U "$APP_ROLE" -h localhost -d "$DB_NAME" \
-  -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -v "admin_auth_id=${admin_auth_id}" -tA -f /dev/stdin \
+  -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -v "admin_auth_id=${admin_auth_id}" \
+  -v "student_b=${student_b}" -tA -f /dev/stdin \
   < scripts/test/rls-policies.sql
 
 echo "==> RLS policy tests passed"

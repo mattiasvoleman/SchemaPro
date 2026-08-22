@@ -450,3 +450,51 @@ $$;
 ROLLBACK;
 
 SELECT 'rls-policies: all assertions passed' AS result;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 8: a guardian link cannot reach across schools.
+--
+-- This was a live cross-tenant hole, reproduced end to end before it was fixed:
+-- the write policy checked only that the ROW carried the admin's own schoolId,
+-- and nothing tied the named pupil to that school. The forged link then
+-- unlocked another school's child — profile, absence notes carrying health
+-- information, leave reasons, group memberships and timetable — through six
+-- policies that trusted the link without asking whose it was.
+--
+-- The fix is a pair of composite foreign keys rather than a policy predicate,
+-- because a policy that reads Users recurses (Users' own guardian policy reads
+-- GuardianStudents right back, and Postgres refuses the cycle) and because keys
+-- bind every writer, not only `authenticated`.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+SET LOCAL ROLE app_authenticated;
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text, true);
+-- psql does not expand :variables inside a dollar-quoted block, so the pupil's
+-- id is handed to the block through a setting instead of pasted into it.
+SELECT set_config('app.test_student_b', :'student_b', true);
+
+DO $$
+DECLARE
+  forged boolean := false;
+BEGIN
+  BEGIN
+    INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId")
+    VALUES ((select app.current_school_id()), (select app.current_user_id()),
+            current_setting('app.test_student_b')::uuid);
+    forged := true;
+  EXCEPTION
+    WHEN foreign_key_violation THEN forged := false;
+    WHEN insufficient_privilege THEN forged := false;
+  END;
+
+  IF forged THEN
+    RAISE EXCEPTION
+      'cross-tenant guardian link accepted: another school''s pupil can be filed as this admin''s child';
+  END IF;
+END $$;
+
+ROLLBACK;

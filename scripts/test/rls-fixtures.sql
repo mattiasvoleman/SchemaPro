@@ -28,6 +28,18 @@ WHERE s.slug = 'rls-fixture-school'
     SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000001'
   );
 
+-- A PUPIL in the second school. The cross-tenant guardian assertion needs a
+-- real child to try to claim; without one it would pass while proving nothing,
+-- which is the failure mode every fixture here exists to avoid.
+INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+SELECT s.id, 'rls-fixture-pupil@example.invalid', 'Fixture', 'Pupil', 'STUDENT',
+       '00000000-0000-4000-8000-000000000002', true, now()
+FROM "Schools" s
+WHERE s.slug = 'rls-fixture-school'
+  AND NOT EXISTS (
+    SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000002'
+  );
+
 -- An active key for the FIRST school, so the key-lookup assertions have
 -- something to find, and a revoked one so revocation can be asserted.
 INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", "createdAt")

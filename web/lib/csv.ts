@@ -74,7 +74,7 @@ export function parseCsv(text: string): ParsedCsv {
   let inQuotes = false;
 
   const pushField = () => {
-    record.push(field);
+    record.push(readFormulaGuard(field));
     field = "";
   };
   const pushRecord = () => {
@@ -192,8 +192,44 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
  * columns and the file would no longer import back.
  */
 function escapeField(value: string): string {
-  if (!/[";\r\n]/.test(value)) return value;
-  return `"${value.replace(/"/g, '""')}"`;
+  const guarded = neutralizeFormula(value);
+  if (!/[";\r\n]/.test(guarded)) return guarded;
+  return `"${guarded.replace(/"/g, '""')}"`;
+}
+
+/**
+ * A leading =, +, - or @ makes a spreadsheet treat the cell as a formula.
+ *
+ * The data in these exports is not typed by us: a school's people and subjects
+ * arrive by CSV from a municipal system, and a name of
+ * `=HYPERLINK("http://…"&A1)` is stored as faithfully as `Andersson`. It does
+ * nothing at all inside SchemaPro — and then an administrator opens the export
+ * in Excel and it runs, with the sheet's own contents available to send.
+ * Quoting does not help: Excel evaluates a quoted field too.
+ *
+ * An apostrophe is what a spreadsheet reads as "this cell is text"; it is not
+ * displayed. Import strips it again (see `readFormulaGuard`), so a value
+ * survives export → import → export unchanged.
+ *
+ * Numbers are left alone, so a legitimate -5 stays a number rather than
+ * becoming text that no longer sums.
+ */
+function neutralizeFormula(value: string): string {
+  if (!/^[\s\t]*[=+\-@\t\r]/.test(value)) return value;
+  if (value.trim() !== "" && Number.isFinite(Number(value.trim()))) return value;
+  return `'${value}`;
+}
+
+/**
+ * Undoes `neutralizeFormula` on the way back in.
+ *
+ * Only before a character that would have been guarded — an apostrophe is a
+ * legitimate first character of a name (O'Brien is not one, but 'Anna' with
+ * quotes typed by hand is), and stripping it unconditionally would quietly
+ * rename people.
+ */
+function readFormulaGuard(value: string): string {
+  return /^'[\s\t]*[=+\-@\t\r]/.test(value) ? value.slice(1) : value;
 }
 
 /** Semicolon + CRLF + BOM: exactly what Swedish Excel round-trips cleanly. */
