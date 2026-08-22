@@ -714,3 +714,50 @@ $$;
 ROLLBACK;
 
 SELECT 'rls-policies: all assertions passed' AS result;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 9: no read policy answers "is this row mine?" without also asking
+-- "is this row my school's?".
+--
+-- Nine SELECT policies keyed on the caller's group or membership and never on
+-- the row's schoolId. On its own that is only theoretical — but the create
+-- endpoints for teaching requirements and master lessons copy studentGroupId
+-- straight from the request without checking whose it is, and PostgreSQL runs
+-- foreign-key checks as the referenced table's OWNER with row security off, so
+-- an FK pointing at a row the caller cannot even SELECT still validates. An
+-- admin of one school could therefore write a row carrying their own schoolId
+-- and another school's group, and that school's pupils saw it in their
+-- timetable while their own admin could neither see nor delete it.
+--
+-- Asserted over the catalog rather than with fixture rows on purpose. The
+-- defect was not one wrong policy; it was a shape that nine policies shared and
+-- that the next one written the same way would share too. A catalog check
+-- fails on the tenth before anybody plants anything.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  offenders text;
+BEGIN
+  SELECT string_agg(tablename || '.' || policyname, ', ' ORDER BY tablename, policyname)
+    INTO offenders
+  FROM pg_policies
+  WHERE schemaname = 'public'
+    AND (
+      qual LIKE '%current_user_group_id%'
+      OR qual LIKE '%StudentGroupMembers%'
+      OR qual LIKE '%CalendarLessonStudents%'
+    )
+    AND qual NOT LIKE '%current_school_id%'
+    -- StudentGroupMembers' own policies are the exception the rule needs: the
+    -- table IS the membership, so a policy over it that asked the caller's
+    -- school would be asking about itself. They carry schoolId predicates of
+    -- their own where they need them.
+    AND tablename <> 'StudentGroupMembers';
+
+  IF offenders IS NOT NULL THEN
+    RAISE EXCEPTION
+      'read policies that never ask which school the row belongs to: %', offenders;
+  END IF;
+END $$;
