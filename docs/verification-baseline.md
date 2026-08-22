@@ -26,6 +26,7 @@ could be evaluated at all.
 | WCAG 2.1 AA (axe-core) | ✓ pass (10/10, one real defect fixed) |
 | Visual regression | ✓ pass (16/16 on linux-x64 baselines) |
 | API coverage | ✗ 95.09% vs 95% (ratcheted at 95; remainder is module wiring) |
+| Mobile coverage | ✗ 12.83% vs 95% (first floor at 12; runner stood up 2026-08-22) |
 | Solver coverage | ✗ 89.50% vs 95% (ratcheted at 81) |
 | Mutation score | ✗ 66.21% vs 85% |
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
@@ -68,6 +69,7 @@ could be evaluated at all.
 | API function coverage | ≥ 95% | 90.59% (520/574) | ✗ | same |
 | Solver line coverage | ≥ 95% | **89.50%** (1333 stmts, 125 missed) | ✗ | `npm run test:engine:cov` |
 | Mutation score, tested files | ≥ 85% | **66.21%** (192 killed / 97 survived) | ✗ | `npm run test:mutation` |
+| Mobile unit coverage | ≥ 95% | **12.83%** statements (services, utils, hooks) | ✗ | `npm run test:mobile:cov` |
 | Web unit coverage | ≥ 95% | **88.98%** lines (1397/1570) | ✗ | `npm run test:unit:cov` in `web/` |
 
 The API suite is 868 tests across 47 suites, all passing. The solver suite is

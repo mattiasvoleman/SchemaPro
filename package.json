@@ -36,6 +36,8 @@
     "dev:mobile": "npm run start --prefix mobile",
     "dev:engine": "cd optimization-engine && uvicorn app.main:app --reload --port 8000",
     "test:web": "npm run test --prefix web",
+    "test:mobile": "npm run test --prefix mobile",
+    "test:mobile:cov": "npm run test:cov --prefix mobile",
     "test:a11y": "npx --prefix web playwright test --project=a11y",
     "test:visual": "npx --prefix web playwright test --project=visual --project=visual-mobile",
     "test:visual:update": "npx --prefix web playwright test --project=visual --project=visual-mobile --update-snapshots",

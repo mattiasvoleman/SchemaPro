@@ -351,7 +351,7 @@ jobs:
             p/react
 
   mobile:
-    name: Mobile — typecheck
+    name: Mobile — typecheck & tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -378,3 +378,9 @@ jobs:
 
       - name: Typecheck
         run: npx tsc --noEmit
+
+      # The app holds attendance for real children in an offline queue on a
+      # tablet several teachers share, and a mistake there is invisible until
+      # the register is already wrong. It went untested for far too long.
+      - name: Unit tests
+        run: npx jest --coverage --ci
