@@ -499,7 +499,8 @@
     "periodHint": "Lämna tomt för hela läsåret. Fyll i för ett ämne som bara läses en del av året, till exempel en halv termin.",
     "badgeOdd": "udda",
     "badgeEven": "jämna",
-    "badgePeriod": "period"
+    "badgePeriod": "period",
+    "editRemoved": "{count, plural, =1 {1 kalenderlektion togs bort — publicera igen för att lägga tillbaka lektioner som ryms.} other {# kalenderlektioner togs bort — publicera igen för att lägga tillbaka lektioner som ryms.}}"
   },
   "dayPlanner": {
     "title": "Dagsplanering",

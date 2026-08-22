@@ -14,6 +14,7 @@ import { firstValueFrom, TimeoutError } from 'rxjs';
 import { timeout, catchError } from 'rxjs/operators';
 import type { AiEngineConfig } from '../config/configuration';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import type { RecurrenceWindow } from '../calendar/lesson-recurrence';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import type {
@@ -49,6 +50,32 @@ import type {
  * 5. Map the AI engine's anonymous response back to real DB ids using the
  *    retained anon→real id map before persisting master lessons.
  */
+/**
+ * Master lessons a regeneration leaves alone, expressed once.
+ *
+ * Four shapes with one thing in common: each carries intent the solver cannot
+ * express and therefore could never put back. A locked lesson is a placement
+ * somebody chose. A multi-class or named-student lesson is a construct the
+ * generator does not build. And a lesson that does not run every week — slöjd
+ * udda veckor, kemi bara på vårterminen — is a decision about the calendar the
+ * engine has no concept of at all: regenerating it returned it as an ordinary
+ * weekly lesson, silently, and a term-long course became a year-long one with
+ * nothing in the audit trail to say so.
+ *
+ * Referenced from the two places that must agree exactly: the fetch that
+ * forwards these to the engine as immovable placements, and the delete that
+ * clears the machine-owned remainder. One constant, because a lesson that is
+ * in one list and not the other is either sent twice or thrown away.
+ */
+const PRESERVED_FROM_REGENERATION = [
+  { isLocked: true },
+  { extraGroups: { some: {} } },
+  { participants: { some: {} } },
+  { recurrence: { not: 'ALL_WEEKS' as const } },
+  { startDate: { not: null } },
+  { endDate: { not: null } },
+];
+
 @Injectable()
 export class OptimizationProxyService {
   private readonly logger = new Logger(OptimizationProxyService.name);
@@ -202,21 +229,12 @@ export class OptimizationProxyService {
       },
     });
 
-    // Locked master lessons are immovable, and participant lessons
-    // (multi-class / individual students) are manual constructs the generator
-    // never recreates — both are forwarded to the engine as fixed placements
-    // and preserved by regeneration. Their count is subtracted from the
-    // weekly demand of the matching requirement so the solver only re-places
-    // the machine-owned remainder.
+    // See PRESERVED_FROM_REGENERATION: these are the lessons regeneration must
+    // not touch and must plan around. Their count is subtracted from the weekly
+    // demand of the matching requirement, so the solver re-places only the
+    // machine-owned remainder.
     const lockedLessons = await tx.masterLesson.findMany({
-      where: {
-        academicYearId,
-        OR: [
-          { isLocked: true },
-          { extraGroups: { some: {} } },
-          { participants: { some: {} } },
-        ],
-      },
+      where: { academicYearId, OR: PRESERVED_FROM_REGENERATION },
       select: {
         id: true,
         subjectId: true,
@@ -227,6 +245,12 @@ export class OptimizationProxyService {
         dayOfWeek: true,
         startTime: true,
         endTime: true,
+        // Not forwarded — the engine has no notion of weeks. Selected because
+        // the subtraction below has to know whether a locked lesson is really
+        // there every week before it cancels a week's worth of demand.
+        recurrence: true,
+        startDate: true,
+        endDate: true,
         extraGroups: { select: { studentGroupId: true } },
       },
     });
@@ -388,8 +412,40 @@ export class OptimizationProxyService {
       }
     }
 
+    /*
+     * How much of the weekly demand is already placed by hand.
+     *
+     * Only a lesson that is there every week can cancel a lesson a week. The
+     * engine has no concept of weeks at all, so whatever is subtracted here is
+     * subtracted from every week alike — there is no way to say "one lesson,
+     * but only on odd ones". That leaves only the choice of which way to be
+     * wrong, and the two directions are not symmetric.
+     *
+     * Counting an alternating lesson under-delivers, invisibly: lessonsPerWeek
+     * 2 with one locked odd-week lesson sends 1 to the solver, and the class
+     * quietly gets one lesson on even weeks for the rest of the year while the
+     * timplan says two. Nothing on any screen says so. Not counting it
+     * over-delivers: an extra lesson on odd weeks, sitting on the timetable in
+     * front of the administrator, who can unlock or remove it. That costs
+     * packing room and not correctness — the locked lesson is forwarded as a
+     * fixed placement either way, so its slot stays blocked in every week, and
+     * what the engine adds runs every week itself.
+     *
+     * So anything but the unrestricted default is left uncounted. Deliberately
+     * a test for "unrestricted" rather than a second reading of runsOn: what
+     * runs when is defined once, in calendar/lesson-recurrence.ts, and a
+     * recurrence added there later lands on the visible side of the error
+     * without this line being touched. That module reads a missing recurrence
+     * as ALL_WEEKS because there the wrong guess would drop half a school's
+     * lessons; here the wrong guess would hide them, so the fallthrough leans
+     * the other way and an absent column counts for nothing.
+     */
+    const runsEveryWeek = (lesson: RecurrenceWindow): boolean =>
+      lesson.recurrence === 'ALL_WEEKS' && !lesson.startDate && !lesson.endDate;
+
     const lockedCountByDemand = new Map<string, number>();
     for (const lesson of lockedLessons) {
+      if (!runsEveryWeek(lesson)) continue;
       const key = `${lesson.studentGroupId}:${lesson.subjectId}`;
       lockedCountByDemand.set(key, (lockedCountByDemand.get(key) ?? 0) + 1);
     }
@@ -837,13 +893,8 @@ export class OptimizationProxyService {
     // Non-destructive regeneration: locked lessons AND participant lessons
     // (manual multi-class / individual-student constructs) are preserved
     // verbatim; only machine-owned lessons are replaced by the new solution.
-    const preservedWhere = {
-      OR: [
-        { isLocked: true },
-        { extraGroups: { some: {} } },
-        { participants: { some: {} } },
-      ],
-    };
+    // The same four shapes the fetch above shares; see the constant for why.
+    const preservedWhere = { OR: PRESERVED_FROM_REGENERATION };
 
     /*
      * The dated lessons of the templates about to go, removed before the

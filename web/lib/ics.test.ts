@@ -13,6 +13,33 @@ const lesson = (overrides: Partial<IcsLesson> = {}): IcsLesson => ({
   ...overrides,
 });
 
+const yyyymmdd = (date: Date) =>
+  `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}` +
+  `${String(date.getDate()).padStart(2, "0")}`;
+
+/**
+ * Expand the calendar the way a subscriber's client would.
+ *
+ * Covers only the FREQ=WEEKLY[;INTERVAL=n];UNTIL rules buildIcs writes, and
+ * deliberately re-reads them off the emitted text rather than asking the
+ * module anything — asserting the rule string alone would not notice a rule
+ * that is well-formed and lands on the wrong dates.
+ */
+function expandRrules(ics: string): string[] {
+  const dates: string[] = [];
+  for (const event of ics.split("BEGIN:VEVENT").slice(1)) {
+    const start = /DTSTART:(\d{4})(\d{2})(\d{2})T/.exec(event)!;
+    const rule = /RRULE:FREQ=WEEKLY(?:;INTERVAL=(\d+))?;UNTIL=(\d{8})T/.exec(event)!;
+    const stepDays = 7 * Number(rule[1] ?? "1");
+    const date = new Date(Number(start[1]), Number(start[2]) - 1, Number(start[3]));
+    while (yyyymmdd(date) <= rule[2]!) {
+      dates.push(yyyymmdd(date));
+      date.setDate(date.getDate() + stepDays);
+    }
+  }
+  return dates.sort();
+}
+
 describe("buildIcs", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -113,6 +140,106 @@ describe("buildIcs", () => {
     expect(lines).not.toContain("BEGIN:VEVENT");
   });
 
+  it("treats an explicit ALL_WEEKS the same as no recurrence at all", () => {
+    const lines = buildIcs([lesson({ recurrence: "ALL_WEEKS" })], YEAR).split("\r\n");
+    expect(lines).toContain("DTSTART:20260824T081500");
+    expect(lines).toContain("RRULE:FREQ=WEEKLY;UNTIL=20270611T235959");
+  });
+
+  it("emits INTERVAL=2 from the first odd ISO week for an odd-week lesson", () => {
+    // Autumn term only, so the run is uninterrupted. Monday 2026-08-24 is ISO
+    // week 35 — the first odd week of the year — and 2026-10-19 is week 43.
+    const lines = buildIcs(
+      [lesson({ recurrence: "ODD_WEEKS", endDate: "2026-10-31" })],
+      YEAR,
+    ).split("\r\n");
+    expect(lines).toContain("DTSTART:20260824T081500");
+    expect(lines).toContain("DTEND:20260824T090000");
+    expect(lines).toContain("RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=20261031T235959");
+  });
+
+  it("starts an even-week lesson one week after an odd-week one", () => {
+    // Same slot, opposite parity: 2026-08-24 is week 35, 2026-08-31 is week 36.
+    // Getting this backwards puts every single date on the wrong week.
+    const lines = buildIcs(
+      [lesson({ recurrence: "EVEN_WEEKS", endDate: "2026-10-31" })],
+      YEAR,
+    ).split("\r\n");
+    expect(lines).toContain("DTSTART:20260831T081500");
+    expect(lines).toContain("RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=20261031T235959");
+  });
+
+  it("respects a lesson's own start and end dates", () => {
+    const lines = buildIcs(
+      [lesson({ startDate: "2027-01-11", endDate: "2027-02-01" })],
+      YEAR,
+    ).split("\r\n");
+    expect(lines).toContain("DTSTART:20270111T081500");
+    expect(lines).toContain("RRULE:FREQ=WEEKLY;UNTIL=20270201T235959");
+  });
+
+  it("clamps a lesson period that reaches outside the academic year", () => {
+    const lines = buildIcs(
+      [lesson({ startDate: "2026-06-01", endDate: "2027-12-31" })],
+      YEAR,
+    ).split("\r\n");
+    // The year still bounds both ends: first Monday on/after 2026-08-19, and
+    // the year's own end, not the lesson's.
+    expect(lines).toContain("DTSTART:20260824T081500");
+    expect(lines).toContain("RRULE:FREQ=WEEKLY;UNTIL=20270611T235959");
+  });
+
+  it("drops a lesson whose period holds no week it actually runs", () => {
+    // The only Monday in this period is 2026-08-31, ISO week 36 — even.
+    const ics = buildIcs(
+      [
+        lesson({
+          id: "never",
+          recurrence: "ODD_WEEKS",
+          startDate: "2026-08-25",
+          endDate: "2026-09-04",
+        }),
+      ],
+      YEAR,
+    );
+    expect(ics).not.toContain("BEGIN:VEVENT");
+  });
+
+  it("splits an alternating lesson across a 53-week ISO year", () => {
+    // 2026 has 53 ISO weeks, so week 53 (2026-12-28) is followed directly by
+    // week 1 (2027-01-04) — two odd weeks running. INTERVAL=2 cannot step over
+    // that, so the spring term becomes a second series.
+    const lines = buildIcs([lesson({ recurrence: "ODD_WEEKS" })], YEAR).split("\r\n");
+    expect(lines.filter((line) => line === "BEGIN:VEVENT")).toHaveLength(2);
+    expect(lines).toContain("UID:les-1@schemapro");
+    expect(lines).toContain("DTSTART:20260824T081500");
+    expect(lines).toContain("RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=20261228T235959");
+    expect(lines).toContain("UID:les-1-2@schemapro");
+    expect(lines).toContain("DTSTART:20270104T081500");
+    expect(lines).toContain("RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=20270611T235959");
+  });
+
+  it("expands to exactly the odd ISO weeks of the year", () => {
+    expect(expandRrules(buildIcs([lesson({ recurrence: "ODD_WEEKS" })], YEAR))).toEqual([
+      // Weeks 35..53 of 2026, then 1..23 of 2027.
+      "20260824", "20260907", "20260921", "20261005", "20261019", "20261102",
+      "20261116", "20261130", "20261214", "20261228", "20270104", "20270118",
+      "20270201", "20270215", "20270301", "20270315", "20270329", "20270412",
+      "20270426", "20270510", "20270524", "20270607",
+    ]);
+  });
+
+  it("expands to exactly the even ISO weeks of the year", () => {
+    // The even-week seam is three weeks wide, not one: weeks 53 and 1 are both
+    // odd, so 2026-12-21 (week 52) is followed by 2027-01-11 (week 2).
+    expect(expandRrules(buildIcs([lesson({ recurrence: "EVEN_WEEKS" })], YEAR))).toEqual([
+      "20260831", "20260914", "20260928", "20261012", "20261026", "20261109",
+      "20261123", "20261207", "20261221", "20270111", "20270125", "20270208",
+      "20270222", "20270308", "20270322", "20270405", "20270419", "20270503",
+      "20270517", "20270531",
+    ]);
+  });
+
   // SUSPECTED BUG (pinned, not fixed): RFC 5545 §3.1 requires content lines
   // longer than 75 octets to be folded (CRLF + space continuation). buildIcs
   // never folds, so a long summary is emitted as one over-long line, which
@@ -180,5 +307,92 @@ describe("downloadIcs", () => {
     ).mock.invocationCallOrder[0]!;
     const revokeOrder = revokeObjectURL.mock.invocationCallOrder[0]!;
     expect(revokeOrder).toBeGreaterThan(clickOrder);
+  });
+});
+
+/** Expand an ICS RRULE the way a calendar client would, for comparison. */
+function expand(ics: string): string[] {
+  const out: string[] = [];
+  for (const block of ics.split("BEGIN:VEVENT").slice(1)) {
+    const start = /DTSTART:(\d{8})/.exec(block)![1]!;
+    const rule = /RRULE:([^\r\n]+)/.exec(block)![1]!;
+    const until = /UNTIL=(\d{8})/.exec(rule)![1]!;
+    const stride = rule.includes("INTERVAL=2") ? 14 : 7;
+    const toDate = (s: string) =>
+      new Date(`${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}T00:00:00`);
+    const day = (d: Date) =>
+      `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    for (let d = toDate(start); day(d) <= until; d = new Date(d.getTime() + stride * 86400000)) {
+      out.push(day(d));
+    }
+  }
+  return out.sort();
+}
+
+/** The server's rule, transcribed: ISO week number, Thursday rule. */
+function isoWeekNumber(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil(((d.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
+
+function truthFor(recurrence: string, weekday: number, from: string, to: string): string[] {
+  const out: string[] = [];
+  for (let d = new Date(`${from}T00:00:00`); d <= new Date(`${to}T00:00:00`); d = new Date(d.getTime() + 86400000)) {
+    if ((d.getDay() || 7) !== weekday) continue;
+    const odd = isoWeekNumber(d) % 2 === 1;
+    if (recurrence === "ALL_WEEKS" || (recurrence === "ODD_WEEKS" ? odd : !odd)) {
+      out.push(`${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * The whole rule, checked against itself rather than against examples.
+ *
+ * A parent subscribes to this file once and then trusts it for a year. The two
+ * ways it can lie are symmetrical and both silent: an event on a week the class
+ * does not meet, and a missing event on a week it does. INTERVAL=2 counts
+ * fourteen days from DTSTART while the parity we mean is the ISO week number,
+ * and an ISO year with 53 weeks puts two odd weeks side by side — so the rule
+ * has a seam in it, and a seam is not something example tests find reliably.
+ *
+ * This expands what the file actually says the way a calendar client would,
+ * and compares every date against the server's own definition, over sixteen
+ * school years.
+ */
+describe("a broad sweep of school years, parities and weekdays", () => {
+  it("never emits a date the school does not run, and never misses one", () => {
+    const mismatches: string[] = [];
+    for (let year = 2020; year <= 2035; year++) {
+      const yearStart = `${year}-08-17`;
+      const yearEnd = `${year + 1}-06-11`;
+      for (const recurrence of ["ALL_WEEKS", "ODD_WEEKS", "EVEN_WEEKS"] as const) {
+        for (let weekday = 1; weekday <= 5; weekday++) {
+          for (const [startDate, endDate] of [
+            [null, null],
+            [`${year}-10-05`, `${year + 1}-02-17`],
+            [null, `${year}-12-23`],
+          ] as const) {
+            const ics = buildIcs(
+              [{ id: "l", dayOfWeek: weekday, startTime: "08:00", endTime: "09:00",
+                 summary: "S", recurrence, startDate, endDate } as never],
+              { calendarName: "x", yearStart, yearEnd },
+            );
+            const from = startDate && startDate > yearStart ? startDate : yearStart;
+            const to = endDate && endDate < yearEnd ? endDate : yearEnd;
+            const emitted = expand(ics).join(",");
+            const truth = truthFor(recurrence, weekday, from, to).join(",");
+            if (emitted !== truth) {
+              mismatches.push(`${year} ${recurrence} d${weekday} ${startDate ?? "-"}..${endDate ?? "-"}`);
+            }
+          }
+        }
+      }
+    }
+    expect(mismatches).toEqual([]);
   });
 });

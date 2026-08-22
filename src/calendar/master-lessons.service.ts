@@ -8,7 +8,7 @@ import {
 import type { PrismaClient, Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
-import { weeksCanOverlap } from './lesson-recurrence';
+import { runsOn, weeksCanOverlap } from './lesson-recurrence';
 import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -46,6 +46,11 @@ export interface MasterLessonResult {
 export interface UpdateMasterLessonResult extends MasterLessonResult {
   /** Future calendar lessons that were moved along with the template. */
   propagatedLessons: number;
+  /**
+   * Future, attendance-free calendar lessons dropped because the template's
+   * new weeks no longer cover the date they sat on.
+   */
+  removedCalendarLessons: number;
 }
 
 export interface DeleteMasterLessonResult {
@@ -295,9 +300,9 @@ export class MasterLessonsService {
         select: LESSON_SELECT,
       });
 
-      const propagatedLessons =
+      const { moved: propagatedLessons, removed: removedCalendarLessons } =
         dto.propagate === false
-          ? 0
+          ? { moved: 0, removed: 0 }
           : await this.propagate(tx, lesson, updated, lesson.school.timezone, lesson.school.id);
 
       const before = toResult(lesson);
@@ -313,13 +318,14 @@ export class MasterLessonsService {
       });
 
       this.logger.log(
-        `Master lesson adjusted [lesson=${id}, propagated=${propagatedLessons}]`,
+        `Master lesson adjusted [lesson=${id}, propagated=${propagatedLessons}, removed=${removedCalendarLessons}]`,
       );
       this.realtime.notifyMasterTimetableChanged(lesson.school.id);
 
       // In-app schedule-change notice to affected classes once published
-      // lessons actually moved.
-      if (propagatedLessons > 0) {
+      // lessons actually moved — or disappeared, which the class needs to
+      // hear about just as much.
+      if (propagatedLessons > 0 || removedCalendarLessons > 0) {
         const recipients = await this.notifications.recipientsForGroups(tx, [
           lesson.studentGroupId,
           ...lesson.extraGroups.map((entry) => entry.studentGroupId),
@@ -341,7 +347,7 @@ export class MasterLessonsService {
         });
       }
 
-      return { ...after, propagatedLessons };
+      return { ...after, propagatedLessons, removedCalendarLessons };
     });
   }
 
@@ -365,15 +371,8 @@ export class MasterLessonsService {
       // Remove future, still-SCHEDULED materialized lessons without recorded
       // attendance. Past lessons and lessons with attendance stay (history
       // must remain accurate); the FK sets their masterLessonId to null.
-      const today = new Date();
-      today.setUTCHours(0, 0, 0, 0);
       const { count: removedCalendarLessons } = await tx.calendarLesson.deleteMany({
-        where: {
-          masterLessonId: id,
-          status: 'SCHEDULED',
-          date: { gte: today },
-          attendanceRecords: { none: {} },
-        },
+        where: reconcilableLessons(id),
       });
 
       await tx.masterLesson.delete({ where: { id } });
@@ -601,9 +600,22 @@ export class MasterLessonsService {
   // ---------------------------------------------------------------------
 
   /**
-   * Moves future, still-SCHEDULED calendar lessons that were materialized
-   * from this template and carry no attendance yet. Lessons in the past or
-   * with attendance are left untouched (history must stay accurate).
+   * Reconciles future, still-SCHEDULED calendar lessons that were
+   * materialized from this template and carry no attendance yet: they move
+   * with the slot, and the ones the template no longer runs on are removed.
+   * Lessons in the past or with attendance are left untouched (history must
+   * stay accurate).
+   *
+   * Only the removing half lives here, deliberately. Narrowing a template —
+   * every week to odd weeks, a term end pulled forward — strands rows that no
+   * later publish can ever reach again, because publishing only ever creates;
+   * they would sit in the calendar until the template itself is deleted, so
+   * this is the one place that can clear them. Widening leaves the opposite
+   * gap, dates that ought to exist and do not, but filling it is
+   * materialization: it needs the academic year's bounds, the holiday
+   * closures and the idempotency set that `CalendarService.publish` owns.
+   * Re-publishing is how those dates appear, and it is idempotent, so it can
+   * be run any time after the change.
    */
   private async propagate(
     tx: PrismaClient,
@@ -614,30 +626,36 @@ export class MasterLessonsService {
       endTime: Date;
       roomId: string | null;
       teacherId: string | null;
+      recurrence: LessonRecurrence;
+      startDate: Date | null;
+      endDate: Date | null;
     },
     timezone: string,
     schoolId: string,
-  ): Promise<number> {
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-
+  ): Promise<{ moved: number; removed: number }> {
     const futureLessons = await tx.calendarLesson.findMany({
-      where: {
-        masterLessonId: before.id,
-        status: 'SCHEDULED',
-        date: { gte: today },
-        attendanceRecords: { none: {} },
-      },
+      where: reconcilableLessons(before.id),
       select: { id: true, date: true },
     });
 
     const dayShift = after.dayOfWeek - before.dayOfWeek;
     const startHHMM = toHHMM(after.startTime);
     const endHHMM = toHHMM(after.endTime);
+    const stale: string[] = [];
+    let moved = 0;
 
     for (const calendarLesson of futureLessons) {
       const newDate = new Date(calendarLesson.date);
       newDate.setUTCDate(newDate.getUTCDate() + dayShift);
+
+      // The date the row would land on is the one that has to survive the
+      // template's own rule — a weekday move can carry a half-term lesson
+      // past its end date, and a parity change empties every other week.
+      if (!runsOn(after, newDate)) {
+        stale.push(calendarLesson.id);
+        continue;
+      }
+
       const dateString = newDate.toISOString().slice(0, 10);
 
       await tx.calendarLesson.update({
@@ -649,6 +667,7 @@ export class MasterLessonsService {
           roomId: after.roomId,
         },
       });
+      moved++;
 
       // Keep the LEAD teacher assignment in sync with the template.
       if (after.teacherId !== before.teacherId) {
@@ -668,7 +687,13 @@ export class MasterLessonsService {
       }
     }
 
-    return futureLessons.length;
+    // Deleting by id alone is safe: these ids come from the guarded query
+    // above, so they are already future, SCHEDULED and attendance-free.
+    if (stale.length > 0) {
+      await tx.calendarLesson.deleteMany({ where: { id: { in: stale } } });
+    }
+
+    return { moved, removed: stale.length };
   }
 
   // ---------------------------------------------------------------------
@@ -761,6 +786,28 @@ function toResult(lesson: LessonRecord): MasterLessonResult {
     endDate: toDateStringOrNull(lesson.endDate),
     extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
     studentIds: lesson.participants.map((entry) => entry.studentId),
+  };
+}
+
+/**
+ * The materialized lessons a template change may still rewrite or remove.
+ *
+ * One definition for both callers: deleting the template and narrowing it
+ * throw away the same rows, and a difference between the two rules would mean
+ * a lesson that survives one and not the other. Anything in the past, no
+ * longer merely SCHEDULED (cancelled, completed, rescheduled by hand), or
+ * with attendance recorded is what happened, and stays as it happened.
+ */
+function reconcilableLessons(
+  masterLessonId: string,
+): Prisma.CalendarLessonWhereInput {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  return {
+    masterLessonId,
+    status: 'SCHEDULED',
+    date: { gte: today },
+    attendanceRecords: { none: {} },
   };
 }
 

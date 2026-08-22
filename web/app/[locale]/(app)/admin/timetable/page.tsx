@@ -168,6 +168,25 @@ export default function TimetablePage() {
   const { data: people } = usePeople();
   const { data: constraints } = useConstraints();
   const { data: requirements } = useRequirements(activeYear?.id ?? null);
+  /**
+   * What an edit actually did, including the part that is not reversible by
+   * editing back.
+   *
+   * Narrowing a lesson's weeks or its date window removes the future calendar
+   * rows the new window no longer covers. Widening it again does not put them
+   * back — publishing does — so an admin who is not told simply loses lessons
+   * from the calendar and finds out later.
+   */
+  const editSavedMessage = (result: {
+    propagatedLessons: number;
+    removedCalendarLessons?: number;
+  }): string => {
+    const saved = t("editSaved", { count: result.propagatedLessons });
+    return result.removedCalendarLessons
+      ? `${saved} ${t("editRemoved", { count: result.removedCalendarLessons })}`
+      : saved;
+  };
+
   const publish = usePublishSchedule();
   const { data: lunchSettings } = useLunchSettings();
   const updateLesson = useUpdateMasterLesson();
@@ -515,7 +534,7 @@ export default function TimetablePage() {
         endTime: minutesToHHMM(change.endMinutes),
       })
         .then((result) =>
-          toast.success(t("editSaved", { count: result.propagatedLessons })),
+          toast.success(editSavedMessage(result)),
         )
         .catch(showError);
     },
@@ -561,7 +580,7 @@ export default function TimetablePage() {
         startTime: minutesToHHMM(suggestion.startMinutes),
         endTime: minutesToHHMM(suggestion.endMinutes),
       });
-      toast.success(t("editSaved", { count: result.propagatedLessons }));
+      toast.success(editSavedMessage(result));
       setSuggesting(null);
     } catch (error) {
       showError(error);
@@ -743,7 +762,7 @@ export default function TimetablePage() {
         startDate: editStartDate === "" ? null : editStartDate,
         endDate: editEndDate === "" ? null : editEndDate,
       });
-      toast.success(t("editSaved", { count: result.propagatedLessons }));
+      toast.success(editSavedMessage(result));
       setEditing(null);
       setRemoteEditing(null);
     } catch (error) {
@@ -938,6 +957,11 @@ export default function TimetablePage() {
           description: teacher
             ? `${teacher.firstName} ${teacher.lastName}`
             : undefined,
+          // Without these a subscriber sees slöjd every week when it runs
+          // every other, and a spring course all through the autumn.
+          recurrence: lesson.recurrence,
+          startDate: lesson.startDate,
+          endDate: lesson.endDate,
         };
       }),
       {

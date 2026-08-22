@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import type { LessonRecurrence } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -33,6 +34,46 @@ const CREATED_AT = new Date('2026-08-06T12:00:00.000Z');
 
 /** parseHHMM builds times on the epoch day, UTC. */
 const utcTime = (h: number, m: number) => new Date(Date.UTC(1970, 0, 1, h, m));
+/** `@db.Date` columns come back from Prisma at midnight UTC. */
+const utcDate = (day: string) => new Date(`${day}T00:00:00.000Z`);
+
+/** One master lesson as `snapshot()` reads it back from Prisma. */
+type MasterLessonRow = {
+  subjectId: string;
+  studentGroupId: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  roomId: string | null;
+  dayOfWeek: number;
+  startTime: Date;
+  endTime: Date;
+  isLocked: boolean;
+  recurrence: LessonRecurrence;
+  startDate: Date | null;
+  endDate: Date | null;
+  extraGroups: { studentGroupId: string }[];
+  participants: { studentId: string }[];
+};
+
+const masterLessonRow = (
+  overrides: Partial<MasterLessonRow> = {},
+): MasterLessonRow => ({
+  subjectId: SUBJECT_ID,
+  studentGroupId: GROUP_ID,
+  teacherId: TEACHER_ID,
+  coTeacherId: null,
+  roomId: ROOM_ID,
+  dayOfWeek: 2,
+  startTime: utcTime(8, 5),
+  endTime: utcTime(9, 30),
+  isLocked: true,
+  recurrence: 'ALL_WEEKS',
+  startDate: null,
+  endDate: null,
+  extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }],
+  participants: [{ studentId: STUDENT_ID }],
+  ...overrides,
+});
 
 describe('ScheduleVersionsService', () => {
   let service: ScheduleVersionsService;
@@ -104,21 +145,6 @@ describe('ScheduleVersionsService', () => {
       });
     };
 
-    /** One master lesson as `snapshot()` reads it back from Prisma. */
-    const masterLessonRow = () => ({
-      subjectId: SUBJECT_ID,
-      studentGroupId: GROUP_ID,
-      teacherId: TEACHER_ID,
-      coTeacherId: null,
-      roomId: ROOM_ID,
-      dayOfWeek: 2,
-      startTime: utcTime(8, 5),
-      endTime: utcTime(9, 30),
-      isLocked: true,
-      extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }],
-      participants: [{ studentId: STUDENT_ID }],
-    });
-
     it('404s when the academic year does not exist', async () => {
       tx.academicYear.findUnique.mockResolvedValue(null);
 
@@ -157,6 +183,9 @@ describe('ScheduleVersionsService', () => {
                 startTime: '08:05',
                 endTime: '09:30',
                 isLocked: true,
+                recurrence: 'ALL_WEEKS',
+                startDate: null,
+                endDate: null,
                 extraGroupIds: [EXTRA_GROUP_ID],
                 studentIds: [STUDENT_ID],
               },
@@ -164,6 +193,37 @@ describe('ScheduleVersionsService', () => {
           }),
         }),
       );
+    });
+
+    it('snapshots the recurrence and the date window of a term-long lesson', async () => {
+      arrangeYear();
+      tx.masterLesson.findMany.mockResolvedValue([
+        masterLessonRow({
+          recurrence: 'ODD_WEEKS',
+          startDate: utcDate('2026-08-31'),
+          endDate: utcDate('2026-12-18'),
+        }),
+      ]);
+
+      await service.create(YEAR_ID, 'Draft v1', testUser());
+
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            recurrence: true,
+            startDate: true,
+            endDate: true,
+          }),
+        }),
+      );
+      const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
+      expect(lessons[0]).toMatchObject({
+        recurrence: 'ODD_WEEKS',
+        // Stored the way a `@db.Date` reads, not as a full timestamp — the
+        // restore parses these back.
+        startDate: '2026-08-31',
+        endDate: '2026-12-18',
+      });
     });
 
     it('returns the stored summary with an ISO timestamp', async () => {
@@ -241,11 +301,17 @@ describe('ScheduleVersionsService', () => {
       startTime: '08:15',
       endTime: '09:00',
       isLocked: true,
+      recurrence: 'ODD_WEEKS',
+      startDate: '2026-08-31',
+      endDate: '2026-12-18',
       extraGroupIds: [EXTRA_GROUP_ID],
       studentIds: [STUDENT_ID],
     });
 
-    /** Optional fields absent — the restore must default them. */
+    /**
+     * Optional fields absent — the restore must default them. This is also
+     * the shape of every snapshot stored before recurrence was carried.
+     */
     const minimalLesson = (): VersionLesson => ({
       subjectId: SUBJECT_ID,
       studentGroupId: GROUP_ID,
@@ -350,6 +416,9 @@ describe('ScheduleVersionsService', () => {
           startTime: utcTime(8, 15),
           endTime: utcTime(9, 0),
           isLocked: true,
+          recurrence: 'ODD_WEEKS',
+          startDate: utcDate('2026-08-31'),
+          endDate: utcDate('2026-12-18'),
           extraGroups: {
             create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
           },
@@ -370,6 +439,74 @@ describe('ScheduleVersionsService', () => {
           extraGroups: { create: [] },
           participants: { create: [] },
         }),
+      });
+    });
+
+    it('reads a snapshot stored before recurrence existed as every week', async () => {
+      arrangeRestore([minimalLesson()]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      // No key at all in the blob. Writing the column explicitly rather than
+      // leaning on its default keeps the reading visible at the boundary.
+      expect(tx.masterLesson.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+        }),
+      });
+    });
+
+    it('survives a round trip: what snapshot() writes, restore() reads back', async () => {
+      const row = masterLessonRow({
+        recurrence: 'EVEN_WEEKS',
+        startDate: utcDate('2027-01-11'),
+        endDate: utcDate('2027-06-11'),
+      });
+      // Snapshot the row, then feed that exact blob back into a restore. The
+      // two halves have to agree on the wire format or the window is lost.
+      arrangeRestore();
+      tx.academicYear.findUnique.mockResolvedValue({
+        id: YEAR_ID,
+        schoolId: SCHOOL_ID,
+      });
+      tx.masterLesson.findMany.mockResolvedValue([row]);
+      await service.create(YEAR_ID, 'Draft v1', testUser());
+      const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
+
+      arrangeRestore(lessons);
+      await service.restore(VERSION_ID, testUser());
+
+      expect(tx.masterLesson.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          recurrence: row.recurrence,
+          startDate: row.startDate,
+          endDate: row.endDate,
+        }),
+      });
+    });
+
+    it('carries recurrence into the automatic safety snapshot', async () => {
+      arrangeRestore([minimalLesson()]);
+      // The live timetable being replaced runs on odd weeks. If the safety
+      // snapshot flattens that, undoing this restore silently doubles the
+      // lesson — so the "a restore can always be reverted" promise fails.
+      tx.masterLesson.findMany.mockResolvedValue([
+        masterLessonRow({
+          recurrence: 'ODD_WEEKS',
+          startDate: utcDate('2026-08-31'),
+          endDate: null,
+        }),
+      ]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
+      expect(lessons[0]).toMatchObject({
+        recurrence: 'ODD_WEEKS',
+        startDate: '2026-08-31',
+        endDate: null,
       });
     });
 

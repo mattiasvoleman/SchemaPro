@@ -682,7 +682,16 @@ export function useUpdateMasterLesson() {
   const invalidate = useInvalidateSchedule();
   return useMutation({
     mutationFn: ({ id, ...body }: UpdateMasterLessonInput) =>
-      api.patch<MasterLessonResponse & { propagatedLessons: number }>(
+      // removedCalendarLessons: narrowing a lesson's weeks or its date window
+      // takes the future calendar rows the new window no longer covers. The
+      // admin has to be told — it is the one part of an edit that a widening
+      // edit does not put back on its own.
+      api.patch<
+        MasterLessonResponse & {
+          propagatedLessons: number;
+          removedCalendarLessons: number;
+        }
+      >(
         `/api/v1/master-lessons/${id}`,
         body,
       ),

@@ -35,6 +35,7 @@ const LESSON_ID = '55555555-5555-4555-8555-555555555555';
 const OTHER_LESSON_ID = '44444444-4444-4444-8444-444444444444';
 const STUDENT_ID = '33333333-3333-4333-8333-333333333331';
 const CAL_LESSON_ID = '11111111-2222-4333-8444-555555555555';
+const OTHER_CAL_LESSON_ID = '11111111-2222-4333-8444-666666666666';
 /** testUser()'s default userId — the audit-trail actor. */
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 
@@ -684,6 +685,8 @@ describe('MasterLessonsService', () => {
         extraGroupIds: [],
         studentIds: [],
         propagatedLessons: 1,
+        // The lesson still runs every week, so nothing is stranded.
+        removedCalendarLessons: 0,
       });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
@@ -706,6 +709,8 @@ describe('MasterLessonsService', () => {
           roomId: ROOM_ID,
         },
       });
+      // A plain move of an every-week lesson strands nothing.
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
       expect(realtime.notifyMasterTimetableChanged).toHaveBeenCalledWith(
         SCHOOL_ID,
       );
@@ -835,6 +840,155 @@ describe('MasterLessonsService', () => {
       });
     });
 
+    // ISO weeks for the dates below: 2026-08-10 is week 33 (odd),
+    // 2026-08-17 week 34 (even), 2026-08-24 week 35 (odd).
+    it('drops the calendar lessons the narrowed recurrence no longer covers', async () => {
+      arrangeUpdate({}, { recurrence: 'ODD_WEEKS' });
+      tx.calendarLesson.findMany.mockResolvedValue([
+        { id: CAL_LESSON_ID, date: new Date('2026-08-10T00:00:00.000Z') },
+        { id: OTHER_CAL_LESSON_ID, date: new Date('2026-08-17T00:00:00.000Z') },
+      ]);
+
+      await expect(
+        service.update(LESSON_ID, { recurrence: 'ODD_WEEKS' }, testUser()),
+      ).resolves.toMatchObject({
+        propagatedLessons: 1,
+        removedCalendarLessons: 1,
+      });
+
+      // The odd week survives untouched; the even week is unreachable by any
+      // later publish, so it is deleted rather than left behind.
+      expect(tx.calendarLesson.update).toHaveBeenCalledTimes(1);
+      expect(tx.calendarLesson.update).toHaveBeenCalledWith({
+        where: { id: CAL_LESSON_ID },
+        data: {
+          date: new Date('2026-08-10T00:00:00.000Z'),
+          startsAt: new Date('2026-08-10T08:00:00.000Z'),
+          endsAt: new Date('2026-08-10T09:00:00.000Z'),
+          roomId: ROOM_ID,
+        },
+      });
+      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: [OTHER_CAL_LESSON_ID] } },
+      });
+    });
+
+    it('drops calendar lessons left outside a term end pulled forward', async () => {
+      // The window itself is narrowed, without the slot moving at all:
+      // 2026-08-10 stays inside, 2026-09-14 falls past the new end date.
+      arrangeUpdate({}, { endDate: new Date('2026-09-07T00:00:00.000Z') });
+      tx.calendarLesson.findMany.mockResolvedValue([
+        { id: CAL_LESSON_ID, date: new Date('2026-08-10T00:00:00.000Z') },
+        { id: OTHER_CAL_LESSON_ID, date: new Date('2026-09-14T00:00:00.000Z') },
+      ]);
+
+      await expect(
+        service.update(LESSON_ID, { endDate: '2026-09-07' }, testUser()),
+      ).resolves.toMatchObject({
+        endDate: '2026-09-07',
+        propagatedLessons: 1,
+        removedCalendarLessons: 1,
+      });
+
+      // The DATE column holds midnight UTC, so the day is never shifted by a
+      // timezone on the way in.
+      expect(tx.masterLesson.update).toHaveBeenCalledWith({
+        where: { id: LESSON_ID },
+        data: {
+          dayOfWeek: 1,
+          endDate: new Date('2026-09-07T00:00:00.000Z'),
+        },
+        select: expect.any(Object),
+      });
+      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: [OTHER_CAL_LESSON_ID] } },
+      });
+    });
+
+    it("drops calendar lessons a weekday move carries past the template's end date", async () => {
+      // A half-term lesson, Mondays 2026-08-31 to 2026-09-16, moved to
+      // Fridays: 08-31 lands on 09-04 and stays, 09-14 lands on 09-18 and
+      // falls outside the template's own window.
+      const startDate = new Date('2026-08-31T00:00:00.000Z');
+      const endDate = new Date('2026-09-16T00:00:00.000Z');
+      arrangeUpdate(
+        { startDate, endDate },
+        { dayOfWeek: 5, startDate, endDate },
+      );
+      tx.calendarLesson.findMany.mockResolvedValue([
+        { id: CAL_LESSON_ID, date: new Date('2026-08-31T00:00:00.000Z') },
+        { id: OTHER_CAL_LESSON_ID, date: new Date('2026-09-14T00:00:00.000Z') },
+      ]);
+
+      await expect(
+        service.update(LESSON_ID, { dayOfWeek: 5 }, testUser()),
+      ).resolves.toMatchObject({
+        propagatedLessons: 1,
+        removedCalendarLessons: 1,
+      });
+
+      expect(tx.calendarLesson.update).toHaveBeenCalledTimes(1);
+      expect(tx.calendarLesson.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: CAL_LESSON_ID },
+          data: expect.objectContaining({
+            date: new Date('2026-09-04T00:00:00.000Z'),
+          }),
+        }),
+      );
+      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: [OTHER_CAL_LESSON_ID] } },
+      });
+    });
+
+    it('notifies the affected classes when the change only removed lessons', async () => {
+      // 2026-08-17 is week 34, so an ODD_WEEKS lesson loses it and moves
+      // nothing at all — the class still has to hear that it is gone.
+      arrangeUpdate({}, { recurrence: 'ODD_WEEKS' });
+      tx.calendarLesson.findMany.mockResolvedValue([
+        { id: CAL_LESSON_ID, date: new Date('2026-08-17T00:00:00.000Z') },
+      ]);
+      tx.subject.findUnique.mockResolvedValue({ name: 'Mathematics' });
+      notifications.recipientsForGroups.mockResolvedValue([STUDENT_ID]);
+
+      await expect(
+        service.update(LESSON_ID, { recurrence: 'ODD_WEEKS' }, testUser()),
+      ).resolves.toMatchObject({
+        propagatedLessons: 0,
+        removedCalendarLessons: 1,
+      });
+
+      expect(tx.calendarLesson.update).not.toHaveBeenCalled();
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          userIds: [STUDENT_ID],
+          type: 'SCHEDULE_CHANGED',
+        }),
+      );
+    });
+
+    it('leaves the LEAD teacher of a dropped lesson alone', async () => {
+      // The row is about to be deleted; rewriting its teacher first would be
+      // work on a lesson that no longer exists.
+      arrangeUpdate(
+        {},
+        { recurrence: 'ODD_WEEKS', teacherId: NEW_TEACHER_ID },
+      );
+      tx.calendarLesson.findMany.mockResolvedValue([
+        { id: CAL_LESSON_ID, date: new Date('2026-08-17T00:00:00.000Z') },
+      ]);
+
+      await service.update(
+        LESSON_ID,
+        { recurrence: 'ODD_WEEKS', teacherId: NEW_TEACHER_ID },
+        testUser(),
+      );
+
+      expect(tx.calendarLessonTeacher.deleteMany).not.toHaveBeenCalled();
+      expect(tx.calendarLessonTeacher.create).not.toHaveBeenCalled();
+    });
+
     it('skips propagation entirely when propagate is false', async () => {
       arrangeUpdate({}, { dayOfWeek: 5 });
 
@@ -844,8 +998,12 @@ describe('MasterLessonsService', () => {
           { dayOfWeek: 5, propagate: false },
           testUser(),
         ),
-      ).resolves.toMatchObject({ propagatedLessons: 0 });
+      ).resolves.toMatchObject({
+        propagatedLessons: 0,
+        removedCalendarLessons: 0,
+      });
       expect(tx.calendarLesson.findMany).not.toHaveBeenCalled();
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
       expect(notifications.notifyUsers).not.toHaveBeenCalled();
     });
 
@@ -996,7 +1154,10 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.update(LESSON_ID, { dayOfWeek: 3 }, testUser()),
-      ).resolves.toMatchObject({ propagatedLessons: 0 });
+      ).resolves.toMatchObject({
+        propagatedLessons: 0,
+        removedCalendarLessons: 0,
+      });
       expect(notifications.notifyUsers).not.toHaveBeenCalled();
       expect(notifications.recipientsForGroups).not.toHaveBeenCalled();
     });

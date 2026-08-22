@@ -4,11 +4,14 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { LessonRecurrence, Prisma, PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 
-/** One lesson inside a version snapshot (times as HH:MM strings). */
+/**
+ * One lesson inside a version snapshot (times as `HH:MM`, dates as
+ * `YYYY-MM-DD`).
+ */
 export interface VersionLesson {
   subjectId: string;
   studentGroupId: string;
@@ -19,6 +22,21 @@ export interface VersionLesson {
   startTime: string;
   endTime: string;
   isLocked: boolean;
+  /**
+   * Absent is read as ALL_WEEKS, the same reading `RecurrenceWindow` gives it.
+   *
+   * Snapshots written before this field was carried have no such key, and no
+   * migration can repair them: the blob is the only copy, and the master
+   * lessons it was taken from have since been edited or restored over. Those
+   * restores already produced ALL_WEEKS, because that is the column default —
+   * so reading an absent key that way keeps an old snapshot restoring exactly
+   * as it always did, rather than failing on it.
+   */
+  recurrence?: LessonRecurrence;
+  /** Absent or null means "from the start of the academic year". */
+  startDate?: string | null;
+  /** Absent or null means "until the year ends". */
+  endDate?: string | null;
   extraGroupIds?: string[];
   studentIds?: string[];
 }
@@ -155,6 +173,9 @@ export class ScheduleVersionsService {
             startTime: parseHHMM(lesson.startTime),
             endTime: parseHHMM(lesson.endTime),
             isLocked: lesson.isLocked,
+            recurrence: lesson.recurrence ?? 'ALL_WEEKS',
+            startDate: parseDateOrNull(lesson.startDate),
+            endDate: parseDateOrNull(lesson.endDate),
             extraGroups: {
               create: (lesson.extraGroupIds ?? []).map((studentGroupId) => ({
                 schoolId: version.schoolId,
@@ -236,6 +257,9 @@ export class ScheduleVersionsService {
         startTime: true,
         endTime: true,
         isLocked: true,
+        recurrence: true,
+        startDate: true,
+        endDate: true,
         extraGroups: { select: { studentGroupId: true } },
         participants: { select: { studentId: true } },
       },
@@ -251,6 +275,9 @@ export class ScheduleVersionsService {
       startTime: toHHMM(lesson.startTime),
       endTime: toHHMM(lesson.endTime),
       isLocked: lesson.isLocked,
+      recurrence: lesson.recurrence,
+      startDate: toDateStringOrNull(lesson.startDate),
+      endDate: toDateStringOrNull(lesson.endDate),
       extraGroupIds: lesson.extraGroups.map((entry) => entry.studentGroupId),
       studentIds: lesson.participants.map((entry) => entry.studentId),
     }));
@@ -294,4 +321,19 @@ function parseHHMM(value: string): Date {
   const d = new Date(0);
   d.setUTCHours(h ?? 0, m ?? 0, 0, 0);
   return d;
+}
+
+function toDateStringOrNull(value: Date | null): string | null {
+  return value ? value.toISOString().slice(0, 10) : null;
+}
+
+/**
+ * `YYYY-MM-DD` back to the midnight-UTC value a `@db.Date` column holds.
+ *
+ * The slice keeps a full ISO timestamp readable too: the blob is the only
+ * copy of a snapshot, so restoring must not turn on how a date was spelled.
+ */
+function parseDateOrNull(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  return new Date(`${value.slice(0, 10)}T00:00:00.000Z`);
 }

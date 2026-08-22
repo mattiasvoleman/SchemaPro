@@ -499,7 +499,8 @@
     "periodHint": "Leave empty for the whole academic year. Fill in for a subject read for part of it, such as half a term.",
     "badgeOdd": "odd",
     "badgeEven": "even",
-    "badgePeriod": "period"
+    "badgePeriod": "period",
+    "editRemoved": "{count, plural, =1 {1 calendar lesson was removed — publish again to restore any the window still covers.} other {# calendar lessons were removed — publish again to restore any the window still covers.}}"
   },
   "dayPlanner": {
     "title": "Day planner",

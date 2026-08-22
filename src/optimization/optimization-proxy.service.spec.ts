@@ -267,6 +267,21 @@ describe('OptimizationProxyService', () => {
       tx.masterLesson.count.mockResolvedValue(2);
     });
 
+    it('keeps a half-term course a half-term course', async () => {
+      // The engine has no week model, so a regenerated replacement always comes
+      // back as an ordinary weekly lesson. "Kemi bara på vårterminen" would
+      // quietly become a year-long course, with nothing in the audit trail to
+      // say a school's decision had been reversed.
+      await persist({ status: 'FEASIBLE', lessons: [] });
+
+      const call = tx.masterLesson.deleteMany.mock.calls[0]![0] as {
+        where: { NOT: { OR: Array<Record<string, unknown>> } };
+      };
+      expect(call.where.NOT.OR).toContainEqual({ recurrence: { not: 'ALL_WEEKS' } });
+      expect(call.where.NOT.OR).toContainEqual({ startDate: { not: null } });
+      expect(call.where.NOT.OR).toContainEqual({ endDate: { not: null } });
+    });
+
     it('preserves locked lessons and manual multi-class constructs', async () => {
       await persist({ status: 'FEASIBLE', lessons: [] });
 
@@ -275,6 +290,12 @@ describe('OptimizationProxyService', () => {
           { isLocked: true },
           { extraGroups: { some: {} } },
           { participants: { some: {} } },
+          // A lesson that does not run every week carries a calendar decision
+          // the engine has no concept of, so a regenerated replacement would
+          // always come back as an ordinary weekly one.
+          { recurrence: { not: 'ALL_WEEKS' } },
+          { startDate: { not: null } },
+          { endDate: { not: null } },
         ],
       };
       // Machine-owned lessons are replaced; anything a human locked or built
@@ -317,6 +338,9 @@ describe('OptimizationProxyService', () => {
                   { isLocked: true },
                   { extraGroups: { some: {} } },
                   { participants: { some: {} } },
+                  { recurrence: { not: 'ALL_WEEKS' } },
+                  { startDate: { not: null } },
+                  { endDate: { not: null } },
                 ],
               },
             },
@@ -435,6 +459,12 @@ describe('OptimizationProxyService', () => {
       dayOfWeek: 2,
       startTime: eightAm,
       endTime: nineAm,
+      // As the column defaults: every week, no period. Spelled out because a
+      // row that omits them is not a row the database can produce, and the
+      // subtraction below reads them.
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
       extraGroups: [],
       ...overrides,
     });
@@ -642,6 +672,64 @@ describe('OptimizationProxyService', () => {
           where: expect.objectContaining({ academicYearId: ACADEMIC_YEAR }),
         }),
       );
+    });
+
+    /*
+     * A locked lesson only cancels weekly demand if it is there every week.
+     *
+     * The engine knows nothing about weeks, so a subtraction applies to all of
+     * them. Subtracting for a lesson that runs every other week leaves the
+     * class one lesson short on the other weeks, for the whole year, with
+     * nothing anywhere saying so. Over-delivering instead puts an extra lesson
+     * on the timetable, where somebody can see it.
+     */
+    it('does not let an alternating locked lesson cancel a weekly lesson', async () => {
+      arrange({ lockedLessons: [lockedLesson({ recurrence: 'ODD_WEEKS' })] });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+      const payload = postedPayload();
+
+      // Timplanen says three a week; the odd-week lesson covers none of the
+      // even weeks, so all three are still the engine's to place.
+      expect(payload.requirements[0].lessonsPerWeek).toBe(3);
+      // And it is still a fixed placement, so its slot stays blocked in every
+      // week — that is what makes over-delivery cost packing room, not a clash.
+      expect(payload.fixedLessons).toHaveLength(1);
+    });
+
+    it('does not let a part-of-the-year locked lesson cancel a weekly lesson', async () => {
+      arrange({
+        lockedLessons: [
+          lockedLesson({
+            startDate: new Date('2026-01-07T00:00:00.000Z'),
+            endDate: new Date('2026-06-11T00:00:00.000Z'),
+          }),
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      // A subject read for one term is absent for the other one, so it covers
+      // no more of a full-year requirement than an alternating lesson does.
+      expect(postedPayload().requirements[0].lessonsPerWeek).toBe(3);
+    });
+
+    it('still asks the engine when only alternating lessons cover the demand', async () => {
+      arrange({
+        requirements: [requirement({ lessonsPerWeek: 1 })],
+        lockedLessons: [lockedLesson({ recurrence: 'EVEN_WEEKS' })],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      // The counterpart of the skip above: demand that only looks covered must
+      // not take the shortcut past the solver, or the odd weeks get nothing.
+      expect(http.post).toHaveBeenCalled();
+      expect(postedPayload().requirements).toHaveLength(1);
+      expect(postedPayload().requirements[0].lessonsPerWeek).toBe(1);
     });
 
     it('forwards locked lessons as fixed placements with HH:MM:SS times', async () => {
