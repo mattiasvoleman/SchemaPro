@@ -43,8 +43,83 @@ describe('RealtimeService', () => {
     subject: { name: 'Mathematics' },
     room: { name: 'A101' },
     teachers: [{ teacherId: 'teacher-1' }, { teacherId: 'teacher-2' }],
-    studentGroup: { members: [{ id: 'student-1' }, { id: 'student-2' }] },
+    studentGroup: {
+      members: [{ id: 'student-1' }, { id: 'student-2' }],
+      teachingMembers: [],
+    },
+    extraGroups: [],
+    participants: [],
     ...overrides,
+  });
+
+  describe('who a lesson update is about', () => {
+    it('includes a teaching group’s roster, which no home class holds', async () => {
+      // Ma71 has no home-class members by construction. The teacher app writes
+      // this list straight into its offline cache, so an empty broadcast does
+      // not merely fail to help — it wipes the roster the teacher is about to
+      // take attendance with.
+      tx.calendarLesson.findUnique.mockResolvedValue(
+        lessonRow({
+          studentGroup: {
+            members: [],
+            teachingMembers: [{ studentId: 'ma71-1' }, { studentId: 'ma71-2' }],
+          },
+        }),
+      );
+
+      await service.notifyLessonChanged(tx as never, LESSON_ID);
+
+      const [, , message] = gateway.emitLessonUpdated.mock.calls[0] as [
+        string,
+        string[],
+        { updatedLesson: { studentIds: string[] } },
+      ];
+      expect(message.updatedLesson.studentIds.sort()).toEqual(['ma71-1', 'ma71-2']);
+    });
+
+    it('gathers every class attending, plus pupils named individually', async () => {
+      tx.calendarLesson.findUnique.mockResolvedValue(
+        lessonRow({
+          studentGroup: { members: [{ id: 'a' }], teachingMembers: [] },
+          extraGroups: [
+            {
+              studentGroup: {
+                members: [{ id: 'b' }],
+                teachingMembers: [{ studentId: 'c' }],
+              },
+            },
+          ],
+          participants: [{ studentId: 'd' }],
+        }),
+      );
+
+      await service.notifyLessonChanged(tx as never, LESSON_ID);
+
+      const [, , message] = gateway.emitLessonUpdated.mock.calls[0] as [
+        string,
+        string[],
+        { updatedLesson: { studentIds: string[] } },
+      ];
+      expect(message.updatedLesson.studentIds.sort()).toEqual(['a', 'b', 'c', 'd']);
+    });
+
+    it('counts a pupil once when two sources name them', async () => {
+      tx.calendarLesson.findUnique.mockResolvedValue(
+        lessonRow({
+          studentGroup: { members: [{ id: 'a' }], teachingMembers: [{ studentId: 'a' }] },
+          participants: [{ studentId: 'a' }],
+        }),
+      );
+
+      await service.notifyLessonChanged(tx as never, LESSON_ID);
+
+      const [, , message] = gateway.emitLessonUpdated.mock.calls[0] as [
+        string,
+        string[],
+        { updatedLesson: { studentIds: string[] } },
+      ];
+      expect(message.updatedLesson.studentIds).toEqual(['a']);
+    });
   });
 
   describe('notifyMasterTimetableChanged', () => {
@@ -83,6 +158,10 @@ describe('RealtimeService', () => {
               select: {
                 members: expect.objectContaining({
                   where: { role: 'STUDENT', isActive: true },
+                }),
+                // A teaching group holds nobody through that back-relation.
+                teachingMembers: expect.objectContaining({
+                  where: { student: { role: 'STUDENT', isActive: true } },
                 }),
               },
             },

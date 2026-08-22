@@ -46,14 +46,43 @@ export class RealtimeService {
           subject: { select: { name: true } },
           room: { select: { name: true } },
           teachers: { select: { teacherId: true } },
+          // Home-class pupils…
           studentGroup: {
             select: {
               members: {
                 where: { role: 'STUDENT', isActive: true },
                 select: { id: true },
               },
+              // …and the teaching-group roster, which lives in the join model
+              // and not in that back-relation. A nivågrupp has no home-class
+              // members at all, so asking only the first question produced an
+              // empty list — and the teacher app writes this list straight into
+              // its offline cache. Once that cache is correct, an empty
+              // broadcast does not merely fail to help: it wipes the roster the
+              // teacher is about to take attendance with.
+              teachingMembers: {
+                where: { student: { role: 'STUDENT', isActive: true } },
+                select: { studentId: true },
+              },
             },
           },
+          extraGroups: {
+            select: {
+              studentGroup: {
+                select: {
+                  members: {
+                    where: { role: 'STUDENT', isActive: true },
+                    select: { id: true },
+                  },
+                  teachingMembers: {
+                    where: { student: { role: 'STUDENT', isActive: true } },
+                    select: { studentId: true },
+                  },
+                },
+              },
+            },
+          },
+          participants: { select: { studentId: true } },
         },
       });
       if (!lesson) return;
@@ -64,7 +93,19 @@ export class RealtimeService {
         endTime: lesson.endsAt.toISOString(),
         subjectName: lesson.subject.name,
         roomName: lesson.room?.name ?? '—',
-        studentIds: lesson.studentGroup.members.map((member) => member.id),
+        // The same union the clients assemble: every class attending, the
+        // teaching-group rosters of all of them, and pupils named individually.
+        studentIds: [
+          ...new Set([
+            ...lesson.studentGroup.members.map((member) => member.id),
+            ...lesson.studentGroup.teachingMembers.map((row) => row.studentId),
+            ...lesson.extraGroups.flatMap((entry) => [
+              ...entry.studentGroup.members.map((member) => member.id),
+              ...entry.studentGroup.teachingMembers.map((row) => row.studentId),
+            ]),
+            ...lesson.participants.map((row) => row.studentId),
+          ]),
+        ],
         status: lesson.status,
       };
 
