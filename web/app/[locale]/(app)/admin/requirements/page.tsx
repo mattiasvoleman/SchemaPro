@@ -16,6 +16,7 @@ import {
 } from "@/lib/queries";
 import type { TeachingRequirement } from "@/lib/types";
 import { subjectColor } from "@/lib/utils";
+import { sortByName } from "@/lib/sorting";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -178,6 +179,25 @@ export default function RequirementsPage() {
     }
   };
 
+  /**
+   * The columns, in the order of the label they actually carry.
+   *
+   * `useSubjects` sorts by name, which is right for every dropdown — those show
+   * names. This header shows the CODE, and sorting one string while displaying
+   * another reads as no order at all: the school's own list came out
+   * "EN IDH MA MU NO SO SL SV", because Slöjd sorts after SO by name while the
+   * eye is reading SL against SO.
+   *
+   * Sorted here rather than in the hook, because the hook feeds both views and
+   * each is alphabetical in what it shows. The cells below iterate this same
+   * array — a header ordered one way and cells another would silently file
+   * every lesson under the wrong subject.
+   */
+  const columns = useMemo(
+    () => sortByName(subjects ?? [], (subject) => subject.code ?? subject.name),
+    [subjects],
+  );
+
   const subjectOf = (id: string) => subjects?.find((subject) => subject.id === id);
   const groupOf = (id: string) => yearGroups.find((group) => group.id === id);
 
@@ -237,7 +257,7 @@ export default function RequirementsPage() {
                   <th className="sticky left-0 top-0 z-30 bg-card px-3 py-2.5 text-left font-medium text-muted-foreground">
                     {tCommon("group")}
                   </th>
-                  {subjects.map((subject) => (
+                  {columns.map((subject) => (
                     <th
                       key={subject.id}
                       className="sticky top-0 z-20 border-l bg-card px-2 py-2.5 text-center"
@@ -260,7 +280,7 @@ export default function RequirementsPage() {
                   <Fragment key={section.kind}>
                     <tr className="border-b bg-muted/40">
                       <td
-                        colSpan={subjects.length + 1}
+                        colSpan={columns.length + 1}
                         className="bg-muted px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                       >
                         {/*
@@ -293,12 +313,22 @@ export default function RequirementsPage() {
                         </span>
                       ) : null}
                     </td>
-                    {subjects.map((subject) => {
+                    {columns.map((subject) => {
                       const requirement = requirementIndex.get(`${group.id}:${subject.id}`);
                       return (
                         <td key={subject.id} className="border-l p-1 text-center">
                           <button
                             type="button"
+                            // Names the cell for a screen reader, which read
+                            // only "3×60" or nothing at all before — and binds
+                            // the cell to its column, so a header ordered one
+                            // way and cells another can be caught by a test
+                            // rather than by a school teaching the wrong
+                            // subject for a term.
+                            aria-label={t("cellLabel", {
+                              group: group.name,
+                              subject: subject.name,
+                            })}
                             onClick={() => openCell(group.id, subject.id)}
                             className={
                               requirement

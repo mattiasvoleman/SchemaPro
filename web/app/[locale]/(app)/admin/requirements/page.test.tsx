@@ -17,9 +17,17 @@ const groups = [
   { id: "g-ma71", academicYearId: "y1", name: "Ma71", kind: "TEACHING_GROUP", gradeLevel: null },
 ];
 
-/** Ordered as the hook delivers them — Swedish, so Övrigt comes last. */
+/**
+ * As the hook delivers them: sorted by NAME, in Swedish.
+ *
+ * SO and Slöjd are the pair that exposed the bug, and they are a school's real
+ * subjects, not a contrivance: by name Samhällsorientering sorts before Slöjd,
+ * so the hook hands over SO then SL — while the header shows codes, and an eye
+ * reading codes sees SL before SO. Övrigt is kept for the Swedish collation.
+ */
 const subjects = [
   { id: "s-bi", name: "Bild", code: "BI", color: "#4f46e5", requiredRoomTypeId: null },
+  { id: "s-so", name: "SO", code: "SO", color: "#0ea5e9", requiredRoomTypeId: null },
   { id: "s-sl", name: "Slöjd", code: "SL", color: "#db2777", requiredRoomTypeId: null },
   { id: "s-ov", name: "Övrigt", code: "ÖV", color: "#059669", requiredRoomTypeId: null },
 ];
@@ -51,16 +59,37 @@ vi.mock("next-intl", () => ({
 const matrix = () => screen.getByRole("table");
 
 describe("Timplan matrix", () => {
-  it("keeps the columns in the order the subject hook delivers", () => {
-    // The hook sorts in Swedish; the matrix must not reorder behind it, or the
-    // two views a school ticks boxes across would disagree.
+  it("orders the columns by the label they actually show", () => {
+    // The header shows the CODE while the hook sorts by NAME, and sorting one
+    // string while displaying another reads as no order at all — the school's
+    // own list came out "EN IDH MA MU NO SO SL SV". Each view is alphabetical
+    // in what it shows: names in the dropdowns, codes here.
     render(<RequirementsPage />);
 
     const codes = within(matrix())
       .getAllByRole("columnheader")
       .slice(1)
       .map((cell) => cell.textContent?.trim());
-    expect(codes).toEqual(["BI", "SL", "ÖV"]);
+    expect(codes).toEqual(["BI", "SL", "SO", "ÖV"]);
+  });
+
+  it("keeps every row's cells under the column they belong to", () => {
+    // Counting cells is not enough: a header ordered one way and cells another
+    // gives the same count and files every lesson under the wrong subject —
+    // silently, in the one view a school uses to decide what it teaches. Each
+    // cell names its own subject, so the two can be compared position by
+    // position.
+    render(<RequirementsPage />);
+
+    const order = ["Bild", "Slöjd", "SO", "Övrigt"];
+    for (const row of within(matrix()).getAllByRole("row").slice(1)) {
+      const buttons = within(row).queryAllByRole("button");
+      if (buttons.length === 0) continue; // section heading row
+      // The mocked translator joins values in object order: group, then subject.
+      expect(
+        buttons.map((b) => b.getAttribute("aria-label")?.split("|")[1]?.replace(")", "")),
+      ).toEqual(order);
+    }
   });
 
   it("renders a column per subject and a row per group", () => {
@@ -71,6 +100,7 @@ describe("Timplan matrix", () => {
       "group",
       "BI",
       "SL",
+      "SO",
       "ÖV",
     ]);
   });

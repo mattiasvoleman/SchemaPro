@@ -313,7 +313,8 @@
     "coTeacherHint": "Båda lärarna schemaläggs tillsammans; publicerade lektioner får ett LEAD + ASSISTANT-par.",
     "classesSection": "Klasser",
     "teachingGroupsSection": "Undervisningsgrupper",
-    "memberCount": "{count} elever"
+    "memberCount": "{count} elever",
+    "cellLabel": "{subject} för {group}"
   },
   "constraints": {
     "title": "Tillgänglighet",

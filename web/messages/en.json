@@ -313,7 +313,8 @@
     "coTeacherHint": "Both teachers are scheduled together; published lessons get a LEAD + ASSISTANT pair.",
     "classesSection": "Classes",
     "teachingGroupsSection": "Teaching groups",
-    "memberCount": "{count} students"
+    "memberCount": "{count} students",
+    "cellLabel": "{subject} for {group}"
   },
   "constraints": {
     "title": "Availability",
