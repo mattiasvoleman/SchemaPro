@@ -20,6 +20,9 @@ import type {
 import { OptimizationProxyService } from './optimization-proxy.service';
 
 const ACADEMIC_YEAR = '44444444-4444-4444-8444-444444444444';
+/** One requirement, as the database holds it and as the engine sees it. */
+const REAL_REQ = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const ANON_REQ = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 
 const makeConfigService = () =>
   ({
@@ -53,7 +56,15 @@ describe('OptimizationProxyService', () => {
    * destructive path in the codebase: a delete-and-recreate of a school's
    * timetable. Testing it through six layers of setup would obscure that.
    */
-  const persist = (response: Partial<AiEngineScheduleResponse>, user = testUser()) =>
+  const persist = (
+    response: Partial<AiEngineScheduleResponse>,
+    {
+      user = testUser(),
+      /** The demand the engine was sent, which its answer must match. */
+      requirements = [] as { id: string; lessonsPerWeek: number }[],
+      requirementAnonMap = new Map<string, string>(),
+    } = {},
+  ) =>
     (
       service as unknown as {
         persistMasterLessons: (
@@ -61,6 +72,7 @@ describe('OptimizationProxyService', () => {
           academicYearId: string,
           user: unknown,
           response: AiEngineScheduleResponse,
+          requirements: { id: string; lessonsPerWeek: number }[],
           requirementAnonMap: Map<string, string>,
           roomAnonMap: Map<string, string>,
         ) => Promise<void>;
@@ -70,9 +82,36 @@ describe('OptimizationProxyService', () => {
       ACADEMIC_YEAR,
       user,
       { status: 'FEASIBLE', lessons: [], ...response } as AiEngineScheduleResponse,
-      new Map(),
+      requirements,
+      requirementAnonMap,
       new Map(),
     );
+
+  /** A placement of `ANON_REQ`, as the engine words it. */
+  const placement = (requirementId = ANON_REQ) => ({
+    requirementId,
+    roomId: null,
+    dayOfWeek: 1,
+    startTime: '08:00:00',
+    endTime: '09:00:00',
+  });
+
+  /** One requirement asking for `lessonsPerWeek`, wired anon → real. */
+  const oneRequirement = (lessonsPerWeek: number) => {
+    tx.teachingRequirement.findMany.mockResolvedValue([
+      {
+        id: REAL_REQ,
+        subjectId: 'subject-1',
+        studentGroupId: 'group-1',
+        teacherId: null,
+        coTeacherId: null,
+      },
+    ]);
+    return {
+      requirements: [{ id: ANON_REQ, lessonsPerWeek }],
+      requirementAnonMap: new Map([[REAL_REQ, ANON_REQ]]),
+    };
+  };
 
   describe('persistMasterLessons — destructive-path guards', () => {
     it.each(['INFEASIBLE', 'TIMEOUT'])(
@@ -90,7 +129,7 @@ describe('OptimizationProxyService', () => {
 
     it('refuses to persist when the principal carries no tenant', async () => {
       await expect(
-        persist({ status: 'FEASIBLE' }, testUser({ schoolId: undefined })),
+        persist({ status: 'FEASIBLE' }, { user: testUser({ schoolId: undefined }) }),
       ).rejects.toThrow('schoolId missing from JWT');
 
       expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
@@ -102,9 +141,121 @@ describe('OptimizationProxyService', () => {
       tx.teachingRequirement.findMany.mockResolvedValue([]);
 
       await expect(
-        persist({ status: 'OPTIMAL' }, testUser({ schoolId: undefined })),
+        persist({ status: 'OPTIMAL' }, { user: testUser({ schoolId: undefined }) }),
       ).rejects.toThrow();
       expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The engine places every lesson it is asked for or none at all, so a
+   * response that does not match the demand it was sent is not an answer to
+   * this request — and must be refused *before* the delete, not dropped after
+   * it. Each case below is a well-formed, schema-valid FEASIBLE body: schema
+   * validation would pass every one of them, and every one of them used to
+   * empty out the year's machine-owned timetable.
+   */
+  describe('persistMasterLessons — verifying the solution before replacing', () => {
+    beforeEach(() => {
+      tx.masterLesson.deleteMany.mockResolvedValue({ count: 40 });
+      tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
+      tx.masterLesson.count.mockResolvedValue(0);
+    });
+
+    const expectNothingTouched = () => {
+      expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.masterLesson.create).not.toHaveBeenCalled();
+      expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
+    };
+
+    it('refuses an empty solution and leaves the timetable standing', async () => {
+      await expect(
+        persist({ status: 'FEASIBLE', lessons: [] }, oneRequirement(3)),
+      ).rejects.toMatchObject({ status: 502 });
+
+      expectNothingTouched();
+    });
+
+    it('names the refusal in the error the caller sees', async () => {
+      await expect(
+        persist({ status: 'FEASIBLE', lessons: [] }, oneRequirement(1)),
+      ).rejects.toThrow('does not match the requested timetable');
+    });
+
+    it('refuses a solution that places fewer lessons than were asked for', async () => {
+      // Three a week requested, one placed: accepting it would replace the
+      // whole year with a third of a timetable.
+      await expect(
+        persist(
+          { status: 'FEASIBLE', lessons: [placement()] },
+          oneRequirement(3),
+        ),
+      ).rejects.toMatchObject({ status: 502 });
+
+      expectNothingTouched();
+    });
+
+    it('refuses a solution that places more lessons than were asked for', async () => {
+      await expect(
+        persist(
+          { status: 'OPTIMAL', lessons: [placement(), placement()] },
+          oneRequirement(1),
+        ),
+      ).rejects.toMatchObject({ status: 502 });
+
+      expectNothingTouched();
+    });
+
+    it('refuses a solution naming a requirement this request never sent', async () => {
+      await expect(
+        persist(
+          {
+            status: 'FEASIBLE',
+            lessons: [placement('ffffffff-ffff-4fff-8fff-ffffffffffff')],
+          },
+          oneRequirement(1),
+        ),
+      ).rejects.toMatchObject({ status: 502 });
+
+      expectNothingTouched();
+    });
+
+    it('refuses when a requirement was deleted while the solver ran', async () => {
+      const asked = oneRequirement(1);
+      // The anon id still resolves, but the row it names is gone from the
+      // year: the solution describes a timetable that no longer exists.
+      tx.teachingRequirement.findMany.mockResolvedValue([]);
+
+      await expect(
+        persist({ status: 'FEASIBLE', lessons: [placement()] }, asked),
+      ).rejects.toMatchObject({ status: 502 });
+
+      expectNothingTouched();
+    });
+
+    it('replaces the timetable when the solution covers the demand exactly', async () => {
+      await persist(
+        { status: 'OPTIMAL', lessons: [placement(), placement()] },
+        oneRequirement(2),
+      );
+
+      expect(tx.masterLesson.deleteMany).toHaveBeenCalledTimes(1);
+      expect(tx.masterLesson.create).toHaveBeenCalledTimes(2);
+      // Built before the delete, written after it — and every create must land
+      // after the delete, or the new lessons would be deleted with the old.
+      expect(tx.masterLesson.create.mock.invocationCallOrder[0]).toBeGreaterThan(
+        tx.masterLesson.deleteMany.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it('still clears leftovers when every lesson was already placed by hand', async () => {
+      // No requirement reaches the engine, so nothing is demanded and nothing
+      // is placed — the one empty solution that is a correct answer.
+      await persist({ status: 'FEASIBLE', lessons: [] });
+
+      expect(tx.masterLesson.deleteMany).toHaveBeenCalledTimes(1);
+      expect(tx.masterLesson.create).not.toHaveBeenCalled();
     });
   });
 
@@ -112,6 +263,7 @@ describe('OptimizationProxyService', () => {
     beforeEach(() => {
       tx.teachingRequirement.findMany.mockResolvedValue([]);
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 3 });
+      tx.calendarLesson.deleteMany.mockResolvedValue({ count: 7 });
       tx.masterLesson.count.mockResolvedValue(2);
     });
 
@@ -142,6 +294,48 @@ describe('OptimizationProxyService', () => {
         where: { academicYearId: string };
       };
       expect(call.where.academicYearId).toBe(ACADEMIC_YEAR);
+    });
+
+    it('takes the dated lessons of the replaced templates with them', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-12T08:00:00.000Z'));
+      try {
+        await persist({ status: 'FEASIBLE', lessons: [] });
+      } finally {
+        jest.useRealTimers();
+      }
+
+      // Without this the FK sets masterLessonId to null and the rows survive
+      // as orphans the publish idempotency set cannot see — the next publish
+      // then materializes the same week a second time.
+      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+        where: {
+          masterLesson: {
+            is: {
+              academicYearId: ACADEMIC_YEAR,
+              NOT: {
+                OR: [
+                  { isLocked: true },
+                  { extraGroups: { some: {} } },
+                  { participants: { some: {} } },
+                ],
+              },
+            },
+          },
+          status: 'SCHEDULED',
+          date: { gte: new Date('2026-08-12T00:00:00.000Z') },
+          attendanceRecords: { none: {} },
+        },
+      });
+    });
+
+    it('clears the dated lessons before the templates they hang off', async () => {
+      await persist({ status: 'FEASIBLE', lessons: [] });
+
+      // The other order loses them: deleting the template first nulls the
+      // link, and the relation filter then matches nothing.
+      expect(
+        tx.calendarLesson.deleteMany.mock.invocationCallOrder[0]!,
+      ).toBeLessThan(tx.masterLesson.deleteMany.mock.invocationCallOrder[0]!);
     });
   });
 
@@ -313,12 +507,18 @@ describe('OptimizationProxyService', () => {
       tx.roomPreference.findMany.mockResolvedValue(overrides.roomPreferences ?? []);
       tx.lunchSetting.findUnique.mockResolvedValue(overrides.lunchSettings ?? null);
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 2 });
+      tx.calendarLesson.deleteMany.mockResolvedValue({ count: 4 });
       tx.masterLesson.count.mockResolvedValue(1);
       tx.masterLesson.create.mockResolvedValue({});
       tx.scheduleChangeLog.create.mockResolvedValue({});
     };
 
-    /** Engine echo: places every forwarded requirement in the first room. */
+    /**
+     * Engine echo: places every forwarded requirement in the first room, as
+     * many times a week as it asked for. The count is part of the contract —
+     * the engine creates one decision variable per lesson-per-week and emits
+     * all of them — and a response carrying any other number is refused.
+     */
     const echoEngine = (
       status: AiEngineScheduleResponse['status'] = 'OPTIMAL',
     ) => {
@@ -327,13 +527,15 @@ describe('OptimizationProxyService', () => {
           data: {
             requestId: payload.requestId,
             status,
-            lessons: payload.requirements.map((r: any) => ({
-              requirementId: r.id,
-              roomId: payload.rooms[0]?.id ?? null,
-              dayOfWeek: 1,
-              startTime: '08:00:00',
-              endTime: '09:15:00',
-            })),
+            lessons: payload.requirements.flatMap((r: any) =>
+              Array.from({ length: r.lessonsPerWeek }, () => ({
+                requirementId: r.id,
+                roomId: payload.rooms[0]?.id ?? null,
+                dayOfWeek: 1,
+                startTime: '08:00:00',
+                endTime: '09:15:00',
+              })),
+            ),
             conflicts: null,
           },
         }),
@@ -539,7 +741,9 @@ describe('OptimizationProxyService', () => {
         testUser({ schoolId: 'school-A' }),
       );
 
-      expect(tx.masterLesson.create).toHaveBeenCalledTimes(1);
+      // Three lessons a week were asked for, so three come back and three are
+      // written — the whole solution, not a sample of it.
+      expect(tx.masterLesson.create).toHaveBeenCalledTimes(3);
       expect(tx.masterLesson.create).toHaveBeenCalledWith({
         data: {
           schoolId: 'school-A',
@@ -556,7 +760,9 @@ describe('OptimizationProxyService', () => {
       });
     });
 
-    it('drops solution lessons whose anonymous requirement is unknown', async () => {
+    it('refuses a solution whose anonymous requirement is unknown', async () => {
+      // It used to drop the lesson and carry on — having already deleted the
+      // year's unlocked timetable to make room for it.
       arrange();
       http.post.mockImplementation(() =>
         of({
@@ -577,16 +783,13 @@ describe('OptimizationProxyService', () => {
         }),
       );
 
-      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+      await expect(
+        service.triggerScheduling(ACADEMIC_YEAR, testUser()),
+      ).rejects.toMatchObject({ status: 502 });
 
+      expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
       expect(tx.masterLesson.create).not.toHaveBeenCalled();
-      expect(tx.scheduleChangeLog.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            after: expect.objectContaining({ lessonsCreated: 0 }),
-          }),
-        }),
-      );
+      expect(tx.scheduleChangeLog.create).not.toHaveBeenCalled();
     });
 
     it('appends a REGENERATE audit entry with the replacement counts', async () => {
@@ -605,9 +808,10 @@ describe('OptimizationProxyService', () => {
           action: 'REGENERATE',
           after: {
             solverStatus: 'OPTIMAL',
-            lessonsCreated: 1,
+            lessonsCreated: 3,
             unlockedReplaced: 2,
             lockedPreserved: 1,
+            calendarLessonsRemoved: 4,
           },
         },
       });
@@ -1020,7 +1224,13 @@ describe('OptimizationProxyService', () => {
       // sending its size too would fill the hall twice with the same children.
       const MA71 = '99999999-9999-4999-8999-999999999999';
       arrange({
-        requirements: [requirement(), requirement({ studentGroupId: MA71 })],
+        requirements: [
+          requirement(),
+          requirement({
+            id: '88888888-8888-4888-8888-888888888888',
+            studentGroupId: MA71,
+          }),
+        ],
         homeMembers: [
           { id: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: GROUP_ID },
           { id: 'aaaaaaa2-0000-4000-8000-000000000002', studentGroupId: GROUP_ID },

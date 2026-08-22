@@ -290,17 +290,51 @@ describe('OptimizationJobsService', () => {
       );
     });
 
-    it('SUSPECTED BUG (pinned): a failed RUNNING update escapes the fire-and-forget', async () => {
-      // The `await this.update(jobId, user, { status: 'RUNNING' })` sits
-      // OUTSIDE run()'s try/catch, and start() invokes run() as
-      // `void this.run(...)`. A rejection here therefore becomes an unhandled
-      // promise rejection (fatal by default on Node >= 15) instead of being
-      // captured on the job row like every other failure. This test pins the
-      // current behaviour; the fix belongs in production code.
-      tx.optimizationJob.update.mockRejectedValue(new Error('db down'));
+    it('records a failed RUNNING update on the job row instead of rejecting', async () => {
+      // The RUNNING write once sat outside run()'s try/catch, so its rejection
+      // escaped into `void this.run(...)` in start() — an unhandled rejection,
+      // which Node answers by killing the API for every school on the instance.
+      // It has to be contained like every other failure in the run.
+      tx.optimizationJob.update
+        .mockRejectedValueOnce(new Error('db down')) // RUNNING
+        .mockResolvedValueOnce({}); // FAILED
 
-      await expect(runPrivate()).rejects.toThrow('db down');
+      await expect(runPrivate()).resolves.toBeUndefined();
+
       expect(proxy.triggerScheduling).not.toHaveBeenCalled();
+      expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
+        where: { id: JOB_ID },
+        data: {
+          status: 'FAILED',
+          error: 'db down',
+          finishedAt: expect.any(Date),
+        },
+      });
+    });
+
+    it('logs and swallows a crash that escapes run() rather than letting it kill the process', async () => {
+      // Last line of defence for the same hazard: start() never awaits run(),
+      // so anything that does escape it must be caught at the call site.
+      const logger = jest
+        .spyOn(
+          (service as unknown as { logger: { error: (...args: unknown[]) => void } })
+            .logger,
+          'error',
+        )
+        .mockImplementation(() => undefined);
+      jest
+        .spyOn(service as unknown as { run: () => Promise<void> }, 'run')
+        .mockRejectedValue(new Error('run itself threw'));
+
+      await expect(service.start(YEAR_ID, testUser())).resolves.toEqual({
+        jobId: JOB_ID,
+      });
+      await flushBackgroundRun();
+
+      expect(logger).toHaveBeenCalledWith(
+        `Optimization job ${JOB_ID} crashed outside its own error handling.`,
+        expect.stringContaining('run itself threw'),
+      );
     });
   });
 

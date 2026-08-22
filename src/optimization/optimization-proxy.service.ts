@@ -123,12 +123,15 @@ export class OptimizationProxyService {
         : { requestId, status: 'FEASIBLE', lessons: [], conflicts: null };
 
     // Step 3: Persist the master-lesson output, translating anon ids back.
+    // `requirements` rides along as the demand the response is checked against
+    // before anything is deleted — see persistMasterLessons.
     await this.prisma.withRls(user, (tx) =>
       this.persistMasterLessons(
         tx,
         academicYearId,
         user,
         response,
+        requirements,
         requirementAnonMap,
         roomAnonMap,
       ),
@@ -720,6 +723,7 @@ export class OptimizationProxyService {
     academicYearId: string,
     user: AuthenticatedUser,
     response: AiEngineScheduleResponse,
+    requirements: AnonymousRequirement[],
     requirementAnonMap: Map<string, string>,
     roomAnonMap: Map<string, string>,
   ): Promise<void> {
@@ -744,6 +748,7 @@ export class OptimizationProxyService {
     if (!user.schoolId) {
       throw new Error('Cannot persist master lessons: schoolId missing from JWT.');
     }
+    const schoolId = user.schoolId;
 
     // Fetch requirement details needed for the MasterLesson record.
     const requirementDetails = await tx.teachingRequirement.findMany({
@@ -758,6 +763,77 @@ export class OptimizationProxyService {
     });
     const reqById = new Map(requirementDetails.map((r) => [r.id, r]));
 
+    /*
+     * The whole replacement is built and checked here, BEFORE a single row is
+     * deleted — the ordering is the guard, not an optimization.
+     *
+     * The engine places every lesson it is asked for or none at all: one
+     * decision variable per lesson-per-week, all of them extracted into the
+     * response. So a solution that does not carry exactly the demand it was
+     * sent is not an answer to this request, whatever its status says, and the
+     * timetable must not be replaced by it. A well-formed but empty
+     * `{status:"FEASIBLE", lessons:[]}` used to reach the delete below and
+     * leave the school's year with nothing in it — and no snapshot is taken
+     * before a regeneration, so there was nothing to put back.
+     */
+    const demandByRequirement = new Map(
+      requirements.map((r) => [r.id, r.lessonsPerWeek]),
+    );
+    const placedByRequirement = new Map<string, number>();
+    let unmatchedLessons = 0;
+
+    const creates = response.lessons.flatMap((lesson) => {
+      const realReqId = realRequirementId.get(lesson.requirementId);
+      const req = realReqId ? reqById.get(realReqId) : undefined;
+      // Either the response names a requirement this request never sent, or
+      // the requirement has been deleted while the solver was running. Both
+      // mean the solution no longer describes this academic year.
+      if (!req || !demandByRequirement.has(lesson.requirementId)) {
+        unmatchedLessons++;
+        return [];
+      }
+
+      placedByRequirement.set(
+        lesson.requirementId,
+        (placedByRequirement.get(lesson.requirementId) ?? 0) + 1,
+      );
+
+      const realRoom = lesson.roomId ? realRoomId.get(lesson.roomId) : null;
+
+      return [
+        {
+          schoolId,
+          academicYearId,
+          subjectId: req.subjectId,
+          studentGroupId: req.studentGroupId,
+          teacherId: req.teacherId ?? null,
+          coTeacherId: req.coTeacherId ?? null,
+          roomId: realRoom ?? null,
+          dayOfWeek: lesson.dayOfWeek,
+          startTime: this.parseTime(lesson.startTime),
+          endTime: this.parseTime(lesson.endTime),
+        },
+      ];
+    });
+
+    const offTarget = [...demandByRequirement].filter(
+      ([anonRequirementId, wanted]) =>
+        (placedByRequirement.get(anonRequirementId) ?? 0) !== wanted,
+    ).length;
+    if (unmatchedLessons > 0 || offTarget > 0) {
+      const requested = [...demandByRequirement.values()].reduce(
+        (sum, count) => sum + count,
+        0,
+      );
+      this.logger.error(
+        `Rejected AI engine solution [academicYearId=${academicYearId}, status=${response.status}, requestedLessons=${requested}, placedLessons=${creates.length}, unmatchedLessons=${unmatchedLessons}, requirementsOffTarget=${offTarget}]. Timetable left untouched.`,
+      );
+      throw new HttpException(
+        'The AI engine returned a solution that does not match the requested timetable. The existing timetable was left unchanged.',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+
     // Non-destructive regeneration: locked lessons AND participant lessons
     // (manual multi-class / individual-student constructs) are preserved
     // verbatim; only machine-owned lessons are replaced by the new solution.
@@ -768,6 +844,33 @@ export class OptimizationProxyService {
         { participants: { some: {} } },
       ],
     };
+
+    /*
+     * The dated lessons of the templates about to go, removed before the
+     * templates themselves.
+     *
+     * CalendarLessons.masterLessonId is ON DELETE SET NULL, so they would
+     * otherwise outlive their template as orphans — and publish keys its
+     * idempotency set on (masterLessonId, date), which an orphan matches
+     * nothing in. Publishing again after a regeneration then materialized the
+     * same week a second time: one lesson a week over four weeks came back as
+     * eight, half of them at a slot no timetable mentions any more.
+     *
+     * Same rule the single-lesson delete uses (master-lessons.service.ts):
+     * future, still-SCHEDULED, no attendance recorded. What has already
+     * happened stays exactly as it happened, orphaned but intact.
+     */
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const { count: removedCalendarLessons } = await tx.calendarLesson.deleteMany({
+      where: {
+        masterLesson: { is: { academicYearId, NOT: preservedWhere } },
+        status: 'SCHEDULED',
+        date: { gte: today },
+        attendanceRecords: { none: {} },
+      },
+    });
+
     const { count: removedUnlocked } = await tx.masterLesson.deleteMany({
       where: { academicYearId, NOT: preservedWhere },
     });
@@ -775,38 +878,12 @@ export class OptimizationProxyService {
       where: { academicYearId, ...preservedWhere },
     });
 
-    const creates = response.lessons.flatMap((lesson) => {
-      const realReqId = realRequirementId.get(lesson.requirementId);
-      if (!realReqId) return [];
-      const req = reqById.get(realReqId);
-      if (!req) return [];
-
-      const realRoom = lesson.roomId ? realRoomId.get(lesson.roomId) : null;
-
-      return [
-        tx.masterLesson.create({
-          data: {
-            schoolId: user.schoolId as string,
-            academicYearId,
-            subjectId: req.subjectId,
-            studentGroupId: req.studentGroupId,
-            teacherId: req.teacherId ?? null,
-            coTeacherId: req.coTeacherId ?? null,
-            roomId: realRoom ?? null,
-            dayOfWeek: lesson.dayOfWeek,
-            startTime: this.parseTime(lesson.startTime),
-            endTime: this.parseTime(lesson.endTime),
-          },
-        }),
-      ];
-    });
-
-    await Promise.all(creates);
+    await Promise.all(creates.map((data) => tx.masterLesson.create({ data })));
 
     // Append a REGENERATE entry to the schedule audit trail.
     await tx.scheduleChangeLog.create({
       data: {
-        schoolId: user.schoolId,
+        schoolId,
         academicYearId,
         masterLessonId: null,
         actorId: user.userId ?? null,
@@ -816,6 +893,7 @@ export class OptimizationProxyService {
           lessonsCreated: creates.length,
           unlockedReplaced: removedUnlocked,
           lockedPreserved,
+          calendarLessonsRemoved: removedCalendarLessons,
         },
       },
     });

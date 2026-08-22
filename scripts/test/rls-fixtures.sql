@@ -40,6 +40,33 @@ WHERE s.slug = 'rls-fixture-school'
     SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000002'
   );
 
+-- A DEACTIVATED SCHOOL_ADMIN in the FIRST school — the principal the identity
+-- helpers must now resolve to nothing. An admin rather than a teacher because
+-- an admin is the worst case: before the helpers required `isActive`, a
+-- deactivated one kept full read and write access to the school and could set
+-- their own `isActive` back to true through `users_admin_all`.
+--
+-- They belong to the first school on purpose. The assertions also prove the
+-- other half — that an ACTIVE admin of that same school still sees this row
+-- and can still reactivate it, which is the only way back for a locked-out
+-- colleague.
+INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+SELECT s.id, 'rls-fixture-inactive@example.invalid', 'Fixture', 'Inactive', 'SCHOOL_ADMIN',
+       '00000000-0000-4000-8000-000000000003', false, now()
+FROM "Schools" s
+WHERE s.slug <> 'rls-fixture-school'
+  AND NOT EXISTS (
+    SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000003'
+  )
+ORDER BY s."createdAt" LIMIT 1;
+
+-- The reactivation assertion flips this row and rolls back, so a completed run
+-- leaves it inactive. A run killed mid-transaction would not, and the next run
+-- would then assert "an inactive principal sees nothing" against an active
+-- user and pass while proving nothing. Repair it rather than assume it.
+UPDATE "Users" SET "isActive" = false, "updatedAt" = now()
+ WHERE "authId" = '00000000-0000-4000-8000-000000000003' AND "isActive";
+
 -- An active key for the FIRST school, so the key-lookup assertions have
 -- something to find, and a revoked one so revocation can be asserted.
 INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", "createdAt")

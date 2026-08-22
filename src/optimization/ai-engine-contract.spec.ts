@@ -138,6 +138,11 @@ describe('AI engine wire contract', () => {
       },
     ]);
     tx['masterLesson']!['deleteMany']!.mockResolvedValue({ count: 0 });
+    // Regeneration now also clears the future calendar rows the replaced
+    // master lessons had already materialised — without it, publishing again
+    // duplicated the week.
+    tx['calendarLesson']!['deleteMany']!.mockResolvedValue({ count: 0 });
+    tx['masterLesson']!['create']!.mockResolvedValue({ id: 'ml-1' });
     tx['masterLesson']!['count']!.mockResolvedValue(0);
     tx['scheduleChangeLog']!['create']!.mockResolvedValue({});
 
@@ -145,11 +150,29 @@ describe('AI engine wire contract', () => {
     const http = {
       post: jest.fn((_url: string, payload: Record<string, unknown>) => {
         sent = payload;
+        // One placement per requested lesson. An empty answer is no longer an
+        // acceptable stub: the proxy now refuses a solution that does not match
+        // what it asked for, rather than deleting the year and finding out
+        // afterwards. A contract test must exercise the accepting path, or it
+        // would only ever be measuring the rejection.
+        const requirements = payload['requirements'] as Array<{
+          id: string;
+          lessonsPerWeek: number;
+        }>;
+        const rooms = payload['rooms'] as Array<{ id: string }>;
         return of({
           data: {
             requestId: payload['requestId'],
             status: 'OPTIMAL',
-            lessons: [],
+            lessons: requirements.flatMap((requirement) =>
+              Array.from({ length: requirement.lessonsPerWeek }, () => ({
+                requirementId: requirement.id,
+                roomId: rooms[0]?.id ?? null,
+                dayOfWeek: 1,
+                startTime: '08:00:00',
+                endTime: '09:00:00',
+              })),
+            ),
             conflicts: null,
           },
         });

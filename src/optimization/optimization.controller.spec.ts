@@ -130,12 +130,11 @@ describe('OptimizationController', () => {
       });
     });
 
-    it('SUSPECTED BUG (pinned): the sync endpoint silently drops weights and rules', async () => {
-      // TriggerOptimizationDto accepts weights/rules on both POST /jobs and
-      // POST /trigger, but trigger() forwards only the academicYearId — the
-      // caller's tuning is ignored without an error. Pinning current
-      // behaviour; if intentional, the DTO for /trigger should not accept
-      // the fields.
+    it('forwards the weights and rules from the body to the solver', async () => {
+      // TriggerOptimizationDto accepts tuning on both POST /jobs and
+      // POST /trigger. The sync endpoint used to forward only the
+      // academicYearId, so a scripted run was silently solved under the
+      // school's stored rules instead of the ones it sent.
       proxy.triggerScheduling.mockResolvedValue(engineResponse());
       const user = testUser();
 
@@ -144,7 +143,26 @@ describe('OptimizationController', () => {
         user,
       );
 
-      expect(proxy.triggerScheduling).toHaveBeenCalledWith(YEAR_ID, user);
+      expect(proxy.triggerScheduling).toHaveBeenCalledWith(
+        YEAR_ID,
+        user,
+        { spread: 9 },
+        { lunchMinutes: 45 },
+      );
+    });
+
+    it('normalises omitted tuning to null so the proxy falls back to stored rules', async () => {
+      proxy.triggerScheduling.mockResolvedValue(engineResponse());
+      const user = testUser();
+
+      await controller.trigger(dto(), user);
+
+      expect(proxy.triggerScheduling).toHaveBeenCalledWith(
+        YEAR_ID,
+        user,
+        null,
+        null,
+      );
     });
 
     it('propagates a solver failure to the caller', async () => {
@@ -159,12 +177,16 @@ describe('OptimizationController', () => {
   });
 
   describe('access control metadata', () => {
-    it('restricts the whole controller to school and platform admins', () => {
+    it('restricts the whole controller to school admins only', () => {
       // The Roles decorator is the RBAC boundary for every optimization route;
       // RolesGuard reads exactly this metadata.
+      //
+      // SYSTEM_ADMIN must stay off this list. The platform role has no `Users`
+      // row by design, and every RLS policy these routes depend on requires a
+      // SCHOOL_ADMIN row in the caller's tenant, so admitting it advertises an
+      // access that reads and writes nothing.
       expect(Reflect.getMetadata(ROLES_KEY, OptimizationController)).toEqual([
         Role.SCHOOL_ADMIN,
-        Role.SYSTEM_ADMIN,
       ]);
     });
   });

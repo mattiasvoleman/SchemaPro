@@ -26,13 +26,20 @@ import {
 import type { AiEngineScheduleResponse } from './interfaces/ai-engine-payload.interface';
 
 /**
- * Exposes the scheduling optimization trigger exclusively to school- and
- * platform-level administrators. No PII ever passes through this endpoint —
- * the proxy service strips everything before forwarding to the AI engine.
+ * Exposes the scheduling optimization trigger exclusively to school
+ * administrators. No PII ever passes through this endpoint — the proxy service
+ * strips everything before forwarding to the AI engine.
+ *
+ * SYSTEM_ADMIN used to be listed here too, but the platform role deliberately
+ * has no `Users` row (see Role in ../auth/enums/role.enum.ts) while every
+ * policy behind these routes admits only `SCHOOL_ADMIN` in the caller's own
+ * tenant. Such a token got past the guard and then read nothing and wrote
+ * nothing — an advertised capability that could not work. Cross-tenant
+ * operation needs explicit tenant delegation, not a role on the decorator.
  */
 @Controller('api/v1/optimization')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.SCHOOL_ADMIN, Role.SYSTEM_ADMIN)
+@Roles(Role.SCHOOL_ADMIN)
 export class OptimizationController {
   constructor(
     private readonly proxy: OptimizationProxyService,
@@ -82,7 +89,15 @@ export class OptimizationController {
     @Body() dto: TriggerOptimizationDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<{ status: AiEngineScheduleResponse['status']; lessonsGenerated: number }> {
-    const result = await this.proxy.triggerScheduling(dto.academicYearId, user);
+    // Same body as POST /jobs, so the same tuning has to reach the solver.
+    // Dropping it silently produced a schedule under the school's stored rules
+    // while the caller believed their own had been applied.
+    const result = await this.proxy.triggerScheduling(
+      dto.academicYearId,
+      user,
+      dto.weights ?? null,
+      dto.rules ?? null,
+    );
     return { status: result.status, lessonsGenerated: result.lessons.length };
   }
 }

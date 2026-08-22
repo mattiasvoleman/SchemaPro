@@ -449,9 +449,6 @@ END
 $$;
 ROLLBACK;
 
-SELECT 'rls-policies: all assertions passed' AS result;
-
-
 -- ---------------------------------------------------------------------------
 -- Section 8: a guardian link cannot reach across schools.
 --
@@ -498,3 +495,222 @@ BEGIN
 END $$;
 
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 9: deactivation actually takes access away — and only from the
+-- person who was deactivated.
+--
+-- Deactivating someone writes `Users."isActive" = false` and nothing else, and
+-- the four identity helpers under every policy in this schema used to ignore
+-- that column. Web and mobile read Supabase directly, so the account kept the
+-- role and the tenant it had a moment earlier: a deactivated SCHOOL_ADMIN
+-- still read the whole school, still wrote to it, and could set their own
+-- `isActive` back to true through `users_admin_all`. The helpers now require
+-- `isActive`, which resolves such a caller to NULL on all four and makes every
+-- policy predicate NULL — never true.
+--
+-- The trap in that change is over-correction. The helpers resolve the CALLER,
+-- never the row under test, so an ACTIVE admin must still see a deactivated
+-- colleague and must still be able to switch them back on — otherwise
+-- deactivation is a one-way door and the fix is worse than the hole. Both
+-- halves are asserted here, and the round trip between them, because a
+-- plausible wrong fix (putting `isActive` in the Users policies instead of the
+-- helpers) passes the first half and quietly fails the second.
+--
+-- Acts as the deactivated admin the fixtures plant in school A. Their ids come
+-- in with -v: an inactive principal cannot look up anything, itself included.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'inactive_auth_id', 'role', 'authenticated')::text,
+  true
+);
+-- psql does not expand :variables inside a dollar-quoted block, so the ids the
+-- assertions need are handed to the blocks through settings instead.
+SELECT set_config('app.test_school_a', :'school_a', true);
+SELECT set_config('app.test_inactive_user_id', :'inactive_user_id', true);
+
+DO $$
+DECLARE t record; n bigint; checked int := 0;
+BEGIN
+  IF app.current_user_id() IS NOT NULL OR app.current_school_id() IS NOT NULL
+     OR app.current_user_role() IS NOT NULL OR app.current_user_group_id() IS NOT NULL THEN
+    RAISE EXCEPTION
+      'inactive: a deactivated admin still resolves to a principal (user %, school %, role %, group %)',
+      app.current_user_id(), app.current_school_id(),
+      app.current_user_role(), app.current_user_group_id();
+  END IF;
+
+  -- Every table rather than a chosen few: "sees nothing" is only worth
+  -- asserting if nothing is what it means, and a table added later must not be
+  -- able to opt out of it by being forgotten here. `_prisma_migrations` is
+  -- Prisma's own schema history — no tenant data, no RLS — and is the single
+  -- exclusion.
+  FOR t IN
+    SELECT c.oid, c.relname
+      FROM pg_class c
+      JOIN pg_namespace ns ON ns.oid = c.relnamespace
+     WHERE ns.nspname = 'public'
+       AND c.relkind IN ('r', 'p')
+       AND c.relname <> '_prisma_migrations'
+       AND has_table_privilege(c.oid, 'SELECT')
+     ORDER BY c.relname
+  LOOP
+    EXECUTE format('SELECT count(*) FROM public.%I', t.relname) INTO n;
+    IF n <> 0 THEN
+      RAISE EXCEPTION
+        'inactive: a deactivated admin reads % row(s) of "%"', n, t.relname;
+    END IF;
+    checked := checked + 1;
+  END LOOP;
+
+  -- The schema has 30 such tables today. The floor only has to be high enough
+  -- that a catalog query which quietly stopped matching anything cannot pass
+  -- for a clean run.
+  IF checked < 25 THEN
+    RAISE EXCEPTION
+      'inactive: only % table(s) were checked; the catalog query proved nothing', checked;
+  END IF;
+END
+$$;
+
+-- Reads are the half that is easy to notice. Writes are the half that lets a
+-- deactivated admin undo their own deactivation, so both are asserted. The
+-- school id is pasted in from outside because they can no longer resolve it.
+DO $$
+DECLARE n bigint;
+BEGIN
+  BEGIN
+    INSERT INTO "Rooms" ("schoolId", "name", "updatedAt")
+    VALUES (current_setting('app.test_school_a')::uuid, 'RLS-inaktiv-sal', now());
+    RAISE EXCEPTION
+      'inactive: a deactivated admin created a room in the school they were removed from';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- The escalation itself: switching yourself back on. A policy that refuses
+  -- an UPDATE does not raise, it simply matches no row, so the row count is
+  -- the assertion.
+  UPDATE "Users" SET "isActive" = true, "updatedAt" = now()
+   WHERE "id" = current_setting('app.test_inactive_user_id')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'inactive: a deactivated admin reactivated themselves (% row(s) updated)', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- The other half: an ACTIVE admin of the same school still sees the
+-- deactivated colleague and can still put them back. This is the only way back
+-- for a locked-out account, so it is asserted rather than assumed.
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id', 'role', 'authenticated')::text,
+  true
+);
+SELECT set_config('app.test_inactive_auth_id', :'inactive_auth_id', true);
+SELECT set_config('app.test_inactive_user_id', :'inactive_user_id', true);
+
+DO $$
+DECLARE
+  target  uuid := current_setting('app.test_inactive_user_id')::uuid;
+  t       record;
+  n       bigint;
+  visible int := 0;
+BEGIN
+  -- IS DISTINCT FROM, not <>: an over-strict helper resolves the role to NULL,
+  -- and `NULL <> 'SCHOOL_ADMIN'` is NULL, so a plain <> would wave it through.
+  -- That is the same NULL semantics the fix relies on, pointed the other way.
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION
+      'reactivation: expected to act as an ACTIVE admin of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+
+  -- Counts the tables this admin can actually read something from. Without it,
+  -- the "0 rows everywhere" loop above could pass on an empty database and
+  -- prove nothing at all. A seeded database gives 12; the floor is set well
+  -- below that so a seed that grows or shrinks a little does not fail CI for
+  -- an unrelated reason.
+  FOR t IN
+    SELECT c.oid, c.relname
+      FROM pg_class c
+      JOIN pg_namespace ns ON ns.oid = c.relnamespace
+     WHERE ns.nspname = 'public'
+       AND c.relkind IN ('r', 'p')
+       AND c.relname <> '_prisma_migrations'
+       AND has_table_privilege(c.oid, 'SELECT')
+  LOOP
+    EXECUTE format('SELECT count(*) FROM public.%I', t.relname) INTO n;
+    IF n > 0 THEN visible := visible + 1; END IF;
+  END LOOP;
+
+  IF visible < 8 THEN
+    RAISE EXCEPTION
+      'reactivation: an active admin sees rows in only % table(s); the lockout assertion above is vacuous',
+      visible;
+  END IF;
+
+  -- Former staff stay listed. `users_staff_select` and `users_admin_all` ask
+  -- about the caller, never about the target's isActive, and that is exactly
+  -- what keeps the admin screen able to show a deactivated person at all.
+  SELECT count(*) INTO n FROM "Users" WHERE "id" = target;
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'reactivation: an active admin sees % row(s) for the deactivated colleague, expected 1', n;
+  END IF;
+
+  -- That the colleague is genuinely deactivated at this point is guaranteed
+  -- twice over — the runner refuses to start unless the fixture row is
+  -- inactive, and the block above raises if a deactivated principal resolves
+  -- at all — so it is not re-checked here.
+
+  -- A USING clause that hid the row would leave the row count at 0; a WITH
+  -- CHECK clause that refused the new value raises instead. Both are ways for
+  -- reactivation to stop working, so both are named here rather than left to
+  -- surface as a bare "new row violates row-level security policy".
+  BEGIN
+    UPDATE "Users" SET "isActive" = true, "updatedAt" = now() WHERE "id" = target;
+    GET DIAGNOSTICS n = ROW_COUNT;
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      RAISE EXCEPTION
+        'reactivation: an admin''s reactivation was refused by a WITH CHECK clause';
+  END;
+
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'reactivation: an admin''s reactivation was filtered by policy (% row(s) updated)', n;
+  END IF;
+
+  -- And the round trip closes: the same account, reactivated in this very
+  -- transaction, resolves to a principal again. Deactivation is a door, not a
+  -- wall.
+  PERFORM set_config('request.jwt.claims',
+    json_build_object('sub', current_setting('app.test_inactive_auth_id'),
+                      'role', 'authenticated')::text, true);
+
+  IF app.current_user_id() IS DISTINCT FROM target
+     OR app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION
+      'reactivation: the reactivated admin still resolves to nothing (user %, role %)',
+      coalesce(app.current_user_id()::text, '<none>'),
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+
+  SELECT count(*) INTO n FROM "Schools";
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'reactivation: the reactivated admin sees % school(s), expected their own', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+SELECT 'rls-policies: all assertions passed' AS result;

@@ -47,13 +47,33 @@ echo "    primary school: ${school_a}"
 # The authenticated policies key off auth.uid(), so the assertions need a real
 # admin authId to act as. Like the school id, the unprivileged role cannot look
 # it up — with no principal set it sees zero users — so the owner reads it here.
+#
+# `isActive` is part of the predicate because the fixtures now plant a
+# DEACTIVATED admin in this same school. Picking that one would resolve to no
+# principal at all and fail every section below for the wrong reason.
 admin_auth_id="$(
   compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
     -v ON_ERROR_STOP=1 -tAc \
     "SELECT \"authId\" FROM \"Users\" WHERE \"schoolId\" = '${school_a}' \
-       AND role = 'SCHOOL_ADMIN' AND \"authId\" IS NOT NULL LIMIT 1" \
+       AND role = 'SCHOOL_ADMIN' AND \"isActive\" AND \"authId\" IS NOT NULL LIMIT 1" \
   | tr -d '[:space:]'
 )"
+
+# The deactivated admin of the SAME school. Read as the owner for the usual
+# reason, and required to be inactive here so a fixture that silently stopped
+# deactivating them cannot let the lockout assertions pass vacuously.
+inactive_user_id="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT id FROM \"Users\" \
+      WHERE \"authId\" = '00000000-0000-4000-8000-000000000003' AND NOT \"isActive\"" \
+  | tr -d '[:space:]'
+)"
+
+if [ -z "$inactive_user_id" ]; then
+  echo "FAIL: no deactivated admin in the primary school; fixtures did not run." >&2
+  exit 1
+fi
 
 # The other school's pupil, for the cross-tenant guardian assertion. Read as the
 # owner: the app role cannot see the second tenant at all, which is the point.
@@ -78,7 +98,8 @@ echo "==> Running policy assertions as ${APP_ROLE} (the role the API uses)"
 compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   psql -U "$APP_ROLE" -h localhost -d "$DB_NAME" \
   -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -v "admin_auth_id=${admin_auth_id}" \
-  -v "student_b=${student_b}" -tA -f /dev/stdin \
+  -v "student_b=${student_b}" -v "inactive_user_id=${inactive_user_id}" \
+  -v "inactive_auth_id=00000000-0000-4000-8000-000000000003" -tA -f /dev/stdin \
   < scripts/test/rls-policies.sql
 
 echo "==> RLS policy tests passed"

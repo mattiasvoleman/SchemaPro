@@ -27,6 +27,21 @@ export interface PublishResult {
  * re-publishing after regenerating part of the schedule is safe and never
  * duplicates lessons or touches lessons that already carry attendance.
  *
+ * That key is the *template* id, which is why it only holds as long as no
+ * dated lesson outlives its template. The FK is ON DELETE SET NULL, so an
+ * orphaned row carries `masterLessonId = null`, matches no key below, and is
+ * published straight over — a regenerated week used to come back doubled for
+ * exactly that reason. Whoever replaces a generated timetable therefore
+ * deletes its future materializations in the same transaction; see
+ * OptimizationProxyService.persistMasterLessons.
+ *
+ * Concurrency: the idempotency set is read once, at the start of the
+ * transaction, so two administrators publishing the same window at the same
+ * moment each see the other's rows as absent and both insert. Nothing in this
+ * method can separate them — only a unique index on (masterLessonId, date)
+ * can, and then the loser's write surfaces as 409 through the standard Prisma
+ * error mapping.
+ *
  * Holidays: full-day `UNAVAILABLE` constraints on a student group with a
  * concrete `date` suppress materialization for that group on that day.
  */
