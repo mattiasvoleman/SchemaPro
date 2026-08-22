@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import * as ExpoCrypto from 'expo-crypto';
+import { SecureTokenStore } from '../services/auth/secureTokenStore';
 import {
   enqueueAttendanceRecord,
   getPendingAttendanceRecords,
@@ -33,8 +34,11 @@ export function useOfflineAttendance(): UseOfflineAttendanceReturn {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const refreshQueue = useCallback(async (): Promise<void> => {
-    const records = await getPendingAttendanceRecords();
-    setPendingRecords(records);
+    // This teacher's own queue. A shared tablet keeps a colleague's unsynced
+    // rows in the same encrypted store, and they are not this teacher's to see
+    // or to send.
+    const session = await SecureTokenStore.getTeacherSession();
+    setPendingRecords(session ? await getPendingAttendanceRecords(session.teacherId) : []);
   }, []);
 
   const enqueue = useCallback(

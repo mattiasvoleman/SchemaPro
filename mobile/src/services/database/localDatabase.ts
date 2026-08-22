@@ -213,7 +213,21 @@ export async function enqueueAttendanceRecord(
   );
 }
 
-export async function getPendingAttendanceRecords(): Promise<PendingAttendanceRecord[]> {
+/**
+ * The queue belonging to one teacher, and never anyone else's.
+ *
+ * A tablet is shared. Logout clears the keychain but not this database — the
+ * encrypted store stays keyed and every unsynced row with it — so the next
+ * teacher to sign in used to drain their colleague's queue under their own
+ * token. The server stamps `recordedById` from the bearer it is given, so the
+ * record ended up officially attributed to a teacher who was never in the room.
+ *
+ * The owner was written all along; nobody asked. Passing it is required rather
+ * than optional so a new caller cannot quietly inherit the old behaviour.
+ */
+export async function getPendingAttendanceRecords(
+  teacherId: string,
+): Promise<PendingAttendanceRecord[]> {
   const db = getDb();
   const rows = await db.getAllAsync<{
     id: string;
@@ -223,7 +237,10 @@ export async function getPendingAttendanceRecords(): Promise<PendingAttendanceRe
     timestamp: string;
     submitted_by_teacher_id: string;
     retry_count: number;
-  }>('SELECT * FROM attendance_queue WHERE is_synced = 0 ORDER BY timestamp ASC');
+  }>(
+    'SELECT * FROM attendance_queue WHERE is_synced = 0 AND submitted_by_teacher_id = ? ORDER BY timestamp ASC',
+    [teacherId],
+  );
 
   return rows.map((r) => ({
     id: r.id,

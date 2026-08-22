@@ -72,6 +72,8 @@ describe('AttendanceService', () => {
       createdAt: NOW,
       updatedAt: NOW,
     });
+    // Nothing in the register yet — the ordinary first report.
+    tx.attendanceRecord.findMany.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -349,6 +351,80 @@ describe('AttendanceService', () => {
         homeClass: [STUDENT_A],
         named: [{ id: STUDENT_A, firstName: 'Åsa', lastName: 'Åkesson' }],
       });
+    });
+
+    it('keeps the time the teacher marked it, not the time it arrived', async () => {
+      // A batch can sit in the offline queue for a day. Stamping arrival puts
+      // the whole class in the register at one instant hours after the lesson,
+      // and the register is what an absence follow-up is read from.
+      await service.reportAttendance(
+        {
+          calendarLessonId: LESSON_ID,
+          records: [
+            {
+              studentId: STUDENT_A,
+              status: 'PRESENT' as never,
+              recordedAt: '2026-09-01T09:10:00.000Z',
+            },
+          ],
+        } as never,
+        teacher(),
+      );
+
+      const call = tx.attendanceRecord.upsert.mock.calls[0]?.[0] as {
+        create: { recordedAt: Date };
+      };
+      expect(call.create.recordedAt).toEqual(new Date('2026-09-01T09:10:00.000Z'));
+    });
+
+    it.each([
+      ['a time in the future', '2099-01-01T00:00:00.000Z'],
+      ['a time older than a school term', '2020-01-01T00:00:00.000Z'],
+      ['a value that is not a date at all', 'imorgon'],
+    ])('falls back to the server clock for %s', async (_label, recordedAt) => {
+      // The device clock is not trusted blindly: these are a broken device,
+      // not a teacher who marked attendance in 2099.
+      await service.reportAttendance(
+        {
+          calendarLessonId: LESSON_ID,
+          records: [{ studentId: STUDENT_A, status: 'PRESENT' as never, recordedAt }],
+        } as never,
+        teacher(),
+      );
+
+      const call = tx.attendanceRecord.upsert.mock.calls[0]?.[0] as {
+        create: { recordedAt: Date };
+      };
+      expect(call.create.recordedAt).toEqual(NOW);
+    });
+
+    it('stays silent when the pupil was already absent in the register', async () => {
+      // The device retries whenever a response is lost. The write is idempotent
+      // — upsert on (lesson, student) — but the alert was not, so every retry
+      // told the guardian about the same absence again. A guardian who is told
+      // four times learns to ignore the fifth.
+      tx.attendanceRecord.findMany.mockResolvedValue([
+        { studentId: STUDENT_A, status: 'ABSENT' },
+      ]);
+
+      await reportAbsent();
+
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      // The record itself is still written: a replay must converge, not be
+      // refused.
+      expect(tx.attendanceRecord.upsert).toHaveBeenCalled();
+    });
+
+    it('alerts when a correction turns a present pupil absent', async () => {
+      // Not a replay — the register said something else a moment ago, and this
+      // is the first time anybody could have been told.
+      tx.attendanceRecord.findMany.mockResolvedValue([
+        { studentId: STUDENT_A, status: 'PRESENT' },
+      ]);
+
+      await reportAbsent();
+
+      expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
     });
 
     it('alerts the guardians when no absence report exists', async () => {

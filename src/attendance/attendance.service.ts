@@ -106,8 +106,47 @@ export class AttendanceService {
       let created = 0;
       let updated = 0;
 
+      /**
+       * What the register said before this batch.
+       *
+       * The guardian alert is about a pupil BECOMING absent, not about a
+       * request arriving. The device queue retries whenever a response is lost,
+       * and the write itself is idempotent — upsert on (lesson, student) — but
+       * the alert was not: every retry sent the guardian the same "oanmäld
+       * frånvaro" again. Notifications carry no natural key to deduplicate on,
+       * and inventing one would be describing the symptom; the transition is
+       * the thing that is actually new.
+       */
+      const priorStatus = new Map(
+        (
+          await tx.attendanceRecord.findMany({
+            where: { calendarLessonId: dto.calendarLessonId, studentId: { in: studentIds } },
+            select: { studentId: true, status: true },
+          })
+        ).map((row) => [row.studentId, row.status]),
+      );
+
       const now = new Date();
       const recordedById = user.userId ?? null;
+
+      /**
+       * When the teacher marked it, not when the network came back.
+       *
+       * The offline queue can hold a batch for a day, and stamping arrival time
+       * puts a whole class in the register at one instant hours after the
+       * lesson — which is what an absence follow-up is then read from. The
+       * client's clock is not trusted blindly: a time in the future, or older
+       * than a school term, is the device being wrong rather than the teacher
+       * being late, and the server's own clock is the safer answer there.
+       */
+      const MAX_BACKDATE_MS = 120 * 24 * 60 * 60 * 1000;
+      const recordedAtOf = (value: string | undefined): Date => {
+        if (!value) return now;
+        const claimed = new Date(value);
+        if (Number.isNaN(claimed.getTime())) return now;
+        const age = now.getTime() - claimed.getTime();
+        return age < 0 || age > MAX_BACKDATE_MS ? now : claimed;
+      };
 
       // Use upsert for idempotency — mobile devices may re-send if the first
       // attempt was lost while offline.
@@ -125,13 +164,13 @@ export class AttendanceService {
             studentId: entry.studentId,
             status: entry.status,
             recordedById,
-            recordedAt: now,
+            recordedAt: recordedAtOf(entry.recordedAt),
             note: entry.note ?? null,
           },
           update: {
             status: entry.status,
             recordedById,
-            recordedAt: now,
+            recordedAt: recordedAtOf(entry.recordedAt),
             note: entry.note ?? null,
           },
           select: { createdAt: true, updatedAt: true },
@@ -154,7 +193,15 @@ export class AttendanceService {
       // Skola24-style guardian alert: a student was marked ABSENT without a
       // prior absence report covering this lesson.
       const absentIds = dto.records
-        .filter((entry) => entry.status === 'ABSENT')
+        .filter(
+          (entry) =>
+            entry.status === 'ABSENT' &&
+            // Already absent in the register: this batch changed nothing about
+            // them, so there is nothing to tell a guardian that was not told
+            // the first time. A correction from PRESENT to ABSENT is a real
+            // transition and does alert.
+            priorStatus.get(entry.studentId) !== 'ABSENT',
+        )
         .map((entry) => entry.studentId);
       if (absentIds.length > 0) {
         const reports = await tx.absenceReport.findMany({

@@ -1,5 +1,6 @@
 import * as Network from 'expo-network';
 import { getAccessToken } from '../supabase';
+import { SecureTokenStore } from '../auth/secureTokenStore';
 import { assertSecureBaseUrl } from '../network/secureUrl';
 import {
   getPendingAttendanceRecords,
@@ -81,6 +82,10 @@ async function pushLessonBatch(
       records: records.map((record) => ({
         studentId: record.studentId,
         status: STATUS_TO_API[record.status],
+        // When the teacher actually marked it, not when the network came back.
+        // A batch can sit in this queue for a day; without it the register says
+        // the whole class was marked at once, hours after the lesson ended.
+        recordedAt: record.timestamp,
       })),
     }),
   });
@@ -131,8 +136,22 @@ export class AttendanceSyncWorker {
       return;
     }
 
-    const records = await getPendingAttendanceRecords();
+    // Whose queue this is, before anything is sent. A tablet is shared, and
+    // logout leaves the encrypted store keyed with every unsynced row in it —
+    // so draining "the queue" would submit a colleague's records under this
+    // session's token, and the server stamps the recorder from the bearer it
+    // is given. An attendance record is an official document about a child;
+    // signing it with the wrong teacher's name is not a sync detail.
+    const session = await SecureTokenStore.getTeacherSession();
+    if (!session) {
+      this.onStatusChange('error', await getPendingQueueCount(), 'Session expired — please log in again.');
+      return;
+    }
+
+    const records = await getPendingAttendanceRecords(session.teacherId);
     if (records.length === 0) {
+      // Rows may still be queued for somebody else on this device. They are
+      // theirs to send, so the count shown is this teacher's own: nought.
       this.onStatusChange('connected', 0, null);
       return;
     }
