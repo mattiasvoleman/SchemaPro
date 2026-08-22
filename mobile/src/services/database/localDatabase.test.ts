@@ -1,5 +1,11 @@
 import * as SQLite from 'expo-sqlite';
-import { getPendingAttendanceRecords, getStudentsByIds, initDatabase } from './localDatabase';
+import {
+  clearCachedSchoolData,
+  getPendingAttendanceRecords,
+  getPendingQueueCount,
+  getStudentsByIds,
+  initDatabase,
+} from './localDatabase';
 
 jest.mock('expo-crypto', () => ({
   getRandomBytesAsync: jest.fn(async () => new Uint8Array(32).fill(7)),
@@ -18,6 +24,8 @@ jest.mock('expo-secure-store', () => ({
  */
 const rows: unknown[] = [];
 const getAllAsync = jest.fn(async () => rows);
+const getFirstAsync = jest.fn(async () => ({ cipher_version: '4.5.5 community', count: 0 }));
+const execAsync = jest.fn(async () => undefined);
 
 jest.mock('expo-sqlite', () => ({
   openDatabaseAsync: jest.fn(),
@@ -32,11 +40,13 @@ const lastQuery = () => getAllAsync.mock.calls.at(-1) as unknown as [string, unk
 beforeEach(async () => {
   rows.length = 0;
   getAllAsync.mockClear();
+  getFirstAsync.mockClear();
+  execAsync.mockClear();
   openDatabaseAsync.mockResolvedValue({
-    execAsync: jest.fn(async () => undefined),
+    execAsync,
     // initDatabase asserts SQLCipher is actually compiled in before it trusts
     // the store — see the cipher_version check it makes on the connection.
-    getFirstAsync: jest.fn(async () => ({ cipher_version: '4.5.5 community' })),
+    getFirstAsync,
     getAllAsync,
     runAsync: jest.fn(async () => ({ changes: 0, lastInsertRowId: 0 })),
   } as unknown as SQLite.SQLiteDatabase);
@@ -67,6 +77,42 @@ describe('the offline attendance queue', () => {
     await getPendingAttendanceRecords('teacher-a');
 
     expect(lastQuery()[0]).toContain('ORDER BY timestamp ASC');
+  });
+});
+
+describe('the pending badge', () => {
+  it('counts only the signed-in teacher’s own rows', async () => {
+    // The badge has to agree with what the worker can actually send, and the
+    // worker only drains its own teacher's rows. Counting the whole table made
+    // the badge stick at a number this teacher could never work off.
+    await getPendingQueueCount('teacher-a');
+
+    const [sql, params] = getFirstAsync.mock.calls.at(-1) as unknown as [string, unknown[]];
+    expect(sql).toContain('submitted_by_teacher_id = ?');
+    expect(params).toEqual(['teacher-a']);
+  });
+});
+
+describe('signing out of a shared tablet', () => {
+  it('forgets the cached roster', async () => {
+    // Signing out used to clear three keychain items and nothing else, so the
+    // next teacher's app opened holding the previous teacher's pupils by name.
+    await clearCachedSchoolData();
+
+    const [sql] = execAsync.mock.calls.at(-1) as unknown as [string];
+    expect(sql).toContain('DELETE FROM students');
+    expect(sql).toContain('DELETE FROM calendar_lessons');
+    expect(sql).toContain('DELETE FROM lesson_students');
+  });
+
+  it('keeps unsent attendance, which may be the only copy', async () => {
+    // A legal record about a child. The teacher who signs out at the end of a
+    // lesson must find it again when they sign back in — and it is already
+    // unreachable by whoever signs in next.
+    await clearCachedSchoolData();
+
+    const [sql] = execAsync.mock.calls.at(-1) as unknown as [string];
+    expect(sql).not.toContain('attendance_queue');
   });
 });
 

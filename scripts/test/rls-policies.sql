@@ -1031,3 +1031,40 @@ BEGIN
 END $$;
 
 ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 10: the constraint the whole authorization layer rests on.
+--
+-- app.current_user_id, app.current_school_id, app.current_user_role and
+-- app.current_user_group_id each resolve one value WHERE "authId" = auth.uid(),
+-- and each is declared RETURNS uuid rather than SETOF. With two rows for one
+-- authId they do not error and do not warn — they return whichever row the heap
+-- hands over first, and the answer flips when unrelated rows are rewritten.
+--
+-- So the UNIQUE constraint is not hygiene, it is what keeps every session
+-- resolving to the school it belongs to. It also does not look load-bearing
+-- from the schema, which is why this assertion exists rather than a comment
+-- alone: relaxing it is the obvious first step towards one person working in
+-- several schools, and doing that without rewriting those four functions in the
+-- same migration would silently start resolving sessions to an arbitrary school.
+-- ---------------------------------------------------------------------------
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_index i
+    JOIN pg_class t ON t.oid = i.indrelid
+    JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY (i.indkey)
+    WHERE t.relname = 'Users'
+      AND i.indisunique
+      AND i.indnatts = 1
+      AND a.attname = 'authId'
+  ) THEN
+    RAISE EXCEPTION
+      'Users.authId is no longer uniquely constrained — the four app.current_* '
+      'helpers now resolve an arbitrary row, and every session can silently '
+      'land in the wrong school';
+  END IF;
+END $$;

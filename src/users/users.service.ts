@@ -256,13 +256,18 @@ export class UsersService {
       authId = await this.prisma.withRls(user, async (tx) => {
         const target = await tx.user.findUnique({
           where: { id },
-          select: { authId: true },
+          select: { authId: true, invitedAt: true },
         });
         if (!target) {
           throw new NotFoundException('The requested record does not exist.');
         }
         await tx.user.delete({ where: { id } });
-        return target.authId;
+        // Somebody who was never contacted has no identity to delete: `authId`
+        // is a placeholder uuid written at create time and matching nothing at
+        // the provider. Asking it to delete one produced a warning that read
+        // like a failure on every removal of an uninvited person, which is most
+        // of them while a school is still building its catalog.
+        return target.invitedAt === null ? null : target.authId;
       });
     } catch (error) {
       if (error instanceof NotFoundException) throw error;

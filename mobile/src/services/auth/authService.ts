@@ -1,4 +1,5 @@
 import { getSupabase } from '../supabase';
+import { clearCachedSchoolData } from '../database/localDatabase';
 import { SecureTokenStore } from './secureTokenStore';
 import type { AuthState } from '../../types';
 
@@ -80,5 +81,8 @@ export const AuthService = {
   async logout(): Promise<void> {
     await getSupabase().auth.signOut();
     await SecureTokenStore.clearSession();
+    // The cached roster goes with the session. Unsent attendance does not —
+    // see clearCachedSchoolData for why the queue survives a sign-out.
+    await clearCachedSchoolData();
   },
 } as const;

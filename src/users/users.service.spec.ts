@@ -584,7 +584,10 @@ describe('UsersService', () => {
 
   describe('remove', () => {
     it('deletes the tenant row, then the Supabase identity, in the caller RLS context', async () => {
-      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID });
+      tx.user.findUnique.mockResolvedValue({
+        authId: AUTH_ID,
+        invitedAt: new Date('2026-08-01T00:00:00.000Z'),
+      });
       tx.user.delete.mockResolvedValue({ id: USER_ID });
       const user = testUser();
 
@@ -593,10 +596,24 @@ describe('UsersService', () => {
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.user.findUnique).toHaveBeenCalledWith({
         where: { id: USER_ID },
-        select: { authId: true },
+        select: { authId: true, invitedAt: true },
       });
       expect(tx.user.delete).toHaveBeenCalledWith({ where: { id: USER_ID } });
       expect(supabaseAdmin.deleteUser).toHaveBeenCalledWith(AUTH_ID);
+    });
+
+    it('asks the provider for nothing when the person was never invited', async () => {
+      // `authId` is a placeholder uuid written at create time that matches
+      // nothing at the provider. Asking it to delete one logged a warning that
+      // read like a failure — on most removals, while a school is still
+      // building its catalog and few people have been contacted.
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null });
+      tx.user.delete.mockResolvedValue({ id: USER_ID });
+
+      await expect(service.remove(USER_ID, testUser())).resolves.toBeUndefined();
+
+      expect(tx.user.delete).toHaveBeenCalledWith({ where: { id: USER_ID } });
+      expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
     });
 
     it('404s on an unknown (or other-tenant) user without touching Supabase', async () => {

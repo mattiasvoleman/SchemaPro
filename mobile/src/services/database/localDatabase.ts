@@ -266,10 +266,45 @@ export async function incrementRetryCount(id: string): Promise<void> {
   );
 }
 
-export async function getPendingQueueCount(): Promise<number> {
+/**
+ * How many rows THIS teacher still has to send.
+ *
+ * The badge this feeds must agree with what the sync worker can actually
+ * drain, and the worker only ever drains its own teacher's rows. Counting the
+ * whole table made the badge stick at a number the signed-in teacher could
+ * never work off — their colleague's unsent attendance, invisible to them and
+ * unreachable by them. A count nobody can act on is worse than no count.
+ */
+export async function getPendingQueueCount(teacherId: string): Promise<number> {
   const db = getDb();
   const row = await db.getFirstAsync<{ count: number }>(
-    'SELECT COUNT(*) AS count FROM attendance_queue WHERE is_synced = 0',
+    'SELECT COUNT(*) AS count FROM attendance_queue WHERE is_synced = 0 AND submitted_by_teacher_id = ?',
+    [teacherId],
   );
   return row?.count ?? 0;
+}
+
+/**
+ * Forgets the cached roster and timetable, and keeps the queue.
+ *
+ * A tablet is shared. Signing out used to clear three keychain items and
+ * nothing else: the encrypted store stayed keyed, so the next teacher's app
+ * opened holding the previous teacher's pupils by name. Those tables are a
+ * cache — they come back on the next sync — so dropping them costs a refetch
+ * and returns the device to a teacher who has not seen the class.
+ *
+ * `attendance_queue` is deliberately NOT touched. Unsynced attendance is a
+ * legal record about a child and this device may hold the only copy; a teacher
+ * who signs out at the end of a lesson must find it again when they sign back
+ * in. It is already scoped by owner on read, on send and now on count, so it
+ * is neither visible nor sendable by whoever signs in next.
+ */
+export async function clearCachedSchoolData(): Promise<void> {
+  const db = getDb();
+  // lesson_students cascades from calendar_lessons, but say it anyway: the
+  // cascade depends on PRAGMA foreign_keys, which a future connection could
+  // open without.
+  await db.execAsync(
+    'DELETE FROM lesson_students; DELETE FROM calendar_lessons; DELETE FROM students;',
+  );
 }

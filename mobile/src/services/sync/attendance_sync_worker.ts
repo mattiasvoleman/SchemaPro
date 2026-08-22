@@ -129,22 +129,22 @@ export class AttendanceSyncWorker {
   async runSyncCycle(): Promise<void> {
     if (this.isSyncing) return;
 
-    const online = await isOnline();
-    if (!online) {
-      const pending = await getPendingQueueCount();
-      this.onStatusChange('offline', pending, null);
+    // Whose queue this is, before anything is counted or sent. A tablet is
+    // shared, and signing out leaves the encrypted store keyed — so "the
+    // queue" is not this teacher's queue. Sending a colleague's rows would
+    // submit them under this session's token, and the server stamps the
+    // recorder from the bearer it is given: an official document about a child
+    // signed by a teacher who was never in the room. Counting them is milder
+    // and still wrong — a badge that will not go down however much work you do.
+    const session = await SecureTokenStore.getTeacherSession();
+    if (!session) {
+      this.onStatusChange('error', 0, 'Session expired — please log in again.');
       return;
     }
 
-    // Whose queue this is, before anything is sent. A tablet is shared, and
-    // logout leaves the encrypted store keyed with every unsynced row in it —
-    // so draining "the queue" would submit a colleague's records under this
-    // session's token, and the server stamps the recorder from the bearer it
-    // is given. An attendance record is an official document about a child;
-    // signing it with the wrong teacher's name is not a sync detail.
-    const session = await SecureTokenStore.getTeacherSession();
-    if (!session) {
-      this.onStatusChange('error', await getPendingQueueCount(), 'Session expired — please log in again.');
+    const online = await isOnline();
+    if (!online) {
+      this.onStatusChange('offline', await getPendingQueueCount(session.teacherId), null);
       return;
     }
 
@@ -198,7 +198,7 @@ export class AttendanceSyncWorker {
     }
 
     this.isSyncing = false;
-    const remaining = await getPendingQueueCount();
+    const remaining = await getPendingQueueCount(session.teacherId);
 
     if (failureCount > 0 && remaining > 0) {
       this.onStatusChange(
