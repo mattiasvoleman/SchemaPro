@@ -74,17 +74,54 @@ class TimeGrid:
         minutes = total_minutes % 60
         return f"{hours:02d}:{minutes:02d}:00"
 
+    def clamp_to_grid(self, value: str) -> int | None:
+        """A wall-clock time as a slot, folded into the scheduling day.
+
+        `parse_hhmmss` is strict because the times IT reads are typed by an
+        administrator who can be told to correct them. The times reaching HERE
+        are availability windows, and a school writes those in whole days: this
+        product's own full-day closure is 00:00-23:59 (see `isFullDay` in
+        calendar.service.ts) and the seed ships a teacher rule of 12:00-23:59.
+        Neither lands inside an 08:00-18:00 grid, and strict parsing turned each
+        of them into a 400 for the ENTIRE optimization — one holiday closure and
+        the school could not generate a timetable at all.
+
+        Folding is what the times mean anyway: "unavailable until 23:59" says
+        the rest of the school day, and the rest of the school day ends when the
+        grid does. A window that misses the day altogether returns None, because
+        clamping it would invent a constraint the school never wrote.
+
+        Returns a slot index; the end of the day is `slots_per_day`, one past
+        the last slot, which is what a half-open range needs.
+        """
+        hours, minutes, seconds = (int(part) for part in value.split(":"))
+        if seconds not in (0, 59):
+            msg = f"Time {value} must align to whole minutes."
+            raise ValueError(msg)
+        # 23:59:59 and 23:59 are both the same thing a school means by "all day".
+        total = hours * 60 + minutes + (1 if seconds == 59 else 0)
+        if total <= self.day_start_minutes:
+            return 0
+        if total >= self.day_end_minutes:
+            return self.slots_per_day
+        # Outward, never inward: a window that starts mid-slot covers that slot,
+        # or a lesson could be placed in the half of it the school has taken.
+        offset = total - self.day_start_minutes
+        return offset // self.slot_minutes
+
     def window_to_absolute_range(
         self,
         day_of_week: int | None,
         start_time: str,
         end_time: str,
     ) -> list[tuple[int, int]]:
-        start_slot = self.parse_hhmmss(start_time)
-        end_slot = self.parse_hhmmss(end_time)
+        start_slot = self.clamp_to_grid(start_time)
+        end_slot = self.clamp_to_grid(end_time)
         if end_slot <= start_slot:
-            msg = "Constraint end time must be after start time."
-            raise ValueError(msg)
+            # Not an error any more: a window can legitimately fall entirely
+            # outside the school day (an evening booking, a 06:00-07:00 rule),
+            # and such a window constrains nothing rather than being invalid.
+            return []
 
         days = (day_of_week,) if day_of_week is not None else self.schedule_days
         ranges: list[tuple[int, int]] = []

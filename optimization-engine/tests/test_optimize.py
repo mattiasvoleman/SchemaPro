@@ -3517,3 +3517,74 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "diningSeats",
         "maxLessonsPerDayPerGroup",
     }
+
+
+def test_an_all_day_closure_is_scheduled_around_rather_than_refused() -> None:
+    """The shapes a school actually writes must not fell the whole request.
+
+    Availability windows are not typed against the solver's grid. This product
+    writes a full-day closure as 00:00-23:59 — `isFullDay` in
+    calendar.service.ts says so, and its own spec asserts it — and the seed
+    ships a teacher rule of 12:00-23:59. Neither lands inside an 08:00-18:00
+    day, and strict parsing turned each into a 400 for the ENTIRE optimization:
+    one holiday and the school could not generate a timetable at all.
+
+    Folding is what those times mean. "Unavailable until 23:59" is the rest of
+    the school day, and the rest of the school day ends when the grid does. The
+    assertions below are placements, not statuses, because a fold that quietly
+    dropped every constraint would return OPTIMAL just as happily.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(
+        _settings(SOLVER_MAX_TIME_SECONDS=10.0, SCHEDULE_DAYS="1,2"),
+    )
+
+    def place(start: str, end: str, kind: str = "TEACHER"):  # noqa: ANN202
+        payload = _sample_payload()
+        requirement = payload["requirements"][0]  # type: ignore[index]
+        requirement["lessonsPerWeek"] = 1  # type: ignore[index]
+        payload["constraints"] = [
+            {
+                "id": str(uuid4()),
+                "resourceKind": kind,
+                "resourceId": str(
+                    requirement["teacherId"]  # type: ignore[index]
+                    if kind == "TEACHER"
+                    else requirement["studentGroupId"]  # type: ignore[index]
+                ),
+                "dayOfWeek": 1,
+                "date": None,
+                "startTime": start,
+                "endTime": end,
+                "kind": "UNAVAILABLE",
+            },
+        ]
+        response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+        assert response.status in {"OPTIMAL", "FEASIBLE"}, (
+            f"{start}-{end} felled the whole request instead of being scheduled around"
+        )
+        return response.lessons
+
+    # A holiday: the group is closed all of Monday, so Monday is unusable.
+    for lesson in place("00:00:00", "23:59:00", "STUDENT_GROUP"):
+        assert lesson.day_of_week != 1, "the all-day closure was folded into nothing"
+
+    # The seed's own rule: the teacher is gone from noon, so a Monday lesson
+    # must finish before it.
+    for lesson in place("12:00:00", "23:59:00"):
+        if lesson.day_of_week == 1:
+            assert lesson.end_time <= "12:00:00"
+
+    # Exactly the school day. Strict parsing rejected the end time for being one
+    # minute past the last representable moment.
+    for lesson in place("08:00:00", "18:00:00"):
+        assert lesson.day_of_week != 1
+
+    # And a window that misses the school day entirely constrains nothing —
+    # clamping it would invent a rule the school never wrote.
+    monday = [
+        lesson for lesson in place("19:00:00", "20:00:00") if lesson.day_of_week == 1
+    ]
+    assert monday, "an evening window took Monday away, which nobody asked it to"
