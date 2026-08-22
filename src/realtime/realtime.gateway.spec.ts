@@ -25,6 +25,7 @@ const TOKEN = 'handshake-jwt';
 interface Profile {
   userId: string;
   schoolId: string;
+  role: 'TEACHER' | 'SCHOOL_ADMIN' | 'STUDENT' | 'GUARDIAN' | 'SYSTEM_ADMIN';
   label: string;
   editingLessonId: string | null;
 }
@@ -51,6 +52,7 @@ const remoteSocket = (profile?: Profile) => ({
 const profileOf = (overrides: Partial<Profile> = {}): Profile => ({
   userId: USER_ID,
   schoolId: SCHOOL_ID,
+  role: 'SCHOOL_ADMIN',
   label: 'Anna B.',
   editingLessonId: null,
   ...overrides,
@@ -59,6 +61,16 @@ const profileOf = (overrides: Partial<Profile> = {}): Profile => ({
 /** Lets the queued `setImmediate` (and its microtasks) run. */
 const flushImmediates = () =>
   new Promise<void>((resolve) => setImmediate(resolve));
+
+/**
+ * Presence broadcasts are coalesced behind a short timer, so a burst of
+ * heartbeats costs one roster emit instead of one per beat. Tests have to let
+ * that window close.
+ */
+const flushPresence = async () => {
+  jest.advanceTimersByTime(200);
+  await flushImmediates();
+};
 
 describe('RealtimeGateway', () => {
   let gateway: RealtimeGateway;
@@ -70,7 +82,11 @@ describe('RealtimeGateway', () => {
   let server: { to: jest.Mock; in: jest.Mock };
 
   beforeEach(() => {
+    // setImmediate stays real: the gateway defers the post-disconnect roster
+    // refresh onto it, and a faked one would never run.
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     jwt = { verifyAsync: jest.fn() };
@@ -89,6 +105,7 @@ describe('RealtimeGateway', () => {
   });
 
   afterEach(() => {
+    jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
@@ -98,6 +115,7 @@ describe('RealtimeGateway', () => {
   const activeProfileRow = (overrides: Record<string, unknown> = {}) => ({
     id: USER_ID,
     schoolId: SCHOOL_ID,
+    role: 'SCHOOL_ADMIN',
     isActive: true,
     firstName: 'Anna',
     lastName: 'Bergström',
@@ -191,7 +209,7 @@ describe('RealtimeGateway', () => {
       expect(client.join).not.toHaveBeenCalled();
     });
 
-    it('joins the school and user rooms with a PII-reduced label', async () => {
+    it('puts staff in the school room with a PII-reduced label', async () => {
       jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
       tx.user.findUnique.mockResolvedValue(activeProfileRow());
       const client = makeSocket({ token: TOKEN });
@@ -200,17 +218,36 @@ describe('RealtimeGateway', () => {
 
       expect(client.disconnect).not.toHaveBeenCalled();
       expect(client.join).toHaveBeenCalledWith([
-        `school:${SCHOOL_ID}`,
         `user:${USER_ID}`,
+        `staff:${SCHOOL_ID}`,
       ]);
       // Presence label is "First L." — never the full surname or an email.
       expect(client.data['profile']).toEqual({
         userId: USER_ID,
         schoolId: SCHOOL_ID,
+        role: 'SCHOOL_ADMIN',
         label: 'Anna B.',
         editingLessonId: null,
       });
     });
+
+    it.each(['STUDENT', 'GUARDIAN'])(
+      'leaves a %s out of the staff room entirely',
+      async (role) => {
+        // There used to be one room every authenticated principal joined, and
+        // every lesson update went to it — so a pupil received the subject,
+        // room, status and roster of lessons the database refuses to show them.
+        // A socket is not a lighter-weight way in than a query.
+        jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
+        tx.user.findUnique.mockResolvedValue(activeProfileRow({ role }));
+        const client = makeSocket({ token: TOKEN });
+
+        await connect(client);
+
+        expect(client.disconnect).not.toHaveBeenCalled();
+        expect(client.join).toHaveBeenCalledWith([`user:${USER_ID}`]);
+      },
+    );
   });
 
   describe('onPresence', () => {
@@ -246,9 +283,10 @@ describe('RealtimeGateway', () => {
       ]);
 
       await presence(client, { editingLessonId: 'lesson-9' });
+      await flushPresence();
 
-      expect(server.in).toHaveBeenCalledWith(`school:${SCHOOL_ID}`);
-      expect(server.to).toHaveBeenCalledWith(`school:${SCHOOL_ID}`);
+      expect(server.in).toHaveBeenCalledWith(`staff:${SCHOOL_ID}`);
+      expect(server.to).toHaveBeenCalledWith(`staff:${SCHOOL_ID}`);
       expect(emit).toHaveBeenCalledWith(TIMETABLE_PRESENCE_EVENT, {
         peers: [
           {
@@ -272,13 +310,53 @@ describe('RealtimeGateway', () => {
       fetchSockets.mockResolvedValue([remoteSocket(mine)]);
 
       await presence(client, undefined);
+      await flushPresence();
       expect(mine.editingLessonId).toBeNull();
 
       // A non-string id (bad client) is treated as "not editing" too.
       mine.editingLessonId = 'lesson-9';
       await presence(client, { editingLessonId: 42 });
+      await flushPresence();
       expect(mine.editingLessonId).toBeNull();
       expect(emit).toHaveBeenCalledTimes(2);
+    });
+
+    it.each(['STUDENT', 'GUARDIAN'])('ignores a heartbeat from a %s', async (role) => {
+      // The presence roster names the staff who are connected and the lesson
+      // each has open. A pupil's client never sends this, so anything that does
+      // is a stale build or somebody probing — and neither gets an answer that
+      // confirms the room exists.
+      const client = makeSocket();
+      client.data['profile'] = profileOf({ role: role as 'STUDENT' });
+
+      await presence(client, { editingLessonId: 'lesson-1' });
+      await flushPresence();
+
+      expect(server.in).not.toHaveBeenCalled();
+      expect(emit).not.toHaveBeenCalled();
+    });
+
+    it('costs one broadcast however fast the heartbeats arrive', async () => {
+      // Each broadcast walks every socket in the room and emits the roster back
+      // to all of them, so an unthrottled heartbeat multiplies its own traffic
+      // by the number of connected staff.
+      const client = makeSocket();
+      const mine = profileOf();
+      client.data['profile'] = mine;
+      fetchSockets.mockResolvedValue([remoteSocket(mine)]);
+
+      for (let beat = 0; beat < 20; beat++) {
+        await presence(client, { editingLessonId: `lesson-${beat}` });
+      }
+      await flushPresence();
+
+      expect(emit).toHaveBeenCalledTimes(1);
+      // The last state wins: a roster is a snapshot, not a stream.
+      expect(emit).toHaveBeenCalledWith(TIMETABLE_PRESENCE_EVENT, {
+        peers: [
+          { userId: USER_ID, label: 'Anna B.', editingLessonId: 'lesson-19' },
+        ],
+      });
     });
   });
 
@@ -290,11 +368,26 @@ describe('RealtimeGateway', () => {
 
       gateway.handleDisconnect(client as unknown as Socket);
       await flushImmediates();
+      await flushPresence();
 
-      expect(server.in).toHaveBeenCalledWith(`school:${SCHOOL_ID}`);
+      expect(server.in).toHaveBeenCalledWith(`staff:${SCHOOL_ID}`);
       expect(emit).toHaveBeenCalledWith(TIMETABLE_PRESENCE_EVENT, {
         peers: [],
       });
+    });
+
+    it('does not refresh the roster when a pupil disconnects', async () => {
+      // A pupil was never in it, so their leaving changes nothing — and a
+      // roster walk per pupil disconnect is work the school pays for nothing.
+      const client = makeSocket();
+      client.data['profile'] = profileOf({ role: 'STUDENT' });
+
+      gateway.handleDisconnect(client as unknown as Socket);
+      await flushImmediates();
+      await flushPresence();
+
+      expect(server.in).not.toHaveBeenCalled();
+      expect(emit).not.toHaveBeenCalled();
     });
 
     it('does nothing for a socket that never authenticated', async () => {
@@ -307,7 +400,7 @@ describe('RealtimeGateway', () => {
   });
 
   describe('emitMasterTimetableUpdated', () => {
-    it('notifies the school room with the change instant', () => {
+    it('notifies the staff room with the change instant', () => {
       const NOW = new Date('2026-08-07T09:30:00.000Z');
       jest.useFakeTimers().setSystemTime(NOW);
       try {
@@ -316,7 +409,7 @@ describe('RealtimeGateway', () => {
         jest.useRealTimers();
       }
 
-      expect(server.to).toHaveBeenCalledWith(`school:${SCHOOL_ID}`);
+      expect(server.to).toHaveBeenCalledWith(`staff:${SCHOOL_ID}`);
       expect(emit).toHaveBeenCalledWith(MASTER_TIMETABLE_UPDATED_EVENT, {
         changedAt: '2026-08-07T09:30:00.000Z',
       });
@@ -324,7 +417,10 @@ describe('RealtimeGateway', () => {
   });
 
   describe('emitLessonUpdated', () => {
-    it('targets the school room plus each affected teacher room', () => {
+    it('reaches the teachers who teach it, and nobody else', () => {
+      // The payload carries the lesson's subject, room, status and its whole
+      // roster; the teacher app builds its offline attendance cache from it.
+      // It used to go to a room every pupil and guardian was in as well.
       const payload = {
         lessonId: 'lesson-1',
         updatedLesson: { id: 'lesson-1' },
@@ -332,12 +428,21 @@ describe('RealtimeGateway', () => {
 
       gateway.emitLessonUpdated(SCHOOL_ID, ['t-1', 't-2'], payload);
 
-      expect(server.to).toHaveBeenCalledWith([
-        `school:${SCHOOL_ID}`,
-        'user:t-1',
-        'user:t-2',
-      ]);
+      expect(server.to).toHaveBeenCalledWith(['user:t-1', 'user:t-2']);
       expect(emit).toHaveBeenCalledWith(LESSON_UPDATED_EVENT, payload);
+    });
+
+    it('emits nothing at all when the lesson has no assigned teacher', () => {
+      // socket.io treats an empty room list as "everyone", so the guard is not
+      // a tidiness measure — without it an unassigned lesson would broadcast
+      // its roster to every socket on the server, across schools.
+      gateway.emitLessonUpdated(SCHOOL_ID, [], {
+        lessonId: 'lesson-1',
+        updatedLesson: { id: 'lesson-1' },
+      } as unknown as CalendarLessonUpdatedPayload);
+
+      expect(server.to).not.toHaveBeenCalled();
+      expect(emit).not.toHaveBeenCalled();
     });
   });
 });

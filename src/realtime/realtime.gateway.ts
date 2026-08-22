@@ -10,6 +10,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import type { Server, Socket } from 'socket.io';
+import type { UserRole } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import {
@@ -23,11 +24,34 @@ import {
 interface SocketProfile {
   userId: string;
   schoolId: string;
+  role: UserRole;
   /** Display label for presence chips — "First L." (no email, no full PII). */
   label: string;
   /** Master-lesson id this user is currently editing, if any. */
   editingLessonId: string | null;
 }
+
+/**
+ * Who belongs in the staff room. A socket is not a lighter-weight way in than
+ * the database: a pupil's session is the same session RLS refuses the whole
+ * school to, so it must not be handed the school's traffic over a channel that
+ * asks no policy anything.
+ */
+const STAFF_ROLES: readonly UserRole[] = ['TEACHER', 'SCHOOL_ADMIN'];
+
+const isStaff = (profile: SocketProfile): boolean =>
+  STAFF_ROLES.includes(profile.role);
+
+/**
+ * Presence rebroadcast coalescing window, in milliseconds.
+ *
+ * Every presence heartbeat walks every socket in the school room and emits the
+ * whole roster back to all of them, so a client that heartbeats in a loop
+ * multiplies its own traffic by the number of connected staff. Coalescing per
+ * school turns any burst into one broadcast; it is a throttle, not a debounce,
+ * because the roster is a snapshot and only the last one matters.
+ */
+const PRESENCE_COALESCE_MS = 100;
 
 /**
  * Socket.IO gateway for live schedule updates.
@@ -39,9 +63,17 @@ interface SocketProfile {
  * JWT strategy. Unauthenticated sockets are disconnected immediately.
  *
  * ## Rooms
- * Each socket joins `school:<schoolId>` and `user:<userId>`. Lesson updates
- * are emitted to the affected teachers' user rooms plus the school room, so
- * admins' dashboards can also react.
+ * Every socket joins `user:<userId>`. Staff — teachers and school admins —
+ * additionally join `staff:<schoolId>`.
+ *
+ * There used to be one `school:<schoolId>` room that every authenticated
+ * principal joined, and every lesson update went to it. A pupil therefore
+ * received the subject, room, status and roster of lessons the database
+ * refuses to show them, and the presence roster of the admins editing the
+ * timetable along with it. The socket is not a side door: it now carries a
+ * lesson only to the teachers who teach it, and the timetable-editor traffic
+ * only to staff. Both of those are exactly who the clients subscribe from —
+ * the wire events are unchanged and no client needed a line altered.
  *
  * CORS reuses the HTTP `CORS_ORIGINS` allowlist, applied by `CorsIoAdapter`
  * (registered in main.ts) at socket.io server-construction time. The decorator
@@ -53,6 +85,8 @@ interface SocketProfile {
 })
 export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(RealtimeGateway.name);
+  /** One pending roster broadcast per school; see PRESENCE_COALESCE_MS. */
+  private readonly pendingPresence = new Map<string, NodeJS.Timeout>();
 
   @WebSocketServer()
   private server!: Server;
@@ -90,6 +124,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
         select: {
           id: true,
           schoolId: true,
+          role: true,
           isActive: true,
           firstName: true,
           lastName: true,
@@ -104,12 +139,15 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     const socketProfile: SocketProfile = {
       userId: profile.id,
       schoolId: profile.schoolId,
+      role: profile.role,
       label: `${profile.firstName} ${profile.lastName.charAt(0)}.`,
       editingLessonId: null,
     };
     client.data['profile'] = socketProfile;
 
-    await client.join([`school:${profile.schoolId}`, `user:${profile.id}`]);
+    const rooms = [`user:${profile.id}`];
+    if (isStaff(socketProfile)) rooms.push(`staff:${profile.schoolId}`);
+    await client.join(rooms);
     // Only opaque ids in logs — never emails or names.
     this.logger.log(`Socket connected [user=${profile.id}]`);
   }
@@ -118,9 +156,9 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     // Rooms are cleaned up automatically by socket.io; peers just need a
     // fresh roster without the departed editor.
     const profile = client.data['profile'] as SocketProfile | undefined;
-    if (profile) {
+    if (profile && isStaff(profile)) {
       // Fire after socket.io finishes removing the socket from its rooms.
-      setImmediate(() => void this.broadcastPresence(profile.schoolId));
+      setImmediate(() => this.schedulePresence(profile.schoolId));
     }
   }
 
@@ -135,15 +173,30 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     @MessageBody() body: { editingLessonId?: string | null } | undefined,
   ): Promise<void> {
     const profile = client.data['profile'] as SocketProfile | undefined;
-    if (!profile) return;
+    // Silently ignored rather than answered with an error: a pupil's client
+    // never sends this, so anything that does is either a stale build or
+    // somebody probing, and neither deserves a reply that confirms the room.
+    if (!profile || !isStaff(profile)) return;
     profile.editingLessonId =
       typeof body?.editingLessonId === 'string' ? body.editingLessonId : null;
-    await this.broadcastPresence(profile.schoolId);
+    this.schedulePresence(profile.schoolId);
+  }
+
+  /** Coalesces a burst of heartbeats into one roster broadcast per school. */
+  private schedulePresence(schoolId: string): void {
+    if (this.pendingPresence.has(schoolId)) return;
+    const timer = setTimeout(() => {
+      this.pendingPresence.delete(schoolId);
+      void this.broadcastPresence(schoolId);
+    }, PRESENCE_COALESCE_MS);
+    // Nothing should be held open by a roster refresh at shutdown.
+    timer.unref?.();
+    this.pendingPresence.set(schoolId, timer);
   }
 
   /** Roster of connected users per school + what each one is editing. */
   private async broadcastPresence(schoolId: string): Promise<void> {
-    const sockets = await this.server.in(`school:${schoolId}`).fetchSockets();
+    const sockets = await this.server.in(`staff:${schoolId}`).fetchSockets();
     const peers: TimetablePeer[] = [];
     const seen = new Set<string>();
     for (const socket of sockets) {
@@ -156,27 +209,44 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
         editingLessonId: profile.editingLessonId,
       });
     }
-    this.server.to(`school:${schoolId}`).emit(TIMETABLE_PRESENCE_EVENT, { peers });
+    this.server.to(`staff:${schoolId}`).emit(TIMETABLE_PRESENCE_EVENT, { peers });
   }
 
   /** Notifies a school that the master timetable changed (clients refetch). */
   emitMasterTimetableUpdated(schoolId: string): void {
     this.server
-      .to(`school:${schoolId}`)
+      .to(`staff:${schoolId}`)
       .emit(MASTER_TIMETABLE_UPDATED_EVENT, { changedAt: new Date().toISOString() });
   }
 
-  /** Emits a lesson update to its school room and each affected teacher. */
+  /**
+   * Emits a lesson update to the teachers who teach it, and nobody else.
+   *
+   * The school room is deliberately gone from this list. The payload carries
+   * the lesson's subject, room, status and its whole roster — a teacher's
+   * offline attendance cache is built from exactly that — and the only client
+   * that subscribes is the teacher app. Broadcasting it school-wide handed
+   * every pupil and guardian the timetable the database keeps from them, for
+   * the benefit of nobody at all.
+   *
+   * `schoolId` stays in the signature: it is what the log line is keyed on,
+   * and a future audience (a substitute, a duty admin) is a school-scoped
+   * question.
+   */
   emitLessonUpdated(
     schoolId: string,
     teacherIds: readonly string[],
     payload: CalendarLessonUpdatedPayload,
   ): void {
-    const rooms = [
-      `school:${schoolId}`,
-      ...teacherIds.map((teacherId) => `user:${teacherId}`),
-    ];
-    this.server.to(rooms).emit(LESSON_UPDATED_EVENT, payload);
+    if (teacherIds.length === 0) {
+      this.logger.debug(
+        `Lesson update has no assigned teacher to notify [school=${schoolId}]`,
+      );
+      return;
+    }
+    this.server
+      .to(teacherIds.map((teacherId) => `user:${teacherId}`))
+      .emit(LESSON_UPDATED_EVENT, payload);
   }
 
   private extractToken(client: Socket): string | null {
