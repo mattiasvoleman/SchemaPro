@@ -90,6 +90,20 @@ export class MasterLessonsService {
   // Create
   // ---------------------------------------------------------------------
 
+  /**
+   * The academic year is looked up under RLS because `schoolId` is taken from
+   * it; the subject, group, teachers, room, extra classes and participants are
+   * used as they arrived. That is deliberate — each of them is named through a
+   * composite (id, schoolId) foreign key, so a lesson carrying this school's
+   * `schoolId` cannot name another school's row (20260822130000). RLS is no
+   * help here: PostgreSQL runs referential-integrity checks as the referenced
+   * table's owner with row security off, so a foreign key to a row the caller
+   * cannot even SELECT still validates.
+   *
+   * A refused reference surfaces as P2003, which the exception filter renders
+   * as 400 "references a resource that does not exist" — which is what a
+   * foreign id is, from inside the caller's tenant.
+   */
   async create(
     dto: CreateMasterLessonDto,
     user: AuthenticatedUser,

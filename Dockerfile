@@ -8,8 +8,17 @@
 #   "Node.js detected but native WebSocket not found."
 # Verified directly against node:20-slim and node:22-slim. Do not lower this
 # without checking that call path.
+#
+# Both stages pin the same digest, which is what actually decides the bytes —
+# `22-slim` moves with every upstream patch release, so two builds of the same
+# commit would otherwise not be the same image. The tag stays in front of the
+# digest so a reader can see what is pinned. Refresh both lines together, and
+# deliberately (a pin also freezes base-image CVE fixes until someone moves it):
+#   docker buildx imagetools inspect node:22-slim --format '{{.Manifest.Digest}}'
+#
+# Pinned 2026-08-22 → node 22.23.2 (index published 2026-08-05).
 # =============================================================================
-FROM node:22-slim AS builder
+FROM node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS builder
 
 # OpenSSL is required by the Prisma query engine.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl \
@@ -32,7 +41,8 @@ RUN npm run build \
 # =============================================================================
 # Runtime
 # =============================================================================
-FROM node:22-slim AS runtime
+# Same digest as the builder stage above — see the note there before changing it.
+FROM node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS runtime
 
 ENV NODE_ENV=production
 

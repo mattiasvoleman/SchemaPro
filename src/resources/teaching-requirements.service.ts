@@ -13,6 +13,22 @@ import type {
 export class TeachingRequirementsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * The five referenced ids go in as they arrived, and no ownership check
+   * happens here on purpose: the database refuses a reference to another
+   * school. `TeachingRequirements` names its year, subject, group and both
+   * teachers through composite (id, schoolId) foreign keys, so a row whose
+   * `schoolId` is the caller's cannot name anything that is not
+   * (20260822130000). RLS could not have done this — PostgreSQL runs
+   * referential-integrity checks as the referenced table's owner with row
+   * security off, so a foreign key to a row the caller cannot even SELECT
+   * still validates.
+   *
+   * A refused reference surfaces as P2003, which `rethrowPrismaError` maps to
+   * "references a record that does not exist" — the same answer the caller
+   * would get for an id that never existed, which is what a foreign id is as
+   * far as their tenant is concerned.
+   */
   async create(
     dto: CreateTeachingRequirementDto,
     user: AuthenticatedUser,

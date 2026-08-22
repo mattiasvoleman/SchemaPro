@@ -15,9 +15,10 @@ import { asUser, createTestApp, type TestHarness } from './utils/test-app';
  * The other specs in this suite stub one call at a time; this one keeps a
  * small store across requests instead, because what is under test is what the
  * *rows* look like after regenerate → publish, not the shape of any single
- * query. The store models exactly two database behaviours the services rely
- * on: the SET NULL on the master-lesson FK, and delete predicates matching
- * only rows whose template is still there.
+ * query. The store models exactly three database behaviours the services rely
+ * on: the SET NULL on the master-lesson FK, delete predicates matching only
+ * rows whose template is still there, and the availability predicate deciding
+ * which closures a publish window actually sees.
  */
 
 const YEAR_ID = '44444444-4444-4444-8444-444444444444';
@@ -79,11 +80,27 @@ interface CalendarRow {
   date: Date;
   startsAt: Date;
   status: string;
+  note: string | null;
   /** Attendance rows recorded against this lesson; none, in these tests. */
   attendance: number;
 }
 
-const time = (hour: number) => new Date(Date.UTC(1970, 0, 1, hour, 0, 0));
+/** A row of `AvailabilityConstraints`, as the publish query selects it. */
+interface ConstraintRow {
+  resourceType: 'TEACHER' | 'ROOM' | 'STUDENT_GROUP' | 'GRADE_LEVEL';
+  type: 'UNAVAILABLE' | 'PREFERRED_FREE' | 'PREFERRED_BUSY';
+  userId: string | null;
+  roomId: string | null;
+  studentGroupId: string | null;
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+  date: Date | null;
+  startTime: Date;
+  endTime: Date;
+}
+
+const time = (hour: number, minute = 0) =>
+  new Date(Date.UTC(1970, 0, 1, hour, minute, 0));
 
 /** Locked or hand-built lessons, which regeneration must never replace. */
 const isPreserved = (master: MasterRow) =>
@@ -91,10 +108,26 @@ const isPreserved = (master: MasterRow) =>
   master.extraGroups.length > 0 ||
   master.participants.length > 0;
 
+/** A dated, full-day closure of the class — the holiday shape. */
+const closure = (overrides: Partial<ConstraintRow> = {}): ConstraintRow => ({
+  resourceType: 'STUDENT_GROUP',
+  type: 'UNAVAILABLE',
+  userId: null,
+  roomId: null,
+  studentGroupId: GROUP_ID,
+  minGradeLevel: null,
+  maxGradeLevel: null,
+  date: day(MONDAYS[1]!),
+  startTime: time(0),
+  endTime: time(23, 59),
+  ...overrides,
+});
+
 describe('Publish and regenerate (e2e)', () => {
   let harness: TestHarness;
   let masters: MasterRow[];
   let calendar: CalendarRow[];
+  let constraints: ConstraintRow[];
   let sequence: number;
 
   const http = () => harness.app.getHttpServer();
@@ -150,6 +183,7 @@ describe('Publish and regenerate (e2e)', () => {
 
     sequence = 0;
     calendar = [];
+    constraints = [];
     masters = [
       {
         id: 'master-monday',
@@ -258,11 +292,29 @@ describe('Publish and regenerate (e2e)', () => {
         date: data.date,
         startsAt: data.startsAt,
         status: data.status,
+        note: data.note ?? null,
         attendance: 0,
       };
       calendar.push(row);
       return { id: row.id };
     });
+
+    // Modelled rather than stubbed, so the predicate the service sends is the
+    // thing that decides what comes back: a preference row or a row dated
+    // outside the window is filtered out here exactly as Postgres would.
+    tx['availabilityConstraint']!['findMany']!.mockImplementation(
+      async ({ where }: any) =>
+        constraints.filter(
+          (row) =>
+            row.type === where.type &&
+            row.date !== null &&
+            row.date >= where.date.gte &&
+            row.date <= where.date.lte,
+        ),
+    );
+    tx['studentGroup']!['findMany']!.mockImplementation(async () => [
+      { id: GROUP_ID, gradeLevel: 7 },
+    ]);
     tx['calendarLesson']!['deleteMany']!.mockImplementation(async ({ where }: any) => {
       const before = calendar.length;
       calendar = calendar.filter((lesson) => {
@@ -286,7 +338,7 @@ describe('Publish and regenerate (e2e)', () => {
   it('materializes one dated lesson per week of the window', async () => {
     const response = await publish().expect(200);
 
-    expect(response.body).toMatchObject({ created: 4, skipped: 0 });
+    expect(response.body).toMatchObject({ created: 4, cancelled: 0, skipped: 0 });
     expect(publishedDates()).toEqual(MONDAYS);
   });
 
@@ -316,6 +368,59 @@ describe('Publish and regenerate (e2e)', () => {
     });
     expect(publishedDates()).toEqual(tuesdays);
     expect(calendar.every((row) => row.masterLessonId !== null)).toBe(true);
+  });
+
+  describe('a date the school has already said is not available', () => {
+    /** Status per date, so "gone" and "still there" are read off one object. */
+    const statusByDate = () =>
+      Object.fromEntries(calendar.map((row) => [toIso(row.date), row.status]));
+
+    it('publishes the lesson cancelled when its teacher is away that day', async () => {
+      constraints.push(
+        closure({
+          resourceType: 'TEACHER',
+          studentGroupId: null,
+          userId: TEACHER_ID,
+          // Part of a day, and only the part the 08:00 lesson sits in.
+          startTime: time(7, 30),
+          endTime: time(8, 30),
+        }),
+      );
+
+      const response = await publish().expect(200);
+
+      expect(response.body).toMatchObject({ created: 3, cancelled: 1, skipped: 0 });
+      // The absent Monday is still on the calendar — cancelled, and saying so —
+      // and the other three weeks are untouched.
+      expect(publishedDates()).toEqual(MONDAYS);
+      expect(statusByDate()).toEqual({
+        [MONDAYS[0]!]: 'SCHEDULED',
+        [MONDAYS[1]!]: 'CANCELLED',
+        [MONDAYS[2]!]: 'SCHEDULED',
+        [MONDAYS[3]!]: 'SCHEDULED',
+      });
+      expect(calendar.find((row) => toIso(row.date) === MONDAYS[1])?.note).toBe(
+        'Inställd: läraren är inte tillgänglig detta datum.',
+      );
+    });
+
+    it('writes no lesson at all when the class itself is closed', async () => {
+      constraints.push(closure());
+
+      const response = await publish().expect(200);
+
+      expect(response.body).toMatchObject({ created: 3, cancelled: 0, skipped: 1 });
+      expect(publishedDates()).toEqual([MONDAYS[0], MONDAYS[2], MONDAYS[3]]);
+    });
+
+    it('ignores a preference, which is a wish and not a closure', async () => {
+      constraints.push(closure({ type: 'PREFERRED_FREE' }));
+
+      const response = await publish().expect(200);
+
+      expect(response.body).toMatchObject({ created: 4, cancelled: 0, skipped: 0 });
+      expect(publishedDates()).toEqual(MONDAYS);
+    });
   });
 
   it('keeps the published week when the solver answers with nothing', async () => {

@@ -761,3 +761,273 @@ BEGIN
       'read policies that never ask which school the row belongs to: %', offenders;
   END IF;
 END $$;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 10: a lesson row's school is the school of everything the row names,
+-- and a key is what says so.
+--
+-- The other half of the defect Section 9 guards. Both create endpoints copy
+-- their reference ids out of the request — teaching requirements check none of
+-- the five, master lessons check only the academic year — and `schoolId` comes
+-- from the principal, so the row passes its own WITH CHECK. PostgreSQL runs
+-- referential-integrity checks as the referenced table's OWNER with row
+-- security off, which is why RLS cannot be the thing that stops this: a
+-- foreign key pointing at a row the caller cannot even SELECT still validates.
+--
+-- Asserted over the catalog, like Section 9 and for the same reason. The next
+-- reference column added to one of these tables is the one that would slip
+-- through, and it will not be added by anyone thinking about tenancy.
+--
+-- Scoped to the four tables 20260822130000 pinned. The rest of the schema
+-- still references school-owned rows by id alone; that is known, and widening
+-- this list is what closing each of those looks like.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  offenders text;
+BEGIN
+  SELECT string_agg(child.relname || '.' || c.conname, ', ' ORDER BY child.relname, c.conname)
+    INTO offenders
+  FROM pg_constraint c
+  JOIN pg_class child  ON child.oid  = c.conrelid
+  JOIN pg_class parent ON parent.oid = c.confrelid
+  WHERE c.contype = 'f'
+    AND child.relname IN ('TeachingRequirements', 'MasterLessons',
+                          'MasterLessonGroups', 'MasterLessonStudents')
+    -- Only references to school-owned rows can cross a tenant boundary.
+    -- "Schools" itself has no schoolId and is excluded by this test.
+    AND EXISTS (
+      SELECT 1 FROM pg_attribute a
+       WHERE a.attrelid = parent.oid AND a.attname = 'schoolId' AND NOT a.attisdropped
+    )
+    -- The two links to the lesson itself are deliberately plain: the child
+    -- row's school is already pinned to its group's or its pupil's by the key
+    -- beside it, and nothing reads a lesson through those links without asking
+    -- the lesson's own schoolId first.
+    AND parent.relname <> 'MasterLessons'
+    AND NOT EXISTS (
+      SELECT 1 FROM unnest(c.conkey) AS k
+      JOIN pg_attribute a ON a.attrelid = child.oid AND a.attnum = k
+      WHERE a.attname = 'schoolId'
+    );
+
+  IF offenders IS NOT NULL THEN
+    RAISE EXCEPTION
+      'lesson references that never say which school they belong to: %', offenders;
+  END IF;
+END $$;
+
+-- The squatting half, which the composite keys close as a side effect and
+-- which this asserts on its own so it stays closed if one is ever relaxed.
+-- TeachingRequirements' unique key was (academicYearId, studentGroupId,
+-- subjectId) with no school in it: one school's forged row took the slot for
+-- another school's real combination, and that school's admin then got a 409
+-- creating their own while seeing no row anywhere that explained it.
+DO $$
+DECLARE
+  offenders text;
+BEGIN
+  SELECT string_agg(i.relname, ', ' ORDER BY i.relname)
+    INTO offenders
+  FROM pg_index x
+  JOIN pg_class t ON t.oid = x.indrelid
+  JOIN pg_class i ON i.oid = x.indexrelid
+  WHERE t.relname = 'TeachingRequirements'
+    AND x.indisunique
+    AND NOT x.indisprimary
+    AND NOT EXISTS (
+      SELECT 1 FROM unnest(x.indkey::smallint[]) AS k
+      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k
+      WHERE a.attname = 'schoolId'
+    );
+
+  IF offenders IS NOT NULL THEN
+    RAISE EXCEPTION
+      'unique keys on TeachingRequirements that one school can fill for another: %', offenders;
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 11: the same rule, exercised rather than read off the catalog.
+--
+-- Three writes that reached into another tenant before 20260822130000, each
+-- paired with the ordinary writes it must not have cost. The legitimate half
+-- is asserted in the same breath on purpose: a probe that only shows the
+-- forged write failing passes just as well when the fixture is empty or the
+-- principal resolved to nobody — and an over-strict key (MATCH FULL) refuses
+-- every unassigned requirement in the product while still passing Section 10.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id', 'role', 'authenticated')::text, true);
+-- The pupil of the OTHER school. An attacker knowing a uuid from another
+-- tenant is the finding's stated precondition; this role could never read it.
+SELECT set_config('app.test_student_b', :'student_b', true);
+
+DO $$
+DECLARE
+  own_year    uuid;
+  own_group   uuid;
+  own_subject uuid;
+  free_subjects uuid[];
+  own_teacher uuid;
+  own_room    uuid;
+  own_student uuid;
+  student_b   uuid := current_setting('app.test_student_b')::uuid;
+  lesson      uuid;
+  n           bigint;
+  accepted    boolean;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION
+      'lesson-references: expected to act as an admin of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+
+  -- The forged id must genuinely be out of reach, or every refusal below could
+  -- be explained by the row simply not existing.
+  SELECT count(*) INTO n FROM "Users" WHERE id = student_b;
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'lesson-references: the other school''s pupil is visible to this admin; the probe proves nothing';
+  END IF;
+
+  SELECT id INTO own_teacher FROM "Users" WHERE role = 'TEACHER' LIMIT 1;
+  SELECT id INTO own_student FROM "Users" WHERE role = 'STUDENT' LIMIT 1;
+  SELECT id INTO own_room    FROM "Rooms" LIMIT 1;
+  -- The group with the most (year, group, subject) slots the seeded curriculum
+  -- has not taken, so neither legitimate create below can fail as a 409 and be
+  -- mistaken for the key doing its job. Two slots are needed: one for the
+  -- assigned requirement, one for the unassigned one.
+  SELECT y.id, g.id INTO own_year, own_group
+    FROM "AcademicYears" y
+    JOIN "StudentGroups" g ON g."academicYearId" = y.id
+   ORDER BY (
+     SELECT count(*) FROM "Subjects" s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "TeachingRequirements" t
+         WHERE t."academicYearId" = y.id AND t."studentGroupId" = g.id AND t."subjectId" = s.id
+      )
+   ) DESC
+   LIMIT 1;
+  SELECT array_agg(s.id) INTO free_subjects
+    FROM "Subjects" s
+   WHERE NOT EXISTS (
+     SELECT 1 FROM "TeachingRequirements" t
+      WHERE t."academicYearId" = own_year AND t."studentGroupId" = own_group
+        AND t."subjectId" = s.id
+   );
+
+  IF own_teacher IS NULL OR own_student IS NULL OR own_room IS NULL
+     OR own_year IS NULL OR coalesce(array_length(free_subjects, 1), 0) < 2 THEN
+    RAISE EXCEPTION
+      'lesson-references: school A is missing fixtures (teacher %, pupil %, room %, free slots %)',
+      own_teacher, own_student, own_room, coalesce(array_length(free_subjects, 1), 0);
+  END IF;
+  own_subject := free_subjects[1];
+
+  -- 1. The requirement naming the other school's pupil as its teacher, and
+  --    then the legitimate one into the very same slot. That order matters:
+  --    the second insert would collide with the first on the unique key if the
+  --    first had been accepted, so "refused" and "left nothing behind" are the
+  --    same assertion.
+  accepted := true;
+  BEGIN
+    INSERT INTO "TeachingRequirements"
+      ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "updatedAt")
+    VALUES ((select app.current_school_id()), own_year, own_subject, own_group, student_b, now());
+  EXCEPTION WHEN foreign_key_violation THEN accepted := false;
+  END;
+  IF accepted THEN
+    RAISE EXCEPTION
+      'lesson-references: a teaching requirement accepted another school''s user as its teacher';
+  END IF;
+
+  INSERT INTO "TeachingRequirements"
+    ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "updatedAt")
+  VALUES ((select app.current_school_id()), own_year, own_subject, own_group, own_teacher, now());
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lesson-references: a school''s own teaching requirement was refused';
+  END IF;
+
+  -- And a requirement with nobody teaching it yet, which is the normal state of
+  -- a curriculum being planned. `teacherId` is nullable and `schoolId` is not,
+  -- so the default MATCH SIMPLE skips the check entirely for this row; MATCH
+  -- FULL — the plausible wrong way to write these keys — would refuse every
+  -- unassigned requirement in the product.
+  BEGIN
+    INSERT INTO "TeachingRequirements"
+      ("schoolId", "academicYearId", "subjectId", "studentGroupId", "updatedAt")
+    VALUES ((select app.current_school_id()), own_year, free_subjects[2], own_group, now());
+  EXCEPTION WHEN foreign_key_violation THEN
+    RAISE EXCEPTION
+      'lesson-references: a requirement with no teacher was refused (%); the key is MATCH FULL',
+      SQLERRM;
+  END;
+
+  -- 2. The same pair for the master timetable.
+  INSERT INTO "MasterLessons"
+    ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId",
+     "dayOfWeek", "startTime", "endTime", "updatedAt")
+  VALUES ((select app.current_school_id()), own_year, own_subject, own_group, own_teacher,
+          own_room, 7, '08:00', '09:00', now())
+  RETURNING id INTO lesson;
+  IF lesson IS NULL THEN
+    RAISE EXCEPTION 'lesson-references: a school''s own master lesson was refused';
+  END IF;
+
+  BEGIN
+    INSERT INTO "MasterLessons"
+      ("schoolId", "academicYearId", "subjectId", "studentGroupId",
+       "dayOfWeek", "startTime", "endTime", "updatedAt")
+    VALUES ((select app.current_school_id()), own_year, own_subject, own_group,
+            7, '10:00', '11:00', now());
+  EXCEPTION WHEN foreign_key_violation THEN
+    RAISE EXCEPTION
+      'lesson-references: a lesson with no teacher and no room was refused (%); the keys are MATCH FULL',
+      SQLERRM;
+  END;
+
+  accepted := true;
+  BEGIN
+    INSERT INTO "MasterLessons"
+      ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId",
+       "dayOfWeek", "startTime", "endTime", "updatedAt")
+    VALUES ((select app.current_school_id()), own_year, own_subject, own_group, student_b,
+            7, '09:00', '10:00', now());
+  EXCEPTION WHEN foreign_key_violation THEN accepted := false;
+  END;
+  IF accepted THEN
+    RAISE EXCEPTION
+      'lesson-references: a master lesson accepted another school''s user as its teacher';
+  END IF;
+
+  -- 3. And the participant rows, which are the ones a pupil's own read policy
+  --    trusts: master_lesson_students_self_select asks only "is this about
+  --    me?", so only this key makes a row that answers yes a row from the
+  --    pupil's own school.
+  INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId")
+  VALUES ((select app.current_school_id()), lesson, own_student);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lesson-references: a school''s own pupil was refused as a participant';
+  END IF;
+
+  accepted := true;
+  BEGIN
+    INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId")
+    VALUES ((select app.current_school_id()), lesson, student_b);
+  EXCEPTION WHEN foreign_key_violation THEN accepted := false;
+  END;
+  IF accepted THEN
+    RAISE EXCEPTION
+      'lesson-references: another school''s pupil was added to this school''s lesson';
+  END IF;
+END $$;
+
+ROLLBACK;

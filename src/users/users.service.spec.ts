@@ -96,17 +96,63 @@ describe('UsersService', () => {
       expect(data.authId).not.toBe(AUTH_ID);
     });
 
-    it('invites first and stamps invitedAt when the admin asks for it', async () => {
-      tx.user.create.mockResolvedValue({ id: USER_ID });
+    it('persists first and invites second, then adopts the identity', async () => {
+      tx.user.create.mockResolvedValue({ id: USER_ID, email: 'anna@school.se' });
+      tx.user.update.mockResolvedValue({ id: USER_ID, authId: AUTH_ID });
 
-      await service.create(createDto({ sendInvitation: true }), testUser());
+      await expect(
+        service.create(createDto({ sendInvitation: true }), testUser()),
+      ).resolves.toEqual({ id: USER_ID, authId: AUTH_ID });
 
+      // Order is the whole point: nothing may be emailed before the row that
+      // makes the invitation meaningful exists.
+      expect(tx.user.create.mock.invocationCallOrder[0]).toBeLessThan(
+        supabaseAdmin.inviteUser.mock.invocationCallOrder[0],
+      );
       expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se');
+
       const { data } = tx.user.create.mock.calls[0][0] as {
         data: { authId: string; invitedAt: Date | null };
       };
-      expect(data.authId).toBe(AUTH_ID);
-      expect(data.invitedAt).toBeInstanceOf(Date);
+      expect(data.authId).not.toBe(AUTH_ID);
+      expect(data.invitedAt).toBeNull();
+
+      const args = tx.user.update.mock.calls[0][0] as {
+        where: { id: string };
+        data: { authId: string; invitedAt: Date };
+      };
+      expect(args.where).toEqual({ id: USER_ID });
+      expect(args.data.authId).toBe(AUTH_ID);
+      expect(args.data.invitedAt).toBeInstanceOf(Date);
+    });
+
+    it('invites nobody when the row itself is rejected', async () => {
+      // The identity and the email are unrecallable side effects. A duplicate
+      // email must not leave a stranger holding a set-password link for an
+      // account that was never created.
+      tx.user.create.mockRejectedValue(knownError('P2002'));
+
+      await expect(
+        service.create(createDto({ sendInvitation: true }), testUser()),
+      ).rejects.toThrow(ConflictException);
+
+      expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
+      expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+    });
+
+    it('keeps both row and identity when the link write fails, so a retry heals it', async () => {
+      // The email is already gone; deleting the identity would kill the link
+      // the person is holding, and it may not even be ours to delete.
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      tx.user.create.mockResolvedValue({ id: USER_ID, email: 'anna@school.se' });
+      tx.user.update.mockRejectedValue(knownError('P2025'));
+
+      await expect(
+        service.create(createDto({ sendInvitation: true }), testUser()),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+      expect(tx.user.delete).not.toHaveBeenCalled();
     });
 
     it('persists the tenant from the principal, never from the payload', async () => {
@@ -157,15 +203,36 @@ describe('UsersService', () => {
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
-    it('maps an invite failure to 503 and persists nothing', async () => {
+    it('maps an invite failure to 503 and takes the new row back', async () => {
       jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      tx.user.create.mockResolvedValue({ id: USER_ID, email: 'anna@school.se' });
       supabaseAdmin.inviteUser.mockRejectedValue(new Error('gotrue down'));
 
       await expect(
         service.create(createDto({ sendInvitation: true }), testUser()),
       ).rejects.toThrow(ServiceUnavailableException);
 
-      expect(prisma.withRls).not.toHaveBeenCalled();
+      // Nothing was sent, so "create and invite" keeps its all-or-nothing
+      // promise — and the row we drop is our own, seconds old, with a
+      // placeholder identity that was never registered anywhere.
+      expect(tx.user.delete).toHaveBeenCalledWith({ where: { id: USER_ID } });
+      expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+    });
+
+    it('still reports the invitation failure when the row cannot be taken back', async () => {
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      tx.user.create.mockResolvedValue({ id: USER_ID, email: 'anna@school.se' });
+      supabaseAdmin.inviteUser.mockRejectedValue(new Error('gotrue down'));
+      tx.user.delete.mockRejectedValue(knownError('P2025'));
+
+      await expect(
+        service.create(createDto({ sendInvitation: true }), testUser()),
+      ).rejects.toThrow(ServiceUnavailableException);
+
+      expect(warn).toHaveBeenCalled();
     });
 
     it('refuses an explicit invitation when Supabase is not configured', async () => {
@@ -271,6 +338,19 @@ describe('UsersService', () => {
       expect(tx.user.update).not.toHaveBeenCalled();
     });
 
+    it('maps a row that vanished mid-invitation to 404, not a raw Prisma error', async () => {
+      // The identity survives on purpose: the invitation link is already in
+      // the person's inbox, and re-inviting adopts the same identity again.
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      tx.user.findUnique.mockResolvedValue(target());
+      tx.user.update.mockRejectedValue(knownError('P2025'));
+
+      await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+    });
+
     it('503s before any lookup when invitations are not configured', async () => {
       supabaseAdmin.isConfigured = false;
 
@@ -342,6 +422,15 @@ describe('UsersService', () => {
   });
 
   describe('update', () => {
+    beforeEach(() => {
+      // Every patch is judged against the row it lands on, so the stored role
+      // and group have to exist for any of these to reach the write at all.
+      tx.user.findUnique.mockResolvedValue({
+        role: UserRole.STUDENT,
+        studentGroupId: null,
+      });
+    });
+
     it('updates only the provided fields, under the caller RLS context', async () => {
       tx.user.update.mockResolvedValue({ id: USER_ID });
       const user = testUser();
@@ -406,13 +495,64 @@ describe('UsersService', () => {
         ),
       ).rejects.toThrow(BadRequestException);
 
-      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.user.update).not.toHaveBeenCalled();
     });
 
-    it('accepts a group change that does not name a role (current behaviour)', async () => {
-      // SUSPECTED GAP (pinned, not fixed): the students-only guard requires
-      // `dto.role` to be present, so `{ studentGroupId }` alone bypasses it and
-      // can attach a group to a TEACHER/GUARDIAN row. See report.
+    it('rejects a group change that names no role, against the stored role', async () => {
+      // The patch alone looks innocent. app.current_user_group_id() does not
+      // read roles, so a teacher left sitting in a student group is handed the
+      // students' view of that group's lessons.
+      tx.user.findUnique.mockResolvedValue({
+        role: UserRole.TEACHER,
+        studentGroupId: null,
+      });
+
+      await expect(
+        service.update(USER_ID, { studentGroupId: GROUP_ID }, testUser()),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a role change that would leave a group behind', async () => {
+      // The other door to the same row: the group is already stored, and the
+      // patch only moves the person out of being a student.
+      tx.user.findUnique.mockResolvedValue({
+        role: UserRole.STUDENT,
+        studentGroupId: GROUP_ID,
+      });
+
+      await expect(
+        service.update(USER_ID, { role: UserRole.GUARDIAN }, testUser()),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('allows that same role change when the patch clears the group with it', async () => {
+      // The control: the rule is about the merged row, so the legitimate
+      // "this person is staff now" edit must still go through.
+      tx.user.findUnique.mockResolvedValue({
+        role: UserRole.STUDENT,
+        studentGroupId: GROUP_ID,
+      });
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+
+      await service.update(
+        USER_ID,
+        { role: UserRole.GUARDIAN, studentGroupId: null },
+        testUser(),
+      );
+
+      expect(tx.user.update).toHaveBeenCalledWith({
+        where: { id: USER_ID },
+        data: { role: UserRole.GUARDIAN, studentGroupId: null },
+      });
+    });
+
+    it('allows a group change on a row the database says is a student', async () => {
+      // The other control: moving a student between classes is the everyday
+      // edit and must not need a role in the body.
       tx.user.update.mockResolvedValue({ id: USER_ID });
 
       await service.update(USER_ID, { studentGroupId: GROUP_ID }, testUser());
@@ -421,6 +561,16 @@ describe('UsersService', () => {
         where: { id: USER_ID },
         data: { studentGroupId: GROUP_ID },
       });
+    });
+
+    it('404s an id the caller cannot see before validating anything', async () => {
+      tx.user.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.update(USER_ID, { studentGroupId: GROUP_ID }, testUser()),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(tx.user.update).not.toHaveBeenCalled();
     });
 
     it('maps P2025 to 404 — unknown id and cross-tenant rows look identical', async () => {

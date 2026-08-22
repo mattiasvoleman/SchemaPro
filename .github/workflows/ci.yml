@@ -1,5 +1,15 @@
 name: CI
 
+# Every `uses:` below names a commit SHA, not a tag. A tag is a movable pointer
+# in somebody else's repository: `@v5` is whatever that owner pushed last, and
+# a compromised or retagged release runs with this workflow's token and secrets.
+# The trailing comment is the release each SHA was resolved from — keep the two
+# in step when bumping a pin, or the file stops being readable:
+#   git ls-remote https://github.com/actions/checkout refs/tags/v5 'refs/tags/v5^{}'
+# The second, peeled ref is what an annotated tag points at; when it prints
+# nothing the tag is lightweight and the first line is already the commit.
+# Resolved 2026-08-22.
+
 on:
   push:
     branches: [main]
@@ -29,12 +39,12 @@ jobs:
       COVERAGE_MIN_FUNCTIONS: ${{ vars.COVERAGE_MIN_FUNCTIONS || '' }}
       COVERAGE_MIN_BRANCHES: ${{ vars.COVERAGE_MIN_BRANCHES || '' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # Node 22+: @supabase/supabase-js needs a native WebSocket global, which
       # Node 20 lacks — createClient() throws at construction. Matches the
       # runtime floor in package.json engines and the API Dockerfile.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -69,7 +79,7 @@ jobs:
 
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: api-coverage
           path: coverage/
@@ -85,7 +95,7 @@ jobs:
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: placeholder-publishable-key
       NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # Node 24, not 20 like the other jobs: the Vitest suite runs jsdom 30,
       # whose undici 8 does an unguarded
@@ -94,7 +104,7 @@ jobs:
       # every jsdom worker dies with "webidl.util.markAsUncloneable is not a
       # function" before a single test runs. 24 is the active LTS and the
       # version the suite is developed against.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           cache: npm
@@ -164,7 +174,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: web-playwright-report
           path: web/playwright-report/
@@ -187,9 +197,9 @@ jobs:
       # will trip this. That is the intended behaviour, not a misconfiguration.
       COVERAGE_MIN: ${{ vars.ENGINE_COVERAGE_MIN || '81' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12'
           cache: pip
@@ -206,7 +216,7 @@ jobs:
 
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: solver-coverage
           path: optimization-engine/coverage.xml
@@ -228,12 +238,12 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
       DIRECT_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # Node 22+: @supabase/supabase-js needs a native WebSocket global, which
       # Node 20 lacks — createClient() throws at construction. Matches the
       # runtime floor in package.json engines and the API Dockerfile.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -291,12 +301,12 @@ jobs:
     name: Security — dependency audit & SAST
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
       # Node 22+: @supabase/supabase-js needs a native WebSocket global, which
       # Node 20 lacks — createClient() throws at construction. Matches the
       # runtime floor in package.json engines and the API Dockerfile.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: npm
@@ -309,7 +319,7 @@ jobs:
       - name: Pin npm
         run: npm install -g npm@11
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12'
 
@@ -333,13 +343,15 @@ jobs:
 
       - name: pip-audit (solver)
         run: |
-          pip install pip-audit
+          # Pinned like everything else here. The advisory data is fetched at
+          # run time, so a fixed scanner version still sees today's CVEs.
+          pip install pip-audit==2.10.1
           pip-audit --requirement optimization-engine/requirements.txt --strict
 
       # Static analysis across every package. `--error` makes any finding fail
       # the job; the rulesets cover OWASP Top 10 patterns for TS/JS and Python.
       - name: Semgrep SAST
-        uses: semgrep/semgrep-action@v1
+        uses: semgrep/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d # v1
         with:
           config: >-
             p/owasp-top-ten
@@ -357,9 +369,9 @@ jobs:
       run:
         working-directory: mobile
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 20
           cache: npm

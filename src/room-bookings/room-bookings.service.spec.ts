@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -55,11 +56,24 @@ describe('RoomBookingsService', () => {
   const arrangeFreeRoom = (requiresApproval = false) => {
     tx.room.findUnique.mockResolvedValue({ id: ROOM_ID, requiresApproval });
     tx.calendarLesson.findFirst.mockResolvedValue(null);
-    tx.roomBooking.findFirst.mockResolvedValue(null);
     tx.roomBooking.create.mockImplementation(({ data }: any) =>
       Promise.resolve({ id: BOOKING_ID, status: data.status }),
     );
   };
+
+  /**
+   * What PostgreSQL sends back when the exclusion constraint refuses a second
+   * active booking of the room, as Prisma re-wraps it: no error code of its
+   * own, the SQLSTATE and the constraint name buried in the message.
+   */
+  const roomHeldOnce = () =>
+    new Prisma.PrismaClientUnknownRequestError(
+      'Error occurred during query execution:\nConnectorError(ConnectorError ' +
+        '{ kind: QueryError(PostgresError { code: "23P01", message: ' +
+        '"conflicting key value violates exclusion constraint ' +
+        '\\"RoomBookings_room_is_held_once\\"" }) })',
+      { clientVersion: '0.0.0' },
+    );
 
   describe('create', () => {
     it('books an ordinary free room as APPROVED', async () => {
@@ -154,22 +168,48 @@ describe('RoomBookingsService', () => {
     });
 
     it('rejects a slot occupied by a scheduled lesson', async () => {
-      tx.room.findUnique.mockResolvedValue({ id: ROOM_ID, requiresApproval: false });
+      arrangeFreeRoom();
       tx.calendarLesson.findFirst.mockResolvedValue({ id: 'lesson-1' });
 
+      // The row is written before the room is asked about — that is what makes
+      // the answer hold — and the throw is what takes it back out again.
       await expect(service.create(dto() as any, testUser())).rejects.toThrow(
         ConflictException,
       );
-      expect(tx.roomBooking.create).not.toHaveBeenCalled();
     });
 
-    it('rejects a slot already held by another booking', async () => {
-      tx.room.findUnique.mockResolvedValue({ id: ROOM_ID, requiresApproval: false });
-      tx.calendarLesson.findFirst.mockResolvedValue(null);
-      tx.roomBooking.findFirst.mockResolvedValue({ id: 'other-booking' });
+    it('asks about the room only after the booking is written', async () => {
+      arrangeFreeRoom();
+      const order: string[] = [];
+      tx.roomBooking.create.mockImplementation(({ data }: any) => {
+        order.push('create');
+        return Promise.resolve({ id: BOOKING_ID, status: data.status });
+      });
+      tx.calendarLesson.findFirst.mockImplementation(() => {
+        order.push('check');
+        return Promise.resolve(null);
+      });
+
+      await service.create(dto() as any, testUser());
+
+      expect(order).toEqual(['create', 'check']);
+    });
+
+    it('turns the exclusion constraint into the conflict the caller expects', async () => {
+      arrangeFreeRoom();
+      tx.roomBooking.create.mockRejectedValue(roomHeldOnce());
 
       await expect(service.create(dto() as any, testUser())).rejects.toThrow(
         'That room is already booked for this time.',
+      );
+    });
+
+    it('passes any other database failure through untranslated', async () => {
+      arrangeFreeRoom();
+      tx.roomBooking.create.mockRejectedValue(new Error('connection reset'));
+
+      await expect(service.create(dto() as any, testUser())).rejects.toThrow(
+        'connection reset',
       );
     });
 
@@ -178,7 +218,7 @@ describe('RoomBookingsService', () => {
 
       await service.create(dto() as any, testUser());
 
-      // startsAt < endsAt AND endsAt > startsAt — an adjoining booking that
+      // startsAt < endsAt AND endsAt > startsAt — an adjoining lesson that
       // ends exactly at 10:00 must not match.
       expect(tx.calendarLesson.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -187,20 +227,6 @@ describe('RoomBookingsService', () => {
             status: 'SCHEDULED',
             startsAt: { lt: new Date('2026-08-05T11:00:00.000Z') },
             endsAt: { gt: new Date('2026-08-05T10:00:00.000Z') },
-          }),
-        }),
-      );
-    });
-
-    it('counts PENDING bookings as occupying the room', async () => {
-      arrangeFreeRoom();
-
-      await service.create(dto() as any, testUser());
-
-      expect(tx.roomBooking.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({
-            status: { in: ['PENDING', 'APPROVED'] },
           }),
         }),
       );
@@ -292,7 +318,6 @@ describe('RoomBookingsService', () => {
     const arrangePending = (overrides: Record<string, unknown> = {}) => {
       tx.roomBooking.findUnique.mockResolvedValue(pending(overrides));
       tx.calendarLesson.findFirst.mockResolvedValue(null);
-      tx.roomBooking.findFirst.mockResolvedValue(null);
       tx.roomBooking.update.mockImplementation(({ data }: any) =>
         Promise.resolve({ id: BOOKING_ID, status: data.status }),
       );
@@ -317,26 +342,33 @@ describe('RoomBookingsService', () => {
       );
     });
 
-    it('re-checks availability at approval time, excluding the booking itself', async () => {
+    it('re-checks the room for a lesson at approval time', async () => {
       arrangePending();
 
       await service.decide(BOOKING_ID, { status: 'APPROVED' }, testUser());
 
-      expect(tx.roomBooking.findFirst).toHaveBeenCalledWith(
+      expect(tx.calendarLesson.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ id: { not: BOOKING_ID } }),
+          where: expect.objectContaining({
+            roomId: ROOM_ID,
+            status: 'SCHEDULED',
+            startsAt: { lt: new Date('2026-08-05T11:00:00.000Z') },
+            endsAt: { gt: new Date('2026-08-05T10:00:00.000Z') },
+          }),
         }),
       );
     });
 
-    it('refuses approval when the slot was claimed while pending', async () => {
+    it('refuses approval when a lesson claimed the slot while pending', async () => {
       arrangePending();
       tx.calendarLesson.findFirst.mockResolvedValue({ id: 'lesson-1' });
 
+      // The approval is written before the room is asked about, so the throw is
+      // what undoes it; nothing is announced to the requester either.
       await expect(
         service.decide(BOOKING_ID, { status: 'APPROVED' }, testUser()),
       ).rejects.toThrow(ConflictException);
-      expect(tx.roomBooking.update).not.toHaveBeenCalled();
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
     });
 
     it('skips the availability check when rejecting', async () => {

@@ -194,6 +194,7 @@ describe('CalendarService', () => {
 
       await expect(service.publish(dto(), user)).resolves.toEqual({
         created: 1,
+        cancelled: 0,
         skipped: 0,
         fromDate: '2026-08-10',
         toDate: '2026-08-16',
@@ -277,6 +278,125 @@ describe('CalendarService', () => {
       );
     });
 
+    const closure = (overrides: Record<string, unknown> = {}) => ({
+      resourceType: 'STUDENT_GROUP',
+      userId: null,
+      roomId: null,
+      studentGroupId: GROUP_ID,
+      minGradeLevel: null,
+      maxGradeLevel: null,
+      date: day('2026-08-10'),
+      startTime: time(0),
+      endTime: time(0),
+      ...overrides,
+    });
+
+    const publishOneDay = () =>
+      service.publish(
+        dto({ fromDate: '2026-08-10', toDate: '2026-08-10' }),
+        testUser(),
+      );
+
+    describe('a date the school has already said is not available', () => {
+      it('cancels the lesson when the teacher is away, rather than hiding it', async () => {
+        // The class is still here and expecting the lesson. A hole in their
+        // schedule explains nothing — and the substitute workflow searches the
+        // calendar by teacher and date, so a lesson that was never written is
+        // invisible to the very process that exists to cover it.
+        arrangePublish([template()], {
+          closures: [
+            closure({
+              resourceType: 'TEACHER',
+              studentGroupId: null,
+              userId: TEACHER_ID,
+              startTime: time(8, 30),
+              endTime: time(9, 30),
+            }),
+          ],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 0,
+          cancelled: 1,
+          skipped: 0,
+        });
+        const { data } = tx.calendarLesson.create.mock.calls[0]![0] as {
+          data: { status: string; note: string };
+        };
+        expect(data.status).toBe('CANCELLED');
+        expect(data.note).toBe('Inställd: läraren är inte tillgänglig detta datum.');
+      });
+
+      it('writes nothing when the class itself is closed', async () => {
+        // Nobody is there. There is no lesson to hold, and nobody to cancel
+        // one for — which is why a class closure outranks a resource closure.
+        arrangePublish([template()], { closures: [closure()] });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 0,
+          cancelled: 0,
+          skipped: 1,
+        });
+        expect(tx.calendarLesson.create).not.toHaveBeenCalled();
+      });
+
+      it('reads the closure clock in the school timezone, not in UTC', async () => {
+        // The closure is a bare wall clock, the lesson is a real instant.
+        // Comparing raw UTC parts is off by the offset — one or two hours every
+        // day of the year in Europe/Stockholm — so a closure that covers the
+        // lesson locally looks like one that misses it.
+        arrangePublish([template()], {
+          closures: [
+            closure({
+              resourceType: 'TEACHER',
+              studentGroupId: null,
+              userId: TEACHER_ID,
+              // Lifted through Europe/Stockholm this lands inside the lesson;
+              // read as raw UTC clock parts it lands two hours after it.
+              startTime: time(9, 15),
+              endTime: time(9, 45),
+            }),
+          ],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({ cancelled: 1 });
+      });
+
+      it('leaves the lesson alone when the closure misses its hours', async () => {
+        // The control. Without it the test above passes against an
+        // implementation that cancels on any closure at all.
+        arrangePublish([template()], {
+          closures: [
+            closure({
+              resourceType: 'TEACHER',
+              studentGroupId: null,
+              userId: TEACHER_ID,
+              startTime: time(13, 0),
+              endTime: time(14, 0),
+            }),
+          ],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 1,
+          cancelled: 0,
+        });
+      });
+
+      it('ignores a preference, which is a wish and not a closure', async () => {
+        // PREFERRED_FREE is something the solver trades off. Treating it as a
+        // closure would silently delete lessons a school only nudged.
+        arrangePublish([template()], { closures: [] });
+
+        await publishOneDay();
+
+        const [call] = tx.availabilityConstraint.findMany.mock.calls as [
+          [{ where: { type: string } }],
+        ];
+        expect(call[0].where.type).toBe('UNAVAILABLE');
+      });
+    });
+
     it.each([
       ['00:00-00:00', time(0), time(0)],
       ['00:00-23:59', time(0), time(23, 59)],
@@ -285,7 +405,20 @@ describe('CalendarService', () => {
       async (_label, startTime, endTime) => {
         arrangePublish([template()], {
           closures: [
-            { studentGroupId: GROUP_ID, date: day('2026-08-10'), startTime, endTime },
+            {
+              // The service reads the kind now: the query used to filter on it
+              // and throw away everything that was not a whole day, so a
+              // teacher or a room marked away was materialised straight over.
+              resourceType: 'STUDENT_GROUP',
+              userId: null,
+              roomId: null,
+              studentGroupId: GROUP_ID,
+              minGradeLevel: null,
+              maxGradeLevel: null,
+              date: day('2026-08-10'),
+              startTime,
+              endTime,
+            },
           ],
         });
 
@@ -300,7 +433,9 @@ describe('CalendarService', () => {
         expect(tx.availabilityConstraint.findMany).toHaveBeenCalledWith(
           expect.objectContaining({
             where: {
-              resourceType: 'STUDENT_GROUP',
+              // Every kind, not only classes: the narrowing to STUDENT_GROUP
+              // was the defect. Which kind it is decides what gets written,
+              // and that decision belongs in the loop, not in the query.
               type: 'UNAVAILABLE',
               date: { not: null, gte: day('2026-08-10'), lte: day('2026-08-10') },
             },
@@ -335,6 +470,7 @@ describe('CalendarService', () => {
         ),
       ).resolves.toEqual({
         created: 5,
+        cancelled: 0,
         skipped: 0,
         fromDate: '2026-08-01',
         toDate: '2026-08-31',
@@ -349,6 +485,7 @@ describe('CalendarService', () => {
         service.publish(dto({ fromDate: undefined, toDate: undefined }), testUser()),
       ).resolves.toEqual({
         created: 3,
+        cancelled: 0,
         skipped: 0,
         fromDate: '2026-08-12',
         toDate: '2026-08-31',

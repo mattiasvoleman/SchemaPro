@@ -282,6 +282,8 @@ model Room {
   preferenceRooms         RoomPreferenceRoom[]
 
   @@unique([schoolId, name])
+  /// The target a tenant-scoped composite foreign key needs; see User.
+  @@unique([id, schoolId])
   @@index([schoolId])
   @@index([roomTypeId])
   @@map("Rooms")
@@ -306,6 +308,8 @@ model Subject {
   roomPreferences      RoomPreference[]
 
   @@unique([schoolId, code])
+  /// The target a tenant-scoped composite foreign key needs; see User.
+  @@unique([id, schoolId])
   @@index([schoolId])
   @@map("Subjects")
 }
@@ -326,6 +330,8 @@ model AcademicYear {
   masterLessons        MasterLesson[]
 
   @@unique([schoolId, name])
+  /// The target a tenant-scoped composite foreign key needs; see User.
+  @@unique([id, schoolId])
   @@index([schoolId])
   @@index([schoolId, startDate, endDate])
   @@map("AcademicYears")
@@ -371,6 +377,8 @@ model StudentGroup {
   extraCalendarLessons    CalendarLessonGroup[]    @relation("CalendarLessonExtraGroup")
 
   @@unique([schoolId, academicYearId, name])
+  /// The target a tenant-scoped composite foreign key needs; see User.
+  @@unique([id, schoolId])
   @@index([schoolId])
   @@index([academicYearId])
   @@map("StudentGroups")
@@ -395,13 +403,23 @@ model TeachingRequirement {
   updatedAt        DateTime @updatedAt @db.Timestamptz(6)
 
   school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
-  subject      Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  studentGroup StudentGroup @relation(fields: [studentGroupId], references: [id], onDelete: Cascade)
-  teacher      User?        @relation("RequirementTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
-  coTeacher    User?        @relation("RequirementCoTeacher", fields: [coTeacherId], references: [id], onDelete: SetNull)
+  /// Every reference carries `schoolId`, because create() copies all five ids
+  /// out of the request and checks none of them, and a foreign-key check runs
+  /// as the referenced table's owner with row security off — so an id the
+  /// caller cannot even SELECT still validates. The composite keys are what
+  /// make a requirement's school the school of its year, subject, group and
+  /// teachers.
+  academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  subject      Subject      @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  studentGroup StudentGroup @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  teacher      User?        @relation("RequirementTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: SetNull)
+  coTeacher    User?        @relation("RequirementCoTeacher", fields: [coTeacherId, schoolId], references: [id, schoolId], onDelete: SetNull)
 
-  @@unique([academicYearId, studentGroupId, subjectId])
+  /// `schoolId` leads the key so the slot a school occupies is its own. Without
+  /// it one school's forged row took the (year, group, subject) slot of
+  /// another, whose admin then got a 409 creating their real requirement while
+  /// seeing no row anywhere that explained it.
+  @@unique([schoolId, academicYearId, studentGroupId, subjectId])
   @@index([schoolId])
   @@index([teacherId])
   @@map("TeachingRequirements")
@@ -456,12 +474,18 @@ model MasterLesson {
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
   school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
-  subject      Subject      @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  studentGroup StudentGroup @relation(fields: [studentGroupId], references: [id], onDelete: Cascade)
-  teacher      User?        @relation("MasterLessonTeacher", fields: [teacherId], references: [id], onDelete: SetNull)
-  coTeacher    User?        @relation("MasterLessonCoTeacher", fields: [coTeacherId], references: [id], onDelete: SetNull)
-  room         Room?        @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  /// Tenant-scoped for the same reason as TeachingRequirement's: create() takes
+  /// subjectId, studentGroupId, teacherId, coTeacherId and roomId from the
+  /// request and only ever validates the academic year. `academicYearId` is on
+  /// the list too — the service does derive `schoolId` from that very row, but
+  /// that is a property of three TypeScript call sites, and a direct PostgREST
+  /// write meets no TypeScript at all.
+  academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  subject      Subject      @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  studentGroup StudentGroup @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  teacher      User?        @relation("MasterLessonTeacher", fields: [teacherId, schoolId], references: [id, schoolId], onDelete: SetNull)
+  coTeacher    User?        @relation("MasterLessonCoTeacher", fields: [coTeacherId, schoolId], references: [id, schoolId], onDelete: SetNull)
+  room         Room?        @relation(fields: [roomId, schoolId], references: [id, schoolId], onDelete: SetNull)
 
   calendarLessons CalendarLesson[]
   /// Additional classes attending this lesson (beyond the primary group).
@@ -506,6 +530,13 @@ model CalendarLesson {
   extraGroups       CalendarLessonGroup[]
   participants      CalendarLessonStudent[]
 
+  // Not visible here, and load-bearing: an EXCLUDE constraint on
+  // (roomId, tstzrange(startsAt, endsAt)) refuses a second SCHEDULED lesson in
+  // a room already taken, and a BEFORE trigger takes an advisory lock on the
+  // room so the cross-table checks against RoomBookings hold too. Prisma
+  // cannot express either — see migration
+  // 20260822131500_a_room_holds_one_thing_at_a_time.
+
   // Indexes optimized for fast date/time range scans.
   @@index([schoolId, date])
   @@index([schoolId, startsAt, endsAt])
@@ -531,7 +562,12 @@ model MasterLessonGroup {
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
 
   masterLesson MasterLesson @relation(fields: [masterLessonId], references: [id], onDelete: Cascade)
-  studentGroup StudentGroup @relation("MasterLessonExtraGroup", fields: [studentGroupId], references: [id], onDelete: Cascade)
+  /// The extra classes come straight from the request, so this reference is
+  /// tenant-scoped like the lesson's own. `masterLessonId` is deliberately
+  /// left plain: the row's school is already pinned to the group's by this
+  /// key, and nothing reads a lesson through this link without asking the
+  /// lesson's own school first.
+  studentGroup StudentGroup @relation("MasterLessonExtraGroup", fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
 
   @@unique([masterLessonId, studentGroupId])
   @@index([schoolId])
@@ -547,7 +583,11 @@ model MasterLessonStudent {
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
 
   masterLesson MasterLesson @relation(fields: [masterLessonId], references: [id], onDelete: Cascade)
-  student      User         @relation("MasterLessonParticipant", fields: [studentId], references: [id], onDelete: Cascade)
+  /// The one reference here that a pupil's own read policy trusts:
+  /// `master_lesson_students_self_select` asks only "is this row about me?".
+  /// Pinning the school to the pupil is what makes a row that answers yes
+  /// necessarily a row from the pupil's own school.
+  student      User         @relation("MasterLessonParticipant", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade)
 
   @@unique([masterLessonId, studentId])
   @@index([schoolId])
@@ -831,6 +871,10 @@ model RoomBooking {
   bookedBy  User   @relation("RoomBookingBooker", fields: [bookedById], references: [id], onDelete: Cascade)
   decidedBy User?  @relation("RoomBookingDecider", fields: [decidedById], references: [id], onDelete: SetNull)
 
+  // Not visible here, and load-bearing: an EXCLUDE constraint on
+  // (roomId, tstzrange(startsAt, endsAt)), limited to PENDING and APPROVED
+  // rows, is what stops two people holding one room at one hour. Prisma cannot
+  // express it — see migration 20260822131500_a_room_holds_one_thing_at_a_time.
   @@index([schoolId, startsAt])
   @@index([roomId, startsAt])
   @@index([bookedById, startsAt])

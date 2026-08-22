@@ -2,8 +2,15 @@
 # Stage 1 — builder
 # =============================================================================
 # Use the official Python slim image pinned to an exact digest for
-# reproducibility and supply-chain security.
-FROM python:3.11-slim AS builder
+# reproducibility and supply-chain security. The tag alone moves with every
+# upstream patch release, so it would decide nothing; the digest is what makes
+# two builds of this commit the same image. Both stages carry the same one.
+# Refresh them together and deliberately — a pin also freezes base-image CVE
+# fixes until somebody moves it:
+#   docker buildx imagetools inspect python:3.11-slim --format '{{.Manifest.Digest}}'
+#
+# Pinned 2026-08-22 → python 3.11.16 (index published 2026-08-13).
+FROM python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7 AS builder
 
 # Prevent .pyc files and enable unbuffered stdout/stderr (important for logs)
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -32,7 +39,8 @@ RUN pip install --upgrade pip \
 # =============================================================================
 # Stage 2 — runtime
 # =============================================================================
-FROM python:3.11-slim AS runtime
+# Same digest as the builder stage above — see the note there before changing it.
+FROM python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

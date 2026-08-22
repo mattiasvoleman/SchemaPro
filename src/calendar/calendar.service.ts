@@ -12,7 +12,16 @@ import { zonedTimeToUtc } from '../common/utils/time';
 import type { PublishScheduleDto } from './dto/publish-schedule.dto';
 
 export interface PublishResult {
+  /** SCHEDULED rows written. Never includes a lesson nobody can hold. */
   created: number;
+  /**
+   * Rows written CANCELLED because the teacher or the room was already spoken
+   * for that date. The class is still here and expecting the lesson, so a hole
+   * in their schedule with no explanation would be the worse answer — and the
+   * substitute workflow finds these by querying the calendar, so a lesson that
+   * was never written is invisible to the very process meant to cover it.
+   */
+  cancelled: number;
   skipped: number;
   fromDate: string;
   toDate: string;
@@ -126,22 +135,80 @@ export class CalendarService {
           existing.map((row) => `${row.masterLessonId}:${toDateString(row.date)}`),
         );
 
-        // Full-day, date-specific group closures (holiday mechanism).
+        /*
+         * Every dated closure in the window, not only whole-day class holidays.
+         *
+         * This used to ask for STUDENT_GROUP rows and then throw away anything
+         * that was not a full day, so a teacher marked away on a Tuesday, or a
+         * room closed for two hours, was materialised over regardless: the
+         * school had said the lesson could not be held and the calendar said it
+         * would be.
+         *
+         * PREFERRED_FREE and PREFERRED_BUSY stay out on purpose. They are
+         * wishes the solver trades off, not statements that a date cannot be
+         * held, and treating a wish as a closure would silently delete lessons
+         * a school only nudged.
+         */
         const closures = await tx.availabilityConstraint.findMany({
           where: {
-            resourceType: 'STUDENT_GROUP',
             type: 'UNAVAILABLE',
             date: { not: null, gte: parseUtcDate(fromDate), lte: parseUtcDate(toDate) },
           },
-          select: { studentGroupId: true, date: true, startTime: true, endTime: true },
+          select: {
+            resourceType: true,
+            userId: true,
+            roomId: true,
+            studentGroupId: true,
+            minGradeLevel: true,
+            maxGradeLevel: true,
+            date: true,
+            startTime: true,
+            endTime: true,
+          },
         });
-        const closedKeys = new Set(
-          closures
-            .filter((c) => isFullDay(c.startTime, c.endTime) && c.date && c.studentGroupId)
-            .map((c) => `${c.studentGroupId}:${toDateString(c.date as Date)}`),
-        );
+        const closuresByDate = new Map<string, typeof closures>();
+        for (const closure of closures) {
+          if (!closure.date) continue;
+          const key = toDateString(closure.date);
+          const list = closuresByDate.get(key);
+          if (list) list.push(closure);
+          else closuresByDate.set(key, [closure]);
+        }
+
+        // The year of each class, for GRADE_LEVEL closures. Read only when such
+        // a closure exists at all, so an ordinary publish pays nothing for it.
+        const gradeOfGroup = new Map<string, number | null>();
+        if (closures.some((closure) => closure.resourceType === 'GRADE_LEVEL')) {
+          const groups = await tx.studentGroup.findMany({
+            where: { academicYearId: dto.academicYearId },
+            select: { id: true, gradeLevel: true },
+          });
+          for (const group of groups) gradeOfGroup.set(group.id, group.gradeLevel);
+        }
+
+        /**
+         * Does this closure cover the lesson's own hours on that date?
+         *
+         * The closure's times are a bare wall clock and the lesson is a real
+         * instant, so the two are lifted into the same unit through the school's
+         * timezone — the same conversion that built `startsAt` a few lines
+         * below. Comparing the raw UTC parts is off by the offset, which in
+         * Europe/Stockholm is an hour or two every day of the year.
+         */
+        const coversTime = (
+          closure: { startTime: Date; endTime: Date },
+          date: string,
+          startsAt: Date,
+          endsAt: Date,
+        ): boolean => {
+          if (isFullDay(closure.startTime, closure.endTime)) return true;
+          const from = zonedTimeToUtc(date, timeToString(closure.startTime), timezone);
+          const to = zonedTimeToUtc(date, timeToString(closure.endTime), timezone);
+          return from.getTime() < endsAt.getTime() && startsAt.getTime() < to.getTime();
+        };
 
         let created = 0;
+        let cancelled = 0;
         let skipped = 0;
         const pendingCreates: Array<() => Promise<unknown>> = [];
 
@@ -156,17 +223,81 @@ export class CalendarService {
             // lesson-recurrence.ts for the rule the conflict checker shares.
             if (!runsOn(template, parseUtcDate(date))) continue;
 
+            // First, always: an already-materialised row may carry attendance,
+            // and rewriting it would rewrite what happened.
             if (existingKeys.has(`${template.id}:${date}`)) {
-              skipped++;
-              continue;
-            }
-            if (closedKeys.has(`${template.studentGroupId}:${date}`)) {
               skipped++;
               continue;
             }
 
             const startsAt = zonedTimeToUtc(date, timeToString(template.startTime), timezone);
             const endsAt = zonedTimeToUtc(date, timeToString(template.endTime), timezone);
+
+            /*
+             * Who is unavailable decides what to write, and the split is the
+             * point. If the CLASS is away — lov, studiedag, PRAO — there is no
+             * lesson to hold and nothing is written. If the teacher or the room
+             * is spoken for, the class is still here: the lesson is written
+             * CANCELLED so the pupils' schedule says what happened and the
+             * substitute workflow, which searches the calendar by teacher and
+             * date, can find it.
+             *
+             * A class closure outranks a resource closure: if nobody is there,
+             * there is nobody to cancel a lesson for.
+             */
+            let blocked: 'group' | 'teacher' | 'room' | null = null;
+            for (const closure of closuresByDate.get(date) ?? []) {
+              if (!coversTime(closure, date, startsAt, endsAt)) continue;
+
+              if (
+                closure.resourceType === 'STUDENT_GROUP' &&
+                closure.studentGroupId === template.studentGroupId
+              ) {
+                blocked = 'group';
+                break;
+              }
+              if (closure.resourceType === 'GRADE_LEVEL') {
+                // A group with no year of its own — a nivågrupp — cannot be
+                // shown to be inside a range, and erasing a lesson on a guess
+                // is the worse mistake.
+                const grade = gradeOfGroup.get(template.studentGroupId);
+                if (
+                  typeof grade === 'number' &&
+                  (closure.minGradeLevel === null || grade >= closure.minGradeLevel) &&
+                  (closure.maxGradeLevel === null || grade <= closure.maxGradeLevel)
+                ) {
+                  blocked = 'group';
+                  break;
+                }
+              }
+              if (
+                closure.resourceType === 'TEACHER' &&
+                closure.userId !== null &&
+                (closure.userId === template.teacherId ||
+                  closure.userId === template.coTeacherId)
+              ) {
+                blocked = blocked ?? 'teacher';
+              }
+              if (
+                closure.resourceType === 'ROOM' &&
+                closure.roomId !== null &&
+                closure.roomId === template.roomId
+              ) {
+                blocked = blocked ?? 'room';
+              }
+            }
+
+            if (blocked === 'group') {
+              skipped++;
+              continue;
+            }
+
+            // Never the constraint's own `reason`: that field holds "sjukskriven",
+            // and `note` is read by every pupil and guardian.
+            const cancelledNote =
+              blocked === 'teacher'
+                ? 'Inställd: läraren är inte tillgänglig detta datum.'
+                : 'Inställd: salen är inte tillgänglig detta datum.';
 
             pendingCreates.push(() =>
               tx.calendarLesson.create({
@@ -179,7 +310,8 @@ export class CalendarService {
                   date: parseUtcDate(date),
                   startsAt,
                   endsAt,
-                  status: 'SCHEDULED',
+                  status: blocked === null ? 'SCHEDULED' : 'CANCELLED',
+                  ...(blocked === null ? {} : { note: cancelledNote }),
                   ...(template.extraGroups.length > 0
                     ? {
                         extraGroups: {
@@ -224,7 +356,8 @@ export class CalendarService {
                 select: { id: true },
               }),
             );
-            created++;
+            if (blocked === null) created++;
+            else cancelled++;
           }
         }
 
@@ -237,7 +370,7 @@ export class CalendarService {
           `Published schedule [year=${dto.academicYearId}, ${fromDate}..${toDate}, created=${created}, skipped=${skipped}]`,
         );
 
-        return { created, skipped, fromDate, toDate };
+        return { created, cancelled, skipped, fromDate, toDate };
       },
       { timeoutMs: 120_000 },
     );

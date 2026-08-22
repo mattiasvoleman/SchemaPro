@@ -7,6 +7,11 @@ name: Quality Gates
 #
 # Everything here is a hard gate: each job exits non-zero when its threshold is
 # missed. Nothing is advisory.
+#
+# Actions are pinned to commit SHAs for the same reason as in ci.yml — a `@v5`
+# tag is a pointer somebody else can move — with the release name kept in the
+# trailing comment. That file's header has the command for resolving a new pin.
+# Resolved 2026-08-22.
 
 on:
   schedule:
@@ -35,9 +40,9 @@ jobs:
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: placeholder-publishable-key
       NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 20
           cache: npm
@@ -73,7 +78,7 @@ jobs:
       # needs write permissions this workflow should not hold, and a baseline
       # change deserves a human looking at the images.
       - name: Upload baselines
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: visual-baselines-linux-x64
           path: web/e2e/visual.spec.ts-snapshots/*-linux-x64.png
@@ -88,9 +93,9 @@ jobs:
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 20
           cache: npm
@@ -119,7 +124,7 @@ jobs:
 
       - name: Upload mutation report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mutation-report
           path: reports/mutation/
@@ -137,9 +142,9 @@ jobs:
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: placeholder-publishable-key
       NEXT_PUBLIC_API_BASE_URL: http://localhost:4000
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 20
           cache: npm
@@ -165,7 +170,7 @@ jobs:
 
       - name: Upload Lighthouse results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: lighthouse-results
           path: web/.lighthouseci/
@@ -179,9 +184,9 @@ jobs:
       run:
         working-directory: optimization-engine
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12'
           cache: pip
@@ -231,9 +236,9 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
       DIRECT_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 20
           cache: npm

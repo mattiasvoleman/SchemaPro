@@ -3,6 +3,7 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -172,6 +173,26 @@ describe('MasterLessonsService', () => {
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(prisma.withSystemTransaction).not.toHaveBeenCalled();
       expect(prisma.withServicePrincipal).not.toHaveBeenCalled();
+    });
+
+    // The composite (id, schoolId) keys added in 20260822130000 are what stop a
+    // lesson naming another school's subject, group, teacher or room, and they
+    // report it as P2003. Nothing here catches it on purpose: the exception
+    // filter renders a bare P2003 as 400 "references a resource that does not
+    // exist", which is what a foreign id is from inside the caller's tenant.
+    // Wrapping this in `rethrowPrismaError` would quietly turn that into a 409.
+    it('lets a reference the database refuses reach the filter as P2003', async () => {
+      arrangeCreate();
+      tx.masterLesson.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Foreign key constraint failed', {
+          code: 'P2003',
+          clientVersion: Prisma.prismaVersion.client,
+        }),
+      );
+
+      await expect(
+        service.create(createDto(), testUser()),
+      ).rejects.toMatchObject({ code: 'P2003' });
     });
 
     it('persists the tenant from the academic-year row, not from the payload', async () => {
