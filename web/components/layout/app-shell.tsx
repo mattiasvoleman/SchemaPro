@@ -7,6 +7,7 @@ import {
   CalendarClock,
   CalendarDays,
   CalendarRange,
+  CalendarSearch,
   ClipboardCheck,
   Grid3x3,
   LayoutDashboard,
@@ -65,6 +66,9 @@ const ADMIN_NAV: NavSection[] = [
     items: [
       { labelKey: "generate", href: "/admin/generate", icon: Sparkles },
       { labelKey: "timetable", href: "/admin/timetable", icon: CalendarDays },
+      // Next to the grid it is used against: finslipning starts once a base
+      // schedule exists, and every answer there is read off this one.
+      { labelKey: "gaps", href: "/admin/gaps", icon: CalendarSearch },
     ],
   },
   {
