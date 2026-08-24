@@ -241,6 +241,11 @@ describe("taughtGroupsOf", () => {
     coTeacherId,
     lessonsPerWeek: 3,
     minutesPerLesson: 60,
+    // Not what these tests are about, but a requirement carries its own period
+    // now and the fixture has to be a whole one — see lib/teaching-hours.ts.
+    recurrence: "ALL_WEEKS" as const,
+    startDate: null,
+    endDate: null,
   });
 
   it("lists the groups a teacher leads", () => {

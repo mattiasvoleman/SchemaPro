@@ -33,6 +33,30 @@ export interface VersionLesson {
    * as it always did, rather than failing on it.
    */
   recurrence?: LessonRecurrence;
+  /**
+   * Who owns the lesson: false is somebody's handiwork that regeneration must
+   * leave standing, true is the optimizer's own output it may replace. Carried
+   * through the snapshot rather than re-decided on the way out, because a
+   * restore that stamped a fixed value would hand every lesson in the year to
+   * the machine (or take every one from it) as a side effect of restoring.
+   *
+   * Absent is read as false, which is a choice about which way to be wrong on
+   * snapshots stored before the field was carried. Read absent as true and an
+   * old snapshot signs the whole year over to the optimizer, which deletes the
+   * handmade lessons on its next run — and restoring the same version again
+   * only feeds them back into the same shredder, since the blob still has no
+   * key. Read as false it preserves too much instead: a generated lesson lives
+   * on, in front of the administrator, who can see it and remove it. Same
+   * direction the column's own default leans, for the same reason.
+   *
+   * Rejected: reproducing the migration's backfill here (ALL_WEEKS with no
+   * dates = the machine's) so an old snapshot classifies exactly as the rows it
+   * was taken from. Tempting, but it re-implements in a second place the guess
+   * the column exists to abolish, and it demotes a lesson an admin placed by
+   * hand after the migration — whose row plainly says false — the first time a
+   * pre-change snapshot is restored over it.
+   */
+  isGenerated?: boolean;
   /** Absent or null means "from the start of the academic year". */
   startDate?: string | null;
   /** Absent or null means "until the year ends". */
@@ -173,6 +197,8 @@ export class ScheduleVersionsService {
             startTime: parseHHMM(lesson.startTime),
             endTime: parseHHMM(lesson.endTime),
             isLocked: lesson.isLocked,
+            // See VersionLesson.isGenerated for why an absent key is false.
+            isGenerated: lesson.isGenerated ?? false,
             recurrence: lesson.recurrence ?? 'ALL_WEEKS',
             startDate: parseDateOrNull(lesson.startDate),
             endDate: parseDateOrNull(lesson.endDate),
@@ -257,6 +283,7 @@ export class ScheduleVersionsService {
         startTime: true,
         endTime: true,
         isLocked: true,
+        isGenerated: true,
         recurrence: true,
         startDate: true,
         endDate: true,
@@ -275,6 +302,7 @@ export class ScheduleVersionsService {
       startTime: toHHMM(lesson.startTime),
       endTime: toHHMM(lesson.endTime),
       isLocked: lesson.isLocked,
+      isGenerated: lesson.isGenerated,
       recurrence: lesson.recurrence,
       startDate: toDateStringOrNull(lesson.startDate),
       endDate: toDateStringOrNull(lesson.endDate),

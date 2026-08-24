@@ -267,6 +267,27 @@ describe('Planning surface (e2e)', () => {
         .expect(201);
     });
 
+    it('rejects a period date that no calendar has', async () => {
+      // 2026 is not a leap year, and April has 30 days. Both shapes are
+      // /^\d{4}-\d{2}-\d{2}$/ and both were accepted before, then rolled over
+      // by `new Date` to the 1st of the following month — an admin's typo
+      // became a period that quietly meant something else. Asserted over HTTP
+      // because it is the validation pipe, not the service, that has to answer.
+      for (const startDate of ['2026-02-29', '2026-04-31']) {
+        await request(http())
+          .post('/api/v1/teaching-requirements')
+          .set('x-test-user', admin())
+          .send({
+            academicYearId: YEAR_ID,
+            subjectId: SUBJECT_ID,
+            studentGroupId: GROUP_ID,
+            startDate,
+          })
+          .expect(400);
+      }
+      expect(harness.tx['teachingRequirement']!['create']).not.toHaveBeenCalled();
+    });
+
     it('rejects a lesson length outside the schedulable range', async () => {
       for (const minutesPerLesson of [5, 600]) {
         await request(http())

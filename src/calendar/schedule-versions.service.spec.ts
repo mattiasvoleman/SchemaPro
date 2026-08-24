@@ -48,6 +48,7 @@ type MasterLessonRow = {
   startTime: Date;
   endTime: Date;
   isLocked: boolean;
+  isGenerated: boolean;
   recurrence: LessonRecurrence;
   startDate: Date | null;
   endDate: Date | null;
@@ -67,6 +68,7 @@ const masterLessonRow = (
   startTime: utcTime(8, 5),
   endTime: utcTime(9, 30),
   isLocked: true,
+  isGenerated: false,
   recurrence: 'ALL_WEEKS',
   startDate: null,
   endDate: null,
@@ -183,6 +185,7 @@ describe('ScheduleVersionsService', () => {
                 startTime: '08:05',
                 endTime: '09:30',
                 isLocked: true,
+                isGenerated: false,
                 recurrence: 'ALL_WEEKS',
                 startDate: null,
                 endDate: null,
@@ -224,6 +227,31 @@ describe('ScheduleVersionsService', () => {
         startDate: '2026-08-31',
         endDate: '2026-12-18',
       });
+    });
+
+    it('snapshots who owns each lesson, not just what it looks like', async () => {
+      arrangeYear();
+      // Two lessons that are identical in every field the old inference could
+      // see — both plain, both unlocked — and differ only in the column. A
+      // snapshot that dropped it could not tell them apart on the way back,
+      // and a restore would have to guess for both.
+      tx.masterLesson.findMany.mockResolvedValue([
+        masterLessonRow({ isLocked: false, isGenerated: true }),
+        masterLessonRow({ isLocked: false, isGenerated: false }),
+      ]);
+
+      await service.create(YEAR_ID, 'Draft v1', testUser());
+
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ isGenerated: true }),
+        }),
+      );
+      const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
+      expect(lessons.map((lesson: VersionLesson) => lesson.isGenerated)).toEqual([
+        true,
+        false,
+      ]);
     });
 
     it('returns the stored summary with an ISO timestamp', async () => {
@@ -301,6 +329,9 @@ describe('ScheduleVersionsService', () => {
       startTime: '08:15',
       endTime: '09:00',
       isLocked: true,
+      // The optimizer's own work, locked afterwards by an admin who liked
+      // where it landed. Ownership and lock are independent flags.
+      isGenerated: true,
       recurrence: 'ODD_WEEKS',
       startDate: '2026-08-31',
       endDate: '2026-12-18',
@@ -416,6 +447,7 @@ describe('ScheduleVersionsService', () => {
           startTime: utcTime(8, 15),
           endTime: utcTime(9, 0),
           isLocked: true,
+          isGenerated: true,
           recurrence: 'ODD_WEEKS',
           startDate: utcDate('2026-08-31'),
           endDate: utcDate('2026-12-18'),
@@ -458,11 +490,54 @@ describe('ScheduleVersionsService', () => {
       });
     });
 
+    it('gives each restored lesson back the owner it was snapshotted with', async () => {
+      // One of the machine's, one of a human's, restored in the same call. A
+      // restore that stamped a constant would pass whichever half it guessed
+      // and hand the other half to the wrong owner — after which the next
+      // regeneration either deletes work nobody can get back, or preserves its
+      // own output and leaves the requirement unmet for good.
+      arrangeRestore([
+        fullLesson(),
+        { ...fullLesson(), isGenerated: false, isLocked: false },
+      ]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      expect(tx.masterLesson.create).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          data: expect.objectContaining({ isGenerated: true }),
+        }),
+      );
+      expect(tx.masterLesson.create).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          data: expect.objectContaining({ isGenerated: false }),
+        }),
+      );
+    });
+
+    it('reads a snapshot stored before ownership was carried as handmade', async () => {
+      arrangeRestore([minimalLesson()]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      // No key in the blob, and no way to add one: the snapshot is the only
+      // copy. False is the recoverable direction — the lesson survives the
+      // next regeneration and sits on the timetable where an administrator can
+      // delete it. True would let regeneration delete it instead, and
+      // restoring the same version again would only stage the same deletion.
+      expect(tx.masterLesson.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ isGenerated: false }),
+      });
+    });
+
     it('survives a round trip: what snapshot() writes, restore() reads back', async () => {
       const row = masterLessonRow({
         recurrence: 'EVEN_WEEKS',
         startDate: utcDate('2027-01-11'),
         endDate: utcDate('2027-06-11'),
+        isGenerated: true,
       });
       // Snapshot the row, then feed that exact blob back into a restore. The
       // two halves have to agree on the wire format or the window is lost.
@@ -483,6 +558,9 @@ describe('ScheduleVersionsService', () => {
           recurrence: row.recurrence,
           startDate: row.startDate,
           endDate: row.endDate,
+          // A generated lesson that came home as a handmade one would be the
+          // regeneration's problem, one restore later.
+          isGenerated: row.isGenerated,
         }),
       });
     });
@@ -508,6 +586,26 @@ describe('ScheduleVersionsService', () => {
         startDate: '2026-08-31',
         endDate: null,
       });
+    });
+
+    it('carries ownership into the automatic safety snapshot', async () => {
+      arrangeRestore([minimalLesson()]);
+      // Same promise as above, for the other column: the safety snapshot is
+      // what a regretted restore is undone from, and a handmade lesson that
+      // came back from it as the machine's would be deleted by the first
+      // regeneration after the undo — with the original already overwritten.
+      tx.masterLesson.findMany.mockResolvedValue([
+        masterLessonRow({ isGenerated: false }),
+        masterLessonRow({ isGenerated: true }),
+      ]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
+      expect(lessons.map((lesson: VersionLesson) => lesson.isGenerated)).toEqual([
+        false,
+        true,
+      ]);
     });
 
     it('records the restore in the change log with the actor and safety id', async () => {

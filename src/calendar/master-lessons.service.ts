@@ -161,6 +161,14 @@ export class MasterLessonsService {
           startTime: parseTimeString(dto.startTime),
           endTime: parseTimeString(dto.endTime),
           isLocked: dto.isLocked ?? false,
+          // Said out loud although the column already defaults to false. This
+          // is the hand-placed lesson — the one regeneration must never take
+          // for its own — and the claim reads here, where an admin's intent
+          // enters the system, rather than in a schema default a later
+          // migration is free to move. Not taken from the DTO on purpose
+          // either: ownership follows from which code path ran, and no request
+          // may declare itself the optimizer.
+          isGenerated: false,
           recurrence: dto.recurrence ?? 'ALL_WEEKS',
           startDate: parseDateOrNull(dto.startDate),
           endDate: parseDateOrNull(dto.endDate),
@@ -287,6 +295,31 @@ export class MasterLessonsService {
             : {}),
           ...(dto.endDate !== undefined
             ? { endDate: parseDateOrNull(dto.endDate) }
+            : {}),
+          /*
+           * Writing a window hands the lesson to whoever wrote it.
+           *
+           * Regeneration replaces what the optimizer made and nobody has since
+           * touched. A generated lesson now arrives carrying its requirement's
+           * window, so the window by itself no longer says who put it there.
+           * Without this line an administrator who narrows a generated lesson
+           * to odd weeks, or to one term, leaves `isGenerated` true — and the
+           * next regeneration deletes the very intent they just expressed,
+           * without saying so.
+           *
+           * Only a window flips ownership, not every edit, and the difference
+           * is what the engine can express. It has no notion of weeks at all,
+           * so a window is unreproducible and preserving it is the only way not
+           * to lose it. A moved time it can express perfectly well and simply
+           * decided otherwise about — pinning that is what the lock is for, and
+           * the lock is visible on the lesson. Flipping here on every edit would
+           * make each nudge a second, invisible lock and leave the padlock
+           * meaning nothing.
+           */
+          ...(dto.recurrence !== undefined ||
+          dto.startDate !== undefined ||
+          dto.endDate !== undefined
+            ? { isGenerated: false }
             : {}),
           ...(dto.extraGroupIds !== undefined
             ? {

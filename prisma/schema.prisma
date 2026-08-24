@@ -399,6 +399,24 @@ model TeachingRequirement {
   coTeacherId      String?  @db.Uuid
   lessonsPerWeek   Int      @default(1)
   minutesPerLesson Int      @default(60)
+
+  /// Which weeks the requirement is read over, inherited by every lesson the
+  /// optimizer generates for it. `lessonsPerWeek` counts weeks the requirement
+  /// actually runs, so 2 lessons a week over a spring-only window is two a week
+  /// that spring — not two averaged across the year.
+  ///
+  /// The engine has no concept of weeks (optimization-proxy.service.ts), so it
+  /// still packs a windowed requirement as if it ran all year: the window is
+  /// stamped on the resulting lessons afterwards. That over-provisions — two
+  /// half-year subjects get separate slots where they could have shared one —
+  /// which costs packing room and not correctness, and is visible on the
+  /// timetable rather than hidden.
+  recurrence       LessonRecurrence @default(ALL_WEEKS)
+  /// First date the requirement is read; null means "from the start of the
+  /// year". With endDate this expresses a subject read for one term only.
+  startDate        DateTime?        @db.Date
+  /// Last date the requirement is read; null means "until the year ends".
+  endDate          DateTime?        @db.Date
   createdAt        DateTime @default(now()) @db.Timestamptz(6)
   updatedAt        DateTime @updatedAt @db.Timestamptz(6)
 
@@ -470,6 +488,19 @@ model MasterLesson {
   // Locked lessons survive regeneration untouched: the optimizer treats them
   // as fixed placements and schedules the remaining demand around them.
   isLocked  Boolean  @default(false)
+  /// True only for lessons the optimizer itself produced, and the one thing
+  /// regeneration is allowed to replace.
+  ///
+  /// Ownership used to be inferred from the lesson looking untouched — default
+  /// recurrence, no dates. That held only while nothing but a human ever set
+  /// those. Now a generated lesson inherits its requirement's window, so an
+  /// inferred rule would read the optimizer's own output as handmade: it would
+  /// be preserved, the requirement would still count as unmet, and the next
+  /// regeneration would stack another copy on top of it every time.
+  ///
+  /// Defaults to false so a creation path that forgets to say is treated as
+  /// handmade and survives. Only the optimizer sets it true.
+  isGenerated Boolean @default(false)
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 

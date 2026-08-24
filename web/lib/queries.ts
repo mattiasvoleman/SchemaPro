@@ -208,7 +208,7 @@ export function useRequirements(academicYearId: string | null) {
         supabase
           .from("TeachingRequirements")
           .select(
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson",
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, recurrence, startDate, endDate",
           )
           .eq("academicYearId", academicYearId!)
           .order("id")

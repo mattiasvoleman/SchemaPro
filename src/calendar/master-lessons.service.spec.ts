@@ -218,6 +218,7 @@ describe('MasterLessonsService', () => {
           startTime: new Date('1970-01-01T10:00:00.000Z'),
           endTime: new Date('1970-01-01T11:00:00.000Z'),
           isLocked: false,
+          isGenerated: false,
           recurrence: 'ALL_WEEKS',
           startDate: null,
           endDate: null,
@@ -230,6 +231,34 @@ describe('MasterLessonsService', () => {
         },
         select: expect.any(Object),
       });
+    });
+
+    // Regeneration deletes what it owns. If this path ever left the column to
+    // its default and the default moved, every lesson an admin placed by hand
+    // would be deleted on the next optimizer run — so the write is asserted
+    // here rather than trusted to the schema.
+    it('claims a hand-placed lesson for the humans, whatever the column default', async () => {
+      arrangeCreate();
+
+      await service.create(
+        createDto({
+          // The shape a generated lesson now inherits from its requirement, to
+          // make the point that the flag is what decides ownership: a window
+          // no longer implies a human, and a plain lesson no longer implies
+          // the machine.
+          recurrence: 'ODD_WEEKS',
+          startDate: '2026-08-31',
+          endDate: '2026-12-18',
+          isLocked: true,
+        }),
+        testUser(),
+      );
+
+      expect(tx.masterLesson.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ isGenerated: false }),
+        }),
+      );
     });
 
     it('honours an explicit isLocked flag', async () => {
@@ -814,6 +843,63 @@ describe('MasterLessonsService', () => {
       });
     });
 
+    /*
+     * The three below guard the seam between a generated lesson and the person
+     * editing it. Regeneration keeps what the optimizer made and nobody has
+     * touched; a generated lesson carries its requirement's window, so the
+     * window alone cannot say who wrote it. Get this wrong in one direction and
+     * an administrator's "kemi bara på våren" is deleted at the next
+     * regeneration; get it wrong in the other and every nudge becomes an
+     * invisible lock.
+     */
+    it.each([
+      ['odd weeks', { recurrence: 'ODD_WEEKS' as const }, { recurrence: 'ODD_WEEKS' }],
+      ['a period start', { startDate: '2027-01-11' }, { startDate: new Date('2027-01-11') }],
+      ['a period end', { endDate: '2027-06-11' }, { endDate: new Date('2027-06-11') }],
+    ])(
+      'takes the lesson away from the machine when a human writes %s',
+      async (_label, patch, written) => {
+        arrangeUpdate({ isGenerated: true });
+
+        await service.update(LESSON_ID, patch, testUser());
+
+        expect(tx.masterLesson.update).toHaveBeenCalledWith({
+          where: { id: LESSON_ID },
+          data: { dayOfWeek: 1, ...written, isGenerated: false },
+          select: expect.any(Object),
+        });
+      },
+    );
+
+    it('clears a window without leaving the lesson to be regenerated over', async () => {
+      arrangeUpdate({ isGenerated: true, recurrence: 'ODD_WEEKS' });
+
+      await service.update(LESSON_ID, { recurrence: 'ALL_WEEKS' }, testUser());
+
+      // Writing ALL_WEEKS is still writing the window, so the handover stands.
+      // The lesson stops alternating and stays the administrator's — the
+      // alternative is that undoing an edit quietly re-arms the delete.
+      expect(tx.masterLesson.update).toHaveBeenCalledWith({
+        where: { id: LESSON_ID },
+        data: { dayOfWeek: 1, recurrence: 'ALL_WEEKS', isGenerated: false },
+        select: expect.any(Object),
+      });
+    });
+
+    it('leaves ownership where it is when the patch only moves the lesson', async () => {
+      arrangeUpdate({ isGenerated: true });
+
+      await service.update(LESSON_ID, { dayOfWeek: 3 }, testUser());
+
+      // A moved time is something the solver can express and simply decided
+      // otherwise about, so pinning it stays the lock's job — visible on the
+      // lesson, rather than a side effect of having touched it.
+      const { data } = tx.masterLesson.update.mock.calls[0][0] as {
+        data: Record<string, unknown>;
+      };
+      expect(data).not.toHaveProperty('isGenerated');
+    });
+
     it('replaces the extra groups, dropping the primary group and scoping rows to the school', async () => {
       arrangeUpdate(
         {},
@@ -912,12 +998,14 @@ describe('MasterLessonsService', () => {
       });
 
       // The DATE column holds midnight UTC, so the day is never shifted by a
-      // timezone on the way in.
+      // timezone on the way in. `isGenerated` rides along because writing a
+      // window hands the lesson to whoever wrote it.
       expect(tx.masterLesson.update).toHaveBeenCalledWith({
         where: { id: LESSON_ID },
         data: {
           dayOfWeek: 1,
           endDate: new Date('2026-09-07T00:00:00.000Z'),
+          isGenerated: false,
         },
         select: expect.any(Object),
       });

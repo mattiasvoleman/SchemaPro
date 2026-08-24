@@ -267,19 +267,84 @@ describe('OptimizationProxyService', () => {
       tx.masterLesson.count.mockResolvedValue(2);
     });
 
-    it('keeps a half-term course a half-term course', async () => {
-      // The engine has no week model, so a regenerated replacement always comes
-      // back as an ordinary weekly lesson. "Kemi bara på vårterminen" would
-      // quietly become a year-long course, with nothing in the audit trail to
-      // say a school's decision had been reversed.
-      await persist({ status: 'FEASIBLE', lessons: [] });
+    /** A master lesson row, in the columns the preserve rule reads. */
+    const lessonRow = (overrides: Record<string, unknown> = {}) => ({
+      isGenerated: false,
+      isLocked: false,
+      extraGroups: [] as unknown[],
+      participants: [] as unknown[],
+      recurrence: 'ALL_WEEKS',
+      startDate: null as Date | null,
+      endDate: null as Date | null,
+      ...overrides,
+    });
 
+    /**
+     * The delete's own where-clause, applied to a row as Prisma would apply it.
+     *
+     * That clause is what decides whether a school's lesson is still there
+     * after a regeneration, and asserting its literal shape only proves nobody
+     * mistyped it. Four clause kinds are all it may contain; an unrecognised
+     * one throws rather than quietly reading as "not preserved", which is the
+     * direction that deletes somebody's lesson.
+     */
+    const survivesRegeneration = (lesson: Record<string, unknown>): boolean => {
       const call = tx.masterLesson.deleteMany.mock.calls[0]![0] as {
         where: { NOT: { OR: Array<Record<string, unknown>> } };
       };
-      expect(call.where.NOT.OR).toContainEqual({ recurrence: { not: 'ALL_WEEKS' } });
-      expect(call.where.NOT.OR).toContainEqual({ startDate: { not: null } });
-      expect(call.where.NOT.OR).toContainEqual({ endDate: { not: null } });
+      return call.where.NOT.OR.some((clause) => {
+        if ('isGenerated' in clause) return lesson.isGenerated === clause.isGenerated;
+        if ('isLocked' in clause) return lesson.isLocked === clause.isLocked;
+        if ('extraGroups' in clause) return (lesson.extraGroups as unknown[]).length > 0;
+        if ('participants' in clause) return (lesson.participants as unknown[]).length > 0;
+        throw new Error(`Unhandled preserve clause: ${JSON.stringify(clause)}`);
+      });
+    };
+
+    const springTerm = {
+      startDate: new Date('2026-01-07T00:00:00.000Z'),
+      endDate: new Date('2026-06-11T00:00:00.000Z'),
+    };
+
+    it('deletes its own windowed output instead of stacking a copy on it', async () => {
+      await persist({ status: 'FEASIBLE', lessons: [] });
+
+      // The whole reason ownership is a column. Inferred from the row looking
+      // untouched, this lesson read as handmade — odd weeks, dates set — and so
+      // it was preserved, its requirement still counted as unmet, and the next
+      // run put a second copy beside it. Every press of generate added one.
+      expect(
+        survivesRegeneration(
+          lessonRow({ isGenerated: true, recurrence: 'ODD_WEEKS', ...springTerm }),
+        ),
+      ).toBe(false);
+    });
+
+    it('keeps a half-term course a half-term course', async () => {
+      await persist({ status: 'FEASIBLE', lessons: [] });
+
+      // "Kemi bara på vårterminen", placed by hand. The engine has no week
+      // model, so a regenerated replacement always comes back as an ordinary
+      // weekly lesson: the course would quietly become a year-long one, with
+      // nothing in the audit trail to say a school's decision was reversed.
+      // It is the hand that saves it now, not the window.
+      expect(survivesRegeneration(lessonRow(springTerm))).toBe(true);
+    });
+
+    it('keeps a generated lesson somebody has since taken over', async () => {
+      await persist({ status: 'FEASIBLE', lessons: [] });
+
+      // Locking it, adding a second class or naming students are all decisions
+      // the solver cannot express and could not put back.
+      expect(survivesRegeneration(lessonRow({ isGenerated: true, isLocked: true }))).toBe(true);
+      expect(
+        survivesRegeneration(lessonRow({ isGenerated: true, extraGroups: [{}] })),
+      ).toBe(true);
+      expect(
+        survivesRegeneration(lessonRow({ isGenerated: true, participants: [{}] })),
+      ).toBe(true);
+      // …while one nobody has touched is still the machine's to replace.
+      expect(survivesRegeneration(lessonRow({ isGenerated: true }))).toBe(false);
     });
 
     it('preserves locked lessons and manual multi-class constructs', async () => {
@@ -287,15 +352,11 @@ describe('OptimizationProxyService', () => {
 
       const preserved = {
         OR: [
+          // Everything the optimizer did not write, whatever it looks like.
+          { isGenerated: false },
           { isLocked: true },
           { extraGroups: { some: {} } },
           { participants: { some: {} } },
-          // A lesson that does not run every week carries a calendar decision
-          // the engine has no concept of, so a regenerated replacement would
-          // always come back as an ordinary weekly one.
-          { recurrence: { not: 'ALL_WEEKS' } },
-          { startDate: { not: null } },
-          { endDate: { not: null } },
         ],
       };
       // Machine-owned lessons are replaced; anything a human locked or built
@@ -335,12 +396,10 @@ describe('OptimizationProxyService', () => {
               academicYearId: ACADEMIC_YEAR,
               NOT: {
                 OR: [
+                  { isGenerated: false },
                   { isLocked: true },
                   { extraGroups: { some: {} } },
                   { participants: { some: {} } },
-                  { recurrence: { not: 'ALL_WEEKS' } },
-                  { startDate: { not: null } },
-                  { endDate: { not: null } },
                 ],
               },
             },
@@ -445,6 +504,12 @@ describe('OptimizationProxyService', () => {
       coTeacherId: null,
       lessonsPerWeek: 3,
       minutesPerLesson: 60,
+      // As the columns default: every week, all year. Spelled out because a row
+      // that omits them is not a row the database can produce, and both the
+      // subtraction and the lessons the run writes read them.
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
       subject: { requiredRoomTypeId: 'room-type-lab' },
       ...overrides,
     });
@@ -675,13 +740,14 @@ describe('OptimizationProxyService', () => {
     });
 
     /*
-     * A locked lesson only cancels weekly demand if it is there every week.
+     * A locked lesson only cancels demand it covers for the requirement's
+     * whole period.
      *
      * The engine knows nothing about weeks, so a subtraction applies to all of
-     * them. Subtracting for a lesson that runs every other week leaves the
-     * class one lesson short on the other weeks, for the whole year, with
-     * nothing anywhere saying so. Over-delivering instead puts an extra lesson
-     * on the timetable, where somebody can see it.
+     * them. Subtracting for a lesson that is absent from part of the period
+     * leaves the class one lesson short on those weeks, for the whole year,
+     * with nothing anywhere saying so. Over-delivering instead puts an extra
+     * lesson on the timetable, where somebody can see it.
      */
     it('does not let an alternating locked lesson cancel a weekly lesson', async () => {
       arrange({ lockedLessons: [lockedLesson({ recurrence: 'ODD_WEEKS' })] });
@@ -714,6 +780,73 @@ describe('OptimizationProxyService', () => {
       // A subject read for one term is absent for the other one, so it covers
       // no more of a full-year requirement than an alternating lesson does.
       expect(postedPayload().requirements[0].lessonsPerWeek).toBe(3);
+    });
+
+    it('does not let a locked lesson cancel demand outside its own window', async () => {
+      const autumnStart = new Date('2025-08-18T00:00:00.000Z');
+      arrange({
+        requirements: [
+          requirement({
+            startDate: autumnStart,
+            endDate: new Date('2026-06-11T00:00:00.000Z'),
+          }),
+        ],
+        lockedLessons: [
+          lockedLesson({
+            // Autumn term only, against a requirement read all year: the spring
+            // half of it has no lesson in it at all. The lesson looks like a
+            // perfectly good match on (group, subject) and covers two thirds of
+            // what was asked for, which is exactly why the comparison has to be
+            // against the requirement's own period rather than the default.
+            startDate: autumnStart,
+            endDate: new Date('2025-12-19T00:00:00.000Z'),
+          }),
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().requirements[0].lessonsPerWeek).toBe(3);
+    });
+
+    it('lets a locked lesson matching the requirement period cancel a lesson', async () => {
+      const spring = {
+        startDate: new Date('2026-01-07T00:00:00.000Z'),
+        endDate: new Date('2026-06-11T00:00:00.000Z'),
+      };
+      arrange({
+        requirements: [requirement({ recurrence: 'ODD_WEEKS', ...spring })],
+        lockedLessons: [lockedLesson({ recurrence: 'ODD_WEEKS', ...spring })],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      // The counterweight to the refusals above: a rule that never counted
+      // anything would send the full demand every time and quietly double a
+      // half-term subject on every regeneration.
+      expect(postedPayload().requirements[0].lessonsPerWeek).toBe(2);
+    });
+
+    it('lets an all-year locked lesson cancel a lesson of a one-term requirement', async () => {
+      arrange({
+        requirements: [
+          requirement({
+            startDate: new Date('2026-01-07T00:00:00.000Z'),
+            endDate: new Date('2026-06-11T00:00:00.000Z'),
+          }),
+        ],
+        lockedLessons: [lockedLesson()],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      // An absent bound is the open one, so a lesson with neither encloses any
+      // period a requirement can name — it is there every week the requirement
+      // is, and then some.
+      expect(postedPayload().requirements[0].lessonsPerWeek).toBe(2);
     });
 
     it('still asks the engine when only alternating lessons cover the demand', async () => {
@@ -844,7 +977,43 @@ describe('OptimizationProxyService', () => {
           dayOfWeek: 1,
           startTime: new Date('1970-01-01T08:00:00.000Z'),
           endTime: new Date('1970-01-01T09:15:00.000Z'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          isGenerated: true,
         },
+      });
+    });
+
+    it('gives a windowed requirement windowed lessons, stamped as its own', async () => {
+      const springStart = new Date('2026-01-07T00:00:00.000Z');
+      const springEnd = new Date('2026-06-11T00:00:00.000Z');
+      arrange({
+        requirements: [
+          requirement({
+            lessonsPerWeek: 1,
+            recurrence: 'ODD_WEEKS',
+            startDate: springStart,
+            endDate: springEnd,
+          }),
+        ],
+      });
+      echoEngine('OPTIMAL');
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      // The engine is never told about weeks — it packs the requirement as if
+      // it ran all year — so the period can only be stamped on here, from the
+      // requirement. Without it "slöjd udda veckor" comes back weekly and
+      // all-year, and the timplan is quietly rewritten by a regeneration.
+      expect(tx.masterLesson.create).toHaveBeenCalledTimes(1);
+      expect(tx.masterLesson.create.mock.calls[0]![0].data).toMatchObject({
+        recurrence: 'ODD_WEEKS',
+        startDate: springStart,
+        endDate: springEnd,
+        // And the row says whose it is, so the next run may delete it. Inferred
+        // ownership would read these very columns as a human's handiwork.
+        isGenerated: true,
       });
     });
 

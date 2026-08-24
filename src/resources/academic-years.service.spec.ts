@@ -17,6 +17,12 @@ import type {
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const YEAR_ID = '99999999-9999-4999-8999-999999999999';
 
+/** The row as it stands before an update moves it. */
+const YEAR = {
+  startDate: new Date('2026-08-17T00:00:00.000Z'),
+  endDate: new Date('2027-06-11T00:00:00.000Z'),
+};
+
 const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
     code,
@@ -153,6 +159,8 @@ describe('AcademicYearsService', () => {
     });
 
     it('sends only the provided fields, dates parsed', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      tx.teachingRequirement.count.mockResolvedValue(0);
       tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
 
       await service.update(
@@ -168,6 +176,94 @@ describe('AcademicYearsService', () => {
           startDate: new Date('2026-08-18T00:00:00.000Z'),
         },
       });
+    });
+
+    it('never reads the requirements when no date moves', async () => {
+      tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
+
+      await service.update(YEAR_ID, { name: 'Läsår 26/27' }, testUser());
+
+      // A rename cannot strand a period, and the containment check costs two
+      // queries inside a serializable transaction — not a toll to charge every
+      // edit of the year's name or its active flag.
+      expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+      expect(tx.teachingRequirement.count).not.toHaveBeenCalled();
+    });
+
+    it('refuses to move the year out from under existing periods, and says how many', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      tx.teachingRequirement.count.mockResolvedValue(3);
+
+      // Autumn term start pushed a month later; every course that already
+      // starts in August is now outside its own year.
+      await expect(
+        service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
+      ).rejects.toThrow(
+        '3 teaching requirements would fall outside the new academic year ' +
+          '(2026-09-14 to 2027-06-11). Move or clear those periods first.',
+      );
+      expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('measures the periods against the bounds as they will end up', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
+
+      // Only endDate moves, so startDate has to come from the row — measuring
+      // against a half-stated year would count every August period as stranded.
+      await service.update(YEAR_ID, { endDate: '2027-06-18' }, testUser());
+
+      expect(tx.teachingRequirement.count).toHaveBeenCalledWith({
+        where: {
+          academicYearId: YEAR_ID,
+          OR: [
+            { startDate: { lt: YEAR.startDate } },
+            { startDate: { gt: new Date('2027-06-18T00:00:00.000Z') } },
+            { endDate: { lt: YEAR.startDate } },
+            { endDate: { gt: new Date('2027-06-18T00:00:00.000Z') } },
+          ],
+        },
+      });
+      expect(tx.academicYear.update).toHaveBeenCalled();
+    });
+
+    it('lets a widened year through — nothing that fit can fall outside a superset', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
+
+      await expect(
+        service.update(
+          YEAR_ID,
+          { startDate: '2026-08-10', endDate: '2027-06-18' },
+          testUser(),
+        ),
+      ).resolves.toEqual({ id: YEAR_ID });
+    });
+
+    it('says a one-sided move inverted the year rather than blaming the periods', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+
+      await expect(
+        service.update(YEAR_ID, { startDate: '2027-08-01' }, testUser()),
+      ).rejects.toThrow('startDate must be before endDate.');
+      // The count would have answered "every period is outside", which is true
+      // and says nothing about the mistake that was actually made.
+      expect(tx.teachingRequirement.count).not.toHaveBeenCalled();
+      expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('leaves a year RLS hides to update()’s own 404', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(null);
+      tx.academicYear.update.mockRejectedValue(prismaError('P2025'));
+
+      // Counting somebody else's requirements at them would confirm the year
+      // exists; the 404 the update already gives is the whole answer.
+      await expect(
+        service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
+      ).rejects.toThrow(NotFoundException);
+      expect(tx.teachingRequirement.count).not.toHaveBeenCalled();
     });
 
     it('requires a school even for a name-only change', async () => {

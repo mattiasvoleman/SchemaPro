@@ -1,4 +1,9 @@
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
@@ -18,6 +23,12 @@ const GROUP_ID = '66666666-6666-4666-8666-666666666666';
 const TEACHER_ID = '44444444-4444-4444-8444-444444444444';
 const CO_TEACHER_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const REQUIREMENT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+/** The läsår every period in these tests is measured against. */
+const YEAR = {
+  startDate: new Date('2026-08-17T00:00:00.000Z'),
+  endDate: new Date('2027-06-11T00:00:00.000Z'),
+};
 
 const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
@@ -47,11 +58,13 @@ describe('TeachingRequirementsService', () => {
 
   describe('create', () => {
     it('creates an unassigned requirement with the documented defaults', async () => {
-      const row = { id: REQUIREMENT_ID };
+      const row = { id: REQUIREMENT_ID, startDate: null, endDate: null };
       tx.teachingRequirement.create.mockResolvedValue(row);
       const user = testUser();
 
-      await expect(service.create(dto(), user)).resolves.toBe(row);
+      // The row itself rather than a copy of it would be the simpler
+      // assertion, but the dates leave as strings now — see toResponse.
+      await expect(service.create(dto(), user)).resolves.toEqual(row);
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.teachingRequirement.create).toHaveBeenCalledWith({
@@ -64,8 +77,14 @@ describe('TeachingRequirementsService', () => {
           coTeacherId: null,
           lessonsPerWeek: 1,
           minutesPerLesson: 60,
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
         },
       });
+      // A requirement without a period runs the whole year by definition, so
+      // there is nothing to measure and the year is never fetched.
+      expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
     });
 
     it('persists explicit teachers and load figures', async () => {
@@ -93,6 +112,106 @@ describe('TeachingRequirementsService', () => {
       );
     });
 
+    it('persists a spring-only period and its recurrence', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.create(
+        dto({
+          recurrence: 'ODD_WEEKS',
+          startDate: '2027-01-11',
+          endDate: '2027-06-11',
+        }),
+        testUser(),
+      );
+
+      expect(tx.academicYear.findUnique).toHaveBeenCalledWith({
+        where: { id: YEAR_ID },
+        select: { startDate: true, endDate: true },
+      });
+      expect(tx.teachingRequirement.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            recurrence: 'ODD_WEEKS',
+            startDate: new Date('2027-01-11T00:00:00.000Z'),
+            // The last day of the year is inside it — the bounds are inclusive.
+            endDate: new Date('2027-06-11T00:00:00.000Z'),
+          }),
+        }),
+      );
+    });
+
+    it('answers with the period as dates, not as invented midnight instants', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      tx.teachingRequirement.create.mockResolvedValue({
+        id: REQUIREMENT_ID,
+        startDate: new Date('2027-01-11T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+      });
+
+      // The shape the web app's own type has always claimed for this field, and
+      // the shape Supabase gives when the same row is read back. Before this,
+      // saving and reloading produced two different strings for one field.
+      await expect(
+        service.create(
+          dto({ startDate: '2027-01-11', endDate: '2027-06-11' }),
+          testUser(),
+        ),
+      ).resolves.toEqual({
+        id: REQUIREMENT_ID,
+        startDate: '2027-01-11',
+        endDate: '2027-06-11',
+      });
+    });
+
+    it('keeps a period-less requirement’s nulls as nulls', async () => {
+      tx.teachingRequirement.create.mockResolvedValue({
+        id: REQUIREMENT_ID,
+        startDate: null,
+        endDate: null,
+      });
+
+      // Null is "the year's own boundary" and has to survive the trip out; an
+      // empty string here would read as a stated bound the admin never gave.
+      await expect(service.create(dto(), testUser())).resolves.toEqual({
+        id: REQUIREMENT_ID,
+        startDate: null,
+        endDate: null,
+      });
+    });
+
+    it('refuses a period that reaches past the end of the läsår', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+
+      await expect(
+        service.create(dto({ endDate: '2027-08-01' }), testUser()),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses an end before its start instead of letting the CHECK 500', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+
+      await expect(
+        service.create(
+          dto({ startDate: '2027-01-11', endDate: '2026-12-01' }),
+          testUser(),
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+    });
+
+    it('says nothing about a year RLS hides, and lets the FK refuse it', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(null);
+      tx.teachingRequirement.create.mockRejectedValue(prismaError('P2003'));
+
+      // Not 400 "outside its year": that answer would confirm the year exists.
+      await expect(
+        service.create(dto({ startDate: '2027-01-11' }), testUser()),
+      ).rejects.toThrow(ConflictException);
+      expect(tx.teachingRequirement.create).toHaveBeenCalled();
+    });
+
     it('rejects a principal with no school', async () => {
       await expect(
         service.create(dto(), testUser({ schoolId: undefined })),
@@ -111,13 +230,18 @@ describe('TeachingRequirementsService', () => {
 
   describe('update', () => {
     it('unassigns the teacher with an explicit null and nothing else', async () => {
-      const row = { id: REQUIREMENT_ID, teacherId: null };
+      const row = {
+        id: REQUIREMENT_ID,
+        teacherId: null,
+        startDate: null,
+        endDate: null,
+      };
       tx.teachingRequirement.update.mockResolvedValue(row);
       const user = testUser();
 
       await expect(
         service.update(REQUIREMENT_ID, { teacherId: null }, user),
-      ).resolves.toBe(row);
+      ).resolves.toEqual(row);
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
@@ -139,6 +263,65 @@ describe('TeachingRequirementsService', () => {
         where: { id: REQUIREMENT_ID },
         data: { lessonsPerWeek: 2, minutesPerLesson: 90 },
       });
+      // Neither date was sent, so the row is not read to merge a period.
+      expect(tx.teachingRequirement.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('clears a period with explicit nulls and nothing else', async () => {
+      tx.teachingRequirement.findUnique.mockResolvedValue({
+        startDate: new Date('2027-01-11T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+        academicYear: YEAR,
+      });
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.update(
+        REQUIREMENT_ID,
+        { startDate: null, endDate: null },
+        testUser(),
+      );
+
+      expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+        where: { id: REQUIREMENT_ID },
+        data: { startDate: null, endDate: null },
+      });
+    });
+
+    it('measures a one-sided move against the date already on the row', async () => {
+      tx.teachingRequirement.findUnique.mockResolvedValue({
+        startDate: new Date('2027-01-11T00:00:00.000Z'),
+        endDate: null,
+        academicYear: YEAR,
+      });
+
+      // Nothing in this PATCH is wrong on its own; it is wrong against the
+      // start it inherits, which is the whole reason the row is read first.
+      await expect(
+        service.update(REQUIREMENT_ID, { endDate: '2026-12-01' }, testUser()),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a period moved outside the row’s own läsår', async () => {
+      tx.teachingRequirement.findUnique.mockResolvedValue({
+        startDate: null,
+        endDate: null,
+        academicYear: YEAR,
+      });
+
+      await expect(
+        service.update(REQUIREMENT_ID, { startDate: '2026-06-01' }, testUser()),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+
+    it('leaves an unreadable row to update()’s own 404', async () => {
+      tx.teachingRequirement.findUnique.mockResolvedValue(null);
+      tx.teachingRequirement.update.mockRejectedValue(prismaError('P2025'));
+
+      await expect(
+        service.update(REQUIREMENT_ID, { startDate: '2026-06-01' }, testUser()),
+      ).rejects.toThrow(NotFoundException);
     });
 
     it('maps P2025 (unknown or cross-tenant id) to 404', async () => {

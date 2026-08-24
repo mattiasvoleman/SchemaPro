@@ -128,6 +128,27 @@ export interface TeachingRequirement {
   coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /**
+   * Which weeks the subject is read over — said once on the requirement and
+   * inherited by every lesson generated from it, rather than corrected lesson
+   * by lesson in the master timetable afterwards.
+   */
+  recurrence: LessonRecurrence;
+  /**
+   * YYYY-MM-DD, or null for the academic year's own boundary.
+   *
+   * Date-only from BOTH doors now. Supabase always rendered the DATE column
+   * this way; the POST/PATCH response from NestJS used to send the same field
+   * as "2027-01-11T00:00:00.000Z", so the shape of a requirement depended on
+   * whether you had just saved it or just reloaded. The instant is cut at its
+   * source (src/resources/teaching-requirements.service.ts, toResponse) rather
+   * than here — see that comment for why the server and not the client.
+   *
+   * Consumers may therefore compare these as strings, which lib/teaching-hours.ts
+   * and lib/ics.ts both do, and hand them straight to an `<input type="date">`.
+   */
+  startDate: string | null;
+  endDate: string | null;
 }
 
 export interface AvailabilityConstraint {

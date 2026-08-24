@@ -53,14 +53,23 @@ import type {
 /**
  * Master lessons a regeneration leaves alone, expressed once.
  *
- * Four shapes with one thing in common: each carries intent the solver cannot
- * express and therefore could never put back. A locked lesson is a placement
- * somebody chose. A multi-class or named-student lesson is a construct the
- * generator does not build. And a lesson that does not run every week — slöjd
- * udda veckor, kemi bara på vårterminen — is a decision about the calendar the
- * engine has no concept of at all: regenerating it returned it as an ordinary
- * weekly lesson, silently, and a term-long course became a year-long one with
- * nothing in the audit trail to say so.
+ * The first shape is the whole rule: `isGenerated` is false on everything the
+ * optimizer did not produce, and nothing else in the timetable is the
+ * machine's to replace. The other three are what a human has since done to a
+ * lesson the machine did produce — locked it into place, opened it to a second
+ * class, filled it with named students — each an intent the solver cannot
+ * express and therefore could never put back.
+ *
+ * Ownership used to be inferred from the row looking untouched: default
+ * recurrence and no dates, so nobody has been here, so it is ours. That held
+ * only while nothing but a human ever set those columns. A generated lesson
+ * now inherits its requirement's window, so "kemi bara på vårterminen"
+ * describes the optimizer's own output exactly as well as a handmade lesson —
+ * and read as handmade it was preserved, its requirement still counted as
+ * unmet, and the next run stacked a second copy on top of it. Every press of
+ * generate added another layer. The three window conditions are gone from this
+ * list for that reason, and a handmade lesson carrying a window is caught by
+ * `isGenerated: false` like every other handmade lesson.
  *
  * Referenced from the two places that must agree exactly: the fetch that
  * forwards these to the engine as immovable placements, and the delete that
@@ -68,12 +77,10 @@ import type {
  * in one list and not the other is either sent twice or thrown away.
  */
 const PRESERVED_FROM_REGENERATION = [
+  { isGenerated: false },
   { isLocked: true },
   { extraGroups: { some: {} } },
   { participants: { some: {} } },
-  { recurrence: { not: 'ALL_WEEKS' as const } },
-  { startDate: { not: null } },
-  { endDate: { not: null } },
 ];
 
 @Injectable()
@@ -225,15 +232,22 @@ export class OptimizationProxyService {
         coTeacherId: true,
         lessonsPerWeek: true,
         minutesPerLesson: true,
+        // Never forwarded — the engine has no notion of weeks. Read here
+        // because the subtraction below compares a preserved lesson's weeks
+        // against these, and stamped on the lessons the run produces so a
+        // spring-only requirement yields spring-only lessons.
+        recurrence: true,
+        startDate: true,
+        endDate: true,
         subject: { select: { requiredRoomTypeId: true } },
       },
     });
 
     // See PRESERVED_FROM_REGENERATION: these are the lessons regeneration must
-    // not touch and must plan around. Their count is subtracted from the weekly
-    // demand of the matching requirement, so the solver re-places only the
-    // machine-owned remainder.
-    const lockedLessons = await tx.masterLesson.findMany({
+    // not touch and must plan around. Those that cover a requirement's whole
+    // period are subtracted from its weekly demand, so the solver re-places
+    // only the machine-owned remainder.
+    const preservedLessons = await tx.masterLesson.findMany({
       where: { academicYearId, OR: PRESERVED_FROM_REGENERATION },
       select: {
         id: true,
@@ -246,8 +260,8 @@ export class OptimizationProxyService {
         startTime: true,
         endTime: true,
         // Not forwarded — the engine has no notion of weeks. Selected because
-        // the subtraction below has to know whether a locked lesson is really
-        // there every week before it cancels a week's worth of demand.
+        // the subtraction below has to know which weeks a preserved lesson is
+        // really there before it cancels any of a requirement's demand.
         recurrence: true,
         startDate: true,
         endDate: true,
@@ -271,8 +285,8 @@ export class OptimizationProxyService {
     const scheduledGroupIds = [
       ...new Set([
         ...rawRequirements.map((r) => r.studentGroupId),
-        ...lockedLessons.map((lesson) => lesson.studentGroupId),
-        ...lockedLessons.flatMap((lesson) =>
+        ...preservedLessons.map((lesson) => lesson.studentGroupId),
+        ...preservedLessons.flatMap((lesson) =>
           lesson.extraGroups.map((entry) => entry.studentGroupId),
         ),
       ]),
@@ -415,45 +429,82 @@ export class OptimizationProxyService {
     /*
      * How much of the weekly demand is already placed by hand.
      *
-     * Only a lesson that is there every week can cancel a lesson a week. The
-     * engine has no concept of weeks at all, so whatever is subtracted here is
-     * subtracted from every week alike — there is no way to say "one lesson,
-     * but only on odd ones". That leaves only the choice of which way to be
-     * wrong, and the two directions are not symmetric.
+     * Only a lesson that is there for every week the requirement is can cancel
+     * one of its lessons a week. The engine has no concept of weeks at all, so
+     * whatever is subtracted here is subtracted from all of them alike — there
+     * is no way to say "one lesson, but only on odd ones". That leaves only the
+     * choice of which way to be wrong, and the two directions are not
+     * symmetric.
      *
-     * Counting an alternating lesson under-delivers, invisibly: lessonsPerWeek
-     * 2 with one locked odd-week lesson sends 1 to the solver, and the class
-     * quietly gets one lesson on even weeks for the rest of the year while the
-     * timplan says two. Nothing on any screen says so. Not counting it
-     * over-delivers: an extra lesson on odd weeks, sitting on the timetable in
-     * front of the administrator, who can unlock or remove it. That costs
-     * packing room and not correctness — the locked lesson is forwarded as a
-     * fixed placement either way, so its slot stays blocked in every week, and
-     * what the engine adds runs every week itself.
+     * Counting a lesson that is absent for part of the requirement
+     * under-delivers, invisibly: lessonsPerWeek 2 with one locked odd-week
+     * lesson sends 1 to the solver, and the class quietly gets one lesson on
+     * even weeks for the rest of the year while the timplan says two. Nothing
+     * on any screen says so. Not counting it over-delivers: an extra lesson on
+     * odd weeks, sitting on the timetable in front of the administrator, who
+     * can unlock or remove it. That costs packing room and not correctness —
+     * the preserved lesson is forwarded as a fixed placement either way, so its
+     * slot stays blocked in every week, and what the engine adds carries the
+     * requirement's own window.
      *
-     * So anything but the unrestricted default is left uncounted. Deliberately
-     * a test for "unrestricted" rather than a second reading of runsOn: what
-     * runs when is defined once, in calendar/lesson-recurrence.ts, and a
-     * recurrence added there later lands on the visible side of the error
-     * without this line being touched. That module reads a missing recurrence
-     * as ALL_WEEKS because there the wrong guess would drop half a school's
-     * lessons; here the wrong guess would hide them, so the fallthrough leans
-     * the other way and an absent column counts for nothing.
+     * So the test below is a covering test, and everything it cannot be sure of
+     * falls on the visible side: equal recurrence, and a date window enclosing
+     * the requirement's. Equal rather than covering recurrences on purpose —
+     * an ALL_WEEKS lesson does cover an ODD_WEEKS requirement, and counting it
+     * would buy one lesson of packing room in exchange for a second comparison
+     * that has to stay right forever. Equality also keeps a recurrence added to
+     * the enum later on the safe side without this line being touched: two
+     * lessons with the same recurrence run the same weeks whatever it is, and
+     * anything unequal is simply not counted. calendar/lesson-recurrence.ts
+     * reads a missing recurrence as ALL_WEEKS because there the wrong guess
+     * would drop half a school's lessons; here the wrong guess would hide them,
+     * so an absent column on either side counts for nothing.
      */
-    const runsEveryWeek = (lesson: RecurrenceWindow): boolean =>
-      lesson.recurrence === 'ALL_WEEKS' && !lesson.startDate && !lesson.endDate;
+    const coversDemand = (
+      lesson: RecurrenceWindow,
+      requirement: RecurrenceWindow,
+    ): boolean => {
+      if (!lesson.recurrence || !requirement.recurrence) return false;
+      if (lesson.recurrence !== requirement.recurrence) return false;
 
-    const lockedCountByDemand = new Map<string, number>();
-    for (const lesson of lockedLessons) {
-      if (!runsEveryWeek(lesson)) continue;
+      // Both columns are `@db.Date`, so both sides arrive at midnight UTC and
+      // compare as plain instants. A null bound is the open one — "from the
+      // start of the year", "until it ends" — so it encloses whatever the
+      // requirement asks for, while a bound on the lesson and none on the
+      // requirement encloses nothing: the requirement outlives the lesson.
+      if (
+        lesson.startDate &&
+        (!requirement.startDate || lesson.startDate > requirement.startDate)
+      ) {
+        return false;
+      }
+      if (
+        lesson.endDate &&
+        (!requirement.endDate || lesson.endDate < requirement.endDate)
+      ) {
+        return false;
+      }
+      return true;
+    };
+
+    // Keyed on the demand a lesson answers, which one requirement per (year,
+    // group, subject) — TeachingRequirement's own unique key — makes
+    // unambiguous. The lessons themselves rather than a count, because whether
+    // any of them cancels anything is a question about the requirement's
+    // period and cannot be answered until the requirement is in hand.
+    const preservedByDemand = new Map<string, RecurrenceWindow[]>();
+    for (const lesson of preservedLessons) {
       const key = `${lesson.studentGroupId}:${lesson.subjectId}`;
-      lockedCountByDemand.set(key, (lockedCountByDemand.get(key) ?? 0) + 1);
+      const forDemand = preservedByDemand.get(key);
+      if (forDemand) forDemand.push(lesson);
+      else preservedByDemand.set(key, [lesson]);
     }
 
     const requirements: AnonymousRequirement[] = rawRequirements.flatMap((r) => {
-      const lockedCount =
-        lockedCountByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? 0;
-      const remaining = r.lessonsPerWeek - lockedCount;
+      const alreadyCovered = (
+        preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? []
+      ).filter((lesson) => coversDemand(lesson, r)).length;
+      const remaining = r.lessonsPerWeek - alreadyCovered;
       if (remaining <= 0) return [];
       return [
         {
@@ -507,7 +558,7 @@ export class OptimizationProxyService {
       },
     );
 
-    const fixedLessons: AnonymousFixedLesson[] = lockedLessons.map((lesson) => ({
+    const fixedLessons: AnonymousFixedLesson[] = preservedLessons.map((lesson) => ({
       id: randomUUID(),
       teacherId: lesson.teacherId ? anonId(teacherAnonMap, lesson.teacherId) : null,
       coTeacherId: lesson.coTeacherId
@@ -806,7 +857,9 @@ export class OptimizationProxyService {
     }
     const schoolId = user.schoolId;
 
-    // Fetch requirement details needed for the MasterLesson record.
+    // Fetch requirement details needed for the MasterLesson record. Read again
+    // rather than carried from the fetch phase: the solver has been running in
+    // between, and every other field written below comes from this same row.
     const requirementDetails = await tx.teachingRequirement.findMany({
       where: { academicYearId },
       select: {
@@ -815,6 +868,9 @@ export class OptimizationProxyService {
         studentGroupId: true,
         teacherId: true,
         coTeacherId: true,
+        recurrence: true,
+        startDate: true,
+        endDate: true,
       },
     });
     const reqById = new Map(requirementDetails.map((r) => [r.id, r]));
@@ -868,6 +924,20 @@ export class OptimizationProxyService {
           dayOfWeek: lesson.dayOfWeek,
           startTime: this.parseTime(lesson.startTime),
           endTime: this.parseTime(lesson.endTime),
+          // The window comes from the requirement, never from the engine — the
+          // engine was never told about weeks and packs a spring-only course as
+          // if it ran all year. Stamping the period on afterwards over-provisions
+          // (two half-year subjects get separate slots where one would have
+          // done) and that is the visible kind of wrong; a lesson that came back
+          // as an ordinary weekly one would silently turn "kemi bara på
+          // vårterminen" into a year-long course.
+          recurrence: req.recurrence,
+          startDate: req.startDate,
+          endDate: req.endDate,
+          // What makes the next run allowed to delete this row again: the one
+          // place in the codebase that sets it true, and the column
+          // PRESERVED_FROM_REGENERATION asks to tell whose lesson this is.
+          isGenerated: true,
         },
       ];
     });
@@ -890,10 +960,12 @@ export class OptimizationProxyService {
       );
     }
 
-    // Non-destructive regeneration: locked lessons AND participant lessons
-    // (manual multi-class / individual-student constructs) are preserved
-    // verbatim; only machine-owned lessons are replaced by the new solution.
-    // The same four shapes the fetch above shares; see the constant for why.
+    // Non-destructive regeneration: handmade lessons, locked lessons AND
+    // participant lessons (manual multi-class / individual-student constructs)
+    // are preserved verbatim; only lessons this optimizer wrote are replaced by
+    // the new solution. The same four shapes the fetch above shares — and the
+    // rows about to be deleted are exactly the ones a previous run stamped
+    // `isGenerated`; see the constant for why that is a column and not a guess.
     const preservedWhere = { OR: PRESERVED_FROM_REGENERATION };
 
     /*
