@@ -58,6 +58,8 @@ vi.mock("./user-menu", () => ({
 
 // Namespace-aware key echo: pins which namespace each label comes from.
 vi.mock("next-intl", () => ({
+  // DateField reads the active locale for its month and weekday names.
+  useLocale: () => "sv",
   useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}`,
 }));
 

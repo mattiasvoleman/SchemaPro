@@ -5,6 +5,8 @@ import { WeekSchedule } from "./week-schedule";
 import type { TimetableLesson } from "./timetable-grid";
 
 vi.mock("next-intl", () => ({
+  // DateField reads the active locale for its month and weekday names.
+  useLocale: () => "sv",
   useTranslations: () => (key: string, values?: Record<string, unknown>) =>
     values ? `${key} ${Object.values(values).join(" ")}` : key,
 }));

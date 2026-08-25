@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -260,20 +261,20 @@ export default function SetupPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="year-start">{t("startDate")}</Label>
-                  <Input
+                  <DateField
+                    label={t("startDate")}
                     id="year-start"
-                    type="date"
                     value={yearForm.startDate}
-                    onChange={(e) => setYearForm({ ...yearForm, startDate: e.target.value })}
+                    onChange={(value) => setYearForm({ ...yearForm, startDate: value })}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="year-end">{t("endDate")}</Label>
-                  <Input
+                  <DateField
+                    label={t("endDate")}
                     id="year-end"
-                    type="date"
                     value={yearForm.endDate}
-                    onChange={(e) => setYearForm({ ...yearForm, endDate: e.target.value })}
+                    onChange={(value) => setYearForm({ ...yearForm, endDate: value })}
                   />
                 </div>
               </div>

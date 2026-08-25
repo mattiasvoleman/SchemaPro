@@ -22,6 +22,7 @@ import { LunchSettingsCard } from "@/components/schedule/lunch-settings-card";
 import { RoomPreferencesCard } from "@/components/schedule/room-preferences-card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -500,11 +501,11 @@ export default function ConstraintsPage() {
             ) : (
               <div className="space-y-2">
                 <Label htmlFor="constraint-date">{tCommon("date")}</Label>
-                <Input
+                <DateField
+                  label={tCommon("date")}
                   id="constraint-date"
-                  type="date"
                   value={form.date}
-                  onChange={(e) => setForm({ ...form, date: e.target.value })}
+                  onChange={(value) => setForm({ ...form, date: value })}
                 />
               </div>
             )}

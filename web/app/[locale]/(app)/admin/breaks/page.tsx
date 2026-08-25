@@ -92,6 +92,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -578,24 +579,24 @@ export default function BreaksPage() {
                   not a check — the refusal still comes from the API, which is
                   the only place that knows the year the id names.
                 */}
-                <Input
+                <DateField
+                  label={t("startDate")}
                   id="break-start"
-                  type="date"
                   min={year?.startDate}
                   max={year?.endDate}
                   value={form.startDate}
-                  onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                  onChange={(value) => setForm({ ...form, startDate: value })}
                 />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="break-end">{t("endDate")}</Label>
-                <Input
+                <DateField
+                  label={t("endDate")}
                   id="break-end"
-                  type="date"
                   min={year?.startDate}
                   max={year?.endDate}
                   value={form.endDate}
-                  onChange={(e) => setForm({ ...form, endDate: e.target.value })}
+                  onChange={(value) => setForm({ ...form, endDate: value })}
                 />
               </div>
             </div>

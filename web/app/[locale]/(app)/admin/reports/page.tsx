@@ -13,6 +13,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -235,22 +236,22 @@ export default function ReportsPage() {
         </div>
         <div className="space-y-2">
           <Label htmlFor="report-from">{tCommon("from")}</Label>
-          <Input
+          <DateField
+            label={tCommon("from")}
             id="report-from"
-            type="date"
             className="w-40"
             value={fromDate}
-            onChange={(e) => e.target.value && setFromDate(e.target.value)}
+            onChange={(value) => value && setFromDate(value)}
           />
         </div>
         <div className="space-y-2">
           <Label htmlFor="report-to">{tCommon("to")}</Label>
-          <Input
+          <DateField
+            label={tCommon("to")}
             id="report-to"
-            type="date"
             className="w-40"
             value={toDate}
-            onChange={(e) => e.target.value && setToDate(e.target.value)}
+            onChange={(value) => value && setToDate(value)}
           />
         </div>
         {classAverage !== null ? (

@@ -74,6 +74,7 @@ import {
 } from "@/components/schedule/timetable-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -1919,20 +1920,20 @@ export default function TimetablePage() {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="publish-from">{t("publishFrom")}</Label>
-              <Input
+              <DateField
+                label={t("publishFrom")}
                 id="publish-from"
-                type="date"
                 value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
+                onChange={(value) => setFromDate(value)}
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="publish-to">{t("publishTo")}</Label>
-              <Input
+              <DateField
+                label={t("publishTo")}
                 id="publish-to"
-                type="date"
                 value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
+                onChange={(value) => setToDate(value)}
               />
             </div>
           </div>

@@ -1,4 +1,14 @@
 {
+  "dateField": {
+    "placeholder": "yyyy-mm-dd",
+    "openCalendar": "Open calendar",
+    "weekNumber": "Week {week}",
+    "openCalendarFor": "Open calendar for {field}",
+    "calendarLabel": "Choose a date",
+    "previousMonth": "Previous month",
+    "nextMonth": "Next month",
+    "weekAbbreviation": "wk"
+  },
   "common": {
     "appName": "SchemaPro",
     "tagline": "AI-driven school scheduling & attendance",

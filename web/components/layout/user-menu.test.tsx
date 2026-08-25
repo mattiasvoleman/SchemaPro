@@ -24,6 +24,8 @@ vi.mock("@/utils/supabase/client", () => ({
 // Namespace-aware key echo: t("signOut") from useTranslations("common")
 // renders as "common.signOut", so assertions also pin the namespace used.
 vi.mock("next-intl", () => ({
+  // DateField reads the active locale for its month and weekday names.
+  useLocale: () => "sv",
   useTranslations: (namespace: string) => (key: string) => `${namespace}.${key}`,
 }));
 

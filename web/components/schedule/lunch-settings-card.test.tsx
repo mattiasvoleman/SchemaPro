@@ -17,6 +17,8 @@ vi.mock("@/lib/queries", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock("next-intl", () => ({
+  // DateField reads the active locale for its month and weekday names.
+  useLocale: () => "sv",
   useTranslations: () => (key: string) => key,
 }));
 

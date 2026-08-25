@@ -72,6 +72,8 @@ vi.mock("@/lib/queries", () => ({
 // this page deliberately reads the three parity labels out of `timetable` and
 // the weekday names out of `days` rather than translating either a second time.
 vi.mock("next-intl", () => ({
+  // DateField reads the active locale for its month and weekday names.
+  useLocale: () => "sv",
   useTranslations:
     (namespace: string) => (key: string, values?: Record<string, unknown>) =>
       values

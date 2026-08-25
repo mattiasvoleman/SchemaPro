@@ -11,6 +11,8 @@ vi.mock("@/lib/csv", async (importOriginal) => ({
 }));
 
 vi.mock("next-intl", () => ({
+  // DateField reads the active locale for its month and weekday names.
+  useLocale: () => "sv",
   useTranslations: () => (key: string) => key,
 }));
 

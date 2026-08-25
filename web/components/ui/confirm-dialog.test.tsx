@@ -6,6 +6,8 @@ import { ConfirmDialog } from "./confirm-dialog";
 // Key-echo translator: t("cancel") renders as "cancel", which is what the
 // button queries below assert against.
 vi.mock("next-intl", () => ({
+  // DateField reads the active locale for its month and weekday names.
+  useLocale: () => "sv",
   useTranslations: () => (key: string) => key,
 }));
 

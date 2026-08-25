@@ -173,6 +173,8 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock("next-intl", () => ({
+  // DateField reads the active locale for its month and weekday names.
+  useLocale: () => "sv",
   useTranslations: () => {
     const t = (key: string, values?: Record<string, unknown>) =>
       values ? `${key}(${Object.values(values).join("|")})` : key;
@@ -566,16 +568,33 @@ describe("Vad formuläret skickar", () => {
     expect(screen.getByRole("button", { name: "save" })).toBeEnabled();
   });
 
-  it("offers the läsår's own months to the date pickers", () => {
-    // An affordance, not a check: the picker opens on the right year instead
-    // of on today. The refusal still comes from the API, which is the only
-    // place that knows the year the id names.
+  it("will not offer a day outside the läsår in the calendar", async () => {
+    /*
+     * An affordance, not a check: the API is still the only place that knows
+     * which year the id names, and it still refuses. But offering a day that
+     * is going to be rejected is a worse conversation than not offering it.
+     *
+     * Asserted on the calendar rather than on `min`/`max` attributes. The field
+     * is no longer `<input type="date">` — it could not be, because no browser
+     * shows week numbers in its own picker — so the bounds live where the days
+     * are drawn.
+     */
+    const user = userEvent.setup();
     render(<BreaksPage />);
     fireEvent.click(screen.getByRole("button", { name: "addBreak" }));
 
-    const start = screen.getByLabelText("startDate") as HTMLInputElement;
-    expect(start.min).toBe("2026-08-17");
-    expect(start.max).toBe("2027-06-11");
+    fireEvent.change(screen.getByLabelText("startDate"), {
+      target: { value: "2026-08-19" },
+    });
+    // Each field's calendar button now names the field it belongs to, so two
+    // date pickers in one dialog can be told apart by a screen reader.
+    await user.click(screen.getByRole("button", { name: "openCalendarFor(startDate)" }));
+
+    // The läsår opens 2026-08-17, so the 16th is the day before it starts. The
+    // days carry their whole date as their name — "16" alone said nothing about
+    // which month the arrows had wandered into.
+    expect(screen.getByRole("button", { name: "16 augusti 2026" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "19 augusti 2026" })).toBeEnabled();
   });
 });
 

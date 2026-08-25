@@ -25,6 +25,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -220,22 +221,22 @@ export default function TeacherAbsencePage() {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="from-date">{t("from")}</Label>
-          <Input
+          <DateField
+            label={t("from")}
             id="from-date"
-            type="date"
             className="w-40"
             value={from}
-            onChange={(e) => e.target.value && setFrom(e.target.value)}
+            onChange={(value) => value && setFrom(value)}
           />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="to-date">{t("to")}</Label>
-          <Input
+          <DateField
+            label={t("to")}
             id="to-date"
-            type="date"
             className="w-40"
             value={to}
-            onChange={(e) => e.target.value && setTo(e.target.value)}
+            onChange={(value) => value && setTo(value)}
           />
         </div>
         {teacherId && lessons && lessons.length > 0 ? (

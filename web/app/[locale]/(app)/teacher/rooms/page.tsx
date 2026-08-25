@@ -16,6 +16,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -133,13 +134,13 @@ export default function TeacherRoomsPage() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="book-date">{tCommon("date")}</Label>
-              <Input
+              <DateField
+                label={tCommon("date")}
                 id="book-date"
-                type="date"
                 className="w-40"
                 value={date}
                 min={today}
-                onChange={(e) => e.target.value && setDate(e.target.value)}
+                onChange={(value) => value && setDate(value)}
               />
             </div>
             <div className="space-y-1.5">

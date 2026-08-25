@@ -64,6 +64,8 @@ vi.mock("@/utils/supabase/client", () => ({
 // Key echo that surfaces interpolated values, so counts and report numbers can
 // be asserted from the rendered text.
 vi.mock("next-intl", () => ({
+  // DateField reads the active locale for its month and weekday names.
+  useLocale: () => "sv",
   useTranslations:
     () => (key: string, values?: Record<string, unknown>) =>
       values

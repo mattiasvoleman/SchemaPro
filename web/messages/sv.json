@@ -1,4 +1,14 @@
 {
+  "dateField": {
+    "placeholder": "åååå-mm-dd",
+    "openCalendar": "Öppna kalender",
+    "weekNumber": "Vecka {week}",
+    "openCalendarFor": "Öppna kalender för {field}",
+    "calendarLabel": "Välj datum",
+    "previousMonth": "Föregående månad",
+    "nextMonth": "Nästa månad",
+    "weekAbbreviation": "v."
+  },
   "common": {
     "appName": "SchemaPro",
     "tagline": "AI-driven schemaläggning & närvaro",

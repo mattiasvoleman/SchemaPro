@@ -17,6 +17,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -158,12 +159,12 @@ export default function GuardianPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="absence-date">{t("date")}</Label>
-                <Input
+                <DateField
+                  label={t("date")}
                   id="absence-date"
-                  type="date"
                   min={todayISO()}
                   value={date}
-                  onChange={(e) => setDate(e.target.value)}
+                  onChange={(value) => setDate(value)}
                 />
               </div>
               <div className="space-y-2">
@@ -263,22 +264,22 @@ export default function GuardianPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="leave-start">{t("from")}</Label>
-                <Input
+                <DateField
+                  label={t("from")}
                   id="leave-start"
-                  type="date"
                   min={todayISO()}
                   value={leaveStart}
-                  onChange={(e) => setLeaveStart(e.target.value)}
+                  onChange={(value) => setLeaveStart(value)}
                 />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="leave-end">{t("to")}</Label>
-                <Input
+                <DateField
+                  label={t("to")}
                   id="leave-end"
-                  type="date"
                   min={leaveStart}
                   value={leaveEnd}
-                  onChange={(e) => setLeaveEnd(e.target.value)}
+                  onChange={(value) => setLeaveEnd(value)}
                 />
               </div>
             </div>

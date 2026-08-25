@@ -24,6 +24,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -204,11 +205,20 @@ export default function DayPlannerPage() {
         >
           <ChevronLeft />
         </Button>
-        <Input
-          type="date"
+        {/*
+          The only date field in the app with no visible <Label>: it sits
+          between two chevrons as a day navigator, and a label above it would
+          push the row apart for a word the layout already says. So it carries
+          its name instead of borrowing one — without it the box announced as
+          nothing at all, and its calendar button as a second "Öppna kalender"
+          with no way to tell which field it belonged to.
+        */}
+        <DateField
           className="w-44"
+          aria-label={tCommon("date")}
+          label={tCommon("date")}
           value={date}
-          onChange={(e) => e.target.value && setDate(e.target.value)}
+          onChange={(value) => value && setDate(value)}
         />
         <Button
           variant="outline"

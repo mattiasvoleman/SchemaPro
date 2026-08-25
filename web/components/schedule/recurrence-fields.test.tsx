@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { RecurrenceFields, recurrenceBadge } from "./recurrence-fields";
 
 vi.mock("next-intl", () => ({
+  // DateField reads the active locale for its month and weekday names.
+  useLocale: () => "sv",
   useTranslations: () => (key: string) => key,
 }));
 
