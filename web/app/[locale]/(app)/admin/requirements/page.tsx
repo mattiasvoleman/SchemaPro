@@ -23,10 +23,31 @@
 // the hours it is taught over the year. They are the last two columns, pinned
 // to the right for the same reason the group name is pinned to the left.
 //
-// The hours are honest about what they cannot see: there is no closure model
-// anywhere in the app, so they count whole calendar weeks and lov is counted as
-// taught. `hoursCaveat` says so on the page rather than here alone — a figure a
-// rektor might put in a document has to carry its own footnote.
+// THE HOURS NOW SUBTRACT LOV, and this paragraph used to say the opposite —
+// flatly, because nothing in the app knew a week could be a lov and every
+// figure here read roughly 8-10 weeks high across a Swedish läsår. SchoolBreak
+// closed that hole; admin/breaks is where a school enters its lov and
+// studiedagar, and this page loads them for the picked year and hands them to
+// `annualMinutes` together with each group's own gradeLevel — a studiedag for
+// lågstadiet must not shorten årskurs 9's year.
+//
+// The grade is why the closures are applied PER GROUP and not once to a total.
+// A group with no gradeLevel of its own — a nivågrupp, a språkval — is inside
+// no span at all, so a grade-narrowed break leaves it alone; see closesForGrade
+// in lib/teaching-hours.ts for why that direction of error is the honest one.
+//
+// `peakLessonsPerWeek` is deliberately left alone. A lov week holds no lessons
+// and must not be allowed to drag the busiest week down: the peak asks whether
+// a week's lessons fit in the grid at all, which is a yes/no about capacity.
+// The library's own header says so at weeksInPeriod, and this is the caller
+// that would be tempted.
+//
+// What is left is an estimate, structurally and not for want of care: a
+// requirement carries lessonsPerWeek and no weekday, so nothing can know
+// whether the studiedag fell on one of its lesson days. `hoursCaveat` says that
+// on the page rather than here alone — a figure a rektor might put in a
+// document has to carry its own footnote, and so does the table's caption,
+// which a reader arriving by table navigation is the only text they see.
 //
 // CONTRAST, MEASURED. Computed from the HSL tokens in app/globals.css, rounded
 // to 8-bit the way a browser paints them, and blended where a token is painted
@@ -113,6 +134,7 @@ import {
   useGroups,
   usePeople,
   useRequirements,
+  useSchoolBreaks,
   useSubjects,
 } from "@/lib/queries";
 import { requirementsToCsv } from "@/lib/csv";
@@ -210,6 +232,22 @@ export default function RequirementsPage() {
     isLoading: requirementsLoading,
     isError: requirementsFailed,
   } = useRequirements(activeYearId);
+  /**
+   * The year's lov, which the hours are measured against.
+   *
+   * `closures` is optional in lib/teaching-hours.ts and omitting it reproduces
+   * the old calendar-week figure exactly — which is precisely the trap that
+   * module's header warns about: a caller that forgets the breaks gets the
+   * overestimate back without a word. So this query is gated below alongside
+   * the others rather than left to arrive late. An empty list is a real answer
+   * (a school that has entered no lov) and reads the same as the old behaviour,
+   * honestly this time.
+   */
+  const {
+    data: breaks,
+    isLoading: breaksLoading,
+    isError: breaksFailed,
+  } = useSchoolBreaks(activeYearId);
 
   /**
    * One gate for every query this page prints a NUMBER from.
@@ -235,17 +273,24 @@ export default function RequirementsPage() {
    * holding the entire timplan back on the staff register to avoid a late
    * "H. Nilsson" would be the worse trade.
    *
-   * `useRequirements` is disabled while activeYearId is null, and a disabled
-   * query is not loading in react-query v5 (isLoading = isPending && isFetching)
-   * — so a school with no läsår at all still falls through to the empty state
-   * below instead of showing a skeleton forever.
+   * `breaks` earns its place here on the same rule and it is the subtlest of
+   * them: a lov list that has not arrived yet is not a school without lov, it
+   * is a page that does not know — and the difference is 8-10 weeks of teaching
+   * on every row. Unlike a missing requirement this one does not read as zero,
+   * which is worse: it reads as a plausible, confident, too-high number.
+   *
+   * `useRequirements` and `useSchoolBreaks` are both disabled while activeYearId
+   * is null, and a disabled query is not loading in react-query v5 (isLoading =
+   * isPending && isFetching) — so a school with no läsår at all still falls
+   * through to the empty state below instead of showing a skeleton forever.
    */
   const loading =
     yearsLoading ||
     subjectsLoading ||
     groupsLoading ||
     membershipsLoading ||
-    requirementsLoading;
+    requirementsLoading ||
+    breaksLoading;
 
   /*
    * The same gate for the other way of not knowing.
@@ -269,7 +314,11 @@ export default function RequirementsPage() {
     subjectsFailed ||
     groupsFailed ||
     membershipsFailed ||
-    requirementsFailed;
+    requirementsFailed ||
+    // A dead breaks query would otherwise print the pre-lov overestimate under
+    // a caveat that now promises the lov are deducted — a wrong number under a
+    // sentence swearing it is right.
+    breaksFailed;
 
   const mutations = useCrudMutations<{
     academicYearId: string;
@@ -335,7 +384,34 @@ export default function RequirementsPage() {
     return year ? { startDate: year.startDate, endDate: year.endDate } : null;
   }, [years, activeYearId]);
 
-  /** Group id -> teaching minutes across the whole year, for the last column. */
+  /**
+   * Group id -> årskurs, for deciding which lov reach which row.
+   *
+   * Built from `yearGroups` and not from every group the school has: two läsår
+   * may both own a "7A", and a map built from the whole list would take
+   * whichever came last — then apply a prao for åk 9 to a class that is in åk 7
+   * this year.
+   */
+  const gradeLevelByGroup = useMemo(() => {
+    const grades = new Map<string, number | null>();
+    for (const group of yearGroups) grades.set(group.id, group.gradeLevel);
+    return grades;
+  }, [yearGroups]);
+
+  /**
+   * Group id -> teaching minutes across the whole year, for the last column.
+   *
+   * The year's lov go in here and nowhere else. Per group rather than once over
+   * the total, because a break may carry a year span: a studiedag for
+   * lågstadiet takes a fifth of that week from åk 3 and nothing at all from
+   * åk 9, and a single school-wide subtraction cannot express that.
+   *
+   * A group the map cannot name reads as `null`, which is "no particular
+   * grade" — school-wide lov still apply to it, year-narrowed ones do not.
+   * That is the same reading a teaching group with no årskurs of its own gets,
+   * and it is the direction that never invents teaching time it has not
+   * measured.
+   */
   const annualMinutesByGroup = useMemo(() => {
     const totals = new Map<string, number>();
     if (!yearBounds) return totals;
@@ -343,11 +419,16 @@ export default function RequirementsPage() {
       totals.set(
         requirement.studentGroupId,
         (totals.get(requirement.studentGroupId) ?? 0) +
-          annualMinutes(requirement, yearBounds),
+          annualMinutes(
+            requirement,
+            yearBounds,
+            breaks,
+            gradeLevelByGroup.get(requirement.studentGroupId) ?? null,
+          ),
       );
     }
     return totals;
-  }, [requirements, yearBounds]);
+  }, [requirements, yearBounds, breaks, gradeLevelByGroup]);
 
   /**
    * Group id -> lessons in that group's own heaviest week.
@@ -387,6 +468,11 @@ export default function RequirementsPage() {
    * a single class's week against is per group, and it lives in the table with
    * the other per-group figure — a third number on this line would make the
    * sentence a table, and the table is right there.
+   *
+   * NO LOV COME OFF EITHER PEAK, and `peakLessonsPerWeek` takes no closures to
+   * hand them to. A lov week holds no lessons, so letting it pull the busiest
+   * week down would answer "does this fit in a week" with the average of the
+   * weeks it does not have to fit in. The hours are the figure lov belong to.
    */
   const peakWeekly = useMemo(
     () => (yearBounds ? peakLessonsPerWeek(requirements ?? [], yearBounds) : 0),
@@ -634,8 +720,22 @@ export default function RequirementsPage() {
               hours: formatHours(annualTotal),
             })}
           </p>
+          {/*
+            Which footnote is true depends on whether the school has entered any
+            lov, and that is not a detail. `hoursCaveat` states that holidays are
+            deducted; for a school with an empty admin/breaks — which is every
+            school until someone fills it in, and the default state of the
+            feature — nothing is deducted and the figure is the old one, reading
+            8-10 weeks high under a sentence promising it does not. That is the
+            precise silent overstatement this whole change was made to remove,
+            so the empty case says so and points at the page that fixes it.
+
+            Empty is not the same as absent here: `loading` and `failed` above
+            already hold the whole table back, so reaching this line means the
+            list arrived and genuinely held nothing.
+          */}
           <p id="requirements-hours-caveat" className="mb-3 mt-1 text-xs text-foreground">
-            {t("hoursCaveat")}
+            {(breaks ?? []).length > 0 ? t("hoursCaveat") : t("hoursCaveatNoBreaks")}
           </p>
           {/*
             Its own scroll area, not the page's.

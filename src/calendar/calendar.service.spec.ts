@@ -77,12 +77,14 @@ describe('CalendarService', () => {
     {
       existing = [] as Record<string, unknown>[],
       closures = [] as Record<string, unknown>[],
+      breaks = [] as Record<string, unknown>[],
     } = {},
   ) => {
     arrangeYear();
     tx.masterLesson.findMany.mockResolvedValue(templates);
     tx.calendarLesson.findMany.mockResolvedValue(existing);
     tx.availabilityConstraint.findMany.mockResolvedValue(closures);
+    tx.schoolBreak.findMany.mockResolvedValue(breaks);
     tx.calendarLesson.create.mockResolvedValue({ id: 'created-lesson' });
   };
 
@@ -394,6 +396,182 @@ describe('CalendarService', () => {
           [{ where: { type: string } }],
         ];
         expect(call[0].where.type).toBe('UNAVAILABLE');
+      });
+    });
+
+    describe('lov och studiedagar', () => {
+      /** A `SchoolBreak` row, as the publish query selects it. */
+      const schoolBreak = (overrides: Record<string, unknown> = {}) => ({
+        startDate: day('2026-08-10'),
+        endDate: day('2026-08-10'),
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        ...overrides,
+      });
+
+      /** The template each `create` came from, in the order they were made. */
+      const createdIds = () =>
+        tx.calendarLesson.create.mock.calls.map(
+          (call) => (call[0] as { data: { masterLessonId: string } }).data.masterLessonId,
+        );
+
+      it('writes no lesson at all on a lov day', async () => {
+        // Nothing is written and nothing is cancelled: a cancellation says "this
+        // lesson was supposed to happen and did not", and on a lov there was
+        // never a lesson to hold — the class is not in the building.
+        arrangePublish([template()], { breaks: [schoolBreak()] });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 0,
+          cancelled: 0,
+          skipped: 1,
+        });
+        expect(tx.calendarLesson.create).not.toHaveBeenCalled();
+      });
+
+      it('takes both edges of the range on the school local date, and stops there', async () => {
+        // The trap: a lov is a DATE and a lesson an instant, so in Stockholm
+        // (UTC+2 in August) a lesson at 00:15 on the lov's first day is
+        // 22:15Z the day BEFORE it, and 00:15 the day after the lov ends is
+        // 22:15Z on its last day. Compared as UTC instants the range misses
+        // the first lesson and swallows the fourth — one day out in both
+        // directions at once. 2026-08-09 is a Sunday, 08-13 a Thursday.
+        const early = (id: string, dayOfWeek: number) =>
+          template({ id, dayOfWeek, startTime: time(0, 15), endTime: time(1) });
+        const late = (id: string, dayOfWeek: number) =>
+          template({ id, dayOfWeek, startTime: time(23, 30), endTime: time(23, 59) });
+
+        arrangePublish(
+          [
+            late('sunday-before', 7), // 08-09 23:30 local = 21:30Z, same day
+            early('monday-first', 1), // 08-10 00:15 local = 08-09 22:15Z
+            late('wednesday-last', 3), // 08-12 23:30 local = 21:30Z, same day
+            early('thursday-after', 4), // 08-13 00:15 local = 08-12 22:15Z
+          ],
+          {
+            breaks: [
+              schoolBreak({ startDate: day('2026-08-10'), endDate: day('2026-08-12') }),
+            ],
+          },
+        );
+        arrangeYear({ school: { timezone: 'Europe/Stockholm' } });
+
+        await expect(
+          service.publish(dto({ fromDate: '2026-08-09', toDate: '2026-08-13' }), testUser()),
+        ).resolves.toMatchObject({ created: 2, cancelled: 0, skipped: 2 });
+
+        // Both ends of the lov are inclusive; the days around it are not.
+        expect(createdIds()).toEqual(['sunday-before', 'thursday-after']);
+      });
+
+      it('outranks a teacher closure — a lov leaves nothing to cancel', async () => {
+        arrangePublish([template()], {
+          breaks: [schoolBreak()],
+          closures: [
+            closure({
+              resourceType: 'TEACHER',
+              studentGroupId: null,
+              userId: TEACHER_ID,
+              startTime: time(8, 30),
+              endTime: time(9, 30),
+            }),
+          ],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 0,
+          cancelled: 0,
+          skipped: 1,
+        });
+        expect(tx.calendarLesson.create).not.toHaveBeenCalled();
+      });
+
+      it('does not read group years for a school-wide lov', async () => {
+        // The common case by far, and it must not cost an extra query.
+        arrangePublish([template()], { breaks: [schoolBreak()] });
+
+        await publishOneDay();
+
+        expect(tx.studentGroup.findMany).not.toHaveBeenCalled();
+      });
+
+      it('reads group years for a lov that names a span, and takes the group inside it', async () => {
+        // Prao för åk 9: the years are only looked up because this row asks.
+        arrangePublish([template()], {
+          breaks: [schoolBreak({ minGradeLevel: 7, maxGradeLevel: 9 })],
+        });
+        tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 8 }]);
+
+        await expect(publishOneDay()).resolves.toMatchObject({ created: 0, skipped: 1 });
+        expect(tx.studentGroup.findMany).toHaveBeenCalled();
+      });
+
+      /*
+       * Both edges of the span, which nothing touched.
+       *
+       * The fixture uses 7-9 with a group in åk 8, so an inclusive/exclusive
+       * slip at either end — or losing the lower bound entirely, which turns a
+       * prao för åk 9 into a school-wide lov — passed the whole suite. The two
+       * years just outside are here for the same reason: a span that has
+       * quietly become unbounded satisfies the two inside on its own.
+       */
+      it.each([
+        ['the lower edge, åk 7', 7, { created: 0, skipped: 1 }],
+        ['the upper edge, åk 9', 9, { created: 0, skipped: 1 }],
+        ['just below it, åk 6', 6, { created: 1, skipped: 0 }],
+        ['just above it, åk 10', 10, { created: 1, skipped: 0 }],
+      ])('resolves %s the way the span reads', async (_label, gradeLevel, expected) => {
+        arrangePublish([template()], {
+          breaks: [schoolBreak({ minGradeLevel: 7, maxGradeLevel: 9 })],
+        });
+        tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel }]);
+
+        await expect(publishOneDay()).resolves.toMatchObject(expected);
+      });
+
+      it('leaves a group outside the span teaching as usual', async () => {
+        arrangePublish([template()], {
+          breaks: [schoolBreak({ minGradeLevel: 7, maxGradeLevel: 9 })],
+        });
+        tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 4 }]);
+
+        await expect(publishOneDay()).resolves.toMatchObject({ created: 1, skipped: 0 });
+      });
+
+      it('keeps the lesson for a group with no year of its own', async () => {
+        // A nivågrupp cannot be shown to be inside the span, and erasing a
+        // lesson on a guess is the worse mistake of the two.
+        arrangePublish([template()], {
+          breaks: [schoolBreak({ minGradeLevel: 7, maxGradeLevel: 9 })],
+        });
+        tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: null }]);
+
+        await expect(publishOneDay()).resolves.toMatchObject({ created: 1, skipped: 0 });
+      });
+
+      it('asks for the breaks that overlap the window, not only those inside it', async () => {
+        arrangePublish([template()]);
+
+        await publishOneDay();
+
+        expect(tx.schoolBreak.findMany).toHaveBeenCalledWith({
+          where: {
+            academicYearId: YEAR_ID,
+            // A jullov that began before the window still closes the days of
+            // it that fall inside — overlap, not containment.
+            startDate: { lte: day('2026-08-10') },
+            endDate: { gte: day('2026-08-10') },
+          },
+          // No `kind`: HOLIDAY and STAFF_DAY suppress identically, so the two
+          // arrive here as the same row and there is nothing to branch on.
+          // What separates them is what the day means for staff.
+          select: {
+            startDate: true,
+            endDate: true,
+            minGradeLevel: true,
+            maxGradeLevel: true,
+          },
+        });
       });
     });
 

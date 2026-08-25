@@ -185,13 +185,47 @@ export class AcademicYearsService {
         ],
       },
     });
-    if (stranded === 0) return;
+    /*
+     * Lov are dated against the same year and strand the same way, and worse.
+     *
+     * A stranded requirement period simply generates nothing. A stranded lov
+     * stops suppressing publish — lessons reappear across a week the school is
+     * shut — and it can never be edited back, because every write path measures
+     * the range against the year it no longer fits inside. The only way out is
+     * to delete it, which is not what an administrator moving a year by three
+     * days is trying to do.
+     *
+     * Counted separately rather than folded into one number: "4 rader" tells
+     * nobody where to look, and the two live on different pages.
+     */
+    const strandedBreaks = await tx.schoolBreak.count({
+      where: {
+        academicYearId: id,
+        OR: [
+          { startDate: { lt: startDate } },
+          { startDate: { gt: endDate } },
+          { endDate: { lt: startDate } },
+          { endDate: { gt: endDate } },
+        ],
+      },
+    });
+
+    if (stranded === 0 && strandedBreaks === 0) return;
 
     const asDate = (value: Date): string => value.toISOString().slice(0, 10);
+    const parts: string[] = [];
+    if (stranded > 0) {
+      parts.push(
+        `${stranded} teaching requirement${stranded === 1 ? '' : 's'}`,
+      );
+    }
+    if (strandedBreaks > 0) {
+      parts.push(`${strandedBreaks} break${strandedBreaks === 1 ? '' : 's'}`);
+    }
     throw new BadRequestException(
-      `${stranded} teaching requirement${stranded === 1 ? '' : 's'} would fall ` +
-        `outside the new academic year (${asDate(startDate)} to ${asDate(endDate)}). ` +
-        'Move or clear those periods first.',
+      `${parts.join(' and ')} would fall outside the new academic year ` +
+        `(${asDate(startDate)} to ${asDate(endDate)}). ` +
+        'Move or clear them first.',
     );
   }
 }

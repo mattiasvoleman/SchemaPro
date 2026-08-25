@@ -90,6 +90,42 @@ export interface AcademicYear {
   isActive: boolean;
 }
 
+/**
+ * What kind of non-teaching day a break is. Both mean "no lessons"; the
+ * difference is only what the school calls it, and it is worth carrying because
+ * "Studiedag" on a pupil's empty week answers a different question than "Lov".
+ */
+export type BreakKind = "HOLIDAY" | "STAFF_DAY";
+
+/**
+ * A named stretch of days the school is not teaching (SchoolBreaks).
+ *
+ * Both dates are INCLUSIVE — a one-day studiedag has startDate === endDate —
+ * and both are the plain YYYY-MM-DD the DATE column holds, from either door:
+ * Supabase renders it that way and the API cuts its own instant to match (see
+ * src/resources/school-breaks.service.ts, toResponse). So these compare as
+ * strings and go straight into an `<input type="date">`, exactly like a
+ * requirement's period.
+ *
+ * The grade span is all-or-nothing: both null is the whole school, which is
+ * what a lov almost always is. It is the same shape as an availability
+ * constraint's GRADE_LEVEL range for the same reason — a year is a property of
+ * a group's members, so there is no row to point at.
+ *
+ * Structurally this is lib/teaching-hours.ts's `ClosedRange`, which is why a
+ * list of these can be handed to annualMinutes without mapping.
+ */
+export interface SchoolBreak {
+  id: string;
+  academicYearId: string;
+  name: string;
+  kind: BreakKind;
+  startDate: string;
+  endDate: string;
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+}
+
 /** A home class (7A) or a teaching group cutting across classes (Ma71). */
 export type StudentGroupKind = "CLASS" | "TEACHING_GROUP";
 

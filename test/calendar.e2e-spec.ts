@@ -99,6 +99,14 @@ interface ConstraintRow {
   endTime: Date;
 }
 
+/** A row of `SchoolBreaks`, as the publish query selects it — no `kind`. */
+interface BreakRow {
+  startDate: Date;
+  endDate: Date;
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+}
+
 const time = (hour: number, minute = 0) =>
   new Date(Date.UTC(1970, 0, 1, hour, minute, 0));
 
@@ -123,11 +131,31 @@ const closure = (overrides: Partial<ConstraintRow> = {}): ConstraintRow => ({
   ...overrides,
 });
 
+/**
+ * A lov over the second week: Monday through the Friday after it.
+ *
+ * Deliberately wider than the one day the closure above names, because a
+ * range is the whole reason breaks exist — a sportlov used to need a
+ * constraint row per day per group.
+ */
+const schoolBreak = (overrides: Partial<BreakRow> = {}): BreakRow => {
+  const endDate = day(MONDAYS[1]!);
+  endDate.setUTCDate(endDate.getUTCDate() + 4);
+  return {
+    startDate: day(MONDAYS[1]!),
+    endDate,
+    minGradeLevel: null,
+    maxGradeLevel: null,
+    ...overrides,
+  };
+};
+
 describe('Publish and regenerate (e2e)', () => {
   let harness: TestHarness;
   let masters: MasterRow[];
   let calendar: CalendarRow[];
   let constraints: ConstraintRow[];
+  let breaks: BreakRow[];
   let sequence: number;
 
   const http = () => harness.app.getHttpServer();
@@ -184,6 +212,7 @@ describe('Publish and regenerate (e2e)', () => {
     sequence = 0;
     calendar = [];
     constraints = [];
+    breaks = [];
     masters = [
       {
         id: 'master-monday',
@@ -312,6 +341,16 @@ describe('Publish and regenerate (e2e)', () => {
             row.date <= where.date.lte,
         ),
     );
+    // Modelled the same way, and for the same reason: what a break query
+    // returns has to be decided by the predicate the service sends, or a test
+    // that a lov "overlapping the window" bites would pass on any predicate.
+    tx['schoolBreak']!['findMany']!.mockImplementation(
+      async ({ where }: any) =>
+        breaks.filter(
+          (row) =>
+            row.startDate <= where.startDate.lte && row.endDate >= where.endDate.gte,
+        ),
+    );
     tx['studentGroup']!['findMany']!.mockImplementation(async () => [
       { id: GROUP_ID, gradeLevel: 7 },
     ]);
@@ -415,6 +454,42 @@ describe('Publish and regenerate (e2e)', () => {
 
     it('ignores a preference, which is a wish and not a closure', async () => {
       constraints.push(closure({ type: 'PREFERRED_FREE' }));
+
+      const response = await publish().expect(200);
+
+      expect(response.body).toMatchObject({ created: 4, cancelled: 0, skipped: 0 });
+      expect(publishedDates()).toEqual(MONDAYS);
+    });
+  });
+
+  describe('a week the school is on lov', () => {
+    it('writes no lesson on any day the break covers', async () => {
+      breaks.push(schoolBreak());
+
+      const response = await publish().expect(200);
+
+      // The lov is a range over the second week, and the Monday inside it is
+      // simply absent — not cancelled: there was no lesson to hold.
+      expect(response.body).toMatchObject({ created: 3, cancelled: 0, skipped: 1 });
+      expect(publishedDates()).toEqual([MONDAYS[0], MONDAYS[2], MONDAYS[3]]);
+    });
+
+    it('closes the days inside the window of a lov that began before it', async () => {
+      // Ends on the window's own first day, inclusive, and starts a week
+      // earlier — the half of the overlap predicate a containment query drops.
+      const startDate = day(MONDAYS[0]!);
+      startDate.setUTCDate(startDate.getUTCDate() - 7);
+      breaks.push(schoolBreak({ startDate, endDate: day(MONDAYS[0]!) }));
+
+      const response = await publish().expect(200);
+
+      expect(response.body).toMatchObject({ created: 3, skipped: 1 });
+      expect(publishedDates()).toEqual([MONDAYS[1], MONDAYS[2], MONDAYS[3]]);
+    });
+
+    it('leaves the class teaching when the lov names other years', async () => {
+      // Prao för åk 1-3; this group sits in åk 7 and is in school as usual.
+      breaks.push(schoolBreak({ minGradeLevel: 1, maxGradeLevel: 3 }));
 
       const response = await publish().expect(200);
 

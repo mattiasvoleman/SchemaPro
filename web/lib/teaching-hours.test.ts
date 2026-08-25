@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { Recurrence, RequirementLoad, YearBounds } from "./teaching-hours";
+import type {
+  ClosedRange,
+  Recurrence,
+  RequirementLoad,
+  YearBounds,
+} from "./teaching-hours";
 import {
   annualMinutes,
   formatHours,
   peakLessonsPerWeek,
   peakLessonsPerWeekByKey,
+  teachingWeeks,
   weeksInPeriod,
 } from "./teaching-hours";
 
@@ -447,6 +453,438 @@ describe("weeksInPeriod", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Lov fixtures, dated against the same läsår and checked by hand against a
+// calendar. Every one is written out as literal dates rather than derived from
+// the year — a fixture computed with the module's own week arithmetic would
+// agree with a broken implementation by construction.
+//
+//   STUDIEDAG  Fri 2026-09-18            week 38, EVEN
+//   HOSTLOV    Mon 2026-10-26 - Fri 30   week 44, EVEN
+//   JULLOV     Mon 2026-12-21 - Fri 2027-01-08
+//                                        weeks 52 (even), 53 (odd), 1 (odd)
+//   SPORTLOV   Mon 2027-03-01 - Fri 05   week 9,  ODD
+//
+// The parities matter: an alternating requirement must lose a lov week only
+// when the lov lands in a week it was taught in, and 53-next-to-1 puts jullov
+// across the seam this file exists to police.
+//
+// The year holds 43 weeks, so 215 Mon-Fri days. Every expected number below is
+// (215 - closed days) / 5, and is written as the decimal rather than the
+// division so a wrong answer has to be wrong about the days, not about the
+// arithmetic.
+// ---------------------------------------------------------------------------
+
+const STUDIEDAG: ClosedRange = { startDate: "2026-09-18", endDate: "2026-09-18" };
+const HOSTLOV: ClosedRange = { startDate: "2026-10-26", endDate: "2026-10-30" };
+const JULLOV: ClosedRange = { startDate: "2026-12-21", endDate: "2027-01-08" };
+const SPORTLOV: ClosedRange = { startDate: "2027-03-01", endDate: "2027-03-05" };
+
+describe("teachingWeeks", () => {
+  it("is weeksInPeriod exactly when no closures are given", () => {
+    // The compatibility promise, and the reason every existing caller can stay
+    // as it is. `toBe` rather than toBeCloseTo on purpose: a weighted walk that
+    // summed 1/5 forty-three times would land a few ulps off 43 and pass a
+    // near-enough assertion while writing 42.99999999999999 into a page.
+    const recurrences: Recurrence[] = ["ALL_WEEKS", "ODD_WEEKS", "EVEN_WEEKS"];
+    for (const recurrence of recurrences) {
+      expect(teachingWeeks({ recurrence }, YEAR)).toBe(
+        weeksInPeriod({ recurrence }, YEAR),
+      );
+    }
+    expect(teachingWeeks({}, YEAR)).toBe(ALL_WEEKS_IN_YEAR);
+  });
+
+  it("is weeksInPeriod exactly for an empty list of closures", () => {
+    // A school that has entered no lov yet is the common case in the first week
+    // of use, and it must not read differently from a caller that passes none.
+    expect(teachingWeeks({}, YEAR, [])).toBe(ALL_WEEKS_IN_YEAR);
+    expect(teachingWeeks({ recurrence: "ODD_WEEKS" }, YEAR, [])).toBe(
+      ODD_WEEKS_IN_YEAR,
+    );
+  });
+
+  it("takes a fifth of a week off for a single studiedag", () => {
+    expect(teachingWeeks({}, YEAR, [STUDIEDAG])).toBe(42.8);
+  });
+
+  it("takes a whole week off for a full lov week", () => {
+    expect(teachingWeeks({}, YEAR, [HOSTLOV])).toBe(42);
+  });
+
+  it("ignores the weekend a lov is padded out with", () => {
+    // Höstlov as a parent would write it — from the Saturday it starts feeling
+    // like a lov to the Sunday before school resumes. The two weekend days are
+    // not teaching days, so the week is worth exactly what the Mon-Fri lov
+    // alone made it worth. A denominator of seven would answer 42.28… here.
+    const padded: ClosedRange = { startDate: "2026-10-24", endDate: "2026-11-01" };
+    expect(teachingWeeks({}, YEAR, [padded])).toBe(42);
+    expect(teachingWeeks({}, YEAR, [padded])).toBe(teachingWeeks({}, YEAR, [HOSTLOV]));
+  });
+
+  it("deducts nothing for a closure that falls only at a weekend", () => {
+    // 2026-10-31 is a Saturday and 2026-11-01 the Sunday after it, both inside
+    // ISO week 44. Nothing is scheduled against them in a Mon-Fri timplan, so
+    // the week is untouched.
+    expect(
+      teachingWeeks({}, YEAR, [{ startDate: "2026-10-31", endDate: "2026-11-01" }]),
+    ).toBe(ALL_WEEKS_IN_YEAR);
+  });
+
+  it("counts a day covered by two overlapping lov only once", () => {
+    // The shape a real register produces: a studiedag entered on its own, then
+    // swallowed by a höstlov someone extended afterwards. Seven closed days are
+    // named across the two ranges and only five of them exist.
+    const overlapping: ClosedRange[] = [
+      { startDate: "2026-10-26", endDate: "2026-10-28" },
+      { startDate: "2026-10-27", endDate: "2026-10-30" },
+    ];
+    expect(teachingWeeks({}, YEAR, overlapping)).toBe(42);
+  });
+
+  it("cannot drive a week below zero however many lov pile onto it", () => {
+    // Five copies of the same week, which a duplicated import produces. Summing
+    // range lengths instead of asking each day once would answer 38.
+    const duplicated = [HOSTLOV, HOSTLOV, HOSTLOV, HOSTLOV, HOSTLOV];
+    expect(teachingWeeks({}, YEAR, duplicated)).toBe(42);
+  });
+
+  it("adds up two lov that share a week without sharing a day", () => {
+    // Mon-Tue and Thu-Fri of week 44: four days closed, one taught.
+    const split: ClosedRange[] = [
+      { startDate: "2026-10-26", endDate: "2026-10-27" },
+      { startDate: "2026-10-29", endDate: "2026-10-30" },
+    ];
+    expect(teachingWeeks({}, YEAR, split)).toBe(42.2);
+  });
+
+  it("ignores a lov that falls entirely outside the academic year", () => {
+    const summer: ClosedRange[] = [
+      { startDate: "2026-07-01", endDate: "2026-07-31" },
+      { startDate: "2027-07-01", endDate: "2027-08-31" },
+    ];
+    expect(teachingWeeks({}, YEAR, summer)).toBe(ALL_WEEKS_IN_YEAR);
+  });
+
+  it("counts only the days a lov shares with the year when it straddles the start", () => {
+    // 2026-08-10 to 2026-08-18: the first week of it is week 33, which the year
+    // does not contain, and the year's opening week 34 loses its Monday and
+    // Tuesday. Two days, not nine, and not five.
+    expect(
+      teachingWeeks({}, YEAR, [{ startDate: "2026-08-10", endDate: "2026-08-18" }]),
+    ).toBe(42.6);
+  });
+
+  it("counts only the days a lov shares with the year when it straddles the end", () => {
+    // The year closes on Friday 2027-06-11, mid-June. A lov running into the
+    // week after takes week 23's five days and nothing more.
+    expect(
+      teachingWeeks({}, YEAR, [{ startDate: "2027-06-07", endDate: "2027-06-20" }]),
+    ).toBe(42);
+  });
+
+  it("ignores a lov that falls outside the requirement's own period", () => {
+    // An autumn-term course: 18 weeks (pinned by the weeksInPeriod tests
+    // above). Höstlov is inside it and costs a week; jullov starts three days
+    // after the course ends and costs nothing.
+    const autumn = { startDate: "2026-08-17", endDate: "2026-12-18" };
+    expect(teachingWeeks(autumn, YEAR, [JULLOV])).toBe(18);
+    expect(teachingWeeks(autumn, YEAR, [HOSTLOV])).toBe(17);
+    expect(teachingWeeks(autumn, YEAR, [HOSTLOV, JULLOV])).toBe(17);
+  });
+
+  it("takes three weeks off for a jullov that runs across the new year", () => {
+    // Weeks 52, 53 and 1 — the seam. A lov measured in whole weeks from its
+    // own start would find two.
+    expect(teachingWeeks({}, YEAR, [JULLOV])).toBe(40);
+  });
+
+  it("charges an ODD_WEEKS requirement for jullov's two odd weeks only", () => {
+    // Weeks 53 and 1 are both odd and adjacent; week 52 is even and is not this
+    // requirement's to lose.
+    expect(teachingWeeks({ recurrence: "ODD_WEEKS" }, YEAR, [JULLOV])).toBe(
+      ODD_WEEKS_IN_YEAR - 2,
+    );
+    expect(teachingWeeks({ recurrence: "EVEN_WEEKS" }, YEAR, [JULLOV])).toBe(
+      EVEN_WEEKS_IN_YEAR - 1,
+    );
+  });
+
+  it("leaves an alternating requirement alone when the lov misses its weeks", () => {
+    // Höstlov is week 44, even. The odd-week course was never taught that week,
+    // so it loses nothing — the aggregate deduction must follow the parity, not
+    // be spread across the year.
+    expect(teachingWeeks({ recurrence: "ODD_WEEKS" }, YEAR, [HOSTLOV])).toBe(
+      ODD_WEEKS_IN_YEAR,
+    );
+    expect(teachingWeeks({ recurrence: "EVEN_WEEKS" }, YEAR, [HOSTLOV])).toBe(
+      EVEN_WEEKS_IN_YEAR - 1,
+    );
+    // Sportlov is week 9, odd — the same test with the parities swapped, so a
+    // fix that hardcodes one of them fails here.
+    expect(teachingWeeks({ recurrence: "ODD_WEEKS" }, YEAR, [SPORTLOV])).toBe(
+      ODD_WEEKS_IN_YEAR - 1,
+    );
+    expect(teachingWeeks({ recurrence: "EVEN_WEEKS" }, YEAR, [SPORTLOV])).toBe(
+      EVEN_WEEKS_IN_YEAR,
+    );
+  });
+
+  it("applies a lov with a grade span to a grade inside it", () => {
+    const hogstadiet: ClosedRange = { ...HOSTLOV, minGradeLevel: 7, maxGradeLevel: 9 };
+    expect(teachingWeeks({}, YEAR, [hogstadiet], 8)).toBe(42);
+  });
+
+  it("does not apply a grade span to a grade outside it", () => {
+    const hogstadiet: ClosedRange = { ...HOSTLOV, minGradeLevel: 7, maxGradeLevel: 9 };
+    expect(teachingWeeks({}, YEAR, [hogstadiet], 3)).toBe(ALL_WEEKS_IN_YEAR);
+  });
+
+  it("treats both ends of a grade span as inclusive", () => {
+    const span: ClosedRange = { ...HOSTLOV, minGradeLevel: 7, maxGradeLevel: 9 };
+    expect(teachingWeeks({}, YEAR, [span], 7)).toBe(42);
+    expect(teachingWeeks({}, YEAR, [span], 9)).toBe(42);
+    expect(teachingWeeks({}, YEAR, [span], 6)).toBe(ALL_WEEKS_IN_YEAR);
+    expect(teachingWeeks({}, YEAR, [span], 10)).toBe(ALL_WEEKS_IN_YEAR);
+  });
+
+  it("applies a span covering årskurs 0 to förskoleklass", () => {
+    // 0 is a real grade and a falsy number, so it is where a lazy guard shows.
+    const fritids: ClosedRange = { ...HOSTLOV, minGradeLevel: 0, maxGradeLevel: 3 };
+    expect(teachingWeeks({}, YEAR, [fritids], 0)).toBe(42);
+    expect(teachingWeeks({}, YEAR, [fritids], 4)).toBe(ALL_WEEKS_IN_YEAR);
+
+    // The 0-to-0 span is the case that actually catches it, and the two lines
+    // above do not: a `!min && !max` school-wide test reads årskurs 0-0 as "no
+    // span at all" and closes the week for the whole school. Written after a
+    // mutant with exactly that guard survived every other assertion here.
+    const forskoleklass: ClosedRange = { ...HOSTLOV, minGradeLevel: 0, maxGradeLevel: 0 };
+    expect(teachingWeeks({}, YEAR, [forskoleklass], 0)).toBe(42);
+    expect(teachingWeeks({}, YEAR, [forskoleklass], 5)).toBe(ALL_WEEKS_IN_YEAR);
+    expect(teachingWeeks({}, YEAR, [forskoleklass], null)).toBe(ALL_WEEKS_IN_YEAR);
+  });
+
+  it("leaves a grade-spanned lov out when the caller names no grade", () => {
+    // Null and omitted both mean "no particular grade", which is a school-wide
+    // question — and a lågstadiet studiedag is not a school-wide fact. Counting
+    // it would understate teaching for the grades it never touched.
+    const lagstadiet: ClosedRange = { ...HOSTLOV, minGradeLevel: 1, maxGradeLevel: 3 };
+    expect(teachingWeeks({}, YEAR, [lagstadiet], null)).toBe(ALL_WEEKS_IN_YEAR);
+    expect(teachingWeeks({}, YEAR, [lagstadiet])).toBe(ALL_WEEKS_IN_YEAR);
+  });
+
+  it("applies a lov with no grade span whatever grade is asked about", () => {
+    // The other half of the rule above: school-wide closures are true for every
+    // grade, including the caller that cannot name one.
+    expect(teachingWeeks({}, YEAR, [HOSTLOV], null)).toBe(42);
+    expect(teachingWeeks({}, YEAR, [HOSTLOV], undefined)).toBe(42);
+    expect(teachingWeeks({}, YEAR, [HOSTLOV], 5)).toBe(42);
+    // Explicit nulls, which is what a row straight out of SchoolBreaks carries.
+    const fromDb: ClosedRange = { ...HOSTLOV, minGradeLevel: null, maxGradeLevel: null };
+    expect(teachingWeeks({}, YEAR, [fromDb], 5)).toBe(42);
+  });
+
+  it("reads a half-filled grade span as open-ended on the missing side", () => {
+    // The database cannot produce one — the check constraint on SchoolBreaks
+    // makes the pair all-or-nothing — but the interface can, and dropping the
+    // range silently is worse than honouring the bound that is there.
+    const fromSeven: ClosedRange = { ...HOSTLOV, minGradeLevel: 7, maxGradeLevel: null };
+    expect(teachingWeeks({}, YEAR, [fromSeven], 9)).toBe(42);
+    expect(teachingWeeks({}, YEAR, [fromSeven], 3)).toBe(ALL_WEEKS_IN_YEAR);
+
+    const uptoThree: ClosedRange = { ...HOSTLOV, minGradeLevel: null, maxGradeLevel: 3 };
+    expect(teachingWeeks({}, YEAR, [uptoThree], 2)).toBe(42);
+    expect(teachingWeeks({}, YEAR, [uptoThree], 8)).toBe(ALL_WEEKS_IN_YEAR);
+  });
+
+  it("mixes a school-wide lov with a grade-spanned one for the same grade", () => {
+    // Year 8 loses höstlov because everyone does, and keeps the lågstadiet
+    // studiedag. Reading only the first entry, or filtering the list away
+    // wholesale, gets a different number for each of these.
+    const lagstadiet: ClosedRange = { ...STUDIEDAG, minGradeLevel: 1, maxGradeLevel: 3 };
+    expect(teachingWeeks({}, YEAR, [HOSTLOV, lagstadiet], 8)).toBe(42);
+    expect(teachingWeeks({}, YEAR, [HOSTLOV, lagstadiet], 2)).toBe(41.8);
+  });
+
+  it("sums whole days and divides once, rather than adding fifths as it goes", () => {
+    // Three consecutive weeks, one studiedag in each: 12 taught days out of 15,
+    // which is 2.4 weeks. Adding 0.8 three times gives 2.4000000000000004 —
+    // binary floating point, not a counting mistake — and that value reaches a
+    // page as "2.4000000000000004 veckor" the moment anything renders it
+    // unformatted. Dividing 12 by 5 once lands on the double a human writes.
+    //
+    // The smallest pattern where the two spellings disagree at all, found by
+    // enumeration; the fixtures elsewhere in this file happen to agree under
+    // both, so without this test the arithmetic in teachingWeeks is unpinned.
+    const threeWeeks = { startDate: "2026-09-14", endDate: "2026-10-02" };
+    const studiedagar: ClosedRange[] = [
+      { startDate: "2026-09-18", endDate: "2026-09-18" }, // Fri, week 38
+      { startDate: "2026-09-22", endDate: "2026-09-22" }, // Tue, week 39
+      { startDate: "2026-10-01", endDate: "2026-10-01" }, // Thu, week 40
+    ];
+    expect(weeksInPeriod(threeWeeks, YEAR)).toBe(3);
+    expect(teachingWeeks(threeWeeks, YEAR, studiedagar)).toBe(2.4);
+  });
+
+  it("ignores a lov whose dates are the wrong way round", () => {
+    // The same reading clampToYear gives an inverted period: it covers nothing.
+    // The DB check makes it unreachable from a row, an import preview can hold
+    // one.
+    expect(
+      teachingWeeks({}, YEAR, [{ startDate: "2026-11-30", endDate: "2026-11-02" }]),
+    ).toBe(ALL_WEEKS_IN_YEAR);
+  });
+
+  /*
+   * A lov only subtracts days the period actually contains.
+   *
+   * The week is generous and the lov is exact, and the two are different
+   * decisions — see the file header. An edge week the period joins on the
+   * Wednesday still counts as a whole week, but a lov on that week's Monday is
+   * outside the period and must weigh nothing. Without the window test it
+   * weighed 3/5, which points DOWN in a function whose contract is that it errs
+   * upward, and a lov sitting entirely before a spring term subtracted from it.
+   *
+   * 2027-01-11 is a Monday, so the week Mon 11 - Fri 15 is the one to aim at.
+   */
+  it("ignores a lov on days the period has not started on yet", () => {
+    const springFromWednesday = { startDate: "2027-01-13", endDate: "2027-06-11" };
+    const lovOnTheMonday: ClosedRange[] = [
+      { startDate: "2027-01-11", endDate: "2027-01-12" },
+    ];
+
+    expect(teachingWeeks(springFromWednesday, YEAR, lovOnTheMonday)).toBe(
+      weeksInPeriod(springFromWednesday, YEAR),
+    );
+  });
+
+  it("ignores a lov that falls entirely before the period", () => {
+    const spring = { startDate: "2027-01-13", endDate: "2027-06-11" };
+    const jullov: ClosedRange[] = [
+      { startDate: "2026-12-21", endDate: "2027-01-08" },
+    ];
+
+    expect(teachingWeeks(spring, YEAR, jullov)).toBe(weeksInPeriod(spring, YEAR));
+  });
+
+  it("ignores a lov that falls entirely after the period", () => {
+    const autumn = { startDate: "2026-08-17", endDate: "2026-12-18" };
+    const sportlov: ClosedRange[] = [
+      { startDate: "2027-02-22", endDate: "2027-02-26" },
+    ];
+
+    expect(teachingWeeks(autumn, YEAR, sportlov)).toBe(weeksInPeriod(autumn, YEAR));
+  });
+
+  it("still subtracts the part of a lov the period does contain", () => {
+    // The other direction, so the three above cannot be satisfied by a
+    // weighting that ignores closures altogether. The lov straddles the start:
+    // Mon-Tue are outside the period, Wed-Thu are inside, so two of the week's
+    // five days go.
+    const springFromWednesday = { startDate: "2027-01-13", endDate: "2027-06-11" };
+    const straddling: ClosedRange[] = [
+      { startDate: "2027-01-11", endDate: "2027-01-14" },
+    ];
+
+    const whole = weeksInPeriod(springFromWednesday, YEAR);
+    expect(teachingWeeks(springFromWednesday, YEAR, straddling)).toBeCloseTo(
+      whole - 2 / 5,
+      10,
+    );
+  });
+
+  it("is 0 for a period outside the year, closures or not", () => {
+    const outside = { startDate: "2028-01-01", endDate: "2028-06-30" };
+    expect(teachingWeeks(outside, YEAR, [HOSTLOV, JULLOV])).toBe(0);
+    expect(teachingWeeks({}, { startDate: "2027-06-11", endDate: "2026-08-17" }, [
+      HOSTLOV,
+    ])).toBe(0);
+  });
+
+  it("takes a whole Swedish läsår's lov off the top", () => {
+    // All four fixtures at once, which is roughly what a real register holds:
+    // 1 + 5 + 15 + 5 = 26 closed days, so 189/5.
+    expect(teachingWeeks({}, YEAR, [STUDIEDAG, HOSTLOV, JULLOV, SPORTLOV])).toBe(37.8);
+  });
+
+  it("never exceeds weeksInPeriod, over a sweep of periods and lov", () => {
+    // The property the whole design rests on: closures only ever remove
+    // teaching. If this can be broken, some figure in the app reports more
+    // hours because a school entered a lov.
+    //
+    // Same mulberry32 as the sweep above — fixed seed, so a failure is
+    // reproducible from the diff alone.
+    let state = 0x1f3a_77c5;
+    const random = () => {
+      state = (state + 0x6d2b_79f5) >>> 0;
+      let t = state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+    };
+    const between = (low: number, high: number) =>
+      low + Math.floor(random() * (high - low + 1));
+
+    const anchor = new Date("2026-07-17T00:00:00");
+    const dayFrom = (offset: number) => {
+      const date = new Date(anchor);
+      date.setDate(date.getDate() + offset);
+      return asDay(date);
+    };
+    const recurrences: Recurrence[] = ["ALL_WEEKS", "ODD_WEEKS", "EVEN_WEEKS"];
+
+    let strictlyFewer = 0;
+    let equal = 0;
+    for (let draw = 0; draw < 400; draw += 1) {
+      const startOffset = between(0, 360);
+      const period = {
+        recurrence: recurrences[between(0, 2)] as Recurrence,
+        startDate: dayFrom(startOffset),
+        endDate: dayFrom(startOffset + between(-20, 300)),
+      };
+
+      // Between none and four lov, each 1-16 days, anywhere in or around the
+      // year — overlaps, weekend-only ranges and out-of-year ranges all arise
+      // on their own at these numbers.
+      const closures: ClosedRange[] = [];
+      for (let i = between(0, 4); i > 0; i -= 1) {
+        const from = between(0, 360);
+        const spanned = between(0, 15);
+        const grade = between(0, 3); // 3 of 4 draws are school-wide
+        closures.push({
+          startDate: dayFrom(from),
+          endDate: dayFrom(from + spanned),
+          minGradeLevel: grade === 0 ? between(0, 6) : null,
+          maxGradeLevel: grade === 0 ? between(6, 12) : null,
+        });
+      }
+
+      const gradeLevel = between(0, 12);
+      const weighted = teachingWeeks(period, YEAR, closures, gradeLevel);
+      const calendar = weeksInPeriod(period, YEAR);
+
+      if (weighted > calendar || weighted < 0) {
+        // Through expect so the failure names the period and the lov rather
+        // than just the two numbers.
+        expect({ period, closures, gradeLevel, weighted, calendar }).toEqual({
+          period,
+          closures,
+          gradeLevel,
+          weighted: calendar,
+          calendar,
+        });
+      }
+      if (weighted < calendar) strictlyFewer += 1;
+      else equal += 1;
+    }
+
+    // Without these the property would hold trivially on a teachingWeeks that
+    // returned 0 for everything, or on one that ignored closures entirely.
+    expect(strictlyFewer).toBeGreaterThan(100);
+    expect(equal).toBeGreaterThan(20);
+  });
+});
+
 describe("annualMinutes", () => {
   it("multiplies weeks by lessons by minutes", () => {
     // 43 weeks x 2 lessons x 45 min.
@@ -498,6 +936,59 @@ describe("annualMinutes", () => {
     expect(annualMinutes(req({ lessonsPerWeek: Number.NaN }), YEAR)).toBe(0);
     expect(annualMinutes(req({ minutesPerLesson: Number.NaN }), YEAR)).toBe(0);
     expect(annualMinutes(req({ lessonsPerWeek: -3 }), YEAR)).toBe(0);
+  });
+
+  it("is unchanged to the minute when no closures are passed", () => {
+    // The four assertions above this describe already pin the old numbers; this
+    // one says so about the new argument being absent, which is what every
+    // caller written before the lov model does.
+    const load = req({ lessonsPerWeek: 2, minutesPerLesson: 45 });
+    expect(annualMinutes(load, YEAR)).toBe(ALL_WEEKS_IN_YEAR * 2 * 45);
+    expect(annualMinutes(load, YEAR, [])).toBe(ALL_WEEKS_IN_YEAR * 2 * 45);
+  });
+
+  it("stops charging for the weeks a lov takes away", () => {
+    // 42 weeks after höstlov, not 43.
+    expect(
+      annualMinutes(req({ lessonsPerWeek: 2, minutesPerLesson: 45 }), YEAR, [HOSTLOV]),
+    ).toBe(42 * 2 * 45);
+    // And a fifth of a week for a studiedag: 42.8 x 2 x 45 = 3852.
+    //
+    // toBeCloseTo, and only here. teachingWeeks itself returns 42.8 exactly —
+    // it divides once, at the end, so the value is the nearest double to 42.8
+    // and `toBe(42.8)` above holds. Multiplying that double by 2 and by 45
+    // lands on 3851.9999999999995, because 42.8 has no exact binary form for
+    // the products to be exact about. Rounding inside annualMinutes was the
+    // alternative and was rejected: minutes are genuinely fractional once weeks
+    // are, and a round there would be this module inventing precision to make a
+    // test pretty. What a user sees is the formatted figure, asserted below.
+    expect(
+      annualMinutes(req({ lessonsPerWeek: 2, minutesPerLesson: 45 }), YEAR, [STUDIEDAG]),
+    ).toBeCloseTo(3852, 9);
+  });
+
+  it("charges different grades differently for a lov that is not school-wide", () => {
+    const lagstadiet: ClosedRange = { ...HOSTLOV, minGradeLevel: 1, maxGradeLevel: 3 };
+    const load = req({ lessonsPerWeek: 3, minutesPerLesson: 60 });
+    expect(annualMinutes(load, YEAR, [lagstadiet], 2)).toBe(42 * 3 * 60);
+    expect(annualMinutes(load, YEAR, [lagstadiet], 8)).toBe(ALL_WEEKS_IN_YEAR * 3 * 60);
+  });
+
+  it("still reads a half-filled form as 0 with lov in play", () => {
+    expect(
+      annualMinutes(req({ lessonsPerWeek: Number.NaN }), YEAR, [HOSTLOV]),
+    ).toBe(0);
+    expect(
+      annualMinutes(req({ minutesPerLesson: Number.NaN }), YEAR, [JULLOV], 5),
+    ).toBe(0);
+  });
+
+  it("prints a lov-adjusted year as hours a rektor can read", () => {
+    // The end-to-end shape: 42.8 weeks of two 45-minute lessons is 64,2 h, down
+    // from the 64,5 h the same requirement reads without the studiedag.
+    const load = req({ lessonsPerWeek: 2, minutesPerLesson: 45 });
+    expect(formatHours(annualMinutes(load, YEAR, [STUDIEDAG]))).toBe("64,2 h");
+    expect(formatHours(annualMinutes(load, YEAR))).toBe("64,5 h");
   });
 });
 

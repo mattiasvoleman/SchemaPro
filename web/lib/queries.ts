@@ -17,6 +17,7 @@ import type {
   AcademicYear,
   AttendanceRecordRow,
   AvailabilityConstraint,
+  BreakKind,
   CalendarLessonRow,
   MasterLesson,
   Person,
@@ -24,6 +25,7 @@ import type {
   RoomBooking,
   RoomBookingStatus,
   LeaveRequest,
+  SchoolBreak,
   StudentGroup,
   Subject,
   TeachingRequirement,
@@ -228,6 +230,105 @@ export function useConstraints() {
         "createdAt",
       ),
   });
+}
+
+/**
+ * The läsår's lov och studiedagar, earliest first.
+ *
+ * Keyed on the year like ["requirements", yearId], and disabled until one is
+ * picked, because a break only means anything inside its own läsår — the same
+ * argument the timplan makes for its year picker. A caller that measured next
+ * autumn's hours against this autumn's lov would be quietly wrong.
+ *
+ * NOT paged, unlike its neighbours, and that is a statement about the table
+ * rather than an oversight: a Swedish läsår has höstlov, jullov, sportlov,
+ * påsklov, a few röda dagar and a handful of studiedagar. Twenty rows, not a
+ * thousand. `fetchAllPages` exists for the tables that really do exceed
+ * PostgREST's cap (memberships, the timplan), and wrapping this one in it would
+ * suggest a volume that cannot happen here.
+ *
+ * Ordered by startDate because a lov list is read as a calendar — the same
+ * order the API's own `list` returns, so the two doors agree.
+ */
+export function useSchoolBreaks(academicYearId: string | null) {
+  return useQuery({
+    queryKey: ["schoolBreaks", academicYearId],
+    enabled: academicYearId !== null,
+    queryFn: async () => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("SchoolBreaks")
+        .select(
+          "id, academicYearId, name, kind, startDate, endDate, minGradeLevel, maxGradeLevel",
+        )
+        .eq("academicYearId", academicYearId!)
+        .order("startDate")
+        // Two lov may start on the same day (a studiedag inside a longer
+        // break), and rows tying on the sort column are free to shuffle between
+        // requests — which makes the list jump about as it refetches.
+        .order("id");
+      if (error) throw new Error(error.message);
+      return (data ?? []) as SchoolBreak[];
+    },
+  });
+}
+
+/**
+ * Writes to a break, typed on what the write ANSWERS.
+ *
+ * `useCrudMutations` would have done the three calls, and it types its result
+ * `unknown` — which is exactly the field that must not be lost here. Creating
+ * or moving a lov DELETES published calendar lessons, and the endpoint answers
+ * with how many; a hook that throws the number away leaves the UI unable to say
+ * what it just did, which is the one thing this feature exists to do.
+ *
+ * The schedule caches are invalidated alongside the break list for the same
+ * reason: rows were deleted, and a calendar left holding them shows lessons the
+ * database no longer has.
+ */
+export interface SchoolBreakInput {
+  academicYearId: string;
+  name: string;
+  kind: BreakKind;
+  startDate: string;
+  endDate: string;
+  /** Both null is the whole school; the API refuses one without the other. */
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+}
+
+export interface SchoolBreakWriteResult extends SchoolBreak {
+  /** Published, still-scheduled, register-free lessons the break threw away. */
+  removedCalendarLessons: number;
+}
+
+export function useSchoolBreakActions() {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["schoolBreaks"] });
+    void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
+    void queryClient.invalidateQueries({ queryKey: ["dayLessons"] });
+    void queryClient.invalidateQueries({ queryKey: ["teacherLessons"] });
+  };
+
+  return {
+    create: useMutation({
+      mutationFn: (input: SchoolBreakInput) =>
+        api.post<SchoolBreakWriteResult>("/api/v1/school-breaks", input),
+      onSuccess: invalidate,
+    }),
+    update: useMutation({
+      // No academicYearId: moving a lov to another läsår is not an edit, it is
+      // a different lov, and the DTO leaves the field out for that reason.
+      mutationFn: ({ id, ...input }: Omit<SchoolBreakInput, "academicYearId"> & { id: string }) =>
+        api.patch<SchoolBreakWriteResult>(`/api/v1/school-breaks/${id}`, input),
+      onSuccess: invalidate,
+    }),
+    remove: useMutation({
+      mutationFn: (id: string) => api.delete(`/api/v1/school-breaks/${id}`),
+      onSuccess: invalidate,
+    }),
+  };
 }
 
 /**

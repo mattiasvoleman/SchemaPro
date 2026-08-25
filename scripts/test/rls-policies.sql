@@ -1068,3 +1068,73 @@ BEGIN
       'land in the wrong school';
   END IF;
 END $$;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 12: every table is protected at all.
+--
+-- The narrower catalog check further up asks whether a policy forgets the
+-- tenant. This asks the question before that one: is there a policy, and is row
+-- security even on.
+--
+-- A table shipped with neither is not a subtle hole. `app_authenticated` holds
+-- table-level GRANTs from the migration that created it, so with RLS off the
+-- role reads and writes every school's rows, and nothing anywhere reports it —
+-- the API keeps working, the e2e suite mocks Prisma and never sees Postgres,
+-- and the table looks exactly like its protected neighbours in the schema.
+-- RLS enabled with zero policies fails the other way and is nearly as bad in
+-- practice: it denies everything, so the feature is simply dead for every
+-- caller, which is at least loud.
+--
+-- Deliberately without an exception list, unlike a rule about which predicate a
+-- policy must carry. That rule needs 26 exemptions here — the service role
+-- crosses tenants by design, and a policy keyed on the caller's own id is
+-- already inside one school — and a rule with 26 exemptions rots into a list
+-- nobody maintains. This one has none, and a new table cannot be added without
+-- either satisfying it or changing it on purpose.
+--
+-- The floor guards the query itself: a catalog filter that quietly stopped
+-- matching would otherwise pass as a clean run, which is how a previous
+-- assertion in this file managed to prove nothing for a while.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE
+  unprotected text;
+  policyless  text;
+  checked     int;
+BEGIN
+  SELECT count(*)::int INTO checked
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname <> '_prisma_migrations';
+
+  IF checked < 25 THEN
+    RAISE EXCEPTION
+      'only % table(s) were examined; the catalog query proved nothing', checked;
+  END IF;
+
+  SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO unprotected
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relkind = 'r'
+    AND c.relname <> '_prisma_migrations'
+    AND NOT c.relrowsecurity;
+
+  IF unprotected IS NOT NULL THEN
+    RAISE EXCEPTION
+      'tables with row security switched off, readable across every school: %',
+      unprotected;
+  END IF;
+
+  SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO policyless
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relkind = 'r'
+    AND c.relname <> '_prisma_migrations'
+    AND c.relrowsecurity
+    AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
+
+  IF policyless IS NOT NULL THEN
+    RAISE EXCEPTION
+      'tables with row security on and no policy at all — denied to everyone: %',
+      policyless;
+  END IF;
+END $$;

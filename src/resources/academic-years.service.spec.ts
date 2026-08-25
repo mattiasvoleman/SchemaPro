@@ -161,6 +161,7 @@ describe('AcademicYearsService', () => {
     it('sends only the provided fields, dates parsed', async () => {
       tx.academicYear.findUnique.mockResolvedValue(YEAR);
       tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.schoolBreak.count.mockResolvedValue(0);
       tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
 
       await service.update(
@@ -193,6 +194,7 @@ describe('AcademicYearsService', () => {
     it('refuses to move the year out from under existing periods, and says how many', async () => {
       tx.academicYear.findUnique.mockResolvedValue(YEAR);
       tx.teachingRequirement.count.mockResolvedValue(3);
+      tx.schoolBreak.count.mockResolvedValue(0);
 
       // Autumn term start pushed a month later; every course that already
       // starts in August is now outside its own year.
@@ -200,14 +202,54 @@ describe('AcademicYearsService', () => {
         service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
       ).rejects.toThrow(
         '3 teaching requirements would fall outside the new academic year ' +
-          '(2026-09-14 to 2027-06-11). Move or clear those periods first.',
+          '(2026-09-14 to 2027-06-11). Move or clear them first.',
       );
       expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses just as firmly when only a lov would be stranded', async () => {
+      /*
+       * The half that was missing, and the worse one. A stranded requirement
+       * period simply generates nothing; a stranded lov stops suppressing
+       * publish — lessons reappear across a week the school is shut — and it
+       * can never be edited back, because every write path measures the range
+       * against the year it no longer fits inside.
+       */
+      tx.academicYear.findUnique.mockResolvedValue({
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+      });
+      tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.schoolBreak.count.mockResolvedValue(1);
+
+      await expect(
+        service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
+      ).rejects.toThrow(
+        '1 break would fall outside the new academic year ' +
+          '(2026-09-14 to 2027-06-11). Move or clear them first.',
+      );
+      expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('names both when a year move would strand periods and lov together', async () => {
+      // Two counts rather than one total: "4 rader" tells nobody where to look,
+      // and the two live on different pages.
+      tx.academicYear.findUnique.mockResolvedValue({
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+      });
+      tx.teachingRequirement.count.mockResolvedValue(3);
+      tx.schoolBreak.count.mockResolvedValue(2);
+
+      await expect(
+        service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
+      ).rejects.toThrow('3 teaching requirements and 2 breaks would fall outside');
     });
 
     it('measures the periods against the bounds as they will end up', async () => {
       tx.academicYear.findUnique.mockResolvedValue(YEAR);
       tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.schoolBreak.count.mockResolvedValue(0);
       tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
 
       // Only endDate moves, so startDate has to come from the row — measuring
@@ -231,6 +273,7 @@ describe('AcademicYearsService', () => {
     it('lets a widened year through — nothing that fit can fall outside a superset', async () => {
       tx.academicYear.findUnique.mockResolvedValue(YEAR);
       tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.schoolBreak.count.mockResolvedValue(0);
       tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
 
       await expect(

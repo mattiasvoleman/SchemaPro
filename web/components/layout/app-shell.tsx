@@ -6,6 +6,7 @@ import {
   BarChart3,
   CalendarClock,
   CalendarDays,
+  CalendarOff,
   CalendarRange,
   CalendarSearch,
   ClipboardCheck,
@@ -59,6 +60,12 @@ const ADMIN_NAV: NavSection[] = [
       { labelKey: "people", href: "/admin/people", icon: UserCheck },
       { labelKey: "requirements", href: "/admin/requirements", icon: Grid3x3 },
       { labelKey: "constraints", href: "/admin/constraints", icon: SlidersHorizontal },
+      // Next to tillgänglighet, which is the other list of "not then": that one
+      // says when a room or a teacher cannot be used, this one says when the
+      // school is not teaching at all. It sits under Planering rather than
+      // Drift because the timplan's hours are measured against it before a
+      // single lesson exists.
+      { labelKey: "breaks", href: "/admin/breaks", icon: CalendarOff },
     ],
   },
   {

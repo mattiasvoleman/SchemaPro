@@ -12,23 +12,55 @@
 // the same reason lib/gaps.ts stays a plain module: the page that shows these
 // numbers is not the only thing that will want them.
 //
-// TWO THINGS THIS DELIBERATELY DOES NOT MODEL
+// WHAT THE WEEK COUNTS SEE, AND WHAT THEY STILL DO NOT
 //
-// 1. Holidays. There is no SchoolClosure table, no term-break model, nothing
-//    anywhere in the app that knows a week is a lov. So every number here
-//    counts CALENDAR weeks inside the period, not actual teaching weeks. A
-//    Swedish läsår loses roughly 8-10 weeks to höstlov, jullov, sportlov,
-//    påsklov and studiedagar, so annualMinutes reads high by about that
-//    fraction. Wording in the UI has to say "kalenderveckor"; the fix is a
-//    closure model, not a fudge factor invented here.
-// 2. Partly covered edge weeks. A period starting on a Wednesday still counts
-//    that whole week (see weeksInPeriod). Also an overestimate, but a much
-//    smaller one, and the alternative — counting fifths of a week — produces
-//    fractional weeks that no one can check against a timetable by eye.
+// 1. Lov and studiedagar ARE modelled now. This header used to say the
+//    opposite, and said it flatly: no closure table, nothing anywhere in the
+//    app that knew a week was a lov, so every figure counted calendar weeks and
+//    read roughly 8-10 weeks high across a Swedish läsår. SchoolBreak in
+//    schema.prisma closed that hole — an inclusive date range with a kind
+//    (HOLIDAY | STAFF_DAY) and an optional grade span. teachingWeeks and
+//    annualMinutes accept those ranges as `closures` and weight every week by
+//    the share of its Mon-Fri days that survives them.
 //
-// Both overestimate in the same direction, which is the honest direction for a
-// planning figure: nobody is harmed by budgeting for a week that turns out to
-// be a lov, and the opposite error hides an under-taught subject.
+//    `closures` is optional and omitting it reproduces the old calendar-week
+//    figure exactly. That is what lets existing callers keep compiling, and it
+//    is also the trap: a caller that forgets to pass the year's breaks gets the
+//    overestimate back with no complaint. This module has no database and
+//    cannot fetch them itself — loading them is the caller's job.
+//
+//    IT IS AN ESTIMATE AT REQUIREMENT LEVEL, structurally, not for want of
+//    care. A requirement has no weekday: "3 lektioner i veckan" says how much,
+//    never on which days — the weekday belongs to the placed Lesson — so
+//    nothing here can know whether the studiedag fell on one of this
+//    requirement's lesson days or on a day it never used. A week holding one
+//    studiedag is charged four fifths of its lessons, which is right averaged
+//    over a term and wrong for the single week anybody points at. Do not quote
+//    these hours as delivered teaching time; they answer "does the timplan look
+//    covered", nothing finer.
+//
+// 2. weeksInPeriod stays WHOLE CALENDAR weeks, deliberately, and is not the
+//    function that subtracts lov. It feeds peakLessonsPerWeek, where the
+//    question is whether a week's lessons fit in the grid at all — a lov week
+//    holds no lessons and must not be allowed to drag the busiest week down.
+//    Fractions belong to the annual total; the peak is a yes/no about capacity.
+//
+// 3. Partly covered edge weeks. A period starting on a Wednesday still counts
+//    that whole WEEK, in teachingWeeks too — trimming the week was rejected
+//    because it would make the no-closure path stop agreeing with
+//    weeksInPeriod, and every existing caller and test reads that path.
+//
+//    The CLOSURES in such a week are trimmed to the period even so, and the two
+//    halves are not the same decision. Counting a lov on the Monday of a week
+//    the period only joins on Wednesday made that week weigh 3/5 instead of 1,
+//    which is an error pointing DOWN — the direction this file says it never
+//    goes — and it also let a lov sitting entirely outside a term's period
+//    subtract from it. So the week is generous and the lov is exact, and what
+//    is left over still errs upward.
+//
+// What is left over errs upward, which is the honest direction for a planning
+// figure: nobody is harmed by budgeting for a week that turns out to be a lov,
+// and the opposite error hides an under-taught subject.
 
 import type { LessonRecurrence } from "@/lib/types";
 import { addDays, isoWeek, startOfIsoWeek, toDateString } from "@/lib/utils";
@@ -60,6 +92,33 @@ export interface YearBounds {
   endDate: string;
 }
 
+/**
+ * A stretch of days nobody is taught — one SchoolBreak row, narrowed.
+ *
+ * Structural rather than an import of the Prisma type on purpose: this module
+ * is deliberately free of the client (the whole file is arithmetic, see the
+ * header), and a caller assembling ranges from an import file or a preview form
+ * has no rows to hand yet. The field names match the columns so a query result
+ * passes straight in.
+ *
+ * HOLIDAY and STAFF_DAY are not distinguished here. Both mean the same thing to
+ * an hours count — no lessons that day — and the kind exists for the UI to
+ * label with, not for this to branch on.
+ */
+export interface ClosedRange {
+  /** Inclusive ISO yyyy-mm-dd, matching SchoolBreak.startDate (@db.Date). */
+  startDate: string;
+  /** Inclusive too: a one-day studiedag has startDate === endDate. */
+  endDate: string;
+  /**
+   * Both null (or absent) means the whole school is closed. A span closes the
+   * range only for the grades inside it — a studiedag for lågstadiet leaves
+   * year 9 teaching.
+   */
+  minGradeLevel?: number | null;
+  maxGradeLevel?: number | null;
+}
+
 export interface RequirementLoad extends TeachingPeriod {
   lessonsPerWeek: number;
   minutesPerLesson: number;
@@ -89,6 +148,29 @@ export interface RequirementLoad extends TeachingPeriod {
  * with none of them exactly.
  */
 const DAYS_IN_WEEK = 7;
+
+/**
+ * Five, and the disagreement with DAYS_IN_WEEK above is not an oversight.
+ *
+ * The two constants answer different questions. Seven decides whether a week
+ * EXISTS for a period at all, and it has to be seven because a lesson may sit on
+ * any of Lesson.dayOfWeek 1-7 and runsOn never looks at the weekday — skipping a
+ * week because its only covered days were a weekend charges nothing for teaching
+ * that really happens.
+ *
+ * This one is a denominator: given that the week exists, how much of a
+ * TEACHING week is left after the closures. A studiedag takes a fifth of that
+ * week's teaching, not a seventh — the Saturday it did not fall on was never
+ * carrying a normal share of the lessons to begin with. Dividing by seven here
+ * would quietly under-deduct every lov by 2/7, which is most of the error the
+ * closure model was added to remove.
+ *
+ * A school that really does teach on Saturdays is charged slightly too little
+ * for a lov by this. There is no column saying which days a school uses (see
+ * DAYS_IN_WEEK), so the alternative is this file inventing the school's week,
+ * and Mon-Fri is the one every Swedish grundskola's timplan is written against.
+ */
+const TEACHING_DAYS_IN_WEEK = 5;
 
 /**
  * The period's own bounds, narrowed to the year and normalised.
@@ -183,13 +265,14 @@ function teachesInWeek(window: TaughtWindow, monday: Date): boolean {
  * whole one: a course running 2026-09-02 (a Wednesday) to the end of term is
  * charged for all of week 36, including the Monday and Tuesday before it
  * started. That overestimates, marginally and always upward. Counting the week
- * as 3/5 was tried on paper and thrown out — it turns every figure downstream
- * into a decimal nobody can reconcile against a printed timetable, to correct
- * an error far smaller than the holidays this module cannot see at all (see the
- * file header).
+ * as 3/5 was tried on paper and thrown out — it turns this figure into a
+ * decimal nobody can reconcile against a printed timetable, and this is the
+ * figure peakLessonsPerWeek counts with.
  *
- * The count is CALENDAR weeks. There is no closure model in the app, so lov and
- * studiedagar are all counted as taught.
+ * The count is CALENDAR weeks, and stays that way now that closures exist: lov
+ * and studiedagar are counted as taught here. That is not an oversight to be
+ * fixed in passing — subtracting them would blunt the peak, whose whole job is
+ * to ask whether a week's lessons fit. teachingWeeks is where the lov come off.
  *
  * A period outside the year, or the wrong way round, gives 0.
  */
@@ -202,6 +285,139 @@ export function weeksInPeriod(period: TeachingPeriod, year: YearBounds): number 
     if (teachesInWeek(window, monday)) weeks += 1;
   }
   return weeks;
+}
+
+/**
+ * Whether a closure reaches a given grade.
+ *
+ * A missing or null `gradeLevel` is NOT inside any span. The caller who cannot
+ * say which grade it is asking about is asking a school-wide question, and a
+ * lågstadiet studiedag is not a school-wide fact; counting it would understate
+ * teaching for every grade it never touched. School-wide closures still apply,
+ * because those are true whatever the grade is.
+ *
+ * A half-filled span (one bound null) cannot come out of the database — the
+ * check constraint on SchoolBreaks makes the pair all-or-nothing — but the
+ * interface allows one, so it is read as open-ended on the missing side rather
+ * than thrown away. Silently dropping a range that says "årskurs 7 och uppåt"
+ * would be the worse failure of the two.
+ */
+function closesForGrade(closure: ClosedRange, gradeLevel?: number | null): boolean {
+  const min = closure.minGradeLevel ?? null;
+  const max = closure.maxGradeLevel ?? null;
+  if (min === null && max === null) return true;
+
+  // Explicit null/undefined test, not a falsy one: årskurs 0 is förskoleklass,
+  // a real grade this app stores, and `!gradeLevel` would exclude it from every
+  // span that covers it.
+  if (gradeLevel === null || gradeLevel === undefined) return false;
+  if (min !== null && gradeLevel < min) return false;
+  if (max !== null && gradeLevel > max) return false;
+  return true;
+}
+
+/**
+ * How many of the week's Mon-Fri days at least one closure covers.
+ *
+ * `some` per day rather than summing each range's length is what makes
+ * overlapping lov safe: a day two ranges both claim — a studiedag entered
+ * separately and then swallowed by an extended höstlov — is closed once, and a
+ * week can never lose more than five days. Summing lengths let a school with
+ * duplicated imports drive teachingWeeks negative.
+ *
+ * Days outside the academic year need no special case. The walk only ever asks
+ * about weeks the period itself touches, so the part of a lov that sticks out
+ * past the year is asked about only for the days it shares with a week in play.
+ */
+/**
+ * Mon-Fri days of this week that are both INSIDE the window and closed.
+ *
+ * The window test is not decoration. Without it a lov on the Monday of a week
+ * whose period only starts on the Wednesday subtracted two days the period does
+ * not contain, so the week weighed 3/5 instead of 1 — an error pointing DOWN,
+ * in a function whose whole contract is that it errs upward. The same shape
+ * subtracted a lov sitting entirely before a spring-term requirement.
+ *
+ * A partly covered edge week still counts as a WHOLE week, which is the
+ * deliberate upward error documented at the top of this file. Only the closures
+ * are trimmed to the window, never the week itself — trimming the week too
+ * would make the no-closure path stop agreeing with weeksInPeriod, and every
+ * caller that has not learned about lov reads that path.
+ */
+function closedTeachingDays(
+  monday: Date,
+  closures: ClosedRange[],
+  window: TaughtWindow,
+): number {
+  let closed = 0;
+  for (let offset = 0; offset < TEACHING_DAYS_IN_WEEK; offset += 1) {
+    const day = toDateString(addDays(monday, offset));
+    if (day < window.from || day > window.to) continue;
+    // A range the wrong way round (endDate < startDate) covers nothing here,
+    // which is the same reading clampToYear gives an inverted period.
+    if (closures.some((closure) => day >= closure.startDate && day <= closure.endDate)) {
+      closed += 1;
+    }
+  }
+  return closed;
+}
+
+/**
+ * The weeks of the period, WEIGHTED by how much of each is actually taught.
+ *
+ * Same weeks weeksInPeriod finds, but a week no longer counts as a flat 1: it
+ * counts as the share of its five Mon-Fri days that no closure covers. An
+ * ordinary week is 1, a week with one studiedag is 0.8, a full lov week is 0.
+ * Omit `closures` and every week weighs 1, so the result is weeksInPeriod's own
+ * integer — that identity is deliberate and pinned by a test, because every
+ * caller that has not learned about lov yet goes down this path.
+ *
+ * `gradeLevel` is the grade being asked about. A closure with no grade span
+ * applies to it whatever it is; a closure with one applies only if the grade
+ * falls inside. Null or omitted means "no particular grade", which no span
+ * reaches (see closesForGrade).
+ *
+ * THIS IS AN ESTIMATE AND THE IMPRECISION CANNOT BE ENGINEERED AWAY. A
+ * requirement carries lessonsPerWeek, not weekdays — the weekday only comes into
+ * existence when a Lesson is placed — so this cannot know whether the studiedag
+ * fell on a day this requirement was taught or on one it never used. Weighting
+ * by the fraction of the week is right in aggregate over a term and wrong for
+ * any single week. Two things were rejected here: reading the placed lessons
+ * (they do not exist yet when a rektor checks a timplan, which is the whole
+ * point of the check), and rounding weeks to whole numbers (it would move the
+ * error from a fifth of a week to a whole one, in an unpredictable direction).
+ *
+ * Fractions are summed as whole days and divided once at the end. Adding 0.8 to
+ * a running total forty times leaves the answer a few ulps off a number a test
+ * or a UI would write literally; 172/5 does not.
+ */
+export function teachingWeeks(
+  period: TeachingPeriod,
+  year: YearBounds,
+  closures?: ClosedRange[],
+  gradeLevel?: number | null,
+): number {
+  const window = clampToYear(period, year);
+  if (!window) return 0;
+
+  // Filtered once, before the walk: the grade question has the same answer in
+  // every week, and asking it per day would be O(weeks x 5 x closures).
+  const applicable = (closures ?? []).filter((closure) =>
+    closesForGrade(closure, gradeLevel),
+  );
+
+  let taughtDays = 0;
+  let weeks = 0;
+  for (const monday of mondaysBetween(window.from, window.to)) {
+    if (!teachesInWeek(window, monday)) continue;
+    weeks += 1;
+    taughtDays += TEACHING_DAYS_IN_WEEK - closedTeachingDays(monday, applicable, window);
+  }
+
+  // Short-circuited so the common no-closure call returns the exact integer
+  // weeksInPeriod would, rather than something that merely rounds to it.
+  if (applicable.length === 0) return weeks;
+  return taughtDays / TEACHING_DAYS_IN_WEEK;
 }
 
 /**
@@ -218,13 +434,27 @@ function load(value: number): number {
 /**
  * Total teaching minutes the requirement is worth across the academic year.
  *
- * weeks x lessons per week x minutes per lesson. Same caveat as weeksInPeriod:
- * these are calendar weeks, so the figure is an upper bound on real teaching
- * time, not the delivered time.
+ * weeks x lessons per week x minutes per lesson, where the weeks are
+ * teachingWeeks' weighted ones — hand it the year's lov and studiedagar and the
+ * figure stops counting them. Without `closures` it is the calendar-week
+ * overestimate it always was, unchanged to the minute.
+ *
+ * It counts weeks and not placed lessons by design, so it answers the timplan
+ * question ("is this subject planned for enough hours") before a single lesson
+ * has been scheduled. It is therefore planned time, never delivered time, and
+ * an estimate even as planned time — see teachingWeeks for exactly which part
+ * of it is a guess.
  */
-export function annualMinutes(req: RequirementLoad, year: YearBounds): number {
+export function annualMinutes(
+  req: RequirementLoad,
+  year: YearBounds,
+  closures?: ClosedRange[],
+  gradeLevel?: number | null,
+): number {
   return (
-    weeksInPeriod(req, year) * load(req.lessonsPerWeek) * load(req.minutesPerLesson)
+    teachingWeeks(req, year, closures, gradeLevel) *
+    load(req.lessonsPerWeek) *
+    load(req.minutesPerLesson)
   );
 }
 
@@ -335,7 +565,8 @@ export function peakLessonsPerWeekByKey<T extends RequirementLoad>(
  * Decimal comma, at most one decimal, and a whole number of hours drops the
  * decimal entirely rather than showing "58,0 h" — a timplan is quoted in whole
  * hours far more often than not, and the trailing zero reads as false
- * precision on a figure that already cannot see holidays.
+ * precision on a figure that is an estimate at requirement level however
+ * carefully the lov are subtracted (see teachingWeeks).
  *
  * Formatted by hand rather than through toLocaleString("sv-SE"): sv-SE groups
  * thousands with a non-breaking space, which is correct typography and a

@@ -22,6 +22,13 @@ export interface PublishResult {
    * was never written is invisible to the very process meant to cover it.
    */
   cancelled: number;
+  /**
+   * Lessons deliberately not written: already materialized, or on a day the
+   * class is not in school at all — a dated group closure, or a lov. They are
+   * one number because they have one meaning for the caller ("nothing to do
+   * here"), and no counter separates the reasons; a report that wants to know
+   * how many lessons a lov cost has to ask the breaks, not this.
+   */
   skipped: number;
   fromDate: string;
   toDate: string;
@@ -51,8 +58,12 @@ export interface PublishResult {
  * can, and then the loser's write surfaces as 409 through the standard Prisma
  * error mapping.
  *
- * Holidays: full-day `UNAVAILABLE` constraints on a student group with a
- * concrete `date` suppress materialization for that group on that day.
+ * Holidays: two independent sources, and neither ever writes anything — they
+ * only suppress. A full-day `UNAVAILABLE` constraint on a student group with a
+ * concrete `date` closes that one group's day. A `SchoolBreak` closes the day
+ * for the whole school, or for the span of years it names; it has no clock
+ * part at all, because a lov takes the day. Both are decided on the school's
+ * local calendar date, which is the unit this method walks in.
  */
 @Injectable()
 export class CalendarService {
@@ -175,10 +186,76 @@ export class CalendarService {
           else closuresByDate.set(key, [closure]);
         }
 
-        // The year of each class, for GRADE_LEVEL closures. Read only when such
-        // a closure exists at all, so an ordinary publish pays nothing for it.
+        /*
+         * Lov och studiedagar overlapping the window.
+         *
+         * A break is a named range belonging to the school rather than to a
+         * resource, which is exactly why it is a second query and not more
+         * rows in the one above: a constraint names ONE resource on ONE date
+         * and can say "åk 7 cannot be taught on the 26th", but nothing in
+         * `ConstraintResource` means "everybody", and a sportlov entered that
+         * way was a row per day per group.
+         *
+         * `kind` is not selected, and that is the point: HOLIDAY and STAFF_DAY
+         * suppress identically. What separates them is what the day MEANS for
+         * staff — a studiedag is a working day, a jullov is not — not whether
+         * anyone is taught, and nobody is taught on either. Do not add a branch
+         * on it here; the reports that count the two apart read the breaks.
+         */
+        const breaks = await tx.schoolBreak.findMany({
+          where: {
+            academicYearId: dto.academicYearId,
+            // Inclusive at both ends, so overlap is start<=windowEnd and
+            // end>=windowStart — not containment. A jullov that begins before
+            // the window still closes the days of it that fall inside.
+            startDate: { lte: parseUtcDate(toDate) },
+            endDate: { gte: parseUtcDate(fromDate) },
+          },
+          select: {
+            startDate: true,
+            endDate: true,
+            minGradeLevel: true,
+            maxGradeLevel: true,
+          },
+        });
+
+        /*
+         * Expanded onto local calendar days, clipped to the window.
+         *
+         * The dates are the unit the loop below walks in and the unit each
+         * `startsAt` is BUILT from, so a break and a lesson meet here as two
+         * "YYYY-MM-DD" strings and never as a range and an instant. Testing
+         * the instant against the range is the off-by-a-day this keeps out:
+         * 22:15Z on the 25th is a lesson at 00:15 on the 26th in Stockholm,
+         * and a lov starting the 26th has to take it. Same trap `coversTime`
+         * exists for, one level up.
+         *
+         * Expanding rather than scanning the ranges per date because a läsår
+         * holds a few dozen breaks against a couple of hundred dates, and the
+         * map keeps the shape of `closuresByDate` right above it.
+         */
+        const breakDays = new Map<string, typeof breaks>();
+        for (const entry of breaks) {
+          const from = maxDate(toDateString(entry.startDate), fromDate);
+          const to = minDate(toDateString(entry.endDate), toDate);
+          for (const date of iterateDates(from, to)) {
+            const list = breakDays.get(date);
+            if (list) list.push(entry);
+            else breakDays.set(date, [entry]);
+          }
+        }
+
+        // The year of each class, for GRADE_LEVEL closures and for breaks that
+        // narrow themselves to a span of years. Read only when something in the
+        // window actually asks the question, so an ordinary publish — no grade
+        // closures, a school-wide lov — still pays nothing for it.
         const gradeOfGroup = new Map<string, number | null>();
-        if (closures.some((closure) => closure.resourceType === 'GRADE_LEVEL')) {
+        if (
+          closures.some((closure) => closure.resourceType === 'GRADE_LEVEL') ||
+          breaks.some(
+            (entry) => entry.minGradeLevel !== null || entry.maxGradeLevel !== null,
+          )
+        ) {
           const groups = await tx.studentGroup.findMany({
             where: { academicYearId: dto.academicYearId },
             select: { id: true, gradeLevel: true },
@@ -207,6 +284,30 @@ export class CalendarService {
           return from.getTime() < endsAt.getTime() && startsAt.getTime() < to.getTime();
         };
 
+        /**
+         * Is this class inside the break — that is, off school that day?
+         *
+         * Both bounds null is the ordinary lov: the whole school, answered
+         * without asking any group about its year. A span narrows it to prao
+         * för åk 9 or a studiedag for the lower years, and then the group's own
+         * year has to sit inside it. A group that has no year — a nivågrupp
+         * drawn across several — cannot be shown to be inside, so its lesson
+         * survives: the same call the GRADE_LEVEL closure makes below, for the
+         * same reason, that erasing a lesson on a guess is the worse mistake.
+         */
+        const breakCoversGroup = (
+          entry: { minGradeLevel: number | null; maxGradeLevel: number | null },
+          studentGroupId: string,
+        ): boolean => {
+          if (entry.minGradeLevel === null && entry.maxGradeLevel === null) return true;
+          const grade = gradeOfGroup.get(studentGroupId);
+          if (typeof grade !== 'number') return false;
+          return (
+            (entry.minGradeLevel === null || grade >= entry.minGradeLevel) &&
+            (entry.maxGradeLevel === null || grade <= entry.maxGradeLevel)
+          );
+        };
+
         let created = 0;
         let cancelled = 0;
         let skipped = 0;
@@ -226,6 +327,22 @@ export class CalendarService {
             // First, always: an already-materialised row may carry attendance,
             // and rewriting it would rewrite what happened.
             if (existingKeys.has(`${template.id}:${date}`)) {
+              skipped++;
+              continue;
+            }
+
+            /*
+             * Then the lov, before anything is asked about teachers or rooms.
+             * The class is not in school, so there is no lesson to hold and
+             * nobody to cancel one for — the same answer, and the same reason,
+             * as a closed class below. It is asked here rather than down there
+             * because a break has no hours to compare against.
+             */
+            if (
+              (breakDays.get(date) ?? []).some((entry) =>
+                breakCoversGroup(entry, template.studentGroupId),
+              )
+            ) {
               skipped++;
               continue;
             }
@@ -391,6 +508,10 @@ function parseUtcDate(date: string): Date {
 
 function maxDate(a: string, b: string): string {
   return a > b ? a : b;
+}
+
+function minDate(a: string, b: string): string {
+  return a < b ? a : b;
 }
 
 function clampDate(value: string, min: string, max: string): string {

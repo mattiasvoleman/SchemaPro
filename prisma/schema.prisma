@@ -137,6 +137,7 @@ model School {
   calendarLessonTeachers  CalendarLessonTeacher[]
   attendanceRecords       AttendanceRecord[]
   availabilityConstraints AvailabilityConstraint[]
+  schoolBreaks            SchoolBreak[]
   scheduleChangeLogs      ScheduleChangeLog[]
   scheduleVersions        ScheduleVersion[]
   optimizationJobs        OptimizationJob[]
@@ -328,6 +329,7 @@ model AcademicYear {
   studentGroups        StudentGroup[]
   teachingRequirements TeachingRequirement[]
   masterLessons        MasterLesson[]
+  schoolBreaks         SchoolBreak[]
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -996,6 +998,59 @@ model AvailabilityConstraint {
   @@index([studentGroupId, dayOfWeek])
   @@index([date])
   @@map("AvailabilityConstraints")
+}
+
+/// Lov och studiedagar: whole days a school does not teach.
+///
+/// A dated `UNAVAILABLE` constraint could already say "this group cannot be
+/// taught on this date", and publish honoured it. What it could not say is
+/// "the school is closed all of week 9": a constraint names ONE resource on
+/// ONE date, so a sportlov meant a row per day per group, and a läsår's lov
+/// and studiedagar together ran past a thousand rows entered by hand. Nothing
+/// in `ConstraintResource` means "everybody" either.
+///
+/// So this is a named RANGE that belongs to the school rather than to a
+/// resource. Constraints keep doing what they are good at — one teacher away
+/// on a Tuesday, a room closed for two hours — and are untouched by this.
+enum BreakKind {
+  /// Höstlov, jullov, sportlov, påsklov: nobody is in the building.
+  HOLIDAY
+  /// Studiedag — pupils are off, staff are working. No lessons either way, but
+  /// a teacher's day is not free and a report that counts them apart needs to
+  /// know which it was.
+  STAFF_DAY
+}
+
+model SchoolBreak {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String    @db.Uuid
+  academicYearId String    @db.Uuid
+  /// What the school calls it — "Höstlov", "Studiedag", "Prao åk 9".
+  name           String
+  kind           BreakKind @default(HOLIDAY)
+  /// Inclusive at both ends, so a single day is startDate == endDate.
+  startDate      DateTime  @db.Date
+  endDate        DateTime  @db.Date
+  /// Narrows the break to a span of years, for the cases that are not
+  /// school-wide — prao for åk 9, a studiedag for the lower years. Both null
+  /// means the whole school, which is what a lov almost always is. Same shape
+  /// and same DB checks as AvailabilityConstraint's GRADE_LEVEL rows, because
+  /// a year is a property of a group's members and there is no row to point at.
+  minGradeLevel  Int?
+  maxGradeLevel  Int?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  /// Composite, for the same reason every other reference here is: a foreign
+  /// key check runs as the referenced table's owner with row security off, so
+  /// an id the caller cannot SELECT would still validate. The key is what makes
+  /// a break's school the school of its year.
+  academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@index([schoolId, academicYearId])
+  @@index([schoolId, startDate, endDate])
+  @@map("SchoolBreaks")
 }
 
 /// Lunch, and how many pupils the dining hall can seat at once.

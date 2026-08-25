@@ -17,6 +17,8 @@ import { TeachingRequirementsController } from './teaching-requirements.controll
 import { TeachingRequirementsService } from './teaching-requirements.service';
 import { AvailabilityConstraintsController } from './availability-constraints.controller';
 import { AvailabilityConstraintsService } from './availability-constraints.service';
+import { SchoolBreaksController } from './school-breaks.controller';
+import { SchoolBreaksService } from './school-breaks.service';
 
 /**
  * School catalog CRUD (admin-only). Reads happen directly against Supabase
@@ -34,6 +36,7 @@ import { AvailabilityConstraintsService } from './availability-constraints.servi
     StudentGroupsController,
     TeachingRequirementsController,
     AvailabilityConstraintsController,
+    SchoolBreaksController,
   ],
   providers: [
     RoomTypesService,
@@ -45,6 +48,7 @@ import { AvailabilityConstraintsService } from './availability-constraints.servi
     StudentGroupsService,
     TeachingRequirementsService,
     AvailabilityConstraintsService,
+    SchoolBreaksService,
   ],
 })
 export class ResourcesModule {}

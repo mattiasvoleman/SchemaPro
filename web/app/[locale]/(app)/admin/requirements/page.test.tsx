@@ -144,6 +144,44 @@ const SCHOOL_HOURS = "86 h";
 /** No week of the year holds more than one of the two alternating pairs. */
 const PEAK_LESSONS = 2;
 
+/**
+ * A lov as the page reads one — lib/teaching-hours.ts's ClosedRange plus the
+ * fields the row carries. Spelled out for the same reason RequirementFixture
+ * is: from a literal, `minGradeLevel: null` infers as the type `null` and a
+ * fixture that then narrows a break to a year span fails to compile.
+ */
+interface BreakFixture {
+  id: string;
+  academicYearId: string;
+  name: string;
+  kind: "HOLIDAY" | "STAFF_DAY";
+  startDate: string;
+  endDate: string;
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+}
+
+/**
+ * Höstlovet: Monday 2026-10-26 to Friday 2026-10-30, ISO week 44 — an EVEN
+ * week, which is what makes it visible in the fixture above. Slöjd runs even
+ * weeks, so it loses one of its 21 to this and is worth 20 * 2 * 60 = 2400 min
+ * = 40 h; SO runs odd weeks and is untouched at 44 h. 7A therefore reads 84 h
+ * with this lov and 86 h without, and the two are far enough apart that no
+ * rounding can confuse them.
+ */
+const HOSTLOV: BreakFixture = {
+  id: "b-host",
+  academicYearId: "y1",
+  name: "Höstlov",
+  kind: "HOLIDAY",
+  startDate: "2026-10-26",
+  endDate: "2026-10-30",
+  minGradeLevel: null,
+  maxGradeLevel: null,
+};
+
+const SEVEN_A_HOURS_AFTER_HOSTLOV = "84 h";
+
 interface QueryState<T> {
   data: T | undefined;
   isLoading: boolean;
@@ -198,6 +236,13 @@ const freshState = () => ({
   groups: loaded(groups),
   memberships: loaded([] as { studentGroupId: string }[]),
   requirements: loaded(requirements),
+  /**
+   * No lov by default, so every hour figure above keeps the arithmetic it was
+   * derived from. The lov tests set this themselves — and an empty list is the
+   * honest reading of "this school has entered none", which is what the page
+   * shows when the query has answered and held nothing.
+   */
+  breaks: loaded([] as BreakFixture[]),
   people: loaded([] as { id: string; email: string }[]),
   /**
    * Set only by the export tests, which are the ones that care WHICH year the
@@ -244,6 +289,7 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
     state.requirementsByYear
       ? loaded(state.requirementsByYear[yearId ?? ""] ?? [])
       : state.requirements,
+  useSchoolBreaks: () => state.breaks,
   useCrudMutations: () => ({
     create: { mutateAsync: createMock, isPending: false },
     update: { mutateAsync: updateMock, isPending: false },
@@ -604,6 +650,84 @@ describe("Timplan matrix", () => {
     expect(screen.getByLabelText("cellLabel(7A|Bild)").textContent).toBe("");
   });
 
+  it("takes the läsår's lov off the hours", () => {
+    // The figure this page was wrong about until SchoolBreak existed: every
+    // hour was counted on whole calendar weeks, lov included, which reads
+    // 8-10 weeks high across a Swedish läsår. Höstlovet is a full Mon-Fri week
+    // and it is an EVEN one, so Slöjd loses a week and SO does not — 44 + 40
+    // rather than 44 + 42.
+    state.breaks = loaded([HOSTLOV]);
+
+    render(<RequirementsPage />);
+
+    expect(hoursFor("7A")).toBe(SEVEN_A_HOURS_AFTER_HOSTLOV);
+    expect(screen.getByRole("status").textContent).toBe(
+      `summary(${PEAK_LESSONS}|${SEVEN_A_HOURS_AFTER_HOSTLOV})`,
+    );
+  });
+
+  it("does not let a lov drag the busiest week down", () => {
+    /*
+     * The other half, and the reason peakLessonsPerWeek takes no closures at
+     * all: a lov week holds no lessons, so subtracting it from the peak would
+     * answer "do these lessons fit in a week" with an average over the weeks
+     * they never had to fit in.
+     *
+     * The requirement is narrowed to the höstlov week and NOTHING else, which
+     * is what makes the test able to fail. With the ordinary all-year fixture a
+     * closure-aware peak still finds 2 in the other forty-two weeks, so the
+     * assertion held whether or not the closures reached the wrong function —
+     * it was the shape it was written to catch.
+     *
+     * 2026-10-26 is the Monday of the lov week and 2026-10-30 the Friday, so
+     * the period and the lov are the same five days. The right answer is still
+     * PEAK_LESSONS: those lessons had to fit in a week, and whether the week
+     * was later declared a lov does not change how full it was.
+     */
+    state.requirements = loaded([
+      { ...requirements[0], recurrence: "ALL_WEEKS", startDate: "2026-10-26", endDate: "2026-10-30" },
+    ]);
+    state.breaks = loaded([HOSTLOV]);
+
+    render(<RequirementsPage />);
+
+    expect(peakFor("7A")).toBe(String(PEAK_LESSONS));
+    // And the hours for that same requirement ARE zero, from the same render,
+    // so a closure list handed to neither function cannot pass both.
+    expect(hoursFor("7A")).toBe("0 h");
+  });
+
+  it("applies a year-narrowed lov to the classes inside the span and to no others", () => {
+    /*
+     * The reason the closures are applied per group rather than once to a
+     * total. Both groups here read the SAME requirement — two 60-minute
+     * lessons every week of the year, 43 weeks, 86 h — and the only thing that
+     * differs is which of them the lov reaches.
+     *
+     * 7A is årskurs 7 and inside the span, so it loses the week: 84 h. Ma71 is
+     * a teaching group with no årskurs of its own, which puts it inside no
+     * span at all (closesForGrade), so its year is untouched: 86 h. An
+     * implementation that ignores the span, or that passes a single gradeLevel
+     * for the whole page, gives the two rows the same number and fails.
+     */
+    const everyWeek = {
+      ...requirements[0],
+      recurrence: "ALL_WEEKS" as const,
+      lessonsPerWeek: 2,
+      minutesPerLesson: 60,
+    };
+    state.requirements = loaded([
+      { ...everyWeek, id: "r-7a", studentGroupId: "g-7a" },
+      { ...everyWeek, id: "r-ma71", subjectId: "s-bi", studentGroupId: "g-ma71" },
+    ]);
+    state.breaks = loaded([{ ...HOSTLOV, minGradeLevel: 7, maxGradeLevel: 7 }]);
+
+    render(<RequirementsPage />);
+
+    expect(hoursFor("7A")).toBe("84 h");
+    expect(hoursFor("Ma71")).toBe("86 h");
+  });
+
   it("paints the empty cell's plus at a contrast that can be seen", () => {
     // Measured from the tokens in app/globals.css, light / dark: the icon was
     // `text-muted-foreground/40`, and lucide inherits currentColor, so what
@@ -631,6 +755,24 @@ describe("Timplan matrix", () => {
 describe("Timplan while its data is still arriving", () => {
   it("shows no figures at all while the requirements are in flight", () => {
     state.requirements = pending();
+    render(<RequirementsPage />);
+
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(/\d+ h/)).toBeNull();
+    expect(document.querySelector(".animate-pulse")).not.toBeNull();
+  });
+
+  it("shows no hours until it knows which weeks are lov", () => {
+    /*
+     * The subtlest of the gates, and the only one whose failure is not a zero.
+     * `closures` is optional in lib/teaching-hours.ts and omitting it silently
+     * reproduces the pre-lov calendar-week figure — so a page that draws before
+     * the lov arrive prints 86 h under a caveat that promises 84 h, in the same
+     * weight as a measurement. There is nothing on screen to tell the two
+     * apart, which is why the skeleton has to cover this query too.
+     */
+    state.breaks = pending();
     render(<RequirementsPage />);
 
     expect(screen.queryByRole("table")).toBeNull();
@@ -686,6 +828,9 @@ describe("Timplan while its data is still arriving", () => {
     ["the groups", () => (state.groups = failed())],
     ["the memberships", () => (state.memberships = failed())],
     ["the subjects", () => (state.subjects = failed())],
+    // A dead lov query is the one that does not read as zero: it reads as the
+    // old overestimate, under a footnote now promising the lov are deducted.
+    ["the lov", () => (state.breaks = failed())],
   ])("prints no figure at all when %s could not be fetched", (_which, breakIt) => {
     breakIt();
 
@@ -793,10 +938,10 @@ describe("Timplan while its data is still arriving", () => {
   });
 
   it("keeps the hours footnote with the figure it qualifies", () => {
-    // The number is calendar weeks, lov included, and a rektor may well put it
-    // in a document. Deleting the caveat leaves a figure that reads more exact
-    // than it is, and the aria-describedby is how a screen reader hears the two
-    // together at all.
+    // A rektor may well put the number in a document. Deleting the caveat
+    // leaves a figure that reads more exact than it is, and the
+    // aria-describedby is how a screen reader hears the two together at all.
+    state.breaks = loaded([HOSTLOV]);
     render(<RequirementsPage />);
 
     const caveat = screen.getByText("hoursCaveat");
@@ -804,6 +949,26 @@ describe("Timplan while its data is still arriving", () => {
     expect(
       screen.getByRole("status").getAttribute("aria-describedby"),
     ).toBe("requirements-hours-caveat");
+  });
+
+  it("does not claim the lov are deducted when the school has entered none", () => {
+    /*
+     * The default state of the feature, and the one the whole change exists to
+     * stop lying about. With an empty admin/breaks nothing is deducted, so the
+     * figure is the old one — roughly 8-10 weeks high — and the footnote used
+     * to promise the deduction underneath it regardless. That is the same
+     * silent overstatement the lov model was built to remove, one layer up.
+     *
+     * Empty is not absent: `loading` and `failed` hold the whole table back, so
+     * reaching this text means the list arrived and held nothing.
+     */
+    state.breaks = loaded([]);
+    render(<RequirementsPage />);
+
+    expect(screen.getByText("hoursCaveatNoBreaks").id).toBe(
+      "requirements-hours-caveat",
+    );
+    expect(screen.queryByText("hoursCaveat")).toBeNull();
   });
 
   it("names the table for a reader who never sees the heading above it", () => {

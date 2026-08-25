@@ -24,6 +24,30 @@ export function parseDateString(date: string): Date {
 }
 
 /**
+ * The calendar day it is right now IN A SCHOOL'S TIMEZONE, as the UTC midnight
+ * that `@db.Date` columns store.
+ *
+ * `new Date()` with `setUTCHours(0,0,0,0)` gives the UTC day, and for an hour
+ * or two after local midnight that is YESTERDAY in Stockholm. Anywhere that
+ * compares it against a DATE column to mean "from today onwards" is then off by
+ * a day for that window — which is harmless when it merely widens a read, and
+ * is not harmless at all when it decides which lessons may be deleted: a day
+ * the school has already taught becomes deletable.
+ *
+ * Formatted through `en-CA`, whose short date format IS yyyy-mm-dd, so the
+ * parts do not have to be reassembled by hand.
+ */
+export function todayInZone(timeZone: string, now: Date = new Date()): Date {
+  const day = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+  return new Date(`${day}T00:00:00.000Z`);
+}
+
+/**
  * Converts a wall-clock time in a given IANA timezone to the corresponding
  * UTC instant. Used when materializing calendar lessons so "09:00" means
  * 09:00 in the school's timezone regardless of server locale.

@@ -394,5 +394,8 @@ jobs:
       # The app holds attendance for real children in an offline queue on a
       # tablet several teachers share, and a mistake there is invisible until
       # the register is already wrong. It went untested for far too long.
+      # Through the script, not `npx jest` directly: the script carries the
+      # `TZ=UTC` pin, and a date test that agrees with the runner's own zone
+      # compares a value to itself.
       - name: Unit tests
-        run: npx jest --coverage --ci
+        run: npm run test:cov -- --ci
