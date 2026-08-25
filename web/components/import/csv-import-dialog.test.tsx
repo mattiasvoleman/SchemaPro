@@ -93,6 +93,11 @@ const STUDENTS_CSV =
   "Alma;Berg;alma@example.com;7A\r\n" +
   "Nils;Ek;nils@example.com;7B\r\n";
 const TEACHERS_CSV = BOM + "fornamn;efternamn;epost\r\nKarin;Ek;karin.ek@example.com\r\n";
+// The timplan template's own columns, in its own order.
+const REQUIREMENTS_CSV =
+  BOM +
+  "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;medlarare;veckor;fran;till\r\n" +
+  "7A;MA;3;60;karin.ek@example.com;;udda;;\r\n";
 
 function renderDialog(props: Partial<CsvImportDialogProps> = {}) {
   const queryClient = new QueryClient({
@@ -431,6 +436,238 @@ describe("CsvImportDialog import", () => {
     ).toBeInTheDocument();
   });
 
+  /*
+   * Which läsår the rows land in.
+   *
+   * The dialog used to resolve that itself, always to the year carrying
+   * isActive. A page with a year picker then disagreed with its own import: an
+   * admin planning next autumn selected 2027/2028, saw and exported that year,
+   * and the import wrote into the year still flagged active — with no year
+   * named anywhere in the flow to give it away.
+   */
+  const NEXT_YEAR = {
+    id: "y-2",
+    name: "26/27",
+    startDate: "2026-08-17",
+    endDate: "2027-06-11",
+    isActive: false,
+  };
+
+  it("tells the API which columns the file had, so the rest are left alone", async () => {
+    /*
+     * The rows cannot say it themselves. They omit a key whose column is
+     * absent, but the API's ValidationPipe runs class-transformer, which
+     * materialises every declared property — so by the time the service reads
+     * the row the omission is gone, and "the file had no larare column" looks
+     * exactly like "the school emptied the cell". One means leave it, the other
+     * means clear it, and the import overwrites.
+     */
+    mockPost.mockResolvedValue({ created: 1, skipped: 0, updated: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["requirements"] });
+
+    await uploadCsv(
+      user,
+      BOM + "grupp;amne;lektioner_per_vecka;minuter_per_lektion\r\n7A;MA;3;60\r\n",
+      "timplan.csv",
+    );
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    const [, body] = mockPost.mock.calls[0] as [string, { columns: string[] }];
+    expect(body.columns).toEqual(["groupName", "subject", "lessonsPerWeek", "minutesPerLesson"]);
+  });
+
+  it("sends no columns key for a kind that only ever creates", async () => {
+    // Six of the seven kinds cannot overwrite anything, so there is nothing for
+    // a column set to protect — and the API validates with forbidNonWhitelisted,
+    // which would answer an unexpected key with a 400 rather than ignoring it.
+    mockPost.mockResolvedValue({ created: 2, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog();
+
+    await uploadCsv(user, STUDENTS_CSV);
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    const [, body] = mockPost.mock.calls[0] as [string, Record<string, unknown>];
+    expect(body).not.toHaveProperty("columns");
+  });
+
+  it("imports into the läsår the page is showing, not the active one", async () => {
+    supabaseState.years = [ACTIVE_YEAR, NEXT_YEAR];
+    mockPost.mockResolvedValue({ created: 1, skipped: 0, updated: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["requirements"], academicYearId: NEXT_YEAR.id });
+
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplan.csv");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    const [, body] = mockPost.mock.calls[0] as [string, { academicYearId: string }];
+    expect(body.academicYearId).toBe("y-2");
+  });
+
+  it("says which läsår it is importing into", async () => {
+    supabaseState.years = [ACTIVE_YEAR, NEXT_YEAR];
+    renderDialog({ kinds: ["requirements"], academicYearId: NEXT_YEAR.id });
+
+    expect(await screen.findByText("importingIntoYear(year=26/27)")).toBeTruthy();
+  });
+
+  it("still falls back to the active year for a page without a picker", async () => {
+    // The five other call sites pass no year and must keep working.
+    supabaseState.years = [ACTIVE_YEAR, NEXT_YEAR];
+    mockPost.mockResolvedValue({ created: 2, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog();
+
+    await uploadCsv(user, STUDENTS_CSV);
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    const [, body] = mockPost.mock.calls[0] as [string, { academicYearId: string }];
+    expect(body.academicYearId).toBe("y-1");
+  });
+
+  it("posts the timplan to /import/requirements with the läsår from the dialog", async () => {
+    // The year is the dialog's, never a column in the file: a läsår column
+    // would let one upload scatter rows across years the admin is not looking
+    // at. Same rule as teaching-group memberships.
+    mockPost.mockResolvedValue({ created: 1, updated: 0, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["requirements"] });
+
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplan.csv");
+    await screen.findByText("rowsReady(count=1)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await screen.findByText(/resultSummary/);
+    expect(mockPost).toHaveBeenCalledWith("/api/v1/import/requirements", {
+      academicYearId: "y-1",
+      // Every column the header carried, so the server can leave the ones it
+      // did not have exactly as they are.
+      columns: [
+        "groupName",
+        "subject",
+        "lessonsPerWeek",
+        "minutesPerLesson",
+        "teacherEmail",
+        "coTeacherEmail",
+        "recurrence",
+        "startDate",
+        "endDate",
+      ],
+      rows: [
+        {
+          groupName: "7A",
+          subject: "MA",
+          lessonsPerWeek: 3,
+          minutesPerLesson: 60,
+          teacherEmail: "karin.ek@example.com",
+          coTeacherEmail: null,
+          recurrence: "ODD_WEEKS",
+          startDate: null,
+          endDate: null,
+        },
+      ],
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The one kind that overwrites (IMPORT_UPDATES_ROWS)
+//
+// Everything here is driven off the DATA — a report that carries `updated`, a
+// kind flagged as updating — rather than off the kind's name, so the six
+// create-only kinds have to keep rendering exactly what they rendered before.
+// The last test in this block is what pins that half.
+// ---------------------------------------------------------------------------
+
+describe("CsvImportDialog for an import that updates", () => {
+  it("counts the rows it wrote over, separately from the ones it created", async () => {
+    mockPost.mockResolvedValue({ created: 1, updated: 4, skipped: 2, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["requirements"] });
+
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplan.csv");
+    await screen.findByText("rowsReady(count=1)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    expect(
+      await screen.findByText("resultSummaryUpdated(created=1|updated=4|skipped=2)"),
+    ).toBeInTheDocument();
+  });
+
+  it("still says so when it overwrote nothing this time", async () => {
+    // `report.updated === undefined` and not falsiness. A zero here is an
+    // import that COULD have overwritten and happened not to, which is a
+    // different statement from an import that cannot overwrite at all — and
+    // truthiness collapses the two, silently dropping the counter from the
+    // sentence exactly when a school re-uploads an unchanged file.
+    mockPost.mockResolvedValue({ created: 3, updated: 0, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["requirements"] });
+
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplan.csv");
+    await screen.findByText("rowsReady(count=1)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    expect(
+      await screen.findByText("resultSummaryUpdated(created=3|updated=0|skipped=0)"),
+    ).toBeInTheDocument();
+  });
+
+  it("warns that a row deleted from the file is not deleted from the timplan", async () => {
+    // The misreading this sentence exists to prevent: an import that updates
+    // looks like the file REPLACING what was there, so an admin who uploads
+    // only årskurs 7 concludes the rest is gone. It is not, and there is no
+    // undo to reach for either way — which is why it has to be said before the
+    // file is chosen and again on the result.
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["requirements"] });
+
+    expect(screen.getByText("updatesNotDeletes")).toBeInTheDocument();
+
+    mockPost.mockResolvedValue({ created: 1, updated: 0, skipped: 0, errors: [] });
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplan.csv");
+    await screen.findByText("rowsReady(count=1)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await screen.findByText(/resultSummaryUpdated/);
+    expect(screen.getByText("updatesNotDeletes")).toBeInTheDocument();
+  });
+
+  it("leaves the create-only kinds exactly as they were", async () => {
+    // The whole reason `updated` is optional. A student import neither
+    // overwrites nor warns, and a counter reading "0 uppdaterade" there would
+    // be a sentence about something that cannot happen.
+    mockPost.mockResolvedValue({ created: 2, skipped: 0, errors: [] });
+    const user = userEvent.setup();
+    renderDialog();
+
+    expect(screen.queryByText("updatesNotDeletes")).not.toBeInTheDocument();
+
+    await uploadCsv(user, STUDENTS_CSV);
+    await screen.findByText("rowsReady(count=2)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await screen.findByText("resultSummary(created=2|skipped=0)");
+    expect(screen.queryByText(/resultSummaryUpdated/)).not.toBeInTheDocument();
+    expect(screen.queryByText("updatesNotDeletes")).not.toBeInTheDocument();
+  });
+});
+
+describe("CsvImportDialog import failures", () => {
   it("stays on the form and keeps the parse when the POST fails", async () => {
     mockPost.mockRejectedValue(new Error("HTTP 429"));
     const user = userEvent.setup();

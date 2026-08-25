@@ -8,6 +8,7 @@ import {
   downloadTemplate,
   mapClassRows,
   mapMembershipRows,
+  mapRequirementRows,
   mapRoomTypeRows,
   mapSubjectRows,
   mapStudentRows,
@@ -19,6 +20,7 @@ import {
 } from "@/lib/csv";
 import {
   IMPORT_NEEDS_YEAR,
+  IMPORT_UPDATES_ROWS,
   useAcademicYears,
   useImportCsv,
   type ImportReport,
@@ -52,7 +54,16 @@ import {
 /** Parsed CSV -> typed rows + row-numbered errors, per import kind. */
 const MAPPERS: Record<
   ImportKind,
-  (parsed: ParsedCsv) => { rows: Array<Record<string, unknown>>; errors: RowError[] }
+  (parsed: ParsedCsv) => {
+    rows: Array<Record<string, unknown>>;
+    errors: RowError[];
+    /**
+     * Which columns the file had. Only a kind that UPDATES needs it — for the
+     * six create-only kinds an absent column cannot overwrite anything, so
+     * they do not report one.
+     */
+    columns?: string[];
+  }
 > = {
   students: mapStudentRows,
   teachers: mapTeacherRows,
@@ -60,6 +71,7 @@ const MAPPERS: Record<
   teachingGroups: mapMembershipRows,
   roomTypes: mapRoomTypeRows,
   subjects: mapSubjectRows,
+  requirements: mapRequirementRows,
 };
 
 const PREVIEW_ROWS = 5;
@@ -72,11 +84,28 @@ interface FilePreview {
   /** Typed rows ready to POST (invalid rows already excluded). */
   rows: Array<Record<string, unknown>>;
   errors: RowError[];
+  /** The file's own column set, where the mapper reports one. */
+  columns?: string[];
 }
 
 export interface CsvImportDialogProps {
   /** Which import kinds this page offers (first one is preselected). */
   kinds: ImportKind[];
+  /**
+   * The läsår to import into, for a page that lets one be picked.
+   *
+   * The dialog used to always resolve this itself, to whichever year carries
+   * `isActive`. That is right for a page with no year picker, and wrong for the
+   * timplan, which has one: an admin planning next autumn selects 2027/2028,
+   * sees that year's matrix, exports that year's file — and the import put it
+   * into 2026/2027, because that is the year still flagged active. Nothing on
+   * screen named a year, so there was nothing to notice.
+   *
+   * Omitted, the old behaviour stands, which is what the five year-less call
+   * sites want. Given, it wins outright rather than being a fallback: a page
+   * that knows which year it is showing is never the less reliable source.
+   */
+  academicYearId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
@@ -86,12 +115,26 @@ export interface CsvImportDialogProps {
  * a CSV file, review the parse (first rows + mapping errors), import, and read
  * the created/skipped/errors report. Parsing happens entirely in the browser
  * (web/lib/csv.ts); the API receives typed rows.
+ *
+ * A kind that OVERWRITES rather than skips (IMPORT_UPDATES_ROWS — the timplan,
+ * so far) says so in both halves of the flow, and the `updated` counter it
+ * answers with joins the summary. Both are driven off the data rather than off
+ * the kind name, so the six create-only kinds render byte for byte what they
+ * rendered before.
  */
-export function CsvImportDialog({ kinds, open, onOpenChange }: CsvImportDialogProps) {
+export function CsvImportDialog({
+  kinds,
+  academicYearId,
+  open,
+  onOpenChange,
+}: CsvImportDialogProps) {
   const t = useTranslations("csvImport");
   const tCommon = useTranslations("common");
   const { data: years } = useAcademicYears();
-  const activeYear = years?.find((year) => year.isActive) ?? null;
+  const targetYear =
+    (academicYearId !== undefined && academicYearId !== null
+      ? years?.find((year) => year.id === academicYearId)
+      : years?.find((year) => year.isActive)) ?? null;
   const importCsv = useImportCsv();
 
   const [kind, setKind] = useState<ImportKind>(kinds[0]);
@@ -129,17 +172,43 @@ export function CsvImportDialog({ kinds, open, onOpenChange }: CsvImportDialogPr
       previewRows: parsed.rows.slice(0, PREVIEW_ROWS),
       rows: mapped.rows,
       errors: mapped.errors,
+      ...(mapped.columns ? { columns: mapped.columns } : {}),
     });
   };
 
-  const missingYear = IMPORT_NEEDS_YEAR[kind] && activeYear === null;
+  const missingYear = IMPORT_NEEDS_YEAR[kind] && targetYear === null;
+
+  /**
+   * The sentence an admin has to read before they draw the wrong conclusion
+   * from a partial file.
+   *
+   * An import that updates looks, from the outside, like the file replacing
+   * what was there — so an admin who uploads a spreadsheet holding only
+   * årskurs 7 can reasonably read the result as "the rest is gone". Nothing
+   * was removed, and there is no undo to reach for either way; saying it in
+   * the code comment where the decision was made helps nobody standing in
+   * front of the dialog.
+   *
+   * Rendered before the file is chosen AND on the report, because the two are
+   * different worries: beforehand it is "what will this do to what I already
+   * entered", afterwards it is "did the rows I left out just disappear".
+   */
+  const overwriteNotice = IMPORT_UPDATES_ROWS[kind] ? (
+    // foreground on muted: 17.00:1 light, 13.19:1 dark — AAA both ways. The
+    // fill is what marks the box off; a border-token outline here would be a
+    // 1.15:1 line doing work the fill already does.
+    <p className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
+      {t("updatesNotDeletes")}
+    </p>
+  ) : null;
 
   const submit = async () => {
     if (!preview) return;
     try {
       const result = await importCsv.mutateAsync({
         kind,
-        ...(activeYear !== null ? { academicYearId: activeYear.id } : {}),
+        ...(targetYear !== null ? { academicYearId: targetYear.id } : {}),
+        ...(preview.columns ? { columns: preview.columns } : {}),
         rows: preview.rows,
       });
       setReport(result);
@@ -158,9 +227,28 @@ export function CsvImportDialog({ kinds, open, onOpenChange }: CsvImportDialogPr
         {report ? (
           <>
             <div className="space-y-3">
+              {/*
+                Two whole sentences rather than one with a clause appended when
+                the counter happens to be there: `updated` is absent for every
+                create-only kind, and a translator needs to see the sentence
+                they are translating rather than a fragment that may or may not
+                be glued on. `=== undefined`, not falsiness — a real zero
+                updated rows is still an import that could have overwritten and
+                must say so.
+              */}
               <p className="text-sm font-medium">
-                {t("resultSummary", { created: report.created, skipped: report.skipped })}
+                {report.updated === undefined
+                  ? t("resultSummary", {
+                      created: report.created,
+                      skipped: report.skipped,
+                    })
+                  : t("resultSummaryUpdated", {
+                      created: report.created,
+                      updated: report.updated,
+                      skipped: report.skipped,
+                    })}
               </p>
+              {overwriteNotice}
               {report.errors.length > 0 ? (
                 <div className="space-y-1">
                   <p className="text-sm font-medium text-destructive">{t("rowErrors")}</p>
@@ -207,6 +295,10 @@ export function CsvImportDialog({ kinds, open, onOpenChange }: CsvImportDialogPr
                 </div>
               </div>
 
+              {/* Above the file picker, so it is read before a file is picked
+                  and not discovered afterwards. */}
+              {overwriteNotice}
+
               <div className="space-y-2">
                 <Label htmlFor="csv-import-file">{t("chooseFile")}</Label>
                 <Input
@@ -220,6 +312,16 @@ export function CsvImportDialog({ kinds, open, onOpenChange }: CsvImportDialogPr
 
               {missingYear ? (
                 <p className="text-sm text-destructive">{t("noActiveYear")}</p>
+              ) : targetYear && IMPORT_NEEDS_YEAR[kind] ? (
+                /*
+                  The year the rows will land in, named on the way in.
+                  An import that writes into a year is a big enough thing to
+                  say out loud, and this is the only place in the flow a year
+                  appears at all — the report afterwards counts rows, not years.
+                */
+                <p className="text-sm text-muted-foreground">
+                  {t("importingIntoYear", { year: targetYear.name })}
+                </p>
               ) : null}
 
               {preview ? (

@@ -1,7 +1,20 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { downloadCsv } from "@/lib/csv";
 import RequirementsPage from "./page";
+
+// Radix needs these in jsdom to open a Select or a Dialog — environment, not
+// behaviour under test.
+Element.prototype.hasPointerCapture ??= () => false;
+Element.prototype.setPointerCapture ??= () => {};
+Element.prototype.releasePointerCapture ??= () => {};
+Element.prototype.scrollIntoView ??= () => {};
+globalThis.ResizeObserver ??= class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
 
 /**
  * The matrix has to stay legible while an admin scrolls a hundred groups.
@@ -185,6 +198,14 @@ const freshState = () => ({
   groups: loaded(groups),
   memberships: loaded([] as { studentGroupId: string }[]),
   requirements: loaded(requirements),
+  people: loaded([] as { id: string; email: string }[]),
+  /**
+   * Set only by the export tests, which are the ones that care WHICH year the
+   * page asked for. Left null everywhere else so `useRequirements` keeps
+   * answering `state.requirements` regardless of the argument, and none of the
+   * tests above have to grow a year they never mention.
+   */
+  requirementsByYear: null as Record<string, RequirementFixture[]> | null,
 });
 
 let state = freshState();
@@ -195,25 +216,53 @@ let state = freshState();
  * reference to — the whole submit path, including the null-versus-omitted
  * distinction the period depends on, ran unobserved.
  */
-const { createMock, updateMock, removeMock } = vi.hoisted(() => ({
+const { createMock, updateMock, removeMock, importMock } = vi.hoisted(() => ({
   createMock: vi.fn(),
   updateMock: vi.fn(),
   removeMock: vi.fn(),
+  importMock: vi.fn(),
 }));
 
-vi.mock("@/lib/queries", () => ({
+/**
+ * The hooks are replaced; everything else in the module is not.
+ *
+ * The import dialog this page mounts reads IMPORT_NEEDS_YEAR and
+ * IMPORT_UPDATES_ROWS out of the same module, and a hand-written stand-in for
+ * those two tables would be a second copy of the decision the page is here to
+ * prove — green in this file while the real one says the opposite.
+ */
+vi.mock("@/lib/queries", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/queries")>()),
   useAcademicYears: () => state.years,
   useSubjects: () => state.subjects,
   useGroups: () => state.groups,
-  usePeople: () => ({ data: [] }),
+  usePeople: () => state.people,
   useGroupMemberships: () => state.memberships,
-  useRequirements: () => state.requirements,
+  // Year-aware, so a test can prove the page asked for the year the picker is
+  // showing and not merely "some requirements".
+  useRequirements: (yearId: string | null) =>
+    state.requirementsByYear
+      ? loaded(state.requirementsByYear[yearId ?? ""] ?? [])
+      : state.requirements,
   useCrudMutations: () => ({
     create: { mutateAsync: createMock, isPending: false },
     update: { mutateAsync: updateMock, isPending: false },
     remove: { mutateAsync: removeMock, isPending: false },
   }),
+  // The dialog's own mutation, which needs a QueryClientProvider this page
+  // test does not set up. What it POSTs is csv-import-dialog.test.tsx's
+  // subject; here the dialog only has to open.
+  useImportCsv: () => ({ mutateAsync: importMock, isPending: false }),
 }));
+
+// The real requirementsToCsv runs — the file's CONTENTS are what the export
+// tests assert. Only the browser download is stubbed.
+vi.mock("@/lib/csv", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/csv")>()),
+  downloadCsv: vi.fn(),
+}));
+
+const mockDownloadCsv = downloadCsv as unknown as Mock;
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -241,6 +290,8 @@ beforeEach(() => {
   createMock.mockReset().mockResolvedValue(undefined);
   updateMock.mockReset().mockResolvedValue(undefined);
   removeMock.mockReset().mockResolvedValue(undefined);
+  importMock.mockReset().mockResolvedValue({ created: 0, skipped: 0, errors: [] });
+  mockDownloadCsv.mockReset();
 });
 
 describe("Timplan matrix", () => {
@@ -772,5 +823,198 @@ describe("Timplan while its data is still arriving", () => {
 
     expect(screen.getByText("noYear")).toBeTruthy();
     expect(document.querySelector(".animate-pulse")).toBeNull();
+  });
+});
+
+/**
+ * CSV in and out of the timplan.
+ *
+ * The export is the half with a way to be quietly wrong: the page holds every
+ * year's groups and the picker's own year, and a builder handed the wrong one
+ * writes a plausible file for a läsår nobody asked about. So the assertions
+ * read the FILE — the real requirementsToCsv runs, only the download is
+ * stubbed — rather than checking that a function was called.
+ */
+const NEXT_YEAR = {
+  id: "y2",
+  name: "2027/2028",
+  isActive: false,
+  startDate: "2027-08-16",
+  endDate: "2028-06-09",
+};
+
+/** A group that exists only in the second läsår, so the two files differ. */
+const NEXT_YEAR_GROUP = {
+  id: "g-8b",
+  academicYearId: "y2",
+  name: "8B",
+  kind: "CLASS",
+  gradeLevel: 8,
+};
+
+const NEXT_YEAR_REQUIREMENT: RequirementFixture = {
+  ...requirements[0],
+  id: "r-next",
+  academicYearId: "y2",
+  studentGroupId: "g-8b",
+  subjectId: "s-bi",
+  lessonsPerWeek: 1,
+  recurrence: "ALL_WEEKS",
+};
+
+/** Puts both läsår on the page, each with a timplan of its own. */
+const twoYears = () => {
+  state.years = loaded([year, NEXT_YEAR]);
+  state.groups = loaded([...groups, NEXT_YEAR_GROUP]);
+  state.requirementsByYear = { y1: requirements, y2: [NEXT_YEAR_REQUIREMENT] };
+};
+
+const exportButton = () => screen.getByRole("button", { name: "exportButton" });
+
+describe("Timplan CSV", () => {
+  it("has nothing to hand over when the timplan is empty", async () => {
+    // Not a disabled-for-the-sake-of-it button: the alternative is a file with
+    // a header row and no rows, downloaded without a word of explanation, and
+    // an admin who opens that in Excel concludes the export is broken rather
+    // than that the year they picked has no timplan.
+    state.requirements = loaded([]);
+    render(<RequirementsPage />);
+
+    expect(exportButton()).toBeDisabled();
+
+    // And it is the timplan that decides, not the page being empty in general:
+    // the groups and subjects are all still there.
+    expect(screen.getByRole("table")).toBeTruthy();
+  });
+
+  it("waits for the staff register before it will write a file", async () => {
+    // requirementsToCsv DROPS a row whose teacher the roster cannot name,
+    // rather than writing a blank teacher cell — blank means "no teacher" to
+    // the importer, and the import updates, so a blank would strip the teacher
+    // off a requirement that has one. While `usePeople` is in flight that
+    // silently empties the file of every requirement that has a teacher. The
+    // page deliberately does not hold the matrix back on people; the wait is
+    // paid on this button alone.
+    state.people = pending();
+    render(<RequirementsPage />);
+
+    expect(exportButton()).toBeDisabled();
+    // The matrix itself is not held back — that is the trade being made.
+    expect(screen.getByRole("table")).toBeTruthy();
+  });
+
+  it("exports the timplan of the year the picker is showing", async () => {
+    twoYears();
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+
+    // The active year first: 7A's two alternating requirements, no 8B.
+    await user.click(exportButton());
+    const [firstName, firstFile] = mockDownloadCsv.mock.calls[0] as [string, string];
+    expect(firstName).toBe("timplan.csv");
+    expect(firstFile).toContain("7A;SO;2;60;;;udda;;");
+    expect(firstFile).toContain("7A;SL;2;60;;;jamna;;");
+    expect(firstFile).not.toContain("8B");
+
+    // Move the picker to next autumn and ask again. The file has to follow —
+    // a builder reading the ACTIVE year, or every requirement the school has,
+    // both pass a test that only ever looks at the first download.
+    await user.click(screen.getByRole("combobox", { name: "yearLabel" }));
+    await user.click(screen.getByRole("option", { name: "2027/2028" }));
+
+    await user.click(exportButton());
+    const [, secondFile] = mockDownloadCsv.mock.calls[1] as [string, string];
+    expect(secondFile).toContain("8B;BI;1;60;;;alla;;");
+    expect(secondFile).not.toContain("7A");
+  });
+
+  it("names the year picker, now that it stands among buttons", () => {
+    // Its value is the year, so a trigger without a name announces as
+    // "2026/2027, combobox" — which of the three controls in that header is
+    // anybody's guess. The name is what makes it the year picker.
+    render(<RequirementsPage />);
+
+    expect(screen.getByRole("combobox", { name: "yearLabel" })).toBeTruthy();
+  });
+
+  it("opens the import dialog, offering the timplan and nothing else", async () => {
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "button" }));
+
+    const dialog = await screen.findByRole("dialog");
+    // Every other kind has a page of its own, and an import of elever launched
+    // from here would land somewhere the admin cannot see the result.
+    await user.click(within(dialog).getByRole("combobox", { name: "kindLabel" }));
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "kinds.requirements",
+    ]);
+  });
+
+  it.each([
+    ["people", () => (state.people = pending())],
+    ["subjects", () => (state.subjects = pending())],
+    ["groups", () => (state.groups = pending())],
+    ["requirements", () => (state.requirements = pending())],
+  ])("will not export a file while %s is still unknown", (_which, breakIt) => {
+    // requirementsToCsv drops any row whose group, subject or teacher it cannot
+    // name. A query that has not answered therefore does not produce a smaller
+    // file — it produces a plausible one that is missing most of the school,
+    // and nothing about it says so afterwards.
+    breakIt();
+
+    render(<RequirementsPage />);
+
+    // getByRole, not queryByRole with an if: a lookup that finds nothing has to
+    // fail here rather than quietly assert nothing.
+    expect(screen.getByRole("button", { name: "exportButton" })).toBeDisabled();
+  });
+
+  it("does export once every one of them has answered", () => {
+    // The other half. Without it the four above are satisfied by a button that
+    // is disabled always, which would be its own bug.
+    render(<RequirementsPage />);
+
+    expect(screen.getByRole("button", { name: "exportButton" })).toBeEnabled();
+  });
+
+  it("hands the dialog the läsår the page is showing", async () => {
+    /*
+     * The one place this can regress, and it was unpinned: the whole
+     * `academicYearId` prop could be deleted with every other test green.
+     *
+     * The fixture year is deliberately NOT flagged active here. The page falls
+     * back to the first year and draws its matrix; the dialog, left to itself,
+     * resolves the ACTIVE year and would find none — so it would tell an admin
+     * looking at a full timplan that there is no läsår to import into. With two
+     * years and a picker, the same disagreement is quieter and worse: the rows
+     * land in a year the admin never opened.
+     */
+    state.years = loaded([{ ...year, isActive: false }]);
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+
+    await user.click(screen.getByRole("button", { name: "button" }));
+
+    const dialog = await screen.findByRole("dialog");
+    // This file's translator mock joins values without their keys.
+    expect(within(dialog).getByText("importingIntoYear(2026/2027)")).toBeTruthy();
+    expect(within(dialog).queryByText("noActiveYear")).toBeNull();
+  });
+
+  it("says in the dialog that a row taken out of the file is not taken out of the timplan", async () => {
+    // The timplan is the only import that overwrites, which makes it the only
+    // one an admin can read as the file REPLACING what was there. Uploading a
+    // spreadsheet holding only årskurs 7 removes nothing, and there is no undo
+    // to reach for either way.
+    const user = userEvent.setup();
+    render(<RequirementsPage />);
+
+    await user.click(screen.getByRole("button", { name: "button" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("updatesNotDeletes")).toBeTruthy();
   });
 });

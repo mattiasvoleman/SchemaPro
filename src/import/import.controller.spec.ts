@@ -10,6 +10,7 @@ import type {
   ImportGroupsDto,
   ImportMembershipsDto,
   ImportReport,
+  ImportRequirementsDto,
   ImportStudentsDto,
   ImportTeachersDto,
 } from './dto/import.dto';
@@ -23,6 +24,7 @@ describe('ImportController', () => {
     importStudents: jest.Mock;
     importGroups: jest.Mock;
     importMemberships: jest.Mock;
+    importRequirements: jest.Mock;
   };
   let controller: ImportController;
   const user = testUser();
@@ -33,6 +35,7 @@ describe('ImportController', () => {
       importStudents: jest.fn().mockResolvedValue(REPORT),
       importGroups: jest.fn().mockResolvedValue(REPORT),
       importMemberships: jest.fn().mockResolvedValue(REPORT),
+      importRequirements: jest.fn().mockResolvedValue(REPORT),
     };
     controller = new ImportController(imports as unknown as ImportService);
   });
@@ -84,6 +87,28 @@ describe('ImportController', () => {
       expect(imports.importMemberships).toHaveBeenCalledWith(dto, user);
     });
 
+    it('importRequirements passes the DTO and the principal through unchanged', async () => {
+      const dto: ImportRequirementsDto = {
+        academicYearId: YEAR_ID,
+        rows: [
+          {
+            groupName: '7A',
+            subject: 'MA',
+            lessonsPerWeek: 3,
+            minutesPerLesson: 60,
+            teacherEmail: 'karin@example.com',
+            coTeacherEmail: null,
+            recurrence: 'ALL_WEEKS',
+            startDate: null,
+            endDate: null,
+          },
+        ],
+      };
+
+      await expect(controller.importRequirements(dto, user)).resolves.toEqual(REPORT);
+      expect(imports.importRequirements).toHaveBeenCalledWith(dto, user);
+    });
+
     it('propagates service failures instead of swallowing them', async () => {
       const boom = new Error('boom');
       imports.importStudents.mockRejectedValue(boom);
@@ -100,13 +125,15 @@ describe('ImportController', () => {
   // The decorators ARE the authorization and rate-limit model for these
   // routes — RolesGuard and ThrottlerGuard read this metadata at runtime.
   // Everything here is declared at CLASS level, so one dropped decorator
-  // would silently open all four bulk-import endpoints at once.
+  // would silently open every bulk-import endpoint at once — including the
+  // timplan route, the only one that can also OVERWRITE existing rows.
   describe('route metadata', () => {
     const handlers = [
       ImportController.prototype.importTeachers,
       ImportController.prototype.importStudents,
       ImportController.prototype.importGroups,
       ImportController.prototype.importMemberships,
+      ImportController.prototype.importRequirements,
     ];
 
     it('guards the whole controller with JwtAuthGuard + RolesGuard', () => {

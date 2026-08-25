@@ -33,6 +33,43 @@ describe("importCsvInBatches", () => {
     post.mockResolvedValue({ created: 0, skipped: 0, errors: [] });
   });
 
+  it("sums updated across batches too, not just created and skipped", async () => {
+    // The timplan is the only kind that reports `updated`, and it is also the
+    // kind most likely to need more than one batch. Summing it was written and
+    // never exercised: an overwrite instead of a sum reported the LAST batch's
+    // count as the whole file's.
+    post.mockResolvedValue({ created: 1, updated: 2, skipped: 3, errors: [] });
+
+    const report = await importCsvInBatches({
+      kind: "requirements",
+      academicYearId: YEAR,
+      columns: ["groupName", "subject"],
+      rows: Array.from({ length: 2500 }, (_, i) => ({ groupName: `G${i}`, subject: "MA" })),
+    });
+
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(report).toMatchObject({ created: 3, updated: 6, skipped: 9 });
+  });
+
+  it("carries the file's column set on every batch", async () => {
+    // Each batch is validated on its own, so a column set sent only with the
+    // first one would let batches two onward clear the fields it protects.
+    post.mockResolvedValue({ created: 0, updated: 0, skipped: 0, errors: [] });
+
+    await importCsvInBatches({
+      kind: "requirements",
+      academicYearId: YEAR,
+      columns: ["groupName", "subject", "lessonsPerWeek", "minutesPerLesson"],
+      rows: Array.from({ length: 2500 }, (_, i) => ({ groupName: `G${i}`, subject: "MA" })),
+    });
+
+    const sent = post.mock.calls.map(([, body]) => (body as { columns?: string[] }).columns);
+    expect(sent).toHaveLength(3);
+    for (const columns of sent) {
+      expect(columns).toEqual(["groupName", "subject", "lessonsPerWeek", "minutesPerLesson"]);
+    }
+  });
+
   it("mirrors the row caps the API DTOs declare", () => {
     expect(IMPORT_MAX_ROWS).toEqual({
       subjects: 500,
@@ -41,6 +78,7 @@ describe("importCsvInBatches", () => {
       classes: 500,
       teachingGroups: 2000,
       roomTypes: 200,
+      requirements: 1000,
     });
   });
 

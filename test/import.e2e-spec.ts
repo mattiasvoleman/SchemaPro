@@ -118,6 +118,121 @@ describe('CSV import (e2e)', () => {
         .expect(201);
     });
 
+    it('imports a timplan, creating the new row and updating the changed one', async () => {
+      // The timplan is the one kind that overwrites: a school edits the file
+      // and uploads it again, so row 1 below has to land as an UPDATE of the
+      // requirement already stored, not as a skip.
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([
+        { id: GROUP_ID, name: '7A' },
+      ]);
+      harness.tx['subject']!['findMany']!.mockResolvedValue([
+        { id: 'sub-ma', name: 'Matematik', code: 'MA' },
+        { id: 'sub-sv', name: 'Svenska', code: 'SV' },
+      ]);
+      harness.tx['user']!['findMany']!.mockResolvedValue([
+        { id: 'u-karin', email: 'karin.ek@example.com' },
+      ]);
+      harness.tx['academicYear']!['findUnique']!.mockResolvedValue({
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+      });
+      harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+        {
+          id: 'req-1',
+          studentGroupId: GROUP_ID,
+          subjectId: 'sub-ma',
+          teacherId: null,
+          coTeacherId: null,
+          lessonsPerWeek: 3,
+          minutesPerLesson: 60,
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+        },
+      ]);
+      harness.tx['teachingRequirement']!['create']!.mockResolvedValue({ id: 'req-2' });
+      harness.tx['teachingRequirement']!['update']!.mockResolvedValue({ id: 'req-1' });
+
+      const response = await post(harness, 'requirements')
+        .send({
+          academicYearId: YEAR_ID,
+          rows: [
+            {
+              groupName: '7A',
+              subject: 'MA', // by code
+              lessonsPerWeek: 4, // was 3
+              minutesPerLesson: 60,
+              teacherEmail: 'karin.ek@example.com',
+              coTeacherEmail: null,
+              recurrence: 'ALL_WEEKS',
+              startDate: null,
+              endDate: null,
+            },
+            {
+              groupName: '7A',
+              subject: 'Svenska', // by name
+              lessonsPerWeek: 3,
+              minutesPerLesson: 45,
+              teacherEmail: null,
+              coTeacherEmail: null,
+              recurrence: 'ODD_WEEKS',
+              startDate: '2026-09-01',
+              endDate: '2026-12-20',
+            },
+          ],
+        })
+        .expect(201);
+
+      expect(response.body).toEqual({
+        created: 1,
+        updated: 1,
+        skipped: 0,
+        errors: [],
+      });
+      const created = harness.tx['teachingRequirement']!['create']!.mock
+        .calls[0]?.[0] as { data: { schoolId: string; subjectId: string } };
+      expect(created.data.schoolId).toBe(SCHOOL_ID);
+      expect(created.data.subjectId).toBe('sub-sv');
+    });
+
+    it('reports an unknown group as a row error and imports the rest of the file', async () => {
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([
+        { id: GROUP_ID, name: '7A' },
+      ]);
+      harness.tx['subject']!['findMany']!.mockResolvedValue([
+        { id: 'sub-ma', name: 'Matematik', code: 'MA' },
+      ]);
+      harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([]);
+      harness.tx['teachingRequirement']!['create']!.mockResolvedValue({ id: 'req-1' });
+
+      const requirement = (groupName: string) => ({
+        groupName,
+        subject: 'MA',
+        lessonsPerWeek: 3,
+        minutesPerLesson: 60,
+        teacherEmail: null,
+        coTeacherEmail: null,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+      });
+
+      const response = await post(harness, 'requirements')
+        .send({
+          academicYearId: YEAR_ID,
+          rows: [requirement('9Z'), requirement('7A')],
+        })
+        .expect(201);
+
+      expect(response.body).toMatchObject({ created: 1, updated: 0 });
+      expect(response.body.errors).toEqual([
+        { row: 1, message: expect.stringContaining('"9Z"') },
+      ]);
+      // A timplan points at groups; it does not declare them, so a typo must
+      // not leave the school with an empty phantom group.
+      expect(harness.tx['studentGroup']!['create']).not.toHaveBeenCalled();
+    });
+
     it('imports subjects, resolving the room type by name', async () => {
       harness.tx['subject']!['findMany']!.mockResolvedValue([]);
       harness.tx['roomType']!['findMany']!.mockResolvedValue([
@@ -220,6 +335,111 @@ describe('CSV import (e2e)', () => {
         .expect(400);
     });
 
+    it('rejects a recurrence that is not one of the three the enum has', async () => {
+      const response = await post(harness, 'requirements')
+        .send({
+          academicYearId: YEAR_ID,
+          rows: [
+            {
+              groupName: '7A',
+              subject: 'MA',
+              lessonsPerWeek: 3,
+              minutesPerLesson: 60,
+              recurrence: 'udda', // the Swedish the FILE carries; csv.ts folds it
+            },
+          ],
+        })
+        .expect(400);
+
+      expect(JSON.stringify(response.body)).toContain('recurrence');
+    });
+
+    it('rejects a period date that is shaped right but does not exist', async () => {
+      // 2026-02-30 passes /^\d{4}-\d{2}-\d{2}$/ and rolls over to 2026-03-02
+      // in every JavaScript parser downstream — see is-calendar-date.ts.
+      const response = await post(harness, 'requirements')
+        .send({
+          academicYearId: YEAR_ID,
+          rows: [
+            {
+              groupName: '7A',
+              subject: 'MA',
+              lessonsPerWeek: 3,
+              minutesPerLesson: 60,
+              recurrence: 'ALL_WEEKS',
+              startDate: '2026-02-30',
+            },
+          ],
+        })
+        .expect(400);
+
+      expect(JSON.stringify(response.body)).toContain('startDate');
+    });
+
+    /*
+     * The wire contract for the column set, both directions.
+     *
+     * The client reports the WHOLE header, because that is what "which columns
+     * the file had" means. Narrowing the DTO to the five columns the server
+     * actually consults was tried, and it turned an honest four-column upload
+     * into a 400 — caught by a client test asserting the request body, which is
+     * the only place the two halves meet. This pins it where they meet for
+     * real.
+     */
+    it('accepts every column name the client can report', async () => {
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([]);
+      harness.tx['subject']!['findMany']!.mockResolvedValue([]);
+      harness.tx['user']!['findMany']!.mockResolvedValue([]);
+      harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([]);
+      harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+
+      await post(harness, 'requirements')
+        .send({
+          academicYearId: YEAR_ID,
+          columns: [
+            'groupName',
+            'subject',
+            'lessonsPerWeek',
+            'minutesPerLesson',
+            'teacherEmail',
+            'coTeacherEmail',
+            'recurrence',
+            'startDate',
+            'endDate',
+          ],
+          rows: [
+            {
+              groupName: '7A',
+              subject: 'MA',
+              lessonsPerWeek: 3,
+              minutesPerLesson: 60,
+              recurrence: 'ALL_WEEKS',
+            },
+          ],
+        })
+        .expect(201);
+    });
+
+    it('refuses a column name that is not a column', async () => {
+      const response = await post(harness, 'requirements')
+        .send({
+          academicYearId: YEAR_ID,
+          columns: ['groupName', 'teacherName'],
+          rows: [
+            {
+              groupName: '7A',
+              subject: 'MA',
+              lessonsPerWeek: 3,
+              minutesPerLesson: 60,
+              recurrence: 'ALL_WEEKS',
+            },
+          ],
+        })
+        .expect(400);
+
+      expect(JSON.stringify(response.body)).toContain('columns');
+    });
+
     it('never lets a body carry the tenant id', async () => {
       await post(harness, 'teachers')
         .send({
@@ -241,6 +461,7 @@ describe('CSV import (e2e)', () => {
           'groups',
           'room-types',
           'group-members',
+          'requirements',
         ]) {
           await request(harness.app.getHttpServer())
             .post(`/api/v1/import/${path}`)

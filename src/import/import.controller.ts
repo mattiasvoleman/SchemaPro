@@ -10,6 +10,7 @@ import { ImportService } from './import.service';
 import {
   ImportGroupsDto,
   ImportMembershipsDto,
+  ImportRequirementsDto,
   ImportRoomTypesDto,
   ImportSubjectsDto,
   ImportStudentsDto,
@@ -63,5 +64,14 @@ export class ImportController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.imports.importMemberships(dto, user);
+  }
+
+  /** The only route here that also updates existing rows — see the service. */
+  @Post('requirements')
+  importRequirements(
+    @Body() dto: ImportRequirementsDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.imports.importRequirements(dto, user);
   }
 }

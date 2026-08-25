@@ -65,6 +65,35 @@
 // clears both by a margin. Anything past that is the muted-foreground token
 // itself, which is the palette-wide question the paragraph below already flags.
 //
+// The header gained an export button, an import button and a named year
+// picker, and the import dialog gained the sentence saying an import never
+// deletes. Recomputed the same way rather than assumed from the rows above:
+//
+//   foreground on background        18.69 / 16.36   AAA — both button labels
+//   accent-fg on accent (:hover)     9.79 /  7.33   AAA — either one hovered
+//   foreground on muted             17.00 / 13.19   AAA — the dialog's notice
+//   foreground/50 on background      3.49 /  4.65   see below — export at rest
+//                                                   with nothing to export
+//
+// `variant="outline"` paints `bg-background` and inherits `foreground`, so the
+// labels land on the first row and their hover on the second — the same two
+// numbers the filled cell already uses, because `accent` is an opaque token
+// and the button does not blend it. The dialog's notice is `text-foreground`
+// on `bg-muted`; a `border-border` outline around it was dropped rather than
+// added, because that line measures 1.15:1 on the fill and the fill already
+// marks the box off, so it would have been a graphical object below 3:1 doing
+// no work.
+//
+// The last row is the disabled export button, and it does NOT clear 4.5:1 in
+// light. It is `disabled:opacity-50` from components/ui/button.tsx, which
+// blends the label to #89898b on white. WCAG 2.1 exempts an inactive control
+// from 1.4.3 and 1.4.11 outright, and the greying IS the affordance — a
+// disabled button at full strength is a button people click. Left as it is
+// because moving it means changing `disabled:opacity-50` for every disabled
+// button in the product, which is the same palette-wide question as the
+// paragraph below; noted here so the next reader does not have to measure it
+// again to find that out.
+//
 // Left alone, and worth raising on its own: three pieces of text this page did
 // not gain today are still `muted-foreground` — the "Klass" heading and the
 // member count on card (4.83 / 6.17) and the section headings on muted (4.40 /
@@ -76,7 +105,7 @@ import { Fragment, useMemo, useState } from "react";
 import { splitGroupsByKind } from "@/lib/group-sections";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Grid3x3, Plus, TriangleAlert } from "lucide-react";
+import { Grid3x3, Plus, TriangleAlert, Upload } from "lucide-react";
 import {
   useAcademicYears,
   useCrudMutations,
@@ -86,6 +115,9 @@ import {
   useRequirements,
   useSubjects,
 } from "@/lib/queries";
+import { requirementsToCsv } from "@/lib/csv";
+import { CsvExportButton } from "@/components/import/csv-export-button";
+import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import {
   annualMinutes,
   formatHours,
@@ -147,6 +179,7 @@ export default function RequirementsPage() {
   // because the master timetable said "udda veckor" first and a requirement
   // that means the same thing must not be given a second wording here.
   const tTimetable = useTranslations("timetable");
+  const tCsvImport = useTranslations("csvImport");
   const {
     data: years,
     isLoading: yearsLoading,
@@ -251,6 +284,7 @@ export default function RequirementsPage() {
     endDate?: string | null;
   }>("/api/v1/teaching-requirements", [["requirements", activeYearId ?? ""]]);
 
+  const [importOpen, setImportOpen] = useState(false);
   const [cell, setCell] = useState<CellTarget | null>(null);
   const [form, setForm] = useState<CellForm>({
     lessonsPerWeek: "2",
@@ -472,29 +506,89 @@ export default function RequirementsPage() {
   const subjectOf = (id: string) => subjects?.find((subject) => subject.id === id);
   const groupOf = (id: string) => yearGroups.find((group) => group.id === id);
 
+  /**
+   * The timplan on screen, as the file the importer reads back.
+   *
+   * `requirements` is already the picked year's — `useRequirements(activeYearId)`
+   * is keyed on it — so the export follows the year picker without filtering
+   * anything a second time. An admin who switches to next autumn and exports
+   * gets next autumn, which is the only reading of the button that is not a
+   * trap.
+   *
+   * The groups handed over are `yearGroups` rather than every group the school
+   * has: two läsår may both own a "7A", and the id-to-name map would then be
+   * built from whichever came last in the list.
+   */
+  const exportCsv = () =>
+    requirementsToCsv(requirements ?? [], yearGroups, subjects ?? [], people ?? []);
+
+  /**
+   * Nothing to export is one reason to disable the button. An unanswered
+   * `usePeople` is the other, and it is not the same thing at all: a teacher
+   * the roster cannot name makes requirementsToCsv DROP the row rather than
+   * write a blank teacher cell (a blank means "no teacher" to the importer,
+   * and the import updates). While the roster is in flight that silently
+   * empties the file of every requirement that has a teacher — a plausible
+   * looking CSV missing most of the school. This page deliberately does not
+   * hold the matrix back on `people` (see the loading gate above), so the wait
+   * is paid here, on the one control that cannot survive it.
+   */
+  const exportEmpty =
+    (requirements ?? []).length === 0 ||
+    people === undefined ||
+    // Same argument as `people`, for the two lookups a row cannot be written
+    // without: requirementsToCsv skips any row whose group or subject it cannot
+    // name, so a subjects query that failed or has not answered turns the whole
+    // export into a header line with nothing under it — a file that looks like
+    // a school with an empty timplan rather than like a page that did not
+    // finish loading.
+    subjects === undefined ||
+    groups === undefined;
+
   return (
     <div>
       <PageHeader
         title={t("title")}
         subtitle={t("subtitle")}
         actions={
-          years && years.length > 0 ? (
-            <Select
-              value={activeYearId ?? undefined}
-              onValueChange={(value) => setSelectedYearId(value)}
-            >
-              <SelectTrigger className="w-44">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {years.map((year) => (
-                  <SelectItem key={year.id} value={year.id}>
-                    {year.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null
+          <>
+            {years && years.length > 0 ? (
+              <Select
+                value={activeYearId ?? undefined}
+                onValueChange={(value) => setSelectedYearId(value)}
+              >
+                {/*
+                  The picker decides what every figure on the page means, and
+                  it sits among two buttons now rather than alone — a trigger
+                  announcing only "2026/2027" leaves a screen-reader user to
+                  guess which of the three controls they are on.
+                */}
+                <SelectTrigger className="w-44" aria-label={t("yearLabel")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {years.map((year) => (
+                    <SelectItem key={year.id} value={year.id}>
+                      {year.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
+            {/*
+              Export before import, as on admin/subjects and admin/groups. Both
+              carry their own text label, so neither needs an aria-label — an
+              icon-only button here would be the third unnamed control in a
+              row.
+            */}
+            <CsvExportButton
+              exports={[{ kind: "requirements", build: exportCsv, empty: exportEmpty }]}
+            />
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload />
+              {tCsvImport("button")}
+            </Button>
+          </>
         }
       />
 
@@ -797,6 +891,21 @@ export default function RequirementsPage() {
           </div>
         </>
       )}
+
+      {/*
+        Only the timplan, though the dialog can offer a list: every other kind
+        has a page of its own, and an import of elever launched from here would
+        land somewhere the admin cannot see the result.
+      */}
+      <CsvImportDialog
+        kinds={["requirements"]}
+        // The year the matrix, the hours and the export are all showing. Left
+        // to itself the dialog would find the ACTIVE year instead, which is a
+        // different year the moment someone plans ahead.
+        academicYearId={activeYearId}
+        open={importOpen}
+        onOpenChange={setImportOpen}
+      />
 
       <Dialog open={cell !== null} onOpenChange={(open) => !open && setCell(null)}>
         <DialogContent>

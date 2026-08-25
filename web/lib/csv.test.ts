@@ -12,10 +12,12 @@ import {
   CSV_TEMPLATES,
   mapClassRows,
   mapMembershipRows,
+  mapRequirementRows,
   mapRoomTypeRows,
   mapSubjectRows,
   classesToCsv,
   membershipsToCsv,
+  requirementsToCsv,
   roomTypesToCsv,
   studentsToCsv,
   teachersToCsv,
@@ -316,7 +318,13 @@ describe("parseCsv — row shape", () => {
 // templateCsvContent
 // ---------------------------------------------------------------------------
 
-const ALL_KINDS: ImportKind[] = ["students", "teachers", "classes", "teachingGroups"];
+const ALL_KINDS: ImportKind[] = [
+  "students",
+  "teachers",
+  "classes",
+  "teachingGroups",
+  "requirements",
+];
 
 describe("templateCsvContent", () => {
   it.each(ALL_KINDS)("%s: starts with the UTF-8 BOM", (kind) => {
@@ -873,6 +881,585 @@ describe("subjects", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Teaching requirements (timplanen)
+// ---------------------------------------------------------------------------
+
+describe("teaching requirements", () => {
+  const HEAD =
+    "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;medlarare;veckor;fran;till\r\n";
+
+  /** A minimal well-formed file with one data row, per-cell overridable. */
+  const oneRow = (cells: Partial<Record<number, string>> = {}) => {
+    const row = ["7A", "MA", "3", "60", "", "", "", "", ""];
+    for (const [index, value] of Object.entries(cells)) row[Number(index)] = value!;
+    return HEAD + row.join(";") + "\r\n";
+  };
+
+  /*
+   * The whole file, not one request's worth.
+   *
+   * The API refuses a duplicate per REQUEST, and importCsvInBatches cuts the
+   * file into requests. A pair either side of that cut passes both halves and
+   * the second row silently overwrites the first, because the import upserts:
+   * nothing errors, nothing is skipped, and one class ends up with the wrong
+   * number of lessons in a subject under a report that says every row landed.
+   */
+  const manyRows = (pairs: [string, string][]) =>
+    HEAD +
+    pairs.map(([group, subject]) => [group, subject, "3", "60", "", "", "", "", ""].join(";")).join("\r\n") +
+    "\r\n";
+
+  it("names both lines when the same class and subject appear twice", () => {
+    const { rows, errors } = mapRequirementRows(
+      parseCsv(manyRows([["7A", "MA"], ["7B", "MA"], ["7A", "MA"]])),
+    );
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.row).toBe(3);
+    expect(errors[0]?.message).toContain("rad 1");
+    // The first row stands and the second is dropped, so the file cannot be
+    // half-applied by whichever order the batches happen to arrive in.
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.groupName)).toEqual(["7A", "7B"]);
+  });
+
+  it("catches a duplicate further apart than a batch is long", () => {
+    // IMPORT_MAX_ROWS.requirements is 1000, and this pair straddles it — the
+    // exact case the API's per-request check cannot see.
+    const filler: [string, string][] = Array.from({ length: 1200 }, (_, i) => [
+      `Grupp${i}`,
+      "MA",
+    ]);
+    const { rows, errors } = mapRequirementRows(
+      parseCsv(manyRows([["7A", "MA"], ...filler, ["7A", "MA"]])),
+    );
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.row).toBe(1202);
+    expect(errors[0]?.message).toContain("rad 1");
+    expect(rows).toHaveLength(1201);
+  });
+
+  it("treats the pair case-insensitively, as the server does", () => {
+    const { rows, errors } = mapRequirementRows(
+      parseCsv(manyRows([["7a", "ma"], ["7A", "MA"]])),
+    );
+
+    expect(errors).toHaveLength(1);
+    expect(rows).toHaveLength(1);
+  });
+
+  it("lets the same subject stand for two different classes", () => {
+    // The guard must not fire on the ordinary shape of a timplan, where one
+    // subject appears once per class down the whole file.
+    const { rows, errors } = mapRequirementRows(
+      parseCsv(manyRows([["7A", "MA"], ["7B", "MA"], ["7C", "MA"], ["7A", "SV"]])),
+    );
+
+    expect(errors).toEqual([]);
+    expect(rows).toHaveLength(4);
+  });
+
+  /*
+   * Which columns the FILE had, reported separately from the rows.
+   *
+   * The rows already omit a key whose column is absent, and that omission does
+   * not survive the API: the ValidationPipe runs class-transformer, which
+   * materialises every declared property, so the service sees the key holding
+   * undefined — the same shape as a cell someone deliberately emptied. For an
+   * import that overwrites those mean opposite things, so the column set has to
+   * travel as data of its own.
+   */
+  it("reports every column the file carried", () => {
+    const { columns } = mapRequirementRows(parseCsv(oneRow()));
+
+    expect([...columns].sort()).toEqual([
+      "coTeacherEmail",
+      "endDate",
+      "groupName",
+      "lessonsPerWeek",
+      "minutesPerLesson",
+      "recurrence",
+      "startDate",
+      "subject",
+      "teacherEmail",
+    ]);
+  });
+
+  it("reports only the four required columns for a four-column file", () => {
+    // A school's own spreadsheet: the teachers and the terms were set in the
+    // app, not in Excel. Uploading it to fix a lesson count must not be read as
+    // an instruction to clear five fields.
+    const { rows, errors, columns } = mapRequirementRows(
+      parseCsv(
+        "grupp;amne;lektioner_per_vecka;minuter_per_lektion\r\n7A;MA;3;60\r\n",
+      ),
+    );
+
+    expect(errors).toEqual([]);
+    expect([...columns].sort()).toEqual([
+      "groupName",
+      "lessonsPerWeek",
+      "minutesPerLesson",
+      "subject",
+    ]);
+    // And the row leaves those keys out, which is the other half of the same
+    // statement — belt and braces, since only one of the two reaches the DB.
+    expect(rows[0]).not.toHaveProperty("teacherEmail");
+    expect(rows[0]).not.toHaveProperty("startDate");
+  });
+
+  it("reports no columns at all when the file is missing a required one", () => {
+    const { columns } = mapRequirementRows(
+      parseCsv("grupp;amne\r\n7A;MA\r\n"),
+    );
+
+    expect(columns).toEqual([]);
+  });
+
+  it("ships a template that maps back through its own mapper with zero errors", () => {
+    const { rows, errors } = mapRequirementRows(
+      parseCsv(templateCsvContent("requirements")),
+    );
+
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      {
+        groupName: "7A",
+        subject: "MA",
+        lessonsPerWeek: 3,
+        minutesPerLesson: 60,
+        teacherEmail: "karin.ek@example.com",
+        coTeacherEmail: null,
+        recurrence: "ALL_WEEKS",
+        startDate: null,
+        endDate: null,
+      },
+      {
+        groupName: "Sl71",
+        subject: "SLTX",
+        lessonsPerWeek: 1,
+        minutesPerLesson: 120,
+        teacherEmail: "karin.ek@example.com",
+        coTeacherEmail: "bo.alm@example.com",
+        recurrence: "ODD_WEEKS",
+        startDate: null,
+        endDate: null,
+      },
+      {
+        groupName: "7A",
+        subject: "SV",
+        lessonsPerWeek: 2,
+        minutesPerLesson: 45,
+        teacherEmail: null,
+        coTeacherEmail: null,
+        recurrence: "ALL_WEEKS",
+        startDate: "2026-01-12",
+        endDate: "2026-03-27",
+      },
+    ]);
+    expect(CSV_TEMPLATES.requirements.filename).toBe("timplan.csv");
+  });
+
+  it("names every missing required column at row 0", () => {
+    const result = mapRequirementRows(parseCsv("grupp;veckor\r\n7A;alla\r\n"));
+
+    expect(result.rows).toEqual([]);
+    expect(result.errors).toEqual([
+      {
+        row: 0,
+        message:
+          "Kolumner saknas: amne, lektioner_per_vecka, minuter_per_lektion. Ladda ner mallen och utgå från den.",
+      },
+    ]);
+  });
+
+  it("reports an empty grupp or amne cell with its row number", () => {
+    expect(mapRequirementRows(parseCsv(oneRow({ 0: "" }))).errors).toEqual([
+      { row: 1, message: 'Rad 1: kolumnen "grupp" är tom.' },
+    ]);
+    expect(mapRequirementRows(parseCsv(oneRow({ 1: "" }))).errors).toEqual([
+      { row: 1, message: 'Rad 1: kolumnen "amne" är tom.' },
+    ]);
+  });
+
+  it("takes the subject written as a code and as a name, verbatim either way", () => {
+    // The importer resolves both against the school's own list; the client
+    // must not guess which one it was handed.
+    const byCode = mapRequirementRows(parseCsv(oneRow({ 1: "SLTX" })));
+    const byName = mapRequirementRows(parseCsv(oneRow({ 1: "Textilslöjd" })));
+
+    expect(byCode.errors).toEqual([]);
+    expect(byName.errors).toEqual([]);
+    expect(byCode.rows[0]?.subject).toBe("SLTX");
+    expect(byName.rows[0]?.subject).toBe("Textilslöjd");
+  });
+
+  it("accepts the header spellings a school would actually use", () => {
+    const csv =
+      "Klass;Ämne;Lektioner/vecka;Lektionslängd;Lärare;Medlärare;Veckor;Fr.o.m.;T.o.m.\r\n" +
+      "7A;MA;3;60;karin@s.se;;jämna veckor;2026-01-12;2026-06-12\r\n";
+    const { rows, errors } = mapRequirementRows(parseCsv(csv));
+
+    expect(errors).toEqual([]);
+    expect(rows[0]).toEqual({
+      groupName: "7A",
+      subject: "MA",
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+      teacherEmail: "karin@s.se",
+      coTeacherEmail: null,
+      recurrence: "EVEN_WEEKS",
+      startDate: "2026-01-12",
+      endDate: "2026-06-12",
+    });
+  });
+
+  describe("veckor", () => {
+    const spellings: [string, string][] = [
+      ["", "ALL_WEEKS"],
+      ["alla", "ALL_WEEKS"],
+      ["Alla veckor", "ALL_WEEKS"],
+      ["varje vecka", "ALL_WEEKS"],
+      ["ALL_WEEKS", "ALL_WEEKS"],
+      ["udda", "ODD_WEEKS"],
+      ["Udda veckor", "ODD_WEEKS"],
+      ["ODD_WEEKS", "ODD_WEEKS"],
+      ["jamna", "EVEN_WEEKS"],
+      ["jämna", "EVEN_WEEKS"],
+      ["Jämna veckor", "EVEN_WEEKS"],
+      ["EVEN_WEEKS", "EVEN_WEEKS"],
+    ];
+
+    it.each(spellings)('reads "%s" as %s', (written, expected) => {
+      const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 6: written })));
+
+      expect(errors).toEqual([]);
+      expect(rows[0]?.recurrence).toBe(expected);
+    });
+
+    it("falls back to ALL_WEEKS when the column is absent entirely", () => {
+      const csv =
+        "grupp;amne;lektioner_per_vecka;minuter_per_lektion\r\n7A;MA;3;60\r\n";
+      const { rows, errors } = mapRequirementRows(parseCsv(csv));
+
+      expect(errors).toEqual([]);
+      expect(rows[0]?.recurrence).toBe("ALL_WEEKS");
+    });
+
+    it("says which words exist when it does not recognise one", () => {
+      const { rows, errors } = mapRequirementRows(
+        parseCsv(oneRow({ 6: "varannan vecka" })),
+      );
+
+      expect(rows).toEqual([]);
+      expect(errors).toEqual([
+        {
+          row: 1,
+          message:
+            'Rad 1: veckor "varannan vecka" känns inte igen. Skriv "alla", "udda" eller "jämna", eller lämna kolumnen tom.',
+        },
+      ]);
+    });
+  });
+
+  describe("numbers", () => {
+    it("accepts both ends of the API's own range", () => {
+      const low = mapRequirementRows(parseCsv(oneRow({ 2: "1", 3: "15" })));
+      const high = mapRequirementRows(parseCsv(oneRow({ 2: "40", 3: "240" })));
+
+      expect(low.errors).toEqual([]);
+      expect(high.errors).toEqual([]);
+      expect(low.rows[0]).toMatchObject({ lessonsPerWeek: 1, minutesPerLesson: 15 });
+      expect(high.rows[0]).toMatchObject({
+        lessonsPerWeek: 40,
+        minutesPerLesson: 240,
+      });
+    });
+
+    it.each(["0", "41", "2.5", "3,5", "abc", ""])(
+      'rejects lektioner_per_vecka "%s" here rather than as a 400 later',
+      (value) => {
+        const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 2: value })));
+
+        expect(rows).toEqual([]);
+        expect(errors).toEqual([
+          {
+            row: 1,
+            message: `Rad 1: lektioner_per_vecka "${value}" är inte ett heltal mellan 1 och 40.`,
+          },
+        ]);
+      },
+    );
+
+    it.each(["14", "241", "45.5", "en timme"])(
+      'rejects minuter_per_lektion "%s"',
+      (value) => {
+        const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 3: value })));
+
+        expect(rows).toEqual([]);
+        expect(errors).toEqual([
+          {
+            row: 1,
+            message: `Rad 1: minuter_per_lektion "${value}" är inte ett heltal mellan 15 och 240.`,
+          },
+        ]);
+      },
+    );
+  });
+
+  describe("dates", () => {
+    it("rejects a date that does not exist, exactly as the API would", () => {
+      // 2026-02-30 is shaped like a date; new Date() rolls it to 2026-03-02.
+      // Letting it through would start the period two days into March without
+      // anybody being told.
+      const { rows, errors } = mapRequirementRows(
+        parseCsv(oneRow({ 7: "2026-02-30" })),
+      );
+
+      expect(rows).toEqual([]);
+      expect(errors).toEqual([
+        {
+          row: 1,
+          message:
+            'Rad 1: fran "2026-02-30" är inte ett datum som finns. Skriv det som åååå-mm-dd.',
+        },
+      ]);
+    });
+
+    it.each(["2026-13-01", "12/01/2026", "2026-1-2", "2026-02-30T00:00:00Z"])(
+      'rejects "%s"',
+      (value) => {
+        expect(mapRequirementRows(parseCsv(oneRow({ 8: value }))).errors).toEqual([
+          {
+            row: 1,
+            message: `Rad 1: till "${value}" är inte ett datum som finns. Skriv det som åååå-mm-dd.`,
+          },
+        ]);
+      },
+    );
+
+    it("accepts a leap day that exists and rejects the one that does not", () => {
+      expect(mapRequirementRows(parseCsv(oneRow({ 7: "2028-02-29" }))).errors).toEqual(
+        [],
+      );
+      expect(mapRequirementRows(parseCsv(oneRow({ 7: "2027-02-29" }))).errors).toHaveLength(
+        1,
+      );
+    });
+
+    it("rejects a period that ends before it starts", () => {
+      const { rows, errors } = mapRequirementRows(
+        parseCsv(oneRow({ 7: "2026-06-12", 8: "2026-01-12" })),
+      );
+
+      expect(rows).toEqual([]);
+      expect(errors).toEqual([
+        {
+          row: 1,
+          message: 'Rad 1: fran "2026-06-12" ligger efter till "2026-01-12".',
+        },
+      ]);
+    });
+
+    it("accepts a one-day period (from equal to till)", () => {
+      const { errors } = mapRequirementRows(
+        parseCsv(oneRow({ 7: "2026-01-12", 8: "2026-01-12" })),
+      );
+
+      expect(errors).toEqual([]);
+    });
+  });
+
+  describe("empty cell versus absent column", () => {
+    // The import UPDATES rows it recognises. null clears the teacher; leaving
+    // the key out leaves the requirement's own teacher alone. A file without a
+    // larare column must therefore not read as "no teacher" for every row.
+    it("an empty cell in a column the file has means null — clear it", () => {
+      const { rows } = mapRequirementRows(parseCsv(oneRow()));
+
+      expect(rows[0]).toStrictEqual({
+        groupName: "7A",
+        subject: "MA",
+        lessonsPerWeek: 3,
+        minutesPerLesson: 60,
+        teacherEmail: null,
+        coTeacherEmail: null,
+        recurrence: "ALL_WEEKS",
+        startDate: null,
+        endDate: null,
+      });
+    });
+
+    it("an absent column leaves the key out of the posted row entirely", () => {
+      const csv =
+        "grupp;amne;lektioner_per_vecka;minuter_per_lektion;veckor\r\n7A;MA;3;60;udda\r\n";
+      const { rows } = mapRequirementRows(parseCsv(csv));
+
+      expect(rows[0]).toStrictEqual({
+        groupName: "7A",
+        subject: "MA",
+        lessonsPerWeek: 3,
+        minutesPerLesson: 60,
+        recurrence: "ODD_WEEKS",
+      });
+    });
+  });
+
+  describe("export", () => {
+    const groups = [
+      { id: "g-7a", name: "7A" },
+      { id: "g-sl", name: "Sl71" },
+    ];
+    const subjects = [
+      { id: "s-ma", name: "Matematik", code: "MA" },
+      { id: "s-sl", name: "Textilslöjd", code: null },
+      { id: "s-bl", name: "Bild", code: "   " },
+    ];
+    const people = [
+      { id: "t-karin", email: "karin@s.se" },
+      { id: "t-bo", email: "bo@s.se" },
+    ];
+    const requirement = (over: Partial<Parameters<typeof requirementsToCsv>[0][0]> = {}) => ({
+      studentGroupId: "g-7a",
+      subjectId: "s-ma",
+      teacherId: null,
+      coTeacherId: null,
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+      recurrence: "ALL_WEEKS" as const,
+      startDate: null,
+      endDate: null,
+      ...over,
+    });
+
+    const dataLines = (csv: string) => csv.trimEnd().split("\r\n").slice(1);
+
+    it("writes the subject as its code, and as its name when it has none", () => {
+      const csv = requirementsToCsv(
+        [
+          requirement(),
+          requirement({ subjectId: "s-sl" }),
+          requirement({ subjectId: "s-bl" }),
+        ],
+        groups,
+        subjects,
+        people,
+      );
+
+      expect(dataLines(csv)).toEqual([
+        "7A;MA;3;60;;;alla;;",
+        // A blank code is not a code: writing it would leave the ämne cell
+        // empty and the row unimportable.
+        "7A;Textilslöjd;3;60;;;alla;;",
+        "7A;Bild;3;60;;;alla;;",
+      ]);
+      expect(csv).not.toContain("s-ma");
+    });
+
+    it("writes teachers as e-mail addresses and never as ids", () => {
+      const csv = requirementsToCsv(
+        [requirement({ teacherId: "t-karin", coTeacherId: "t-bo" })],
+        groups,
+        subjects,
+        people,
+      );
+
+      expect(dataLines(csv)).toEqual(["7A;MA;3;60;karin@s.se;bo@s.se;alla;;"]);
+    });
+
+    it("writes the recurrence as the word the importer reads back", () => {
+      const csv = requirementsToCsv(
+        [
+          requirement({ recurrence: "ODD_WEEKS" }),
+          requirement({ recurrence: "EVEN_WEEKS" }),
+        ],
+        groups,
+        subjects,
+        people,
+      );
+
+      expect(dataLines(csv)).toEqual([
+        "7A;MA;3;60;;;udda;;",
+        "7A;MA;3;60;;;jamna;;",
+      ]);
+    });
+
+    it("leaves the period columns blank when the requirement has no bounds", () => {
+      const csv = requirementsToCsv([requirement()], groups, subjects, people);
+
+      expect(dataLines(csv)).toEqual(["7A;MA;3;60;;;alla;;"]);
+    });
+
+    it("skips a row whose group or subject it cannot name", () => {
+      const csv = requirementsToCsv(
+        [
+          requirement(),
+          requirement({ studentGroupId: "g-gone" }),
+          requirement({ subjectId: "s-gone" }),
+        ],
+        groups,
+        subjects,
+        people,
+      );
+
+      expect(dataLines(csv)).toEqual(["7A;MA;3;60;;;alla;;"]);
+    });
+
+    it("skips a row whose teacher it cannot name rather than blanking the cell", () => {
+      // A blank larare cell is not "unknown" to the importer, it is "no
+      // teacher" — and since the import updates, re-uploading this file would
+      // strip the teacher off the requirement.
+      const csv = requirementsToCsv(
+        [requirement({ teacherId: "t-gone" }), requirement({ coTeacherId: "t-gone" })],
+        groups,
+        subjects,
+        people,
+      );
+
+      expect(dataLines(csv)).toEqual([]);
+    });
+
+    it("writes a header-only file when there is nothing to export", () => {
+      expect(requirementsToCsv([], groups, subjects, people)).toBe(
+        "﻿" +
+          "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;medlarare;veckor;fran;till\r\n",
+      );
+    });
+
+    it("quotes a group name containing the delimiter so it imports back whole", () => {
+      const csv = requirementsToCsv(
+        [requirement({ studentGroupId: "g-semi" })],
+        [...groups, { id: "g-semi", name: "7A; parallell" }],
+        subjects,
+        people,
+      );
+
+      expect(csv).toContain('"7A; parallell"');
+      expect(mapRequirementRows(parseCsv(csv)).rows[0]?.groupName).toBe(
+        "7A; parallell",
+      );
+    });
+
+    it("neutralizes a group name that a spreadsheet would run as a formula", () => {
+      const csv = requirementsToCsv(
+        [requirement({ studentGroupId: "g-formula" })],
+        [...groups, { id: "g-formula", name: '=HYPERLINK("http://evil.example/")' }],
+        subjects,
+        people,
+      );
+
+      // The apostrophe is what marks the cell as text; import strips it again,
+      // so the name survives the round trip unchanged.
+      expect(dataLines(csv)[0]?.replace(/^"/, "").startsWith("'")).toBe(true);
+      expect(mapRequirementRows(parseCsv(csv)).rows[0]?.groupName).toBe(
+        '=HYPERLINK("http://evil.example/")',
+      );
+    });
+  });
+});
+
 describe("serializeCsv", () => {
   it("leaves ordinary fields unquoted", () => {
     expect(serializeCsv(["a", "b"], [["1", "2"]])).toBe("\uFEFFa;b\r\n1;2\r\n");
@@ -1034,6 +1621,76 @@ describe("export round trips", () => {
 
     expect(mapMembershipRows(parseCsv(exported)).rows).toEqual([
       { groupName: "Ma71", email: "alma@s.se" },
+    ]);
+  });
+
+  it("teaching requirements survive, subject as code, teachers as e-mail", () => {
+    const exported = requirementsToCsv(
+      [
+        {
+          studentGroupId: "g-7a",
+          subjectId: "s-ma",
+          teacherId: "t-karin",
+          coTeacherId: null,
+          lessonsPerWeek: 3,
+          minutesPerLesson: 60,
+          recurrence: "ALL_WEEKS",
+          startDate: null,
+          endDate: null,
+        },
+        {
+          studentGroupId: "g-sl",
+          subjectId: "s-sl",
+          teacherId: "t-karin",
+          coTeacherId: "t-bo",
+          lessonsPerWeek: 1,
+          minutesPerLesson: 120,
+          recurrence: "ODD_WEEKS",
+          startDate: "2026-01-12",
+          endDate: "2026-03-27",
+        },
+      ],
+      [
+        { id: "g-7a", name: "7A" },
+        { id: "g-sl", name: "Sl71" },
+      ],
+      [
+        { id: "s-ma", name: "Matematik", code: "MA" },
+        { id: "s-sl", name: "Textilslöjd", code: null },
+      ],
+      [
+        { id: "t-karin", email: "karin@s.se" },
+        { id: "t-bo", email: "bo@s.se" },
+      ],
+    );
+    const { rows, errors } = mapRequirementRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      {
+        groupName: "7A",
+        subject: "MA",
+        lessonsPerWeek: 3,
+        minutesPerLesson: 60,
+        teacherEmail: "karin@s.se",
+        coTeacherEmail: null,
+        recurrence: "ALL_WEEKS",
+        startDate: null,
+        endDate: null,
+      },
+      {
+        // No code on Textilslöjd, so the name is what the file carries — and
+        // what the importer resolves.
+        groupName: "Sl71",
+        subject: "Textilslöjd",
+        lessonsPerWeek: 1,
+        minutesPerLesson: 120,
+        teacherEmail: "karin@s.se",
+        coTeacherEmail: "bo@s.se",
+        recurrence: "ODD_WEEKS",
+        startDate: "2026-01-12",
+        endDate: "2026-03-27",
+      },
     ]);
   });
 

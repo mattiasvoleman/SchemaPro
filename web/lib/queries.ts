@@ -1311,6 +1311,16 @@ import type { ImportKind } from "@/lib/csv";
 export interface ImportReport {
   created: number;
   skipped: number;
+  /**
+   * Rows that matched something already there and were WRITTEN OVER.
+   *
+   * Optional, and deliberately so: the six older kinds are create-or-skip and
+   * never touch an existing row, so they answer without this field and the
+   * result view they render must stay exactly what it was. Only the timplan
+   * import updates, because a timplan is a document a school iterates on —
+   * see IMPORT_UPDATES_ROWS below.
+   */
+  updated?: number;
   /** 1-based DATA row numbers (the header row is not counted). */
   errors: { row: number; message: string }[];
 }
@@ -1322,6 +1332,7 @@ const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
   classes: "/api/v1/import/groups",
   teachingGroups: "/api/v1/import/group-members",
   roomTypes: "/api/v1/import/room-types",
+  requirements: "/api/v1/import/requirements",
 };
 
 /** Kinds whose payload carries the academic year the rows belong to. */
@@ -1335,6 +1346,11 @@ export const IMPORT_NEEDS_YEAR: Record<ImportKind, boolean> = {
   // Room types belong to the school, not to a läsår — the same slöjdsal
   // exists across every year.
   roomTypes: false,
+  // A timplan is written for one läsår and only means anything inside it: the
+  // same 7A reads three NO one year and two the next. The year comes from the
+  // dialog, like teachingGroups — never from a column in the file, where it
+  // would let one upload scatter rows across several years.
+  requirements: true,
 };
 
 /** Result of inviting one person. */
@@ -1431,17 +1447,32 @@ export function useRoomPreferenceActions() {
 
 export interface ImportCsvInput {
   kind: ImportKind;
-  /** Required for students/classes/teachingGroups; stripped for teachers. */
+  /** Required where IMPORT_NEEDS_YEAR says so; stripped everywhere else. */
   academicYearId?: string;
   /** Typed rows from the map*Rows helpers in web/lib/csv.ts. */
   rows: Array<Record<string, unknown>>;
+  /**
+   * Which columns the FILE had, for a kind that updates rather than skips.
+   *
+   * The rows themselves cannot carry it. They omit a key whose column was
+   * absent, but the API's ValidationPipe runs class-transformer, which
+   * materialises every declared property — so the omission is gone by the time
+   * the service reads the row, and an absent column looks exactly like a cell
+   * the school cleared on purpose. For an import that overwrites, those two
+   * mean opposite things, and getting it wrong empties a field across a whole
+   * läsår without a single error in the report.
+   *
+   * Travels with every batch, because each batch is validated on its own.
+   */
+  columns?: string[];
 }
 
 /**
- * One mutation for all four import kinds: the kind picks the endpoint and the
- * body shape (teachers is the only year-less payload). Every reader an import
- * can affect is refreshed — people (students/teachers), groups (classes and
- * on-the-fly teaching groups), and both membership views.
+ * One mutation for every import kind: the kind picks the endpoint and the body
+ * shape (IMPORT_NEEDS_YEAR decides whether the läsår travels with it). Every
+ * reader an import can affect is refreshed — people (students/teachers),
+ * groups (classes and on-the-fly teaching groups), both membership views, and
+ * the timplan.
  */
 /**
  * Rows the API accepts in one request, per kind — the @ArrayMaxSize on each
@@ -1457,6 +1488,44 @@ export const IMPORT_MAX_ROWS: Record<ImportKind, number> = {
   classes: 500,
   teachingGroups: 2000,
   roomTypes: 200,
+  // A full timplan is groups × subjects: forty groups and fifteen subjects is
+  // 600 rows before anyone has done anything unusual, so this cap is reached by
+  // an ordinary school and the batching above is what carries it. 1000 rather
+  // than the 500 people get, because a requirement row is nine short fields and
+  // an ordinary school's whole timplan then fits in one request instead of two.
+  //
+  // The number is ImportRequirementsDto's `@ArrayMaxSize`, and every entry in
+  // this map is its DTO's. import-batching.test.ts asserts the whole map
+  // against a literal, which catches a cap CHANGED here without a thought — it
+  // does not read the DTO, so it cannot catch the two drifting apart if the
+  // server side moves. Keeping them equal is a discipline, not something the
+  // suite enforces: a client value below the DTO's still works, which is
+  // exactly why the drift is easy to miss.
+  requirements: 1000,
+};
+
+/**
+ * Kinds whose import WRITES OVER a row that is already there.
+ *
+ * The timplan is the only one, and it is not an oversight in the other six: a
+ * timplan is a document a school iterates on — export it, change two numbers
+ * in Excel, upload it again — and a create-only import would have made that
+ * round trip do nothing at all, every row skipped as "already exists".
+ *
+ * What it does NOT do is delete. A row removed from the file stays in the
+ * timplan, because the file is an addendum and not the truth: an admin who
+ * uploads a spreadsheet holding only årskurs 7 has not said the rest of the
+ * school teaches nothing. That is a surprise if you assume otherwise, so the
+ * dialog says it in words before the upload rather than leaving it here.
+ */
+export const IMPORT_UPDATES_ROWS: Record<ImportKind, boolean> = {
+  subjects: false,
+  students: false,
+  teachers: false,
+  classes: false,
+  teachingGroups: false,
+  roomTypes: false,
+  requirements: true,
 };
 
 /**
@@ -1479,6 +1548,7 @@ export async function importCsvInBatches({
   kind,
   academicYearId,
   rows,
+  columns,
 }: ImportCsvInput): Promise<ImportReport> {
   const size = IMPORT_MAX_ROWS[kind];
   const merged: ImportReport = { created: 0, skipped: 0, errors: [] };
@@ -1488,15 +1558,25 @@ export async function importCsvInBatches({
     try {
       const report = await api.post<ImportReport>(
         IMPORT_ENDPOINTS[kind],
-        IMPORT_NEEDS_YEAR[kind]
-          ? { academicYearId, rows: batch }
-          : { rows: batch },
+        {
+          ...(IMPORT_NEEDS_YEAR[kind] ? { academicYearId } : {}),
+          ...(columns ? { columns } : {}),
+          rows: batch,
+        },
       );
       // Tolerant of a sparse body: a proxy or an older API build may answer
       // without every field, and losing the whole import over a missing
       // counter would be a worse failure than an under-reported one.
       merged.created += report?.created ?? 0;
       merged.skipped += report?.skipped ?? 0;
+      // Only summed when the answer actually carried it, so the field stays
+      // absent for the six create-only kinds and their result view is
+      // untouched. `(merged.updated ?? 0) + …` unconditionally would have put
+      // a 0 on every import there is, and "0 uppdaterade" on a student upload
+      // is a sentence about a thing that cannot happen.
+      if (typeof report?.updated === "number") {
+        merged.updated = (merged.updated ?? 0) + report.updated;
+      }
       // Row numbers come back 1-based within the batch; shift them so they
       // point at the line the admin actually has to fix in their file.
       for (const error of report?.errors ?? []) {
@@ -1527,6 +1607,11 @@ export function useImportCsv() {
       void queryClient.invalidateQueries({ queryKey: ["groups"] });
       void queryClient.invalidateQueries({ queryKey: ["groupMemberships"] });
       void queryClient.invalidateQueries({ queryKey: ["groupMembers"] });
+      // Prefix match, so every year's timplan is refetched and not just the
+      // one the dialog was opened from — ["requirements", yearId] is the key,
+      // and an import that landed on the active year while the matrix showed
+      // next autumn would otherwise leave the stale one on screen.
+      void queryClient.invalidateQueries({ queryKey: ["requirements"] });
     },
   });
 }

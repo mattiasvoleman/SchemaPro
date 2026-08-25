@@ -20,6 +20,25 @@ const membershipRows = (count: number) =>
     email: `elev.efternamn${i}@exempelskolan.se`,
   }));
 
+/**
+ * A timplan row is the widest of the import shapes — two addresses, a period
+ * and a recurrence on top of the identifying pair — so its declared cap is the
+ * one most likely to outgrow the transport even though the row count is lower
+ * than the membership cap.
+ */
+const requirementRows = (count: number) =>
+  Array.from({ length: count }, (_, i) => ({
+    groupName: `Undervisningsgrupp ${i}`,
+    subject: 'Samhällsorientering',
+    lessonsPerWeek: 3,
+    minutesPerLesson: 60,
+    teacherEmail: `larare.efternamn${i}@exempelskolan.se`,
+    coTeacherEmail: `medlarare.efternamn${i}@exempelskolan.se`,
+    recurrence: 'ODD_WEEKS',
+    startDate: '2026-08-17',
+    endDate: '2027-06-11',
+  }));
+
 describe('Import payload limits (e2e)', () => {
   let harness: TestHarness;
 
@@ -49,6 +68,33 @@ describe('Import payload limits (e2e)', () => {
       .set('x-test-user', asUser({}))
       .send(body)
       .expect(201);
+  });
+
+  it('accepts a timplan import filled right up to the declared cap', async () => {
+    // The kind added last, and the one this file exists to keep honest: a cap
+    // the body parser refuses is a promise the API cannot keep.
+    const body = { academicYearId: YEAR, rows: requirementRows(1000) };
+    expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(100 * 1024);
+
+    harness.tx['studentGroup']!['findMany']!.mockResolvedValue([]);
+    harness.tx['subject']!['findMany']!.mockResolvedValue([]);
+    harness.tx['user']!['findMany']!.mockResolvedValue([]);
+    harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([]);
+    harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+
+    await request(harness.app.getHttpServer())
+      .post('/api/v1/import/requirements')
+      .set('x-test-user', asUser({}))
+      .send(body)
+      .expect(201);
+  });
+
+  it('rejects one timplan row past the cap as a 400', async () => {
+    await request(harness.app.getHttpServer())
+      .post('/api/v1/import/requirements')
+      .set('x-test-user', asUser({}))
+      .send({ academicYearId: YEAR, rows: requirementRows(1001) })
+      .expect(400);
   });
 
   it('rejects one row past the cap as a 400, naming the field', async () => {

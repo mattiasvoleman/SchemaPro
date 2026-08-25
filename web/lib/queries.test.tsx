@@ -1318,8 +1318,17 @@ describe("teaching-group membership hooks", () => {
 
 describe("useImportCsv", () => {
   // Every reader an import can touch: people (students/teachers), groups
-  // (classes + teaching groups created on the fly), and both membership views.
-  const importKeys = [["people"], ["groups"], ["groupMemberships"], ["groupMembers"]];
+  // (classes + teaching groups created on the fly), both membership views, and
+  // the timplan. ["requirements"] is a PREFIX — the real key carries the year
+  // — so every year's matrix refetches rather than only the one the dialog
+  // happened to be opened from.
+  const importKeys = [
+    ["people"],
+    ["groups"],
+    ["groupMemberships"],
+    ["groupMembers"],
+    ["requirements"],
+  ];
 
   it("students POST /import/students with the academic year in the body", async () => {
     const report: ImportReport = { created: 2, skipped: 0, errors: [] };

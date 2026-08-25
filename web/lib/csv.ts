@@ -8,6 +8,8 @@
  * instead of trusting the file extension.
  */
 
+import type { LessonRecurrence } from "@/lib/types";
+
 const BOM = "﻿";
 
 export interface ParsedCsv {
@@ -133,7 +135,8 @@ export type ImportKind =
   | "teachers"
   | "classes"
   | "teachingGroups"
-  | "roomTypes";
+  | "roomTypes"
+  | "requirements";
 
 interface CsvTemplate {
   filename: string;
@@ -180,6 +183,41 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
     exampleRows: [
       ["Ma71", "alma.berg@example.com"],
       ["Sv73", "alma.berg@example.com"],
+    ],
+  },
+  requirements: {
+    filename: "timplan.csv",
+    headers: [
+      "grupp",
+      "amne",
+      "lektioner_per_vecka",
+      "minuter_per_lektion",
+      "larare",
+      "medlarare",
+      "veckor",
+      "fran",
+      "till",
+    ],
+    // The examples exist to show the two columns nobody guesses right. Row two
+    // is 120 minutes on ODD weeks with a second teacher — the slöjd/hemkunskap
+    // shape, where a group reads a long pass every other week; row three is a
+    // subject read for one term only, which is what the date pair is for. A
+    // template of three identical "alla veckor, hela läsåret" rows would teach
+    // an administrator that the last three columns are decoration.
+    exampleRows: [
+      ["7A", "MA", "3", "60", "karin.ek@example.com", "", "alla", "", ""],
+      [
+        "Sl71",
+        "SLTX",
+        "1",
+        "120",
+        "karin.ek@example.com",
+        "bo.alm@example.com",
+        "udda",
+        "",
+        "",
+      ],
+      ["7A", "SV", "2", "45", "", "", "alla", "2026-01-12", "2026-03-27"],
     ],
   },
 };
@@ -343,6 +381,14 @@ const FIELD_LABELS: Record<string, string> = {
   name: "namn",
   gradeLevel: "arskurs",
   groupName: "grupp",
+  subject: "amne",
+  lessonsPerWeek: "lektioner_per_vecka",
+  minutesPerLesson: "minuter_per_lektion",
+  teacherEmail: "larare",
+  coTeacherEmail: "medlarare",
+  recurrence: "veckor",
+  startDate: "fran",
+  endDate: "till",
 };
 
 const requiredMessage = (field: string, row: number) =>
@@ -463,6 +509,347 @@ export function mapMembershipRows(parsed: ParsedCsv) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Teaching requirements (timplanen)
+//
+// The one import whose rows carry numbers and dates rather than names only, so
+// it does not go through `mapRows`: everything below can be decided without the
+// database, and deciding it here turns a 400 from the API — which arrives as
+// one opaque failure for the whole upload — into a row-numbered message next to
+// the row that caused it. What is NOT checked here is everything that needs the
+// school's own data: whether the group, the subject and the teachers exist.
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of timplan.csv after mapping — the body the API's DTO expects.
+ *
+ * A type alias and not an interface: the import dialog collects every mapper
+ * into one `Record<ImportKind, (parsed) => { rows: Record<string, unknown>[] }>`
+ * for its preview table, and only an alias gets TypeScript's implicit index
+ * signature. An interface here fails to assign there for no reason a reader
+ * would ever guess.
+ */
+export type RequirementRow = {
+  groupName: string;
+  /** The subject's CODE or NAME, exactly as written; resolved server-side. */
+  subject: string;
+  lessonsPerWeek: number;
+  minutesPerLesson: number;
+  teacherEmail?: string | null;
+  coTeacherEmail?: string | null;
+  recurrence: LessonRecurrence;
+  /** "yyyy-mm-dd" */
+  startDate?: string | null;
+  endDate?: string | null;
+};
+
+const REQUIREMENT_COLUMNS = {
+  groupName: ["grupp", "group", "undervisningsgrupp", "klass", "class"],
+  subject: ["amne", "amneskod", "subject", "subjectcode", "kod", "code"],
+  lessonsPerWeek: [
+    "lektionerpervecka",
+    "lektionervecka",
+    "lektioner",
+    "antallektioner",
+    "lessonsperweek",
+  ],
+  minutesPerLesson: [
+    "minuterperlektion",
+    "minuterlektion",
+    "minuter",
+    "lektionslangd",
+    "minutesperlesson",
+  ],
+  teacherEmail: [
+    "larare",
+    "undervisandelarare",
+    "lararepost",
+    "teacher",
+    "teacheremail",
+  ],
+  coTeacherEmail: [
+    "medlarare",
+    "medlararepost",
+    "andralarare",
+    "larare2",
+    "coteacher",
+    "coteacheremail",
+  ],
+  recurrence: ["veckor", "vecka", "weeks", "recurrence"],
+  // "Fr.o.m." normalizes to "from", not "fom" — the dots are stripped, not the
+  // letters between them. Both spellings are listed rather than one being
+  // reasoned about at a glance.
+  startDate: [
+    "fran",
+    "franochmed",
+    "from",
+    "fom",
+    "start",
+    "startdatum",
+    "startdate",
+  ],
+  endDate: ["till", "tillochmed", "tom", "slut", "slutdatum", "enddate"],
+} satisfies Record<string, string[]>;
+
+/**
+ * A column the timplan file may carry. Exported because the API has to be told
+ * which of them a file actually HAD — see `mapRequirementRows`.
+ */
+export type RequirementField = keyof typeof REQUIREMENT_COLUMNS;
+
+const REQUIRED_REQUIREMENT_FIELDS: RequirementField[] = [
+  "groupName",
+  "subject",
+  "lessonsPerWeek",
+  "minutesPerLesson",
+];
+
+/**
+ * The `veckor` column is written for humans, so it is read for humans: the
+ * value goes through `normalizeHeader` — case, spacing and diacritics dropped —
+ * because the cell is filled in by the same hand that types the headers and
+ * deserves the same forgiveness. "Jämna veckor", "jamna" and the enum name all
+ * land on the same key.
+ */
+const RECURRENCE_BY_WORD: Record<string, LessonRecurrence> = {
+  // An empty cell is the overwhelmingly common case and means "every week" —
+  // an administrator only fills this in for the exceptions. A missing COLUMN
+  // reads the same, which is the one place this mapper cannot keep "absent"
+  // and "empty" apart: recurrence is not nullable on the requirement, so there
+  // is no value that means "leave it as it was".
+  "": "ALL_WEEKS",
+  alla: "ALL_WEEKS",
+  allaveckor: "ALL_WEEKS",
+  varje: "ALL_WEEKS",
+  varjevecka: "ALL_WEEKS",
+  allweeks: "ALL_WEEKS",
+  udda: "ODD_WEEKS",
+  uddaveckor: "ODD_WEEKS",
+  oddweeks: "ODD_WEEKS",
+  jamna: "EVEN_WEEKS",
+  jamnaveckor: "EVEN_WEEKS",
+  evenweeks: "EVEN_WEEKS",
+};
+
+/** What export writes, and the first spelling an error message suggests. */
+const RECURRENCE_WORD: Record<LessonRecurrence, string> = {
+  ALL_WEEKS: "alla",
+  ODD_WEEKS: "udda",
+  EVEN_WEEKS: "jamna",
+};
+
+/**
+ * A date that EXISTS, not merely one shaped like a date.
+ *
+ * A copy of `isCalendarDate` from src/resources/dto/is-calendar-date.ts, whose
+ * comment is worth reading: `new Date('2026-02-30')` does not fail, it rolls
+ * over to 2026-03-02, so a shape check alone lets a typo through as a period
+ * that silently starts two days into March. Copied rather than imported — the
+ * web app cannot pull in a module that lives behind NestJS decorators and
+ * @prisma/client — and it must stay identical, because the point is that the
+ * client rejects exactly what the API would have rejected, with a row number
+ * attached instead of a 400 for the whole file.
+ */
+function isCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.toISOString().slice(0, 10) === value;
+}
+
+/**
+ * Timplan rows. Bounds are the API's own (see
+ * src/resources/dto/teaching-requirement.dto.ts): 1–40 lessons a week, 15–240
+ * minutes a lesson.
+ *
+ * The academic year is not read from the file — it comes from the dialog, the
+ * same way teaching-group memberships do. A läsår column would let a file
+ * import into a year the administrator is not looking at.
+ */
+/**
+ * Rows, errors, AND which columns the file had.
+ *
+ * The third one is not a nicety. The import updates rather than skips, so a
+ * value it writes replaces what a school already entered — and a school's own
+ * spreadsheet is usually four columns wide, because the teachers and the terms
+ * were set in the app, not in Excel. Uploading that file to fix one lesson
+ * count must not strip the teachers off every requirement it touches.
+ *
+ * The row objects below already leave a key out when its column is absent, and
+ * that is precisely the distinction the API cannot see: the global
+ * ValidationPipe runs class-transformer, which materialises every declared
+ * property, so an omitted `teacherEmail` arrives at the service as an own key
+ * holding `undefined` — indistinguishable from a cell the school emptied on
+ * purpose. Measured, not assumed: a row posted without the key logs
+ * `own: [... "teacherEmail" ...]` inside the service.
+ *
+ * So the column set travels as data of its own, and the server writes only the
+ * columns the file actually had.
+ */
+export function mapRequirementRows(parsed: ParsedCsv): {
+  rows: RequirementRow[];
+  errors: RowError[];
+  columns: RequirementField[];
+} {
+  const normalized = parsed.headers.map(normalizeHeader);
+  const columnOf = new Map<RequirementField, number>();
+  for (const [field, aliases] of Object.entries(REQUIREMENT_COLUMNS)) {
+    const index = normalized.findIndex((header) => aliases.includes(header));
+    if (index !== -1) columnOf.set(field as RequirementField, index);
+  }
+
+  const missing = REQUIRED_REQUIREMENT_FIELDS.filter(
+    (field) => !columnOf.has(field),
+  );
+  if (missing.length > 0) {
+    return {
+      rows: [],
+      errors: [
+        {
+          row: 0,
+          message: `Kolumner saknas: ${missing
+            .map((field) => FIELD_LABELS[field])
+            .join(", ")}. Ladda ner mallen och utgå från den.`,
+        },
+      ],
+      columns: [],
+    };
+  }
+
+  const rows: RequirementRow[] = [];
+  const errors: RowError[] = [];
+  /** Identifying pair -> the file line that claimed it first. */
+  const seenAtRow = new Map<string, number>();
+
+  parsed.rows.forEach((raw, index) => {
+    const rowNumber = index + 1;
+    const cell = (field: RequirementField): string => {
+      const column = columnOf.get(field);
+      return column === undefined ? "" : raw[column];
+    };
+    // One error per row, like every other mapper: an administrator fixes the
+    // row, not the cell, and five complaints about the same row read as five
+    // problems.
+    const fail = (message: string) => {
+      errors.push({ row: rowNumber, message });
+    };
+
+    const groupName = cell("groupName");
+    if (groupName === "") return fail(requiredMessage("groupName", rowNumber));
+    const subject = cell("subject");
+    if (subject === "") return fail(requiredMessage("subject", rowNumber));
+
+    const rawLessons = cell("lessonsPerWeek");
+    const lessonsPerWeek = Number(rawLessons);
+    if (!Number.isInteger(lessonsPerWeek) || lessonsPerWeek < 1 || lessonsPerWeek > 40) {
+      return fail(
+        `Rad ${rowNumber}: lektioner_per_vecka "${rawLessons}" är inte ett heltal mellan 1 och 40.`,
+      );
+    }
+
+    const rawMinutes = cell("minutesPerLesson");
+    const minutesPerLesson = Number(rawMinutes);
+    if (
+      !Number.isInteger(minutesPerLesson) ||
+      minutesPerLesson < 15 ||
+      minutesPerLesson > 240
+    ) {
+      return fail(
+        `Rad ${rowNumber}: minuter_per_lektion "${rawMinutes}" är inte ett heltal mellan 15 och 240.`,
+      );
+    }
+
+    const rawRecurrence = cell("recurrence");
+    const recurrence = RECURRENCE_BY_WORD[normalizeHeader(rawRecurrence)];
+    if (recurrence === undefined) {
+      return fail(
+        `Rad ${rowNumber}: veckor "${rawRecurrence}" känns inte igen. Skriv "alla", "udda" eller "jämna", eller lämna kolumnen tom.`,
+      );
+    }
+
+    const rawStart = cell("startDate");
+    if (rawStart !== "" && !isCalendarDate(rawStart)) {
+      return fail(
+        `Rad ${rowNumber}: fran "${rawStart}" är inte ett datum som finns. Skriv det som åååå-mm-dd.`,
+      );
+    }
+    const rawEnd = cell("endDate");
+    if (rawEnd !== "" && !isCalendarDate(rawEnd)) {
+      return fail(
+        `Rad ${rowNumber}: till "${rawEnd}" är inte ett datum som finns. Skriv det som åååå-mm-dd.`,
+      );
+    }
+    // Both are yyyy-mm-dd by now, which sorts as text.
+    if (rawStart !== "" && rawEnd !== "" && rawStart > rawEnd) {
+      return fail(
+        `Rad ${rowNumber}: fran "${rawStart}" ligger efter till "${rawEnd}".`,
+      );
+    }
+
+    const row: RequirementRow = {
+      groupName,
+      subject,
+      lessonsPerWeek,
+      minutesPerLesson,
+      recurrence,
+    };
+    // Present-but-empty and absent are different answers, and the API already
+    // makes that distinction (see UpdateTeachingRequirementDto): null CLEARS a
+    // teacher or a date, omitting the key leaves whatever the row carries.
+    // Since this import updates, a file that never had a `larare` column must
+    // not strip the teacher off every requirement it touches — only an empty
+    // cell in a column the school did write is an instruction to clear.
+    if (columnOf.has("teacherEmail")) row.teacherEmail = cell("teacherEmail") || null;
+    if (columnOf.has("coTeacherEmail")) {
+      row.coTeacherEmail = cell("coTeacherEmail") || null;
+    }
+    if (columnOf.has("startDate")) row.startDate = rawStart || null;
+    if (columnOf.has("endDate")) row.endDate = rawEnd || null;
+
+    /*
+     * Two rows for the same class and subject, caught here because here is the
+     * only place the WHOLE file exists.
+     *
+     * The API refuses a duplicate too, and its refusal is per request — while
+     * `importCsvInBatches` cuts the file into requests of IMPORT_MAX_ROWS. A
+     * pair straddling that cut lands in two different requests, each of which
+     * looks clean, and the later row silently overwrites the earlier: the
+     * import is an upsert, so nothing errors and nothing is skipped. The admin
+     * reads "600 rows imported" and one class quietly has the wrong number of
+     * lessons in a subject.
+     *
+     * Raising the cap moves the boundary; it does not remove it. The browser
+     * holds every row at once and knows the line number in the file the admin
+     * is actually editing, so the check belongs here and the server's stays as
+     * the backstop for anything that did not come through this dialog.
+     *
+     * Case-folded on the same pair the server keys on. The comparison is
+     * deliberately looser than the server's lookup, which resolves a subject by
+     * code OR name: "MA" and "Matematik" are one subject there and two keys
+     * here, so this catches a subset. Better a duplicate that slips through to
+     * the server's own check than a false accusation about a file that is fine.
+     */
+    const duplicateKey = `${row.groupName.toLowerCase()}\u0000${row.subject.toLowerCase()}`;
+    const firstSeenAt = seenAtRow.get(duplicateKey);
+    if (firstSeenAt !== undefined) {
+      fail(
+        `Rad ${rowNumber}: ${row.groupName} och ${row.subject} står redan på rad ` +
+          `${firstSeenAt}. Ta bort den ena raden — annars avgör ordningen i filen ` +
+          `vilken som gäller.`,
+      );
+      return;
+    }
+    seenAtRow.set(duplicateKey, rowNumber);
+
+    rows.push(row);
+  });
+
+  // The keys of `columnOf` are exactly the columns the header carried, which is
+  // what the server needs and all it needs — the header is read once, and a row
+  // cannot introduce a column the header did not declare.
+  return { rows, errors, columns: [...columnOf.keys()] };
+}
+
 /**
  * A school's subjects as a CSV in exactly the shape the importer accepts.
  *
@@ -573,4 +960,75 @@ export function membershipsToCsv(
   }
 
   return serializeCsv(CSV_TEMPLATES.teachingGroups.headers, rows);
+}
+
+/**
+ * The timplan as the school's own file: names, codes and e-mail addresses,
+ * never ids.
+ *
+ * Takes the four lists the timplan page already holds rather than looking
+ * anything up itself — the page has them loaded to render the grid, and a
+ * fetch in here would make an export depend on the network while the grid it
+ * mirrors does not.
+ *
+ * The subject is written as its CODE when it has one, exactly as the grid
+ * shows it (`subject.code ?? subject.name`) and exactly as a school's own
+ * timplan is written; the importer accepts either. A code that is present but
+ * blank falls back to the name — `??` would write an empty cell, and an empty
+ * ämne is the one thing re-import rejects.
+ */
+export function requirementsToCsv(
+  requirements: {
+    studentGroupId: string;
+    subjectId: string;
+    teacherId: string | null;
+    coTeacherId: string | null;
+    lessonsPerWeek: number;
+    minutesPerLesson: number;
+    recurrence: LessonRecurrence;
+    startDate: string | null;
+    endDate: string | null;
+  }[],
+  groups: { id: string; name: string }[],
+  subjects: { id: string; name: string; code: string | null }[],
+  people: { id: string; email: string }[],
+): string {
+  const groupName = new Map(groups.map((group) => [group.id, group.name]));
+  const subjectLabel = new Map(
+    subjects.map((subject) => [subject.id, subject.code?.trim() || subject.name]),
+  );
+  const email = new Map(people.map((person) => [person.id, person.email]));
+
+  const rows: string[][] = [];
+  for (const requirement of requirements) {
+    const group = groupName.get(requirement.studentGroupId);
+    const subject = subjectLabel.get(requirement.subjectId);
+    if (!group || !subject) continue;
+
+    // A teacher the loaded roster cannot name is a reason to leave the whole
+    // row out, not to write a blank cell. Blank does not mean "unknown" to the
+    // importer — it means "no teacher" — and since the import UPDATES, that
+    // row would come back and strip the teacher off a requirement that has
+    // one. Dropping the row loses nothing instead: a row absent from the file
+    // is a row the import does not touch.
+    const teacher = requirement.teacherId ? email.get(requirement.teacherId) : "";
+    const coTeacher = requirement.coTeacherId
+      ? email.get(requirement.coTeacherId)
+      : "";
+    if (teacher === undefined || coTeacher === undefined) continue;
+
+    rows.push([
+      group,
+      subject,
+      String(requirement.lessonsPerWeek),
+      String(requirement.minutesPerLesson),
+      teacher,
+      coTeacher,
+      RECURRENCE_WORD[requirement.recurrence],
+      requirement.startDate ?? "",
+      requirement.endDate ?? "",
+    ]);
+  }
+
+  return serializeCsv(CSV_TEMPLATES.requirements.headers, rows);
 }

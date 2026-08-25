@@ -11,6 +11,10 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
+import type {
+  ImportRequirementRowDto,
+  ImportRequirementsDto,
+} from './dto/import.dto';
 import type { UsersService } from '../users/users.service';
 import { ImportService } from './import.service';
 
@@ -1060,6 +1064,624 @@ describe('ImportService', () => {
       ).toEqual(['ghost@example.com', 'alma@example.com', 'nils@example.com']);
       // One group create serves all four rows.
       expect(tx.studentGroup.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * The timplan import — the only kind that updates rather than only creating.
+   * Everything below is about the two halves of that: resolving a human-written
+   * row against the school's own catalogue, and deciding whether the row is new,
+   * changed, or already exactly what is stored.
+   */
+  describe('importRequirements', () => {
+    const GROUP_7B = '66666666-6666-4666-8666-666666666667';
+    const SUBJ_MA = 'bbbbbbb1-0000-4000-8000-000000000001';
+    const SUBJ_SV = 'bbbbbbb2-0000-4000-8000-000000000002';
+    const TEACHER_ID = 'ccccccc1-0000-4000-8000-000000000001';
+    const CO_TEACHER_ID = 'ccccccc2-0000-4000-8000-000000000002';
+    const YEAR_START = new Date('2026-08-17T00:00:00.000Z');
+    const YEAR_END = new Date('2027-06-11T00:00:00.000Z');
+
+    /** A valid row; each test overrides only the column it is about. */
+    const row = (
+      overrides: Partial<ImportRequirementRowDto> = {},
+    ): ImportRequirementRowDto => ({
+      groupName: '7A',
+      subject: 'MA',
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+      teacherEmail: null,
+      coTeacherEmail: null,
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+      ...overrides,
+    });
+
+    /**
+     * Every optional column, which is what the template ships and therefore
+     * what most files carry. A test about a file that LACKS a column calls
+     * `runWithColumns` instead and says which ones it had — the distinction is
+     * load-bearing, because a column the file never had must not be written.
+     */
+    const ALL_COLUMNS = [
+      'teacherEmail',
+      'coTeacherEmail',
+      'recurrence',
+      'startDate',
+      'endDate',
+    ] as const;
+
+    const runWithColumns = (
+      columns: ImportRequirementsDto['columns'],
+      ...rows: ImportRequirementRowDto[]
+    ) =>
+      service.importRequirements(
+        { academicYearId: YEAR_ID, columns, rows },
+        testUser(),
+      );
+
+    const run = (...rows: ImportRequirementRowDto[]) =>
+      runWithColumns([...ALL_COLUMNS], ...rows);
+
+    /** What the file says, stored: the shape `existing` rows are compared to. */
+    const stored = (overrides: Record<string, unknown> = {}) => ({
+      id: 'req-1',
+      studentGroupId: GROUP_7A,
+      subjectId: SUBJ_MA,
+      teacherId: null,
+      coTeacherId: null,
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      tx.studentGroup.findMany.mockResolvedValue([
+        { id: GROUP_7A, name: '7A' },
+        { id: GROUP_7B, name: '7B' },
+      ]);
+      tx.subject.findMany.mockResolvedValue([
+        { id: SUBJ_MA, name: 'Matematik', code: 'MA' },
+        { id: SUBJ_SV, name: 'Svenska', code: 'SV' },
+      ]);
+      tx.user.findMany.mockResolvedValue([
+        { id: TEACHER_ID, email: 'karin@example.com' },
+        { id: CO_TEACHER_ID, email: 'bo@example.com' },
+      ]);
+      tx.teachingRequirement.findMany.mockResolvedValue([]);
+      tx.teachingRequirement.create.mockResolvedValue({});
+      tx.teachingRequirement.update.mockResolvedValue({});
+      tx.academicYear.findUnique.mockResolvedValue({
+        startDate: YEAR_START,
+        endDate: YEAR_END,
+      });
+    });
+
+    describe('resolution', () => {
+      it('creates a requirement from a row with no counterpart, stamped with the school of the caller and the posted year', async () => {
+        const report = await run(
+          row({ teacherEmail: 'karin@example.com', coTeacherEmail: 'bo@example.com' }),
+        );
+
+        expect(report).toEqual({ created: 1, updated: 0, skipped: 0, errors: [] });
+        expect(tx.teachingRequirement.create).toHaveBeenCalledWith({
+          data: {
+            schoolId: testUser().schoolId,
+            academicYearId: YEAR_ID,
+            studentGroupId: GROUP_7A,
+            subjectId: SUBJ_MA,
+            teacherId: TEACHER_ID,
+            coTeacherId: CO_TEACHER_ID,
+            lessonsPerWeek: 3,
+            minutesPerLesson: 60,
+            recurrence: 'ALL_WEEKS',
+            startDate: null,
+            endDate: null,
+          },
+        });
+      });
+
+      it('matches the subject by CODE or by NAME, either one case-insensitively', async () => {
+        const report = await run(
+          row({ subject: '  ma ' }),
+          row({ subject: 'svenska' }),
+        );
+
+        expect(report).toMatchObject({ created: 2, errors: [] });
+        const subjectIds = tx.teachingRequirement.create.mock.calls.map(
+          (call) => call[0].data.subjectId,
+        );
+        expect(subjectIds).toEqual([SUBJ_MA, SUBJ_SV]);
+      });
+
+      it('resolves the group by name, trimmed and case-insensitively', async () => {
+        await run(row({ groupName: ' 7b ' }));
+
+        expect(tx.teachingRequirement.create.mock.calls[0][0].data.studentGroupId).toBe(
+          GROUP_7B,
+        );
+        expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
+          where: { academicYearId: YEAR_ID },
+          select: { id: true, name: true },
+        });
+      });
+
+      it('an unknown group is a ROW error and does not create the group — unlike a membership file, a timplan only points at groups', async () => {
+        const report = await run(row({ groupName: '7X' }), row({ groupName: '7A' }));
+
+        expect(report).toEqual({
+          created: 1,
+          updated: 0,
+          skipped: 0,
+          errors: [{ row: 1, message: expect.stringContaining('"7X"') }],
+        });
+        expect(tx.studentGroup.create).not.toHaveBeenCalled();
+        expect(tx.teachingRequirement.create).toHaveBeenCalledTimes(1);
+      });
+
+      it('an unknown subject is a row error and the surrounding rows still import', async () => {
+        const report = await run(row({ subject: 'Fysik' }), row({ subject: 'SV' }));
+
+        expect(report.created).toBe(1);
+        expect(report.errors).toEqual([
+          { row: 1, message: expect.stringContaining('"Fysik"') },
+        ]);
+      });
+
+      it('a string that hits one subject by CODE and another by NAME is ambiguous, and the error names both', async () => {
+        // A real collision: "MU" is the code of Musik and the name a school
+        // gave its "MU"-project subject. Picking either one silently would put
+        // a whole subject's lessons somewhere nobody asked for.
+        tx.subject.findMany.mockResolvedValue([
+          { id: SUBJ_MA, name: 'Musik', code: 'MU' },
+          { id: SUBJ_SV, name: 'MU', code: 'MUPROJ' },
+        ]);
+
+        const report = await run(row({ subject: 'mu' }));
+
+        expect(report.created).toBe(0);
+        expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+        const [error] = report.errors;
+        expect(error!.row).toBe(1);
+        expect(error!.message).toContain('Musik');
+        expect(error!.message).toContain('MUPROJ');
+      });
+
+      it('an unknown teacher email is a row error naming the address', async () => {
+        const report = await run(row({ teacherEmail: 'ghost@example.com' }));
+
+        expect(report).toEqual({
+          created: 0,
+          updated: 0,
+          skipped: 0,
+          errors: [{ row: 1, message: expect.stringContaining('ghost@example.com') }],
+        });
+        expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+      });
+
+      it('an unknown CO-teacher email is a row error that says which column it was', async () => {
+        const report = await run(
+          row({ teacherEmail: 'karin@example.com', coTeacherEmail: 'ghost@example.com' }),
+        );
+
+        expect(report.errors).toEqual([
+          { row: 1, message: expect.stringContaining('medlärare') },
+        ]);
+        expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+      });
+
+      it('asks the database for teachers case-insensitively — the map alone cannot save a mixed-case stored address', async () => {
+        tx.user.findMany.mockResolvedValue([
+          { id: TEACHER_ID, email: 'Karin@Example.com' },
+        ]);
+
+        const report = await run(row({ teacherEmail: 'KARIN@EXAMPLE.COM' }));
+
+        expect(report).toMatchObject({ created: 1, errors: [] });
+        expect(tx.user.findMany).toHaveBeenCalledWith({
+          where: {
+            role: 'TEACHER',
+            isActive: true,
+            email: expect.objectContaining({
+              in: ['karin@example.com'],
+              mode: 'insensitive',
+            }),
+          },
+          select: { id: true, email: true },
+        });
+      });
+
+      it('a file with no teacher columns at all asks for no teachers and leaves the requirement unassigned', async () => {
+        const report = await run(row(), row({ subject: 'SV' }));
+
+        expect(report).toMatchObject({ created: 2, errors: [] });
+        expect(tx.user.findMany).not.toHaveBeenCalled();
+        expect(tx.teachingRequirement.create.mock.calls[0][0].data).toMatchObject({
+          teacherId: null,
+          coTeacherId: null,
+        });
+      });
+    });
+
+    describe('the period', () => {
+      it('a date outside the läsår fails THAT row, with its number — one typo must not cost the other rows', async () => {
+        const report = await run(
+          row({ startDate: '2027-08-01' }), // next year entirely
+          row({ subject: 'SV', startDate: '2026-09-01', endDate: '2026-12-20' }),
+        );
+
+        expect(report.created).toBe(1);
+        expect(report.errors).toEqual([
+          { row: 1, message: expect.stringContaining('2027-08-01') },
+        ]);
+        expect(report.errors[0]!.message).toContain('2026-08-17');
+      });
+
+      it('an end date before the start date is a row error', async () => {
+        const report = await run(
+          row({ startDate: '2026-12-20', endDate: '2026-09-01' }),
+        );
+
+        expect(report.created).toBe(0);
+        expect(report.errors).toEqual([
+          { row: 1, message: expect.stringContaining('2026-09-01') },
+        ]);
+      });
+
+      it('does not read the academic year at all when no row states a period', async () => {
+        await run(row(), row({ subject: 'SV' }));
+
+        expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('says nothing about a year the caller cannot see, and lets the foreign key refuse the row', async () => {
+        // Under RLS a year belonging to another school reads as null. Answering
+        // "outside its year" would confirm that it exists; the composite
+        // foreign key on the insert is what refuses it. Same silence as
+        // TeachingRequirementsService.assertPeriodFitsYear.
+        tx.academicYear.findUnique.mockResolvedValue(null);
+
+        const report = await run(row({ startDate: '2027-08-01' }));
+
+        expect(report.errors).toEqual([]);
+        expect(report.created).toBe(1);
+      });
+    });
+
+    describe('duplicates inside the file', () => {
+      it('flags the second row for a group and subject, naming the number of the first', async () => {
+        const report = await run(
+          row({ subject: 'MA' }),
+          row({ subject: 'SV' }),
+          row({ subject: 'Matematik' }), // same pair as row 1, written by name
+        );
+
+        expect(report.created).toBe(2);
+        expect(report.errors).toEqual([
+          { row: 3, message: expect.stringContaining('rad 1') },
+        ]);
+        expect(tx.teachingRequirement.create).toHaveBeenCalledTimes(2);
+      });
+
+      it('a first row that failed on its teacher still claims the pair — the duplicate is a defect in the file either way', async () => {
+        const report = await run(
+          row({ teacherEmail: 'ghost@example.com' }),
+          row(),
+        );
+
+        expect(report.created).toBe(0);
+        expect(report.errors).toEqual([
+          { row: 1, message: expect.stringContaining('ghost@example.com') },
+          { row: 2, message: expect.stringContaining('rad 1') },
+        ]);
+      });
+    });
+
+    describe('created / updated / skipped', () => {
+      it('an existing row the file changes is UPDATED, by id and with every column the row states', async () => {
+        tx.teachingRequirement.findMany.mockResolvedValue([stored()]);
+
+        const report = await run(
+          row({ lessonsPerWeek: 4, teacherEmail: 'karin@example.com' }),
+        );
+
+        expect(report).toEqual({ created: 0, updated: 1, skipped: 0, errors: [] });
+        expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+        expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+          where: { id: 'req-1' },
+          data: {
+            teacherId: TEACHER_ID,
+            coTeacherId: null,
+            lessonsPerWeek: 4,
+            minutesPerLesson: 60,
+            recurrence: 'ALL_WEEKS',
+            startDate: null,
+            endDate: null,
+          },
+        });
+      });
+
+      it('an identical row is SKIPPED, not counted as an update — the number is what tells a school the upload did something', async () => {
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored({ teacherId: TEACHER_ID }),
+        ]);
+
+        const report = await run(row({ teacherEmail: 'karin@example.com' }));
+
+        expect(report).toEqual({ created: 0, updated: 0, skipped: 1, errors: [] });
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
+
+      it('an unchanged PERIOD is compared by day, not by Date identity — Prisma hands back a fresh object per read', async () => {
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored({
+            startDate: new Date('2026-09-01T00:00:00.000Z'),
+            endDate: new Date('2026-12-20T00:00:00.000Z'),
+          }),
+        ]);
+
+        const report = await run(
+          row({ startDate: '2026-09-01', endDate: '2026-12-20' }),
+        );
+
+        expect(report).toEqual({ created: 0, updated: 0, skipped: 1, errors: [] });
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
+
+      it('a moved end date alone is enough to count as an update', async () => {
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored({ endDate: new Date('2026-12-20T00:00:00.000Z') }),
+        ]);
+
+        const report = await run(row({ endDate: '2027-01-15' }));
+
+        expect(report).toMatchObject({ updated: 1, skipped: 0 });
+      });
+
+      it('a cleared column clears the stored value — within a row the file is what is true', async () => {
+        // Otherwise a teacher or a period entered by mistake could never be
+        // taken back by editing the file, only in the UI, and re-uploading an
+        // edited timplan would be half a mechanism.
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored({
+            teacherId: TEACHER_ID,
+            startDate: new Date('2026-09-01T00:00:00.000Z'),
+          }),
+        ]);
+
+        const report = await run(row({ teacherEmail: null, startDate: null }));
+
+        expect(report).toMatchObject({ updated: 1 });
+        expect(tx.teachingRequirement.update.mock.calls[0][0].data).toMatchObject({
+          teacherId: null,
+          startDate: null,
+        });
+      });
+
+      /*
+       * A COLUMN THE FILE NEVER HAD is a different silence from an empty cell,
+       * and the one above is the only one the file gets to be authoritative
+       * about.
+       *
+       * A school's own spreadsheet is usually just the four required columns —
+       * the teachers and the terms were set in the app, not in Excel. Uploading
+       * it to correct a lesson count used to strip the teacher, the co-teacher
+       * and the whole period off every requirement it matched, and report
+       * `updated` with no errors. Nothing on any screen said so.
+       *
+       * The rows cannot carry the distinction: the ValidationPipe runs
+       * class-transformer, which materialises every declared property, so a row
+       * posted without `teacherEmail` arrives here holding `undefined` under
+       * that very key. The file's column set travels separately, and these
+       * tests are what hold the two silences apart.
+       */
+      it('leaves the teacher alone when the file had no teacher columns', async () => {
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored({ teacherId: TEACHER_ID, coTeacherId: CO_TEACHER_ID }),
+        ]);
+
+        const report = await runWithColumns(
+          [],
+          row({ lessonsPerWeek: 4, teacherEmail: null, coTeacherEmail: null }),
+        );
+
+        expect(report).toMatchObject({ updated: 1 });
+        const { data } = tx.teachingRequirement.update.mock.calls[0][0];
+        expect(data).toEqual({ lessonsPerWeek: 4, minutesPerLesson: 60 });
+      });
+
+      it('leaves an alternating course alternating when the file had no veckor column', async () => {
+        // "Slöjd udda veckor" becoming "slöjd every week" doubles the subject's
+        // hours and the next generation packs twice the lessons — from an
+        // upload that only meant to change a number in another column.
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored({ recurrence: 'ODD_WEEKS' }),
+        ]);
+
+        const report = await runWithColumns([], row({ lessonsPerWeek: 4 }));
+
+        expect(report).toMatchObject({ updated: 1 });
+        expect(tx.teachingRequirement.update.mock.calls[0][0].data).not.toHaveProperty(
+          'recurrence',
+        );
+      });
+
+      it('leaves a half-term period standing when the file had no date columns', async () => {
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored({
+            startDate: new Date('2027-01-11T00:00:00.000Z'),
+            endDate: new Date('2027-06-11T00:00:00.000Z'),
+          }),
+        ]);
+
+        const report = await runWithColumns(
+          ['teacherEmail', 'coTeacherEmail', 'recurrence'],
+          row({ lessonsPerWeek: 4 }),
+        );
+
+        const { data } = tx.teachingRequirement.update.mock.calls[0][0];
+        expect(data).not.toHaveProperty('startDate');
+        expect(data).not.toHaveProperty('endDate');
+        expect(report).toMatchObject({ updated: 1 });
+      });
+
+      it('counts a four-column file that changes nothing as skipped, not updated', async () => {
+        // The count is what a school reads to decide whether the upload did
+        // what they meant. Comparing fields the upload will not write would
+        // report "updated" for a file that altered nothing.
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored({
+            teacherId: TEACHER_ID,
+            recurrence: 'EVEN_WEEKS',
+            endDate: new Date('2027-06-11T00:00:00.000Z'),
+          }),
+        ]);
+
+        const report = await runWithColumns([], row());
+
+        expect(report).toMatchObject({ created: 0, updated: 0, skipped: 1 });
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
+
+      it('reads a missing columns key as "change nothing else"', async () => {
+        // The recoverable direction. A caller that forgets the key writes too
+        // little, which is visible and fixable by uploading the full file; the
+        // other reading empties five fields across a läsår.
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored({ teacherId: TEACHER_ID }),
+        ]);
+
+        const report = await service.importRequirements(
+          { academicYearId: YEAR_ID, rows: [row({ lessonsPerWeek: 4 })] },
+          testUser(),
+        );
+
+        expect(report).toMatchObject({ updated: 1 });
+        expect(tx.teachingRequirement.update.mock.calls[0][0].data).toEqual({
+          lessonsPerWeek: 4,
+          minutesPerLesson: 60,
+        });
+      });
+
+      /*
+       * Every field the comparison claims to look at, one at a time.
+       *
+       * The suite pinned two of seven: five of them could be struck out of
+       * `requirementIsUnchanged` and stay green, which turns "0 updated" — the
+       * number a school reads to decide whether the upload did what they meant
+       * — into a number that means nothing.
+       */
+      it.each([
+        ['teacher', { teacherId: TEACHER_ID }, { teacherEmail: null }],
+        ['co-teacher', { coTeacherId: CO_TEACHER_ID }, { coTeacherEmail: null }],
+        ['lesson count', { lessonsPerWeek: 5 }, { lessonsPerWeek: 3 }],
+        ['lesson length', { minutesPerLesson: 45 }, { minutesPerLesson: 60 }],
+        ['recurrence', { recurrence: 'ODD_WEEKS' }, { recurrence: 'ALL_WEEKS' }],
+        [
+          'start date',
+          { startDate: new Date('2026-09-01T00:00:00.000Z') },
+          { startDate: null },
+        ],
+        [
+          'end date',
+          { endDate: new Date('2027-03-27T00:00:00.000Z') },
+          { endDate: null },
+        ],
+      ])(
+        'a differing %s alone is enough to count as an update',
+        async (_field, storedOverride, rowOverride) => {
+          tx.teachingRequirement.findMany.mockResolvedValue([
+            stored(storedOverride),
+          ]);
+
+          const report = await run(row(rowOverride as Partial<ImportRequirementRowDto>));
+
+          expect(report).toMatchObject({ updated: 1, skipped: 0 });
+          expect(tx.teachingRequirement.update).toHaveBeenCalledTimes(1);
+        },
+      );
+
+      it('counts an untouched re-upload of the full file as skipped', async () => {
+        // The other half: with every field equal, nothing may be written. A
+        // comparison that always returns false would pass the seven above.
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored({
+            teacherId: TEACHER_ID,
+            coTeacherId: CO_TEACHER_ID,
+            recurrence: 'ODD_WEEKS',
+            startDate: new Date('2026-09-01T00:00:00.000Z'),
+            endDate: new Date('2027-03-27T00:00:00.000Z'),
+          }),
+        ]);
+
+        const report = await run(
+          row({
+            teacherEmail: 'karin@example.com',
+            coTeacherEmail: 'bo@example.com',
+            recurrence: 'ODD_WEEKS',
+            startDate: '2026-09-01',
+            endDate: '2027-03-27',
+          }),
+        );
+
+        expect(report).toMatchObject({ created: 0, updated: 0, skipped: 1 });
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
+
+      it('never deletes: a requirement absent from the file is left standing and counted nowhere', async () => {
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored(),
+          stored({ id: 'req-2', subjectId: SUBJ_SV, lessonsPerWeek: 5 }),
+        ]);
+
+        const report = await run(row({ lessonsPerWeek: 4 }));
+
+        expect(report).toEqual({ created: 0, updated: 1, skipped: 0, errors: [] });
+        expect(tx.teachingRequirement.delete).not.toHaveBeenCalled();
+        expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
+        expect(tx.teachingRequirement.update).toHaveBeenCalledTimes(1);
+      });
+
+      it('created + updated + skipped + errors accounts for every input row', async () => {
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          stored(), // 7A/MA, unchanged by row 1
+          stored({ id: 'req-2', subjectId: SUBJ_SV, lessonsPerWeek: 5 }), // changed by row 2
+        ]);
+
+        const rows = [
+          row(), // skipped: identical
+          row({ subject: 'Svenska', lessonsPerWeek: 4 }), // updated
+          row({ groupName: '7B', subject: 'SV' }), // created
+          row({ groupName: '9Z' }), // error: unknown group
+          row({ subject: 'MA' }), // error: duplicate of row 1
+        ];
+        const report = await service.importRequirements(
+          { academicYearId: YEAR_ID, rows },
+          testUser(),
+        );
+
+        expect(report.created).toBe(1);
+        expect(report.updated).toBe(1);
+        expect(report.skipped).toBe(1);
+        expect(report.errors.map((error) => error.row)).toEqual([4, 5]);
+        expect(
+          report.created +
+            report.updated! +
+            report.skipped +
+            report.errors.length,
+        ).toBe(rows.length);
+      });
+    });
+
+    it('403s a principal with no school before touching the database', async () => {
+      await expect(
+        service.importRequirements({ academicYearId: YEAR_ID, rows: [row()] }, schoolless()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.withRls).not.toHaveBeenCalled();
     });
   });
 });
