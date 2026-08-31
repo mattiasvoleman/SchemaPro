@@ -24,6 +24,28 @@ export function parseDateString(date: string): Date {
 }
 
 /**
+ * A `@db.Time` column back out as the wall clock it is: "HH:MM".
+ *
+ * The inverse of `parseTimeString`, and the missing half of it. Prisma hands a
+ * time column back as a `Date` anchored at 1970-01-01, which `JSON.stringify`
+ * turns into "1970-01-01T11:00:00.000Z" — so an endpoint that returns the row
+ * unserialised sends a timestamp where the client is expecting a clock. The
+ * lunch card sliced the first five characters off it, as its comment said
+ * PostgreSQL's own format allowed, and put "1970-" into an `<input type="time">`
+ * that then rendered empty every time the page loaded.
+ *
+ * READ IN UTC ON PURPOSE. The stored value is a wall clock with no day and no
+ * zone attached; reading it in local time would turn 11:00 into 12:00 for half
+ * the year in Stockholm, which is the trap `formatTime` on the web still falls
+ * into for this shape. There is nothing to convert — the digits ARE the answer.
+ */
+export function toWallClock(time: Date): string {
+  const hours = time.getUTCHours().toString().padStart(2, '0');
+  const minutes = time.getUTCMinutes().toString().padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+/**
  * The calendar day it is right now IN A SCHOOL'S TIMEZONE, as the UTC midnight
  * that `@db.Date` columns store.
  *

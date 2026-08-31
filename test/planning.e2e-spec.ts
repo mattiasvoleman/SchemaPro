@@ -366,9 +366,17 @@ describe('Planning surface (e2e)', () => {
     });
 
     it('saves the window, the break and the number of seats', async () => {
-      harness.tx['lunchSetting']!['upsert']!.mockResolvedValue({ id: TYPE_ID });
+      // The two time columns are @db.Time, which Prisma reads as `Date`s at
+      // 1970-01-01. `{ id }` alone could never come back from the database, and
+      // a fixture that cannot occur is what let the endpoint ship those Dates
+      // to a client asking for a clock.
+      harness.tx['lunchSetting']!['upsert']!.mockResolvedValue({
+        id: TYPE_ID,
+        lunchStartTime: new Date('1970-01-01T11:00:00.000Z'),
+        lunchEndTime: new Date('1970-01-01T13:00:00.000Z'),
+      });
 
-      await request(http())
+      const saved = await request(http())
         .put('/api/v1/lunch-settings')
         .set('x-test-user', admin())
         .send({
@@ -379,6 +387,14 @@ describe('Planning surface (e2e)', () => {
           diningSeats: 180,
         })
         .expect(200);
+
+      // Over the wire as a wall clock. While the row went out unserialised this
+      // read "1970-01-01T11:00:00.000Z", the lunch card cut it to "1970-", and
+      // <input type="time"> drew an empty box on every load.
+      expect(saved.body).toMatchObject({
+        lunchStartTime: '11:00',
+        lunchEndTime: '13:00',
+      });
 
       const args = harness.tx['lunchSetting']!['upsert']!.mock.calls[0]?.[0] as {
         where: { schoolId: string };

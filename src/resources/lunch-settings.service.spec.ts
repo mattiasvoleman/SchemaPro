@@ -49,6 +49,39 @@ describe('LunchSettingsService', () => {
       });
     });
 
+    it('answers with the wall clock, never with a timestamp', async () => {
+      /*
+       * `@db.Time` comes out of Prisma as a `Date` at 1970-01-01, so returning
+       * the row unchanged sent "1970-01-01T11:00:00.000Z" to a client that
+       * wanted "11:00". The lunch card took the first five characters, as its
+       * comment said PostgreSQL's own format allowed, and put "1970-" into an
+       * `<input type="time">` — which refuses it and renders empty. The form
+       * showed no start and no end on every load.
+       */
+      tx.lunchSetting.findUnique.mockResolvedValue(storedRow());
+
+      const answer = await service.get(testUser());
+
+      expect(answer).toMatchObject({ lunchStartTime: '11:00', lunchEndTime: '13:00' });
+      // Belt and braces, because the failure mode is a value that still LOOKS
+      // like a time until something tries to parse it.
+      expect(JSON.stringify(answer)).not.toContain('1970');
+    });
+
+    it('reads the clock in UTC, so 11:00 stays 11:00', async () => {
+      // The stored value is a wall clock with no day and no zone. Reading it in
+      // local time turns 11:00 into 12:00 for half the year in Stockholm — the
+      // trap `formatTime` on the web still falls into for this shape.
+      process.env['TZ'] = 'UTC';
+      tx.lunchSetting.findUnique.mockResolvedValue(
+        storedRow({ lunchStartTime: new Date('1970-01-01T07:30:00.000Z') }),
+      );
+
+      await expect(service.get(testUser())).resolves.toMatchObject({
+        lunchStartTime: '07:30',
+      });
+    });
+
     it('refuses a principal carrying no school', async () => {
       await expect(
         service.get(testUser({ schoolId: undefined })),
@@ -56,12 +89,34 @@ describe('LunchSettingsService', () => {
     });
   });
 
+  /** What Prisma hands back for this table: @db.Time columns are `Date`s. */
+  const storedRow = (overrides: Record<string, unknown> = {}) => ({
+    id: 'ls-1',
+    schoolId: SCHOOL_ID,
+    lunchEnabled: true,
+    lunchStartTime: new Date('1970-01-01T11:00:00.000Z'),
+    lunchEndTime: new Date('1970-01-01T13:00:00.000Z'),
+    lunchMinutes: 30,
+    diningSeats: 180,
+    maxLessonsPerDayPerGroup: null,
+    createdAt: new Date('2026-08-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-08-01T00:00:00.000Z'),
+    ...overrides,
+  });
+
   describe('upsert', () => {
     it('writes the row for the caller’s school, times parsed for @db.Time', async () => {
-      const row = { id: 'ls-1' };
-      tx.lunchSetting.upsert.mockResolvedValue(row);
+      // A row shaped as the database returns one: the two time columns are
+      // `Date`s anchored at 1970-01-01, not strings. `{ id: 'ls-1' }` could
+      // never come back from Prisma, and a fixture that cannot occur was what
+      // let the endpoint ship a timestamp where a clock was expected.
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
 
-      await expect(service.upsert(dto(), testUser())).resolves.toBe(row);
+      await expect(service.upsert(dto(), testUser())).resolves.toMatchObject({
+        id: 'ls-1',
+        lunchStartTime: '11:00',
+        lunchEndTime: '13:00',
+      });
 
       const data = {
         lunchEnabled: true,
@@ -81,7 +136,7 @@ describe('LunchSettingsService', () => {
     it('stores an absent seat count as null rather than dropping the field', async () => {
       // Null means "no limit worth modelling", and the solver reads it as
       // permission to place lunch exactly as it did before seats existed.
-      tx.lunchSetting.upsert.mockResolvedValue({ id: 'ls-1' });
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
 
       await service.upsert(dto({ diningSeats: undefined }), testUser());
 
@@ -116,7 +171,7 @@ describe('LunchSettingsService', () => {
     });
 
     it('accepts a window exactly as long as the break', async () => {
-      tx.lunchSetting.upsert.mockResolvedValue({ id: 'ls-1' });
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
 
       await service.upsert(
         dto({ lunchStartTime: '11:00', lunchEndTime: '11:30', lunchMinutes: 30 }),

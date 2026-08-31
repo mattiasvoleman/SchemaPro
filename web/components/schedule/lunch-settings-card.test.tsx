@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { LunchSettingsCard } from "./lunch-settings-card";
+import { LunchSettingsCard, toInputTime } from "./lunch-settings-card";
 
 const save = vi.hoisted(() => vi.fn());
 const settings = vi.hoisted(() => ({
@@ -36,7 +36,10 @@ describe("LunchSettingsCard", () => {
     settings.data = {
       id: "ls-1",
       lunchEnabled: true,
-      // PostgreSQL returns a `time` column with seconds; the input wants HH:MM.
+      // HH:MM:SS is what PostgreSQL holds, and what this fixture has always
+      // said the API sends. It does not — it sends HH:MM — and for a while it
+      // sent the raw `Date`, which is the bug the two tests below cover. Kept
+      // as-is because the field must tolerate seconds either way.
       lunchStartTime: "10:45:00",
       lunchEndTime: "12:30:00",
       lunchMinutes: 30,
@@ -50,6 +53,79 @@ describe("LunchSettingsCard", () => {
     expect(field("windowEnd").value).toBe("12:30");
     expect(field("seats").value).toBe("180");
     expect(field("maxPerDay").value).toBe("7");
+  });
+
+  const saved = (overrides: Record<string, unknown> = {}) => {
+    settings.data = {
+      id: "ls-1",
+      lunchEnabled: true,
+      lunchStartTime: "11:00",
+      lunchEndTime: "13:00",
+      lunchMinutes: 30,
+      diningSeats: 180,
+      maxLessonsPerDayPerGroup: 7,
+      ...overrides,
+    };
+  };
+
+  it("fills the times from the shape the API actually sends", async () => {
+    // HH:MM, because the endpoint serialises the `@db.Time` column now. While
+    // it returned the raw column instead, this field held
+    // "1970-01-01T11:00:00.000Z".
+    saved();
+
+    render(<LunchSettingsCard />);
+
+    await waitFor(() => expect(field("windowStart").value).toBe("11:00"));
+    expect(field("windowEnd").value).toBe("13:00");
+  });
+
+  describe("toInputTime", () => {
+    /*
+     * Tested directly, because through the DOM the two outcomes are the same
+     * thing: jsdom reports an invalid `type="time"` value as "" exactly as it
+     * reports an empty one, so a rendered test passed whether the guard existed
+     * or not. Found by mutation.
+     */
+    it.each([
+      ["11:00", "11:00"],
+      ["11:00:00", "11:00"],
+      ["07:30:45.123", "07:30"],
+    ])("keeps %s as %s", (given, expected) => {
+      expect(toInputTime(given)).toBe(expected);
+    });
+
+    it.each([
+      ["1970-01-01T11:00:00.000Z", "the shape the endpoint used to send"],
+      ["", "an empty field"],
+      ["elva", "something that is not a time at all"],
+    ])("refuses %s — %s", (given) => {
+      // "" and not "1970-": an input given a value it cannot parse draws empty
+      // and writes a warning nobody reads. Empty on purpose is the same picture
+      // with a reason behind it.
+      expect(toInputTime(given)).toBe("");
+    });
+  });
+
+  it("draws nothing rather than 1970 if a timestamp ever arrives", async () => {
+    /*
+     * The regression, and what it looked like: `.slice(0, 5)` of
+     * "1970-01-01T11:00:00.000Z" is "1970-", which an `<input type="time">`
+     * refuses — "The specified value '1970-' does not conform to the required
+     * format" in the console, and an empty box on screen with no explanation.
+     *
+     * The field ends up empty either way. The difference is that it is empty on
+     * purpose, and that this test fails if the truncation comes back.
+     */
+    saved({
+      lunchStartTime: "1970-01-01T11:00:00.000Z",
+      lunchEndTime: "1970-01-01T13:00:00.000Z",
+    });
+
+    render(<LunchSettingsCard />);
+
+    await waitFor(() => expect(field("windowStart").value).not.toBe("1970-"));
+    expect(field("windowStart").value).toBe("");
   });
 
   it("shows an absent seat limit as an empty field, not as a zero", async () => {

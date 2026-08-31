@@ -4,6 +4,31 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { toWallClock } from '../common/utils/time';
+
+/**
+ * What the endpoint answers with, which is not the row.
+ *
+ * The two time columns come out of Prisma as `Date`s anchored at 1970-01-01,
+ * and returning the row unchanged sent "1970-01-01T11:00:00.000Z" to a client
+ * asking for a clock. `<input type="time">` refused it — "The specified value
+ * '1970-' does not conform to the required format" — and the lunch form drew
+ * its start and end empty on every load.
+ */
+export interface LunchSettingsResponse
+  extends Omit<LunchSetting, 'lunchStartTime' | 'lunchEndTime'> {
+  /** HH:MM, the wall clock the column actually holds. */
+  lunchStartTime: string;
+  lunchEndTime: string;
+}
+
+function toResponse(row: LunchSetting): LunchSettingsResponse {
+  return {
+    ...row,
+    lunchStartTime: toWallClock(row.lunchStartTime),
+    lunchEndTime: toWallClock(row.lunchEndTime),
+  };
+}
 import { parseTimeString } from '../common/utils/time';
 import type { UpsertLunchSettingsDto } from './dto/lunch-settings.dto';
 
@@ -38,20 +63,21 @@ export class LunchSettingsService {
    * 11:00" are different facts, and the publish warning depends on telling them
    * apart.
    */
-  async get(user: AuthenticatedUser): Promise<LunchSetting | null> {
+  async get(user: AuthenticatedUser): Promise<LunchSettingsResponse | null> {
     // async, so a principal with no school rejects rather than throwing before
     // the promise exists — a caller awaiting this should not have to also
     // wrap the call itself in a try.
     const schoolId = requireSchoolId(user);
-    return this.prisma.withRls(user, (tx) =>
+    const row = await this.prisma.withRls(user, (tx) =>
       tx.lunchSetting.findUnique({ where: { schoolId } }),
     );
+    return row === null ? null : toResponse(row);
   }
 
   async upsert(
     dto: UpsertLunchSettingsDto,
     user: AuthenticatedUser,
-  ): Promise<LunchSetting> {
+  ): Promise<LunchSettingsResponse> {
     const schoolId = requireSchoolId(user);
     this.assertFitsTheSolverGrid(dto);
 
@@ -65,12 +91,14 @@ export class LunchSettingsService {
     };
 
     try {
-      return await this.prisma.withRls(user, (tx) =>
-        tx.lunchSetting.upsert({
-          where: { schoolId },
-          create: { schoolId, ...data },
-          update: data,
-        }),
+      return toResponse(
+        await this.prisma.withRls(user, (tx) =>
+          tx.lunchSetting.upsert({
+            where: { schoolId },
+            create: { schoolId, ...data },
+            update: data,
+          }),
+        ),
       );
     } catch (error) {
       rethrowPrismaError(error);

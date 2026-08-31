@@ -30,6 +30,7 @@ import { Label } from "@/components/ui/label";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { formatTime } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -226,8 +227,12 @@ export default function GeneratePage() {
                 {lunchSettings?.lunchEnabled ? (
                   <>
                     {tLunch("summary", {
-                      start: lunchSettings.lunchStartTime.slice(0, 5),
-                      end: lunchSettings.lunchEndTime.slice(0, 5),
+                      // formatTime, not a slice: the same five characters read
+                      // "1970-" for as long as the endpoint sent the raw
+                      // `@db.Time` column, and this line printed it as the
+                      // school's lunch hour on the page you press generate from.
+                      start: formatTime(lunchSettings.lunchStartTime),
+                      end: formatTime(lunchSettings.lunchEndTime),
                       minutes: lunchSettings.lunchMinutes,
                     })}
                     {" · "}

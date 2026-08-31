@@ -1,5 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
-import { parseDateString, parseTimeString, zonedTimeToUtc } from './time';
+import {
+  parseDateString,
+  parseTimeString,
+  toWallClock,
+  zonedTimeToUtc,
+} from './time';
 
 describe('parseTimeString', () => {
   it('parses HH:MM into a UTC-epoch-day Date', () => {
@@ -104,5 +109,37 @@ describe('zonedTimeToUtc', () => {
     expect(zonedTimeToUtc('2026-01-15', '00:30', 'Europe/Stockholm')).toEqual(
       new Date('2026-01-14T23:30:00.000Z'),
     );
+  });
+});
+
+describe('toWallClock', () => {
+  /*
+   * The inverse of parseTimeString, and the half that was missing. A @db.Time
+   * column is a wall clock with no day and no zone; the digits ARE the answer,
+   * so it is read in UTC. Reading it locally would move 11:00 to 12:00 for half
+   * the year in Stockholm.
+   */
+  it.each([
+    ['1970-01-01T11:00:00.000Z', '11:00'],
+    ['1970-01-01T07:30:00.000Z', '07:30'],
+    ['1970-01-01T00:00:00.000Z', '00:00'],
+    ['1970-01-01T23:59:00.000Z', '23:59'],
+    ['1970-01-01T09:05:00.000Z', '09:05'],
+  ])('turns %s into %s', (stored, expected) => {
+    expect(toWallClock(new Date(stored))).toBe(expected);
+  });
+
+  it('round-trips whatever parseTimeString accepted', () => {
+    for (const clock of ['00:00', '07:30', '11:00', '13:45', '23:59']) {
+      expect(toWallClock(parseTimeString(clock))).toBe(clock);
+    }
+  });
+
+  it('is not moved by the timezone the server happens to run in', () => {
+    // Asserted rather than assumed: the suite pins TZ=UTC in the npm scripts,
+    // so a local-time implementation would pass here and fail on a laptop.
+    const stored = new Date('1970-01-01T11:00:00.000Z');
+    expect(toWallClock(stored)).toBe('11:00');
+    expect(stored.getUTCHours()).toBe(11);
   });
 });

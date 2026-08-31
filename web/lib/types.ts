@@ -215,7 +215,12 @@ export interface AvailabilityConstraint {
 export interface LunchSettings {
   id: string;
   lunchEnabled: boolean;
-  /** HH:MM:SS as PostgreSQL returns a `time` column. */
+  /**
+   * HH:MM. The API serialises the `@db.Time` column rather than passing the row
+   * through — Prisma reads one as a `Date` at 1970-01-01, and the endpoint used
+   * to send "1970-01-01T11:00:00.000Z" under this very field. The comment here
+   * said HH:MM:SS, which it never was.
+   */
   lunchStartTime: string;
   lunchEndTime: string;
   lunchMinutes: number;

@@ -31,8 +31,28 @@ const EMPTY_FORM: LunchForm = {
   maxLessonsPerDayPerGroup: "",
 };
 
-/** "11:00:00" as PostgreSQL returns it, "11:00" as an <input type="time"> wants it. */
-function toInputTime(value: string): string {
+/**
+ * "11:00" for an `<input type="time">`, whatever shape the API is sending.
+ *
+ * The comment here used to claim the value arrived as PostgreSQL's "11:00:00"
+ * and took the first five characters on that basis. It arrived as
+ * "1970-01-01T11:00:00.000Z" — Prisma reads a `@db.Time` as a `Date` and the
+ * endpoint returned the row unserialised — so the slice produced "1970-", the
+ * input refused it ("does not conform to the required format"), and the form
+ * drew its start and end EMPTY on every load.
+ *
+ * The API sends HH:MM now, so the slice is no longer what makes this work. It
+ * stays as a narrow guard against the seconds PostgreSQL would add if the
+ * serialisation were ever bypassed, and the timestamp shape is rejected outright
+ * rather than silently truncated into something that looks like a time.
+ *
+ * Exported only to be tested. Through the rendered card the two outcomes are
+ * indistinguishable — jsdom reports an invalid `type="time"` value as "" just
+ * as it reports an empty one — so a test that went through the DOM passed
+ * whether the guard was there or not.
+ */
+export function toInputTime(value: string): string {
+  if (!/^\d{2}:\d{2}/.test(value)) return "";
   return value.slice(0, 5);
 }
 
