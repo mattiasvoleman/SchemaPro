@@ -64,11 +64,22 @@ class SlidingWindowRateLimiter:
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     settings: Settings = application.state.settings
     configure_logging(settings.log_level)
+    # The grid is here because it decides which lesson lengths a school can
+    # have, and it is read from the environment — so the value in the code is
+    # not evidence of the value in production. A deployment with SLOT_MINUTES
+    # left at an old number rejects every 40- and 50-minute lesson, and the only
+    # place that said so was the rejection itself, one generation attempt later.
+    # Now the first line of the log answers it.
     logger.info(
         "service_starting",
         app_env=settings.app_env,
         allowed_origins=settings.allowed_origins,
         solver_timeout_seconds=settings.solver_max_time_seconds,
+        slot_minutes=settings.slot_minutes,
+        schedule_day=(
+            f"{settings.schedule_day_start_minutes // 60:02d}:00-"
+            f"{settings.schedule_day_end_minutes // 60:02d}:00"
+        ),
     )
     yield
     logger.info("service_stopped")

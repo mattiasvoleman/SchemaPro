@@ -106,6 +106,45 @@ def test_optimize_rejects_oversized_requirements(client: TestClient) -> None:
     assert response.status_code == 422  # schema max_length rejects before solving
 
 
+def test_startup_says_which_grid_is_in_force(caplog) -> None:  # type: ignore[no-untyped-def]
+    """The grid comes from the environment, so the code is not evidence of it.
+
+    A deployment left on an old SLOT_MINUTES refuses every 40- and 50-minute
+    lesson, and the only thing that said so was the rejection itself — one
+    generation attempt after startup, and one service away from the variable.
+    Working out which value was in force took reading the image, the compose
+    file and the repository. The first line of the log should answer it.
+    """
+    import json
+    import logging
+
+    from fastapi.testclient import TestClient as _TestClient
+
+    from app.main import create_app
+
+    # The app renders JSON through structlog and hands it to stdlib logging, so
+    # the whole event is the RECORD'S MESSAGE, not a set of attributes on it.
+    # Two earlier attempts here looked in the wrong place — structlog's own
+    # capture (replaced when `configure_logging` runs inside the lifespan) and
+    # captured stdout — and both found nothing while the line was being emitted
+    # perfectly well.
+    with caplog.at_level(logging.INFO):
+        with _TestClient(create_app(_settings(SLOT_MINUTES=15))):
+            pass
+
+    lines = []
+    for record in caplog.records:
+        message = record.getMessage()
+        if message.startswith("{"):
+            lines.append(json.loads(message))
+    starting = [entry for entry in lines if entry.get("event") == "service_starting"]
+    assert starting, "startup must log service_starting"
+    assert starting[0]["slot_minutes"] == 15
+    # The window too, for the same reason: both decide which lessons are
+    # possible and both come from the environment.
+    assert starting[0]["schedule_day"] == "08:00-18:00"
+
+
 def test_a_misaligned_lesson_length_is_input_not_a_crash(client: TestClient) -> None:
     """A duration off the grid must answer, not explode.
 
