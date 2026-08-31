@@ -5,6 +5,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUrl,
   Max,
   Min,
   validateSync,
@@ -64,8 +65,37 @@ export class EnvironmentVariables {
   @IsString()
   JWT_AUDIENCE?: string;
 
+  /*
+   * A URL, not merely a non-empty string.
+   *
+   * `@IsNotEmpty` alone let the literal "undefined" through — which is what an
+   * environment variable interpolated from a value that was never set looks
+   * like — and the app booted happily. The failure surfaced on the first
+   * attempt to generate a schedule, as "AI engine unavailable": axios refuses
+   * to parse "undefined/v1/schedule" and throws a TypeError, which is neither a
+   * timeout nor an AxiosError and so falls through to the proxy's most generic
+   * message. Nothing in it says the URL is the problem, and the obvious next
+   * move — is the engine up? — finds an engine that is perfectly healthy.
+   *
+   * Boot is the right place to notice. A misconfigured deployment should refuse
+   * to start rather than run until somebody presses the button that needs it.
+   *
+   * `require_tld: false` because the engine answers at `localhost` in
+   * development and at a bare service name (`http://solver:8000`) inside
+   * compose; neither has a dot in it and both are correct.
+   *
+   * `require_protocol: true` is the half that does the work. Without it
+   * validator.js accepts a bare hostname, so "undefined" and "localhost:8000"
+   * both passed — and "undefined" is the exact value this rule exists to catch.
+   * Found by the test, not by reading the option list.
+   */
   @IsString()
   @IsNotEmpty()
+  @IsUrl({
+    require_tld: false,
+    require_protocol: true,
+    protocols: ['http', 'https'],
+  })
   AI_ENGINE_URL!: string;
 
   @IsString()
