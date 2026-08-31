@@ -800,6 +800,23 @@ export class OptimizationProxyService {
           })
           .pipe(
             timeout(this.aiConfig.timeoutMs),
+            /*
+             * Three different failures, told apart, because they need three
+             * different things done about them.
+             *
+             * "Returned an error" used to cover two of them. An AxiosError with
+             * no `response` is a request that never arrived — the engine
+             * refused the connection, or the host does not resolve — and
+             * reporting that as the engine having answered sent whoever read
+             * the log looking at the engine's own logs, which are empty because
+             * it was never running. That is the ordinary case locally: the
+             * engine is a separate service and it is easy to forget to start.
+             *
+             * The status is kept from the response where there is one, because
+             * a 400 from the engine means this request was wrong and a 500
+             * means the engine broke, and flattening both into 502 loses the
+             * only thing that separates them.
+             */
             catchError((error: unknown) => {
               if (error instanceof TimeoutError) {
                 throw new ServiceUnavailableException(
@@ -807,10 +824,17 @@ export class OptimizationProxyService {
                 );
               }
               if (error instanceof AxiosError) {
-                const status = error.response?.status ?? HttpStatus.BAD_GATEWAY;
+                if (error.response === undefined) {
+                  this.logger.error(
+                    `AI engine unreachable at ${this.aiConfig.baseUrl} [${error.code ?? 'no code'}]`,
+                  );
+                  throw new ServiceUnavailableException(
+                    'The AI engine could not be reached.',
+                  );
+                }
                 throw new HttpException(
                   'The AI engine returned an error.',
-                  status,
+                  error.response.status,
                 );
               }
               throw new ServiceUnavailableException('AI engine unavailable.');

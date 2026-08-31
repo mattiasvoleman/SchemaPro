@@ -446,6 +446,36 @@ describe('OptimizationProxyService', () => {
       await expect(call()).rejects.toThrow('did not respond in time');
     });
 
+    it('says the engine could not be REACHED when nothing answered', async () => {
+      /*
+       * The ordinary local failure: the engine is a separate service and it is
+       * easy to forget to start. An AxiosError with no `response` is a request
+       * that never arrived — ECONNREFUSED, or a host that does not resolve.
+       *
+       * It used to be reported as "The AI engine returned an error" with a 502,
+       * which sent whoever read it looking at the engine's own logs. Those are
+       * empty, because it was never running.
+       */
+      const refused = new AxiosError('connect ECONNREFUSED 127.0.0.1:8000');
+      refused.code = 'ECONNREFUSED';
+      http.post.mockReturnValue(throwError(() => refused));
+
+      await expect(call()).rejects.toThrow(ServiceUnavailableException);
+      await expect(call()).rejects.toThrow('could not be reached');
+      // And NOT the message that means the engine answered.
+      await expect(call()).rejects.not.toThrow('returned an error');
+    });
+
+    it('keeps a 500 from the engine a 500, not a 502', async () => {
+      // The status is what separates "this request was wrong" from "the engine
+      // broke", and flattening both into 502 loses it.
+      const broke = new AxiosError('boom');
+      broke.response = { status: 500 } as never;
+      http.post.mockReturnValue(throwError(() => broke));
+
+      await expect(call()).rejects.toMatchObject({ status: 500 });
+    });
+
     it('propagates the engine status code on an HTTP error', async () => {
       const axiosError = new AxiosError('boom');
       axiosError.response = { status: 422 } as never;
@@ -455,10 +485,19 @@ describe('OptimizationProxyService', () => {
       await expect(call()).rejects.toMatchObject({ status: 422 });
     });
 
-    it('falls back to 502 when the engine error carries no status', async () => {
+    it('answers 503 and not 502 when the engine never responded', async () => {
+      /*
+       * This used to assert 502, and 502 was the wrong answer.
+       *
+       * "Bad Gateway" says the upstream replied with something unusable. An
+       * AxiosError carrying no `response` says it replied with nothing at all,
+       * which is 503 — and the distinction is the difference between reading
+       * the engine's logs and starting the engine.
+       */
       http.post.mockReturnValue(throwError(() => new AxiosError('no response')));
 
-      await expect(call()).rejects.toMatchObject({ status: 502 });
+      await expect(call()).rejects.toMatchObject({ status: 503 });
+      await expect(call()).rejects.toThrow('could not be reached');
     });
 
     it('maps an unrecognised transport failure to 503', async () => {
