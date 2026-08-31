@@ -37,6 +37,7 @@ import type {
   LunchSettings,
 } from "@/lib/types";
 import { timeToMinutes } from "@/lib/utils";
+import type { GradeSpan } from "@/lib/grade-span";
 
 /** Monday–Friday, and the span findOpenSlots searches, so answers agree. */
 const DEFAULT_DAYS = [1, 2, 3, 4, 5];
@@ -92,6 +93,15 @@ export interface ScheduleData {
   /** studentId → home class, so an elective booked per pupil occupies it. */
   studentGroupOf?: Map<string, string | null>;
   /**
+   * groupId → the years it holds, so a GRADE_LEVEL rule can reach it.
+   *
+   * Omitted, year rules are skipped — which is what this module did for every
+   * caller until now, silently: a rule saying åk 4 stops at 15:00 left the
+   * search reporting 15:00-16:00 as free for a year-4 class. See
+   * lib/grade-span.ts for why a group's year has to be derived rather than read.
+   */
+  gradeSpanOf?: Map<string, GradeSpan>;
+  /**
    * Who sits in which teaching group — the rows buildGroupConflictMap takes.
    *
    * Together with studentGroupOf this is the roster, and supplying it is what
@@ -140,6 +150,8 @@ interface Bodies {
 interface KnownMemberships {
   studentGroupOf?: Map<string, string | null>;
   groupConflicts?: GroupConflictMap;
+  /** See ScheduleData.gradeSpanOf — year rules cannot reach a group without it. */
+  gradeSpanOf?: Map<string, GradeSpan>;
 }
 
 /**
@@ -267,6 +279,7 @@ function closes(
         [constraint],
         known.studentGroupOf,
         known.groupConflicts,
+        known.gradeSpanOf,
       ).length > 0,
   );
 }
@@ -928,6 +941,10 @@ export function whoIsFree(
           options.constraints,
           options.studentGroupOf,
           options.groupConflicts,
+          // The reverse lookup has to read year rules too. Without this it
+          // answers "åk 4 is free" for a slot a ramtid has closed — the same
+          // silence the forward search had.
+          options.gradeSpanOf,
         ).length > 0,
     );
 

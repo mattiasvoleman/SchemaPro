@@ -302,7 +302,7 @@ describe("findFreeWindows", () => {
     ]);
   });
 
-  it("ignores rules aimed at somebody else, at a date, or at no weekday", () => {
+  it("ignores rules aimed at somebody else, at a date, or merely wished for", () => {
     const query = {
       studentGroupIds: ["7A"],
       minimumMinutes: 30,
@@ -322,12 +322,6 @@ describe("findFreeWindows", () => {
         constraints: [constraint({ studentGroupId: "7A", date: "2026-09-01" })],
       }),
     ).toEqual(whole);
-    expect(
-      findFreeWindows({
-        ...query,
-        constraints: [constraint({ studentGroupId: "7A", dayOfWeek: null })],
-      }),
-    ).toEqual(whole);
     // A wish is not an occupation.
     expect(
       findFreeWindows({
@@ -335,6 +329,70 @@ describe("findFreeWindows", () => {
         constraints: [constraint({ studentGroupId: "7A", type: "PREFERRED_FREE" })],
       }),
     ).toEqual(whole);
+  });
+
+  it("closes time for a year rule, once the group's years are known", () => {
+    /*
+     * The rule this module ignored outright. A GRADE_LEVEL row names no group,
+     * so it matched nothing and the search offered 12:00-13:00 as free to a
+     * year-4 class the solver would refuse to schedule there.
+     *
+     * Supplying the spans is what switches it on; without them the rule is
+     * skipped rather than guessed at, which the second assertion pins.
+     */
+    const rule = constraint({
+      resourceType: "GRADE_LEVEL",
+      studentGroupId: null,
+      minGradeLevel: 4,
+      maxGradeLevel: 4,
+    });
+    const query = {
+      studentGroupIds: ["7A"],
+      minimumMinutes: 30,
+      placements: [],
+      ...monday,
+      constraints: [rule],
+    };
+
+    expect(
+      findFreeWindows({ ...query, gradeSpanOf: new Map([["7A", { min: 4, max: 4 }]]) }),
+    ).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(12), weeks: "ALL_WEEKS" },
+      { dayOfWeek: 1, startMinutes: hm(13), endMinutes: hm(16), weeks: "ALL_WEEKS" },
+    ]);
+
+    // No spans supplied: the whole day, as before.
+    expect(findFreeWindows(query)).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(16), weeks: "ALL_WEEKS" },
+    ]);
+
+    // A class the rule does not name keeps its day whole.
+    expect(
+      findFreeWindows({ ...query, gradeSpanOf: new Map([["7A", { min: 7, max: 7 }]]) }),
+    ).toEqual([{ dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(16), weeks: "ALL_WEEKS" }]);
+  });
+
+  it("treats a rule with no weekday as closing EVERY day", () => {
+    /*
+     * Moved out of the test above, which listed it among the rules to ignore.
+     * The engine expands a null weekday across every teaching day
+     * (TimeGrid.window_to_absolute_range), so ignoring it here made the search
+     * offer time the solver would refuse to use.
+     */
+    // The fixture rule runs 12:00-13:00, so Monday is cut in two rather than
+    // erased — which is the point: with the old reading it was not cut at all.
+    const windows = findFreeWindows({
+      studentGroupIds: ["7A"],
+      minimumMinutes: 30,
+      placements: [],
+      ...monday,
+      constraints: [constraint({ studentGroupId: "7A", dayOfWeek: null })],
+    });
+
+    expect(windows).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(12), weeks: "ALL_WEEKS" },
+      { dayOfWeek: 1, startMinutes: hm(13), endMinutes: hm(16), weeks: "ALL_WEEKS" },
+    ]);
   });
 
   it("offers an every-other-week window as one, without hiding the weekly ones", () => {
@@ -1296,6 +1354,41 @@ describe("whoIsFree", () => {
         constraints: [],
       }),
     ).toEqual({ studentGroupIds: ["7B"], teacherIds: ["t2"], roomIds: ["r2"] });
+  });
+
+  /*
+   * The reverse lookup read the same ScheduleData as the forward search but
+   * dropped the spans on the way to validatePlacement, so it answered "åk 4 is
+   * free" for exactly the slot the forward search had just refused to offer.
+   */
+  it("does not offer a year the rule has closed", () => {
+    const rule = constraint({
+      resourceType: "GRADE_LEVEL",
+      studentGroupId: null,
+      minGradeLevel: 4,
+      maxGradeLevel: 4,
+      dayOfWeek: 1,
+      startTime: "10:00",
+      endTime: "11:00",
+    });
+    const query = {
+      ...at,
+      studentGroupIds: ["4A", "7A"],
+      placements: [],
+      constraints: [rule],
+    };
+
+    expect(whoIsFree({
+      ...query,
+      gradeSpanOf: new Map([
+        ["4A", { min: 4, max: 4 }],
+        ["7A", { min: 7, max: 7 }],
+      ]),
+    }).studentGroupIds).toEqual(["7A"]);
+
+    // Without the spans the rule is skipped rather than guessed at, so both
+    // groups come back — the state this function was in until now.
+    expect(whoIsFree(query).studentGroupIds).toEqual(["4A", "7A"]);
   });
 
   it("treats a lesson that ends when the interval starts as no obstacle", () => {

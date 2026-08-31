@@ -62,6 +62,7 @@ import {
   type OpenSlotMatch,
   type PlacementSuggestion,
 } from "@/lib/conflicts";
+import { buildGradeSpans } from "@/lib/grade-span";
 import {
   useHistoryKeyboard,
   useScheduleHistory,
@@ -246,6 +247,29 @@ export default function TimetablePage() {
     [students],
   );
   const { data: memberships } = useGroupMemberships();
+  /**
+   * groupId -> the years it holds, so a GRADE_LEVEL rule can reach it.
+   *
+   * A teaching group has no year of its own, so it is derived from its members'
+   * home classes — the same derivation the server does for the solver payload.
+   * Without this the rule matches nothing and is ignored in silence; see
+   * lib/grade-span.ts.
+   */
+  const gradeSpanOf = useMemo(
+    () =>
+      buildGradeSpans({
+        groups: groups ?? [],
+        membersByGroup: (memberships ?? []).reduce((map, row) => {
+          const list = map.get(row.studentGroupId);
+          if (list) list.push(row.studentId);
+          else map.set(row.studentGroupId, [row.studentId]);
+          return map;
+        }, new Map<string, string[]>()),
+        homeClassOf: studentGroupOf,
+      }),
+    [groups, memberships, studentGroupOf],
+  );
+
   /** Groups sharing students — the manual-edit twin of the engine's pairs. */
   const groupConflictMap = useMemo(
     () => buildGroupConflictMap(studentGroupOf, memberships ?? []),
@@ -279,8 +303,15 @@ export default function TimetablePage() {
   // -------------------------------------------------------------------
 
   const conflictMap = useMemo(
-    () => detectConflicts(lessons ?? [], constraints ?? [], studentGroupOf, groupConflictMap),
-    [lessons, constraints, studentGroupOf, groupConflictMap],
+    () =>
+      detectConflicts(
+        lessons ?? [],
+        constraints ?? [],
+        studentGroupOf,
+        groupConflictMap,
+        gradeSpanOf,
+      ),
+    [lessons, constraints, studentGroupOf, groupConflictMap, gradeSpanOf],
   );
 
   /** lessonId → collaborator label (soft edit-locks from presence). */
@@ -321,10 +352,11 @@ export default function TimetablePage() {
           constraints ?? [],
           studentGroupOf,
           groupConflictMap,
+          gradeSpanOf,
         ).length === 0
       );
     },
-    [lessonById, placements, constraints, studentGroupOf, groupConflictMap],
+    [lessonById, placements, constraints, studentGroupOf, groupConflictMap, gradeSpanOf],
   );
 
   const filtered = useMemo(

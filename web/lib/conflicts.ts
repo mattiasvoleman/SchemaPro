@@ -11,6 +11,7 @@ import type {
   LessonRecurrence,
   MasterLesson,
 } from "@/lib/types";
+import { spanMeetsRule, type GradeSpan } from "@/lib/grade-span";
 import { timeToMinutes } from "@/lib/utils";
 
 export type ConflictKind = "TEACHER" | "ROOM" | "GROUP" | "AVAILABILITY";
@@ -162,6 +163,13 @@ export function validatePlacement(
   studentGroupOf?: Map<string, string | null>,
   /** Groups sharing students (see buildGroupConflictMap). */
   groupConflicts?: GroupConflictMap,
+  /**
+   * groupId → the years it holds, for GRADE_LEVEL rules.
+   *
+   * Omitted, year rules are skipped rather than guessed at — which is what this
+   * function did for every caller until now, silently. See buildGradeSpans.
+   */
+  gradeSpanOf?: Map<string, GradeSpan>,
 ): ConflictHit[] {
   const hits: ConflictHit[] = [];
 
@@ -222,7 +230,14 @@ export function validatePlacement(
   for (const constraint of constraints) {
     if (constraint.type !== "UNAVAILABLE") continue;
     if (constraint.date !== null) continue; // one-off dates act at publish time
-    if (constraint.dayOfWeek !== candidate.dayOfWeek) continue;
+    // A rule with no weekday applies to EVERY teaching day — the engine reads
+    // it that way (TimeGrid.window_to_absolute_range), and this line used to
+    // read it as applying to none, because `null !== 1`. The rules page cannot
+    // create such a row today, so this is a divergence closed before it is
+    // reached rather than a bug anyone has hit.
+    if (constraint.dayOfWeek !== null && constraint.dayOfWeek !== candidate.dayOfWeek) {
+      continue;
+    }
 
     const applies =
       (constraint.resourceType === "TEACHER" &&
@@ -233,7 +248,15 @@ export function validatePlacement(
         constraint.roomId === candidate.roomId) ||
       (constraint.resourceType === "STUDENT_GROUP" &&
         constraint.studentGroupId !== null &&
-        groupsOf(candidate).includes(constraint.studentGroupId));
+        groupsOf(candidate).includes(constraint.studentGroupId)) ||
+      // A year rule names no row at all — it carries a span instead, and
+      // reaches whichever groups overlap it. Without this branch it matched
+      // nothing: the solver refused to place åk 4 after 15:00 while this
+      // function let a lesson be dragged there and reported no conflict.
+      (constraint.resourceType === "GRADE_LEVEL" &&
+        groupsOf(candidate).some((groupId) =>
+          spanMeetsRule(gradeSpanOf?.get(groupId), constraint),
+        ));
     if (!applies) continue;
 
     if (
@@ -261,12 +284,21 @@ export function detectConflicts(
   constraints: AvailabilityConstraint[],
   studentGroupOf?: Map<string, string | null>,
   groupConflicts?: GroupConflictMap,
+  /** groupId → the years it holds; without it GRADE_LEVEL rules are skipped. */
+  gradeSpanOf?: Map<string, GradeSpan>,
 ): Map<string, ConflictHit[]> {
   const placements = lessons.map(toPlacement);
   const result = new Map<string, ConflictHit[]>();
 
   for (const placement of placements) {
-    const hits = validatePlacement(placement, placements, constraints, studentGroupOf, groupConflicts);
+    const hits = validatePlacement(
+      placement,
+      placements,
+      constraints,
+      studentGroupOf,
+      groupConflicts,
+      gradeSpanOf,
+    );
     if (hits.length > 0 && placement.id) {
       result.set(placement.id, hits);
     }

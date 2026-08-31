@@ -437,6 +437,45 @@ describe("Gaps page — free time", () => {
     ]);
   });
 
+  it("closes time for a year rule, on a group that has no year of its own", async () => {
+    const user = userEvent.setup();
+    render(<GapsPage />);
+
+    await check(user, "Ma71");
+    await searchFree(user);
+    const before = onDay("gaps.freeTitle", 4);
+
+    cleanup();
+    // A GRADE_LEVEL rule names no row at all — no userId, no studentGroupId —
+    // so it reaches Ma71 only through the years its members bring: Sara is a
+    // 7A pupil, so Ma71 is a year-7 group even though its own gradeLevel is
+    // null. Without buildGradeSpans on this page the rule matches nothing and
+    // the search offers Thursday afternoon to a year that may not be there.
+    state.constraints = [
+      {
+        id: "c-year-7",
+        resourceType: "GRADE_LEVEL",
+        userId: null,
+        roomId: null,
+        studentGroupId: null,
+        minGradeLevel: 7,
+        maxGradeLevel: 7,
+        dayOfWeek: 4,
+        date: null,
+        startTime: "14:00:00",
+        endTime: "17:00:00",
+        type: "UNAVAILABLE",
+        reason: "Ramtid",
+      } as AvailabilityConstraint,
+    ];
+    render(<GapsPage />);
+    await check(user, "Ma71");
+    await searchFree(user);
+
+    expect(onDay("gaps.freeTitle", 4)).not.toEqual(before);
+    expect(onDay("gaps.freeTitle", 4).join("\n")).not.toMatch(/–1[5-7]:00/);
+  });
+
   it("refuses to answer a question about nobody, and clears back to it", async () => {
     const user = userEvent.setup();
     render(<GapsPage />);

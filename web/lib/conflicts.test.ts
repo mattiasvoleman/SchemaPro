@@ -450,12 +450,101 @@ describe("validatePlacement availability constraints", () => {
     ).toEqual([]);
   });
 
-  it("ignores weekly constraints with a null dayOfWeek", () => {
+  it("reads a weekly constraint with no weekday as EVERY day", () => {
+    /*
+     * This asserted the opposite, with no reason given, and the opposite is
+     * what the engine does not do: TimeGrid.window_to_absolute_range expands a
+     * null weekday across every teaching day. Reading it as "no day" here meant
+     * the two halves of the app disagreed about the same row.
+     *
+     * Dated one-offs are skipped a few lines earlier, so after that point a
+     * null weekday can only mean the recurring every-day case.
+     *
+     * No such row exists in production and the rules page cannot create one, so
+     * this closes a divergence before anybody reaches it rather than fixing a
+     * bug anybody has hit.
+     */
     expect(
       validatePlacement(candidate(), [], [
         makeConstraint({ userId: "t1", dayOfWeek: null }),
       ]),
+    ).toEqual([{ kind: "AVAILABILITY" }]);
+  });
+
+  it("still skips a one-off dated constraint, which publish handles", () => {
+    // The other shape with a null weekday, and the reason the line above can
+    // only mean "every day" by the time it runs.
+    expect(
+      validatePlacement(candidate(), [], [
+        makeConstraint({ userId: "t1", dayOfWeek: null, date: "2027-02-24" }),
+      ]),
     ).toEqual([]);
+  });
+
+  describe("year rules", () => {
+    /*
+     * The bug this branch exists for: a GRADE_LEVEL rule names no row — no
+     * userId, no roomId, no studentGroupId — so it matched nothing here and was
+     * ignored in silence. The solver refused to place åk 4 after 15:00 while
+     * this function let the same lesson be dragged there and reported nothing,
+     * and the gap search called the slot free.
+     */
+    const yearRule = (min: number | null, max: number | null) =>
+      makeConstraint({
+        resourceType: "GRADE_LEVEL",
+        userId: null,
+        minGradeLevel: min,
+        maxGradeLevel: max,
+      });
+
+    const spans = (entries: Record<string, { min: number; max: number }>) =>
+      new Map(Object.entries(entries));
+
+    it("flags a lesson for a group inside the rule's years", () => {
+      expect(
+        validatePlacement(candidate(), [], [yearRule(4, 4)], undefined, undefined,
+          spans({ gA: { min: 4, max: 4 } })),
+      ).toEqual([{ kind: "AVAILABILITY" }]);
+    });
+
+    it("leaves a group outside the rule's years alone", () => {
+      expect(
+        validatePlacement(candidate(), [], [yearRule(4, 4)], undefined, undefined,
+          spans({ gA: { min: 7, max: 7 } })),
+      ).toEqual([]);
+    });
+
+    it("reaches a group that only overlaps the rule", () => {
+      // Overlap, not containment: some of its pupils are in åk 6 and they
+      // cannot be in two places.
+      expect(
+        validatePlacement(candidate(), [], [yearRule(4, 6)], undefined, undefined,
+          spans({ gA: { min: 6, max: 7 } })),
+      ).toEqual([{ kind: "AVAILABILITY" }]);
+    });
+
+    it("reaches through an extra group, not only the owning one", () => {
+      const shared = { ...candidate(), extraGroupIds: ["g9"] };
+      expect(
+        validatePlacement(shared, [], [yearRule(9, 9)], undefined, undefined,
+          spans({ gA: { min: 4, max: 4 }, g9: { min: 9, max: 9 } })),
+      ).toEqual([{ kind: "AVAILABILITY" }]);
+    });
+
+    it("does not guess at a group whose year is unknown", () => {
+      expect(
+        validatePlacement(candidate(), [], [yearRule(4, 4)], undefined, undefined, spans({})),
+      ).toEqual([]);
+    });
+
+    it("skips year rules entirely when no spans are supplied", () => {
+      // What every caller got before this parameter existed. Stated so that a
+      // caller which forgets to pass them fails visibly in review rather than
+      // quietly reproducing the original bug.
+      expect(
+        validatePlacement(candidate(), [], [yearRule(4, 4)]),
+      ).toEqual([]);
+    });
   });
 
   it("flags a room constraint only for that room", () => {
@@ -509,6 +598,41 @@ describe("validatePlacement availability constraints", () => {
 describe("detectConflicts", () => {
   it("returns an empty map for an empty timetable", () => {
     expect(detectConflicts([], []).size).toBe(0);
+  });
+
+  /*
+   * detectConflicts took the spans and dropped them: it never passed them on to
+   * validatePlacement. Every year-rule test below it went through
+   * validatePlacement directly, so the whole suite stayed green while the
+   * timetable page — which calls detectConflicts, not validatePlacement — kept
+   * showing åk 4 as unflagged at 16:00.
+   */
+  it("passes the year spans on to each lesson it checks", () => {
+    const lesson = makeLesson({ id: "L1", studentGroupId: "gA" });
+    const rule = makeConstraint({
+      resourceType: "GRADE_LEVEL",
+      userId: null,
+      minGradeLevel: 4,
+      maxGradeLevel: 4,
+    });
+    const spans = new Map([["gA", { min: 4, max: 4 }]]);
+
+    expect(detectConflicts([lesson], [rule], undefined, undefined, spans).get("L1")).toEqual([
+      { kind: "AVAILABILITY" },
+    ]);
+  });
+
+  it("leaves a year outside the rule alone when the spans are passed on", () => {
+    const lesson = makeLesson({ id: "L1", studentGroupId: "gA" });
+    const rule = makeConstraint({
+      resourceType: "GRADE_LEVEL",
+      userId: null,
+      minGradeLevel: 4,
+      maxGradeLevel: 4,
+    });
+    const spans = new Map([["gA", { min: 7, max: 9 }]]);
+
+    expect(detectConflicts([lesson], [rule], undefined, undefined, spans).size).toBe(0);
   });
 
   it("returns an empty map for a clean timetable", () => {

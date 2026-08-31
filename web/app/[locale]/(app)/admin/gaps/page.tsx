@@ -79,6 +79,7 @@ import {
   useRooms,
 } from "@/lib/queries";
 import { buildGroupConflictMap, toPlacement } from "@/lib/conflicts";
+import { buildGradeSpans } from "@/lib/grade-span";
 import {
   DEFAULT_MINIMUM_GAP_MINUTES,
   findFreeWindows,
@@ -313,6 +314,28 @@ export default function GapsPage() {
     () => buildGroupConflictMap(studentGroupOf, memberships ?? []),
     [studentGroupOf, memberships],
   );
+  /**
+   * groupId -> the years it holds, so a GRADE_LEVEL rule can reach it.
+   *
+   * A teaching group has no year of its own, so it is derived from its members'
+   * home classes — the same derivation the server does for the solver payload.
+   * Without this the rule matches nothing and the search offers time a year
+   * rule has closed; see lib/grade-span.ts.
+   */
+  const gradeSpanOf = useMemo(
+    () =>
+      buildGradeSpans({
+        groups: groups ?? [],
+        membersByGroup: (memberships ?? []).reduce((map, row) => {
+          const list = map.get(row.studentGroupId);
+          if (list) list.push(row.studentId);
+          else map.set(row.studentGroupId, [row.studentId]);
+          return map;
+        }, new Map<string, string[]>()),
+        homeClassOf: studentGroupOf,
+      }),
+    [groups, memberships, studentGroupOf],
+  );
   const placements = useMemo(() => (lessons ?? []).map(toPlacement), [lessons]);
 
   const scheduleData: ScheduleData = useMemo(
@@ -326,6 +349,7 @@ export default function GapsPage() {
       // else, which loses every elective — the fourteen of 7A who are idle
       // while the other sixteen are in Ma71 would be reported as nobody.
       studentGroupOf,
+      gradeSpanOf,
       // `undefined` while the query is in flight, never `[]`. An empty array is
       // a complete roster that happens to hold nobody, and findIdleGaps reads
       // it as one: it switches to the per-pupil reading and finds no pupils, so
