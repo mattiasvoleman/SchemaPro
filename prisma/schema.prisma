@@ -138,6 +138,7 @@ model School {
   attendanceRecords       AttendanceRecord[]
   availabilityConstraints AvailabilityConstraint[]
   schoolBreaks            SchoolBreak[]
+  frameTimes              FrameTime[]
   scheduleChangeLogs      ScheduleChangeLog[]
   scheduleVersions        ScheduleVersion[]
   optimizationJobs        OptimizationJob[]
@@ -391,16 +392,16 @@ model StudentGroup {
 // -----------------------------------------------------------------------------
 
 model TeachingRequirement {
-  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId         String   @db.Uuid
-  academicYearId   String   @db.Uuid
-  subjectId        String   @db.Uuid
-  studentGroupId   String   @db.Uuid
-  teacherId        String?  @db.Uuid
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String  @db.Uuid
+  academicYearId   String  @db.Uuid
+  subjectId        String  @db.Uuid
+  studentGroupId   String  @db.Uuid
+  teacherId        String? @db.Uuid
   /// Optional second teacher — both are scheduled together (co-teaching).
-  coTeacherId      String?  @db.Uuid
-  lessonsPerWeek   Int      @default(1)
-  minutesPerLesson Int      @default(60)
+  coTeacherId      String? @db.Uuid
+  lessonsPerWeek   Int     @default(1)
+  minutesPerLesson Int     @default(60)
 
   /// Which weeks the requirement is read over, inherited by every lesson the
   /// optimizer generates for it. `lessonsPerWeek` counts weeks the requirement
@@ -413,14 +414,14 @@ model TeachingRequirement {
   /// half-year subjects get separate slots where they could have shared one —
   /// which costs packing room and not correctness, and is visible on the
   /// timetable rather than hidden.
-  recurrence       LessonRecurrence @default(ALL_WEEKS)
+  recurrence LessonRecurrence @default(ALL_WEEKS)
   /// First date the requirement is read; null means "from the start of the
   /// year". With endDate this expresses a subject read for one term only.
-  startDate        DateTime?        @db.Date
+  startDate  DateTime?        @db.Date
   /// Last date the requirement is read; null means "until the year ends".
-  endDate          DateTime?        @db.Date
-  createdAt        DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime @updatedAt @db.Timestamptz(6)
+  endDate    DateTime?        @db.Date
+  createdAt  DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime         @updatedAt @db.Timestamptz(6)
 
   school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   /// Every reference carries `schoolId`, because create() copies all five ids
@@ -489,7 +490,7 @@ model MasterLesson {
 
   // Locked lessons survive regeneration untouched: the optimizer treats them
   // as fixed placements and schedules the remaining demand around them.
-  isLocked  Boolean  @default(false)
+  isLocked    Boolean  @default(false)
   /// True only for lessons the optimizer itself produced, and the one thing
   /// regeneration is allowed to replace.
   ///
@@ -502,9 +503,9 @@ model MasterLesson {
   ///
   /// Defaults to false so a creation path that forgets to say is treated as
   /// handmade and survives. Only the optimizer sets it true.
-  isGenerated Boolean @default(false)
-  createdAt DateTime @default(now()) @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+  isGenerated Boolean  @default(false)
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
 
   school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   /// Tenant-scoped for the same reason as TeachingRequirement's: create() takes
@@ -998,6 +999,37 @@ model AvailabilityConstraint {
   @@index([studentGroupId, dayOfWeek])
   @@index([date])
   @@map("AvailabilityConstraints")
+}
+
+/// Ramtider: the hours of the day a stage of the school may be taught in.
+///
+/// The positive twin of an UNAVAILABLE constraint. "Åk 4 does not go on until
+/// 17:00" was expressible before only as the holes around the day, two or three
+/// rows per weekday per stage, none of which read back as the sentence meant.
+///
+/// Matching is OVERLAP and every match applies, so a group is bound by the
+/// intersection of the frames its years touch. That is what lets a weekday row
+/// and an every-day row compose without a precedence rule: "08:00-15:00 always,
+/// 08:00-13:00 on Friday" needs no further sentence. dayOfWeek null is every
+/// teaching day, as on a constraint. See the migration for the rest.
+model FrameTime {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String   @db.Uuid
+  /// Inclusive, 0-12, both required and ordered — the DB enforces all three.
+  minGradeLevel Int
+  maxGradeLevel Int
+  /// ISO weekday 1-7, or null for every teaching day.
+  dayOfWeek     Int?
+  startTime     DateTime @db.Time(0)
+  endTime       DateTime @db.Time(0)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, minGradeLevel, maxGradeLevel, dayOfWeek], map: "FrameTimes_schoolId_span_dayOfWeek_key")
+  @@index([schoolId, dayOfWeek])
+  @@map("FrameTimes")
 }
 
 /// Lov och studiedagar: whole days a school does not teach.
