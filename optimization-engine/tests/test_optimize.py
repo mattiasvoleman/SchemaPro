@@ -793,7 +793,7 @@ def test_lessons_never_run_past_the_end_of_their_day() -> None:
     # can produce one. `domain` is a flat [lo, hi, lo, hi, …] bound list.
     model = cp_model.CpModel()
     decisions = solver._create_lesson_decisions(
-        model, request.requirements, len(request.rooms),
+        model, request.requirements, len(request.rooms), request.frame_times,
     )
     slots_per_day = solver._grid.slots_per_day
     for decision in decisions:
@@ -2465,7 +2465,7 @@ def test_room_classes_merge_only_truly_interchangeable_rooms() -> None:
     request = OptimizeScheduleRequest.model_validate(payload)
     solver = SchedulerSolver(_settings())
     decisions = solver._create_lesson_decisions(
-        cp_model.CpModel(), request.requirements, len(request.rooms),
+        cp_model.CpModel(), request.requirements, len(request.rooms), request.frame_times,
     )
 
     classes = build_room_classes(decisions, request.rooms, set(), solver._room_allowed)
@@ -3557,6 +3557,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         AnonymousConstraint,
         AnonymousGroup,
         AnonymousRequirement,
+        FrameTime,
         OptimizeScheduleRequest,
         ScheduleRules,
     )
@@ -3568,6 +3569,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "groups",
         "rooms",
         "constraints",
+        "frameTimes",
         "roomPreferences",
         "fixedLessons",
         "groupConflicts",
@@ -3576,6 +3578,13 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "rules",
     }
     assert _field_names(AnonymousGroup) == {"id", "lunchHeadcount"}
+    assert _field_names(FrameTime) == {
+        "minGradeLevel",
+        "maxGradeLevel",
+        "dayOfWeek",
+        "startTime",
+        "endTime",
+    }
     assert _field_names(AnonymousRequirement) == {
         "id",
         "subjectId",
@@ -3679,3 +3688,256 @@ def test_an_all_day_closure_is_scheduled_around_rather_than_refused() -> None:
         lesson for lesson in place("19:00:00", "20:00:00") if lesson.day_of_week == 1
     ]
     assert monday, "an evening window took Monday away, which nobody asked it to"
+
+# ---------------------------------------------------------------------------
+# Ramtider
+#
+# test_frames.py proves the window arithmetic. These prove the solver actually
+# stands on it: that a frame moves where lessons land, that a frame reaching
+# nobody moves nothing, and that a frame too tight to hold a lesson comes back
+# as a sentence about the frame rather than as "no feasible schedule".
+# ---------------------------------------------------------------------------
+
+
+def _framed_payload(**requirement_overrides: object) -> dict[str, object]:
+    """The sample week, but for a year-4 group so a frame can reach it."""
+    payload = _sample_payload()
+    requirement = payload["requirements"][0]  # type: ignore[index]
+    requirement["minGradeLevel"] = 4  # type: ignore[index]
+    requirement["maxGradeLevel"] = 4  # type: ignore[index]
+    requirement.update(requirement_overrides)  # type: ignore[union-attr]
+    return payload
+
+
+def _lessons(client: TestClient, payload: dict[str, object]) -> list[dict[str, object]]:
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] in {"OPTIMAL", "FEASIBLE"}
+    return body["lessons"]
+
+
+def test_a_frame_keeps_every_lesson_inside_its_window(client: TestClient) -> None:
+    """The window is in the AFTERNOON, and that is the whole point.
+
+    A morning frame proves nothing: the objective already prefers mornings, so
+    every lesson lands inside an 08:00-10:00 window whether the frame reached
+    the group or not, and the assertion passes over a solver that ignores
+    frames entirely. Pushing the window to 14:00-17:00 makes the frame the only
+    reason a lesson could be there.
+    """
+    payload = _framed_payload()
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 4,
+            "maxGradeLevel": 6,
+            "dayOfWeek": None,
+            "startTime": "14:00:00",
+            "endTime": "17:00:00",
+        },
+    ]
+
+    lessons = _lessons(client, payload)
+
+    assert lessons
+    for lesson in lessons:
+        assert lesson["startTime"] >= "14:00:00"
+        assert lesson["endTime"] <= "17:00:00"
+
+
+def test_a_frame_for_another_stage_leaves_the_day_alone(client: TestClient) -> None:
+    """The control for the test above.
+
+    Without it, a solver that simply never placed anything after 10:00 — because
+    the objective happens to prefer mornings — would pass that assertion with
+    the frame doing nothing at all.
+    """
+    payload = _framed_payload(lessonsPerWeek=7, minutesPerLesson=60)
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 7,
+            "maxGradeLevel": 9,
+            "dayOfWeek": None,
+            "startTime": "08:00:00",
+            "endTime": "09:00:00",
+        },
+    ]
+
+    lessons = _lessons(client, payload)
+
+    # Seven lessons against a window that holds one a day across five days.
+    # At least two MUST land outside it whatever the objective would rather do,
+    # so this asserts the frame did not reach a year-4 group rather than
+    # asserting the solver's taste in mornings. A count the window could have
+    # swallowed would have proved neither.
+    assert len(lessons) == 7
+    assert any(lesson["endTime"] > "09:00:00" for lesson in lessons)
+
+
+def test_a_weekday_frame_binds_that_weekday_only(client: TestClient) -> None:
+    """Monday is pushed to the afternoon; the rest of the week is not.
+
+    Both halves matter. Monday landing after 15:00 is only explicable by the
+    frame, and some other day landing before it is what shows the frame stayed
+    on the weekday it named instead of applying to the week.
+    """
+    payload = _framed_payload(lessonsPerWeek=5, minutesPerLesson=60)
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 4,
+            "maxGradeLevel": 4,
+            "dayOfWeek": 1,
+            "startTime": "15:00:00",
+            "endTime": "17:00:00",
+        },
+    ]
+
+    lessons = _lessons(client, payload)
+
+    assert len(lessons) == 5
+    monday = [lesson for lesson in lessons if lesson["dayOfWeek"] == 1]
+    assert monday, "the week has five lessons and five days; Monday holds one"
+    for lesson in monday:
+        assert lesson["startTime"] >= "15:00:00"
+        assert lesson["endTime"] <= "17:00:00"
+    assert any(
+        lesson["dayOfWeek"] != 1 and lesson["startTime"] < "15:00:00"
+        for lesson in lessons
+    )
+
+
+def test_the_close_holds_against_an_objective_pulling_past_it(client: TestClient) -> None:
+    """A previous placement at 14:00 is a reward the frame has to outrank.
+
+    Every other assertion here would survive a solver that read only the OPEN
+    edge of the window, because nothing else in this file wants a late slot:
+    the objective prefers early, so "not before 14:00" and "inside 14:00-17:00"
+    look the same from outside. Handing the solver a previous lesson at 14:00
+    and a frame that closes at 12:00 makes the two edges disagree, and only the
+    close can decide it.
+    """
+    payload = _framed_payload()
+    requirement_id = payload["requirements"][0]["id"]  # type: ignore[index]
+    payload["previousLessons"] = [
+        {"requirementId": requirement_id, "dayOfWeek": 1, "startTime": "14:00:00"},
+        {"requirementId": requirement_id, "dayOfWeek": 2, "startTime": "14:00:00"},
+    ]
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 4,
+            "maxGradeLevel": 4,
+            "dayOfWeek": None,
+            "startTime": "08:00:00",
+            "endTime": "12:00:00",
+        },
+    ]
+
+    lessons = _lessons(client, payload)
+
+    assert len(lessons) == 2
+    for lesson in lessons:
+        assert lesson["endTime"] <= "12:00:00"
+
+
+def test_a_frame_that_closes_one_day_leaves_the_others(client: TestClient) -> None:
+    """Monday is too narrow for a lesson; the week is not, so this is not an error.
+
+    The gate in _validate_request asks whether ANY day still fits the lesson,
+    and that "any" is the whole of it: asking whether EVERY day fits would
+    refuse this perfectly ordinary request — a school that keeps Monday morning
+    for something else — with a message about an impossible timetable.
+    """
+    payload = _framed_payload(lessonsPerWeek=4, minutesPerLesson=60)
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 4,
+            "maxGradeLevel": 4,
+            "dayOfWeek": 1,
+            "startTime": "08:00:00",
+            "endTime": "08:30:00",
+        },
+    ]
+
+    lessons = _lessons(client, payload)
+
+    assert len(lessons) == 4
+    assert all(lesson["dayOfWeek"] != 1 for lesson in lessons)
+
+
+def test_a_frame_too_tight_for_the_lesson_is_named(client: TestClient) -> None:
+    """A narrowed-to-nothing domain is INFEASIBLE with nothing to blame.
+
+    CP-SAT has no variable left to point at, so the school would be told its
+    timetable is impossible and not which sentence made it so. The gate in
+    _validate_request turns that into a 4xx naming the requirement, the window
+    that remains and the length that will not fit.
+    """
+    payload = _framed_payload(minutesPerLesson=90)
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 4,
+            "maxGradeLevel": 4,
+            "dayOfWeek": None,
+            "startTime": "08:00:00",
+            "endTime": "09:00:00",
+        },
+    ]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400, response.text
+    detail = response.json()["message"]
+    assert "Frame times" in detail
+    assert "90-minute" in detail
+    assert "60 minutes" in detail
+
+
+def test_a_frame_that_closes_every_day_is_named_too(client: TestClient) -> None:
+    payload = _framed_payload()
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 4,
+            "maxGradeLevel": 4,
+            "dayOfWeek": None,
+            "startTime": "19:00:00",
+            "endTime": "20:00:00",
+        },
+    ]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "the widest any day still offers is 0 minutes" in response.json()["message"]
+
+
+def test_an_inverted_frame_is_refused_by_the_schema(client: TestClient) -> None:
+    payload = _framed_payload()
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 4,
+            "maxGradeLevel": 4,
+            "dayOfWeek": None,
+            "startTime": "15:00:00",
+            "endTime": "08:00:00",
+        },
+    ]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_a_payload_with_no_frames_behaves_as_it_always_did(client: TestClient) -> None:
+    """The field is optional, and absent must mean the whole day."""
+    payload = _framed_payload()
+    assert "frameTimes" not in payload
+
+    assert len(_lessons(client, payload)) == 2

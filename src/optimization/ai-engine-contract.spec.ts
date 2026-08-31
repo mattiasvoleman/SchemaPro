@@ -28,6 +28,7 @@ const PAYLOAD_FIELDS = [
   'academicYearId',
   'constraints',
   'fixedLessons',
+  'frameTimes',
   'groupConflicts',
   'groups',
   'previousLessons',
@@ -64,6 +65,15 @@ const GRADE_CONSTRAINT_FIELDS = [
   'maxGradeLevel',
   'minGradeLevel',
   'resourceKind',
+  'startTime',
+];
+
+/** A frame names a span of years, so there is nothing here to anonymise. */
+const FRAME_FIELDS = [
+  'dayOfWeek',
+  'endTime',
+  'maxGradeLevel',
+  'minGradeLevel',
   'startTime',
 ];
 
@@ -126,6 +136,16 @@ describe('AI engine wire contract', () => {
         startTime: new Date(0),
         endTime: new Date(0),
         type: 'UNAVAILABLE',
+      },
+    ]);
+    tx['frameTime']!['findMany']!.mockResolvedValue([
+      {
+        minGradeLevel: 4,
+        maxGradeLevel: 6,
+        dayOfWeek: 1,
+        // 1970-anchored, exactly as Prisma reads a TIME column back.
+        startTime: new Date('1970-01-01T08:00:00.000Z'),
+        endTime: new Date('1970-01-01T15:00:00.000Z'),
       },
     ]);
     tx['room']!['findMany']!.mockResolvedValue([
@@ -193,6 +213,24 @@ describe('AI engine wire contract', () => {
 
   it('sends exactly the top-level fields the engine declares', async () => {
     expect(Object.keys(await buildPayload()).sort()).toEqual(PAYLOAD_FIELDS);
+  });
+
+  it('sends exactly the frame fields the engine declares', async () => {
+    const payload = await buildPayload();
+    const frames = payload['frameTimes'] as Array<Record<string, unknown>>;
+    expect(frames).toHaveLength(1);
+    expect(Object.keys(frames[0]!).sort()).toEqual(FRAME_FIELDS);
+  });
+
+  it('sends a frame clock as HH:MM:SS, not as a 1970 timestamp', async () => {
+    const payload = await buildPayload();
+    const frames = payload['frameTimes'] as Array<Record<string, unknown>>;
+
+    // Prisma reads a TIME column into a Date at 1970-01-01, and the engine's
+    // pattern is ^\d{2}:\d{2}:\d{2}$ — so an unconverted value is a 422 for
+    // the whole optimize request, not a bad-looking field.
+    expect(frames[0]!['startTime']).toBe('08:00:00');
+    expect(frames[0]!['endTime']).toBe('15:00:00');
   });
 
   it('sends exactly the group fields the engine declares', async () => {

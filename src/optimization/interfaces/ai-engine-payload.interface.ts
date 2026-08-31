@@ -113,6 +113,30 @@ export interface AnonymousConstraint {
 }
 
 /**
+ * A ramtid: the hours one stage of the school may be taught in.
+ *
+ * NOT anonymised, and there is nothing to anonymise — a frame names a span of
+ * years, which is a property of the timetable and not of any person or room.
+ * The same is already true of a GRADE_LEVEL constraint, and for the same
+ * reason: there is no row to point at.
+ *
+ * The engine reads a frame as the DOMAIN of the lesson's start variable rather
+ * than as forbidden intervals, so the hours a frame closes never become
+ * variables at all. Sending the complement as UNAVAILABLE constraints would
+ * give the same schedule and a bigger model.
+ */
+export interface AnonymousFrameTime {
+  minGradeLevel: number;
+  maxGradeLevel: number;
+  /** ISO weekday 1-7, or null for every teaching day. */
+  dayOfWeek: DayOfWeek | null;
+  /** HH:MM:SS */
+  startTime: string;
+  /** HH:MM:SS */
+  endTime: string;
+}
+
+/**
  * A locked master lesson forwarded as an immovable placement. The solver
  * schedules the remaining demand around these: no generated lesson may
  * overlap a fixed lesson that shares its teacher, student group, or room.
@@ -175,6 +199,8 @@ export interface AiEngineScheduleRequest {
   requirements: AnonymousRequirement[];
   rooms: AnonymousRoom[];
   constraints: AnonymousConstraint[];
+  /** Ramtider. Empty means every stage may use the whole configured day. */
+  frameTimes: AnonymousFrameTime[];
   /** Locked master lessons the solver must plan around (never re-placed). */
   fixedLessons: AnonymousFixedLesson[];
   /** Every group the week concerns, with its dining-hall headcount. */

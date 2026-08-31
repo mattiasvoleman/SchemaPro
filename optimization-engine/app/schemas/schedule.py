@@ -212,6 +212,51 @@ class AnonymousConstraint(CamelModel):
         return self
 
 
+class FrameTime(CamelModel):
+    """A ramtid: the hours one stage of the school may be taught in.
+
+    The positive twin of an UNAVAILABLE constraint, and it is positive on
+    purpose. A window the lessons of a stage must fall INSIDE can narrow the
+    domain of the start variable, which shrinks the search; the same fact
+    expressed as the holes around it can only add forbidden intervals to it.
+
+    MATCHING IS OVERLAP AND EVERY MATCH APPLIES, so a group is bound by the
+    intersection of the frames its years touch — the same overlap test
+    _grade_span_overlaps uses for reservations, for the same reason: a group
+    spanning years 6-7 has year-6 pupils in it, and their stage's afternoon is
+    closed to them wherever they are timetabled. It is also what lets a weekday
+    row and an every-day row compose with no precedence rule between them.
+
+    Both bounds are required, unlike on a constraint. A frame with no years
+    would be a school-wide day length, which is what the engine's own configured
+    window already is, and a second way to say it is a second way to disagree.
+    """
+
+    min_grade_level: int = Field(alias="minGradeLevel", ge=0, le=12)
+    max_grade_level: int = Field(alias="maxGradeLevel", ge=0, le=12)
+    #: ISO weekday, or None for every teaching day.
+    day_of_week: DayOfWeek | None = Field(default=None, alias="dayOfWeek")
+    start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+
+    @model_validator(mode="after")
+    def validate_window(self) -> FrameTime:
+        """A frame has to hold something, and its years have to be a span.
+
+        Checked here rather than left to the solver because an empty or
+        inverted frame closes a stage's whole week, and the model would then be
+        infeasible with nothing to point at. A 422 naming the row is an answer;
+        "no feasible schedule" is not.
+        """
+        if self.min_grade_level > self.max_grade_level:
+            msg = "minGradeLevel must not be above maxGradeLevel."
+            raise ValueError(msg)
+        if self.start_time >= self.end_time:
+            msg = "startTime must be before endTime."
+            raise ValueError(msg)
+        return self
+
+
 class FixedLesson(CamelModel):
     """A locked master lesson the solver must plan around (never re-placed).
 
@@ -299,6 +344,14 @@ class OptimizeScheduleRequest(CamelModel):
     groups: list[AnonymousGroup] = Field(default_factory=list, max_length=2000)
     rooms: list[AnonymousRoom] = Field(min_length=1, max_length=1000)
     constraints: list[AnonymousConstraint] = Field(default_factory=list, max_length=5000)
+    # Ramtider. Optional so the engine can ship before the gateway that fills
+    # it: with none, every stage may use the whole configured day, which is
+    # exactly the behaviour that existed before frames did. The cap is generous
+    # against the real shape — thirteen years by seven weekdays is 91 rows even
+    # if a school writes one frame per single year per day.
+    frame_times: list[FrameTime] = Field(
+        default_factory=list, alias="frameTimes", max_length=500,
+    )
     room_preferences: list[AnonymousRoomPreference] = Field(
         default_factory=list,
         alias="roomPreferences",

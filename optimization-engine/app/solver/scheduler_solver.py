@@ -11,6 +11,7 @@ from ortools.sat.python import cp_model
 
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError, SolverBuildError
+from app.solver.frames import day_windows
 from app.schemas.schedule import (
     AnonymousRoomPreference,
     AnonymousConstraint,
@@ -18,6 +19,7 @@ from app.schemas.schedule import (
     AnonymousRequirement,
     AnonymousRoom,
     FixedLesson,
+    FrameTime,
     OptimizeScheduleRequest,
     OptimizeScheduleResponse,
     PreviousLesson,
@@ -120,7 +122,9 @@ class SchedulerSolver:
         model = cp_model.CpModel()
         registry = AssumptionRegistry(use_assumptions=use_assumptions)
         rooms = request.rooms
-        decisions = self._create_lesson_decisions(model, request.requirements, len(rooms))
+        decisions = self._create_lesson_decisions(
+            model, request.requirements, len(rooms), request.frame_times,
+        )
 
         self._add_capacity_constraints(model, registry, decisions, rooms)
         self._add_teacher_no_overlap(model, decisions)
@@ -635,6 +639,34 @@ class SchedulerSolver:
                 )
                 raise InvalidScheduleInputError(msg)
 
+            # A frame narrows the start domain, and a domain can be narrowed to
+            # nothing. Left to CP-SAT that is an ordinary INFEASIBLE with no
+            # assumption to blame — the model simply has no variable to report —
+            # so the school is told its timetable is impossible and not which
+            # sentence made it so. Caught here it names the requirement, the
+            # window that remains, and the lesson length that will not fit.
+            if request.frame_times:
+                windows = day_windows(request.frame_times, requirement, self._grid)
+                widest = max(
+                    (close - open_slot for open_slot, close in windows.values()),
+                    default=0,
+                )
+                if widest < duration_slots:
+                    grades = (
+                        "any"
+                        if requirement.min_grade_level is None
+                        else f"{requirement.min_grade_level}-{requirement.max_grade_level}"
+                    )
+                    remaining = widest * self._grid.slot_minutes
+                    msg = (
+                        f"Frame times leave no room for requirement "
+                        f"{requirement.id} (years {grades}): its "
+                        f"{requirement.minutes_per_lesson}-minute lessons need a "
+                        f"window, and the widest any day still offers is "
+                        f"{remaining} minutes."
+                    )
+                    raise InvalidScheduleInputError(msg)
+
             eligible_rooms = [
                 room for room in request.rooms if self._room_allowed(room, requirement)
             ]
@@ -730,12 +762,12 @@ class SchedulerSolver:
         model: cp_model.CpModel,
         requirements: list[AnonymousRequirement],
         room_count: int,
+        frames: list[FrameTime],
     ) -> list[LessonDecision]:
         decisions: list[LessonDecision] = []
         horizon = self._grid.horizon
 
         slots_per_day = self._grid.slots_per_day
-        day_count = len(self._grid.schedule_days)
 
         for requirement in requirements:
             duration = self._grid.minutes_to_slots(requirement.minutes_per_lesson)
@@ -745,12 +777,30 @@ class SchedulerSolver:
             # across the 18:00 -> 08:00 boundary: reported as e.g. "Monday
             # 17:30-18:30" (past the configured day end) while the model has
             # actually reserved the teacher, group and room for Tuesday morning.
-            # _validate_request guarantees duration <= slots_per_day, so every
+            #
+            # RAMTIDER NARROW THIS DOMAIN RATHER THAN FORBIDDING INTERVALS IN
+            # IT. A frame is a positive window, so the hours it closes never
+            # become variables at all — which is the whole reason a frame is its
+            # own row and not the two UNAVAILABLE constraints around it. With no
+            # frames every day is (0, slots_per_day) and this is the expression
+            # it always was. _validate_request has already refused the case
+            # where the windows leave a requirement nowhere to go, so every
             # interval below is non-empty.
+            windows = day_windows(frames, requirement, self._grid)
             start_domain = cp_model.Domain.FromIntervals(
                 [
-                    [day * slots_per_day, day * slots_per_day + slots_per_day - duration]
-                    for day in range(day_count)
+                    [
+                        day * slots_per_day + open_slot,
+                        day * slots_per_day + close_slot - duration,
+                    ]
+                    for day, (open_slot, close_slot) in sorted(windows.items())
+                    # A day too narrow for this lesson drops out here rather
+                    # than reaching Domain.FromIntervals as a reversed pair.
+                    # That happens to be safe today — FromIntervals discards
+                    # such a pair silently — but it is undocumented behaviour
+                    # to hang a whole feature's correctness on, and "silently
+                    # discards" is one release away from "raises".
+                    if close_slot - open_slot >= duration
                 ],
             )
             for lesson_index in range(requirement.lessons_per_week):

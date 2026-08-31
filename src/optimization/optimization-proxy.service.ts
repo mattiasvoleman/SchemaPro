@@ -22,6 +22,7 @@ import type {
   AiEngineScheduleResponse,
   AnonymousConstraint,
   AnonymousFixedLesson,
+  AnonymousFrameTime,
   AnonymousGroup,
   AnonymousPreviousLesson,
   AnonymousRequirement,
@@ -116,6 +117,7 @@ export class OptimizationProxyService {
       requirements,
       rooms,
       constraints,
+      frameTimes,
       roomPreferences,
       fixedLessons,
       groups,
@@ -139,6 +141,7 @@ export class OptimizationProxyService {
       requirements,
       rooms,
       constraints,
+      frameTimes,
       roomPreferences,
       fixedLessons,
       groups,
@@ -190,6 +193,7 @@ export class OptimizationProxyService {
     requirements: AnonymousRequirement[];
     rooms: AnonymousRoom[];
     constraints: AnonymousConstraint[];
+    frameTimes: AnonymousFrameTime[];
     roomPreferences: AnonymousRoomPreference[];
     fixedLessons: AnonymousFixedLesson[];
     groups: AnonymousGroup[];
@@ -751,6 +755,31 @@ export class OptimizationProxyService {
       },
     );
 
+    // Ramtider. School-scoped like the constraints above, and read through the
+    // same year -> school hop rather than a schoolId the caller supplied, so a
+    // request for another school's year cannot pull this school's rows.
+    //
+    // Nothing to anonymise: a frame names a span of years, which is a property
+    // of the timetable and not of a person or a room.
+    const rawFrames = await tx.frameTime.findMany({
+      where: { school: { academicYears: { some: { id: academicYearId } } } },
+      select: {
+        minGradeLevel: true,
+        maxGradeLevel: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+
+    const frameTimes: AnonymousFrameTime[] = rawFrames.map((frame) => ({
+      minGradeLevel: frame.minGradeLevel,
+      maxGradeLevel: frame.maxGradeLevel,
+      dayOfWeek: frame.dayOfWeek as DayOfWeek | null,
+      startTime: this.timeToString(frame.startTime),
+      endTime: this.timeToString(frame.endTime),
+    }));
+
     // Anonymize the conflict pairs with the same group map the requirements
     // used, so the engine sees a consistent id space. Pairs whose groups never
     // reached the payload (no requirement and no fixed lesson references them)
@@ -767,6 +796,7 @@ export class OptimizationProxyService {
       requirements,
       rooms,
       constraints,
+      frameTimes,
       roomPreferences,
       fixedLessons,
       groups,
