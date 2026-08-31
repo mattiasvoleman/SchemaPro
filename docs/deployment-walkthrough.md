@@ -283,10 +283,23 @@ GitHub repository.
 
 > **About the port**: you should not have to set one. Railway hands the
 > container a port through a `PORT` variable, and the solver binds whatever it
-> is given. If Railway does ask for a target port, or the domain returns "502"
-> while the **Deployments** log looks healthy, set the port to **8000** — that
-> is what the solver falls back to when nothing is injected. Do not add a
-> `PORT` variable of your own unless you are told to; Railway sets it for you.
+> is given — `--port ${PORT:-8000}` in its Dockerfile.
+>
+> If Railway asks for a target port, **read the number out of the Deployments
+> log** rather than guessing it. The solver prints it on the line
+> `Uvicorn running on http://0.0.0.0:8080`, and that is the number the domain
+> must point at.
+>
+> This advice used to say "set it to 8000, that is what the solver falls back
+> to". That is only true when nothing is injected, and Railway always injects —
+> in practice `PORT=8080`. So the fallback never applies and 8000 is guaranteed
+> to be the wrong number. The result is a domain that answers **502 on every
+> path**, including `/health`, while the container log looks perfectly healthy,
+> and Railway's own network log says `"error":"connection refused"`. Which is
+> the exact symptom this note used to offer 8000 as the cure for.
+>
+> Do not add a `PORT` variable of your own; Railway sets it, and a second one
+> only gives the two ends another way to disagree.
 
 **Check it worked**: open `<SOLVER_URL>/health` in your browser. You should see
 a short message saying it is OK. If the page does not load, open the
@@ -492,6 +505,7 @@ If step 3 fails, the solver is the thing to look at — check
 | Solver keeps restarting | `API_KEY` is shorter than 32 characters. |
 | "Generate" fails but everything else works | `AI_ENGINE_URL` or `AI_ENGINE_API_KEY` on the API does not match the solver. |
 | "Generate" fails with **"AI engine unavailable"** specifically | `AI_ENGINE_URL` is not a usable URL — almost always a missing `https://`, or quotes left around the value. The solver itself is fine; do not go looking at it. Since the check was added the API refuses to start on this instead, naming `AI_ENGINE_URL`. |
+| The solver's domain answers **502 on every path**, `/health` included, while its own log says `Uvicorn running on …` | Railway is routing to a different port than the one the solver bound. Read the port off that log line and set the service's target port to it. The network log confirms it: `"error":"connection refused"`. |
 | Invitation emails never arrive | Supabase's built-in sender is rate-limited. Set up SMTP (Step 3). |
 | Web app builds but every page 404s | Root Directory on Vercel is not set to `web`. |
 
