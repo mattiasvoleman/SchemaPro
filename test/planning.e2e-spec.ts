@@ -405,9 +405,12 @@ describe('Planning surface (e2e)', () => {
     });
 
     it.each([
-      ['a break that is not a whole quarter', { lunchMinutes: 40 }],
+      // The solver grid is five minutes now, not fifteen: a 40-minute break and
+      // a 10:50 start are both legal on it, and a school with 40-minute lessons
+      // is why it moved. What is still refused is a time between slots.
+      ['a break that is not a whole number of slots', { lunchMinutes: 37 }],
       ['a window ending after the school day', { lunchEndTime: '18:30' }],
-      ['a start off the quarter grid', { lunchStartTime: '10:50' }],
+      ['a start off the grid', { lunchStartTime: '10:52' }],
       ['a window too short for the break', { lunchEndTime: '11:00' }],
     ])('400s on %s, before it can be replayed on every run', async (_label, patch) => {
       // A saved setting is replayed on every generation, and the gateway throws

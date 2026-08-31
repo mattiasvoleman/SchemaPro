@@ -154,9 +154,12 @@ describe('LunchSettingsService', () => {
       it.each([
         ['a window starting before the school day', { lunchStartTime: '07:45' }],
         ['a window ending after it', { lunchEndTime: '18:15' }],
-        ['a start that is not a whole quarter', { lunchStartTime: '11:10' }],
-        ['an end that is not a whole quarter', { lunchEndTime: '12:50' }],
-        ['a break that is not a whole number of quarters', { lunchMinutes: 40 }],
+        // The grid is five minutes now, not fifteen — 11:10 and a 40-minute
+        // break are legal on it, and a school with 40-minute lessons is exactly
+        // why it moved. What is still refused is a time off the grid entirely.
+        ['a start that is not on the grid', { lunchStartTime: '11:07' }],
+        ['an end that is not on the grid', { lunchEndTime: '12:52' }],
+        ['a break that is not a whole number of slots', { lunchMinutes: 37 }],
         [
           'a window too short for the break it must hold',
           { lunchStartTime: '11:00', lunchEndTime: '11:15', lunchMinutes: 30 },

@@ -42,7 +42,17 @@ class Settings(BaseSettings):
 
     schedule_day_start_minutes: int = Field(default=480, alias="SCHEDULE_DAY_START_MINUTES")
     schedule_day_end_minutes: int = Field(default=1080, alias="SCHEDULE_DAY_END_MINUTES")
-    slot_minutes: int = Field(default=15, alias="SLOT_MINUTES")
+    # Five, not fifteen. A 15-minute grid cannot express a 40- or 50-minute
+    # lesson, and both are ordinary in a Swedish school — a timplan carrying one
+    # reached the solver and raised on it. Five divides 60, so it satisfies the
+    # validator below, and it admits every length a school actually uses.
+    #
+    # Measured before changing it, at 400 students on the §2 budget of 90s: both
+    # grids placed 576 lessons and produced a valid timetable, though neither
+    # reached OPTIMAL. Tripling the horizon (200 -> 600 slots a week) cost
+    # nothing observable at that size. Variable COUNT is unchanged either way —
+    # one interval per lesson — it is the domain of each that widens.
+    slot_minutes: int = Field(default=5, alias="SLOT_MINUTES")
 
     weight_preferred_free_violation: int = Field(
         default=10,

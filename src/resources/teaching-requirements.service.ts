@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { SLOT_MINUTES, fitsTheGrid } from '../common/solver-grid';
 import { parseDateString } from '../common/utils/time';
 import type {
   CreateTeachingRequirementDto,
@@ -74,6 +75,8 @@ export class TeachingRequirementsService {
     dto: CreateTeachingRequirementDto,
     user: AuthenticatedUser,
   ): Promise<TeachingRequirementResponse> {
+    // Needs nothing from the database, so it answers before one is opened.
+    this.assertLessonLengthFitsTheGrid(dto.minutesPerLesson);
     const schoolId = requireSchoolId(user);
     const startDate = dto.startDate ? parseDateString(dto.startDate) : null;
     const endDate = dto.endDate ? parseDateString(dto.endDate) : null;
@@ -121,6 +124,11 @@ export class TeachingRequirementsService {
     const endDate = dto.endDate ? parseDateString(dto.endDate) : null;
     try {
       return await this.prisma.withRls(user, async (tx) => {
+        // Needs nothing from the database, so it runs before anything is read
+        // — and outside the period's condition, or a PATCH carrying only
+        // `minutesPerLesson`, which is the ordinary edit, would skip it.
+        this.assertLessonLengthFitsTheGrid(dto.minutesPerLesson);
+
         // The period is checked as it will END UP, not as it arrived. A PATCH
         // carrying only `endDate` still has to be measured against the
         // `startDate` already on the row, or half a period escapes the year
@@ -221,6 +229,31 @@ export class TeachingRequirementsService {
    * every other id here (see create()), and answering "outside its year" about
    * a year the caller cannot see would confirm that it exists.
    */
+  /**
+   * A lesson length the solver can actually lay on its grid.
+   *
+   * `@Min(15) @Max(240)` on the DTO says the number is plausible; it does not
+   * say the engine can express it. The engine turns minutes into whole slots
+   * and refuses a remainder, so a 40-minute lesson on the old 15-minute grid
+   * was accepted here, stored, and then blew up as an unhandled ValueError the
+   * first time somebody pressed "generera" — one service away from the field
+   * that caused it, and reported as a 500.
+   *
+   * The grid is five minutes now, which admits 40 and 50. This guard is for
+   * what is left: 37, 41, anything typed by hand that lands between slots. It
+   * belongs here rather than only in the DTO because the message should name
+   * the nearest lengths that work, and a decorator cannot.
+   */
+  private assertLessonLengthFitsTheGrid(minutes: number | undefined): void {
+    if (minutes === undefined || fitsTheGrid(minutes)) return;
+    const below = Math.floor(minutes / SLOT_MINUTES) * SLOT_MINUTES;
+    const above = below + SLOT_MINUTES;
+    throw new BadRequestException(
+      `${minutes} minuter går inte att lägga på schemat, som räknar i hela ` +
+        `${SLOT_MINUTES}-minutersintervall. Närmast är ${below} eller ${above} minuter.`,
+    );
+  }
+
   private assertPeriodFitsYear(
     year: { startDate: Date; endDate: Date } | null,
     startDate: Date | null,

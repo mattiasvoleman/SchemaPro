@@ -228,6 +228,51 @@ describe('TeachingRequirementsService', () => {
     });
   });
 
+  describe('lektionslängden mot solverns rutnät', () => {
+    /*
+     * The gap that produced a 500 in production. `@Min(15) @Max(240)` says the
+     * number is plausible; it does not say the engine can lay it on its grid.
+     * A 40-minute lesson — an ordinary Swedish length — was accepted, stored,
+     * and blew up as an unhandled ValueError the first time somebody pressed
+     * "generera", one service away from the field that caused it.
+     *
+     * The grid is five minutes now, so 40 is fine. What is left is what lands
+     * between slots.
+     */
+    it.each([37, 41, 52, 1])('refuses %s minutes', async (minutesPerLesson) => {
+      await expect(
+        service.create(dto({ minutesPerLesson }), testUser()),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+    });
+
+    it.each([40, 45, 50, 60, 90])('accepts %s minutes', async (minutesPerLesson) => {
+      // 40 and 50 are the reason the grid moved; they were impossible before.
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      tx.teachingRequirement.create.mockResolvedValue({ id: 'req-1' });
+
+      await expect(
+        service.create(dto({ minutesPerLesson }), testUser()),
+      ).resolves.toBeDefined();
+    });
+
+    it('names the two lengths nearest the one that was refused', async () => {
+      // "invalid" would send an administrator back to a grid they cannot see.
+      await expect(
+        service.create(dto({ minutesPerLesson: 37 }), testUser()),
+      ).rejects.toThrow(/35.*40|40.*35/);
+    });
+
+    it('checks an update that changes only the length', async () => {
+      // The guard first sat inside the period's condition, so the ordinary
+      // edit — change the length, touch nothing else — skipped it entirely.
+      await expect(
+        service.update('req-1', { minutesPerLesson: 41 }, testUser()),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('update', () => {
     it('unassigns the teacher with an explicit null and nothing else', async () => {
       const row = {

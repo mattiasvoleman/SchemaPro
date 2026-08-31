@@ -609,7 +609,25 @@ class SchedulerSolver:
             raise InvalidScheduleInputError(msg)
 
         for requirement in request.requirements:
-            duration_slots = self._grid.minutes_to_slots(requirement.minutes_per_lesson)
+            # A duration that does not land on the grid is bad INPUT, not a
+            # broken solver. `minutes_to_slots` signals it with a bare
+            # ValueError, which nothing above catches — so a 40-minute lesson on
+            # a 15-minute grid escaped as an unhandled exception and reached the
+            # caller as a 500 with a stack trace, while the very next check in
+            # this loop reports a too-long lesson as a clean 4xx. Same field,
+            # same loop, two different fates.
+            try:
+                duration_slots = self._grid.minutes_to_slots(
+                    requirement.minutes_per_lesson
+                )
+            except ValueError as error:
+                msg = (
+                    f"Requirement {requirement.id} asks for "
+                    f"{requirement.minutes_per_lesson}-minute lessons, which do not "
+                    f"fit the {self._grid.slot_minutes}-minute scheduling grid. "
+                    f"Use a whole multiple of {self._grid.slot_minutes} minutes."
+                )
+                raise InvalidScheduleInputError(msg) from error
             if duration_slots > self._grid.slots_per_day:
                 msg = (
                     f"Requirement {requirement.id} exceeds the daily scheduling window "

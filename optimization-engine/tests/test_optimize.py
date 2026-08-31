@@ -106,6 +106,38 @@ def test_optimize_rejects_oversized_requirements(client: TestClient) -> None:
     assert response.status_code == 422  # schema max_length rejects before solving
 
 
+def test_a_misaligned_lesson_length_is_input_not_a_crash(client: TestClient) -> None:
+    """A duration off the grid must answer, not explode.
+
+    A duration between slots is impossible, and the engine says so with a bare
+    ValueError from `minutes_to_slots`.
+    `TimeGrid.minutes_to_slots` says so with a bare ValueError, and nothing
+    between it and uvicorn caught one — so the caller got a 500 and a stack
+    trace, while the very next check in the same loop reports a too-long lesson
+    as a clean 4xx. The whole point of `_validate_request` is that bad input has
+    an answer.
+    """
+    payload = _sample_payload()
+    # 37, not 40: the grid is five minutes now and 40 is legal on it — that is
+    # the whole reason it moved. What is still impossible is a length between
+    # slots.
+    payload["requirements"][0]["minutesPerLesson"] = 37  # type: ignore[index]
+
+    response = client.post(
+        "/api/v1/optimize",
+        json=payload,
+        headers={"X-API-Key": "test-api-key-000000000000000000000000"},
+    )
+
+    assert response.status_code < 500
+    body = response.text
+    # The answer has to name the number that is wrong and the number that is
+    # allowed; "invalid request" would send an administrator back to the grid
+    # they cannot see.
+    assert "37" in body
+    assert "grid" in body.lower() or "rutn" in body.lower()
+
+
 def test_settings_passed_to_create_app_reach_the_solver() -> None:
     """create_app()'s Settings must win over the cached env-backed defaults.
 
@@ -1905,19 +1937,24 @@ def test_a_class_too_big_for_the_hall_is_refused_before_the_solver_runs(
 def test_an_off_grid_lunch_break_is_a_400_not_a_500(client: TestClient) -> None:
     """A saved setting that breaks every run has to say which setting.
 
-    minutes_to_slots refuses 40 minutes with a bare ValueError, and that call
-    used to sit outside the block turning those into InvalidScheduleInputError,
-    so main.py's catch-all answered 500 for plain bad input. 40 is reachable:
-    the field is an int between 15 and 120 and the web input steps by 5. Now
-    that lunch is a stored preference rather than a number retyped per run, the
-    same 500 would come back on every generation until somebody guessed which
-    of the settings was wrong.
+    minutes_to_slots refuses an off-grid duration with a bare ValueError, and
+    that call used to sit outside the block turning those into
+    InvalidScheduleInputError, so main.py's catch-all answered 500 for plain bad
+    input. Now that lunch is a stored preference rather than a number retyped
+    per run, the same 500 would come back on every generation until somebody
+    guessed which of the settings was wrong.
+
+    The value moved from 40 to 37 when the grid went from fifteen minutes to
+    five: 40 is legal now, which is exactly why the grid moved. The same
+    oversight lived on in `minutes_per_lesson` until a school with 40-minute
+    lessons found it — see
+    test_a_misaligned_lesson_length_is_input_not_a_crash.
 
     The neighbouring rejection — a window too short to hold the break it asks
     for — already answered 400 and has to keep doing so.
     """
     payload = _sample_payload()
-    payload["rules"] = _lunch_rules(lunchEndTime="13:00:00", lunchMinutes=40)
+    payload["rules"] = _lunch_rules(lunchEndTime="13:00:00", lunchMinutes=37)
     response = client.post(
         "/api/v1/optimize",
         json=payload,
@@ -1927,7 +1964,7 @@ def test_an_off_grid_lunch_break_is_a_400_not_a_500(client: TestClient) -> None:
     body = response.json()
     assert body["code"] == "INVALID_SCHEDULE_INPUT"
     assert body["message"] == (
-        "Lesson duration 40 minutes is not aligned to 15-minute slots."
+        "Lesson duration 37 minutes is not aligned to 5-minute slots."
     )
 
     payload["rules"] = _lunch_rules(lunchEndTime="11:30:00")
@@ -2668,8 +2705,23 @@ def test_previous_lessons_warm_start_the_feasibility_phase(
 
     hint = solved_models[0].Proto().solution_hint
     assert len(hint.vars) == 1, "one previous slot must install exactly one hint"
-    # Wednesday 11:00 on the default grid: day index 2 x 40 slots + 12.
-    assert list(hint.values) == [92]
+
+    # Wednesday 11:00, worked out from the grid rather than written down.
+    #
+    # This used to assert a bare 92 — day index 2 x 40 slots + 12 — which was
+    # right for a fifteen-minute grid and silently wrong the moment it became
+    # five. Deriving it keeps the test about the thing it is for: a previous
+    # lesson installs a hint at ITS OWN absolute slot. The arithmetic is spelled
+    # out rather than borrowed from TimeGrid, so a fault in the grid cannot hide
+    # inside both sides of the comparison.
+    settings = _settings()
+    slots_per_day = (
+        settings.schedule_day_end_minutes - settings.schedule_day_start_minutes
+    ) // settings.slot_minutes
+    minutes_into_day = 11 * 60 - settings.schedule_day_start_minutes
+    wednesday = 2
+    expected = wednesday * slots_per_day + minutes_into_day // settings.slot_minutes
+    assert list(hint.values) == [expected]
 
 
 def _shared_student_payload() -> dict[str, object]:

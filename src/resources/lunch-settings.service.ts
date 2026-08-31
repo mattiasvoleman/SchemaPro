@@ -5,6 +5,12 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { toWallClock } from '../common/utils/time';
+import {
+  DAY_END_MINUTES,
+  DAY_START_MINUTES,
+  SLOT_MINUTES,
+  minutesOf,
+} from '../common/solver-grid';
 
 /**
  * What the endpoint answers with, which is not the row.
@@ -43,14 +49,6 @@ import type { UpsertLunchSettingsDto } from './dto/lunch-settings.dto';
  * because a saved setting is replayed on every run. Catching it at the moment
  * the admin types it is the only place the message can still be useful.
  */
-const DAY_START_MINUTES = 8 * 60;
-const DAY_END_MINUTES = 18 * 60;
-const SLOT_MINUTES = 15;
-
-function minutesOf(time: string): number {
-  const [hours, minutes] = time.split(':');
-  return Number(hours) * 60 + Number(minutes);
-}
 
 @Injectable()
 export class LunchSettingsService {
@@ -125,14 +123,14 @@ export class LunchSettingsService {
       }
       if ((value - DAY_START_MINUTES) % SLOT_MINUTES !== 0) {
         throw new BadRequestException(
-          `${label} måste vara en jämn kvart, till exempel 11:00 eller 11:15.`,
+          `${label} måste vara ett jämnt intervall om ${SLOT_MINUTES} minuter, till exempel 11:00 eller 11:${String(SLOT_MINUTES).padStart(2, '0')}.`,
         );
       }
     }
 
     if (dto.lunchMinutes % SLOT_MINUTES !== 0) {
       throw new BadRequestException(
-        'Lunchens längd måste vara ett helt antal kvartar.',
+        `Lunchens längd måste vara ett helt antal ${SLOT_MINUTES}-minutersintervall.`,
       );
     }
     if (end - start < dto.lunchMinutes) {
