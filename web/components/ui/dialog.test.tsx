@@ -30,6 +30,35 @@ function ExampleDialog(props: { onOpenChange?: (open: boolean) => void }) {
 }
 
 describe("Dialog", () => {
+
+  it("cannot grow past the window, and scrolls when it would", () => {
+    /*
+     * Measured in a browser at a 560px window with forty teaching-group pills:
+     * without these two classes the box was 655px tall and its top sat at -47,
+     * so the TITLE was above the edge — and nothing scrolled, because the box
+     * is centred with `top-1/2 -translate-y-1/2` rather than flowing down the
+     * page. There was no way back to it. With them the same content measured
+     * 528px, entirely inside the window, and scrolled.
+     *
+     * jsdom computes no layout, so what is checkable here is that the two
+     * classes are still on the element. Removing either silently returns the
+     * bug for every dialog in the app; nothing else would notice.
+     *
+     * `dvh` and not `vh`: on a phone `vh` excludes the browser's own chrome, so
+     * a 100vh box puts its bottom under the address bar.
+     */
+    render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Lägg till lektion</DialogTitle>
+        </DialogContent>
+      </Dialog>,
+    );
+
+    const box = screen.getByRole("dialog");
+    expect(box.className).toContain("overflow-y-auto");
+    expect(box.className).toMatch(/max-h-\[calc\(100dvh/);
+  });
   it("is closed until the trigger is clicked", async () => {
     const user = userEvent.setup();
     render(<ExampleDialog />);

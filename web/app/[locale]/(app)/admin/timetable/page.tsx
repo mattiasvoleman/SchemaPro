@@ -1456,7 +1456,14 @@ export default function TimetablePage() {
                     <div className="mb-1 text-xs text-muted-foreground">
                       {t("slotFinderAlsoFree")}
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
+                    {/*
+                      Capped like its two siblings below, which have had
+                      `max-h` and a scroll all along — this list was the one
+                      that did not, and it is the one that grows with the
+                      school. Forty teaching groups made the dialog taller than
+                      the window.
+                    */}
+                    <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
                       {(groups ?? [])
                         .filter((group) => group.id !== creating.studentGroupId)
                         .map((group) => (
