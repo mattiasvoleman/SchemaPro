@@ -535,6 +535,12 @@ describe('Planning surface (e2e)', () => {
       ['POST', '/api/v1/student-groups'],
       ['POST', '/api/v1/teaching-requirements'],
       ['POST', '/api/v1/availability-constraints'],
+      // Both verbs for ramtider. The GET is the one that would go missing in a
+      // refactor: a decorator dropped from the class leaves the writes guarded
+      // by their own bodies and the list wide open, and a list of frames tells
+      // an outsider the shape of a school's day.
+      ['POST', '/api/v1/frame-times'],
+      ['GET', '/api/v1/frame-times'],
     ] as const;
 
     it.each(adminOnly)('denies a teacher on %s %s', async (method, path) => {
