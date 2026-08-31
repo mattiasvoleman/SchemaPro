@@ -152,7 +152,11 @@ export function LunchSettingsCard() {
         diningSeats: optionalNumber(form.diningSeats),
         maxLessonsPerDayPerGroup: optionalNumber(form.maxLessonsPerDayPerGroup),
       });
-      toast.success(tCommon("saved"));
+      // `updated`, not `saved`: this called a key that has never existed in
+      // either locale, so every successful save threw MISSING_MESSAGE instead
+      // of confirming anything. `common.updated` already reads "Sparad", and it
+      // is what every other page in the app says here.
+      toast.success(tCommon("updated"));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }

@@ -98,3 +98,74 @@ describe("translation files", () => {
     expect(empty).toEqual([]);
   });
 });
+
+/**
+ * Every key the CODE asks for exists in both locales.
+ *
+ * The two checks above hold the files level with each other, which is a
+ * different question from whether either one answers what the app calls for.
+ * `common.saved` never existed in either — so it was consistent, and the two
+ * files agreed perfectly — while the lunch card called `tCommon("saved")` on
+ * every successful save and got MISSING_MESSAGE instead of a confirmation. It
+ * had been that way since the card was written.
+ *
+ * Only literal keys are checked. `t(someVariable)` is skipped rather than
+ * guessed at: a rule that reported what it could not resolve would be a list of
+ * false alarms nobody reads, and this one has to stay worth failing on.
+ */
+describe("keys the app actually asks for", () => {
+  const sources = import.meta.glob("../{app,components}/**/*.tsx", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+
+  const lookup = (messages: Messages, key: string): unknown =>
+    key.split(".").reduce<unknown>(
+      (node, part) =>
+        node !== null && typeof node === "object"
+          ? (node as Messages)[part]
+          : undefined,
+      messages,
+    );
+
+  /** `const t = useTranslations("timetable")` -> { t: "timetable" }. */
+  const namespacesIn = (source: string): Map<string, string> => {
+    const found = new Map<string, string>();
+    const declaration = /const\s+(\w+)\s*=\s*useTranslations\(\s*"([^"]+)"\s*\)/g;
+    for (const match of source.matchAll(declaration)) {
+      found.set(match[1]!, match[2]!);
+    }
+    return found;
+  };
+
+  const missing: string[] = [];
+  for (const [file, source] of Object.entries(sources)) {
+    if (file.includes(".test.")) continue;
+    const namespaces = namespacesIn(source);
+    if (namespaces.size === 0) continue;
+    const names = [...namespaces.keys()].join("|");
+    const call = new RegExp(`\\b(${names})\\(\\s*"([^"]+)"`, "g");
+    for (const match of source.matchAll(call)) {
+      const key = `${namespaces.get(match[1]!)}.${match[2]}`;
+      const inSv = lookup(sv as Messages, key) !== undefined;
+      const inEn = lookup(en as Messages, key) !== undefined;
+      if (!inSv || !inEn) {
+        missing.push(`${file.replace("../", "")}: ${key}${inSv ? " (saknas i en)" : inEn ? " (saknas i sv)" : ""}`);
+      }
+    }
+  }
+
+  it("finds enough calls to be measuring something", () => {
+    // A glob that stopped matching, or a regex that stopped recognising the
+    // declaration, would report zero missing keys and look like a clean run.
+    const scanned = Object.entries(sources).filter(
+      ([file, source]) => !file.includes(".test.") && namespacesIn(source).size > 0,
+    );
+    expect(scanned.length).toBeGreaterThan(20);
+  });
+
+  it("resolves every literal key in both locales", () => {
+    expect(missing).toEqual([]);
+  });
+});
