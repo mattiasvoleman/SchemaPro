@@ -450,6 +450,116 @@ $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- 7b. FrameTimes: everyone in the school reads them, only an admin writes.
+--
+-- The catalog sweep at the end proves the switch is on and a policy exists. It
+-- cannot prove the policy is the right one, and the two ways this pair goes
+-- wrong are both silent. A missing member SELECT leaves a teacher's grid
+-- stopping at 15:00 with nothing readable to explain why. A member-writable
+-- table lets any teacher move the whole stage's day — the same escalation
+-- section 7 closed for årskurs locks, and the shape here is closer, because a
+-- frame carries no userId to hang a "their own row" policy on at all.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'frame-times: expected to be acting as an admin, am %',
+      app.current_user_role();
+  END IF;
+
+  INSERT INTO "FrameTimes"
+    ("schoolId", "minGradeLevel", "maxGradeLevel", "dayOfWeek",
+     "startTime", "endTime", "updatedAt")
+  VALUES (app.current_school_id(), 4, 6, 1, '08:00', '15:00', now());
+
+  SELECT count(*) INTO n FROM "FrameTimes";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'frame-times: an admin cannot write their own school''s ramtid (% row(s))', n;
+  END IF;
+
+  -- A row stamped with a school that is not this one. The id is a literal
+  -- because psql does not substitute :variables inside a DO block, and it does
+  -- not need to be a real school: WITH CHECK and the foreign key are both
+  -- correct ways to refuse this, and neither of them is silence. What matters
+  -- is that nothing lands, which the count below asserts rather than trusting
+  -- whichever of the two answered.
+  BEGIN
+    INSERT INTO "FrameTimes"
+      ("schoolId", "minGradeLevel", "maxGradeLevel", "dayOfWeek",
+       "startTime", "endTime", "updatedAt")
+    VALUES ('00000000-0000-4000-8000-0000000000ff', 4, 6, 2, '08:00', '15:00', now());
+    RAISE EXCEPTION 'frame-times: an admin wrote a ramtid into another school';
+  EXCEPTION
+    WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+
+  SELECT count(*) INTO n FROM "FrameTimes"
+   WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'frame-times: an admin wrote a ramtid into another school (% row(s))', n;
+  END IF;
+END
+$$;
+
+-- Now the same table as a teacher of this school. The admin's row is still in
+-- the open transaction, so there is something real to read and to fail to
+-- delete.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() <> 'TEACHER' THEN
+    RAISE EXCEPTION 'frame-times: expected to be acting as a teacher, am %',
+      app.current_user_role();
+  END IF;
+
+  SELECT count(*) INTO n FROM "FrameTimes";
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'frame-times: a teacher cannot read the ramtid that ends their day (% row(s))', n;
+  END IF;
+
+  BEGIN
+    INSERT INTO "FrameTimes"
+      ("schoolId", "minGradeLevel", "maxGradeLevel", "dayOfWeek",
+       "startTime", "endTime", "updatedAt")
+    VALUES (app.current_school_id(), 7, 9, 3, '08:00', '12:00', now());
+    RAISE EXCEPTION 'frame-times: a teacher wrote a ramtid for a whole stage';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- USING, not only WITH CHECK. Readable and not deletable is the whole shape.
+  DELETE FROM "FrameTimes";
+  SELECT count(*) INTO n FROM "FrameTimes";
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'frame-times: a teacher deleted the school''s ramtid (% row(s) left)', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 8: a guardian link cannot reach across schools.
 --
 -- This was a live cross-tenant hole, reproduced end to end before it was fixed:
