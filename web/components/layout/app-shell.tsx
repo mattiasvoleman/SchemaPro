@@ -60,6 +60,11 @@ const ADMIN_NAV: NavSection[] = [
       { labelKey: "people", href: "/admin/people", icon: UserCheck },
       { labelKey: "requirements", href: "/admin/requirements", icon: Grid3x3 },
       { labelKey: "constraints", href: "/admin/constraints", icon: SlidersHorizontal },
+      // Directly after tillgänglighet, because it is the positive half of the
+      // same question. That one says when a named teacher or room cannot be
+      // used; this one says the hours a whole stage may be taught in at all,
+      // and a school setting up its week reaches for them together.
+      { labelKey: "frameTimes", href: "/admin/frame-times", icon: CalendarRange },
       // Next to tillgänglighet, which is the other list of "not then": that one
       // says when a room or a teacher cannot be used, this one says when the
       // school is not teaching at all. It sits under Planering rather than

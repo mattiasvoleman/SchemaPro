@@ -205,6 +205,15 @@ export interface AvailabilityConstraint {
 }
 
 /**
+ * A ramtid: the hours one stage of the school may be taught in.
+ *
+ * Re-exported from lib/frame-times.ts, which owns the shape because it owns the
+ * rules that read it — the intersection, the overlap match, the closed day. A
+ * second declaration here would be a second thing to keep in step.
+ */
+export type { FrameTime } from "@/lib/frame-times";
+
+/**
  * The school's lunch rules and the size of its dining hall — one row, so the
  * hooks read and write it as a single value rather than a collection.
  *

@@ -77,6 +77,7 @@ import {
   useMasterLessons,
   usePeople,
   useRooms,
+  useFrameTimes,
 } from "@/lib/queries";
 import { buildGroupConflictMap, toPlacement } from "@/lib/conflicts";
 import { buildGradeSpans } from "@/lib/grade-span";
@@ -288,6 +289,7 @@ export default function GapsPage() {
   const { data: people } = usePeople();
   const { data: rooms } = useRooms();
   const { data: memberships } = useGroupMemberships();
+  const { data: frameTimes } = useFrameTimes();
   const { data: lunchSettings } = useLunchSettings();
 
   // -------------------------------------------------------------------
@@ -350,6 +352,11 @@ export default function GapsPage() {
       // while the other sixteen are in Ma71 would be reported as nobody.
       studentGroupOf,
       gradeSpanOf,
+      // Undefined while the query is in flight, and that is the right value to
+      // pass on: an empty array is a school with no ramtider, where every hour
+      // is inside the day, and reading "not loaded yet" as that offers time a
+      // frame has closed for as long as the request takes.
+      frameTimes,
       // `undefined` while the query is in flight, never `[]`. An empty array is
       // a complete roster that happens to hold nobody, and findIdleGaps reads
       // it as one: it switches to the per-pupil reading and finds no pupils, so
@@ -358,7 +365,20 @@ export default function GapsPage() {
       // answer, coarser but never wrong in that direction.
       memberships,
     }),
-    [placements, constraints, groupConflicts, studentGroupOf, memberships],
+    // gradeSpanOf and frameTimes belong here for the same reason the rest do:
+    // both arrive from queries that resolve after the first render, and a memo
+    // that does not name them keeps answering with the empty week it was built
+    // from — the search would report time as free until something else on the
+    // page happened to change.
+    [
+      placements,
+      constraints,
+      groupConflicts,
+      studentGroupOf,
+      gradeSpanOf,
+      frameTimes,
+      memberships,
+    ],
   );
 
   const groupOptions: Option[] = useMemo(

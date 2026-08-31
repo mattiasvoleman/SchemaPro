@@ -54,6 +54,14 @@ const state = vi.hoisted(() => ({
   // undefined models the query in flight, which is a different fact from an
   // empty roster and must reach the page as one.
   memberships: [] as unknown[] | undefined,
+  // Same distinction as memberships: undefined is the query in flight, [] is a
+  // school that has entered no ramtider. The page must pass the two on as they
+  // are, not collapse them.
+  frameTimes: [] as unknown[] | undefined,
+  // Stateful because the ORDER the queries resolve in is itself a case: a
+  // group's year span is derived from groups AND memberships, so groups
+  // landing last changes the spans without changing the roster.
+  groups: null as unknown[] | null,
   lunch: null as unknown,
 }));
 
@@ -61,10 +69,11 @@ vi.mock("@/lib/queries", () => ({
   useActiveYear: () => ({ activeYear: { id: "y-1" } }),
   useMasterLessons: () => ({ data: state.lessons, isLoading: state.isLoading }),
   useConstraints: () => ({ data: state.constraints }),
-  useGroups: () => ({ data: GROUPS }),
+  useGroups: () => ({ data: state.groups ?? GROUPS }),
   usePeople: () => ({ data: state.people }),
   useRooms: () => ({ data: ROOMS }),
   useGroupMemberships: () => ({ data: state.memberships }),
+  useFrameTimes: () => ({ data: state.frameTimes }),
   useLunchSettings: () => ({ data: state.lunch }),
 }));
 
@@ -238,6 +247,8 @@ beforeEach(() => {
   state.isLoading = false;
   state.constraints = [];
   state.memberships = [{ studentId: "s-1", studentGroupId: "g-ma71" }];
+  state.frameTimes = [];
+  state.groups = null;
   state.lunch = LUNCH;
 });
 
@@ -474,6 +485,108 @@ describe("Gaps page — free time", () => {
 
     expect(onDay("gaps.freeTitle", 4)).not.toEqual(before);
     expect(onDay("gaps.freeTitle", 4).join("\n")).not.toMatch(/–1[5-7]:00/);
+  });
+
+  it("stops offering time a ramtid has closed", async () => {
+    const user = userEvent.setup();
+    render(<GapsPage />);
+
+    await check(user, "8B");
+    await searchFree(user);
+    const openDay = onDay("gaps.freeTitle", 4).join(" ");
+    expect(openDay).toContain("17:00");
+
+    cleanup();
+    // 8B is a year-8 class, so a 7-9 frame reaches it through its own
+    // gradeLevel — no membership needed, unlike the Ma71 case above.
+    state.frameTimes = [
+      {
+        id: "ram-1",
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+        dayOfWeek: null,
+        startTime: "08:00:00",
+        endTime: "15:00:00",
+      },
+    ];
+    render(<GapsPage />);
+    await check(user, "8B");
+    await searchFree(user);
+
+    const framedDay = onDay("gaps.freeTitle", 4).join(" ");
+    expect(framedDay).not.toContain("17:00");
+    expect(framedDay).toContain("15:00");
+  });
+
+  it("picks up ramtider that arrive after the first render", async () => {
+    /*
+     * The real sequence, not the convenient one. Every other test here renders
+     * with the fixture already in place, so the schedule memo is built once and
+     * never has to notice anything — a dependency array missing frameTimes
+     * passes all of them. On a real page the query resolves a moment after
+     * mount, and a memo that does not name it goes on answering with the
+     * frameless week it was built from.
+     *
+     * rerender, not a second render: a fresh mount would rebuild the memo from
+     * scratch and prove nothing.
+     */
+    const user = userEvent.setup();
+    const { rerender } = render(<GapsPage />);
+
+    await check(user, "8B");
+    await searchFree(user);
+    expect(onDay("gaps.freeTitle", 4).join(" ")).toContain("17:00");
+
+    state.frameTimes = [
+      {
+        id: "ram-1",
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+        dayOfWeek: null,
+        startTime: "08:00:00",
+        endTime: "15:00:00",
+      },
+    ];
+    rerender(<GapsPage />);
+    await searchFree(user);
+
+    expect(onDay("gaps.freeTitle", 4).join(" ")).not.toContain("17:00");
+  });
+
+  it("picks up year spans that change when the groups arrive", async () => {
+    /*
+     * A group's years come from groups AND memberships, and the schedule memo
+     * lists both the roster and the derived spans. Only the spans cover this
+     * ordering: groups resolving last moves a span without touching the
+     * roster, and a memo that named memberships alone would keep the frameless
+     * answer it was built from.
+     */
+    const user = userEvent.setup();
+    // 8B without its gradeLevel: nothing for a 7-9 frame to match.
+    state.groups = GROUPS.map((group) =>
+      group.id === "g-8b" ? { ...group, gradeLevel: null } : group,
+    );
+    state.frameTimes = [
+      {
+        id: "ram-1",
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+        dayOfWeek: null,
+        startTime: "08:00:00",
+        endTime: "15:00:00",
+      },
+    ];
+    const { rerender } = render(<GapsPage />);
+
+    await check(user, "8B");
+    await searchFree(user);
+    expect(onDay("gaps.freeTitle", 4).join(" ")).toContain("17:00");
+
+    state.groups = GROUPS;
+    rerender(<GapsPage />);
+    await searchFree(user);
+
+    expect(onDay("gaps.freeTitle", 4).join(" ")).not.toContain("17:00");
   });
 
   it("refuses to answer a question about nobody, and clears back to it", async () => {

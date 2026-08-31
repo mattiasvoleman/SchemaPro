@@ -30,12 +30,14 @@ import {
   validatePlacement,
   type GroupConflictMap,
   type Placement,
+  groupsOf,
 } from "@/lib/conflicts";
 import type {
   AvailabilityConstraint,
   LessonRecurrence,
   LunchSettings,
 } from "@/lib/types";
+import { frameWindow, type FrameTime } from "@/lib/frame-times";
 import { timeToMinutes } from "@/lib/utils";
 import type { GradeSpan } from "@/lib/grade-span";
 
@@ -102,6 +104,16 @@ export interface ScheduleData {
    */
   gradeSpanOf?: Map<string, GradeSpan>;
   /**
+   * The school's ramtider — the hours each stage may be taught in.
+   *
+   * Time outside a probed group's frame is occupied, in the same sense a
+   * lesson occupies it: the search must not offer 16:00 to a class whose day
+   * the school ended at 15:00. Omitted, frames are not applied, which is the
+   * honest reading of a query still in flight; an empty array is a school with
+   * no frames and means every hour is inside the day.
+   */
+  frameTimes?: FrameTime[];
+  /**
    * Who sits in which teaching group — the rows buildGroupConflictMap takes.
    *
    * Together with studentGroupOf this is the roster, and supplying it is what
@@ -153,6 +165,63 @@ interface KnownMemberships {
   /** See ScheduleData.gradeSpanOf — year rules cannot reach a group without it. */
   gradeSpanOf?: Map<string, GradeSpan>;
 }
+
+/**
+ * The hours a frame closes for the probed bodies on one weekday.
+ *
+ * The COMPLEMENT of the window, because everything here is expressed as
+ * occupied time: what a frame states positively has to be turned into the
+ * intervals it forbids before the same merge that handles lessons can consume
+ * it. A day closed outright is the whole day.
+ *
+ * The union across probes, not the intersection. Asking when 4B and 7A are
+ * both free means an hour outside EITHER frame is not on offer — one of the
+ * two classes may not be there.
+ *
+ * A probe naming no group, or one whose years are unknown, contributes
+ * nothing: the same silence lib/frame-times.ts keeps for it, and the reason a
+ * teacher-only question is unaffected by frames.
+ */
+function frameClosures(
+  probes: Placement[],
+  frames: FrameTime[],
+  day: number,
+  known: KnownMemberships,
+): Interval[] {
+  const closures: Interval[] = [];
+  const seen = new Set<string>();
+
+  // groupsOf, not probe.studentGroupId: buildProbes folds a search over several
+  // classes into one probe that carries the rest in extraGroupIds, so reading
+  // only the named one applies the first class's frame and none of the others'.
+  for (const groupId of probes.flatMap(groupsOf)) {
+    if (seen.has(groupId)) continue;
+    seen.add(groupId);
+
+    // No NO_GROUP check above it: the sentinel is this module's own and never
+    // reaches gradeSpanOf, so a teacher-only probe falls out here for the same
+    // reason a real group with unknown years does. One rule, not two.
+    const span = known.gradeSpanOf?.get(groupId);
+    if (!span) continue;
+
+    const window = frameWindow(frames, span, day);
+    if (window === null) {
+      closures.push({ start: 0, end: DAY_MINUTES });
+      continue;
+    }
+    if (window.startMinutes > 0) {
+      closures.push({ start: 0, end: window.startMinutes });
+    }
+    if (window.endMinutes < DAY_MINUTES) {
+      closures.push({ start: window.endMinutes, end: DAY_MINUTES });
+    }
+  }
+
+  return closures;
+}
+
+/** Midnight to midnight, the outer bound every closure is measured against. */
+const DAY_MINUTES = 24 * 60;
 
 /**
  * A probe must name a student group, since Placement.studentGroupId is
@@ -336,6 +405,15 @@ function collectBusy(
       const end = timeToMinutes(constraint.endTime);
       if (!closes(probes, constraint, day, start, end, known)) continue;
       pushInterval(closedByDay, day, { start, end });
+    }
+
+    // Frames close time on their own, with no constraint to hang off. Putting
+    // this inside the constraint loop would have made a school with frames and
+    // no availability rules see none of them.
+    if (data.frameTimes !== undefined) {
+      for (const closure of frameClosures(probes, data.frameTimes, day, known)) {
+        pushInterval(closedByDay, day, closure);
+      }
     }
   }
 

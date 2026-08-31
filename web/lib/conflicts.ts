@@ -11,10 +11,20 @@ import type {
   LessonRecurrence,
   MasterLesson,
 } from "@/lib/types";
+import { breaksFrame, type FrameTime } from "@/lib/frame-times";
 import { spanMeetsRule, type GradeSpan } from "@/lib/grade-span";
 import { timeToMinutes } from "@/lib/utils";
 
-export type ConflictKind = "TEACHER" | "ROOM" | "GROUP" | "AVAILABILITY";
+/**
+ * FRAME is its own kind rather than a second AVAILABILITY.
+ *
+ * The two are answered differently by the person reading them. "Läraren är
+ * upptagen" is about one row and is fixed by moving one lesson; "åk 4 slutar
+ * 15:00" is about the shape of the school day, and the fix may be the frame
+ * rather than the lesson. Folding them together would make the grid say the
+ * same sentence for both.
+ */
+export type ConflictKind = "TEACHER" | "ROOM" | "GROUP" | "AVAILABILITY" | "FRAME";
 
 export interface ConflictHit {
   kind: ConflictKind;
@@ -68,7 +78,16 @@ export function weeksCanOverlap(a: Placement, b: Placement): boolean {
   return true;
 }
 
-function groupsOf(placement: Placement): string[] {
+/**
+ * Every class in the room, not just the one the placement is named for.
+ *
+ * Exported because gaps.ts has to ask the same question of its probes, and a
+ * multi-group probe is not an edge case there — buildProbes folds a search over
+ * several classes into ONE placement carrying the rest in extraGroupIds. A
+ * second copy of this line in that file read only the first of them, and a
+ * frame closing the morning for the second class was silently not applied.
+ */
+export function groupsOf(placement: Placement): string[] {
   return [placement.studentGroupId, ...(placement.extraGroupIds ?? [])];
 }
 
@@ -170,6 +189,13 @@ export function validatePlacement(
    * function did for every caller until now, silently. See buildGradeSpans.
    */
   gradeSpanOf?: Map<string, GradeSpan>,
+  /**
+   * The school's ramtider. Omitted, frames are not checked — which is what
+   * every caller did before they existed, and the honest reading of a list
+   * that has not loaded yet. An empty array is a different fact: a school with
+   * no frames, where every hour is inside the day.
+   */
+  frames?: FrameTime[],
 ): ConflictHit[] {
   const hits: ConflictHit[] = [];
 
@@ -271,6 +297,22 @@ export function validatePlacement(
     }
   }
 
+  // The frames last, so a lesson that is both double-booked and outside the
+  // day reports the booking first — that is the one whose fix is unambiguous.
+  if (
+    frames !== undefined &&
+    breaksFrame(
+      frames,
+      groupsOf(candidate),
+      gradeSpanOf,
+      candidate.dayOfWeek,
+      candidate.startMinutes,
+      candidate.endMinutes,
+    )
+  ) {
+    hits.push({ kind: "FRAME" });
+  }
+
   return hits;
 }
 
@@ -286,6 +328,8 @@ export function detectConflicts(
   groupConflicts?: GroupConflictMap,
   /** groupId → the years it holds; without it GRADE_LEVEL rules are skipped. */
   gradeSpanOf?: Map<string, GradeSpan>,
+  /** The school's ramtider; without them frames are not checked. */
+  frames?: FrameTime[],
 ): Map<string, ConflictHit[]> {
   const placements = lessons.map(toPlacement);
   const result = new Map<string, ConflictHit[]>();
@@ -298,6 +342,7 @@ export function detectConflicts(
       studentGroupOf,
       groupConflicts,
       gradeSpanOf,
+      frames,
     );
     if (hits.length > 0 && placement.id) {
       result.set(placement.id, hits);

@@ -137,6 +137,7 @@
     "people": "Personer",
     "requirements": "Timplan",
     "constraints": "Tillgänglighet",
+    "frameTimes": "Ramtider",
     "breaks": "Lov & studiedagar",
     "scheduling": "Schemaläggning",
     "generate": "Generera schema",
@@ -384,6 +385,25 @@
     "gradeRange": "Åk {min}–{max}",
     "gradeFrom": "Åk {min} och uppåt",
     "gradeUpTo": "Till och med åk {max}"
+  },
+  "frameTimes": {
+    "title": "Ramtider",
+    "subtitle": "Timmarna varje stadium får schemaläggas inom",
+    "add": "Lägg till ramtid",
+    "edit": "Redigera ramtid",
+    "gradeSpan": "Årskurser",
+    "day": "Dag",
+    "everyDay": "Alla dagar",
+    "startTime": "Från",
+    "endTime": "Till",
+    "empty": "Inga ramtider. Hela skoldagen är öppen för alla årskurser.",
+    "hint": "En ramtid säger när ett stadium FÅR ha lektioner. Allt utanför är stängt — motorn lägger inget där, grundschemat varnar om du drar dit något, och luckssökningen slutar erbjuda tiden.",
+    "overlapHint": "Ramtider som träffar samma grupp gäller alla samtidigt, så det smalaste fönstret vinner. Skriver du «08:00–15:00 alla dagar» och «08:00–13:00 fredag» blir fredagen 08:00–13:00 utan att du behöver ta bort något.",
+    "effectiveTitle": "Så här blir veckan",
+    "effectiveHint": "Uträknat ur raderna ovan, ett stadium per rad.",
+    "closed": "Stängt",
+    "wholeDay": "Hela dagen",
+    "duplicate": "Det finns redan en ramtid för de årskurserna den dagen."
   },
   "breaks": {
     "title": "Lov och studiedagar",

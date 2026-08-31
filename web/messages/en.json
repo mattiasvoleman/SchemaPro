@@ -137,6 +137,7 @@
     "people": "People",
     "requirements": "Curriculum",
     "constraints": "Availability",
+    "frameTimes": "Frame times",
     "breaks": "Holidays & staff days",
     "scheduling": "Scheduling",
     "generate": "Generate schedule",
@@ -384,6 +385,25 @@
     "gradeRange": "Years {min}–{max}",
     "gradeFrom": "Year {min} and above",
     "gradeUpTo": "Up to year {max}"
+  },
+  "frameTimes": {
+    "title": "Frame times",
+    "subtitle": "The hours each stage may be timetabled within",
+    "add": "Add frame time",
+    "edit": "Edit frame time",
+    "gradeSpan": "Years",
+    "day": "Day",
+    "everyDay": "Every day",
+    "startTime": "From",
+    "endTime": "To",
+    "empty": "No frame times. The whole school day is open to every year.",
+    "hint": "A frame time says when a stage MAY have lessons. Everything outside it is closed — the engine places nothing there, the timetable warns if you drag something into it, and the gap search stops offering the time.",
+    "overlapHint": "Frame times reaching the same group all apply at once, so the narrowest window wins. Writing “08:00–15:00 every day” and “08:00–13:00 Friday” makes Friday 08:00–13:00 with nothing to remove.",
+    "effectiveTitle": "How the week turns out",
+    "effectiveHint": "Computed from the rows above, one stage per row.",
+    "closed": "Closed",
+    "wholeDay": "All day",
+    "duplicate": "A frame time already exists for those years on that day."
   },
   "breaks": {
     "title": "Holidays and staff days",

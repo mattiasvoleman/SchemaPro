@@ -1334,6 +1334,171 @@ describe("findIdleGaps", () => {
 // whoIsFree
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Ramtider
+// ---------------------------------------------------------------------------
+
+describe("frame times in the free search", () => {
+  const frame = (
+    min: number,
+    max: number,
+    start: string,
+    end: string,
+    dayOfWeek: number | null = null,
+  ) => ({
+    id: `f-${min}-${max}-${start}-${dayOfWeek ?? "all"}`,
+    minGradeLevel: min,
+    maxGradeLevel: max,
+    dayOfWeek,
+    startTime: `${start}:00`,
+    endTime: `${end}:00`,
+  });
+
+  const spans = new Map([["7A", { min: 7, max: 7 }]]);
+
+  const search = (frameTimes: ReturnType<typeof frame>[] | undefined) =>
+    findFreeWindows({
+      studentGroupIds: ["7A"],
+      minimumMinutes: 30,
+      placements: [],
+      constraints: [],
+      gradeSpanOf: spans,
+      ...(frameTimes === undefined ? {} : { frameTimes }),
+      ...monday,
+    });
+
+  it("offers the whole day when no frames were supplied", () => {
+    expect(search(undefined)).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(16), weeks: "ALL_WEEKS" },
+    ]);
+  });
+
+  it("offers the whole day when the school has no frames", () => {
+    expect(search([])).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(16), weeks: "ALL_WEEKS" },
+    ]);
+  });
+
+  /*
+   * A frame closes time with no constraint to hang off it, and that is the
+   * whole reason it needed its own pass: written inside the constraint loop, a
+   * school with frames and no availability rules — which is most of them — would
+   * have seen none of them, and the search would go on offering 15:00-16:00 to
+   * a class whose day the school ended at 15:00.
+   */
+  it("stops offering time past the frame's close", () => {
+    expect(search([frame(7, 9, "08:00", "15:00")])).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(15), weeks: "ALL_WEEKS" },
+    ]);
+  });
+
+  it("stops offering time before the frame opens", () => {
+    expect(search([frame(7, 9, "09:00", "16:00")])).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(9), endMinutes: hm(16), weeks: "ALL_WEEKS" },
+    ]);
+  });
+
+  it("closes both ends at once", () => {
+    expect(search([frame(7, 9, "09:00", "15:00")])).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(9), endMinutes: hm(15), weeks: "ALL_WEEKS" },
+    ]);
+  });
+
+  it("offers nothing on a day the frames close entirely", () => {
+    expect(search([frame(7, 9, "08:00", "10:00"), frame(7, 9, "14:00", "16:00")])).toEqual(
+      [],
+    );
+  });
+
+  it("ignores a frame written for another stage", () => {
+    expect(search([frame(4, 6, "08:00", "10:00")])).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(16), weeks: "ALL_WEEKS" },
+    ]);
+  });
+
+  it("ignores frames for a group whose years are unknown", () => {
+    expect(
+      findFreeWindows({
+        studentGroupIds: ["7A"],
+        minimumMinutes: 30,
+        placements: [],
+        constraints: [],
+        gradeSpanOf: new Map(),
+        frameTimes: [frame(7, 9, "08:00", "10:00")],
+        ...monday,
+      }),
+    ).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(16), weeks: "ALL_WEEKS" },
+    ]);
+  });
+
+  it("leaves a teacher-only question alone", () => {
+    // A frame is about a stage of pupils. A teacher probe names no group, so
+    // there is nothing for a frame to narrow — asking when Karin is free must
+    // not silently answer as though she taught year 7.
+    expect(
+      findFreeWindows({
+        teacherIds: ["t1"],
+        minimumMinutes: 30,
+        placements: [],
+        constraints: [],
+        gradeSpanOf: spans,
+        frameTimes: [frame(7, 9, "08:00", "10:00")],
+        ...monday,
+      }),
+    ).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(16), weeks: "ALL_WEEKS" },
+    ]);
+  });
+
+  it("closes an hour outside EITHER group's frame when two are asked about", () => {
+    /*
+     * The union, not the intersection. "When are 4B and 7A both free" cannot be
+     * answered with an hour one of them may not be there for.
+     */
+    expect(
+      findFreeWindows({
+        studentGroupIds: ["4B", "7A"],
+        minimumMinutes: 30,
+        placements: [],
+        constraints: [],
+        gradeSpanOf: new Map([
+          ["4B", { min: 4, max: 4 }],
+          ["7A", { min: 7, max: 7 }],
+        ]),
+        frameTimes: [frame(4, 6, "08:00", "14:00"), frame(7, 9, "09:00", "16:00")],
+        ...monday,
+      }),
+    ).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(9), endMinutes: hm(14), weeks: "ALL_WEEKS" },
+    ]);
+  });
+
+  it("applies a weekday frame to that weekday only", () => {
+    const frames = [frame(7, 9, "08:00", "12:00", 5)];
+    const week = {
+      days: [1, 5],
+      dayStartMinutes: hm(8),
+      dayEndMinutes: hm(16),
+    };
+
+    expect(
+      findFreeWindows({
+        studentGroupIds: ["7A"],
+        minimumMinutes: 30,
+        placements: [],
+        constraints: [],
+        gradeSpanOf: spans,
+        frameTimes: frames,
+        ...week,
+      }),
+    ).toEqual([
+      { dayOfWeek: 1, startMinutes: hm(8), endMinutes: hm(16), weeks: "ALL_WEEKS" },
+      { dayOfWeek: 5, startMinutes: hm(8), endMinutes: hm(12), weeks: "ALL_WEEKS" },
+    ]);
+  });
+});
+
 describe("whoIsFree", () => {
   const at = { dayOfWeek: 1, startMinutes: hm(10), endMinutes: hm(11) };
 

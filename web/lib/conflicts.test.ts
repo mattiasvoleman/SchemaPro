@@ -595,6 +595,126 @@ describe("validatePlacement availability constraints", () => {
 // detectConflicts
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// validatePlacement — ramtider
+// ---------------------------------------------------------------------------
+
+describe("validatePlacement frame times", () => {
+  const frame = (
+    min: number,
+    max: number,
+    start: string,
+    end: string,
+    dayOfWeek: number | null = null,
+  ) => ({
+    id: `f-${min}-${max}-${start}`,
+    minGradeLevel: min,
+    maxGradeLevel: max,
+    dayOfWeek,
+    startTime: `${start}:00`,
+    endTime: `${end}:00`,
+  });
+
+  const spans = (entries: Record<string, { min: number; max: number }>) =>
+    new Map(Object.entries(entries));
+
+  /** 09:00-10:00 on a Monday, for group gA — the shared fixture's default. */
+  const candidate = () => makePlacement({ studentGroupId: "gA" });
+
+  const check = (
+    placement: Placement,
+    frames: ReturnType<typeof frame>[] | undefined,
+    gradeSpanOf = spans({ gA: { min: 4, max: 4 } }),
+  ) => validatePlacement(placement, [], [], undefined, undefined, gradeSpanOf, frames);
+
+  it("is silent when no frames were supplied", () => {
+    // The state every caller was in before frames existed, and the honest
+    // reading of a query still in flight.
+    expect(check(candidate(), undefined)).toEqual([]);
+  });
+
+  it("is silent when the school has no frames", () => {
+    expect(check(candidate(), [])).toEqual([]);
+  });
+
+  it("leaves a lesson inside the frame alone", () => {
+    expect(check(candidate(), [frame(4, 6, "08:00", "15:00")])).toEqual([]);
+  });
+
+  it("flags a lesson after the frame closes", () => {
+    const late = makePlacement({
+      studentGroupId: "gA",
+      startMinutes: 16 * 60,
+      endMinutes: 17 * 60,
+    });
+    expect(check(late, [frame(4, 6, "08:00", "15:00")])).toEqual([{ kind: "FRAME" }]);
+  });
+
+  it("flags a lesson before the frame opens", () => {
+    const early = makePlacement({
+      studentGroupId: "gA",
+      startMinutes: 7 * 60,
+      endMinutes: 8 * 60,
+    });
+    expect(check(early, [frame(4, 6, "08:00", "15:00")])).toEqual([{ kind: "FRAME" }]);
+  });
+
+  it("reports FRAME as its own kind, not as AVAILABILITY", () => {
+    /*
+     * The two are fixed differently: a busy teacher is one lesson to move, a
+     * closed day may be the frame to change. A grid that said the same sentence
+     * for both would send the reader to the wrong screen.
+     */
+    const late = makePlacement({
+      studentGroupId: "gA",
+      startMinutes: 16 * 60,
+      endMinutes: 17 * 60,
+    });
+    const hits = check(late, [frame(4, 6, "08:00", "15:00")]);
+    expect(hits.map((hit) => hit.kind)).not.toContain("AVAILABILITY");
+  });
+
+  it("does not reach a group in another stage", () => {
+    const late = makePlacement({
+      studentGroupId: "gA",
+      startMinutes: 16 * 60,
+      endMinutes: 17 * 60,
+    });
+    expect(check(late, [frame(7, 9, "08:00", "15:00")])).toEqual([]);
+  });
+
+  it("reports the double-booking first when a lesson is both", () => {
+    // Whichever is listed first is what the grid shows; the booking's fix is
+    // the unambiguous one.
+    const late = makePlacement({
+      id: "L1",
+      studentGroupId: "gA",
+      teacherId: "t1",
+      startMinutes: 16 * 60,
+      endMinutes: 17 * 60,
+    });
+    const other = makePlacement({
+      id: "L2",
+      studentGroupId: "gB",
+      teacherId: "t1",
+      startMinutes: 16 * 60,
+      endMinutes: 17 * 60,
+    });
+
+    const hits = validatePlacement(
+      late,
+      [other],
+      [],
+      undefined,
+      undefined,
+      spans({ gA: { min: 4, max: 4 } }),
+      [frame(4, 6, "08:00", "15:00")],
+    );
+
+    expect(hits.map((hit) => hit.kind)).toEqual(["TEACHER", "FRAME"]);
+  });
+});
+
 describe("detectConflicts", () => {
   it("returns an empty map for an empty timetable", () => {
     expect(detectConflicts([], []).size).toBe(0);

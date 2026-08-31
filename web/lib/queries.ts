@@ -29,6 +29,7 @@ import type {
   StudentGroup,
   Subject,
   TeachingRequirement,
+  FrameTime,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -228,6 +229,29 @@ export function useConstraints() {
         "AvailabilityConstraints",
         "id, resourceType, userId, roomId, studentGroupId, minGradeLevel, maxGradeLevel, dayOfWeek, date, startTime, endTime, type, reason",
         "createdAt",
+      ),
+  });
+}
+
+/**
+ * The school's ramtider — the hours each stage may be taught in.
+ *
+ * NOT keyed on the läsår, because the row is not: a frame describes the shape
+ * of the school's day, which is the scope AvailabilityConstraints uses and for
+ * the same reason. The migration argues the tradeoff.
+ *
+ * Not paged either. A Swedish school has three or four stages and five
+ * weekdays; even one row per single year per day is under a hundred, and
+ * wrapping this in fetchAllPages would suggest a volume that cannot happen.
+ */
+export function useFrameTimes() {
+  return useQuery({
+    queryKey: ["frame-times"],
+    queryFn: () =>
+      selectAll<FrameTime>(
+        "FrameTimes",
+        "id, minGradeLevel, maxGradeLevel, dayOfWeek, startTime, endTime",
+        "minGradeLevel",
       ),
   });
 }

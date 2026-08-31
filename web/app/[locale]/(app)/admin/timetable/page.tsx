@@ -44,6 +44,7 @@ import {
   type CreateMasterLessonInput,
   type VersionLesson,
   useGroupMemberships,
+  useFrameTimes,
 } from "@/lib/queries";
 import { buildIcs, downloadIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
@@ -247,6 +248,7 @@ export default function TimetablePage() {
     [students],
   );
   const { data: memberships } = useGroupMemberships();
+  const { data: frameTimes } = useFrameTimes();
   /**
    * groupId -> the years it holds, so a GRADE_LEVEL rule can reach it.
    *
@@ -310,8 +312,9 @@ export default function TimetablePage() {
         studentGroupOf,
         groupConflictMap,
         gradeSpanOf,
+        frameTimes,
       ),
-    [lessons, constraints, studentGroupOf, groupConflictMap, gradeSpanOf],
+    [lessons, constraints, studentGroupOf, groupConflictMap, gradeSpanOf, frameTimes],
   );
 
   /** lessonId → collaborator label (soft edit-locks from presence). */
@@ -353,10 +356,19 @@ export default function TimetablePage() {
           studentGroupOf,
           groupConflictMap,
           gradeSpanOf,
+          frameTimes,
         ).length === 0
       );
     },
-    [lessonById, placements, constraints, studentGroupOf, groupConflictMap, gradeSpanOf],
+    [
+      lessonById,
+      placements,
+      constraints,
+      studentGroupOf,
+      groupConflictMap,
+      gradeSpanOf,
+      frameTimes,
+    ],
   );
 
   const filtered = useMemo(
