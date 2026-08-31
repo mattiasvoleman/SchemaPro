@@ -144,7 +144,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `JWT_AUDIENCE` | `authenticated` |
 | `SUPABASE_URL` | project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key |
-| `AI_ENGINE_URL` | solver base URL |
+| `AI_ENGINE_URL` | solver base URL, scheme included (`https://…`) — a bare hostname is not a URL and surfaces as "AI engine unavailable" |
 | `AI_ENGINE_API_KEY` | the shared secret from step 0 |
 | `AI_ENGINE_TIMEOUT_MS` | `90000` (must exceed the solver timeout) |
 | `THROTTLE_TTL_SECONDS` / `THROTTLE_LIMIT` | `60` / `120` |

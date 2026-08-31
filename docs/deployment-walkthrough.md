@@ -272,7 +272,14 @@ GitHub repository.
 > ideal.
 
 4. Under **Settings → Networking**, click **Generate Domain**. Save the address
-   as `SOLVER_URL`.
+   as `SOLVER_URL` — **with `https://` in front of it**.
+
+> Railway shows the domain on its own, like
+> `solver-prod-a1b2.up.railway.app`, and copying it as it appears is the
+> single most common way to break Step 6b. A value with no `https://` is not a
+> URL, and the API reports it as **"AI engine unavailable"** — a message that
+> sends you to look at a solver which is running perfectly. The same goes for
+> quotes: paste the address, not `"the address"`.
 
 > **About the port**: you should not have to set one. Railway hands the
 > container a port through a `PORT` variable, and the solver binds whatever it
@@ -305,7 +312,7 @@ log looks *fine* is the port problem described above, not a crash.
 | `JWT_AUDIENCE` | `authenticated` |
 | `SUPABASE_URL` | your `SUPABASE_URL` from Step 2 |
 | `SUPABASE_SERVICE_ROLE_KEY` | your `SUPABASE_SERVICE_KEY` from Step 2 |
-| `AI_ENGINE_URL` | your `SOLVER_URL` from Step 6a |
+| `AI_ENGINE_URL` | your `SOLVER_URL` from Step 6a — including `https://`, e.g. `https://solver-prod-a1b2.up.railway.app` |
 | `AI_ENGINE_API_KEY` | your `SOLVER_SECRET` from Step 6a |
 | `AI_ENGINE_TIMEOUT_MS` | `90000` |
 | `THROTTLE_TTL_SECONDS` | `60` |
@@ -484,6 +491,7 @@ If step 3 fails, the solver is the thing to look at — check
 | `<API_URL>/health` works, `/health/ready` does not | `DATABASE_URL` is wrong, or the `app_authenticated` password does not match Step 4. |
 | Solver keeps restarting | `API_KEY` is shorter than 32 characters. |
 | "Generate" fails but everything else works | `AI_ENGINE_URL` or `AI_ENGINE_API_KEY` on the API does not match the solver. |
+| "Generate" fails with **"AI engine unavailable"** specifically | `AI_ENGINE_URL` is not a usable URL — almost always a missing `https://`, or quotes left around the value. The solver itself is fine; do not go looking at it. Since the check was added the API refuses to start on this instead, naming `AI_ENGINE_URL`. |
 | Invitation emails never arrive | Supabase's built-in sender is rate-limited. Set up SMTP (Step 3). |
 | Web app builds but every page 404s | Root Directory on Vercel is not set to `web`. |
 
