@@ -67,6 +67,7 @@ import {
   type PlacementSuggestion,
 } from "@/lib/conflicts";
 import { buildGradeSpans } from "@/lib/grade-span";
+import { restorableInput } from "@/lib/lesson-restore";
 import { breaksRoomLock } from "@/lib/room-locks";
 import {
   useHistoryKeyboard,
@@ -229,6 +230,20 @@ export default function TimetablePage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versionName, setVersionName] = useState("");
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
+
+  /**
+   * Change what is on screen and the selection goes with it.
+   *
+   * A selection is made by clicking cards, so it means "these ones, here". It
+   * survived a filter change, and the bulk actions never re-check visibility —
+   * so ticking three lessons under 4.1, switching to 4.2 and pressing delete
+   * removed three lessons the admin could no longer see, with the undo toast
+   * naming a count and nothing else.
+   */
+  const changeFilter = (set: (value: string) => void) => (value: string) => {
+    set(value);
+    setSelectedIds(new Set());
+  };
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
 
   const { data: versions } = useScheduleVersions(
@@ -598,24 +613,7 @@ export default function TimetablePage() {
 
   const undoableDelete = useCallback(
     async (lesson: MasterLesson) => {
-      const input: CreateMasterLessonInput = {
-        academicYearId: lesson.academicYearId,
-        subjectId: lesson.subjectId,
-        studentGroupId: lesson.studentGroupId,
-        teacherId: lesson.teacherId,
-        roomId: lesson.roomId,
-        dayOfWeek: lesson.dayOfWeek,
-        startTime: toHHMM(lesson.startTime),
-        endTime: toHHMM(lesson.endTime),
-        isLocked: lesson.isLocked,
-        // Without these, undoing a delete would quietly turn an odd-week
-        // lesson into a weekly one.
-        recurrence: lesson.recurrence,
-        startDate: lesson.startDate,
-        endDate: lesson.endDate,
-        extraGroupIds: lesson.extraGroupIds,
-        studentIds: lesson.studentIds,
-      };
+      const input: CreateMasterLessonInput = restorableInput(lesson);
       const result = await deleteLesson.mutateAsync(lesson.id);
       const ref = { id: lesson.id };
       history.push({
@@ -776,17 +774,13 @@ export default function TimetablePage() {
     const targets = [...selectedLessons];
     if (targets.length === 0) return;
     try {
-      const inputs: CreateMasterLessonInput[] = targets.map((lesson) => ({
-        academicYearId: lesson.academicYearId,
-        subjectId: lesson.subjectId,
-        studentGroupId: lesson.studentGroupId,
-        teacherId: lesson.teacherId,
-        roomId: lesson.roomId,
-        dayOfWeek: lesson.dayOfWeek,
-        startTime: toHHMM(lesson.startTime),
-        endTime: toHHMM(lesson.endTime),
-        isLocked: lesson.isLocked,
-      }));
+      // The SAME fields undoableDelete restores, and for the reason its own
+      // comment gives twelve lines up: without them undo quietly turns an
+      // odd-week lesson into a weekly one. This path carried nine of the
+      // fourteen, so a bulk undo also dropped the extra classes and the
+      // individually named pupils — silently, on the lessons most likely to
+      // have them.
+      const inputs: CreateMasterLessonInput[] = targets.map(restorableInput);
       const refs = targets.map((lesson) => ({ id: lesson.id }));
       for (const lesson of targets) {
         await deleteLesson.mutateAsync(lesson.id);
@@ -1243,7 +1237,7 @@ export default function TimetablePage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Select value={groupFilter} onValueChange={setGroupFilter}>
+        <Select value={groupFilter} onValueChange={changeFilter(setGroupFilter)}>
           <SelectTrigger className="w-44">
             <SelectValue />
           </SelectTrigger>
@@ -1256,7 +1250,7 @@ export default function TimetablePage() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={teacherFilter} onValueChange={setTeacherFilter}>
+        <Select value={teacherFilter} onValueChange={changeFilter(setTeacherFilter)}>
           <SelectTrigger className="w-52">
             <SelectValue />
           </SelectTrigger>

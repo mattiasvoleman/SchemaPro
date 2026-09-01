@@ -51,6 +51,19 @@ export class UpdateMasterLessonDto {
   teacherId?: string | null;
 
   /**
+   * The second teacher of a co-taught lesson.
+   *
+   * Absent from both DTOs until now, so a co-taught lesson could be created and
+   * updated but never with its second teacher — and undoing a delete, which
+   * recreates through this route, dropped it silently. Only the solver's own
+   * write-back set the column, and it bypasses this validator entirely.
+   */
+  @ValidateIf((dto: { coTeacherId?: string | null }) => dto.coTeacherId !== null)
+  @IsOptional()
+  @IsUUID('4')
+  coTeacherId?: string | null;
+
+  /**
    * Locks/unlocks the lesson. Locked lessons are treated as fixed placements
    * by the optimizer and survive regeneration untouched.
    */

@@ -213,6 +213,7 @@ describe('MasterLessonsService', () => {
           subjectId: SUBJECT_ID,
           studentGroupId: GROUP_ID,
           teacherId: TEACHER_ID,
+          coTeacherId: null,
           roomId: ROOM_ID,
           dayOfWeek: 1,
           startTime: new Date('1970-01-01T10:00:00.000Z'),
@@ -231,6 +232,38 @@ describe('MasterLessonsService', () => {
         },
         select: expect.any(Object),
       });
+    });
+
+    it('persists a co-teacher, which no request could carry until now', async () => {
+      /*
+       * The column existed and the solver wrote it, but no request could: the
+       * create and update DTOs had no field for it. So a co-taught lesson lost
+       * its second teacher the moment a delete was undone — the undo recreates
+       * through this very route.
+       */
+      arrangeCreate();
+
+      await service.create({ ...createDto(), coTeacherId: CO_TEACHER_ID }, testUser());
+
+      expect(tx.masterLesson.create.mock.calls[0][0].data.coTeacherId).toBe(
+        CO_TEACHER_ID,
+      );
+    });
+
+    it('sends the co-teacher into the clash check, not only the primary', async () => {
+      // _detectConflicts reads candidate.coTeacherId. Leaving it off the
+      // candidate meant a create naming a co-teacher was checked against half
+      // the room — the teacher who is also in it went unexamined.
+      arrangeCreate();
+      // Already teaching 10:30-11:30, which the 10:00-11:00 candidate overlaps.
+      tx.masterLesson.findMany.mockResolvedValue([
+        otherLesson({ teacherId: CO_TEACHER_ID }),
+      ]);
+
+      await expect(
+        service.create({ ...createDto(), coTeacherId: CO_TEACHER_ID }, testUser()),
+      ).rejects.toThrow();
+      expect(tx.masterLesson.create).not.toHaveBeenCalled();
     });
 
     // Regeneration deletes what it owns. If this path ever left the column to
@@ -1288,6 +1321,29 @@ describe('MasterLessonsService', () => {
         },
       });
     });
+    it('changes the co-teacher, and clears it when asked', async () => {
+      // The field reached the DTO but not the write, so a PATCH naming it was
+      // accepted and did nothing — the quietest kind of failure.
+      arrangeUpdate({ coTeacherId: CO_TEACHER_ID });
+
+      await service.update(LESSON_ID, { coTeacherId: null }, testUser());
+
+      // toMatchObject, not toEqual: `dayOfWeek` is written unconditionally on
+      // this path (it falls back to the stored value), which the neighbouring
+      // "untouched fields" test already pins.
+      expect(tx.masterLesson.update.mock.calls[0][0].data).toMatchObject({
+        coTeacherId: null,
+      });
+    });
+
+    it('leaves the stored co-teacher alone when the payload omits it', async () => {
+      arrangeUpdate({ coTeacherId: CO_TEACHER_ID });
+
+      await service.update(LESSON_ID, { dayOfWeek: 4 }, testUser());
+
+      expect('coTeacherId' in tx.masterLesson.update.mock.calls[0][0].data).toBe(false);
+    });
+
   });
 
   // -------------------------------------------------------------------

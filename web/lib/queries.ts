@@ -843,6 +843,15 @@ export interface CreateMasterLessonInput {
   subjectId: string;
   studentGroupId: string;
   teacherId?: string | null;
+  /**
+   * The second teacher of a co-taught lesson.
+   *
+   * Missing here and from the server's create DTO until now, so a co-taught
+   * lesson lost its second teacher the moment a delete was undone — on both the
+   * single and the bulk path. The solver writes the column directly and never
+   * went through this type, which is why nothing noticed.
+   */
+  coTeacherId?: string | null;
   roomId?: string | null;
   dayOfWeek: number;
   startTime: string;

@@ -122,6 +122,10 @@ export class MasterLessonsService {
         startMinutes: toMinutes(parseTimeString(dto.startTime)),
         endMinutes: toMinutes(parseTimeString(dto.endTime)),
         teacherId: dto.teacherId ?? null,
+        // Both teachers, or a create naming a co-teacher is checked against
+        // half the room: _detectConflicts reads candidate.coTeacherId (:476)
+        // and would have found undefined on every create.
+        coTeacherId: dto.coTeacherId ?? null,
         roomId: dto.roomId ?? null,
         extraGroupIds: (dto.extraGroupIds ?? []).filter(
           (groupId) => groupId !== dto.studentGroupId,
@@ -156,6 +160,7 @@ export class MasterLessonsService {
           subjectId: dto.subjectId,
           studentGroupId: dto.studentGroupId,
           teacherId: dto.teacherId ?? null,
+          coTeacherId: dto.coTeacherId ?? null,
           roomId: dto.roomId ?? null,
           dayOfWeek: dto.dayOfWeek,
           startTime: parseTimeString(dto.startTime),
@@ -238,7 +243,8 @@ export class MasterLessonsService {
             ? toMinutes(parseTimeString(dto.endTime))
             : toMinutes(lesson.endTime),
         teacherId: dto.teacherId !== undefined ? dto.teacherId : lesson.teacherId,
-        coTeacherId: lesson.coTeacherId,
+        coTeacherId:
+          dto.coTeacherId !== undefined ? dto.coTeacherId : lesson.coTeacherId,
         roomId: dto.roomId !== undefined ? dto.roomId : lesson.roomId,
         extraGroupIds: (dto.extraGroupIds !== undefined
           ? dto.extraGroupIds
@@ -288,6 +294,7 @@ export class MasterLessonsService {
             : {}),
           ...(dto.roomId !== undefined ? { roomId: dto.roomId } : {}),
           ...(dto.teacherId !== undefined ? { teacherId: dto.teacherId } : {}),
+          ...(dto.coTeacherId !== undefined ? { coTeacherId: dto.coTeacherId } : {}),
           ...(dto.isLocked !== undefined ? { isLocked: dto.isLocked } : {}),
           ...(dto.recurrence !== undefined ? { recurrence: dto.recurrence } : {}),
           ...(dto.startDate !== undefined
