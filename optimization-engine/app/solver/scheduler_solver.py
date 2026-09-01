@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date as date_type
@@ -686,6 +687,13 @@ class SchedulerSolver:
             )
             raise InvalidScheduleInputError(msg)
 
+        # Resolved once for the whole request: the same map _add_room_allocation
+        # builds, so a refusal here describes the model that would have been
+        # built rather than a second reading of the same rows.
+        locked_by_requirement = resolve_room_locks(
+            request.requirements, request.room_preferences, request.rooms,
+        )
+
         for requirement in request.requirements:
             # A duration that does not land on the grid is bad INPUT, not a
             # broken solver. `minutes_to_slots` signals it with a bare
@@ -741,20 +749,99 @@ class SchedulerSolver:
                     )
                     raise InvalidScheduleInputError(msg)
 
+            grades = (
+                "any"
+                if requirement.min_grade_level is None
+                else f"{requirement.min_grade_level}-{requirement.max_grade_level}"
+            )
             eligible_rooms = [
                 room for room in request.rooms if self._room_allowed(room, requirement)
             ]
             if not eligible_rooms:
-                grades = (
-                    "any"
-                    if requirement.min_grade_level is None
-                    else f"{requirement.min_grade_level}-{requirement.max_grade_level}"
-                )
                 msg = (
                     f"No room satisfies capacity/type/years for requirement "
                     f"{requirement.id} (group size "
                     f"{requirement.student_group_size}, required type "
                     f"{requirement.required_room_type or 'any'}, years {grades})."
+                )
+                raise InvalidScheduleInputError(msg)
+
+            # THE LOCK GETS ITS OWN SENTENCE, and the branch is the point. The
+            # message above sends a school to the room list to change a seat
+            # count or a stage limit; a school whose maths is locked into a room
+            # too small wrote that rule on another screen entirely, and would
+            # read the sentence above and change the wrong thing.
+            #
+            # Checked after the general refusal so the more basic cause wins:
+            # a requirement with no eligible room AT ALL has a problem the lock
+            # did not create.
+            locked_rooms = locked_by_requirement.get(requirement.id)
+            if locked_rooms is not None:
+                survivors = [
+                    room for room in eligible_rooms if room.id in locked_rooms
+                ]
+                if not survivors:
+                    msg = (
+                        f"A room lock leaves requirement {requirement.id} "
+                        f"(years {grades}) nowhere to go: the rooms it names are "
+                        f"too small, of the wrong type, or reserved for other "
+                        f"years. Widen the lock, name another room, or change "
+                        f"the room."
+                    )
+                    raise InvalidScheduleInputError(msg)
+
+        # THE WEEK, not the lesson. Every locked requirement above can have a
+        # room and the set of them still not fit: three subjects locked into one
+        # room, forty lessons each, against a week that holds fifty. Left to
+        # CP-SAT that is an ordinary INFEASIBLE whose core names room capacity —
+        # sending a school to the seat counts for a rule it wrote elsewhere.
+        #
+        # The bound is lesson-slots against room-slots, which is the room
+        # NoOverlap's own relaxation, so violating it proves infeasibility and
+        # refusing here can never refuse a week that would have worked. It
+        # ignores frame times and availability, which only ever shrink the
+        # supply — so it under-refuses and never over-refuses.
+        by_locked_rooms: dict[frozenset[UUID], list[AnonymousRequirement]] = defaultdict(
+            list,
+        )
+        for requirement in request.requirements:
+            rooms_allowed = locked_by_requirement.get(requirement.id)
+            if rooms_allowed:
+                by_locked_rooms[rooms_allowed].append(requirement)
+
+        slots_per_day = self._grid.slots_per_day
+        days = len(self._grid.schedule_days)
+        for rooms_allowed, group in by_locked_rooms.items():
+            # Every requirement here is captive to this set by construction:
+            # specificity resolution gives each ONE resolved room set, so there
+            # is no choice to protect against and no requirement to exclude.
+            # An earlier version filtered on base eligibility instead, which
+            # asked whether the requirement could use an unlocked room — and the
+            # answer is yes for exactly the requirements the lock has just taken
+            # that option away from, so nothing was ever charged.
+            needed = sum(
+                requirement.lessons_per_week
+                * self._grid.minutes_to_slots(requirement.minutes_per_lesson)
+                for requirement in group
+            )
+            # Rooms that at least one of them could actually use. A locked room
+            # too small for every requirement in the group supplies nothing, and
+            # counting it would hide the very shortage this refuses.
+            usable = sum(
+                1
+                for room in request.rooms
+                if room.id in rooms_allowed
+                and any(self._room_allowed(room, r) for r in group)
+            )
+            available = usable * days * slots_per_day
+            if needed > available:
+                minutes = self._grid.slot_minutes
+                msg = (
+                    f"Room locks put {len(group)} requirement(s) into "
+                    f"{usable} room(s) that cannot hold them: they need "
+                    f"{needed * minutes} minutes a week and those rooms offer "
+                    f"{available * minutes}. Name another room, or narrow which "
+                    f"years the lock applies to."
                 )
                 raise InvalidScheduleInputError(msg)
 
@@ -1187,14 +1274,27 @@ class SchedulerSolver:
         The returned plan is REQUIRED to read rooms back: room_index is no
         longer authoritative except for pinned rooms.
         """
-        # Wishes only. A lock already splits the partition through
-        # _room_allowed, and a second signature bit for it would split the same
-        # rooms twice for nothing.
+        # Wishes only, and for a lock the bit would be redundant rather than
+        # merely wasteful: the signature's first half is eligibility, a lock's
+        # whole effect on eligibility IS "in this room set", so the bit it would
+        # add is the distinction the partition has already made.
+        #
+        # Stated rather than tested. Once the lock is enforced there is no
+        # payload where adding the bit changes the class count, so the test that
+        # guarded this during the wish-only step could no longer say anything
+        # and was removed instead of given a contrived fixture.
         preference_sets = [
             _preference_room_ids(preference, rooms)
             for preference in (room_preferences or [])
             if preference.kind == "WISH"
         ]
+        allowed, key = self._lock_aware(
+            resolve_room_locks(
+                [decision.lesson.requirement for decision in decisions],
+                room_preferences or [],
+                rooms,
+            ),
+        )
         return add_room_allocation(
             model,
             decisions,
@@ -1202,8 +1302,8 @@ class SchedulerSolver:
             distinguished_room_ids=collect_distinguished_room_ids(
                 constraints, fixed_lessons,
             ),
-            room_allowed=self._room_allowed,
-            profile_key=self._room_profile_key,
+            room_allowed=allowed,
+            profile_key=key,
             preference_sets=preference_sets,
         )
 
@@ -2486,6 +2586,48 @@ class SchedulerSolver:
         return capacity_ok and type_ok and _grade_allowed(room, requirement)
 
     @staticmethod
+    def _lock_aware(
+        locked: dict[UUID, frozenset[UUID]],
+    ) -> tuple[
+        Callable[[AnonymousRoom, AnonymousRequirement], bool],
+        Callable[[AnonymousRequirement], tuple],
+    ]:
+        """The eligibility predicate and its profile key, both aware of locks.
+
+        A LOCK IS FOLDED INTO ELIGIBILITY AND NOWHERE ELSE, and that placement
+        is forced rather than chosen. add_room_allocation opens EVERY class when
+        a lesson has none, and _add_capacity_constraints skips when nothing
+        fits, so a lock enforced anywhere else is silently dropped rather than
+        refused — on a run CP-SAT reports OPTIMAL. _room_allowed is already the
+        single predicate behind all three consumers (the pre-solve refusal, the
+        room_index constraints and the class partition), so folding it in here
+        makes the lock inherit the existing refusal for free.
+        Never as a large weight, either: the objective drops its term exactly
+        when the rule is impossible, so a heavy "lock" would vanish in silence.
+
+        THE KEY COMES BACK WITH THE PREDICATE, as one pair from one function.
+        The partition stands one representative requirement in for its whole
+        profile, so a field the predicate reads and the key omits places a
+        lesson in a room it was never allowed — which is precisely the bug the
+        stage limits caused, and locks are a second chance to cause it. Handing
+        the two out together is what stops them being edited apart.
+        """
+
+        def allowed(room: AnonymousRoom, requirement: AnonymousRequirement) -> bool:
+            if not SchedulerSolver._room_allowed(room, requirement):
+                return False
+            rooms_allowed = locked.get(requirement.id)
+            return rooms_allowed is None or room.id in rooms_allowed
+
+        def key(requirement: AnonymousRequirement) -> tuple:
+            return (
+                *SchedulerSolver._room_profile_key(requirement),
+                locked.get(requirement.id),
+            )
+
+        return allowed, key
+
+    @staticmethod
     def _room_profile_key(requirement: AnonymousRequirement) -> tuple:
         """Exactly the fields _room_allowed reads, and nothing else.
 
@@ -2890,6 +3032,68 @@ def _grade_allowed(room: AnonymousRoom, requirement: AnonymousRequirement) -> bo
         room.max_grade_level is not None
         and requirement.max_grade_level > room.max_grade_level
     )
+
+
+def resolve_room_locks(
+    requirements: list[AnonymousRequirement],
+    preferences: list[AnonymousRoomPreference],
+    rooms: list[AnonymousRoom],
+) -> dict[UUID, frozenset[UUID]]:
+    """requirement id -> the only rooms its locks allow. Absent means unlocked.
+
+    THE NARROWEST SPAN WINS, AND EQUALLY NARROW RULES ARE ALTERNATIVES. Among
+    the locks that reach a requirement, only those of the smallest width survive
+    (a lock with no span counts as the widest, since it reaches every year), and
+    the rooms of that tier UNION.
+
+    Not intersection, even though a bound intersects in principle and that is
+    what FrameTimes chose for its own kind. A frame is an interval and
+    intersects continuously; a room set goes empty in ONE step. "Matte åk 4-6 ->
+    Bryggan 3" plus "matte åk 4 -> Optimisten 4" would intersect to nothing, and
+    a whole subject x stage becomes unschedulable from two sentences a school
+    would reasonably write. Under specificity the second sentence reads as what
+    a school means by it: an exception to the first.
+
+    Not a plain union across every tier either, which is the LunchServings rule.
+    Adding one broad lock would then silently weaken every narrow lock already
+    written, and the narrow rule stops meaning what it says.
+
+    Because ties union, the result is a pure function of the row set: order
+    does not matter, there is no tiebreak by id, and it can never come back
+    empty from two rules that each name a room. It CAN come back empty from a
+    single rule whose rooms are all gone — which is a refusal, and
+    _validate_request names it before any solve begins.
+    """
+    by_subject: dict[UUID, list[AnonymousRoomPreference]] = defaultdict(list)
+    for preference in preferences:
+        if preference.kind == "LOCK":
+            by_subject[preference.subject_id].append(preference)
+    if not by_subject:
+        return {}
+
+    locked: dict[UUID, frozenset[UUID]] = {}
+    for requirement in requirements:
+        reaching = [
+            preference
+            for preference in by_subject.get(requirement.subject_id, ())
+            if _rule_reaches(preference, requirement)
+        ]
+        if not reaching:
+            continue
+        narrowest = min(_span_width(preference) for preference in reaching)
+        allowed: set[UUID] = set()
+        for preference in reaching:
+            if _span_width(preference) == narrowest:
+                allowed |= _preference_room_ids(preference, rooms)
+        locked[requirement.id] = frozenset(allowed)
+    return locked
+
+
+def _span_width(preference: AnonymousRoomPreference) -> int:
+    """How many years a rule covers. No span is the widest thing there is."""
+    if preference.min_grade_level is None or preference.max_grade_level is None:
+        return 14  # one more than 0-12, so it loses every tie to a real span
+    return preference.max_grade_level - preference.min_grade_level + 1
 
 
 def _preference_room_ids(

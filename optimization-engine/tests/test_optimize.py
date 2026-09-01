@@ -4952,10 +4952,14 @@ def test_a_wish_says_nothing_about_a_group_with_unknown_years(
     assert names["other"] in by_span[(None, None)]
 
 
-def _preference_terms(payload: dict[str, object]) -> list:  # noqa: ANN401
-    """The objective terms a payload's room rules produce."""
-    from ortools.sat.python import cp_model
+def _terms_for(payload: dict[str, object], objective_only_wishes: bool) -> list:  # noqa: ANN401
+    """Objective terms, with the PLAN always built from every rule.
 
+    Eligibility and price are two different questions and the lock touches both,
+    so a test that varies the rule list varies the partition too and can no
+    longer see which one moved. The plan is therefore built once from the whole
+    rule set, and only the list handed to the objective changes.
+    """
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
@@ -4968,13 +4972,13 @@ def _preference_terms(payload: dict[str, object]) -> list:  # noqa: ANN401
     plan = solver._add_room_allocation(
         model, decisions, request.rooms, [], [], request.room_preferences,
     )
+    offered = (
+        [p for p in request.room_preferences if p.kind == "WISH"]
+        if objective_only_wishes
+        else request.room_preferences
+    )
     return solver._add_room_preference_objective(
-        model,
-        decisions,
-        request.rooms,
-        plan,
-        request.room_preferences,
-        solver._resolve_weights(request),
+        model, decisions, request.rooms, plan, offered, solver._resolve_weights(request),
     )
 
 
@@ -4983,8 +4987,8 @@ def test_a_lock_never_appears_as_a_price() -> None:
 
     Paying for a room the lesson cannot reach anyway is a constant — it inflates
     the objective and steers nothing. Asserted on the objective terms, because
-    once the lock is ENFORCED the lessons land in the named room either way and
-    no behavioural test can tell a price from a bound.
+    the lock IS enforced now and the lessons land in the named room either way,
+    so no behavioural test can tell a price from a bound.
 
     A WISH RIDES ALONG ON PURPOSE. Two filters keep a lock out of the objective
     — one on the bucket, one on the class signature — and with a lock alone they
@@ -4994,63 +4998,362 @@ def test_a_lock_never_appears_as_a_price() -> None:
     bucketed.
     """
     payload, names = _room_rule_payload()
-    wish_only = dict(payload)
-    wish_only["roomPreferences"] = [_rule(names, roomIds=[names["other"]])]
-
-    both = dict(payload)
-    both["roomPreferences"] = [
+    payload["roomPreferences"] = [
         _rule(names, roomIds=[names["other"]]),
-        _rule(names, kind="LOCK", roomIds=[names["wanted"]]),
+        _rule(names, kind="LOCK", roomIds=[names["wanted"]], minGradeLevel=4, maxGradeLevel=4),
     ]
 
-    assert _preference_terms(wish_only), "the wish must produce a price at all"
-    assert len(_preference_terms(both)) == len(_preference_terms(wish_only)), (
-        "the lock added a penalty term of its own"
+    assert _terms_for(payload, objective_only_wishes=True), (
+        "the wish must produce a price at all, or this asserts nothing"
     )
+    assert len(_terms_for(payload, objective_only_wishes=False)) == len(
+        _terms_for(payload, objective_only_wishes=True),
+    ), "the lock added a penalty term of its own"
 
 
-def test_a_lock_does_not_split_the_room_partition_a_second_time() -> None:
-    """A lock earns its splits through _room_allowed, not through a wish bit.
+# ---------------------------------------------------------------------------
+# Salsregler per årskurs — låset
+# ---------------------------------------------------------------------------
 
-    The preference bit exists so two otherwise identical rooms, one wished for
-    and one not, stop being interchangeable — a wish could not be expressed
-    otherwise. A LOCK needs no such bit: it restricts eligibility, and
-    eligibility is already the first half of every room's signature. Adding one
-    anyway splits the same rooms twice and buys nothing.
 
-    Structural, because that is exactly what it is: the mutation changes the
-    model's SIZE and none of its answers, so no behavioural test can see it.
+def test_a_lock_puts_a_stage_in_its_room_and_leaves_the_others(
+    client: TestClient,
+) -> None:
+    """The user's first example: matte, Optimisten 4, åk 4.
+
+    A WISH PULLS THE OTHER WAY, and that is what makes this a test. With two
+    rooms and nothing else to separate them, a solver that ignored the lock
+    entirely would still be free to put year 4 in the locked room, and the
+    assertion would pass over a lock doing nothing. A heavy wish for the OTHER
+    room removes that: the only reason to stay is that nowhere else is allowed.
+
+    It also pins the relationship between the two kinds — a lock is a bound and
+    a wish is a price, so no weight can buy its way past one.
     """
     from app.schemas.schedule import OptimizeScheduleRequest
-    from app.solver.room_allocator import build_room_classes
-    from app.solver.scheduler_solver import SchedulerSolver, _preference_room_ids
+    from app.solver.scheduler_solver import SchedulerSolver
 
     payload, names = _room_rule_payload()
-    payload["roomPreferences"] = [_rule(names, kind="LOCK")]
+    payload["roomPreferences"] = [
+        _rule(names, kind="LOCK", minGradeLevel=4, maxGradeLevel=4),
+        _rule(names, roomIds=[names["other"]], weight=1000),
+    ]
+
     request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
 
-    solver = SchedulerSolver(_settings())
-    decisions = solver._create_lesson_decisions(
-        cp_model.CpModel(), request.requirements, len(request.rooms), [],
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    by_span = _rooms_by_span(response, request)
+    assert by_span[(4, 4)] == {names["wanted"]}, (
+        "the wish bought its way past the lock"
     )
-    without = build_room_classes(
-        decisions, request.rooms, set(), solver._room_allowed, solver._room_profile_key,
-    )
-    # What the partition would look like if a lock were treated as a wish.
-    as_if_wish = build_room_classes(
-        decisions,
-        request.rooms,
-        set(),
-        solver._room_allowed,
-        solver._room_profile_key,
-        [_preference_room_ids(p, request.rooms) for p in request.room_preferences],
+    # The stage the lock says nothing about follows the wish, which is the
+    # control: it proves the wish was strong enough to move anything at all.
+    assert by_span[(7, 9)] == {names["other"]}
+
+
+def test_a_locked_requirement_never_shares_a_room_class_with_an_unlocked_one(
+    client: TestClient,
+) -> None:
+    """The stage-limit bug, one dimension over — and locks are a second chance.
+
+    build_room_classes stands ONE representative requirement in for its whole
+    profile. A lock changes eligibility, so a profile key that omits it collapses
+    a locked and an unlocked requirement into one class and the locked lesson
+    lands wherever the class allows.
+
+    TWO SUBJECTS, ONE SPAN, and that is the whole construction. A lock is keyed
+    on subject and span, so two requirements sharing both share their lock and
+    can never differ; differing by SPAN would be caught by the key's existing
+    year fields and prove nothing new. Different subjects with identical
+    (type, size, span) are the one shape whose eligibility differs while every
+    pre-existing key field agrees.
+
+    The unlocked requirement is listed first so it becomes the representative
+    and its permissive eligibility is the one the signature is computed from.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    free_subject, locked_subject = str(uuid4()), str(uuid4())
+    only_room, other_room = str(uuid4()), str(uuid4())
+
+    def requirement(subject_id: str) -> dict[str, object]:
+        return {
+            "id": str(uuid4()),
+            "subjectId": subject_id,
+            "studentGroupId": str(uuid4()),
+            "teacherId": str(uuid4()),
+            "lessonsPerWeek": 10,
+            "minutesPerLesson": 60,
+            "studentGroupSize": 24,
+            "minGradeLevel": 4,
+            "maxGradeLevel": 4,
+        }
+
+    payload = _sample_payload()
+    payload["requirements"] = [requirement(free_subject), requirement(locked_subject)]
+    payload["groups"] = [
+        {"id": r["studentGroupId"], "lunchHeadcount": 24}  # type: ignore[index]
+        for r in payload["requirements"]  # type: ignore[union-attr]
+    ]
+    payload["rooms"] = [
+        {"id": only_room, "capacity": 30},
+        {"id": other_room, "capacity": 30},
+    ]
+    payload["roomPreferences"] = [
+        {
+            "id": str(uuid4()),
+            "subjectId": locked_subject,
+            "kind": "LOCK",
+            "roomType": None,
+            "roomIds": [only_room],
+            "weight": 5,
+            "minGradeLevel": 4,
+            "maxGradeLevel": 4,
+        },
+    ]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20.0)).solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    subject_of = {str(r.id): str(r.subject_id) for r in request.requirements}
+    trespassing = [
+        lesson
+        for lesson in response.lessons
+        if subject_of[str(lesson.requirement_id)] == locked_subject
+        and str(lesson.room_id) != only_room
+    ]
+    assert trespassing == [], (
+        f"{len(trespassing)} locked lessons escaped their room through a class "
+        f"they shared with an unlocked requirement"
     )
 
-    assert len(as_if_wish) > len(without), (
-        "the fixture must be one where a preference bit WOULD split, or this "
-        "asserts nothing"
+
+def test_a_lock_with_no_span_loses_every_tie_to_one_that_has_a_span() -> None:
+    """A rule about every year is the widest thing there is.
+
+    It reaches everything, so treating it as narrow would make it win every
+    specificity contest — and a school's one general rule would then override
+    every exception it had carefully written.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver, resolve_room_locks
+
+    payload, names = _room_rule_payload()
+    payload["roomPreferences"] = [
+        _rule(names, kind="LOCK", roomIds=[names["other"]]),  # no span at all
+        _rule(names, kind="LOCK", roomIds=[names["wanted"]], minGradeLevel=4, maxGradeLevel=4),
+    ]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    locked = resolve_room_locks(
+        request.requirements, request.room_preferences, request.rooms,
     )
-    plan = solver._add_room_allocation(
-        cp_model.CpModel(), decisions, request.rooms, [], [], request.room_preferences,
+    year_four = next(r for r in request.requirements if r.min_grade_level == 4)
+    assert locked[year_four.id] == frozenset({UUID(names["wanted"])})
+
+
+def test_a_wish_never_restricts_where_a_lesson_may_go() -> None:
+    """The two kinds must not converge.
+
+    A wish naming a room too small for the group is an aspiration the solver
+    ignores; the same rule as a LOCK is a week that cannot be scheduled. If the
+    resolver stopped filtering on kind, every wish a school has ever written
+    would become a restriction — silently, on the next run.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, names = _room_rule_payload()
+    payload["rooms"] = [
+        {"id": names["wanted"], "capacity": 10},  # too small for anyone
+        {"id": names["other"], "capacity": 30},
+    ]
+    payload["roomPreferences"] = [
+        _rule(names, minGradeLevel=4, maxGradeLevel=4),
+    ]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    by_span = _rooms_by_span(response, request)
+    assert by_span[(4, 4)] == {names["other"]}
+
+
+def test_a_lock_may_name_several_rooms(client: TestClient) -> None:
+    """The second example: matte, Optimisten 4 AND Bryggan 3, åk 5.
+
+    Named rooms are alternatives, not a sequence — the engine has no way to say
+    "Optimisten first, Bryggan as a fallback", and the flat set is what the
+    school's own checkbox list already produces.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, names = _room_rule_payload()
+    third = str(uuid4())
+    payload["rooms"].append({"id": third, "capacity": 30})  # type: ignore[union-attr]
+    payload["requirements"][0]["minGradeLevel"] = 5  # type: ignore[index]
+    payload["requirements"][0]["maxGradeLevel"] = 5  # type: ignore[index]
+    payload["roomPreferences"] = [
+        _rule(
+            names,
+            kind="LOCK",
+            roomIds=[names["wanted"], names["other"]],
+            minGradeLevel=5,
+            maxGradeLevel=5,
+        ),
+    ]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
+
+    by_span = _rooms_by_span(response, request)
+    assert by_span[(5, 5)] <= {names["wanted"], names["other"]}
+    assert third not in by_span[(5, 5)]
+
+
+def test_a_lock_may_name_a_room_type(client: TestClient) -> None:
+    """Room types too, which the user asked for after the design was written.
+
+    _preference_room_ids already expanded a type for the wish, so the lock
+    inherits it: the type is resolved to its rooms once, in the same place, and
+    a type that gains a room later simply widens the lock.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, names = _room_rule_payload()
+    lab = str(uuid4())
+    payload["rooms"] = [
+        {"id": names["wanted"], "capacity": 30, "type": lab},
+        {"id": names["other"], "capacity": 30},
+    ]
+    payload["roomPreferences"] = [
+        {
+            "id": str(uuid4()),
+            "subjectId": names["subject"],
+            "kind": "LOCK",
+            "roomType": lab,
+            "roomIds": [],
+            "weight": 5,
+            "minGradeLevel": 4,
+            "maxGradeLevel": 4,
+        },
+    ]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
+
+    by_span = _rooms_by_span(response, request)
+    assert by_span[(4, 4)] == {names["wanted"]}
+
+
+def test_the_narrowest_lock_wins_rather_than_emptying_the_set(
+    client: TestClient,
+) -> None:
+    """Two sentences a school would reasonably write, and the reading that works.
+
+    "Matte åk 4-6 -> Bryggan 3" plus "matte åk 4 -> Optimisten 4" intersects to
+    NOTHING, and a whole subject x stage becomes unschedulable. Under
+    specificity the second sentence is an exception to the first, which is what
+    a school means by writing it.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, names = _room_rule_payload()
+    payload["requirements"][1]["minGradeLevel"] = 5  # type: ignore[index]
+    payload["requirements"][1]["maxGradeLevel"] = 5  # type: ignore[index]
+    payload["roomPreferences"] = [
+        _rule(names, kind="LOCK", roomIds=[names["other"]], minGradeLevel=4, maxGradeLevel=6),
+        _rule(names, kind="LOCK", roomIds=[names["wanted"]], minGradeLevel=4, maxGradeLevel=4),
+    ]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    by_span = _rooms_by_span(response, request)
+    # Year 4 takes the exception; year 5 is only reached by the broad rule.
+    assert by_span[(4, 4)] == {names["wanted"]}
+    assert by_span[(5, 5)] == {names["other"]}
+
+
+def test_two_equally_narrow_locks_are_alternatives(client: TestClient) -> None:
+    # Duplicate rows are harmless — a strict improvement over a duplicate WISH,
+    # which silently doubles the strength the admin set on the slider.
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, names = _room_rule_payload()
+    third = str(uuid4())
+    payload["rooms"].append({"id": third, "capacity": 30})  # type: ignore[union-attr]
+    payload["roomPreferences"] = [
+        _rule(names, kind="LOCK", roomIds=[names["wanted"]], minGradeLevel=4, maxGradeLevel=4),
+        _rule(names, kind="LOCK", roomIds=[names["other"]], minGradeLevel=4, maxGradeLevel=4),
+    ]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    by_span = _rooms_by_span(response, request)
+    assert by_span[(4, 4)] <= {names["wanted"], names["other"]}
+    assert third not in by_span[(4, 4)]
+
+
+def test_a_lock_naming_a_room_too_small_is_refused_by_name(client: TestClient) -> None:
+    """The refusal must not send the school to the wrong screen.
+
+    "No room satisfies capacity/type/years" points at the room list; this school
+    wrote the offending rule somewhere else entirely and would change the wrong
+    thing.
+    """
+    payload, names = _room_rule_payload()
+    payload["rooms"] = [
+        {"id": names["wanted"], "capacity": 10},
+        {"id": names["other"], "capacity": 30},
+    ]
+    payload["roomPreferences"] = [
+        _rule(names, kind="LOCK", minGradeLevel=4, maxGradeLevel=4),
+    ]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
     )
-    assert len(plan.classes) == len(without)
+
+    assert response.status_code == 400, response.text
+    message = response.json()["message"]
+    assert "A room lock leaves requirement" in message
+    assert "Widen the lock" in message
+
+
+def test_locks_that_cannot_hold_a_week_are_refused_by_volume(
+    client: TestClient,
+) -> None:
+    """Every lesson can have a room and the week still not fit.
+
+    Left to CP-SAT this is an INFEASIBLE whose core names room capacity, which
+    sends a school to the seat counts for a rule it wrote elsewhere.
+    """
+    payload, names = _room_rule_payload()
+    # Forty 90-minute lessons for one stage against a single room: 3600
+    # minutes a week against the 3000 one room offers in a 08-18 week.
+    payload["requirements"][0]["lessonsPerWeek"] = 40  # type: ignore[index]
+    payload["requirements"][0]["minutesPerLesson"] = 90  # type: ignore[index]
+    payload["roomPreferences"] = [
+        _rule(names, kind="LOCK", minGradeLevel=4, maxGradeLevel=4),
+    ]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400, response.text
+    message = response.json()["message"]
+    assert "Room locks put" in message
+    assert "minutes a week" in message
