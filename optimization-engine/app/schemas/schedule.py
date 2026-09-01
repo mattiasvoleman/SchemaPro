@@ -405,6 +405,29 @@ class ScheduledLesson(CamelModel):
     end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
 
 
+class ScheduledLunch(CamelModel):
+    """When one student group eats, on one day.
+
+    The solver has always decided this — `lunchstart_<group>_<day>` is a real
+    decision variable, constrained against the group's lessons and against the
+    dining hall's seats. It was simply never read back, which is why a school
+    could see the reserved gap in its timetable and nothing in it. The engine's
+    own test helper says so: "the chosen lunch start exists nowhere outside the
+    model — a known gap that also leaves benchmarks/validate_schedule.py unable
+    to check the rule".
+
+    NOT a ScheduledLesson, and it could not be one: that type is keyed on
+    `requirementId` and a meal has no teaching requirement. A separate list also
+    keeps every existing assertion on `len(response.lessons)` meaning what it
+    meant before.
+    """
+
+    student_group_id: UUID4 = Field(alias="studentGroupId")
+    day_of_week: DayOfWeek = Field(alias="dayOfWeek")
+    start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+
+
 class ConflictDetail(CamelModel):
     category: ConflictCategory
     message: str
@@ -422,5 +445,9 @@ class ConflictAnalysis(CamelModel):
 class OptimizeScheduleResponse(CamelModel):
     request_id: UUID4 = Field(alias="requestId")
     status: SolverStatus
-    lessons: list[ScheduledLesson] = Field(default_factory=list)
+    lessons: list[ScheduledLesson]
+    #: The sittings the solver chose. Defaults to empty so an older gateway
+    #: reading this response is unaffected, and so every response built on a
+    #: failure path stays valid without naming the field.
+    lunches: list[ScheduledLunch] = Field(default_factory=list)
     conflicts: ConflictAnalysis | None = None

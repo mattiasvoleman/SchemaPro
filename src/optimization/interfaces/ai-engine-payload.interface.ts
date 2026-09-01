@@ -255,7 +255,34 @@ export interface AiEngineScheduleResponse {
    */
   status: 'FEASIBLE' | 'INFEASIBLE' | 'OPTIMAL' | 'TIMEOUT';
   lessons: AiEngineLesson[];
+  /**
+   * When each student group eats, one entry per group per teaching day.
+   *
+   * Optional because it arrives from a NEWER engine than the one this gateway
+   * may be talking to. That is safe in this direction and only this one: the
+   * request is validated by pydantic with `extra="forbid"`, so an unknown field
+   * sent UP is a 422 for the whole optimisation — but the reply is read through
+   * a bare generic with no runtime validation, so an unknown field coming DOWN
+   * is ignored and a missing one is `undefined`.
+   */
+  lunches?: AiEngineLunch[];
   conflicts?: AiEngineConflictAnalysis | null;
+}
+
+/**
+ * One student group's sitting on one day.
+ *
+ * Not an AiEngineLesson: that type is keyed on `requirementId` and a meal has
+ * no teaching requirement. `studentGroupId` is the anonymised id, so the
+ * gateway has to map it back through the same group map the requirements used.
+ */
+export interface AiEngineLunch {
+  studentGroupId: string;
+  dayOfWeek: DayOfWeek;
+  /** HH:MM:SS */
+  startTime: string;
+  /** HH:MM:SS */
+  endTime: string;
 }
 
 export interface AiEngineLesson {

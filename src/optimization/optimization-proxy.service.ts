@@ -21,6 +21,7 @@ import type {
   AiEngineScheduleRequest,
   AiEngineScheduleResponse,
   AnonymousConstraint,
+  AiEngineLunch,
   AnonymousFixedLesson,
   AnonymousFrameTime,
   AnonymousGroup,
@@ -110,9 +111,10 @@ export class OptimizationProxyService {
     );
 
     // Step 1: Fetch raw data under the authenticated user's RLS session.
-    // teacherAnonMap / groupAnonMap / subjectAnonMap are produced by
-    // fetchAndAnonymize but only requirementAnonMap and roomAnonMap are needed
-    // to reverse-map the AI engine's response back to real DB ids.
+    // teacherAnonMap / subjectAnonMap are produced by fetchAndAnonymize and not
+    // needed here: the response names requirements, rooms and — since the
+    // engine began returning sittings — student groups, so those three maps are
+    // the ones that have to come back out.
     const {
       requirements,
       rooms,
@@ -125,6 +127,7 @@ export class OptimizationProxyService {
       groupConflicts,
       roomAnonMap,
       requirementAnonMap,
+      groupAnonMap,
       storedRules,
     } = await this.prisma.withRls(user, (tx) =>
       this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user)),
@@ -175,10 +178,47 @@ export class OptimizationProxyService {
     );
 
     this.logger.log(
-      `Optimization complete [requestId=${requestId}, status=${response.status}, lessons=${response.lessons.length}]`,
+      `Optimization complete [requestId=${requestId}, status=${response.status}, ` +
+        `lessons=${response.lessons.length}, lunches=${response.lunches?.length ?? 0}]`,
     );
 
-    return response;
+    // The sittings leave this method carrying REAL group ids. Everything the
+    // engine sees is anonymised, so a caller handed the raw reply would get
+    // uuids that exist in no table — the same unactionable shape the engine's
+    // own conflict messages still have.
+    return { ...response, lunches: this.realiseLunches(response, groupAnonMap) };
+  }
+
+  /**
+   * The engine's sittings with their anonymous group ids turned back.
+   *
+   * A sitting whose group cannot be resolved is DROPPED, not passed through
+   * with the anonymous id: the map is built from the same groups the payload
+   * was assembled from, so an unresolvable id means the engine invented one,
+   * and a lunch pointing at a group that does not exist is worse than no lunch
+   * at all — it would be stored, drawn, and unexplainable.
+   */
+  private realiseLunches(
+    response: AiEngineScheduleResponse,
+    groupAnonMap: Map<string, string>,
+  ): AiEngineLunch[] {
+    if (!response.lunches?.length) return [];
+
+    const realIdOf = new Map(
+      [...groupAnonMap].map(([realId, anonId]) => [anonId, realId]),
+    );
+    const realised: AiEngineLunch[] = [];
+    for (const lunch of response.lunches) {
+      const studentGroupId = realIdOf.get(lunch.studentGroupId);
+      if (!studentGroupId) {
+        this.logger.warn(
+          `Dropping a sitting for unknown group ${lunch.studentGroupId}.`,
+        );
+        continue;
+      }
+      realised.push({ ...lunch, studentGroupId });
+    }
+    return realised;
   }
 
   // ---------------------------------------------------------------------------
@@ -201,6 +241,12 @@ export class OptimizationProxyService {
     groupConflicts: [string, string][];
     roomAnonMap: Map<string, string>;
     requirementAnonMap: Map<string, string>;
+    /**
+     * Needed to read the sittings back. The comment above says only the room
+     * and requirement maps are used to reverse the response — that was true
+     * until the engine began returning lunches, which name a student group.
+     */
+    groupAnonMap: Map<string, string>;
     storedRules: ScheduleRules | null;
   }> {
     // Anonymous-id lookup tables: realId → anonId.
@@ -804,6 +850,7 @@ export class OptimizationProxyService {
       groupConflicts,
       roomAnonMap,
       requirementAnonMap,
+      groupAnonMap,
       // An empty object would send `rules: {}` and read as "rules were
       // considered and came to nothing", which the engine treats the same but
       // a reader of the payload would not.

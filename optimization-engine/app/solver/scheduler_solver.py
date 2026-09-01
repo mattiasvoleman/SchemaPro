@@ -24,6 +24,7 @@ from app.schemas.schedule import (
     OptimizeScheduleResponse,
     PreviousLesson,
     ScheduledLesson,
+    ScheduledLunch,
     ScheduleRules,
     SolverStatus,
 )
@@ -106,7 +107,13 @@ class SchedulerSolver:
         *,
         use_assumptions: bool,
         include_objective: bool = True,
-    ) -> tuple[cp_model.CpModel, AssumptionRegistry, list[LessonDecision], RoomPlan]:
+    ) -> tuple[
+        cp_model.CpModel,
+        AssumptionRegistry,
+        list[LessonDecision],
+        RoomPlan,
+        dict[tuple[UUID, int], cp_model.IntVar],
+    ]:
         """Construct the CP-SAT model.
 
         `use_assumptions` is threaded through to the registry; see its docstring
@@ -143,7 +150,7 @@ class SchedulerSolver:
         )
 
         day_vars: dict[str, cp_model.IntVar] = {}
-        self._add_rules_constraints(
+        lunch_starts = self._add_rules_constraints(
             model, registry, decisions, request.rules, day_vars,
             request.fixed_lessons, request.groups, request.group_conflicts,
         )
@@ -163,7 +170,7 @@ class SchedulerSolver:
                 ),
             ]
             model.Minimize(sum(objective_terms) if objective_terms else 0)
-        return model, registry, decisions, room_plan
+        return model, registry, decisions, room_plan, lunch_starts
 
     def _explain_infeasible(
         self,
@@ -180,7 +187,7 @@ class SchedulerSolver:
         stands — it was proved by the first solve — and the response degrades to
         an unexplained INFEASIBLE rather than an invented explanation.
         """
-        model, registry, _, _ = self._build_model(request, use_assumptions=True)
+        model, registry, _, _, _ = self._build_model(request, use_assumptions=True)
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self._settings.solver_max_time_seconds
         conflicts = None
@@ -244,10 +251,10 @@ class SchedulerSolver:
         self._validate_request(request)
 
         rooms = request.rooms
-        model, _, decisions, room_plan = self._build_model(
+        model, _, decisions, room_plan, lunch_full = self._build_model(
             request, use_assumptions=False, include_objective=True,
         )
-        feas_model, _, feas_decisions, feas_plan = self._build_model(
+        feas_model, _, feas_decisions, feas_plan, lunch_feas = self._build_model(
             request, use_assumptions=False, include_objective=False,
         )
 
@@ -289,13 +296,19 @@ class SchedulerSolver:
             winner_solver: cp_model.CpSolver = phase1
             winner_decisions = feas_decisions
             winner_plan = feas_plan
+            winner_lunch = lunch_feas
             # The two builds iterate the same request in the same order, so
             # their decision lists and room-class literal maps correspond
             # one-to-one. Guarded rather than assumed: hinting mismatched
             # variables would silently corrupt the search.
-            if len(decisions) != len(feas_decisions) or set(
-                room_plan.literals,
-            ) != set(feas_plan.literals):
+            if (
+                len(decisions) != len(feas_decisions)
+                or set(room_plan.literals) != set(feas_plan.literals)
+                # The lunch keys as well: the two builds must agree on which
+                # groups eat on which days, or the map read below belongs to a
+                # different school week than the one being returned.
+                or set(lunch_full) != set(lunch_feas)
+            ):
                 msg = "objective-free and full builds disagree on model structure"
                 raise SolverBuildError(msg)
             hint_pairs = list(zip(decisions, feas_decisions))
@@ -337,6 +350,7 @@ class SchedulerSolver:
             winner_solver = phase1b
             winner_decisions = decisions
             winner_plan = room_plan
+            winner_lunch = lunch_full
             hint_pairs = [(decision, decision) for decision in decisions]
             hint_literals = [
                 (literal, literal)
@@ -352,6 +366,7 @@ class SchedulerSolver:
                 request_id=request.request_id,
                 status="FEASIBLE",
                 lessons=lessons,
+                lunches=self._lunches_of(winner_solver, winner_lunch, request.rules),
                 conflicts=None,
             )
 
@@ -385,6 +400,8 @@ class SchedulerSolver:
                 request_id=request.request_id,
                 status=self._map_status(phase2_code),
                 lessons=lessons,
+                # lunch_full, not winner_lunch: phase 2 solved the full model.
+                lunches=self._lunches_of(phase2, lunch_full, request.rules),
                 conflicts=None,
             )
 
@@ -1654,8 +1671,14 @@ class SchedulerSolver:
         fixed_lessons: list[FixedLesson],
         groups: list[AnonymousGroup],
         group_conflicts: list[tuple[UUID, UUID]] | None = None,
-    ) -> None:
+    ) -> dict[tuple[UUID, int], cp_model.IntVar]:
         """Hard school rules: lunch break, dining hall seats, lessons per day.
+
+        Returns the lunch start variable per (student group, day index), so the
+        sitting the solver chose can be read back. It was always decided here
+        and always discarded — this method was declared `-> None` and the
+        variable was a loop-local. Returning the map is the whole of the fix;
+        no constraint changes.
 
         `fixed_lessons` and `groups` are required, unlike `group_conflicts`,
         which follows its siblings in defaulting to None. The difference is
@@ -1665,8 +1688,9 @@ class SchedulerSolver:
         empty dining hall and say nothing about it. A TypeError names the
         caller; a default would have let it profile the wrong model in silence.
         """
+        lunch_starts: dict[tuple[UUID, int], cp_model.IntVar] = {}
         if rules is None:
-            return
+            return lunch_starts
 
         by_group: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
@@ -1825,6 +1849,7 @@ class SchedulerSolver:
                         day_offset + window_end - lunch_slots,
                         f"lunchstart_{group_id}_{day_index}",
                     )
+                    lunch_starts[(group_id, day_index)] = lunch_start
                     forbidden = blocked_starts.get((group_id, day_index))
                     if forbidden:
                         # UNDER AN ASSUMPTION LITERAL, not bare. A bare domain
@@ -1942,6 +1967,8 @@ class SchedulerSolver:
                 # constraints to say the same thing.
                 model.AddCumulative(sittings, headcounts, seats)
 
+        return lunch_starts
+
     @staticmethod
     def _room_allowed(room: AnonymousRoom, requirement: AnonymousRequirement) -> bool:
         capacity_ok = room.capacity is None or room.capacity >= requirement.student_group_size
@@ -1950,6 +1977,64 @@ class SchedulerSolver:
             or room.type == requirement.required_room_type
         )
         return capacity_ok and type_ok and _grade_allowed(room, requirement)
+
+    def _lunches_of(
+        self,
+        solver: cp_model.CpSolver,
+        lunch_starts: dict[tuple[UUID, int], cp_model.IntVar],
+        rules: ScheduleRules | None,
+    ) -> list[ScheduledLunch]:
+        """Sittings, or none if the school reserves no lunch.
+
+        The map is empty in that case anyway; the guard is on `lunch_minutes`,
+        which is what _extract_lunches needs and which is None exactly when the
+        window is unset.
+        """
+        if rules is None or rules.lunch_minutes is None:
+            return []
+        return self._extract_lunches(solver, lunch_starts, rules.lunch_minutes)
+
+    def _extract_lunches(
+        self,
+        solver: cp_model.CpSolver,
+        lunch_starts: dict[tuple[UUID, int], cp_model.IntVar],
+        lunch_minutes: int,
+    ) -> list[ScheduledLunch]:
+        """The sitting each group got, decoded the same way a lesson is.
+
+        `lunch_starts` must come from the SAME build whose solver is passed in.
+        solve() runs four models — the full one, an objective-free twin, a
+        cleared Clone of the full one, and the assumptions rebuild — and
+        solver.Value() resolves a variable by INDEX, not by identity.
+
+        Measured, because the honest version of this warning is narrower than it
+        first looks: today the two builds give the lunch variables the SAME
+        indices, because _build_model appends every objective auxiliary after
+        the rules are added. Passing the wrong map is therefore currently
+        harmless — by accident. It stops being harmless the moment an objective
+        term allocates a variable earlier, or the build order is rearranged, and
+        the failure would be silent: a real number from a model nobody solved.
+        Taking the map from the winning build costs nothing and removes the
+        accident from the load-bearing path; test_the_two_builds_agree_on_lunch_
+        variable_indices pins the assumption so its expiry is noisy.
+        """
+        duration = self._grid.minutes_to_slots(lunch_minutes)
+        lunches: list[ScheduledLunch] = []
+        for (group_id, _day_index), variable in lunch_starts.items():
+            day_of_week, start_slot = self._grid.decode_absolute(solver.Value(variable))
+            start_time, end_time = self._grid.format_hhmmss(start_slot, duration)
+            lunches.append(
+                ScheduledLunch(
+                    student_group_id=group_id,
+                    day_of_week=day_of_week,  # type: ignore[arg-type]
+                    start_time=start_time,
+                    end_time=end_time,
+                ),
+            )
+        # Stable order: the dict is insertion-ordered by (group, day) already,
+        # but a response a school reads should not depend on that being true.
+        lunches.sort(key=lambda lunch: (str(lunch.student_group_id), lunch.day_of_week))
+        return lunches
 
     def _extract_lessons(
         self,

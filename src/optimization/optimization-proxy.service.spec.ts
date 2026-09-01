@@ -679,6 +679,108 @@ describe('OptimizationProxyService', () => {
     const postedPayload = (): AiEngineScheduleRequest =>
       http.post.mock.calls[0][1] as AiEngineScheduleRequest;
 
+    // -----------------------------------------------------------------------
+    // Sittningarna, on their way back
+    // -----------------------------------------------------------------------
+
+    /** Engine echo that also answers with a sitting for every group it saw. */
+    const echoWithLunches = () => {
+      http.post.mockImplementation((_url: string, payload: any) =>
+        of({
+          data: {
+            requestId: payload.requestId,
+            status: 'OPTIMAL',
+            lessons: payload.requirements.flatMap((r: any) =>
+              Array.from({ length: r.lessonsPerWeek }, () => ({
+                requirementId: r.id,
+                roomId: payload.rooms[0]?.id ?? null,
+                dayOfWeek: 1,
+                startTime: '08:00:00',
+                endTime: '09:15:00',
+              })),
+            ),
+            lunches: payload.groups.map((g: any) => ({
+              studentGroupId: g.id,
+              dayOfWeek: 1,
+              startTime: '11:30:00',
+              endTime: '12:00:00',
+            })),
+            conflicts: null,
+          },
+        }),
+      );
+    };
+
+    it('hands the sittings back with real group ids, not anonymous ones', async () => {
+      /*
+       * The engine only ever sees re-keyed ids, so a caller given the raw reply
+       * would get a uuid that exists in no table — the same unactionable shape
+       * the engine's conflict messages still have. The assertion is on the
+       * exact id, because "contains a uuid" would pass for the anonymous one.
+       */
+      arrange();
+      echoWithLunches();
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.lunches).toEqual([
+        {
+          studentGroupId: GROUP_ID,
+          dayOfWeek: 1,
+          startTime: '11:30:00',
+          endTime: '12:00:00',
+        },
+      ]);
+    });
+
+    it('drops a sitting for a group the payload never carried', async () => {
+      // An id the gateway cannot resolve means the engine invented one. A lunch
+      // pointing at a group that does not exist is worse than no lunch: it
+      // would be stored, drawn, and unexplainable.
+      arrange();
+      http.post.mockImplementation((_url: string, payload: any) =>
+        of({
+          data: {
+            requestId: payload.requestId,
+            status: 'OPTIMAL',
+            lessons: payload.requirements.flatMap((r: any) =>
+              Array.from({ length: r.lessonsPerWeek }, () => ({
+                requirementId: r.id,
+                roomId: payload.rooms[0]?.id ?? null,
+                dayOfWeek: 1,
+                startTime: '08:00:00',
+                endTime: '09:15:00',
+              })),
+            ),
+            lunches: [
+              {
+                studentGroupId: '99999999-9999-4999-8999-999999999999',
+                dayOfWeek: 1,
+                startTime: '11:30:00',
+                endTime: '12:00:00',
+              },
+            ],
+            conflicts: null,
+          },
+        }),
+      );
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.lunches).toEqual([]);
+    });
+
+    it('answers with an empty list when the engine sends no sittings', async () => {
+      // An older engine omits the field entirely. `undefined` must not reach a
+      // caller that will iterate it.
+      arrange();
+      echoEngine();
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.lunches).toEqual([]);
+    });
+
     it('forwards no real database id — every resource is re-keyed anonymously', async () => {
       arrange({
         lockedLessons: [lockedLesson()],

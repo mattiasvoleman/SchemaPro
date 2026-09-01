@@ -1288,7 +1288,7 @@ def test_a_shared_student_pair_the_timplan_never_heard_of_is_skipped() -> None:
         # be the thing that decides the verdict.
         payload["rules"] = _lunch_rules(diningSeats=60)
         request = OptimizeScheduleRequest.model_validate(payload)
-        model, _, _, _ = solver._build_model(request, use_assumptions=False)
+        model, _, _, _, _ = solver._build_model(request, use_assumptions=False)
         return _lunch_no_overlap_count(model), solver.solve(request)
 
     clean_sets, clean = _build(noisy=False)
@@ -1318,7 +1318,7 @@ def _solved_spans(solver, request):  # noqa: ANN001, ANN202
     """
     from ortools.sat.python import cp_model
 
-    model, _registry, decisions, _plan = solver._build_model(
+    model, _registry, decisions, _plan, _lunch = solver._build_model(
         request, use_assumptions=False,
     )
     cp_solver = cp_model.CpSolver()
@@ -1701,7 +1701,7 @@ def _lunch_encoding(rules: dict[str, object]) -> dict[str, int]:
     payload = _dining_payload([30, 30])
     payload["rules"] = rules
     request = OptimizeScheduleRequest.model_validate(payload)
-    model, _, _, _ = solver._build_model(request, use_assumptions=False)
+    model, _, _, _, _ = solver._build_model(request, use_assumptions=False)
 
     proto = model.Proto()
     variables = [variable.name for variable in proto.variables]
@@ -1790,7 +1790,7 @@ def test_a_seat_limit_with_no_headcounts_yet_seats_nobody() -> None:
 
     solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0))
     request = OptimizeScheduleRequest.model_validate(payload)
-    model, _, _, _ = solver._build_model(request, use_assumptions=False)
+    model, _, _, _, _ = solver._build_model(request, use_assumptions=False)
     proto = model.Proto()
 
     assert not [
@@ -2055,7 +2055,7 @@ def test_a_per_day_lesson_cap_and_a_seat_limit_hold_at_the_same_time() -> None:
     )
 
     def _named(request, prefix: str) -> list[str]:  # noqa: ANN001
-        model, _, _, _ = solver._build_model(request, use_assumptions=False)
+        model, _, _, _, _ = solver._build_model(request, use_assumptions=False)
         return [
             variable.name
             for variable in model.Proto().variables
@@ -2110,10 +2110,10 @@ def test_a_feasible_solve_leaves_the_assumptions_field_empty() -> None:
     solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=5.0))
     request = OptimizeScheduleRequest.model_validate(_sample_payload())
 
-    fast, _, _, _ = solver._build_model(request, use_assumptions=False)
+    fast, _, _, _, _ = solver._build_model(request, use_assumptions=False)
     assert list(fast.Proto().assumptions) == []
 
-    explained, registry, _, _ = solver._build_model(request, use_assumptions=True)
+    explained, registry, _, _, _ = solver._build_model(request, use_assumptions=True)
     assert len(explained.Proto().assumptions) > 0
 
 
@@ -2699,7 +2699,7 @@ def test_complexity_guard_tracks_the_model_not_the_old_formula() -> None:
 
     # The property all of this exists for: whatever the terms say, the estimate
     # has to bound the model it predicts.
-    model, _, _, _ = solver._build_model(limited, use_assumptions=False)
+    model, _, _, _, _ = solver._build_model(limited, use_assumptions=False)
     assert solver._estimate_model_size(limited) >= len(model.Proto().variables)
 
 
@@ -3941,3 +3941,145 @@ def test_a_payload_with_no_frames_behaves_as_it_always_did(client: TestClient) -
     assert "frameTimes" not in payload
 
     assert len(_lessons(client, payload)) == 2
+
+# ---------------------------------------------------------------------------
+# Sittningarna — the lunch the solver already decided
+#
+# _solved_spans above reads `lunchstart_<group>_<day>` off the solved proto
+# because, as its docstring says, "the chosen lunch start exists nowhere
+# outside the model". These assert that it now does, and — the part that is
+# easy to get wrong — that the time returned belongs to the build that won.
+# ---------------------------------------------------------------------------
+
+
+def _lunch_payload(**over: object) -> dict[str, object]:
+    payload = _sample_payload()
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "13:00:00",
+        "lunchMinutes": 30,
+    }
+    group_id = payload["requirements"][0]["studentGroupId"]  # type: ignore[index]
+    payload["groups"] = [{"id": group_id, "lunchHeadcount": 24}]
+    payload.update(over)
+    return payload
+
+
+def test_the_response_says_when_each_group_eats(client: TestClient) -> None:
+    payload = _lunch_payload()
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200, response.text
+    lunches = response.json()["lunches"]
+    # One sitting per group per teaching day, not one per lesson.
+    assert len(lunches) == 5
+    assert {lunch["dayOfWeek"] for lunch in lunches} == {1, 2, 3, 4, 5}
+    group_id = payload["requirements"][0]["studentGroupId"]  # type: ignore[index]
+    for lunch in lunches:
+        assert lunch["studentGroupId"] == group_id
+        assert lunch["startTime"] >= "11:00:00"
+        assert lunch["endTime"] <= "13:00:00"
+        assert lunch["endTime"] > lunch["startTime"]
+
+
+def test_a_sitting_is_exactly_the_configured_length(client: TestClient) -> None:
+    payload = _lunch_payload()
+    payload["rules"]["lunchMinutes"] = 45  # type: ignore[index]
+
+    lunches = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    ).json()["lunches"]
+
+    for lunch in lunches:
+        start = _minutes(lunch["startTime"])
+        assert _minutes(lunch["endTime"]) - start == 45
+
+
+def test_a_school_with_no_lunch_rule_gets_no_sittings(client: TestClient) -> None:
+    """Absent, not a list of nulls — the field must not invent a meal."""
+    payload = _sample_payload()
+
+    body = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    ).json()
+
+    assert body["lunches"] == []
+
+
+def test_the_sitting_returned_is_the_one_the_lessons_were_solved_with() -> None:
+    """The map must come from the build that won, not from a shared one.
+
+    solve() runs four models: the full one, an objective-free twin, a cleared
+    Clone of the full one, and the assumptions rebuild. Only the Clone shares
+    variable indices with its original. Reading a phase-1a win off the FULL
+    build's map would return a number — a plausible, wrong number — from a model
+    that was never solved, and large schools take exactly that path.
+
+    Asserted by consistency rather than by which phase ran: whatever comes back,
+    no lesson of a group may overlap that group's own returned sitting. A time
+    read off the wrong build has no reason to satisfy that.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _lunch_payload()
+    payload["requirements"][0]["lessonsPerWeek"] = 20  # type: ignore[index]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0)).solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert response.lunches
+
+    by_day: dict[int, list[tuple[int, int]]] = {}
+    for lesson in response.lessons:
+        by_day.setdefault(lesson.day_of_week, []).append(
+            (_minutes(lesson.start_time), _minutes(lesson.end_time)),
+        )
+    for lunch in response.lunches:
+        start, end = _minutes(lunch.start_time), _minutes(lunch.end_time)
+        for lesson_start, lesson_end in by_day.get(lunch.day_of_week, []):
+            assert lesson_end <= start or lesson_start >= end, (
+                f"lesson {lesson_start}-{lesson_end} overlaps the returned "
+                f"sitting {start}-{end} on day {lunch.day_of_week}"
+            )
+
+
+def _minutes(clock: str) -> int:
+    hours, minutes, _seconds = (int(part) for part in clock.split(":"))
+    return hours * 60 + minutes
+
+
+def test_the_two_builds_agree_on_lunch_variable_indices() -> None:
+    """Why passing the wrong build's map is harmless today — and a tripwire.
+
+    solve() reads the winning build's lunch map, which is correct. This pins the
+    reason a mistake there would currently go unnoticed: the full build and its
+    objective-free twin give the lunch variables identical indices, because
+    _build_model appends the objective's auxiliaries last. If that stops being
+    true this test fails, and whoever is standing there learns that the
+    per-build wiring in solve() is now load-bearing rather than tidy.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    request = OptimizeScheduleRequest.model_validate(_lunch_payload())
+    solver = SchedulerSolver(_settings())
+
+    full_model, _, _, _, lunch_full = solver._build_model(
+        request, use_assumptions=False, include_objective=True,
+    )
+    feas_model, _, _, _, lunch_feas = solver._build_model(
+        request, use_assumptions=False, include_objective=False,
+    )
+
+    assert set(lunch_full) == set(lunch_feas)
+    assert {key: var.Index() for key, var in lunch_full.items()} == {
+        key: var.Index() for key, var in lunch_feas.items()
+    }
+    # And the builds really are different models, so the agreement above is a
+    # property worth pinning rather than a tautology.
+    assert len(full_model.Proto().variables) > len(feas_model.Proto().variables)
