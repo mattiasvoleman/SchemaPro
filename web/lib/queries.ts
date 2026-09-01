@@ -1592,9 +1592,22 @@ export function useInvitations() {
   };
 }
 
+/**
+ * WISH pays a price per lesson placed elsewhere; LOCK forbids everywhere else.
+ *
+ * One table, two kinds, because they differ in one field — and two lists on
+ * screen, because they compose differently and a school must not state a wish
+ * believing it is a promise.
+ */
+export type RoomRuleKind = "WISH" | "LOCK";
+
 export interface RoomPreference {
   id: string;
   subjectId: string;
+  kind: RoomRuleKind;
+  /** Both null means every year. Matched by containment, not overlap. */
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
   roomTypeId: string | null;
   weight: number;
   rooms: { roomId: string }[];
@@ -1602,6 +1615,9 @@ export interface RoomPreference {
 
 export interface RoomPreferenceInput {
   subjectId: string;
+  kind?: RoomRuleKind;
+  minGradeLevel?: number | null;
+  maxGradeLevel?: number | null;
   roomTypeId?: string | null;
   roomIds?: string[];
   weight?: number;

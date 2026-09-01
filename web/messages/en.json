@@ -385,7 +385,17 @@
     "gradeOne": "Year {grade}",
     "gradeRange": "Years {min}–{max}",
     "gradeFrom": "Year {min} and above",
-    "gradeUpTo": "Up to year {max}"
+    "gradeUpTo": "Up to year {max}",
+    "locksTitle": "Locked rooms",
+    "locksHint": "A lock is absolute: the subject's lessons may only be in the rooms you choose. If it cannot be honoured the timetable is refused, naming the rule that is impossible — unlike the wishes below, which the solver weighs against everything else.",
+    "locksEmpty": "No locks. Every room is allowed for every subject.",
+    "addLock": "Add lock",
+    "lockSummary": "{subject} only in {rooms}",
+    "ruleGrades": "Years",
+    "ruleAllGrades": "All years",
+    "ruleGradesHint": "The rule applies to a group whose years all fit inside the span. A group spanning 6-7 is therefore not reached by a rule for 7-9.",
+    "ruleGradeBadge": "Years {min}-{max}",
+    "ruleGradeBadgeOne": "Year {min}"
   },
   "frameTimes": {
     "title": "Frame times",

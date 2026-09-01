@@ -221,6 +221,9 @@ export type { FrameTime } from "@/lib/frame-times";
  */
 export type { LunchServing } from "@/lib/lunch-servings";
 
+/** WISH pays a price; LOCK forbids everywhere else. */
+export type { RoomRuleKind } from "@/lib/queries";
+
 /**
  * The lunch the solver gave one group on one weekday.
  *

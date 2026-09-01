@@ -385,7 +385,17 @@
     "gradeOne": "Åk {grade}",
     "gradeRange": "Åk {min}–{max}",
     "gradeFrom": "Åk {min} och uppåt",
-    "gradeUpTo": "Till och med åk {max}"
+    "gradeUpTo": "Till och med åk {max}",
+    "locksTitle": "Låsta salar",
+    "locksHint": "En låsning är absolut: ämnets lektioner får bara ligga i de salar du väljer. Går det inte att hålla vägras schemat med besked om vilken regel som är omöjlig — till skillnad från önskningarna nedanför, som solvern väger mot allt annat.",
+    "locksEmpty": "Inga låsningar. Alla salar är tillåtna för alla ämnen.",
+    "addLock": "Lägg till låsning",
+    "lockSummary": "{subject} endast i {rooms}",
+    "ruleGrades": "Årskurser",
+    "ruleAllGrades": "Alla årskurser",
+    "ruleGradesHint": "Regeln gäller en grupp vars alla årskurser ryms i spannet. En grupp som spänner 6–7 nås alltså inte av en regel för 7–9.",
+    "ruleGradeBadge": "Åk {min}–{max}",
+    "ruleGradeBadgeOne": "Åk {min}"
   },
   "frameTimes": {
     "title": "Ramtider",

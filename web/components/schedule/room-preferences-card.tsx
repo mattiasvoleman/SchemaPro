@@ -12,6 +12,7 @@ import {
   useSubjects,
 } from "@/lib/queries";
 import { Button } from "@/components/ui/button";
+import type { RoomRuleKind } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import {
   STRENGTH_DEFAULT,
@@ -21,6 +22,7 @@ import {
   strengthBounds,
 } from "@/lib/preference-strength";
 import { Label } from "@/components/ui/label";
+import { GradeSpanField } from "@/components/ui/grade-span-field";
 import {
   Select,
   SelectContent,
@@ -33,15 +35,20 @@ const BY_TYPE = "type";
 const BY_ROOMS = "rooms";
 
 /**
- * Soft room wishes, alongside the school's hard constraints.
+ * Room rules — one card per kind, and the separation is the whole design.
  *
- * Kept visibly separate from the unavailability rules above it because the two
- * fail differently: an unavailability that cannot be honoured makes the week
- * unschedulable and must be fixed, while a wish that cannot be honoured simply
- * costs the optimizer points and produces a timetable anyway. Presenting them
- * as one list would invite a school to state wishes it believes are promises.
+ * A WISH that cannot be honoured costs the optimizer points and produces a
+ * timetable anyway; a LOCK that cannot be honoured refuses the week. Presenting
+ * them as one list would invite a school to state wishes it believes are
+ * promises — which is the argument this card already made for keeping itself
+ * apart from the unavailability rules above it, applied one level down.
+ *
+ * ONE COMPONENT, MOUNTED TWICE, rather than two files. Everything except the
+ * words and the strength slider is identical, and a copy would be the version
+ * that stops matching the first time the room picker changes.
  */
-export function RoomPreferencesCard() {
+export function RoomPreferencesCard({ kind = "WISH" }: { kind?: RoomRuleKind }) {
+  const isLock = kind === "LOCK";
   const t = useTranslations("constraints");
   const tCommon = useTranslations("common");
   const { data: preferences } = useRoomPreferences();
@@ -56,6 +63,10 @@ export function RoomPreferencesCard() {
   const [roomTypeId, setRoomTypeId] = useState("");
   const [roomIds, setRoomIds] = useState<string[]>([]);
   const [weight, setWeight] = useState(STRENGTH_DEFAULT);
+  const [span, setSpan] = useState<{ min: number | null; max: number | null }>({
+    min: null,
+    max: null,
+  });
 
   const subjectName = useMemo(
     () => new Map((subjects ?? []).map((subject) => [subject.id, subject.name])),
@@ -81,6 +92,7 @@ export function RoomPreferencesCard() {
     setRoomTypeId("");
     setRoomIds([]);
     setWeight(STRENGTH_DEFAULT);
+    setSpan({ min: null, max: null });
   };
 
   const submit = async () => {
@@ -91,13 +103,34 @@ export function RoomPreferencesCard() {
         // must not be the place where that becomes a 400 the admin has to
         // decode.
         ...(target === BY_TYPE ? { roomTypeId } : { roomIds }),
-        weight: clampStrength(weight),
+        kind,
+        // Both or neither; the API and the database both refuse half a span.
+        minGradeLevel: span.min,
+        maxGradeLevel: span.max,
+        // A lock never reaches the objective, so the number it carries is the
+        // column default and means nothing. Sending the slider's value anyway
+        // would put a strength on a rule that has none.
+        ...(isLock ? {} : { weight: clampStrength(weight) }),
       });
       toast.success(tCommon("created"));
       reset();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
+  };
+
+  /** Only this card's own kind. A row written as the other belongs elsewhere. */
+  const rules = useMemo(
+    () => (preferences ?? []).filter((preference) => preference.kind === kind),
+    [preferences, kind],
+  );
+
+  /** "Åk 4" or "Åk 4–6", and nothing at all when the rule has no span. */
+  const gradeBadge = (rule: { minGradeLevel: number | null; maxGradeLevel: number | null }) => {
+    if (rule.minGradeLevel === null || rule.maxGradeLevel === null) return null;
+    return rule.minGradeLevel === rule.maxGradeLevel
+      ? t("ruleGradeBadgeOne", { min: rule.minGradeLevel })
+      : t("ruleGradeBadge", { min: rule.minGradeLevel, max: rule.maxGradeLevel });
   };
 
   const canSubmit =
@@ -116,15 +149,19 @@ export function RoomPreferencesCard() {
   return (
     <div className="mt-8 rounded-lg border bg-card p-4">
       <div className="mb-1 flex items-center justify-between">
-        <h2 className="text-lg font-semibold">{t("preferencesTitle")}</h2>
+        <h2 className="text-lg font-semibold">
+          {t(isLock ? "locksTitle" : "preferencesTitle")}
+        </h2>
         {!adding ? (
           <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
             <Plus />
-            {t("addPreference")}
+            {t(isLock ? "addLock" : "addPreference")}
           </Button>
         ) : null}
       </div>
-      <p className="mb-4 text-sm text-muted-foreground">{t("preferencesHint")}</p>
+      <p className="mb-4 text-sm text-muted-foreground">
+        {t(isLock ? "locksHint" : "preferencesHint")}
+      </p>
 
       {adding ? (
         <div className="mb-4 space-y-3 rounded-md border p-3">
@@ -205,6 +242,19 @@ export function RoomPreferencesCard() {
             </div>
           )}
 
+          <GradeSpanField
+            label={t("ruleGrades")}
+            min={span.min}
+            max={span.max}
+            onChange={setSpan}
+            allowAll
+            hint={t("ruleGradesHint")}
+          />
+
+          {/* A lock has no strength: it is a bound, and no number can buy its
+              way past one. Showing the slider would offer a choice that does
+              nothing. */}
+          {isLock ? null : (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="pref-weight">{t("preferenceWeight")}</Label>
@@ -229,6 +279,7 @@ export function RoomPreferencesCard() {
             />
             <p className="text-xs text-muted-foreground">{t("preferenceWeightHint")}</p>
           </div>
+          )}
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={reset}>
@@ -241,23 +292,34 @@ export function RoomPreferencesCard() {
         </div>
       ) : null}
 
-      {(preferences ?? []).length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t("preferencesEmpty")}</p>
+      {rules.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {t(isLock ? "locksEmpty" : "preferencesEmpty")}
+        </p>
       ) : (
         <ul className="space-y-2">
-          {(preferences ?? []).map((preference) => (
+          {rules.map((preference) => (
             <li
               key={preference.id}
               className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
             >
               <span>
-                {t("preferenceSummary", {
+                {t(isLock ? "lockSummary" : "preferenceSummary", {
                   subject: subjectName.get(preference.subjectId) ?? "—",
                   rooms: describe(preference),
                 })}
-                <Badge variant="outline" className="ml-2 font-normal">
-                  {t("preferenceWeightBadge", { weight: preference.weight })}
-                </Badge>
+                {gradeBadge(preference) ? (
+                  <Badge variant="secondary" className="ml-2 font-normal">
+                    {gradeBadge(preference)}
+                  </Badge>
+                ) : null}
+                {/* A lock has no strength. Showing the column default beside it
+                    would read as a number the admin chose. */}
+                {isLock ? null : (
+                  <Badge variant="outline" className="ml-2 font-normal">
+                    {t("preferenceWeightBadge", { weight: preference.weight })}
+                  </Badge>
+                )}
               </span>
               <Button
                 variant="ghost"

@@ -348,7 +348,11 @@ export default function ConstraintsPage() {
       )}
 
       <LunchSettingsCard />
-      <RoomPreferencesCard />
+      {/* Locks above wishes: the absolute rule is read first, and a school
+          scanning the page should meet the thing that can refuse a week before
+          the thing that only nudges it. */}
+      <RoomPreferencesCard kind="LOCK" />
+      <RoomPreferencesCard kind="WISH" />
 
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
