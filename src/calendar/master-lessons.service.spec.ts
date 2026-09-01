@@ -35,6 +35,9 @@ const ROOM_ID = '66666666-6666-4666-8666-666666666666';
 const LESSON_ID = '55555555-5555-4555-8555-555555555555';
 const OTHER_LESSON_ID = '44444444-4444-4444-8444-444444444444';
 const STUDENT_ID = '33333333-3333-4333-8333-333333333331';
+const OTHER_STUDENT_ID = '33333333-3333-4333-8333-333333333332';
+/** A teaching group: a different id from the class, holding the same pupils. */
+const TEACHING_GROUP_ID = '33333333-3333-4333-8333-333333333333';
 const CAL_LESSON_ID = '11111111-2222-4333-8444-555555555555';
 const OTHER_CAL_LESSON_ID = '11111111-2222-4333-8444-666666666666';
 /** testUser()'s default userId — the audit-trail actor. */
@@ -264,6 +267,123 @@ describe('MasterLessonsService', () => {
         service.create({ ...createDto(), coTeacherId: CO_TEACHER_ID }, testUser()),
       ).rejects.toThrow();
       expect(tx.masterLesson.create).not.toHaveBeenCalled();
+    });
+
+    // -----------------------------------------------------------------
+    // Shared pupils across DIFFERENT groups.
+    //
+    // The group check above asks whether two groups are THE SAME. 4.1 and 4ma1
+    // are not, and they hold Alva both — so the API accepted a double-booking
+    // the web client's own engine (web/lib/conflicts.ts, groupsShareStudents)
+    // has always refused. Every writer that is not that client — the solver, an
+    // import, the mobile app, curl — went straight past it.
+    // -----------------------------------------------------------------
+
+    /** Route the two user.findMany call shapes to their own answers. */
+    const arrangeRoster = (opts: {
+      homeClass?: Array<{ id: string; studentGroupId: string }>;
+      teachingGroups?: Array<{ studentId: string; studentGroupId: string }>;
+    }) => {
+      tx.user.findMany.mockImplementation((args: Record<string, any>) =>
+        Promise.resolve(
+          args?.where?.studentGroupId ? (opts.homeClass ?? []) : [],
+        ),
+      );
+      tx.studentGroupMember.findMany.mockResolvedValue(opts.teachingGroups ?? []);
+    };
+
+    it('refuses a lesson whose pupils already sit in another group at that hour', async () => {
+      arrangeCreate();
+      tx.masterLesson.findMany.mockResolvedValue([
+        otherLesson({ studentGroupId: TEACHING_GROUP_ID }),
+      ]);
+      // Alva's home class is the candidate's group, and she is enrolled in the
+      // teaching group the other lesson is filed under. Two different ids, one
+      // pupil, one hour.
+      arrangeRoster({
+        homeClass: [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+        teachingGroups: [
+          { studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID },
+        ],
+      });
+
+      await expect(service.create(createDto(), testUser())).rejects.toThrow(
+        /Students of this group/,
+      );
+      expect(tx.masterLesson.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses it the other way round too', async () => {
+      arrangeCreate();
+      // Now the CANDIDATE is the teaching group and the other lesson is the
+      // home class. Reading one side of the roster only would answer "no shared
+      // pupils" here, since the interesting pair is always one of each.
+      tx.masterLesson.findMany.mockResolvedValue([
+        otherLesson({ studentGroupId: GROUP_ID }),
+      ]);
+      arrangeRoster({
+        homeClass: [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+        teachingGroups: [
+          { studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID },
+        ],
+      });
+
+      await expect(
+        service.create(
+          createDto({ studentGroupId: TEACHING_GROUP_ID }),
+          testUser(),
+        ),
+      ).rejects.toThrow(/Students of this group/);
+    });
+
+    it('allows two groups that merely sit at the same hour', async () => {
+      arrangeCreate();
+      tx.masterLesson.findMany.mockResolvedValue([
+        otherLesson({ studentGroupId: TEACHING_GROUP_ID }),
+      ]);
+      // Different pupils. Two halves of a year taught in parallel is the point
+      // of splitting them, not a clash.
+      arrangeRoster({
+        homeClass: [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+        teachingGroups: [
+          { studentId: OTHER_STUDENT_ID, studentGroupId: TEACHING_GROUP_ID },
+        ],
+      });
+
+      await service.create(createDto(), testUser());
+      expect(tx.masterLesson.create).toHaveBeenCalled();
+    });
+
+    it('says it once when the group clashes with itself', async () => {
+      arrangeCreate();
+      // The commonest clash of all: 4.1 booked twice. Its pupils are shared
+      // with itself by definition, so an unconditional pupil check would append
+      // a second sentence saying the same thing in other words.
+      tx.masterLesson.findMany.mockResolvedValue([
+        otherLesson({ studentGroupId: GROUP_ID }),
+      ]);
+      arrangeRoster({
+        homeClass: [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+      });
+
+      await expect(
+        service.create(createDto(), testUser()),
+      ).rejects.toMatchObject({
+        message: 'The group already has Math in this slot.',
+      });
+    });
+
+    it('asks the database nothing about pupils when no lesson overlaps', async () => {
+      arrangeCreate();
+      // Same day, an hour later. The common save lands on a day that is busy
+      // but not at this hour, and paying for a roster there would be a tax on
+      // every write.
+      tx.masterLesson.findMany.mockResolvedValue([
+        otherLesson({ startTime: t('13:00'), endTime: t('14:00') }),
+      ]);
+
+      await service.create(createDto(), testUser());
+      expect(tx.studentGroupMember.findMany).not.toHaveBeenCalled();
     });
 
     // Regeneration deletes what it owns. If this path ever left the column to

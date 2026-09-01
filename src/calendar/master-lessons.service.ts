@@ -454,6 +454,44 @@ export class MasterLessonsService {
   // Conflict detection
   // ---------------------------------------------------------------------
 
+  /**
+   * groupId → its pupils, from BOTH sides of the roster.
+   *
+   * A home class holds its pupils through User.studentGroupId; a teaching group
+   * holds them through StudentGroupMembers. Reading only one of the two answers
+   * "no shared pupils" for every pairing that matters, since the interesting
+   * pair is always one of each.
+   */
+  private async rosterOf(
+    tx: PrismaClient,
+    groupIds: Set<string>,
+  ): Promise<Map<string, Set<string>>> {
+    const membersOf = new Map<string, Set<string>>();
+    if (groupIds.size === 0) return membersOf;
+    const ids = [...groupIds];
+    const add = (groupId: string, studentId: string) => {
+      const set = membersOf.get(groupId);
+      if (set) set.add(studentId);
+      else membersOf.set(groupId, new Set([studentId]));
+    };
+
+    const [homeClass, teachingGroups] = await Promise.all([
+      tx.user.findMany({
+        where: { studentGroupId: { in: ids } },
+        select: { id: true, studentGroupId: true },
+      }),
+      tx.studentGroupMember.findMany({
+        where: { studentGroupId: { in: ids } },
+        select: { studentId: true, studentGroupId: true },
+      }),
+    ]);
+    for (const pupil of homeClass) {
+      if (pupil.studentGroupId) add(pupil.studentGroupId, pupil.id);
+    }
+    for (const row of teachingGroups) add(row.studentGroupId, row.studentId);
+    return membersOf;
+  }
+
   private async findConflicts(
     tx: PrismaClient,
     lesson: {
@@ -530,17 +568,49 @@ export class MasterLessonsService {
       endDate: candidate.endDate ?? null,
     };
 
-    for (const other of sameDay) {
-      const overlaps =
+    // Narrowed before the roster is loaded below, so a day with fifty lessons
+    // and one overlap still asks about one overlap. Sharing a time slot is only
+    // a clash if some week holds both lessons: slöjd on odd weeks and
+    // hemkunskap on even weeks may share the slot, the room and the teacher —
+    // that is the point of alternating weeks.
+    const clashing = sameDay.filter(
+      (other) =>
         toMinutes(other.startTime) < candidate.endMinutes &&
-        candidate.startMinutes < toMinutes(other.endTime);
-      if (!overlaps) continue;
+        candidate.startMinutes < toMinutes(other.endTime) &&
+        weeksCanOverlap(candidateWeeks, other),
+    );
 
-      // Sharing a time slot is only a clash if some week holds both lessons.
-      // Slöjd on odd weeks and hemkunskap on even weeks may share the slot,
-      // the room and the teacher — that is the point of alternating weeks.
-      if (!weeksCanOverlap(candidateWeeks, other)) continue;
+    /**
+     * Which pupils each group in play holds.
+     *
+     * The group comparison below asks whether two groups are THE SAME. 4.1 and
+     * 4ma1 are not, and they hold Alva and Bo both — so the API accepted a
+     * double-booking that the web client's own engine (lib/conflicts.ts,
+     * groupsShareStudents) has always refused. Every writer that is not that
+     * client — the solver, an import, the mobile app, curl — went straight
+     * past it.
+     */
+    // Empty when nothing overlaps, and rosterOf then asks the database nothing:
+    // the common save lands on a day that is busy but not at this hour.
+    const groupsInPlay =
+      clashing.length === 0
+        ? new Set<string>()
+        : new Set<string>([
+            ...candidateGroups,
+            ...clashing.flatMap((other) => [
+              other.studentGroupId,
+              ...other.extraGroups.map((entry) => entry.studentGroupId),
+            ]),
+          ]);
+    const membersOf = await this.rosterOf(tx, groupsInPlay);
+    const candidatePupils = new Set<string>();
+    for (const groupId of candidateGroups) {
+      for (const studentId of membersOf.get(groupId) ?? []) {
+        candidatePupils.add(studentId);
+      }
+    }
 
+    for (const other of clashing) {
       const otherTeachers = [other.teacherId, other.coTeacherId].filter(Boolean);
       if (candidateTeachers.some((id) => otherTeachers.includes(id))) {
         conflicts.push({
@@ -566,6 +636,21 @@ export class MasterLessonsService {
           message: `The group already has ${other.subject.name} in this slot.`,
           masterLessonId: other.id,
         });
+      } else {
+        // Different groups, same pupils: 4.1 against 4ma1. The clash is the
+        // pupil's, not the group's, and it is exactly as hard.
+        const shared = [...otherGroups].some((groupId) =>
+          [...(membersOf.get(groupId) ?? [])].some((studentId) =>
+            candidatePupils.has(studentId),
+          ),
+        );
+        if (shared) {
+          conflicts.push({
+            kind: 'GROUP',
+            message: `Students of this group already have ${other.subject.name} in this slot.`,
+            masterLessonId: other.id,
+          });
+        }
       }
 
       // Individual participants: busy if their own class attends the other
