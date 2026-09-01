@@ -531,12 +531,20 @@ describe('OptimizationProxyService', () => {
   });
 
   describe('callAiEngine — failure mapping', () => {
-    const call = (payload = {}) =>
+    /** Maps a refusal can name something through; empty unless a test fills one. */
+    const maps = () => ({
+      requirementAnonMap: new Map<string, string>(),
+      roomAnonMap: new Map<string, string>(),
+      groupAnonMap: new Map<string, string>(),
+      roomTypeAnonMap: new Map<string, string>(),
+    });
+
+    const call = (payload = {}, anonMaps = maps()) =>
       (
         service as unknown as {
-          callAiEngine: (p: unknown) => Promise<AiEngineScheduleResponse>;
+          callAiEngine: (p: unknown, m: unknown) => Promise<AiEngineScheduleResponse>;
         }
-      ).callAiEngine(payload);
+      ).callAiEngine(payload, anonMaps);
 
     it('returns the engine payload on success', async () => {
       http.post.mockReturnValue(
@@ -629,6 +637,70 @@ describe('OptimizationProxyService', () => {
 
       await expect(call()).rejects.toThrow('no 30-minute lunch break on day 1');
       await expect(call()).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('turns an anonymous id in a refusal back into the real one', async () => {
+      /*
+       * Every named refusal the engine can produce carries an id the engine
+       * minted. Forwarded verbatim it is a uuid that exists in no table, which
+       * is the state the conflict MESSAGES are still in — the school reads a
+       * precise sentence about something it cannot look up.
+       *
+       * A substitution, not a second implementation of the rule: rebuilding the
+       * lock resolution here to phrase a nicer sentence would be two
+       * implementations of one meaning, and the one that drifts is the one
+       * nobody runs.
+       */
+      const anonRequirement = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
+      const realRequirement = 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb';
+      const refused = new AxiosError('boom');
+      refused.response = {
+        status: 400,
+        data: {
+          code: 'INVALID_SCHEDULE_INPUT',
+          message: `A room lock leaves requirement ${anonRequirement} nowhere to go.`,
+        },
+      } as never;
+      http.post.mockReturnValue(throwError(() => refused));
+
+      await expect(
+        call({}, { ...maps(), requirementAnonMap: new Map([[realRequirement, anonRequirement]]) }),
+      ).rejects.toThrow(realRequirement);
+    });
+
+    it('translates a room type, which is the part of that sentence a school reads', async () => {
+      /*
+       * "No room satisfies capacity/type/years for requirement X (…, required
+       * type Y, …)" names an anonymised TYPE. Leaving it out left the one piece
+       * of that sentence an administrator would actually go and look up as a
+       * uuid belonging to nothing.
+       */
+      const anonType = 'dddddddd-4444-4444-8444-dddddddddddd';
+      const realType = 'eeeeeeee-5555-4555-8555-eeeeeeeeeeee';
+      const refused = new AxiosError('boom');
+      refused.response = {
+        status: 400,
+        data: { code: 'X', message: `… required type ${anonType}, years 4-4).` },
+      } as never;
+      http.post.mockReturnValue(throwError(() => refused));
+
+      await expect(
+        call({}, { ...maps(), roomTypeAnonMap: new Map([[realType, anonType]]) }),
+      ).rejects.toThrow(realType);
+    });
+
+    it('leaves a uuid it has no mapping for exactly as it was', async () => {
+      // Half a translation would be worse than none: an id that looks real and
+      // resolves to nothing sends somebody searching.
+      const stranger = 'cccccccc-3333-4333-8333-cccccccccccc';
+      const refused = new AxiosError('boom');
+      refused.response = {
+        status: 400,
+        data: { code: 'X', message: `Requirement ${stranger} is impossible.` },
+      } as never;
+      http.post.mockReturnValue(throwError(() => refused));
+
+      await expect(call()).rejects.toThrow(stranger);
     });
 
     it('keeps the generic sentence for a 5xx, whatever the body says', async () => {

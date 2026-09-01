@@ -86,6 +86,19 @@ const PRESERVED_FROM_REGENERATION = [
   { participants: { some: {} } },
 ];
 
+/** The maps an engine refusal can name something through. */
+interface AnonMaps {
+  requirementAnonMap: Map<string, string>;
+  roomAnonMap: Map<string, string>;
+  groupAnonMap: Map<string, string>;
+  /**
+   * Room types too. "No room satisfies capacity/type/years for requirement X
+   * (…, required type Y, …)" names an anonymised TYPE, and leaving it out left
+   * the one part of that sentence a school would actually look up untranslated.
+   */
+  roomTypeAnonMap: Map<string, string>;
+}
+
 @Injectable()
 export class OptimizationProxyService {
   private readonly logger = new Logger(OptimizationProxyService.name);
@@ -131,6 +144,7 @@ export class OptimizationProxyService {
       requirementAnonMap,
       groupAnonMap,
       headcountByGroup,
+      roomTypeAnonMap,
       storedRules,
     } = await this.prisma.withRls(user, (tx) =>
       this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user)),
@@ -163,7 +177,12 @@ export class OptimizationProxyService {
     // to solve — skip the engine and just clean up unlocked leftovers.
     const response: AiEngineScheduleResponse =
       requirements.length > 0
-        ? await this.callAiEngine(payload)
+        ? await this.callAiEngine(payload, {
+            requirementAnonMap,
+            roomAnonMap,
+            groupAnonMap,
+            roomTypeAnonMap,
+          })
         : { requestId, status: 'FEASIBLE', lessons: [], conflicts: null };
 
     // The sittings, with real group ids, computed once: they are both written
@@ -260,6 +279,8 @@ export class OptimizationProxyService {
     groupAnonMap: Map<string, string>;
     /** groupId → children who eat AS this group, for the stored sittings. */
     headcountByGroup: Map<string, number>;
+    /** Needed to translate "required type X" in an engine refusal. */
+    roomTypeAnonMap: Map<string, string>;
     storedRules: ScheduleRules | null;
   }> {
     // Anonymous-id lookup tables: realId → anonId.
@@ -918,6 +939,7 @@ export class OptimizationProxyService {
       requirementAnonMap,
       groupAnonMap,
       headcountByGroup: homeCountByGroup,
+      roomTypeAnonMap,
       // An empty object would send `rules: {}` and read as "rules were
       // considered and came to nothing", which the engine treats the same but
       // a reader of the payload would not.
@@ -928,8 +950,42 @@ export class OptimizationProxyService {
     };
   }
 
+  /**
+   * Turn the anonymous ids in an engine refusal back into real ones.
+   *
+   * Every named refusal the engine can produce — "A room lock leaves
+   * requirement 8f2c… nowhere to go", "No room satisfies capacity/type/years
+   * for requirement …" — names an id the engine minted. Forwarded verbatim it
+   * is a uuid that exists in no table, which is the state the engine's conflict
+   * MESSAGES are still in.
+   *
+   * A substitution rather than a second implementation of the rule: rebuilding
+   * the lock resolution here in TypeScript to phrase a nicer sentence would be
+   * two implementations of one meaning, and the one that drifts is the one
+   * nobody runs. The engine keeps saying what is wrong; this only restores who
+   * it is about.
+   */
+  private deanonymise(message: string, maps: AnonMaps): string {
+    const real = new Map<string, string>();
+    for (const map of [
+      maps.requirementAnonMap,
+      maps.roomAnonMap,
+      maps.groupAnonMap,
+      maps.roomTypeAnonMap,
+    ]) {
+      for (const [realId, anonId] of map) real.set(anonId, realId);
+    }
+    // Only whole uuids are replaced, so a message that happens to contain a
+    // uuid-shaped substring of something else is left alone.
+    return message.replace(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+      (found) => real.get(found) ?? found,
+    );
+  }
+
   private async callAiEngine(
     payload: AiEngineScheduleRequest,
+    maps: AnonMaps,
   ): Promise<AiEngineScheduleResponse> {
     const url = `${this.aiConfig.baseUrl}/v1/schedule`;
 
@@ -996,7 +1052,7 @@ export class OptimizationProxyService {
                 const body = error.response.data as { message?: unknown } | null;
                 const detail =
                   error.response.status < 500 && typeof body?.message === 'string'
-                    ? body.message
+                    ? this.deanonymise(body.message, maps)
                     : 'The AI engine returned an error.';
                 throw new HttpException(detail, error.response.status);
               }
