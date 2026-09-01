@@ -30,7 +30,8 @@ export type ConflictKind =
   | "GROUP"
   | "AVAILABILITY"
   | "FRAME"
-  | "LUNCH";
+  | "LUNCH"
+  | "ROOM_LOCK";
 
 export interface ConflictHit {
   kind: ConflictKind;
@@ -210,6 +211,18 @@ export function validatePlacement(
    * on top of the meal, the stripe still shows, and nothing says a word.
    */
   lunchOf?: Map<string, { startMinutes: number; endMinutes: number }>,
+  /**
+   * The school's room locks, and the lesson's subject and stage to read them
+   * with. Omitted, locks are not checked.
+   *
+   * MUST NOT BE PASSED TO THE DRAG PREDICATE. validateChange treats any hit as
+   * a refusal and builds its candidate with the lesson's CURRENT room, since a
+   * drag moves time and not place. Feed a room lock into it and the day a
+   * school writes one, every lesson of that subject already sitting elsewhere
+   * becomes undraggable in time — silently, for a reason unrelated to the move.
+   * A lock violation is a visible conflict; see detectConflicts.
+   */
+  roomLock?: RoomLockCheck,
 ): ConflictHit[] {
   const hits: ConflictHit[] = [];
 
@@ -348,8 +361,18 @@ export function validatePlacement(
     }
   }
 
+  // The room the school locked. Last, because it is the one hit that says
+  // nothing about WHEN the lesson is — it would be just as true at any other
+  // time, and a reader scanning a list wants the time clashes first.
+  if (roomLock !== undefined && roomLock(candidate)) {
+    hits.push({ kind: "ROOM_LOCK" });
+  }
+
   return hits;
 }
+
+/** Whether this placement sits in a room its subject's locks forbid. */
+export type RoomLockCheck = (placement: Placement) => boolean;
 
 /**
  * Detects every existing conflict on the grid. Returns a map of lessonId →
@@ -367,6 +390,8 @@ export function detectConflicts(
   frames?: FrameTime[],
   /** Each group's meal by `groupId:weekday`; without it meals are not checked. */
   lunchOf?: Map<string, { startMinutes: number; endMinutes: number }>,
+  /** The school's room locks; without them locks are not checked. */
+  roomLock?: RoomLockCheck,
 ): Map<string, ConflictHit[]> {
   const placements = lessons.map(toPlacement);
   const result = new Map<string, ConflictHit[]>();
@@ -381,6 +406,7 @@ export function detectConflicts(
       gradeSpanOf,
       frames,
       lunchOf,
+      roomLock,
     );
     if (hits.length > 0 && placement.id) {
       result.set(placement.id, hits);

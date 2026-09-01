@@ -46,6 +46,7 @@ import {
   useGroupMemberships,
   useFrameTimes,
   useLunchSittings,
+  useRoomPreferences,
 } from "@/lib/queries";
 import { buildIcs, downloadIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
@@ -62,9 +63,11 @@ import {
   toPlacement,
   validatePlacement,
   type OpenSlotMatch,
+  type Placement,
   type PlacementSuggestion,
 } from "@/lib/conflicts";
 import { buildGradeSpans } from "@/lib/grade-span";
+import { breaksRoomLock } from "@/lib/room-locks";
 import {
   useHistoryKeyboard,
   useScheduleHistory,
@@ -251,6 +254,7 @@ export default function TimetablePage() {
   const { data: memberships } = useGroupMemberships();
   const { data: frameTimes } = useFrameTimes();
   const { data: lunchSittings } = useLunchSittings(activeYear?.id ?? null);
+  const { data: roomRules } = useRoomPreferences();
   /**
    * groupId -> the years it holds, so a GRADE_LEVEL rule can reach it.
    *
@@ -326,6 +330,27 @@ export default function TimetablePage() {
     );
   }, [lunchSittings]);
 
+  /**
+   * Whether a placement sits in a room its subject's locks forbid.
+   *
+   * The subject comes off the lesson and the stage off its group, so this is a
+   * closure over the page's own maps rather than another argument list.
+   */
+  const roomLock = useMemo(() => {
+    const locks = (roomRules ?? []).filter((rule) => rule.kind === "LOCK");
+    if (locks.length === 0) return undefined;
+    return (placement: Placement) => {
+      const lesson = placement.id ? lessonById.get(placement.id) : undefined;
+      if (!lesson) return false;
+      return breaksRoomLock(
+        locks,
+        lesson.subjectId,
+        gradeSpanOf.get(lesson.studentGroupId),
+        placement.roomId,
+      );
+    };
+  }, [roomRules, lessonById, gradeSpanOf]);
+
   const conflictMap = useMemo(
     () =>
       detectConflicts(
@@ -336,6 +361,7 @@ export default function TimetablePage() {
         gradeSpanOf,
         frameTimes,
         lunchOf,
+        roomLock,
       ),
     [
       lessons,
@@ -345,6 +371,7 @@ export default function TimetablePage() {
       gradeSpanOf,
       frameTimes,
       lunchOf,
+      roomLock,
     ],
   );
 
@@ -389,6 +416,13 @@ export default function TimetablePage() {
           gradeSpanOf,
           frameTimes,
           lunchOf,
+          // NO room lock here, and the omission is the design. This predicate
+          // BLOCKS a drag, and it builds its candidate with the lesson's
+          // current room because a drag moves time and not place. Pass the lock
+          // in and the day a school writes one, every lesson of that subject
+          // already sitting elsewhere becomes undraggable in time — silently,
+          // for a reason that has nothing to do with the move. The violation
+          // shows as a conflict on the grid instead.
         ).length === 0
       );
     },

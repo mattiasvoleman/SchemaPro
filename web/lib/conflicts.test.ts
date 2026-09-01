@@ -10,6 +10,7 @@ import {
   weeksCanOverlap,
   validatePlacement,
   type Placement,
+  type RoomLockCheck,
 } from "./conflicts";
 
 // ---------------------------------------------------------------------------
@@ -837,6 +838,67 @@ describe("validatePlacement lunch sittings", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// validatePlacement — the locked room
+// ---------------------------------------------------------------------------
+
+describe("validatePlacement room locks", () => {
+  /** Forbids every room but "ok". */
+  const lock = (): RoomLockCheck => (placement) =>
+    placement.roomId !== null && placement.roomId !== "ok";
+
+  const at = (roomId: string | null) => makePlacement({ roomId });
+
+  const check = (placement: Placement, roomLock?: RoomLockCheck) =>
+    validatePlacement(
+      placement,
+      [],
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      roomLock,
+    );
+
+  it("is silent when no locks were supplied", () => {
+    expect(check(at("wrong"), undefined)).toEqual([]);
+  });
+
+  it("flags a lesson in a room its lock forbids", () => {
+    expect(check(at("wrong"), lock())).toEqual([{ kind: "ROOM_LOCK" }]);
+  });
+
+  it("leaves a lesson in an allowed room alone", () => {
+    expect(check(at("ok"), lock())).toEqual([]);
+  });
+
+  it("reports the room lock last, after everything about time", () => {
+    /*
+     * A lock says nothing about WHEN the lesson is — it would be just as true
+     * at any other hour — so a reader scanning the list wants the time clashes
+     * first.
+     */
+    const candidate = makePlacement({ id: "L1", teacherId: "t1", roomId: "wrong" });
+    const other = makePlacement({ id: "L2", teacherId: "t1", roomId: "elsewhere" });
+
+    const hits = validatePlacement(
+      candidate,
+      [other],
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      lock(),
+    );
+
+    expect(hits.map((hit) => hit.kind)).toEqual(["TEACHER", "ROOM_LOCK"]);
+  });
+});
+
 describe("detectConflicts", () => {
   it("returns an empty map for an empty timetable", () => {
     expect(detectConflicts([], []).size).toBe(0);
@@ -849,6 +911,22 @@ describe("detectConflicts", () => {
    * timetable page — which calls detectConflicts, not validatePlacement — kept
    * showing åk 4 as unflagged at 16:00.
    */
+  it("passes the room locks on to each lesson it checks", () => {
+    /*
+     * detectConflicts is what the GRID reads; validatePlacement is the drag
+     * predicate, which deliberately never gets the locks. So a lock that
+     * reaches the one and not the other is invisible in exactly the place the
+     * feature exists to be visible — the same hole the year spans had.
+     */
+    const lesson = makeLesson({ id: "L1", roomId: "wrong" });
+    const locked: RoomLockCheck = (placement) => placement.roomId === "wrong";
+
+    expect(
+      detectConflicts([lesson], [], undefined, undefined, undefined, undefined, undefined, locked)
+        .get("L1"),
+    ).toEqual([{ kind: "ROOM_LOCK" }]);
+  });
+
   it("passes the year spans on to each lesson it checks", () => {
     const lesson = makeLesson({ id: "L1", studentGroupId: "gA" });
     const rule = makeConstraint({
