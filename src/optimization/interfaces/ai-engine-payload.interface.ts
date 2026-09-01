@@ -125,6 +125,17 @@ export interface AnonymousRoom {
 export interface AnonymousRoomPreference {
   id: string;
   subjectId: string;
+  /** WISH pays per lesson placed elsewhere; LOCK forbids everywhere else. */
+  kind: 'WISH' | 'LOCK';
+  /**
+   * The years the rule applies to; null on both means every year.
+   *
+   * Matched by CONTAINMENT — the requirement's whole span inside this one — not
+   * by the overlap a GRADE_LEVEL reservation uses. A room decides where a group
+   * may go; a reservation only decides who must be left alone.
+   */
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
   /** Either a type… */
   roomType: string | null;
   /** …or named rooms. The gateway sends exactly one of the two. */

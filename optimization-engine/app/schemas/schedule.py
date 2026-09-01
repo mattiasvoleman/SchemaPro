@@ -11,6 +11,7 @@ ConstraintKind = Literal["UNAVAILABLE", "PREFERRED_FREE", "PREFERRED_BUSY"]
 # and the groups the reservation must hold free are the ones whose own years
 # overlap the span — a match the solver makes per requirement, which is why the
 # gateway sends one rule rather than one rule per group.
+RoomRuleKind = Literal["WISH", "LOCK"]
 ResourceKind = Literal["TEACHER", "ROOM", "STUDENT_GROUP", "GRADE_LEVEL"]
 # An opaque room-type token, not a fixed vocabulary. Room types are rows a
 # school owns and names itself (Hemkunskapssal, Trä- och metallslöjd), and the
@@ -176,6 +177,40 @@ class AnonymousRoomPreference(CamelModel):
     #: Same scale as the other objective weights (spread 3, disruption 8,
     #: preferred_free 10). Defaults to the engine's own weight_room_preference.
     weight: int = Field(default=5, ge=1, le=1000)
+    #: WISH pays `weight` per lesson placed elsewhere; LOCK forbids everywhere
+    #: else and the week is refused by name if that cannot be honoured.
+    #:
+    #: Defaulted so the engine can deploy alone against a gateway that does not
+    #: send it yet — and defaulted to the half that cannot make a week
+    #: impossible.
+    kind: RoomRuleKind = Field(default="WISH")
+    #: The years the rule applies to; None on both means every year, which is
+    #: what every rule written before this field existed means.
+    #:
+    #: Matched by CONTAINMENT — the requirement's whole span inside this one.
+    #: Overlap would let an åk 7-9 rule seize a teaching group spanning 6-7 and
+    #: send year-6 pupils to a högstadie room.
+    min_grade_level: int | None = Field(
+        default=None, alias="minGradeLevel", ge=0, le=12,
+    )
+    max_grade_level: int | None = Field(
+        default=None, alias="maxGradeLevel", ge=0, le=12,
+    )
+
+    @model_validator(mode="after")
+    def validate_span(self) -> AnonymousRoomPreference:
+        """Both years or neither, and ordered. A half span is a gateway bug."""
+        if (self.min_grade_level is None) != (self.max_grade_level is None):
+            msg = "A room rule's year span needs both bounds or neither."
+            raise ValueError(msg)
+        if (
+            self.min_grade_level is not None
+            and self.max_grade_level is not None
+            and self.min_grade_level > self.max_grade_level
+        ):
+            msg = "minGradeLevel must not be above maxGradeLevel."
+            raise ValueError(msg)
+        return self
 
 
 class AnonymousConstraint(CamelModel):

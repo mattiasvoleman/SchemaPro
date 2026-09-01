@@ -90,6 +90,18 @@ const FRAME_FIELDS = [
   'startTime',
 ];
 
+/** Never pinned before — only the top-level key list was. */
+const PREFERENCE_FIELDS = [
+  'id',
+  'kind',
+  'maxGradeLevel',
+  'minGradeLevel',
+  'roomIds',
+  'roomType',
+  'subjectId',
+  'weight',
+];
+
 const RULES_FIELDS = [
   'diningSeats',
   'lunchEndTime',
@@ -99,8 +111,12 @@ const RULES_FIELDS = [
 ];
 
 describe('AI engine wire contract', () => {
+  /** The tx of the most recent buildPayload, for assertions about the QUERIES. */
+  let lastTx: ReturnType<typeof createTxMock>;
+
   const buildPayload = async (): Promise<Record<string, unknown>> => {
     const tx = createTxMock();
+    lastTx = tx;
     const prisma = createPrismaMock(tx);
     const empty = [
       'teachingRequirement',
@@ -149,6 +165,18 @@ describe('AI engine wire contract', () => {
         startTime: new Date(0),
         endTime: new Date(0),
         type: 'UNAVAILABLE',
+      },
+    ]);
+    tx['roomPreference']!['findMany']!.mockResolvedValue([
+      {
+        id: 'pref-1',
+        subjectId: 's1',
+        kind: 'LOCK',
+        minGradeLevel: 4,
+        maxGradeLevel: 4,
+        roomTypeId: null,
+        weight: 5,
+        rooms: [{ roomId: 'rm1' }],
       },
     ]);
     tx['lunchServing']!['findMany']!.mockResolvedValue([
@@ -236,6 +264,34 @@ describe('AI engine wire contract', () => {
 
   it('sends exactly the top-level fields the engine declares', async () => {
     expect(Object.keys(await buildPayload()).sort()).toEqual(PAYLOAD_FIELDS);
+  });
+
+  it('reads every room-rule field it forwards out of the database', async () => {
+    /*
+     * A field dropped from the `select` arrives as undefined, and pydantic's
+     * default then fills it in — so a lock would reach the engine as a WISH,
+     * silently, on a run that succeeds.
+     *
+     * Asserted on the QUERY, which is weaker than a behavioural test and is the
+     * strongest thing available: the prisma mock returns its fixture whole,
+     * regardless of the projection, so no fixture can make it omit a column.
+     */
+    await buildPayload();
+
+    const select = lastTx['roomPreference']!['findMany']!.mock.calls[0][0].select;
+    expect(select).toMatchObject({
+      kind: true,
+      minGradeLevel: true,
+      maxGradeLevel: true,
+      weight: true,
+    });
+  });
+
+  it('sends exactly the room-rule fields the engine declares', async () => {
+    const payload = await buildPayload();
+    const preferences = payload['roomPreferences'] as Array<Record<string, unknown>>;
+    expect(preferences).toHaveLength(1);
+    expect(Object.keys(preferences[0]!).sort()).toEqual(PREFERENCE_FIELDS);
   });
 
   it('sends exactly the sitting fields the engine declares', async () => {

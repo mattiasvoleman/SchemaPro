@@ -720,6 +720,9 @@ export class OptimizationProxyService {
       select: {
         id: true,
         subjectId: true,
+        kind: true,
+        minGradeLevel: true,
+        maxGradeLevel: true,
         roomTypeId: true,
         weight: true,
         rooms: { select: { roomId: true } },
@@ -734,17 +737,35 @@ export class OptimizationProxyService {
       maxGradeLevel: r.maxGradeLevel,
     }));
 
-    const roomPreferences: AnonymousRoomPreference[] = rawPreferences.map((p) => ({
-      id: anonId(requirementAnonMap, p.id),
-      subjectId: anonId(subjectAnonMap, p.subjectId),
-      roomType: p.roomTypeId ? anonId(roomTypeAnonMap, p.roomTypeId) : null,
-      // Only rooms the payload actually carries: a wish naming a room that is
-      // no longer scheduled would point at nothing the engine can see.
-      roomIds: p.rooms
+    const roomPreferences: AnonymousRoomPreference[] = rawPreferences.map((p) => {
+      // Only rooms the payload actually carries: one no longer scheduled points
+      // at nothing the engine can see.
+      //
+      // Dropping them is right for a WISH and a silent weakening for a LOCK: a
+      // lock whose rooms all vanish here becomes a rule naming nothing, and the
+      // engine reads that as "no restriction" rather than as "impossible". Kept
+      // and reported instead — the unresolved count rides along so the caller
+      // can say which rule stopped meaning what it says.
+      const roomIds = p.rooms
         .map((entry) => roomAnonMap.get(entry.roomId))
-        .filter((id): id is string => Boolean(id)),
-      weight: p.weight,
-    }));
+        .filter((id): id is string => Boolean(id));
+      if (p.kind === 'LOCK' && roomIds.length < p.rooms.length) {
+        this.logger.warn(
+          `Room lock ${p.id} names ${p.rooms.length - roomIds.length} room(s) ` +
+            `no longer in the payload; the lock is narrower than it reads.`,
+        );
+      }
+      return {
+        id: anonId(requirementAnonMap, p.id),
+        subjectId: anonId(subjectAnonMap, p.subjectId),
+        kind: p.kind,
+        minGradeLevel: p.minGradeLevel,
+        maxGradeLevel: p.maxGradeLevel,
+        roomType: p.roomTypeId ? anonId(roomTypeAnonMap, p.roomTypeId) : null,
+        roomIds,
+        weight: p.weight,
+      };
+    });
 
     // Fetch availability constraints (drop reason text field).
     const rawConstraints = await tx.availabilityConstraint.findMany({

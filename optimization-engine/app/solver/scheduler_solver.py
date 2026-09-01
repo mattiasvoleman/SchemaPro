@@ -553,7 +553,9 @@ class SchedulerSolver:
             request.constraints, request.fixed_lessons,
         )
         preference_sets = [
-            set(preference.room_ids) for preference in request.room_preferences
+            set(preference.room_ids)
+            for preference in request.room_preferences
+            if preference.kind == "WISH"
         ]
         signature_bound = len(
             {
@@ -1185,9 +1187,13 @@ class SchedulerSolver:
         The returned plan is REQUIRED to read rooms back: room_index is no
         longer authoritative except for pinned rooms.
         """
+        # Wishes only. A lock already splits the partition through
+        # _room_allowed, and a second signature bit for it would split the same
+        # rooms twice for nothing.
         preference_sets = [
             _preference_room_ids(preference, rooms)
             for preference in (room_preferences or [])
+            if preference.kind == "WISH"
         ]
         return add_room_allocation(
             model,
@@ -1611,6 +1617,12 @@ class SchedulerSolver:
         penalties: list[cp_model.LinearExpr] = []
         by_subject: dict[UUID, list[AnonymousRoomPreference]] = defaultdict(list)
         for preference in preferences:
+            # A LOCK is not a price. It restricts eligibility through
+            # _room_allowed and must never also appear as a penalty: paying for
+            # a room the lesson cannot reach anyway is a constant, and one that
+            # would inflate the objective without steering anything.
+            if preference.kind != "WISH":
+                continue
             by_subject[preference.subject_id].append(preference)
 
         for decision in decisions:
@@ -1625,6 +1637,13 @@ class SchedulerSolver:
                 continue
 
             for preference in wanted:
+                # The stage the rule is about. Gated HERE and nowhere else: the
+                # room-class partition treats "preferred" as a static property
+                # of a room, and _class_is_preferred decides a whole class by
+                # testing its first member, so a per-lesson room set would
+                # destroy the invariant the encoding rests on.
+                if not _rule_reaches(preference, requirement):
+                    continue
                 preferred_rooms = _preference_room_ids(preference, rooms)
                 satisfied = [
                     literal
@@ -2811,6 +2830,36 @@ def _grade_span_overlaps(
     return not (
         constraint.max_grade_level is not None
         and requirement.min_grade_level > constraint.max_grade_level
+    )
+
+
+def _rule_reaches(
+    preference: AnonymousRoomPreference,
+    requirement: AnonymousRequirement,
+) -> bool:
+    """Whether a room rule scoped to a stage applies to this requirement.
+
+    CONTAINMENT, like _grade_allowed and unlike _grade_span_overlaps, and for
+    the same reason the one directly below states: a room decides where a group
+    may GO, while a reservation only decides who must be left alone. Under
+    overlap an åk 7-9 rule would seize a teaching group spanning 6-7 — a real
+    shape, since spans come from members' home classes — and send its year-6
+    pupils into a högstadie room. Not applying a rule is survivable; applying it
+    to a group half outside the span is not.
+
+    A rule with no span reaches everything, which is what every rule written
+    before the span existed means, and is what keeps this change at exactly zero
+    difference for a school that has not used it. A rule WITH a span does not
+    reach a group whose own years are unknown: there is nothing to contain, and
+    guessing would sweep every unlabelled group into a rule meant for one stage.
+    """
+    if preference.min_grade_level is None or preference.max_grade_level is None:
+        return True
+    if requirement.min_grade_level is None or requirement.max_grade_level is None:
+        return False
+    return (
+        requirement.min_grade_level >= preference.min_grade_level
+        and requirement.max_grade_level <= preference.max_grade_level
     )
 
 

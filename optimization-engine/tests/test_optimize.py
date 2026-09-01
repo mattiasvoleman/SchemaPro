@@ -1,6 +1,7 @@
 from uuid import UUID, uuid4
 
 import pytest
+from ortools.sat.python import cp_model
 from fastapi.testclient import TestClient
 
 # conftest.py seeds the environment before this module is imported, which the
@@ -3563,6 +3564,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         AnonymousConstraint,
         AnonymousGroup,
         AnonymousRequirement,
+        AnonymousRoomPreference,
         FrameTime,
         LunchServing,
         OptimizeScheduleRequest,
@@ -3590,6 +3592,19 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     assert _field_names(AnonymousGroup) == {
         "id",
         "lunchHeadcount",
+        "minGradeLevel",
+        "maxGradeLevel",
+    }
+    # The room rule's own fields, which neither half of the contract has ever
+    # pinned — only the top-level key list. That is how a dead weight fallback
+    # sat unnoticed in the objective for months.
+    assert _field_names(AnonymousRoomPreference) == {
+        "id",
+        "subjectId",
+        "roomType",
+        "roomIds",
+        "weight",
+        "kind",
         "minGradeLevel",
         "maxGradeLevel",
     }
@@ -4782,3 +4797,260 @@ def test_the_profile_key_names_every_field_the_predicate_reads() -> None:
     # it, so the key must carry the fields IT reads.
     assert "_grade_allowed" in predicate
     assert "min_grade_level" in key and "max_grade_level" in key
+
+
+# ---------------------------------------------------------------------------
+# Salsregler per årskurs — önskan
+# ---------------------------------------------------------------------------
+
+
+def _room_rule_payload(**over: object) -> tuple[dict[str, object], dict[str, str]]:
+    """One subject, two stages, two rooms — the smallest school that can show it."""
+    subject = str(uuid4())
+    young, old = str(uuid4()), str(uuid4())
+    wanted_room, other_room = str(uuid4()), str(uuid4())
+
+    def requirement(group_id: str, low: int, high: int) -> dict[str, object]:
+        return {
+            "id": str(uuid4()),
+            "subjectId": subject,
+            "studentGroupId": group_id,
+            "teacherId": str(uuid4()),
+            "lessonsPerWeek": 5,
+            "minutesPerLesson": 60,
+            "studentGroupSize": 24,
+            "minGradeLevel": low,
+            "maxGradeLevel": high,
+        }
+
+    payload = _sample_payload()
+    payload["requirements"] = [requirement(young, 4, 4), requirement(old, 7, 9)]
+    payload["groups"] = [
+        {"id": young, "lunchHeadcount": 24},
+        {"id": old, "lunchHeadcount": 24},
+    ]
+    payload["rooms"] = [
+        {"id": wanted_room, "capacity": 30},
+        {"id": other_room, "capacity": 30},
+    ]
+    payload.update(over)
+    names = {
+        "subject": subject,
+        "wanted": wanted_room,
+        "other": other_room,
+        "young": young,
+        "old": old,
+    }
+    return payload, names
+
+
+def _rule(names: dict[str, str], **over: object) -> dict[str, object]:
+    return {
+        "id": str(uuid4()),
+        "subjectId": names["subject"],
+        "roomType": None,
+        "roomIds": [names["wanted"]],
+        "weight": 500,
+        **over,
+    }
+
+
+def _rooms_by_span(response, request) -> dict[tuple, set[str]]:  # noqa: ANN001
+    span_of = {
+        str(r.id): (r.min_grade_level, r.max_grade_level) for r in request.requirements
+    }
+    out: dict[tuple, set[str]] = {}
+    for lesson in response.lessons:
+        out.setdefault(span_of[str(lesson.requirement_id)], set()).add(str(lesson.room_id))
+    return out
+
+
+def test_a_wish_without_a_span_still_reaches_every_year(client: TestClient) -> None:
+    """The behaviour every existing row has, unchanged.
+
+    A rule written before the span column existed carries null on both bounds,
+    and null must keep meaning "every year" or this migration would move
+    timetables nobody edited.
+    """
+    payload, names = _room_rule_payload()
+    payload["roomPreferences"] = [_rule(names)]
+
+    body = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    ).json()
+
+    rooms = {lesson["roomId"] for lesson in body["lessons"]}
+    assert rooms == {names["wanted"]}, "both stages should have been pulled in"
+
+
+def test_a_wish_scoped_to_a_stage_leaves_the_other_alone(client: TestClient) -> None:
+    """The whole point: a rule that minds its own business.
+
+    Weight 500 against a school with room to spare makes the wish decisive, so
+    what the year-7-9 lessons do is evidence about the SCOPE rather than about
+    how hard the solver tried.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, names = _room_rule_payload()
+    payload["roomPreferences"] = [_rule(names, minGradeLevel=4, maxGradeLevel=4)]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
+
+    by_span = _rooms_by_span(response, request)
+    assert by_span[(4, 4)] == {names["wanted"]}
+    # The other stage is free of it. With ten lessons and two rooms the spread
+    # and gap objectives have no reason to crowd them into the wanted one.
+    assert names["other"] in by_span[(7, 9)]
+
+
+def test_a_wish_does_not_reach_a_group_only_half_inside_its_span(
+    client: TestClient,
+) -> None:
+    """Containment, and the case that separates it from overlap.
+
+    A rule for åk 7-9 overlaps a teaching group spanning 6-7 at year 7 — a real
+    shape, since spans come from members' home classes. Under overlap the rule
+    would apply and send the group's year-6 pupils wherever it points.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, names = _room_rule_payload()
+    payload["requirements"][1]["minGradeLevel"] = 6  # type: ignore[index]
+    payload["requirements"][1]["maxGradeLevel"] = 7  # type: ignore[index]
+    payload["roomPreferences"] = [_rule(names, minGradeLevel=7, maxGradeLevel=9)]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
+
+    by_span = _rooms_by_span(response, request)
+    assert names["other"] in by_span[(6, 7)], (
+        "a 6-7 group was pulled into a rule written for years 7-9"
+    )
+
+
+def test_a_wish_says_nothing_about_a_group_with_unknown_years(
+    client: TestClient,
+) -> None:
+    # There is nothing to contain, and guessing would sweep every unlabelled
+    # group into a rule meant for one stage.
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload, names = _room_rule_payload()
+    payload["requirements"][1]["minGradeLevel"] = None  # type: ignore[index]
+    payload["requirements"][1]["maxGradeLevel"] = None  # type: ignore[index]
+    payload["roomPreferences"] = [_rule(names, minGradeLevel=0, maxGradeLevel=12)]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
+
+    by_span = _rooms_by_span(response, request)
+    assert names["other"] in by_span[(None, None)]
+
+
+def _preference_terms(payload: dict[str, object]) -> list:  # noqa: ANN401
+    """The objective terms a payload's room rules produce."""
+    from ortools.sat.python import cp_model
+
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    solver = SchedulerSolver(_settings())
+    model = cp_model.CpModel()
+    decisions = solver._create_lesson_decisions(
+        model, request.requirements, len(request.rooms), [],
+    )
+    plan = solver._add_room_allocation(
+        model, decisions, request.rooms, [], [], request.room_preferences,
+    )
+    return solver._add_room_preference_objective(
+        model,
+        decisions,
+        request.rooms,
+        plan,
+        request.room_preferences,
+        solver._resolve_weights(request),
+    )
+
+
+def test_a_lock_never_appears_as_a_price() -> None:
+    """A LOCK restricts; it must not also be paid for.
+
+    Paying for a room the lesson cannot reach anyway is a constant — it inflates
+    the objective and steers nothing. Asserted on the objective terms, because
+    once the lock is ENFORCED the lessons land in the named room either way and
+    no behavioural test can tell a price from a bound.
+
+    A WISH RIDES ALONG ON PURPOSE. Two filters keep a lock out of the objective
+    — one on the bucket, one on the class signature — and with a lock alone they
+    mask each other: without the signature bit the rooms share a class, the term
+    becomes a constant, and dropping the bucket filter changes nothing. The wish
+    splits the partition, so the lock's own term would appear if it were ever
+    bucketed.
+    """
+    payload, names = _room_rule_payload()
+    wish_only = dict(payload)
+    wish_only["roomPreferences"] = [_rule(names, roomIds=[names["other"]])]
+
+    both = dict(payload)
+    both["roomPreferences"] = [
+        _rule(names, roomIds=[names["other"]]),
+        _rule(names, kind="LOCK", roomIds=[names["wanted"]]),
+    ]
+
+    assert _preference_terms(wish_only), "the wish must produce a price at all"
+    assert len(_preference_terms(both)) == len(_preference_terms(wish_only)), (
+        "the lock added a penalty term of its own"
+    )
+
+
+def test_a_lock_does_not_split_the_room_partition_a_second_time() -> None:
+    """A lock earns its splits through _room_allowed, not through a wish bit.
+
+    The preference bit exists so two otherwise identical rooms, one wished for
+    and one not, stop being interchangeable — a wish could not be expressed
+    otherwise. A LOCK needs no such bit: it restricts eligibility, and
+    eligibility is already the first half of every room's signature. Adding one
+    anyway splits the same rooms twice and buys nothing.
+
+    Structural, because that is exactly what it is: the mutation changes the
+    model's SIZE and none of its answers, so no behavioural test can see it.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.room_allocator import build_room_classes
+    from app.solver.scheduler_solver import SchedulerSolver, _preference_room_ids
+
+    payload, names = _room_rule_payload()
+    payload["roomPreferences"] = [_rule(names, kind="LOCK")]
+    request = OptimizeScheduleRequest.model_validate(payload)
+
+    solver = SchedulerSolver(_settings())
+    decisions = solver._create_lesson_decisions(
+        cp_model.CpModel(), request.requirements, len(request.rooms), [],
+    )
+    without = build_room_classes(
+        decisions, request.rooms, set(), solver._room_allowed, solver._room_profile_key,
+    )
+    # What the partition would look like if a lock were treated as a wish.
+    as_if_wish = build_room_classes(
+        decisions,
+        request.rooms,
+        set(),
+        solver._room_allowed,
+        solver._room_profile_key,
+        [_preference_room_ids(p, request.rooms) for p in request.room_preferences],
+    )
+
+    assert len(as_if_wish) > len(without), (
+        "the fixture must be one where a preference bit WOULD split, or this "
+        "asserts nothing"
+    )
+    plan = solver._add_room_allocation(
+        cp_model.CpModel(), decisions, request.rooms, [], [], request.room_preferences,
+    )
+    assert len(plan.classes) == len(without)
