@@ -77,6 +77,15 @@ class Settings(BaseSettings):
         alias="WEIGHT_TEACHER_GAP",
         description="Penalty per idle slot between two same-day lessons of a teacher.",
     )
+    weight_lunch_drift: int = Field(
+        default=1,
+        alias="WEIGHT_LUNCH_DRIFT",
+        description=(
+            "Penalty per slot a group's lunch differs from its own Monday "
+            "lunch. Lowest of all the weights on purpose: a steady meal is "
+            "worth having and worth nothing at the cost of a lesson."
+        ),
+    )
     weight_room_preference: int = Field(
         default=5,
         alias="WEIGHT_ROOM_PREFERENCE",

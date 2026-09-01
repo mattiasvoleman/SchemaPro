@@ -49,6 +49,7 @@ class ResolvedWeights:
     disruption: int
     spread: int
     teacher_gap: int
+    lunch_drift: int
     date_unavailable: int
 
 
@@ -167,6 +168,7 @@ class SchedulerSolver:
                 *self._add_disruption_objective(
                     model, decisions, request.previous_lessons, weights,
                 ),
+                *self._add_lunch_stability_objective(model, lunch_starts, weights),
                 *self._add_spread_objective(model, decisions, weights, day_vars),
                 *self._add_teacher_gap_objective(model, decisions, weights, day_vars),
                 *self._add_room_preference_objective(
@@ -592,6 +594,20 @@ class SchedulerSolver:
             )
             else 0
         )
+        # Two per group-day beyond the first: a signed drift and its magnitude,
+        # so a group's meal can be held to the time it ate at on its own first
+        # day.
+        #
+        # Charged whether or not this payload has a lunch window, exactly as the
+        # (1 + D)L and GD terms above are, and for the reason stated there: an
+        # over-estimate on a ruleless payload is cheaper than an estimator that
+        # reads the rules to decide what to charge. The seat literal stays the
+        # only rules-dependent term in the whole function.
+        lunch_drift_vars = (
+            2 * lunch_groups * max(0, day_count - 1)
+            if self._settings.weight_lunch_drift > 0
+            else 0
+        )
         # The seat rule's entire variable cost, charged whether or not the lunch
         # window that would build it is set — an estimate that is high by one is
         # still an upper bound.
@@ -616,6 +632,7 @@ class SchedulerSolver:
             + day_count * lunch_groups
             + lunch_lock_vars
             + lunch_closure_vars
+            + lunch_drift_vars
             + dining_vars
             + spread_pairs
             + gap_vars
@@ -1438,6 +1455,7 @@ class SchedulerSolver:
                 if override and override.disruption is not None
                 else self._settings.weight_disruption
             ),
+            lunch_drift=self._settings.weight_lunch_drift,
             spread=(
                 override.spread
                 if override and override.spread is not None
@@ -2427,6 +2445,64 @@ class SchedulerSolver:
             or room.type == requirement.required_room_type
         )
         return capacity_ok and type_ok and _grade_allowed(room, requirement)
+
+    def _add_lunch_stability_objective(
+        self,
+        model: cp_model.CpModel,
+        lunch_starts: dict[tuple[UUID, int], cp_model.IntVar],
+        weights: ResolvedWeights,
+    ) -> list[cp_model.LinearExpr]:
+        """Pay for every slot a group's meal drifts off its own first day.
+
+        NOTHING in this model mentioned lunch_start before: the five objective
+        families all take `decisions`, so the meal was placed wherever
+        propagation happened to leave it. Two runs of one payload could return
+        different lunch times, which was invisible while the value was thrown
+        away and is the first thing a school notices once it is drawn.
+
+        Measured against the group's OWN first day, not against a fixed hour.
+        A school-wide target would fight the seat cumulative, whose whole job is
+        to put different groups at different times; this asks only that a class
+        eats at the same time on Tuesday as it did on Monday, which staggering
+        has no quarrel with.
+
+        Day-local, so the comparison is between clock times rather than between
+        positions on the week's line — every day's offset would otherwise swamp
+        the difference this measures.
+
+        The lowest weight in the model, and deliberately: a steady meal is worth
+        having and worth nothing at the cost of a lesson.
+        """
+        if weights.lunch_drift <= 0:
+            return []
+
+        slots_per_day = self._grid.slots_per_day
+        by_group: dict[UUID, list[tuple[int, cp_model.IntVar]]] = {}
+        for (group_id, day_index), variable in lunch_starts.items():
+            by_group.setdefault(group_id, []).append((day_index, variable))
+
+        terms: list[cp_model.LinearExpr] = []
+        for group_id, days in by_group.items():
+            days.sort()
+            if len(days) < 2:
+                continue
+            first_day, first_var = days[0]
+            for day_index, variable in days[1:]:
+                drift = model.NewIntVar(
+                    -slots_per_day, slots_per_day, f"lunchdrift_{group_id}_{day_index}",
+                )
+                model.Add(
+                    drift
+                    == (variable - day_index * slots_per_day)
+                    - (first_var - first_day * slots_per_day),
+                )
+                magnitude = model.NewIntVar(
+                    0, slots_per_day, f"lunchdriftabs_{group_id}_{day_index}",
+                )
+                model.AddAbsEquality(magnitude, drift)
+                terms.append(weights.lunch_drift * magnitude)
+
+        return terms
 
     def _lunches_of(
         self,

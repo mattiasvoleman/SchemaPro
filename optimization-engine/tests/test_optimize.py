@@ -4585,3 +4585,99 @@ def test_a_school_with_no_sittings_keeps_the_whole_lunch_window(
     for lunch in body["lunches"]:
         assert lunch["startTime"] >= "10:30:00"
         assert lunch["endTime"] <= "13:30:00"
+
+
+def test_a_group_eats_at_the_same_time_every_day_when_it_can() -> None:
+    """Nothing mentioned lunch_start in the objective, so it wandered.
+
+    The five objective families all take `decisions`; the meal was placed
+    wherever propagation happened to leave it, and two runs of one payload could
+    answer differently. That was invisible while the value was thrown away and
+    is the first thing a school notices once it is drawn on a grid.
+
+    THE WEEK HAS TO BE BUSY, and this is the whole difficulty of testing it.
+    Measured on a sparse fixture the starts collapse onto one time with or
+    without the term, because propagation has nothing to push against — the
+    first version of this test passed with the objective disconnected. Fourteen
+    sixty-minute lessons against a 10:30-13:30 window is where the difference
+    appears: without the term the same group eats at 10:30, 11:00 and 12:00 in
+    one week.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    group_id = str(uuid4())
+    payload = _sample_payload()
+    payload["requirements"] = [
+        {
+            "id": str(uuid4()),
+            "subjectId": str(uuid4()),
+            "studentGroupId": group_id,
+            "teacherId": str(uuid4()),
+            "lessonsPerWeek": count,
+            "minutesPerLesson": 60,
+            "studentGroupSize": 24,
+        }
+        for count in (8, 6)
+    ]
+    payload["groups"] = [{"id": group_id, "lunchHeadcount": 24}]
+    payload["rooms"] = [{"id": str(uuid4()), "capacity": 30} for _ in range(3)]
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00",
+        "lunchEndTime": "13:30:00",
+        "lunchMinutes": 30,
+    }
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(
+        OptimizeScheduleRequest.model_validate(payload),
+    )
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    times = {lunch.start_time for lunch in response.lunches}
+    assert len(response.lunches) == 5
+    assert len(times) == 1, (
+        f"the group eats at {sorted(times)} — a meal that moves between days is "
+        f"what the drift term exists to stop"
+    )
+
+
+def test_a_day_that_cannot_hold_the_usual_time_moves_rather_than_failing() -> None:
+    """The drift term is a preference and must never behave like a rule.
+
+    A locked lesson over Monday's usual slot makes that time impossible, not
+    merely expensive, so this pins that the term yields — the week is still
+    solved and Monday simply eats later. It does NOT pin the weight's
+    magnitude: no weight can override a hard constraint, so a mutation raising
+    the number would pass here. What keeps the number honest is that it is the
+    lowest in config.py and says so.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _school([(4, 6, 1)])
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "12:30:00",
+        "lunchMinutes": 30,
+    }
+    group_id = payload["groups"][0]["id"]  # type: ignore[index]
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "teacherId": None,
+            "coTeacherId": None,
+            "studentGroupId": group_id,
+            "roomId": None,
+            "dayOfWeek": 1,
+            "startTime": "11:00:00",
+            "endTime": "12:00:00",
+        },
+    ]
+
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(
+        OptimizeScheduleRequest.model_validate(payload),
+    )
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    monday = next(lunch for lunch in response.lunches if lunch.day_of_week == 1)
+    assert monday.start_time >= "12:00:00"
