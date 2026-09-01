@@ -173,18 +173,34 @@ def build_room_classes(
     rooms: list[AnonymousRoom],
     distinguished_room_ids: set[UUID],
     room_allowed: Callable[[AnonymousRoom, object], bool],
+    profile_key: Callable[[object], tuple],
     preference_sets: list[set[UUID]] | None = None,
 ) -> list[RoomClass]:
-    """Partition rooms so that every lesson's eligible set is a union of classes."""
-    # One representative requirement per distinct eligibility profile: room
-    # eligibility depends only on (required type, group size).
+    """Partition rooms so that every lesson's eligible set is a union of classes.
+
+    THE PARTITION IS ONLY SOUND IF `profile_key` NAMES EVERY FIELD
+    `room_allowed` READS. One representative requirement stands for its whole
+    profile, and the signature below is computed against representatives alone —
+    so a field the predicate consults and the key omits makes two genuinely
+    different eligibilities collapse into one class, and a lesson is then placed
+    in a room it was never allowed.
+
+    That is not hypothetical: this function keyed on (required type, group size)
+    under a comment asserting eligibility depended on nothing else, which stopped
+    being true the day rooms gained their own stage limits. Two requirements of
+    equal size and different years collapsed a years-7-9 room and an open room
+    into one class, and year-4 lessons landed in the high-school room on a run
+    reported FEASIBLE with no conflict — 19 of 20 in one reproduction, 8 of 20
+    in the next, because which requirement became the representative depends on
+    the order the payload happens to arrive in.
+
+    The key is therefore passed in by the caller that owns the predicate, beside
+    it, rather than spelled out here where the two can drift apart again.
+    """
     representatives: dict[tuple, object] = {}
     for decision in decisions:
         requirement = decision.lesson.requirement
-        representatives.setdefault(
-            (requirement.required_room_type, requirement.student_group_size),
-            requirement,
-        )
+        representatives.setdefault(profile_key(requirement), requirement)
     profiles = list(representatives.values())
 
     # Soft room preferences join the signature rather than pinning rooms: two
@@ -219,11 +235,13 @@ def add_room_allocation(
     *,
     distinguished_room_ids: set[UUID],
     room_allowed: Callable[[AnonymousRoom, object], bool],
+    profile_key: Callable[[object], tuple],
     preference_sets: list[set[UUID]] | None = None,
 ) -> RoomPlan:
     """Enforce room capacity without naming rooms. Replaces per-room NoOverlap."""
     classes = build_room_classes(
-        decisions, rooms, distinguished_room_ids, room_allowed, preference_sets,
+        decisions, rooms, distinguished_room_ids, room_allowed, profile_key,
+        preference_sets,
     )
     plan = RoomPlan(classes=classes)
     pools: dict[int, list[cp_model.IntervalVar]] = defaultdict(list)

@@ -2468,13 +2468,19 @@ def test_room_classes_merge_only_truly_interchangeable_rooms() -> None:
         cp_model.CpModel(), request.requirements, len(request.rooms), request.frame_times,
     )
 
-    classes = build_room_classes(decisions, request.rooms, set(), solver._room_allowed)
+    classes = build_room_classes(
+        decisions, request.rooms, set(), solver._room_allowed, solver._room_profile_key,
+    )
     sizes = sorted(len(c.room_indices) for c in classes)
     # {room 0, room 1} interchangeable; the lab and the undersized room differ.
     assert sizes == [1, 1, 2], f"unexpected partition {sizes}"
 
     pinned = build_room_classes(
-        decisions, request.rooms, {request.rooms[0].id}, solver._room_allowed,
+        decisions,
+        request.rooms,
+        {request.rooms[0].id},
+        solver._room_allowed,
+        solver._room_profile_key,
     )
     assert sorted(len(c.room_indices) for c in pinned) == [1, 1, 1, 1], (
         "a distinguished room must become its own singleton class"
@@ -4681,3 +4687,98 @@ def test_a_day_that_cannot_hold_the_usual_time_moves_rather_than_failing() -> No
     assert response.status in {"OPTIMAL", "FEASIBLE"}
     monday = next(lunch for lunch in response.lunches if lunch.day_of_week == 1)
     assert monday.start_time >= "12:00:00"
+
+
+# ---------------------------------------------------------------------------
+# Rumsklasserna och årskursen
+# ---------------------------------------------------------------------------
+
+
+def test_a_stage_limited_room_never_takes_a_lesson_from_another_stage() -> None:
+    """The leak the profile key exists to close.
+
+    build_room_classes stands ONE representative requirement in for its whole
+    profile, and it keyed that profile on (required type, group size) under a
+    comment asserting eligibility depended on nothing else. It stopped being
+    true the day rooms gained their own stage limits: two requirements of equal
+    size and different years collapsed a years-7-9 room and an open room into a
+    single class, and åk-4 lessons landed in the high-school room.
+
+    THE ORDER OF THE REQUIREMENTS IS THE WHOLE TEST. Listed with the year-4
+    requirement first it passes even with the bug, because the year-4 profile
+    becomes the representative and correctly refuses the room. Listing the
+    year-7-9 requirement first is what made 19 of 20 lessons leak in one run and
+    8 in the next — and that order-dependence is why a school could meet this
+    and not reproduce it.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    subject = str(uuid4())
+    young, old = str(uuid4()), str(uuid4())
+    open_room, senior_room = str(uuid4()), str(uuid4())
+
+    def requirement(group_id: str, low: int, high: int) -> dict[str, object]:
+        return {
+            "id": str(uuid4()),
+            "subjectId": subject,
+            "studentGroupId": group_id,
+            "teacherId": str(uuid4()),
+            "lessonsPerWeek": 20,
+            "minutesPerLesson": 60,
+            "studentGroupSize": 24,
+            "minGradeLevel": low,
+            "maxGradeLevel": high,
+        }
+
+    payload = _sample_payload()
+    # The high-school requirement FIRST, so it becomes the representative.
+    payload["requirements"] = [requirement(old, 7, 9), requirement(young, 4, 4)]
+    payload["groups"] = [
+        {"id": old, "lunchHeadcount": 24},
+        {"id": young, "lunchHeadcount": 24},
+    ]
+    payload["rooms"] = [
+        {"id": open_room, "capacity": 30},
+        {"id": senior_room, "capacity": 30, "minGradeLevel": 7, "maxGradeLevel": 9},
+    ]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=20.0)).solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    span_of = {
+        str(r.id): (r.min_grade_level, r.max_grade_level) for r in request.requirements
+    }
+    trespassing = [
+        lesson
+        for lesson in response.lessons
+        if str(lesson.room_id) == senior_room
+        and span_of[str(lesson.requirement_id)] == (4, 4)
+    ]
+    assert trespassing == [], (
+        f"{len(trespassing)} year-4 lessons were placed in a room the school "
+        f"reserved for years 7-9"
+    )
+
+
+def test_the_profile_key_names_every_field_the_predicate_reads() -> None:
+    """A tripwire for the next term added to _room_allowed.
+
+    The leak above was not a typo — it was a term added to the predicate and
+    not to the key, two files apart. Reading them as text is the only check
+    that notices, so it is written down rather than trusted to review.
+    """
+    import inspect
+
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    predicate = inspect.getsource(SchedulerSolver._room_allowed)
+    key = inspect.getsource(SchedulerSolver._room_profile_key)
+
+    for field in ("student_group_size", "required_room_type"):
+        assert field in predicate and field in key, f"{field} is in one and not the other"
+    # _grade_allowed is the indirection that hid the leak: the predicate calls
+    # it, so the key must carry the fields IT reads.
+    assert "_grade_allowed" in predicate
+    assert "min_grade_level" in key and "max_grade_level" in key

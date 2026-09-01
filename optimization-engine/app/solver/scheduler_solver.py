@@ -539,14 +539,33 @@ class SchedulerSolver:
             spread_pairs += count * (count - 1) // 2
 
         # The room-class partition merges rooms whose eligibility signature is
-        # identical, and rooms sharing (type, capacity) always are — so the
-        # class count is bounded by the distinct signatures plus the rooms other
-        # builders pin by identity.
+        # identical. Two rooms share a signature only if they agree on every
+        # field _room_allowed reads FROM THE ROOM — type, capacity and the
+        # room's own stage limits — and on which preferences name them.
+        #
+        # The stage limits used to be missing from this tuple, under a comment
+        # asserting that (type, capacity) decided it. That was the same omission
+        # that made the partition itself place year-4 lessons in a years-7-9
+        # room, and here it made the bound an UNDER-estimate: the min() below
+        # takes the smaller of the two, so a bound that is too low is not a
+        # conservative guess but a wrong one.
         distinguished = collect_distinguished_room_ids(
             request.constraints, request.fixed_lessons,
         )
+        preference_sets = [
+            set(preference.room_ids) for preference in request.room_preferences
+        ]
         signature_bound = len(
-            {(room.type, room.capacity) for room in request.rooms},
+            {
+                (
+                    room.type,
+                    room.capacity,
+                    room.min_grade_level,
+                    room.max_grade_level,
+                    tuple(room.id in preferred for preferred in preference_sets),
+                )
+                for room in request.rooms
+            },
         ) + min(len(distinguished), len(request.rooms))
         room_class_vars = total_lessons * min(signature_bound, len(request.rooms))
 
@@ -1178,6 +1197,7 @@ class SchedulerSolver:
                 constraints, fixed_lessons,
             ),
             room_allowed=self._room_allowed,
+            profile_key=self._room_profile_key,
             preference_sets=preference_sets,
         )
 
@@ -2445,6 +2465,27 @@ class SchedulerSolver:
             or room.type == requirement.required_room_type
         )
         return capacity_ok and type_ok and _grade_allowed(room, requirement)
+
+    @staticmethod
+    def _room_profile_key(requirement: AnonymousRequirement) -> tuple:
+        """Exactly the fields _room_allowed reads, and nothing else.
+
+        DIRECTLY ABOVE ITS PREDICATE ON PURPOSE. build_room_classes stands one
+        representative requirement in for its whole profile, so a field the
+        predicate consults and this key omits collapses two different
+        eligibilities into one class and places a lesson in a room it was never
+        allowed. That is exactly how year limits leaked: the key named type and
+        size, `_grade_allowed` had been added to the predicate, and nothing
+        connected the two. Adding a term to _room_allowed means adding it here,
+        and the pair is adjacent so the omission is visible rather than two
+        files apart.
+        """
+        return (
+            requirement.required_room_type,
+            requirement.student_group_size,
+            requirement.min_grade_level,
+            requirement.max_grade_level,
+        )
 
     def _add_lunch_stability_objective(
         self,
