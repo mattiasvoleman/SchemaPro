@@ -14,6 +14,7 @@ import {
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import type {
+  AiEngineLunch,
   AiEngineScheduleRequest,
   AiEngineScheduleResponse,
 } from './interfaces/ai-engine-payload.interface';
@@ -63,6 +64,9 @@ describe('OptimizationProxyService', () => {
       /** The demand the engine was sent, which its answer must match. */
       requirements = [] as { id: string; lessonsPerWeek: number }[],
       requirementAnonMap = new Map<string, string>(),
+      /** Sittings carrying REAL group ids, as realiseLunches hands them over. */
+      lunches = [] as AiEngineLunch[],
+      headcountByGroup = new Map<string, number>(),
     } = {},
   ) =>
     (
@@ -75,6 +79,8 @@ describe('OptimizationProxyService', () => {
           requirements: { id: string; lessonsPerWeek: number }[],
           requirementAnonMap: Map<string, string>,
           roomAnonMap: Map<string, string>,
+          lunches: AiEngineLunch[],
+          headcountByGroup: Map<string, number>,
         ) => Promise<void>;
       }
     ).persistMasterLessons(
@@ -85,6 +91,8 @@ describe('OptimizationProxyService', () => {
       requirements,
       requirementAnonMap,
       new Map(),
+      lunches,
+      headcountByGroup,
     );
 
   /** A placement of `ANON_REQ`, as the engine words it. */
@@ -256,6 +264,106 @@ describe('OptimizationProxyService', () => {
 
       expect(tx.masterLesson.deleteMany).toHaveBeenCalledTimes(1);
       expect(tx.masterLesson.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('persistMasterLessons — the sittings', () => {
+    beforeEach(() => {
+      tx.masterLesson.deleteMany.mockResolvedValue({ count: 0 });
+      tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
+      tx.masterLesson.count.mockResolvedValue(0);
+      tx.lunchSitting.deleteMany.mockResolvedValue({ count: 0 });
+    });
+
+    const sitting = (groupId = 'g-7a', dayOfWeek = 1) => ({
+      studentGroupId: groupId,
+      dayOfWeek,
+      startTime: '11:30:00',
+      endTime: '12:00:00',
+    });
+
+    it('replaces the year\'s sittings outright rather than merging them', async () => {
+      /*
+       * The meal is wholly engine-owned. Merging would need a notion of a
+       * preserved sitting, and a preserved sitting is exactly what must not
+       * exist: it would be sent back as a fixed lesson while the solver still
+       * builds its own lunch variable — two mandatory reservations in one
+       * window, and an INFEASIBLE with no visible cause.
+       */
+      await persist(
+        { status: 'OPTIMAL', lessons: [placement()] },
+        {
+          ...oneRequirement(1),
+          lunches: [sitting()],
+          headcountByGroup: new Map([['g-7a', 24]]),
+        },
+      );
+
+      expect(tx.lunchSitting.deleteMany).toHaveBeenCalledWith({
+        where: { academicYearId: ACADEMIC_YEAR },
+      });
+      expect(tx.lunchSitting.createMany).toHaveBeenCalledWith({
+        data: [
+          {
+            schoolId: testUser().schoolId,
+            academicYearId: ACADEMIC_YEAR,
+            studentGroupId: 'g-7a',
+            dayOfWeek: 1,
+            startTime: new Date('1970-01-01T11:30:00.000Z'),
+            endTime: new Date('1970-01-01T12:00:00.000Z'),
+            headcount: 24,
+          },
+        ],
+      });
+    });
+
+    it('stores the headcount the engine was told, not a zero', async () => {
+      // Kept so the kitchen's own list needs no re-derivation of a roster that
+      // may have changed since the run.
+      await persist(
+        { status: 'OPTIMAL', lessons: [placement()] },
+        {
+          ...oneRequirement(1),
+          lunches: [sitting()],
+          headcountByGroup: new Map([['g-7a', 27]]),
+        },
+      );
+
+      expect(tx.lunchSitting.createMany.mock.calls[0][0].data[0].headcount).toBe(27);
+    });
+
+    it('clears the sittings when a run produces none', async () => {
+      // A school that switched lunch off must not keep last term's flow on the
+      // grid: the delete runs whether or not there is anything to write.
+      await persist({ status: 'OPTIMAL', lessons: [placement()] }, oneRequirement(1));
+
+      expect(tx.lunchSitting.deleteMany).toHaveBeenCalledTimes(1);
+      expect(tx.lunchSitting.createMany).not.toHaveBeenCalled();
+    });
+
+    it('leaves the sittings alone when the engine found no timetable', async () => {
+      // Both verdicts bail out before anything is deleted. A failed run that
+      // wiped the flow would leave the kitchen with nothing while the timetable
+      // it belongs to is still standing.
+      await persist({ status: 'INFEASIBLE', lessons: [] }, { lunches: [sitting()] });
+
+      expect(tx.lunchSitting.deleteMany).not.toHaveBeenCalled();
+      expect(tx.lunchSitting.createMany).not.toHaveBeenCalled();
+    });
+
+    it('leaves the sittings alone when the solution is rejected', async () => {
+      // The 502 path: the whole replacement is built and checked before a
+      // single row is deleted, and the sittings are inside that guarantee.
+      tx.teachingRequirement.findMany.mockResolvedValue([]);
+
+      await expect(
+        persist(
+          { status: 'FEASIBLE', lessons: [placement()] },
+          { ...oneRequirement(2), lunches: [sitting()] },
+        ),
+      ).rejects.toMatchObject({ status: 502 });
+
+      expect(tx.lunchSitting.deleteMany).not.toHaveBeenCalled();
     });
   });
 

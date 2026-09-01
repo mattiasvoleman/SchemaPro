@@ -313,8 +313,81 @@ export class CalendarService {
         let skipped = 0;
         const pendingCreates: Array<() => Promise<unknown>> = [];
 
+        /*
+         * The meals, dated by the very same walk the lessons take.
+         *
+         * Deriving "which days does this school teach" a second time — in the
+         * pupil portal, the guardian portal and the day planner — is how the
+         * lov stops being honoured in two of the three. Here the break check
+         * below is the same object, the same `breakCoversGroup`, and the same
+         * date string.
+         *
+         * Their own table, not CalendarLessons: everything downstream of that
+         * one assumes teaching. SS12000 stamps every row `activityType:
+         * 'Undervisning'` and would report lunch to the kommun as a lesson, and
+         * the absence notice would tell a guardian their child was away from
+         * "Lunch". Both are read straight from the browser through PostgREST
+         * with no server DTO to filter at.
+         */
+        const sittings = await tx.lunchSitting.findMany({
+          where: { academicYearId: dto.academicYearId },
+          select: {
+            studentGroupId: true,
+            dayOfWeek: true,
+            startTime: true,
+            endTime: true,
+          },
+        });
+        const sittingsByWeekday = new Map<number, typeof sittings>();
+        for (const sitting of sittings) {
+          const list = sittingsByWeekday.get(sitting.dayOfWeek);
+          if (list) list.push(sitting);
+          else sittingsByWeekday.set(sitting.dayOfWeek, [sitting]);
+        }
+        // Already-materialised meals, so republishing a window does not fail on
+        // the (group, date) unique key — the same idempotency the lessons get
+        // from `existingKeys`.
+        const existingLunches = new Set(
+          (
+            await tx.calendarLunch.findMany({
+              where: {
+                schoolId,
+                date: { gte: parseUtcDate(fromDate), lte: parseUtcDate(toDate) },
+              },
+              select: { studentGroupId: true, date: true },
+            })
+          ).map((row) => `${row.studentGroupId}:${row.date.toISOString().slice(0, 10)}`),
+        );
+        let lunchesCreated = 0;
+
         for (const date of iterateDates(fromDate, toDate)) {
           const weekday = isoWeekday(date);
+
+          for (const sitting of sittingsByWeekday.get(weekday) ?? []) {
+            if (existingLunches.has(`${sitting.studentGroupId}:${date}`)) continue;
+            // The class is not in school, so there is no meal to serve — the
+            // same answer, and the same call, the lessons make below.
+            if (
+              (breakDays.get(date) ?? []).some((entry) =>
+                breakCoversGroup(entry, sitting.studentGroupId),
+              )
+            ) {
+              continue;
+            }
+            pendingCreates.push(() =>
+              tx.calendarLunch.create({
+                data: {
+                  schoolId,
+                  studentGroupId: sitting.studentGroupId,
+                  date: parseUtcDate(date),
+                  startsAt: zonedTimeToUtc(date, timeToString(sitting.startTime), timezone),
+                  endsAt: zonedTimeToUtc(date, timeToString(sitting.endTime), timezone),
+                },
+              }),
+            );
+            lunchesCreated++;
+          }
+
           const templates = byWeekday.get(weekday);
           if (!templates) continue;
 
@@ -484,7 +557,7 @@ export class CalendarService {
         }
 
         this.logger.log(
-          `Published schedule [year=${dto.academicYearId}, ${fromDate}..${toDate}, created=${created}, skipped=${skipped}]`,
+          `Published schedule [year=${dto.academicYearId}, ${fromDate}..${toDate}, created=${created}, lunches=${lunchesCreated}, skipped=${skipped}]`,
         );
 
         return { created, cancelled, skipped, fromDate, toDate };

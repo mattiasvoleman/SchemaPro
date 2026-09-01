@@ -130,6 +130,7 @@ export class OptimizationProxyService {
       roomAnonMap,
       requirementAnonMap,
       groupAnonMap,
+      headcountByGroup,
       storedRules,
     } = await this.prisma.withRls(user, (tx) =>
       this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user)),
@@ -165,6 +166,10 @@ export class OptimizationProxyService {
         ? await this.callAiEngine(payload)
         : { requestId, status: 'FEASIBLE', lessons: [], conflicts: null };
 
+    // The sittings, with real group ids, computed once: they are both written
+    // below and returned to the caller.
+    const realisedLunches = this.realiseLunches(response, groupAnonMap);
+
     // Step 3: Persist the master-lesson output, translating anon ids back.
     // `requirements` rides along as the demand the response is checked against
     // before anything is deleted — see persistMasterLessons.
@@ -177,6 +182,8 @@ export class OptimizationProxyService {
         requirements,
         requirementAnonMap,
         roomAnonMap,
+        realisedLunches,
+        headcountByGroup,
       ),
     );
 
@@ -189,7 +196,7 @@ export class OptimizationProxyService {
     // engine sees is anonymised, so a caller handed the raw reply would get
     // uuids that exist in no table — the same unactionable shape the engine's
     // own conflict messages still have.
-    return { ...response, lunches: this.realiseLunches(response, groupAnonMap) };
+    return { ...response, lunches: realisedLunches };
   }
 
   /**
@@ -251,6 +258,8 @@ export class OptimizationProxyService {
      * until the engine began returning lunches, which name a student group.
      */
     groupAnonMap: Map<string, string>;
+    /** groupId → children who eat AS this group, for the stored sittings. */
+    headcountByGroup: Map<string, number>;
     storedRules: ScheduleRules | null;
   }> {
     // Anonymous-id lookup tables: realId → anonId.
@@ -887,6 +896,7 @@ export class OptimizationProxyService {
       roomAnonMap,
       requirementAnonMap,
       groupAnonMap,
+      headcountByGroup: homeCountByGroup,
       // An empty object would send `rules: {}` and read as "rules were
       // considered and came to nothing", which the engine treats the same but
       // a reader of the payload would not.
@@ -989,6 +999,10 @@ export class OptimizationProxyService {
     requirements: AnonymousRequirement[],
     requirementAnonMap: Map<string, string>,
     roomAnonMap: Map<string, string>,
+    /** Sittings carrying REAL group ids — realiseLunches has already run. */
+    lunches: AiEngineLunch[],
+    /** groupId → children seated, so the kitchen's list needs no re-derivation. */
+    headcountByGroup: Map<string, number>,
   ): Promise<void> {
     // Neither verdict yields lessons, so both must bail out *before* the
     // delete-and-recreate below — otherwise a run that produced nothing would
@@ -1158,6 +1172,34 @@ export class OptimizationProxyService {
     });
 
     await Promise.all(creates.map((data) => tx.masterLesson.create({ data })));
+
+    /*
+     * The sittings, in the same transaction and with the same all-or-nothing
+     * shape as the lessons above.
+     *
+     * Replaced outright rather than merged: the meal is wholly engine-owned,
+     * there is no isLocked and no isGenerated, and a preserved sitting would be
+     * sent back to the engine as a fixed lesson while the solver still builds
+     * its own lunch variable — two mandatory reservations in one window and an
+     * INFEASIBLE with no visible cause.
+     *
+     * Reached only after the guards above, so a run the gateway refused leaves
+     * last week's flow exactly where it was.
+     */
+    await tx.lunchSitting.deleteMany({ where: { academicYearId } });
+    if (lunches.length > 0) {
+      await tx.lunchSitting.createMany({
+        data: lunches.map((lunch) => ({
+          schoolId,
+          academicYearId,
+          studentGroupId: lunch.studentGroupId,
+          dayOfWeek: lunch.dayOfWeek,
+          startTime: this.parseTime(lunch.startTime),
+          endTime: this.parseTime(lunch.endTime),
+          headcount: headcountByGroup.get(lunch.studentGroupId) ?? 0,
+        })),
+      });
+    }
 
     // Append a REGENERATE entry to the schedule audit trail.
     await tx.scheduleChangeLog.create({

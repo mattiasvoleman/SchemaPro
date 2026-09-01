@@ -62,6 +62,15 @@ describe('CalendarService', () => {
     ...overrides,
   });
 
+  /** A lov, at the outer level so both the lessons and the meals can use one. */
+  const schoolBreakFixture = (overrides: Record<string, unknown> = {}) => ({
+    startDate: day('2026-08-10'),
+    endDate: day('2026-08-10'),
+    minGradeLevel: null,
+    maxGradeLevel: null,
+    ...overrides,
+  });
+
   const arrangeYear = (overrides: Record<string, unknown> = {}) => {
     tx.academicYear.findUnique.mockResolvedValue({
       id: YEAR_ID,
@@ -78,6 +87,10 @@ describe('CalendarService', () => {
       existing = [] as Record<string, unknown>[],
       closures = [] as Record<string, unknown>[],
       breaks = [] as Record<string, unknown>[],
+      /** Weekly meals, as the solver stored them. */
+      sittings = [] as Record<string, unknown>[],
+      /** Meals already materialised in the window. */
+      existingLunches = [] as Record<string, unknown>[],
     } = {},
   ) => {
     arrangeYear();
@@ -86,6 +99,9 @@ describe('CalendarService', () => {
     tx.availabilityConstraint.findMany.mockResolvedValue(closures);
     tx.schoolBreak.findMany.mockResolvedValue(breaks);
     tx.calendarLesson.create.mockResolvedValue({ id: 'created-lesson' });
+    tx.lunchSitting.findMany.mockResolvedValue(sittings);
+    tx.calendarLunch.findMany.mockResolvedValue(existingLunches);
+    tx.calendarLunch.create.mockResolvedValue({ id: 'created-lunch' });
   };
 
   const dto = (overrides: Record<string, string | undefined> = {}) => ({
@@ -298,6 +314,103 @@ describe('CalendarService', () => {
         dto({ fromDate: '2026-08-10', toDate: '2026-08-10' }),
         testUser(),
       );
+
+    describe('the meals', () => {
+      /** A weekly sitting, as the solver stored it. 2026-08-10 is a Monday. */
+      const sitting = (overrides: Record<string, unknown> = {}) => ({
+        studentGroupId: GROUP_ID,
+        dayOfWeek: 1,
+        startTime: time(11),
+        endTime: time(12),
+        ...overrides,
+      });
+
+      const lunchData = () =>
+        tx.calendarLunch.create.mock.calls.map(
+          (call) => (call[0] as { data: Record<string, unknown> }).data,
+        );
+
+      it('materialises a meal on the weekday its sitting names', async () => {
+        arrangePublish([template()], { sittings: [sitting()] });
+
+        await publishOneDay();
+
+        expect(lunchData()).toEqual([
+          {
+            schoolId: testUser().schoolId,
+            studentGroupId: GROUP_ID,
+            date: day('2026-08-10'),
+            startsAt: new Date('2026-08-10T11:00:00.000Z'),
+            endsAt: new Date('2026-08-10T12:00:00.000Z'),
+          },
+        ]);
+      });
+
+      it('writes nothing on a weekday no sitting names', async () => {
+        arrangePublish([template()], { sittings: [sitting({ dayOfWeek: 3 })] });
+
+        await publishOneDay();
+
+        expect(tx.calendarLunch.create).not.toHaveBeenCalled();
+      });
+
+      it('serves no meal on a lov day', async () => {
+        /*
+         * The whole reason the meals are dated HERE rather than derived in the
+         * portals. "Which days does this school teach" is answered once, by the
+         * same breakCoversGroup the lessons ask — three separate derivations is
+         * how a lov stops being honoured in two of them.
+         */
+        arrangePublish([template()], {
+          sittings: [sitting()],
+          breaks: [schoolBreakFixture()],
+        });
+
+        await publishOneDay();
+
+        expect(tx.calendarLunch.create).not.toHaveBeenCalled();
+      });
+
+      it('serves no meal to a stage the lov names, and serves the others', async () => {
+        // A prao week for åk 9 is a break with a grade span. The years come off
+        // the group, exactly as they do for the lessons.
+        arrangePublish([template()], {
+          sittings: [sitting()],
+          breaks: [schoolBreakFixture({ minGradeLevel: 9, maxGradeLevel: 9 })],
+        });
+
+        await publishOneDay();
+
+        // GROUP_ID's own year is not 9 in this fixture, so the meal stands.
+        expect(tx.calendarLunch.create).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not write a meal that is already materialised', async () => {
+        // Republishing a window must not fail on the (group, date) unique key —
+        // the same idempotency the lessons get from their existing-key set.
+        arrangePublish([template()], {
+          sittings: [sitting()],
+          existingLunches: [
+            { studentGroupId: GROUP_ID, date: day('2026-08-10') },
+          ],
+        });
+
+        await publishOneDay();
+
+        expect(tx.calendarLunch.create).not.toHaveBeenCalled();
+      });
+
+      it('writes the meals even when no lesson falls on the day', async () => {
+        // The meal loop runs before the templates are looked up, so a day whose
+        // teaching is entirely hand-placed still feeds its classes.
+        arrangePublish([template({ dayOfWeek: 3 })], { sittings: [sitting()] });
+
+        await publishOneDay();
+
+        expect(tx.calendarLunch.create).toHaveBeenCalledTimes(1);
+        expect(tx.calendarLesson.create).not.toHaveBeenCalled();
+      });
+    });
 
     describe('a date the school has already said is not available', () => {
       it('cancels the lesson when the teacher is away, rather than hiding it', async () => {

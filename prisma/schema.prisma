@@ -140,6 +140,8 @@ model School {
   schoolBreaks            SchoolBreak[]
   frameTimes              FrameTime[]
   lunchServings           LunchServing[]
+  lunchSittings           LunchSitting[]
+  calendarLunches         CalendarLunch[]
   scheduleChangeLogs      ScheduleChangeLog[]
   scheduleVersions        ScheduleVersion[]
   optimizationJobs        OptimizationJob[]
@@ -332,6 +334,7 @@ model AcademicYear {
   teachingRequirements TeachingRequirement[]
   masterLessons        MasterLesson[]
   schoolBreaks         SchoolBreak[]
+  lunchSittings        LunchSitting[]
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -379,6 +382,8 @@ model StudentGroup {
   availabilityConstraints AvailabilityConstraint[] @relation("ConstraintGroup")
   extraMasterLessons      MasterLessonGroup[]      @relation("MasterLessonExtraGroup")
   extraCalendarLessons    CalendarLessonGroup[]    @relation("CalendarLessonExtraGroup")
+  lunchSittings           LunchSitting[]
+  calendarLunches         CalendarLunch[]
 
   @@unique([schoolId, academicYearId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -1064,6 +1069,68 @@ model LunchServing {
 
   @@index([schoolId, dayOfWeek])
   @@map("LunchServings")
+}
+
+/// The lunch the solver chose for one group, one weekday.
+///
+/// The meal's half of the MasterLesson -> CalendarLesson path. Wholly
+/// engine-owned: every run replaces the year's sittings, a failed run leaves
+/// them alone, and there is no isLocked — a preserved sitting would be sent
+/// back as a fixed lesson while the solver still builds its own lunch variable,
+/// giving two mandatory reservations in one window. See the migration.
+model LunchSitting {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  academicYearId String   @db.Uuid
+  studentGroupId String   @db.Uuid
+  /// ISO weekday 1-7. Never null: this is a placement, not a rule.
+  dayOfWeek      Int
+  startTime      DateTime @db.Time(0)
+  endTime        DateTime @db.Time(0)
+  /// Children seated, as the engine was told. Kept so the kitchen's list does
+  /// not have to re-derive a roster that may have changed since the run.
+  headcount      Int      @default(0)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  /// Composite, like every other reference here: a foreign-key check runs as
+  /// the referenced table's owner with row security OFF, so an id the caller
+  /// cannot even SELECT would still validate. The key is what makes a sitting's
+  /// group the group of its school.
+  academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  studentGroup StudentGroup @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@unique([academicYearId, studentGroupId, dayOfWeek], map: "LunchSittings_group_day_key")
+  @@index([schoolId, academicYearId])
+  @@map("LunchSittings")
+}
+
+/// A dated meal, as publish materialises it.
+///
+/// Its own table rather than a CalendarLesson, because everything downstream of
+/// that one assumes teaching: SS12000 would report lunch to the kommun as
+/// undervisning, and the absence notice would tell a guardian their child was
+/// away from "Lunch". Both are read straight from the browser through PostgREST
+/// with no server DTO to filter at, so separation is the only guard that holds.
+model CalendarLunch {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  studentGroupId String   @db.Uuid
+  date           DateTime @db.Date
+  startsAt       DateTime @db.Timestamptz(6)
+  endsAt         DateTime @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  /// Composite, for the same reason as everywhere else in this schema.
+  studentGroup StudentGroup @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@unique([studentGroupId, date], map: "CalendarLunches_group_date_key")
+  @@index([schoolId, date])
+  @@index([studentGroupId, date])
+  @@map("CalendarLunches")
 }
 
 /// Lov och studiedagar: whole days a school does not teach.
