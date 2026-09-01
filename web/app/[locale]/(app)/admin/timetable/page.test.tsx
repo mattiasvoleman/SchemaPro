@@ -238,6 +238,36 @@ describe("the week of one class", () => {
     expect(idrott?.textContent).not.toContain("+1");
   });
 
+  it("marks how much of the class a partial lesson holds", async () => {
+    render(<TimetablePage />);
+    await filterTo("4.1");
+    const maths = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Matematik"));
+    // 4ma1 is Alva and Bo of 4.1's four. Drawn as one rectangle it would claim
+    // the whole class, the way an every-other-week lesson claims every week.
+    expect(maths?.textContent).toContain("2/4");
+    // And spelled out for a reader who cannot see the badge.
+    expect(maths?.textContent).toContain("timetable.sharePupils(2|4|4.1)");
+  });
+
+  it("leaves a lesson the whole class attends unmarked", async () => {
+    render(<TimetablePage />);
+    await filterTo("4.1");
+    const idrott = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Idrott"));
+    // "4/4" on a class's own lesson is noise on the common case.
+    expect(idrott?.textContent).not.toContain("4/4");
+    expect(idrott?.textContent).not.toContain("timetable.sharePupils");
+  });
+
+  it("marks nothing at all in the unfiltered view", () => {
+    render(<TimetablePage />);
+    // There is no class in view to be a fraction OF.
+    expect(document.body.textContent).not.toContain("timetable.sharePupils");
+  });
+
   it("falls back to the named lessons, not a blank grid, while the roster loads", async () => {
     state.memberships = undefined;
     render(<TimetablePage />);

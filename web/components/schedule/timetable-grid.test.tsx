@@ -160,6 +160,31 @@ describe("TimetableGrid overlap lanes", () => {
     expect(biology.style.width).toBe("calc(50% - 6px)");
   });
 
+  it("prints the share badge without taking a lane for it", () => {
+    render(
+      <TimetableGrid
+        lessons={[
+          makeLesson({
+            id: "a",
+            title: "Algebra",
+            share: "2/4",
+            shareLabel: "2 av 4 elever i 4.1",
+          }),
+        ]}
+      />,
+    );
+
+    const algebra = screen.getByRole("button", { name: /Algebra/ });
+    expect(algebra.textContent).toContain("2/4");
+    // Spelled out for a reader who cannot see it. "2/4" alone is a riddle.
+    expect(algebra.textContent).toContain("2 av 4 elever i 4.1");
+    // And still the whole column. layoutDay applies ONE laneCount to a whole
+    // day, so a lane for these badges would narrow every card on the day —
+    // which is the same reason the lunch bands are drawn behind the lessons
+    // rather than beside them.
+    expect(algebra.style.width).toBe("calc(100% - 6px)");
+  });
+
   it("lets back-to-back lessons share a full-width lane", () => {
     render(
       <TimetableGrid

@@ -616,7 +616,8 @@
     "badgeOdd": "udda",
     "badgeEven": "jämna",
     "badgePeriod": "period",
-    "editRemoved": "{count, plural, =1 {1 kalenderlektion togs bort — publicera igen för att lägga tillbaka lektioner som ryms.} other {# kalenderlektioner togs bort — publicera igen för att lägga tillbaka lektioner som ryms.}}"
+    "editRemoved": "{count, plural, =1 {1 kalenderlektion togs bort — publicera igen för att lägga tillbaka lektioner som ryms.} other {# kalenderlektioner togs bort — publicera igen för att lägga tillbaka lektioner som ryms.}}",
+    "sharePupils": "{attending} av {total} elever i {group}"
   },
   "dayPlanner": {
     "title": "Dagsplanering",

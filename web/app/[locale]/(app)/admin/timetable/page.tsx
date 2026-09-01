@@ -55,7 +55,12 @@ import { ApiError } from "@/lib/api";
 import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { subjectColor, timeToMinutes } from "@/lib/utils";
-import { audienceFor, buildRosterIndex, type Audience } from "@/lib/lesson-audience";
+import {
+  audienceFor,
+  buildRosterIndex,
+  showsFraction,
+  type Audience,
+} from "@/lib/lesson-audience";
 import {
   buildGroupConflictMap,
   detectConflicts,
@@ -531,6 +536,7 @@ export default function TimetablePage() {
       const group = groupById.get(lesson.studentGroupId);
       const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : undefined;
       const room = lesson.roomId ? roomById.get(lesson.roomId) : undefined;
+      const audience = audienceByLesson.get(lesson.id);
       return {
         id: lesson.id,
         dayOfWeek: lesson.dayOfWeek,
@@ -559,9 +565,33 @@ export default function TimetablePage() {
         recurrenceNote: recurrenceBadge(lesson, t) ?? undefined,
         conflicted: conflictMap.has(lesson.id),
         remoteEditor: remoteEditors.get(lesson.id),
+        // Only when the class is PARTLY here. "28/28" on every one of a class's
+        // own lessons is noise on the common case, and a lesson that names the
+        // class always holds all of it — showsFraction is the same rule the
+        // library states as an invariant.
+        ...(audience && showsFraction(audience)
+          ? {
+              share: `${audience.attending}/${audience.cohortSize}`,
+              shareLabel: t("sharePupils", {
+                attending: audience.attending,
+                total: audience.cohortSize,
+                group: groupById.get(groupFilter)?.name ?? "",
+              }),
+            }
+          : {}),
       };
     },
-    [subjectById, groupById, teacherById, roomById, conflictMap, remoteEditors],
+    [
+      subjectById,
+      groupById,
+      teacherById,
+      roomById,
+      conflictMap,
+      remoteEditors,
+      audienceByLesson,
+      groupFilter,
+      t,
+    ],
   );
 
   const gridLessons: TimetableLesson[] = useMemo(

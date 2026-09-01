@@ -31,6 +31,21 @@ export interface TimetableLesson {
   recurrenceNote?: string;
   /** Label of a collaborator currently editing this lesson (soft lock). */
   remoteEditor?: string;
+  /**
+   * How much of the class in view sits here, as "2/4" — partial lessons only.
+   *
+   * A class is not one body: while 4ma1 runs, half of 4.1 is taught and the
+   * other half is somewhere else. The grid draws a lesson as one rectangle
+   * either way, so without this mark a half-class lesson claims the whole
+   * class the same way an every-other-week lesson claims every week — which is
+   * the argument recurrenceNote above already won.
+   *
+   * Deliberately NOT a lane of its own: layoutDay applies one laneCount per
+   * whole day, so a lane for these would narrow every card on the day.
+   */
+  share?: string;
+  /** What `share` means, spelled out for a reader who cannot see the badge. */
+  shareLabel?: string;
 }
 
 export interface LessonChange {
@@ -607,6 +622,17 @@ export function TimetableGrid({
                           {lesson.title}
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
+                          {lesson.share ? (
+                            <span
+                              title={lesson.shareLabel}
+                              className="rounded bg-foreground/10 px-1 text-[9px] font-semibold tabular-nums text-foreground"
+                            >
+                              {lesson.share}
+                              <span className="sr-only">
+                                {lesson.shareLabel ? ` ${lesson.shareLabel}` : ""}
+                              </span>
+                            </span>
+                          ) : null}
                           {lesson.remoteEditor ? (
                             <span
                               title={lesson.remoteEditor}
