@@ -24,6 +24,7 @@ import type {
   AiEngineLunch,
   AnonymousFixedLesson,
   AnonymousFrameTime,
+  AnonymousLunchServing,
   AnonymousGroup,
   AnonymousPreviousLesson,
   AnonymousRequirement,
@@ -120,6 +121,7 @@ export class OptimizationProxyService {
       rooms,
       constraints,
       frameTimes,
+      lunchServings,
       roomPreferences,
       fixedLessons,
       groups,
@@ -145,6 +147,7 @@ export class OptimizationProxyService {
       rooms,
       constraints,
       frameTimes,
+      lunchServings,
       roomPreferences,
       fixedLessons,
       groups,
@@ -234,6 +237,7 @@ export class OptimizationProxyService {
     rooms: AnonymousRoom[];
     constraints: AnonymousConstraint[];
     frameTimes: AnonymousFrameTime[];
+    lunchServings: AnonymousLunchServing[];
     roomPreferences: AnonymousRoomPreference[];
     fixedLessons: AnonymousFixedLesson[];
     groups: AnonymousGroup[];
@@ -636,6 +640,12 @@ export class OptimizationProxyService {
     const groups: AnonymousGroup[] = scheduledGroupIds.map((groupId) => ({
       id: anonId(groupAnonMap, groupId),
       lunchHeadcount: homeCountByGroup.get(groupId) ?? 0,
+      // The same span the requirements carry, sent on the group as well: a
+      // sitting and a frame both reach a stage, and a MEAL has no requirement
+      // to read one off. Null for a group whose years cannot be derived — the
+      // engine reads that as "unknown" and leaves it the school-wide window.
+      minGradeLevel: gradeSpanByGroup.get(groupId)?.min ?? null,
+      maxGradeLevel: gradeSpanByGroup.get(groupId)?.max ?? null,
     }));
 
     // Fetch rooms (drop name, code — capacity and type are non-PII enums/numbers).
@@ -826,6 +836,31 @@ export class OptimizationProxyService {
       endTime: this.timeToString(frame.endTime),
     }));
 
+    // Lunchsittningar. School-scoped like the frames above and read through the
+    // same year -> school hop, so a request for another school's year cannot
+    // pull this school's rows. Nothing to anonymise: a sitting names a span of
+    // years, not a person or a room.
+    const rawServings = await tx.lunchServing.findMany({
+      where: { school: { academicYears: { some: { id: academicYearId } } } },
+      select: {
+        minGradeLevel: true,
+        maxGradeLevel: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+        seats: true,
+      },
+    });
+
+    const lunchServings: AnonymousLunchServing[] = rawServings.map((serving) => ({
+      minGradeLevel: serving.minGradeLevel,
+      maxGradeLevel: serving.maxGradeLevel,
+      dayOfWeek: serving.dayOfWeek as DayOfWeek | null,
+      startTime: this.timeToString(serving.startTime),
+      endTime: this.timeToString(serving.endTime),
+      seats: serving.seats,
+    }));
+
     // Anonymize the conflict pairs with the same group map the requirements
     // used, so the engine sees a consistent id space. Pairs whose groups never
     // reached the payload (no requirement and no fixed lesson references them)
@@ -843,6 +878,7 @@ export class OptimizationProxyService {
       rooms,
       constraints,
       frameTimes,
+      lunchServings,
       roomPreferences,
       fixedLessons,
       groups,

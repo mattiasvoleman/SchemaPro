@@ -560,6 +560,86 @@ $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- 7c. LunchServings: read by everyone, written by the administrator alone.
+--
+-- Same pair and the same two silent failures as the frames above. A sitting a
+-- teacher can rewrite is the whole school's lunch flow rewritten from one
+-- session, and a sitting nobody can read leaves a pupil unable to find out when
+-- their own class eats.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  INSERT INTO "LunchServings"
+    ("schoolId", "minGradeLevel", "maxGradeLevel", "dayOfWeek",
+     "startTime", "endTime", "updatedAt")
+  VALUES (app.current_school_id(), 4, 6, NULL, '11:40', '12:20', now());
+
+  SELECT count(*) INTO n FROM "LunchServings";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lunch-servings: an admin cannot write their own school''s sitting (% row(s))', n;
+  END IF;
+
+  BEGIN
+    INSERT INTO "LunchServings"
+      ("schoolId", "minGradeLevel", "maxGradeLevel", "dayOfWeek",
+       "startTime", "endTime", "updatedAt")
+    VALUES ('00000000-0000-4000-8000-0000000000ff', 4, 6, NULL, '11:40', '12:20', now());
+    RAISE EXCEPTION 'lunch-servings: an admin wrote a sitting into another school';
+  EXCEPTION
+    WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+END
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "LunchServings";
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'lunch-servings: a teacher cannot read when their own class eats (% row(s))', n;
+  END IF;
+
+  BEGIN
+    INSERT INTO "LunchServings"
+      ("schoolId", "minGradeLevel", "maxGradeLevel", "dayOfWeek",
+       "startTime", "endTime", "updatedAt")
+    VALUES (app.current_school_id(), 7, 9, NULL, '12:20', '13:00', now());
+    RAISE EXCEPTION 'lunch-servings: a teacher rewrote the school''s lunch flow';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+
+  DELETE FROM "LunchServings";
+  SELECT count(*) INTO n FROM "LunchServings";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lunch-servings: a teacher deleted a sitting (% row(s) left)', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 8: a guardian link cannot reach across schools.
 --
 -- This was a live cross-tenant hole, reproduced end to end before it was fixed:

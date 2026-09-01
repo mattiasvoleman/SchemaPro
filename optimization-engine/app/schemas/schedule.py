@@ -110,6 +110,37 @@ class AnonymousGroup(CamelModel):
     #: not "nobody eats" — and it is also what the whole payload looks like
     #: until the gateway that fills this field is deployed.
     lunch_headcount: int = Field(default=0, alias="lunchHeadcount", ge=0, le=1000)
+    #: The years this group holds, derived by the gateway from its members'
+    #: home classes with the group's own year as the fallback. Needed because a
+    #: sitting and a frame both reach a stage, and a MEAL has no requirement to
+    #: read a span off — a class whose whole week is hand-placed arrives with no
+    #: requirement at all and still eats.
+    #:
+    #: Optional, and None means "unknown" rather than "year 0": a group with no
+    #: derivable years matches no serving and no frame, and keeps the
+    #: school-wide lunch window. Guessing would sweep every yearless group into
+    #: a sitting written for one stage.
+    min_grade_level: int | None = Field(
+        default=None, alias="minGradeLevel", ge=0, le=12,
+    )
+    max_grade_level: int | None = Field(
+        default=None, alias="maxGradeLevel", ge=0, le=12,
+    )
+
+    @model_validator(mode="after")
+    def validate_span(self) -> AnonymousGroup:
+        """Both years or neither, and ordered. A half span is a gateway bug."""
+        if (self.min_grade_level is None) != (self.max_grade_level is None):
+            msg = "A group's year span needs both bounds or neither."
+            raise ValueError(msg)
+        if (
+            self.min_grade_level is not None
+            and self.max_grade_level is not None
+            and self.min_grade_level > self.max_grade_level
+        ):
+            msg = "minGradeLevel must not be above maxGradeLevel."
+            raise ValueError(msg)
+        return self
 
 
 class AnonymousRoom(CamelModel):
@@ -352,6 +383,11 @@ class OptimizeScheduleRequest(CamelModel):
     frame_times: list[FrameTime] = Field(
         default_factory=list, alias="frameTimes", max_length=500,
     )
+    # Lunchsittningar. Empty means every stage may eat anywhere in the school's
+    # lunch window, which is the behaviour that existed before servings did.
+    lunch_servings: list[LunchServing] = Field(
+        default_factory=list, alias="lunchServings", max_length=500,
+    )
     room_preferences: list[AnonymousRoomPreference] = Field(
         default_factory=list,
         alias="roomPreferences",
@@ -403,6 +439,45 @@ class ScheduledLesson(CamelModel):
     day_of_week: DayOfWeek = Field(alias="dayOfWeek")
     start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
     end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+
+
+class LunchServing(CamelModel):
+    """A lunchsittning: the window one stage of the school may eat in.
+
+    The declaration half of the flow. The school states WHEN a stage eats; the
+    solver still decides which class goes when inside that window, and the seat
+    cumulative splits a stage too big for the hall into waves.
+
+    Windows UNION across matching servings — the opposite of FrameTime, which
+    intersects — because a serving grants permission where a frame imposes a
+    bound. A day-specific row replaces the every-day row for that day. See
+    app/solver/servings.py, which owns the rules.
+    """
+
+    min_grade_level: int = Field(alias="minGradeLevel", ge=0, le=12)
+    max_grade_level: int = Field(alias="maxGradeLevel", ge=0, le=12)
+    #: ISO weekday, or None for every teaching day.
+    day_of_week: DayOfWeek | None = Field(default=None, alias="dayOfWeek")
+    start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    #: Chairs for THIS sitting; None means the hall's own diningSeats.
+    seats: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_window(self) -> LunchServing:
+        """A sitting has to hold something, and its years have to be a span.
+
+        Checked here rather than left to the solver because an inverted window
+        empties a stage's whole domain, and the model would then be infeasible
+        with nothing to point at. A 422 naming the row is an answer.
+        """
+        if self.min_grade_level > self.max_grade_level:
+            msg = "minGradeLevel must not be above maxGradeLevel."
+            raise ValueError(msg)
+        if self.start_time >= self.end_time:
+            msg = "startTime must be before endTime."
+            raise ValueError(msg)
+        return self
 
 
 class ScheduledLunch(CamelModel):

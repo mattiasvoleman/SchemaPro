@@ -11,7 +11,8 @@ from ortools.sat.python import cp_model
 
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError, SolverBuildError
-from app.solver.frames import day_windows
+from app.solver.frames import day_windows, span_of
+from app.solver.servings import allowed_starts
 from app.schemas.schedule import (
     AnonymousRoomPreference,
     AnonymousConstraint,
@@ -20,6 +21,7 @@ from app.schemas.schedule import (
     AnonymousRoom,
     FixedLesson,
     FrameTime,
+    LunchServing,
     OptimizeScheduleRequest,
     OptimizeScheduleResponse,
     PreviousLesson,
@@ -153,6 +155,7 @@ class SchedulerSolver:
         lunch_starts = self._add_rules_constraints(
             model, registry, decisions, request.rules, day_vars,
             request.fixed_lessons, request.groups, request.constraints,
+            request.lunch_servings, request.frame_times,
             request.group_conflicts,
         )
         if include_objective:
@@ -679,7 +682,7 @@ class SchedulerSolver:
             # sentence made it so. Caught here it names the requirement, the
             # window that remains, and the lesson length that will not fit.
             if request.frame_times:
-                windows = day_windows(request.frame_times, requirement, self._grid)
+                windows = day_windows(request.frame_times, span_of(requirement), self._grid)
                 widest = max(
                     (close - open_slot for open_slot, close in windows.values()),
                     default=0,
@@ -803,6 +806,92 @@ class SchedulerSolver:
                 )
                 raise InvalidScheduleInputError(msg)
 
+        # The declarations, before either subtraction: a serving or a frame too
+        # tight to hold the break empties the domain outright, and an empty
+        # domain is a proof CP-SAT reaches without touching one assumption
+        # literal — an empty conflict core that takes every other cause in the
+        # payload down with it.
+        span_by_group = {
+            group.id: (group.min_grade_level, group.max_grade_level)
+            for group in request.groups
+            if group.min_grade_level is not None and group.max_grade_level is not None
+        }
+        if request.lunch_servings or request.frame_times:
+            for group_id in lunch_group_ids:
+                for day_index, day_of_week in enumerate(self._grid.schedule_days):
+                    if (group_id, day_index) in exempt_days:
+                        continue
+                    declared = self._declared_lunch_domain(
+                        request.lunch_servings,
+                        request.frame_times,
+                        span_by_group.get(group_id),
+                        day_of_week,
+                        day_index * slots_per_day,
+                        window_start,
+                        window_end,
+                        lunch_slots,
+                    )
+                    if declared is not None and declared.is_empty():
+                        msg = (
+                            f"No lunch serving leaves student group {group_id} "
+                            f"room for a {rules.lunch_minutes}-minute meal on "
+                            f"day {day_of_week}. Widen the sitting, shorten the "
+                            f"break, or check the stage's frame times."
+                        )
+                        raise InvalidScheduleInputError(msg)
+
+        # Can the declared sittings physically feed the stages that must use
+        # them? A window wide enough to hold ONE meal can still be far too small
+        # for a stage's whole headcount, and that failure lands in the seat
+        # cumulative — an INFEASIBLE with no assumption to name, on a payload
+        # whose windows all look reasonable.
+        #
+        # The bound is student-minutes, which is the cumulative's own
+        # relaxation: over a window of W minutes with S chairs, at most S x W
+        # student-minutes can be served, and a stage of N children eating for L
+        # minutes needs N x L. Violating it proves infeasibility, so refusing
+        # here can never refuse a flow that would have worked.
+        #
+        # Counted only for groups this serving is the ONLY one open to. A group
+        # with a choice of sittings could go to the other one, and charging it
+        # to both would refuse schools whose overlapping windows are exactly how
+        # they cope.
+        if request.lunch_servings and rules.dining_seats is not None:
+            headcount_by_group = _lunch_headcounts(request.groups)
+            for day_index, day_of_week in enumerate(self._grid.schedule_days):
+                applicable: dict[UUID, list[LunchServing]] = {}
+                for group_id in lunch_group_ids:
+                    if (group_id, day_index) in exempt_days:
+                        continue
+                    matching = _servings_for(
+                        request.lunch_servings, span_by_group.get(group_id), day_of_week,
+                    )
+                    if matching:
+                        applicable[group_id] = matching
+
+                for serving in request.lunch_servings:
+                    captive = sum(
+                        headcount_by_group.get(group_id, 0)
+                        for group_id, options in applicable.items()
+                        if options == [serving]
+                    )
+                    if captive == 0:
+                        continue
+                    seats = serving.seats if serving.seats is not None else rules.dining_seats
+                    minutes = _clock_minutes(serving.end_time) - _clock_minutes(
+                        serving.start_time,
+                    )
+                    if captive * rules.lunch_minutes > seats * minutes:
+                        msg = (
+                            f"The {serving.start_time[:5]}-{serving.end_time[:5]} "
+                            f"sitting for years {serving.min_grade_level}-"
+                            f"{serving.max_grade_level} cannot feed {captive} "
+                            f"students {rules.lunch_minutes} minutes each with "
+                            f"{seats} seats. Widen the sitting, add seats, or "
+                            f"split the stage across two sittings."
+                        )
+                        raise InvalidScheduleInputError(msg)
+
         # The same question of the school's own reservations. Separate loop and
         # separate sentence: a lesson to move and a rule to change are fixed in
         # two different screens, and one message covering both would send half
@@ -825,26 +914,62 @@ class SchedulerSolver:
                 )
                 raise InvalidScheduleInputError(msg)
 
-        # And the pair together. Each subtraction can leave room on its own
-        # while their intersection is empty — a locked lesson over the first
-        # half of the window and a rule over the second is the ordinary way to
-        # get there, and neither loop above would say a word about it.
-        for key in (set(blocked_starts) | set(closed_starts)) - exempt_days:
-            group_id, day_index = key
-            allowed = self._admissible_lunch_starts(
-                day_index * slots_per_day,
-                window_start,
-                window_end,
-                lunch_slots,
-                blocked_starts.get(key, []) + closed_starts.get(key, []),
-            )
-            if allowed.is_empty():
+        # ALL FOUR SOURCES TOGETHER, last, because each can leave room on its own
+        # while the intersection is empty. A locked lesson over the first half
+        # of a sitting and a frame closing the second half is the ordinary way
+        # to get there, and no single-cause loop above says a word about it.
+        #
+        # Left to the model this is an empty variable domain — a proof CP-SAT
+        # reaches without touching an assumption literal. It does produce a
+        # conflict analysis here, because the locked-lesson literal happens to
+        # be in the core, but that is luck: it names one contributor of four and
+        # arrives as INFEASIBLE rather than as something to fix.
+        for group_id in lunch_group_ids:
+            for day_index, day_of_week in enumerate(self._grid.schedule_days):
+                key = (group_id, day_index)
+                if key in exempt_days:
+                    continue
+                allowed = self._admissible_lunch_starts(
+                    day_index * slots_per_day,
+                    window_start,
+                    window_end,
+                    lunch_slots,
+                    blocked_starts.get(key, []) + closed_starts.get(key, []),
+                )
+                declared = self._declared_lunch_domain(
+                    request.lunch_servings,
+                    request.frame_times,
+                    span_by_group.get(group_id),
+                    day_of_week,
+                    day_index * slots_per_day,
+                    window_start,
+                    window_end,
+                    lunch_slots,
+                )
+                if declared is not None:
+                    allowed = allowed.intersection_with(declared)
+                if not allowed.is_empty():
+                    continue
+
+                # Name what is actually in play, so the sentence sends the
+                # reader to the screen that holds the fix.
+                causes: list[str] = []
+                if blocked_starts.get(key):
+                    causes.append("locked lessons")
+                if closed_starts.get(key):
+                    causes.append("availability rules")
+                if declared is not None:
+                    causes.append("the declared lunch sittings")
+                named = (
+                    " and ".join(causes)
+                    if len(causes) < 3
+                    else ", ".join(causes[:-1]) + " and " + causes[-1]
+                )
                 msg = (
-                    f"Locked lessons and availability rules together leave "
-                    f"student group {group_id} no {rules.lunch_minutes}-minute "
-                    f"lunch break inside {rules.lunch_start_time}-"
-                    f"{rules.lunch_end_time} on day "
-                    f"{self._grid.schedule_days[day_index]}."
+                    f"Together, {named} leave student group {group_id} no "
+                    f"{rules.lunch_minutes}-minute lunch break inside "
+                    f"{rules.lunch_start_time}-{rules.lunch_end_time} on day "
+                    f"{day_of_week}."
                 )
                 raise InvalidScheduleInputError(msg)
 
@@ -877,7 +1002,7 @@ class SchedulerSolver:
             # it always was. _validate_request has already refused the case
             # where the windows leave a requirement nowhere to go, so every
             # interval below is non-empty.
-            windows = day_windows(frames, requirement, self._grid)
+            windows = day_windows(frames, span_of(requirement), self._grid)
             start_domain = cp_model.Domain.FromIntervals(
                 [
                     [
@@ -1131,8 +1256,22 @@ class SchedulerSolver:
             # One row, every group of those years — including the teaching
             # groups, whose own grade level is null but whose members are year
             # 7 all the same. Fanning this out into one constraint per group in
-            # the gateway would turn "year 7 eats at 11:30" into sixty rows
+            # the gateway would turn "hold year 7 free at 11:30" into sixty rows
             # against a payload capped at five thousand.
+            #
+            # THIS EVICTS LESSONS AND NOTHING ELSE. The example here used to
+            # read "year 7 eats at 11:30", which was wrong in a way that
+            # mattered: a reservation empties the half hour of LESSONS and says
+            # nothing about where the meal goes, so a school following that
+            # advice got a hole and a lunch somewhere else entirely. A sitting
+            # is declared with LunchServing, which the lunch variable's own
+            # domain reads.
+            #
+            # And a GRADE_LEVEL row deliberately does NOT subtract from that
+            # domain, unlike a STUDENT_GROUP one. Schools were told to write
+            # sittings this way; making the rows close the lunch would push the
+            # meal out of exactly the window they reserved FOR it, and break the
+            # schools that followed our own documentation.
             for decision in decisions:
                 if _grade_span_overlaps(constraint, decision.lesson.requirement):
                     affected.append((decision, None))
@@ -1667,6 +1806,70 @@ class SchedulerSolver:
             )
         return allowed
 
+    def _declared_lunch_domain(
+        self,
+        servings: list[LunchServing],
+        frames: list[FrameTime],
+        span: tuple[int, int] | None,
+        day_of_week: int,
+        day_offset: int,
+        window_start: int,
+        window_end: int,
+        lunch_slots: int,
+    ) -> cp_model.Domain | None:
+        """Where this stage's meal may start on this day, in ABSOLUTE slots.
+
+        Two declarations meet here and they are not the same kind of thing. A
+        SERVING says when the stage eats — a permission, so several union. A
+        FRAME says which hours the stage may be taught in at all — a bound, so
+        several intersect, and the meal has to sit inside it like everything
+        else does. A school that opens the hall until 13:30 for a stage whose
+        day ends at 13:00 has said two things, and the narrower one wins.
+
+        None means nothing was declared for this group on this day: neither a
+        serving nor a frame reaches it, and the school-wide lunch window stands
+        untouched. An EMPTY domain is the other answer entirely — a declaration
+        too tight to hold the break — and _validate_request refuses that by name
+        before a solve begins.
+        """
+        serving_domain = allowed_starts(servings, span, day_of_week, lunch_slots, self._grid)
+
+        frame_domain: cp_model.Domain | None = None
+        if frames and span is not None:
+            windows = day_windows(frames, span, self._grid)
+            day_index = day_offset // self._grid.slots_per_day
+            window = windows.get(day_index)
+            if window is None:
+                # The frames closed this day for the stage. Nowhere to eat.
+                frame_domain = cp_model.Domain.FromIntervals([])
+            else:
+                open_slot, close_slot = window
+                frame_domain = (
+                    cp_model.Domain(open_slot, close_slot - lunch_slots)
+                    if close_slot - lunch_slots >= open_slot
+                    else cp_model.Domain.FromIntervals([])
+                )
+
+        if serving_domain is None and frame_domain is None:
+            return None
+
+        declared = serving_domain if serving_domain is not None else frame_domain
+        if serving_domain is not None and frame_domain is not None:
+            declared = serving_domain.intersection_with(frame_domain)
+
+        # Day-local so far, because both sources reason inside one day. The
+        # variable lives on the week's line, so shift once, here, rather than in
+        # two modules that would then have to agree about it.
+        assert declared is not None
+        return cp_model.Domain.FromIntervals(
+            [
+                [day_offset + low, day_offset + high]
+                for low, high in _domain_intervals(declared)
+            ],
+        ).intersection_with(
+            cp_model.Domain(day_offset + window_start, day_offset + window_end - lunch_slots),
+        )
+
     def _lunch_starts_blocked_by_constraints(
         self,
         constraints: list[AnonymousConstraint],
@@ -1838,6 +2041,8 @@ class SchedulerSolver:
         fixed_lessons: list[FixedLesson],
         groups: list[AnonymousGroup],
         constraints: list[AnonymousConstraint],
+        servings: list[LunchServing],
+        frames: list[FrameTime],
         group_conflicts: list[tuple[UUID, UUID]] | None = None,
     ) -> dict[tuple[UUID, int], cp_model.IntVar]:
         """Hard school rules: lunch break, dining hall seats, lessons per day.
@@ -1922,6 +2127,14 @@ class SchedulerSolver:
             # while being plainly visible everywhere else.
             lunch_group_ids = _lunch_group_ids(by_group, groups)
             headcount_by_group = _lunch_headcounts(groups)
+            # A meal has no requirement, so the stage it belongs to comes off
+            # the group itself. A group with no derivable years matches no
+            # serving and no frame and keeps the school-wide window.
+            span_by_group = {
+                group.id: (group.min_grade_level, group.max_grade_level)
+                for group in groups
+                if group.min_grade_level is not None and group.max_grade_level is not None
+            }
 
             # Lunch starts a locked lesson has already taken away. Computed
             # once for the whole model: the windows are constant, so this is
@@ -2031,6 +2244,30 @@ class SchedulerSolver:
                         f"lunchstart_{group_id}_{day_index}",
                     )
                     lunch_starts[(group_id, day_index)] = lunch_start
+
+                    # The school's own sentence about when this stage eats, and
+                    # the hours its stage may be taught in at all. Both narrow
+                    # the DOMAIN rather than forbidding intervals in it — the
+                    # same reason a frame narrows a lesson's start.
+                    #
+                    # UNCONDITIONAL, not under an assumption literal, unlike the
+                    # two subtractions below. A narrowed domain that turns out
+                    # empty is refused by name in _validate_request before any
+                    # solve begins, so CP-SAT never meets one; an assumption
+                    # would buy a conflict core for a case that cannot reach it.
+                    declared = self._declared_lunch_domain(
+                        servings,
+                        frames,
+                        span_by_group.get(group_id),
+                        self._grid.schedule_days[day_index],
+                        day_offset,
+                        window_start,
+                        window_end,
+                        lunch_slots,
+                    )
+                    if declared is not None:
+                        model.AddLinearExpressionInDomain(lunch_start, declared)
+
                     forbidden = blocked_starts.get((group_id, day_index))
                     if forbidden:
                         # UNDER AN ASSUMPTION LITERAL, not bare. A bare domain
@@ -2301,6 +2538,40 @@ class SchedulerSolver:
 def _hhmmss_to_minutes(value: str) -> int:
     hours, minutes, _seconds = (int(part) for part in value.split(":"))
     return hours * 60 + minutes
+
+
+def _clock_minutes(value: str) -> int:
+    hours, minutes, _seconds = (int(part) for part in value.split(":"))
+    return hours * 60 + minutes
+
+
+def _servings_for(
+    servings: list[LunchServing],
+    span: tuple[int, int] | None,
+    day_of_week: int,
+) -> list[LunchServing]:
+    """The sittings open to one stage on one day, in declaration order.
+
+    The same shadowing rule servings.allowed_starts applies — a day-specific row
+    replaces the every-day rows — kept here rather than duplicated because the
+    pre-flight has to agree with the domain it is predicting.
+    """
+    if span is None:
+        return []
+    span_min, span_max = span
+    matching = [
+        serving
+        for serving in servings
+        if not (span_max < serving.min_grade_level or span_min > serving.max_grade_level)
+    ]
+    today = [serving for serving in matching if serving.day_of_week == day_of_week]
+    return today or [serving for serving in matching if serving.day_of_week is None]
+
+
+def _domain_intervals(domain: cp_model.Domain) -> list[tuple[int, int]]:
+    """A Domain's [lo, hi] pairs. FlattenedIntervals() returns them flat."""
+    flat = domain.FlattenedIntervals()
+    return [(flat[i], flat[i + 1]) for i in range(0, len(flat), 2)]
 
 
 def _lunch_window_is_set(rules: ScheduleRules) -> bool:

@@ -541,6 +541,8 @@ describe('Planning surface (e2e)', () => {
       // an outsider the shape of a school's day.
       ['POST', '/api/v1/frame-times'],
       ['GET', '/api/v1/frame-times'],
+      ['POST', '/api/v1/lunch-servings'],
+      ['GET', '/api/v1/lunch-servings'],
     ] as const;
 
     it.each(adminOnly)('denies a teacher on %s %s', async (method, path) => {

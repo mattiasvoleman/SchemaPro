@@ -14,10 +14,15 @@ export type ConstraintKind = 'UNAVAILABLE' | 'PREFERRED_FREE' | 'PREFERRED_BUSY'
  * GRADE_LEVEL is the one target that is not a row in any table: there is no
  * "årskurs 5" to point at, so such a constraint carries a year range instead of
  * a resource id and the engine matches it against each group's own year span.
- * A school reserving a lunch sitting for åk 4-6 authors one rule rather than
- * one per class — and the rule then also catches a teaching group whose own
+ * A school holding åk 4-6 free at some hour authors one rule rather than one
+ * per class — and the rule then also catches a teaching group whose own
  * gradeLevel is null but whose members are year 5, which a group-targeted rule
  * never could.
+ *
+ * It evicts LESSONS from that hour and says nothing about where the meal goes.
+ * This comment used to offer "reserving a lunch sitting" as the example, which
+ * left schools with a hole and a lunch somewhere else; a sitting is declared
+ * with a LunchServing, which the lunch variable reads as its own domain.
  */
 export type ResourceKind = 'TEACHER' | 'ROOM' | 'STUDENT_GROUP' | 'GRADE_LEVEL';
 /**
@@ -63,6 +68,44 @@ export interface AnonymousRequirement {
 export interface AnonymousGroup {
   id: string;
   lunchHeadcount: number;
+  /**
+   * The years this group holds, derived from its members' home classes with the
+   * group's own year as the fallback — the same derivation the requirements use.
+   *
+   * Needed because a lunch sitting and a ramtid both reach a STAGE, and a meal
+   * has no requirement to read a span off: a class whose whole week is hand-
+   * placed arrives carrying no requirement at all and still eats.
+   *
+   * Both bounds or neither. Null means "unknown", not year 0 — such a group
+   * matches no sitting and no frame and keeps the school-wide lunch window,
+   * because guessing would sweep every yearless group into a sitting written
+   * for one stage.
+   */
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+}
+
+/**
+ * A lunchsittning: the window one stage of the school may eat in.
+ *
+ * Not anonymised, and there is nothing to anonymise — a sitting names a span of
+ * years, which is a property of the timetable rather than of a person or a room.
+ *
+ * The engine reads it as the DOMAIN of the meal's start. Several sittings that
+ * reach one group UNION (a serving grants permission), which is the opposite of
+ * what frame times do (a frame imposes a bound, so several intersect).
+ */
+export interface AnonymousLunchServing {
+  minGradeLevel: number;
+  maxGradeLevel: number;
+  /** ISO weekday 1-7, or null for every teaching day. */
+  dayOfWeek: DayOfWeek | null;
+  /** HH:MM:SS */
+  startTime: string;
+  /** HH:MM:SS */
+  endTime: string;
+  /** Chairs for this sitting; null means the hall's own diningSeats. */
+  seats: number | null;
 }
 
 export interface AnonymousRoom {
@@ -201,6 +244,8 @@ export interface AiEngineScheduleRequest {
   constraints: AnonymousConstraint[];
   /** Ramtider. Empty means every stage may use the whole configured day. */
   frameTimes: AnonymousFrameTime[];
+  /** Lunchsittningar. Empty means the whole lunch window is open to everyone. */
+  lunchServings: AnonymousLunchServing[];
   /** Locked master lessons the solver must plan around (never re-placed). */
   fixedLessons: AnonymousFixedLesson[];
   /** Every group the week concerns, with its dining-hall headcount. */

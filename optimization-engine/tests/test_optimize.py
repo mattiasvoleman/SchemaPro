@@ -3558,6 +3558,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         AnonymousGroup,
         AnonymousRequirement,
         FrameTime,
+        LunchServing,
         OptimizeScheduleRequest,
         ScheduleRules,
     )
@@ -3570,6 +3571,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "rooms",
         "constraints",
         "frameTimes",
+        "lunchServings",
         "roomPreferences",
         "fixedLessons",
         "groupConflicts",
@@ -3577,7 +3579,22 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "weights",
         "rules",
     }
-    assert _field_names(AnonymousGroup) == {"id", "lunchHeadcount"}
+    # The group's years, so a serving and a frame can reach a MEAL — which has
+    # no requirement to read a span off.
+    assert _field_names(AnonymousGroup) == {
+        "id",
+        "lunchHeadcount",
+        "minGradeLevel",
+        "maxGradeLevel",
+    }
+    assert _field_names(LunchServing) == {
+        "minGradeLevel",
+        "maxGradeLevel",
+        "dayOfWeek",
+        "startTime",
+        "endTime",
+        "seats",
+    }
     assert _field_names(FrameTime) == {
         "minGradeLevel",
         "maxGradeLevel",
@@ -4295,4 +4312,276 @@ def test_a_locked_lesson_and_a_reservation_that_only_together_leave_nothing(
     )
 
     assert response.status_code == 400, response.text
-    assert "together" in response.json()["message"]
+    assert "Together" in response.json()["message"]
+
+
+# ---------------------------------------------------------------------------
+# Lunchflödet
+#
+# test_servings.py owns the window rule. These prove the flow a school actually
+# operates: stages eating in the order the school wrote, a stage bigger than the
+# hall split into waves by the solver, and the two ways a declaration can be
+# impossible answered by name rather than as "no timetable exists".
+# ---------------------------------------------------------------------------
+
+
+def _school(stages: list[tuple[int, int, int]], **rules: object) -> dict[str, object]:
+    """A school of `stages`, each (minYear, maxYear, classes) with 30 pupils."""
+    groups: list[dict[str, object]] = []
+    requirements: list[dict[str, object]] = []
+    for min_year, max_year, classes in stages:
+        for _ in range(classes):
+            group_id = str(uuid4())
+            groups.append(
+                {
+                    "id": group_id,
+                    "lunchHeadcount": 30,
+                    "minGradeLevel": min_year,
+                    "maxGradeLevel": max_year,
+                },
+            )
+            requirements.append(
+                {
+                    "id": str(uuid4()),
+                    "subjectId": str(uuid4()),
+                    "studentGroupId": group_id,
+                    "teacherId": str(uuid4()),
+                    "lessonsPerWeek": 3,
+                    "minutesPerLesson": 60,
+                    "studentGroupSize": 30,
+                },
+            )
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": requirements,
+        "groups": groups,
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in requirements],
+        "constraints": [],
+        "rules": {
+            "lunchStartTime": "10:30:00",
+            "lunchEndTime": "13:30:00",
+            "lunchMinutes": 30,
+            **rules,
+        },
+    }
+
+
+def _sitting(min_year: int, max_year: int, start: str, end: str, **extra: object) -> dict:
+    return {
+        "minGradeLevel": min_year,
+        "maxGradeLevel": max_year,
+        "dayOfWeek": None,
+        "startTime": f"{start}:00",
+        "endTime": f"{end}:00",
+        **extra,
+    }
+
+
+def _spans_of(payload: dict[str, object]) -> dict[str, tuple[int, int]]:
+    return {
+        group["id"]: (group["minGradeLevel"], group["maxGradeLevel"])  # type: ignore[index]
+        for group in payload["groups"]  # type: ignore[union-attr]
+    }
+
+
+def test_the_stages_eat_in_the_order_the_school_wrote(client: TestClient) -> None:
+    payload = _school([(0, 3, 1), (4, 6, 1), (7, 9, 1)], diningSeats=60)
+    payload["lunchServings"] = [
+        _sitting(0, 3, "11:00", "11:40"),
+        _sitting(4, 6, "11:40", "12:20"),
+        _sitting(7, 9, "12:20", "13:00"),
+    ]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200, response.text
+    spans = _spans_of(payload)
+    for lunch in response.json()["lunches"]:
+        low, high = spans[lunch["studentGroupId"]]
+        window = {(0, 3): ("11:00", "11:40"), (4, 6): ("11:40", "12:20"), (7, 9): ("12:20", "13:00")}[
+            (low, high)
+        ]
+        assert lunch["startTime"] >= f"{window[0]}:00"
+        assert lunch["endTime"] <= f"{window[1]}:00"
+
+
+def test_a_stage_bigger_than_the_hall_is_split_into_waves(client: TestClient) -> None:
+    """The user's own requirement: the system splits, the school does not.
+
+    Four classes of thirty against sixty seats cannot all sit at once, and the
+    school declared ONE window. The solver has to produce two waves inside it.
+    """
+    payload = _school([(4, 6, 4)], diningSeats=60)
+    payload["lunchServings"] = [_sitting(4, 6, "11:00", "12:30")]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200, response.text
+    monday = [
+        lunch for lunch in response.json()["lunches"] if lunch["dayOfWeek"] == 1
+    ]
+    assert len(monday) == 4
+    # At least two distinct sitting times, and nobody outside the window.
+    assert len({lunch["startTime"] for lunch in monday}) >= 2
+    for lunch in monday:
+        assert lunch["startTime"] >= "11:00:00"
+        assert lunch["endTime"] <= "12:30:00"
+
+
+def test_a_sitting_too_short_for_the_meal_is_named(client: TestClient) -> None:
+    payload = _school([(4, 6, 1)])
+    payload["lunchServings"] = [_sitting(4, 6, "11:00", "11:20")]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400, response.text
+    message = response.json()["message"]
+    assert "No lunch serving leaves student group" in message
+    assert "30-minute meal" in message
+
+
+def test_a_sitting_too_small_for_the_stage_is_named(client: TestClient) -> None:
+    """Wide enough for ONE meal, far too small for the stage's headcount.
+
+    This failure lands in the seat cumulative — an INFEASIBLE with no assumption
+    to name, on a payload whose windows all look reasonable. The bound is
+    student-minutes, which is the cumulative's own relaxation, so refusing here
+    can never refuse a flow that would have worked.
+    """
+    payload = _school([(4, 6, 4)], diningSeats=60)
+    payload["lunchServings"] = [_sitting(4, 6, "11:00", "11:30")]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400, response.text
+    message = response.json()["message"]
+    assert "cannot feed 120 students" in message
+    assert "60 seats" in message
+    # Three things the school could change, not just a verdict.
+    assert "split the stage across two sittings" in message
+
+
+def test_a_group_with_a_choice_of_sittings_is_not_charged_to_both(
+    client: TestClient,
+) -> None:
+    """Overlapping windows are how a school copes, not a reason to refuse.
+
+    Each sitting alone looks too small for the whole stage; together they are
+    ample. Charging a group that could attend either to both would refuse the
+    arrangement that works.
+    """
+    payload = _school([(4, 6, 4)], diningSeats=60)
+    payload["lunchServings"] = [
+        _sitting(4, 6, "11:00", "11:30"),
+        _sitting(4, 6, "11:30", "12:00"),
+    ]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_a_frame_narrows_a_sitting_that_reaches_past_the_stage_s_day(
+    client: TestClient,
+) -> None:
+    """Two declarations meet, and the narrower one wins.
+
+    A serving PERMITS and a frame BOUNDS. A hall open to åk 4-6 until 13:00 and
+    a stage whose day ends at 12:00 is a school that has said two things; the
+    meal has to sit inside both.
+    """
+    payload = _school([(4, 6, 1)])
+    payload["lunchServings"] = [_sitting(4, 6, "11:00", "13:00")]
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 4,
+            "maxGradeLevel": 6,
+            "dayOfWeek": None,
+            "startTime": "08:00:00",
+            "endTime": "12:00:00",
+        },
+    ]
+    # The locked morning is what makes this a discriminator rather than a
+    # coincidence. The sitting alone would still allow 12:00-12:30, so a solver
+    # that ignored the frame would answer OPTIMAL and place the meal after the
+    # stage's day has ended. Asserting a time instead would prove nothing: with
+    # no objective term on lunch, 11:00 comes back either way.
+    group_id = payload["groups"][0]["id"]  # type: ignore[index]
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "teacherId": None,
+            "coTeacherId": None,
+            "studentGroupId": group_id,
+            "roomId": None,
+            "dayOfWeek": 1,
+            "startTime": "11:00:00",
+            "endTime": "12:00:00",
+        },
+    ]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400, response.text
+    message = response.json()["message"]
+    assert "locked lessons" in message
+    assert "the declared lunch sittings" in message
+
+
+def test_a_sitting_may_carry_its_own_seat_count(client: TestClient) -> None:
+    """One serving line closed, without restating the hall's own size.
+
+    Charged against LunchSettings.diningSeats instead, this school looks ample:
+    120 students, 120 chairs. The sitting's own thirty is what makes it
+    impossible, and only reading `seats` can see that.
+    """
+    payload = _school([(4, 6, 4)], diningSeats=120)
+    payload["lunchServings"] = [_sitting(4, 6, "11:00", "11:30", seats=30)]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "30 seats" in response.json()["message"]
+
+
+def test_a_sitting_without_its_own_seats_uses_the_hall_s(client: TestClient) -> None:
+    # The control: the same school, the same window, no per-sitting number.
+    payload = _school([(4, 6, 4)], diningSeats=120)
+    payload["lunchServings"] = [_sitting(4, 6, "11:00", "11:30")]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_a_school_with_no_sittings_keeps_the_whole_lunch_window(
+    client: TestClient,
+) -> None:
+    payload = _school([(4, 6, 1)])
+    assert "lunchServings" not in payload
+
+    body = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    ).json()
+
+    assert len(body["lunches"]) == 5
+    for lunch in body["lunches"]:
+        assert lunch["startTime"] >= "10:30:00"
+        assert lunch["endTime"] <= "13:30:00"

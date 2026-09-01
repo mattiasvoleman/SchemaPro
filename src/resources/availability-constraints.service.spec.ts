@@ -84,7 +84,7 @@ describe('AvailabilityConstraintsService', () => {
     it('creates a year-range lock that names no resource at all', async () => {
       // The one target that is not a row in any table: there is no "årskurs 5"
       // to point at, so the rule carries its own bounds. A school reserving a
-      // lunch sitting for åk 4-6 writes this once instead of once per class.
+      // hour held free for åk 4-6 is written once instead of once per class.
       tx.availabilityConstraint.create.mockResolvedValue({ id: CONSTRAINT_ID });
 
       await service.create(

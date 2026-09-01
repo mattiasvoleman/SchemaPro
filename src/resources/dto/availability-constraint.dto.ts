@@ -37,10 +37,13 @@ export class CreateAvailabilityConstraintDto {
   /**
    * A year range instead of a named resource, for a GRADE_LEVEL lock.
    *
-   * A school reserving a lunch sitting for åk 4-6 authors one rule, not one per
-   * class. The solver matches a group when its own year span OVERLAPS this
-   * range, so a class spanning 6-7 is caught by a 4-6 lock: a reservation holds
-   * students free, and holding someone free needlessly is the safe error.
+   * A school holding åk 4-6 free at some hour authors one rule, not one per
+   * class. It evicts LESSONS from that hour; a lunch sitting is declared with a
+   * LunchServing instead, which is what the solver reads as the meal's window.
+   *
+   * The solver matches a group when its own year span OVERLAPS this range, so a
+   * class spanning 6-7 is caught by a 4-6 lock: a reservation holds students
+   * free, and holding someone free needlessly is the safe error.
    */
   @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.minGradeLevel !== null)
   @IsOptional()
@@ -108,10 +111,13 @@ export class UpdateAvailabilityConstraintDto {
   /**
    * A year range instead of a named resource, for a GRADE_LEVEL lock.
    *
-   * A school reserving a lunch sitting for åk 4-6 authors one rule, not one per
-   * class. The solver matches a group when its own year span OVERLAPS this
-   * range, so a class spanning 6-7 is caught by a 4-6 lock: a reservation holds
-   * students free, and holding someone free needlessly is the safe error.
+   * A school holding åk 4-6 free at some hour authors one rule, not one per
+   * class. It evicts LESSONS from that hour; a lunch sitting is declared with a
+   * LunchServing instead, which is what the solver reads as the meal's window.
+   *
+   * The solver matches a group when its own year span OVERLAPS this range, so a
+   * class spanning 6-7 is caught by a 4-6 lock: a reservation holds students
+   * free, and holding someone free needlessly is the safe error.
    */
   @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.minGradeLevel !== null)
   @IsOptional()

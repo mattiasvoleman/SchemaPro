@@ -31,6 +31,7 @@ const PAYLOAD_FIELDS = [
   'frameTimes',
   'groupConflicts',
   'groups',
+  'lunchServings',
   'previousLessons',
   'requestId',
   'requirements',
@@ -39,7 +40,19 @@ const PAYLOAD_FIELDS = [
   'rules',
 ];
 
-const GROUP_FIELDS = ['id', 'lunchHeadcount'];
+/** The group's years too: a sitting and a frame reach a stage, and a MEAL has
+ *  no requirement to read a span off. */
+const GROUP_FIELDS = ['id', 'lunchHeadcount', 'maxGradeLevel', 'minGradeLevel'];
+
+/** A sitting names a span of years, so there is nothing here to anonymise. */
+const SERVING_FIELDS = [
+  'dayOfWeek',
+  'endTime',
+  'maxGradeLevel',
+  'minGradeLevel',
+  'seats',
+  'startTime',
+];
 
 const REQUIREMENT_FIELDS = [
   'coTeacherId',
@@ -138,6 +151,16 @@ describe('AI engine wire contract', () => {
         type: 'UNAVAILABLE',
       },
     ]);
+    tx['lunchServing']!['findMany']!.mockResolvedValue([
+      {
+        minGradeLevel: 4,
+        maxGradeLevel: 6,
+        dayOfWeek: null,
+        startTime: new Date('1970-01-01T11:40:00.000Z'),
+        endTime: new Date('1970-01-01T12:20:00.000Z'),
+        seats: null,
+      },
+    ]);
     tx['frameTime']!['findMany']!.mockResolvedValue([
       {
         minGradeLevel: 4,
@@ -213,6 +236,14 @@ describe('AI engine wire contract', () => {
 
   it('sends exactly the top-level fields the engine declares', async () => {
     expect(Object.keys(await buildPayload()).sort()).toEqual(PAYLOAD_FIELDS);
+  });
+
+  it('sends exactly the sitting fields the engine declares', async () => {
+    const payload = await buildPayload();
+    const servings = payload['lunchServings'] as Array<Record<string, unknown>>;
+    expect(servings).toHaveLength(1);
+    expect(Object.keys(servings[0]!).sort()).toEqual(SERVING_FIELDS);
+    expect(servings[0]!['startTime']).toBe('11:40:00');
   });
 
   it('sends exactly the frame fields the engine declares', async () => {

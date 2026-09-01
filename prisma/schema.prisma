@@ -139,6 +139,7 @@ model School {
   availabilityConstraints AvailabilityConstraint[]
   schoolBreaks            SchoolBreak[]
   frameTimes              FrameTime[]
+  lunchServings           LunchServing[]
   scheduleChangeLogs      ScheduleChangeLog[]
   scheduleVersions        ScheduleVersion[]
   optimizationJobs        OptimizationJob[]
@@ -1030,6 +1031,39 @@ model FrameTime {
   @@unique([schoolId, minGradeLevel, maxGradeLevel, dayOfWeek], map: "FrameTimes_schoolId_span_dayOfWeek_key")
   @@index([schoolId, dayOfWeek])
   @@map("FrameTimes")
+}
+
+/// Lunchsittningar: the window each stage of the school may eat in.
+///
+/// The declaration half of the lunch flow. The school states when a stage may
+/// eat; the solver decides which class goes when inside that window, splitting
+/// a stage too big for the hall into waves through the seat cumulative.
+///
+/// Windows UNION across spans — the opposite of FrameTime, which intersects —
+/// because a serving grants permission where a frame imposes a bound. A
+/// day-specific row REPLACES the every-day row for that day, so "alla dagar
+/// 12:20-13:00" plus "fredag 11:40-12:20" means Friday is different rather than
+/// wider. No unique key: two rows for one stage on one day are two hand-written
+/// waves. See the migration for the rest.
+model LunchServing {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String   @db.Uuid
+  /// Inclusive, 0-12, both required and ordered — the DB enforces all three.
+  minGradeLevel Int
+  maxGradeLevel Int
+  /// ISO weekday 1-7, or null for every teaching day.
+  dayOfWeek     Int?
+  startTime     DateTime @db.Time(0)
+  endTime       DateTime @db.Time(0)
+  /// Chairs for THIS sitting; null means the hall's own diningSeats.
+  seats         Int?
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, dayOfWeek])
+  @@map("LunchServings")
 }
 
 /// Lov och studiedagar: whole days a school does not teach.

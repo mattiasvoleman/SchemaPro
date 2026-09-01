@@ -32,13 +32,23 @@ if TYPE_CHECKING:
     from app.solver.time_grid import TimeGrid
 
 
-def _matches(frame: FrameTime, requirement: AnonymousRequirement) -> bool:
-    if requirement.min_grade_level is None or requirement.max_grade_level is None:
+def _matches(frame: FrameTime, span: tuple[int, int] | None) -> bool:
+    if span is None:
         return False
-    return not (
-        requirement.max_grade_level < frame.min_grade_level
-        or requirement.min_grade_level > frame.max_grade_level
-    )
+    span_min, span_max = span
+    return not (span_max < frame.min_grade_level or span_min > frame.max_grade_level)
+
+
+def span_of(requirement: AnonymousRequirement) -> tuple[int, int] | None:
+    """A requirement's year span, or None when its group's years are unknown.
+
+    Lifted out of _matches so the same overlap test can answer for a GROUP as
+    well. A frame bounds a stage's day, and a lunch belongs to a stage just as a
+    lesson does — but a sitting has no requirement to read the span off.
+    """
+    if requirement.min_grade_level is None or requirement.max_grade_level is None:
+        return None
+    return (requirement.min_grade_level, requirement.max_grade_level)
 
 
 def _minutes(value: str) -> int:
@@ -48,7 +58,7 @@ def _minutes(value: str) -> int:
 
 def day_windows(
     frames: Sequence[FrameTime],
-    requirement: AnonymousRequirement,
+    span: tuple[int, int] | None,
     grid: TimeGrid,
 ) -> dict[int, tuple[int, int]]:
     """day index -> (first slot a lesson may start, first slot it may not end after).
@@ -71,7 +81,7 @@ def day_windows(
     slot rather than gaining it.
     """
     windows: dict[int, tuple[int, int]] = {}
-    matching = [frame for frame in frames if _matches(frame, requirement)]
+    matching = [frame for frame in frames if _matches(frame, span)]
 
     for day_index, day_of_week in enumerate(grid.schedule_days):
         open_slot = 0

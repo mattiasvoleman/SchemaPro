@@ -18,6 +18,8 @@ import { TeachingRequirementsService } from './teaching-requirements.service';
 import { AvailabilityConstraintsController } from './availability-constraints.controller';
 import { AvailabilityConstraintsService } from './availability-constraints.service';
 import { FrameTimesController } from './frame-times.controller';
+import { LunchServingsController } from './lunch-servings.controller';
+import { LunchServingsService } from './lunch-servings.service';
 import { FrameTimesService } from './frame-times.service';
 import { SchoolBreaksController } from './school-breaks.controller';
 import { SchoolBreaksService } from './school-breaks.service';
@@ -39,6 +41,7 @@ import { SchoolBreaksService } from './school-breaks.service';
     TeachingRequirementsController,
     AvailabilityConstraintsController,
     FrameTimesController,
+    LunchServingsController,
     SchoolBreaksController,
   ],
   providers: [
@@ -52,6 +55,7 @@ import { SchoolBreaksService } from './school-breaks.service';
     TeachingRequirementsService,
     AvailabilityConstraintsService,
     FrameTimesService,
+    LunchServingsService,
     SchoolBreaksService,
   ],
 })

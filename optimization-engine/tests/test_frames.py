@@ -14,8 +14,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.schemas.schedule import AnonymousRequirement, FrameTime
-from app.solver.frames import day_windows
+from app.schemas.schedule import FrameTime
+from app.solver.frames import day_windows, span_of
 from app.solver.time_grid import TimeGrid
 
 # 08:00-18:00, five days, five-minute slots: 120 slots per day. The real grid.
@@ -47,22 +47,17 @@ def frame(
     )
 
 
-def requirement(
-    min_grade: int | None = 4, max_grade: int | None = 4,
-) -> AnonymousRequirement:
-    return AnonymousRequirement.model_validate(
-        {
-            "id": str(uuid4()),
-            "subjectId": str(uuid4()),
-            "studentGroupId": str(uuid4()),
-            "teacherId": str(uuid4()),
-            "lessonsPerWeek": 1,
-            "minutesPerLesson": 60,
-            "studentGroupSize": 24,
-            "minGradeLevel": min_grade,
-            "maxGradeLevel": max_grade,
-        },
-    )
+def years(min_grade: int | None = 4, max_grade: int | None = 4) -> tuple[int, int] | None:
+    """A group's year span, which is all day_windows needs.
+
+    It used to take a whole AnonymousRequirement and read the span off it. A
+    lunch belongs to a stage exactly as a lesson does but has no requirement to
+    read, so the span is now the argument and span_of() lifts it off a
+    requirement at the lesson call site.
+    """
+    if min_grade is None or max_grade is None:
+        return None
+    return (min_grade, max_grade)
 
 
 def slot(clock: str) -> int:
@@ -78,12 +73,12 @@ def slot(clock: str) -> int:
 
 def test_no_frames_leaves_the_whole_day_open() -> None:
     """The behaviour that existed before frames did, stated as a test."""
-    windows = day_windows([], requirement(), GRID)
+    windows = day_windows([], years(), GRID)
     assert windows == {index: (0, SLOTS) for index in range(5)}
 
 
 def test_a_frame_for_another_stage_is_not_applied() -> None:
-    windows = day_windows([frame(7, 9, "08:00", "16:00")], requirement(4, 4), GRID)
+    windows = day_windows([frame(7, 9, "08:00", "16:00")], years(4, 4), GRID)
     assert windows == {index: (0, SLOTS) for index in range(5)}
 
 
@@ -94,7 +89,7 @@ def test_a_group_with_unknown_years_keeps_the_whole_day() -> None:
     a frame written for one stage of the school — and a group with no years is
     the ordinary state of a school that has not entered its pupils yet.
     """
-    windows = day_windows([frame(0, 12, "08:00", "12:00")], requirement(None, None), GRID)
+    windows = day_windows([frame(0, 12, "08:00", "12:00")], years(None, None), GRID)
     assert windows == {index: (0, SLOTS) for index in range(5)}
 
 
@@ -104,12 +99,12 @@ def test_a_group_with_unknown_years_keeps_the_whole_day() -> None:
 
 
 def test_an_every_day_frame_applies_to_every_day() -> None:
-    windows = day_windows([frame(4, 6, "08:00", "15:00")], requirement(4, 4), GRID)
+    windows = day_windows([frame(4, 6, "08:00", "15:00")], years(4, 4), GRID)
     assert windows == {index: (0, slot("15:00")) for index in range(5)}
 
 
 def test_a_weekday_frame_touches_only_that_weekday() -> None:
-    windows = day_windows([frame(4, 6, "08:00", "13:00", day=5)], requirement(4, 4), GRID)
+    windows = day_windows([frame(4, 6, "08:00", "13:00", day=5)], years(4, 4), GRID)
 
     assert windows[4] == (0, slot("13:00"))
     for index in range(4):
@@ -117,7 +112,7 @@ def test_a_weekday_frame_touches_only_that_weekday() -> None:
 
 
 def test_a_late_start_moves_the_open_slot() -> None:
-    windows = day_windows([frame(4, 6, "09:00", "15:00")], requirement(4, 4), GRID)
+    windows = day_windows([frame(4, 6, "09:00", "15:00")], years(4, 4), GRID)
     assert windows[0] == (slot("09:00"), slot("15:00"))
 
 
@@ -135,7 +130,7 @@ def test_a_weekday_frame_narrows_the_every_day_frame() -> None:
     about the week, and the narrower statement is the one it meant.
     """
     frames = [frame(4, 6, "08:00", "15:00"), frame(4, 6, "08:00", "13:00", day=5)]
-    windows = day_windows(frames, requirement(4, 4), GRID)
+    windows = day_windows(frames, years(4, 4), GRID)
 
     assert windows[0] == (0, slot("15:00"))
     assert windows[4] == (0, slot("13:00"))
@@ -149,14 +144,14 @@ def test_a_group_straddling_two_stages_gets_the_tighter_window() -> None:
     one costs the timetable some room, which is the survivable error of the two.
     """
     frames = [frame(4, 6, "08:00", "15:00"), frame(7, 9, "08:00", "16:00")]
-    windows = day_windows(frames, requirement(6, 7), GRID)
+    windows = day_windows(frames, years(6, 7), GRID)
 
     assert windows[0] == (0, slot("15:00"))
 
 
 def test_frames_narrow_from_both_ends_at_once() -> None:
     frames = [frame(4, 6, "09:00", "16:00"), frame(4, 6, "08:00", "15:00", day=1)]
-    windows = day_windows(frames, requirement(4, 4), GRID)
+    windows = day_windows(frames, years(4, 4), GRID)
 
     assert windows[0] == (slot("09:00"), slot("15:00"))
     assert windows[1] == (slot("09:00"), slot("16:00"))
@@ -169,12 +164,12 @@ def test_frames_narrow_from_both_ends_at_once() -> None:
 
 def test_a_frame_wider_than_the_school_day_is_clamped_not_refused() -> None:
     """A school describing hours the engine does not model is not in error."""
-    windows = day_windows([frame(4, 6, "06:00", "22:00")], requirement(4, 4), GRID)
+    windows = day_windows([frame(4, 6, "06:00", "22:00")], years(4, 4), GRID)
     assert windows == {index: (0, SLOTS) for index in range(5)}
 
 
 def test_a_frame_ending_exactly_at_the_day_end_keeps_the_last_slot() -> None:
-    windows = day_windows([frame(4, 6, "08:00", "18:00")], requirement(4, 4), GRID)
+    windows = day_windows([frame(4, 6, "08:00", "18:00")], years(4, 4), GRID)
     assert windows[0] == (0, SLOTS)
 
 
@@ -185,18 +180,18 @@ def test_a_frame_entirely_before_the_school_day_closes_it() -> None:
     and the caller has to be able to tell them apart: one is a school that
     wrote nothing about Friday, the other is a school that closed it.
     """
-    windows = day_windows([frame(4, 6, "05:00", "07:00")], requirement(4, 4), GRID)
+    windows = day_windows([frame(4, 6, "05:00", "07:00")], years(4, 4), GRID)
     assert windows == {}
 
 
 def test_a_frame_entirely_after_the_school_day_closes_it() -> None:
-    windows = day_windows([frame(4, 6, "19:00", "21:00")], requirement(4, 4), GRID)
+    windows = day_windows([frame(4, 6, "19:00", "21:00")], years(4, 4), GRID)
     assert windows == {}
 
 
 def test_two_frames_that_cannot_both_hold_close_the_day() -> None:
     frames = [frame(4, 6, "08:00", "10:00"), frame(4, 6, "14:00", "16:00")]
-    assert day_windows(frames, requirement(4, 4), GRID) == {}
+    assert day_windows(frames, years(4, 4), GRID) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -225,5 +220,5 @@ def test_a_frame_off_the_grid_loses_the_partial_slot(
         day_start_minutes=480, day_end_minutes=1080, slot_minutes=15,
         schedule_days=(1, 2, 3, 4, 5),
     )
-    windows = day_windows([frame(4, 6, start, end)], requirement(4, 4), grid)
+    windows = day_windows([frame(4, 6, start, end)], years(4, 4), grid)
     assert windows[0] == expected
