@@ -30,6 +30,7 @@ import type {
   Subject,
   TeachingRequirement,
   FrameTime,
+  LunchServing,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -251,6 +252,25 @@ export function useFrameTimes() {
       selectAll<FrameTime>(
         "FrameTimes",
         "id, minGradeLevel, maxGradeLevel, dayOfWeek, startTime, endTime",
+        "minGradeLevel",
+      ),
+  });
+}
+
+/**
+ * The school's lunchsittningar — when each stage eats.
+ *
+ * School-scoped and unpaged for the same reasons useFrameTimes is: the flow
+ * describes the building and the kitchen rather than one läsår, and three or
+ * four stages across five weekdays is a table of tens, not thousands.
+ */
+export function useLunchServings() {
+  return useQuery({
+    queryKey: ["lunch-servings"],
+    queryFn: () =>
+      selectAll<LunchServing>(
+        "LunchServings",
+        "id, minGradeLevel, maxGradeLevel, dayOfWeek, startTime, endTime, seats",
         "minGradeLevel",
       ),
   });

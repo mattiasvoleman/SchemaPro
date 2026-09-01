@@ -214,6 +214,14 @@ export interface AvailabilityConstraint {
 export type { FrameTime } from "@/lib/frame-times";
 
 /**
+ * A lunchsittning: the window one stage of the school may eat in.
+ *
+ * Re-exported from lib/lunch-servings.ts, which owns the shape because it owns
+ * the rules that read it — the union across spans and the weekday shadow.
+ */
+export type { LunchServing } from "@/lib/lunch-servings";
+
+/**
  * The school's lunch rules and the size of its dining hall — one row, so the
  * hooks read and write it as a single value rather than a collection.
  *
