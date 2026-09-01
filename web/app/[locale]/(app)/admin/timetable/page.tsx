@@ -55,6 +55,7 @@ import { ApiError } from "@/lib/api";
 import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { subjectColor, timeToMinutes } from "@/lib/utils";
+import { audienceFor, buildRosterIndex, type Audience } from "@/lib/lesson-audience";
 import {
   buildGroupConflictMap,
   detectConflicts,
@@ -300,6 +301,20 @@ export default function TimetablePage() {
     [studentGroupOf, memberships],
   );
 
+  /**
+   * The same pupils, counted rather than merely paired.
+   *
+   * Deliberately not built on groupConflictMap above: that is a BOOLEAN "these
+   * two groups share at least one pupil", which cannot tell a two-pupil choir
+   * from a fourteen-pupil maths half and never reads a lesson's individually
+   * named studentIds at all. Both indexes are wanted — one answers "may these
+   * collide", this one answers "how much of this class is in the room".
+   */
+  const rosterIndex = useMemo(
+    () => buildRosterIndex(studentGroupOf, memberships),
+    [studentGroupOf, memberships],
+  );
+
   const subjectById = useMemo(
     () => new Map((subjects ?? []).map((subject) => [subject.id, subject])),
     [subjects],
@@ -455,7 +470,6 @@ export default function TimetablePage() {
   );
 
   /**
-   * The lunch drawn behind the lessons  /**
    * The lunch drawn behind the lessons — but ONLY when one class is in view.
    *
    * A sitting belongs to a group. The default view is every group at once, and
@@ -476,18 +490,39 @@ export default function TimetablePage() {
       }));
   }, [lunchSittings, groupFilter, tLunch]);
 
+  /**
+   * lessonId → what this lesson means for the class in view. Empty for "all".
+   *
+   * Resolved ONCE here rather than inside toGridLesson, which runs for every
+   * card on every frame of a drag; the cards only ever read this map.
+   */
+  const audienceByLesson = useMemo(() => {
+    const map = new Map<string, Audience>();
+    if (groupFilter === ALL) return map;
+    for (const lesson of lessons ?? []) {
+      const audience = audienceFor(lesson, groupFilter, rosterIndex);
+      if (audience) map.set(lesson.id, audience);
+    }
+    return map;
+  }, [lessons, groupFilter, rosterIndex]);
+
   const filtered = useMemo(
     () =>
       (lessons ?? []).filter(
         (lesson) =>
-          (groupFilter === ALL || lesson.studentGroupId === groupFilter) &&
+          // Every lesson holding one of this class's pupils, not only the ones
+          // filed under its name: 4.1's maths is filed under 4ma1, and the
+          // pupils in it already saw it on their own phones — the RLS policy
+          // calendar_lessons_teaching_group_select grants exactly that — while
+          // the administrator filtering to 4.1 did not.
+          (groupFilter === ALL || audienceByLesson.has(lesson.id)) &&
           // Both teachers. A lesson somebody only CO-taught was missing from
           // their own view — the filter asked a name question where the data
           // is a set.
           (teacherFilter === ALL ||
             teacherIdsOf(toPlacement(lesson)).includes(teacherFilter)),
       ),
-    [lessons, groupFilter, teacherFilter],
+    [lessons, groupFilter, teacherFilter, audienceByLesson],
   );
 
   const toGridLesson = useCallback(
@@ -504,8 +539,12 @@ export default function TimetablePage() {
         title: subject?.name ?? "",
         subtitle: [
           [
-            group?.name,
-            lesson.extraGroupIds.length > 0 ? `+${lesson.extraGroupIds.length}` : null,
+            // The classes by NAME. "+1" told a reader that some other class was
+            // in the room without telling them which, and the one thing worth
+            // knowing about a shared lesson is who you are sharing it with.
+            [group?.name, ...lesson.extraGroupIds.map((id) => groupById.get(id)?.name)]
+              .filter(Boolean)
+              .join(" + "),
             lesson.studentIds.length > 0 ? `⊕${lesson.studentIds.length}` : null,
           ]
             .filter(Boolean)
@@ -1250,7 +1289,10 @@ export default function TimetablePage() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Select value={groupFilter} onValueChange={changeFilter(setGroupFilter)}>
-          <SelectTrigger className="w-44">
+          {/* Named because two unlabelled comboboxes sit side by side: a screen
+              reader read both as "Alla klasser"/"Alla lärare" with nothing to
+              say which was which. The keys existed already and went unused. */}
+          <SelectTrigger className="w-44" aria-label={t("filterGroup")}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -1263,7 +1305,7 @@ export default function TimetablePage() {
           </SelectContent>
         </Select>
         <Select value={teacherFilter} onValueChange={changeFilter(setTeacherFilter)}>
-          <SelectTrigger className="w-52">
+          <SelectTrigger className="w-52" aria-label={t("filterTeacher")}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
