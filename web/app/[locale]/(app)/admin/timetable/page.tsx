@@ -58,6 +58,7 @@ import { subjectColor, timeToMinutes } from "@/lib/utils";
 import {
   audienceFor,
   buildRosterIndex,
+  homeClassesReached,
   showsFraction,
   type Audience,
 } from "@/lib/lesson-audience";
@@ -210,6 +211,21 @@ export default function TimetablePage() {
   const history = useScheduleHistory();
   const { peers, setEditing: setRemoteEditing } = useTimetableRealtime();
 
+  /**
+   * A drag that lands on more than one class, held until it is confirmed.
+   *
+   * This page has no other confirmation, and deliberately so: every mutation is
+   * undoable and toasted, so "drag freely, undo if wrong" is the whole idiom.
+   * A drag of a shared lesson is the one case undo does not cover — the classes
+   * it also moved were never on screen, so nothing tells you there was anything
+   * to undo. The dialog's job is to NAME them, not to slow you down.
+   */
+  const [confirming, setConfirming] = useState<{
+    lesson: MasterLesson;
+    change: LessonChange;
+    classes: string[];
+  } | null>(null);
+
   const [groupFilter, setGroupFilter] = useState<string>(ALL);
   const [teacherFilter, setTeacherFilter] = useState<string>(ALL);
   const [publishOpen, setPublishOpen] = useState(false);
@@ -304,6 +320,12 @@ export default function TimetablePage() {
   const groupConflictMap = useMemo(
     () => buildGroupConflictMap(studentGroupOf, memberships ?? []),
     [studentGroupOf, memberships],
+  );
+
+  /** The groups that are somebody's home. A teaching group is not one. */
+  const homeClassIds = useMemo(
+    () => (groups ?? []).filter((g) => g.kind === "CLASS").map((g) => g.id),
+    [groups],
   );
 
   /**
@@ -737,10 +759,9 @@ export default function TimetablePage() {
   // Grid interactions
   // -------------------------------------------------------------------
 
-  const handleGridChange = useCallback(
-    (id: string, change: LessonChange) => {
-      const lesson = lessonById.get(id);
-      if (!lesson) return;
+  /** Applies a drop. Separated so the confirmation can reach it too. */
+  const applyGridChange = useCallback(
+    (lesson: MasterLesson, change: LessonChange) => {
       void undoableUpdate(lesson, {
         dayOfWeek: change.dayOfWeek,
         startTime: minutesToHHMM(change.startMinutes),
@@ -751,7 +772,23 @@ export default function TimetablePage() {
         )
         .catch(showError);
     },
-    [lessonById, undoableUpdate, showError, t],
+    [undoableUpdate, showError, t],
+  );
+
+  const handleGridChange = useCallback(
+    (id: string, change: LessonChange) => {
+      const lesson = lessonById.get(id);
+      if (!lesson) return;
+      // Asked of the LESSON, not of the filter: which class you are looking at
+      // has no bearing on whose week just moved.
+      const classes = homeClassesReached(lesson, homeClassIds, rosterIndex);
+      if (classes.length > 1) {
+        setConfirming({ lesson, change, classes });
+        return;
+      }
+      applyGridChange(lesson, change);
+    },
+    [lessonById, homeClassIds, rosterIndex, applyGridChange],
   );
 
   /** Invalid drop → rank the nearest conflict-free slots and offer them. */
@@ -1455,6 +1492,44 @@ export default function TimetablePage() {
       )}
 
       {/* ---------------- Edit dialog ---------------- */}
+      {/* A drag that lands on classes the administrator was not looking at. */}
+      <Dialog
+        open={confirming !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirming(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("sharedMoveTitle")}</DialogTitle>
+            <DialogDescription>
+              {/* The classes BY NAME. "Flera klasser berörs" would be the same
+                  silence the "+1" badge kept: it tells you something is at
+                  stake without telling you what. */}
+              {t("sharedMoveBody", {
+                classes: (confirming?.classes ?? [])
+                  .map((id) => groupById.get(id)?.name ?? id)
+                  .join(", "),
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirming(null)}>
+              {tCommon("cancel")}
+            </Button>
+            <Button
+              onClick={() => {
+                if (!confirming) return;
+                applyGridChange(confirming.lesson, confirming.change);
+                setConfirming(null);
+              }}
+            >
+              {t("sharedMoveConfirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={editing !== null}
         onOpenChange={(open) => {

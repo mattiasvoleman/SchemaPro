@@ -1,6 +1,6 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TimetablePage from "./page";
 
 /**
@@ -21,7 +21,7 @@ const state = vi.hoisted(() => ({
   memberships: [] as unknown[] | undefined,
 }));
 
-const noMutation = { mutateAsync: vi.fn(), isPending: false };
+const noMutation = { mutateAsync: vi.fn().mockResolvedValue({ id: "x" }), isPending: false };
 
 vi.mock("@/lib/queries", () => ({
   useActiveYear: () => ({ activeYear: { id: "y-1" } }),
@@ -181,11 +181,51 @@ const LESSONS = [
   lesson("l-musik", "s-mu", "g-51", "12:00", { studentIds: ["p-alva"] }),
 ];
 
+/**
+ * jsdom computes no layout, so the grid's pointer-to-slot maths would bail out
+ * on the zeros getBoundingClientRect returns. Pinned the same way
+ * timetable-grid.test.tsx pins it: a 56px time axis and five 100px day columns.
+ */
+const GRID_RECT = {
+  x: 0,
+  y: 0,
+  top: 0,
+  left: 0,
+  right: 556,
+  bottom: 528,
+  width: 556,
+  height: 528,
+  toJSON: () => ({}),
+} as DOMRect;
+
 beforeEach(() => {
   cleanup();
+  noMutation.mutateAsync.mockClear();
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue(GRID_RECT);
   state.lessons = LESSONS;
   state.memberships = MEMBERSHIPS;
 });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+/**
+ * Drag a lesson card into Tuesday and let go.
+ *
+ * Sideways rather than down the day on purpose: every lesson in the fixture is
+ * Karin's, so any move within Monday lands on her and the grid answers with the
+ * suggestion dialog instead — a different question than this one.
+ * day = floor((clientX - 56) / 100) + 1, so x=100 is Monday and x=200 Tuesday.
+ */
+function dragToTuesday(subject: string) {
+  const card = screen
+    .queryAllByRole("button")
+    .find((el) => el.textContent?.includes(subject))!;
+  fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+  fireEvent.pointerMove(window, { pointerId: 1, clientX: 200, clientY: 60 });
+  fireEvent.pointerUp(window, { pointerId: 1, clientX: 200, clientY: 60 });
+}
 
 /** Pick a class in the group filter. */
 async function filterTo(name: string) {
@@ -275,5 +315,47 @@ describe("the week of one class", () => {
     // Fewer cards, never zero: Idrott names 4.1 outright. Maths arrives when
     // the roster does, so the flicker is fewer→more rather than empty→full.
     expect(subjectsOnScreen()).toEqual(["Idrott"]);
+  });
+});
+
+describe("moving a lesson that lands on more than one class", () => {
+  it("names the classes before the drag takes effect", () => {
+    render(<TimetablePage />);
+    // Not filtered to anything: the question is asked of the LESSON. 4ma1 holds
+    // Alva and Bo of 4.1 and Eva of 4.2, so this drag moves 4.2's week too.
+    dragToTuesday("Matematik");
+    expect(screen.getByText("timetable.sharedMoveTitle")).toBeInTheDocument();
+    expect(screen.getByText(/timetable.sharedMoveBody\(4\.1, 4\.2\)/)).toBeInTheDocument();
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("applies the move once it is confirmed", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    dragToTuesday("Matematik");
+    await user.click(screen.getByRole("button", { name: "timetable.sharedMoveConfirm" }));
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "l-ma1" }),
+    );
+  });
+
+  it("drops the move when it is cancelled", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    dragToTuesday("Matematik");
+    await user.click(screen.getByRole("button", { name: "common.cancel" }));
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+    expect(screen.queryByText("timetable.sharedMoveTitle")).toBeNull();
+  });
+
+  it("moves a lesson that stays inside one class without asking", () => {
+    render(<TimetablePage />);
+    // Slöjd is 5.1's alone. Asking here would make the dialog noise, and a
+    // dialog that appears on every drag is one nobody reads.
+    dragToTuesday("Slöjd");
+    expect(screen.queryByText("timetable.sharedMoveTitle")).toBeNull();
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "l-slojd" }),
+    );
   });
 });

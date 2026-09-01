@@ -617,7 +617,10 @@
     "badgeEven": "even",
     "badgePeriod": "period",
     "editRemoved": "{count, plural, =1 {1 calendar lesson was removed — publish again to restore any the window still covers.} other {# calendar lessons were removed — publish again to restore any the window still covers.}}",
-    "sharePupils": "{attending} of {total} pupils in {group}"
+    "sharePupils": "{attending} of {total} pupils in {group}",
+    "sharedMoveTitle": "This lesson belongs to several classes",
+    "sharedMoveBody": "Moving it moves it for {classes}. Pupils in those classes get the new time in their timetables.",
+    "sharedMoveConfirm": "Move anyway"
   },
   "dayPlanner": {
     "title": "Day planner",

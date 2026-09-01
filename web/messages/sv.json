@@ -617,7 +617,10 @@
     "badgeEven": "jämna",
     "badgePeriod": "period",
     "editRemoved": "{count, plural, =1 {1 kalenderlektion togs bort — publicera igen för att lägga tillbaka lektioner som ryms.} other {# kalenderlektioner togs bort — publicera igen för att lägga tillbaka lektioner som ryms.}}",
-    "sharePupils": "{attending} av {total} elever i {group}"
+    "sharePupils": "{attending} av {total} elever i {group}",
+    "sharedMoveTitle": "Lektionen tillhör flera klasser",
+    "sharedMoveBody": "Flyttar du den flyttas den för {classes}. Elever i de klasserna får den nya tiden i sina scheman.",
+    "sharedMoveConfirm": "Flytta ändå"
   },
   "dayPlanner": {
     "title": "Dagsplanering",

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { audienceFor, buildRosterIndex, showsFraction } from "./lesson-audience";
+import {
+  audienceFor,
+  buildRosterIndex,
+  homeClassesReached,
+  showsFraction,
+} from "./lesson-audience";
 
 // ---------------------------------------------------------------------------
 // A school small enough to count by hand. Class 4.1 has four pupils, 4.2 has
@@ -162,5 +167,50 @@ describe("showsFraction", () => {
     expect(showsFraction({ attending: 0, cohortSize: 0, named: true })).toBe(
       false,
     );
+  });
+});
+
+describe("homeClassesReached", () => {
+  // The classes, without the teaching groups: 4ma1 is nobody's home.
+  const CLASSES = ["4.1", "4.2"];
+
+  it("reaches every class whose pupils sit in the lesson", () => {
+    // 4ma1 holds a1 and a2 of 4.1, and b1 of 4.2. Dragging it moves the lesson
+    // for a class the administrator filtered to 4.1 never had on screen.
+    expect(homeClassesReached(lesson("4ma1"), CLASSES, index)).toEqual([
+      "4.1",
+      "4.2",
+    ]);
+  });
+
+  it("leaves out a class that only shares a name with the group", () => {
+    expect(homeClassesReached(lesson("4ma2"), CLASSES, index)).toEqual(["4.1"]);
+  });
+
+  it("counts a named class even with no roster behind it", () => {
+    const bare = buildRosterIndex(new Map(), []);
+    expect(homeClassesReached(lesson("4.1", ["4.2"]), CLASSES, bare)).toEqual([
+      "4.1",
+      "4.2",
+    ]);
+  });
+
+  it("reaches a class through an individually named pupil", () => {
+    expect(homeClassesReached(lesson("9.3", [], ["b2"]), CLASSES, index)).toEqual(
+      ["4.2"],
+    );
+  });
+
+  it("counts only the classes it is given, never the teaching groups", () => {
+    // 4ma1 is in the room and is not somebody's home. Counting it would report
+    // three where the honest answer is two.
+    expect(homeClassesReached(lesson("4ma1"), CLASSES, index)).not.toContain(
+      "4ma1",
+    );
+  });
+
+  it("says one class for a lesson that stays inside one class", () => {
+    expect(homeClassesReached(lesson("4.1"), CLASSES, index)).toEqual(["4.1"]);
+    expect(homeClassesReached(lesson("4ma2"), CLASSES, index)).toHaveLength(1);
   });
 });

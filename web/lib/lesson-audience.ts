@@ -35,6 +35,13 @@ export interface RosterIndex {
   membersOf: Map<string, Set<string>>;
 }
 
+/** The three fields of a lesson that decide who is in the room. */
+export interface LessonAudienceInput {
+  studentGroupId: string;
+  extraGroupIds: string[];
+  studentIds: string[];
+}
+
 export interface Audience {
   /** How many of the viewed class sit in this lesson. */
   attending: number;
@@ -91,11 +98,7 @@ export function buildRosterIndex(
  * shape a class split into two named halves has.
  */
 export function audienceFor(
-  lesson: {
-    studentGroupId: string;
-    extraGroupIds: string[];
-    studentIds: string[];
-  },
+  lesson: LessonAudienceInput,
   viewGroupId: string,
   index: RosterIndex,
 ): Audience | null {
@@ -112,6 +115,25 @@ export function audienceFor(
   }
   const cohortSize = cohort.size;
 
+  const attendees = attendeesOf(lesson, index);
+  let attending = 0;
+  for (const studentId of attendees) if (cohort.has(studentId)) attending += 1;
+
+  if (attending === 0) return named ? { attending, cohortSize, named } : null;
+  return { attending, cohortSize, named };
+}
+
+/**
+ * Everyone in the room, as ONE set of pupil ids.
+ *
+ * The union is the whole point. Handling the groups separately double-counts a
+ * pupil that two named groups both hold, which is exactly the shape a class
+ * split into two named halves has.
+ */
+function attendeesOf(
+  lesson: LessonAudienceInput,
+  index: RosterIndex,
+): Set<string> {
   const attendees = new Set<string>();
   for (const groupId of [lesson.studentGroupId, ...lesson.extraGroupIds]) {
     for (const studentId of index.membersOf.get(groupId) ?? []) {
@@ -119,12 +141,42 @@ export function audienceFor(
     }
   }
   for (const studentId of lesson.studentIds) attendees.add(studentId);
+  return attendees;
+}
 
-  let attending = 0;
-  for (const studentId of attendees) if (cohort.has(studentId)) attending += 1;
-
-  if (attending === 0) return named ? { attending, cohortSize, named } : null;
-  return { attending, cohortSize, named };
+/**
+ * Which home classes a change to this lesson reaches.
+ *
+ * Asked of the LESSON, never of the filter: moving 4ma1 moves it for 4.2's
+ * pupils too, and the administrator who dragged it was looking at 4.1. A
+ * filter is what you happen to be looking at; this is who it lands on.
+ *
+ * `homeClasses` is the ids of the groups that are classes — a teaching group is
+ * not somebody's home, and counting 4ma1 alongside 4.1 and 4.2 would report
+ * three where the honest answer is two.
+ */
+export function homeClassesReached(
+  lesson: LessonAudienceInput,
+  homeClasses: Iterable<string>,
+  index: RosterIndex,
+): string[] {
+  const attendees = attendeesOf(lesson, index);
+  const named = new Set([lesson.studentGroupId, ...lesson.extraGroupIds]);
+  const reached: string[] = [];
+  for (const groupId of homeClasses) {
+    if (named.has(groupId)) {
+      // A named class counts even with no roster: the lesson says so itself.
+      reached.push(groupId);
+      continue;
+    }
+    for (const studentId of index.membersOf.get(groupId) ?? []) {
+      if (attendees.has(studentId)) {
+        reached.push(groupId);
+        break;
+      }
+    }
+  }
+  return reached;
 }
 
 /**
