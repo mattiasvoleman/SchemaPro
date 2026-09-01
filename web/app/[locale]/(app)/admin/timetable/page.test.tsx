@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TimetablePage from "./page";
+import { buildIcs } from "@/lib/ics";
+import { exportTimetablePdf } from "@/lib/pdf";
 
 /**
  * Whose week is on screen.
@@ -201,6 +203,8 @@ const GRID_RECT = {
 beforeEach(() => {
   cleanup();
   noMutation.mutateAsync.mockClear();
+  vi.mocked(buildIcs).mockClear();
+  vi.mocked(exportTimetablePdf).mockClear();
   vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue(GRID_RECT);
   state.lessons = LESSONS;
   state.memberships = MEMBERSHIPS;
@@ -357,5 +361,74 @@ describe("moving a lesson that lands on more than one class", () => {
     expect(noMutation.mutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({ id: "l-slojd" }),
     );
+  });
+});
+
+describe("exporting one class's week", () => {
+  /** The lessons handed to the ICS builder, keyed by subject. */
+  async function icsFor(className?: string) {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    if (className) await filterTo(className);
+    await user.click(screen.getByRole("button", { name: "timetable.exportIcs" }));
+    const [lessons] = vi.mocked(buildIcs).mock.calls[0];
+    return lessons;
+  }
+
+  it("carries the lessons the class actually attends", async () => {
+    const lessons = await icsFor("4.1");
+    // The export reads the same widened view the grid does, so a pupil
+    // subscribing to 4.1's calendar gets their own maths — which they could
+    // already see in the portal but not in the file the school handed out.
+    // BOTH maths halves: 4.1's four pupils are split across 4ma1 and 4ma2, so
+    // the class's week holds two maths lessons and neither is the whole class.
+    expect(lessons.map((l) => l.summary)).toEqual([
+      "Matematik — 4ma1",
+      "Matematik — 4ma2",
+      "Idrott — 4.2 + 4.1",
+      "Musik — 5.1",
+    ]);
+  });
+
+  it("names every class in the room, not only the owner", async () => {
+    const lessons = await icsFor("4.1");
+    // "Idrott — 4.2" told a 4.1 subscriber nothing about why it was in their
+    // calendar at all.
+    expect(lessons.find((l) => l.summary.startsWith("Idrott"))?.summary).toBe(
+      "Idrott — 4.2 + 4.1",
+    );
+  });
+
+  it("says how much of the class a partial lesson holds", async () => {
+    const lessons = await icsFor("4.1");
+    // A calendar entry is one block on a phone whether two pupils or four are
+    // in it, and there is no badge to see.
+    expect(lessons.find((l) => l.summary.startsWith("Matematik"))?.description)
+      .toBe("Karin Ek · timetable.sharePupils(2|4|4.1)");
+    expect(lessons.find((l) => l.summary.startsWith("Idrott"))?.description).toBe(
+      "Karin Ek",
+    );
+  });
+
+  it("leaves the unfiltered export without fractions", async () => {
+    const lessons = await icsFor();
+    expect(lessons).toHaveLength(5);
+    expect(
+      lessons.every((l) => !l.description?.includes("sharePupils")),
+    ).toBe(true);
+  });
+
+  it("prints the classes and the fraction in the PDF's group column", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await filterTo("4.1");
+    await user.click(screen.getByRole("button", { name: "timetable.exportPdf" }));
+    const [{ lessons }] = vi.mocked(exportTimetablePdf).mock.calls[0];
+    expect(lessons.map((l) => l.group)).toEqual([
+      "4ma1 2/4",
+      "4ma2 2/4",
+      "4.2 + 4.1",
+      "5.1 1/4",
+    ]);
   });
 });

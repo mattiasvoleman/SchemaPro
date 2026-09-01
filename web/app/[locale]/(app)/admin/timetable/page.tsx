@@ -552,6 +552,34 @@ export default function TimetablePage() {
     [lessons, groupFilter, teacherFilter, audienceByLesson],
   );
 
+  /**
+   * Every class in the room, by name — "4.2 + 4.1".
+   *
+   * Shared by the card, the ICS and the PDF because they were three copies of
+   * one sentence and only the card's was ever corrected. A subscriber to 4.1's
+   * calendar got "Idrott — 4.2" with nothing saying 4.1 was in the hall too.
+   */
+  const groupLabel = useCallback(
+    (lesson: MasterLesson) =>
+      [
+        groupById.get(lesson.studentGroupId)?.name,
+        ...lesson.extraGroupIds.map((id) => groupById.get(id)?.name),
+      ]
+        .filter(Boolean)
+        .join(" + "),
+    [groupById],
+  );
+
+  /** "2/4" when the class in view is only partly here, else nothing. */
+  const shareLabelOf = useCallback(
+    (lesson: MasterLesson) => {
+      const audience = audienceByLesson.get(lesson.id);
+      if (!audience || !showsFraction(audience)) return null;
+      return `${audience.attending}/${audience.cohortSize}`;
+    },
+    [audienceByLesson],
+  );
+
   const toGridLesson = useCallback(
     (lesson: MasterLesson): TimetableLesson => {
       const subject = subjectById.get(lesson.subjectId);
@@ -570,9 +598,7 @@ export default function TimetablePage() {
             // The classes by NAME. "+1" told a reader that some other class was
             // in the room without telling them which, and the one thing worth
             // knowing about a shared lesson is who you are sharing it with.
-            [group?.name, ...lesson.extraGroupIds.map((id) => groupById.get(id)?.name)]
-              .filter(Boolean)
-              .join(" + "),
+            groupLabel(lesson),
             lesson.studentIds.length > 0 ? `⊕${lesson.studentIds.length}` : null,
           ]
             .filter(Boolean)
@@ -612,6 +638,7 @@ export default function TimetablePage() {
       remoteEditors,
       audienceByLesson,
       groupFilter,
+      groupLabel,
       t,
     ],
   );
@@ -1193,16 +1220,29 @@ export default function TimetablePage() {
           endTime: toHHMM(lesson.endTime),
           summary: [
             subjectById.get(lesson.subjectId)?.name ?? "",
-            groupById.get(lesson.studentGroupId)?.name ?? "",
+            groupLabel(lesson),
           ]
             .filter(Boolean)
             .join(" — "),
           location: lesson.roomId
             ? (roomById.get(lesson.roomId)?.name ?? undefined)
             : undefined,
-          description: teacher
-            ? `${teacher.firstName} ${teacher.lastName}`
-            : undefined,
+          // The fraction belongs here too. A calendar entry is one block on a
+          // phone whether four pupils or fourteen are in it, and the subscriber
+          // cannot see the grid's badge.
+          description:
+            [
+              teacher ? `${teacher.firstName} ${teacher.lastName}` : null,
+              shareLabelOf(lesson)
+                ? t("sharePupils", {
+                    attending: audienceByLesson.get(lesson.id)!.attending,
+                    total: audienceByLesson.get(lesson.id)!.cohortSize,
+                    group: groupById.get(groupFilter)?.name ?? "",
+                  })
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ") || undefined,
           // Without these a subscriber sees slöjd every week when it runs
           // every other, and a spring course all through the autumn.
           recurrence: lesson.recurrence,
@@ -1242,7 +1282,9 @@ export default function TimetablePage() {
           startTime: toHHMM(lesson.startTime),
           endTime: toHHMM(lesson.endTime),
           subject: subjectById.get(lesson.subjectId)?.name ?? "",
-          group: groupById.get(lesson.studentGroupId)?.name ?? "",
+          group: [groupLabel(lesson), shareLabelOf(lesson)]
+            .filter(Boolean)
+            .join(" "),
           teacher: [
             teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : null,
             coTeacher ? `${coTeacher.firstName[0]}. ${coTeacher.lastName}` : null,
