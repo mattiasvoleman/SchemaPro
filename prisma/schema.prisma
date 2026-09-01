@@ -1223,23 +1223,51 @@ model LunchSetting {
   @@map("LunchSettings")
 }
 
-/// A soft wish that a subject's lessons land in particular rooms.
+enum RoomRuleKind {
+  /// Paid for, not required — the solver trades it against everything else.
+  WISH
+  /// Required. A week that cannot honour it is refused by name.
+  LOCK
+}
+
+/// Where a subject's lessons belong — as a wish, or as a rule.
 ///
-/// Soft on purpose, and that is the whole difference from
-/// `Subject.requiredRoomTypeId`: a school would rather have NO in the lab, but
-/// not at the price of a week that cannot be scheduled at all. The solver pays
-/// `weight` per lesson placed elsewhere and trades that against its other
-/// objectives.
+/// TWO KINDS IN ONE TABLE because they differ in one field and nothing else.
+/// A WISH is a price: the solver pays `weight` per lesson placed elsewhere and
+/// trades that against its other objectives, so a school gets NO in the lab but
+/// not at the cost of a week that cannot be scheduled. A LOCK is a bound: the
+/// lesson may go nowhere else, and a week that needs it to is refused by name.
+///
+/// `Subject.requiredRoomTypeId` is the only other hard room rule and it is
+/// school-wide and type-only; `Room.minGradeLevel` fences a room to a stage,
+/// which binds that room's every subject. Neither can say "år 4's maths happens
+/// in Optimisten 4".
+///
+/// The optional year span scopes a rule to a stage, matched by CONTAINMENT —
+/// the group's whole span inside the rule's. Null means every year, which is
+/// what every row written before this column existed means. Locks resolve by
+/// specificity (narrowest span wins, ties union); wishes stay additive. The
+/// migration argues all of it.
 model RoomPreference {
-  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId   String   @db.Uuid
-  subjectId  String   @db.Uuid
+  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String       @db.Uuid
+  subjectId  String       @db.Uuid
+  /// WISH pays a price; LOCK forbids everything else.
+  kind       RoomRuleKind @default(WISH)
+  /// Inclusive years the rule applies to; both null means every year. The DB
+  /// enforces both-or-neither, ordered, and 0-12.
+  minGradeLevel Int?
+  maxGradeLevel Int?
   /// Either a type…
-  roomTypeId String?  @db.Uuid
+  roomTypeId String?      @db.Uuid
   /// …or a set of named rooms, via RoomPreferenceRooms. Exactly one of the two
-  /// carries the rule; a preference pointing at neither could never be
-  /// satisfied or violated.
-  weight     Int      @default(50)
+  /// carries the rule; a rule pointing at neither could never be satisfied or
+  /// violated.
+  ///
+  /// Read only for a WISH. Kept NOT NULL rather than nullable-means-hard: the
+  /// engine reads `preference.weight or weights.room_preference`, so a falsy
+  /// weight would silently become its weakest wish instead of a restriction.
+  weight     Int          @default(5)
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
   updatedAt  DateTime @updatedAt @db.Timestamptz(6)
 
@@ -1249,6 +1277,7 @@ model RoomPreference {
   rooms    RoomPreferenceRoom[]
 
   @@index([schoolId])
+  @@index([schoolId, kind])
   @@map("RoomPreferences")
 }
 

@@ -560,6 +560,123 @@ $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- 7d. RoomPreferences: the table that shipped with no assertions at all.
+--
+-- The comment at the top of section 7b noted this file had none for this table.
+-- It mattered less while every row was a WISH the solver could trade away. It
+-- matters now: a row can be a LOCK, which forbids a subject's lessons every
+-- room but the named ones and refuses the week if that is impossible. A teacher
+-- who could write one would be redirecting a whole stage's lessons from their
+-- own session; a teacher who could not READ one would meet a refusal with no
+-- visible cause.
+--
+-- The child table is asserted with it. RoomPreferenceRooms carries its own
+-- schoolId and its own pair of policies, and a rule whose ROOMS a teacher can
+-- rewrite is a rule a teacher can rewrite.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE me uuid; subject_id uuid; room_id uuid; n bigint;
+BEGIN
+  SELECT id INTO subject_id FROM "Subjects"
+   WHERE "schoolId" = app.current_school_id() LIMIT 1;
+  SELECT id INTO room_id FROM "Rooms"
+   WHERE "schoolId" = app.current_school_id() LIMIT 1;
+  IF subject_id IS NULL OR room_id IS NULL THEN
+    RAISE EXCEPTION 'room-rules: the seed has no subject or no room to rule about';
+  END IF;
+
+  INSERT INTO "RoomPreferences"
+    ("schoolId", "subjectId", "kind", "minGradeLevel", "maxGradeLevel",
+     "weight", "updatedAt")
+  VALUES (app.current_school_id(), subject_id, 'LOCK', 4, 4, 5, now())
+  RETURNING id INTO me;
+
+  INSERT INTO "RoomPreferenceRooms" ("schoolId", "preferenceId", "roomId")
+  VALUES (app.current_school_id(), me, room_id);
+
+  SELECT count(*) INTO n FROM "RoomPreferences" WHERE kind = 'LOCK';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'room-rules: an admin cannot write a lock (% row(s))', n;
+  END IF;
+
+  -- Another school's rule, stamped with an id this one cannot reach. WITH CHECK
+  -- and the foreign key are both correct ways to refuse it; what matters is
+  -- that nothing lands, which the count below asserts rather than trusting
+  -- whichever answered.
+  BEGIN
+    INSERT INTO "RoomPreferences"
+      ("schoolId", "subjectId", "kind", "weight", "updatedAt")
+    VALUES ('00000000-0000-4000-8000-0000000000ff', subject_id, 'LOCK', 5, now());
+    RAISE EXCEPTION 'room-rules: an admin wrote a rule into another school';
+  EXCEPTION
+    WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+END
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE subject_id uuid; n bigint;
+BEGIN
+  SELECT id INTO subject_id FROM "Subjects"
+   WHERE "schoolId" = app.current_school_id() LIMIT 1;
+
+  -- Readable: a lock is the reason a lesson cannot be moved, and a teacher who
+  -- cannot see it meets a refusal with no visible cause.
+  SELECT count(*) INTO n FROM "RoomPreferences" WHERE kind = 'LOCK';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'room-rules: a teacher cannot read the lock that binds them (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "RoomPreferenceRooms";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'room-rules: a teacher cannot read a rule''s rooms (% row(s))', n;
+  END IF;
+
+  BEGIN
+    INSERT INTO "RoomPreferences"
+      ("schoolId", "subjectId", "kind", "weight", "updatedAt")
+    VALUES (app.current_school_id(), subject_id, 'LOCK', 5, now());
+    RAISE EXCEPTION 'room-rules: a teacher wrote a lock binding a whole stage';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- USING, not only WITH CHECK, and on the child too: a rule whose ROOMS a
+  -- teacher can delete is a rule a teacher can disarm.
+  DELETE FROM "RoomPreferenceRooms";
+  SELECT count(*) INTO n FROM "RoomPreferenceRooms";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'room-rules: a teacher emptied a lock''s room list (% left)', n;
+  END IF;
+
+  DELETE FROM "RoomPreferences";
+  SELECT count(*) INTO n FROM "RoomPreferences" WHERE kind = 'LOCK';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'room-rules: a teacher deleted a lock (% row(s) left)', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- 7c. LunchServings: read by everyone, written by the administrator alone.
 --
 -- Same pair and the same two silent failures as the frames above. A sitting a
