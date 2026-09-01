@@ -500,6 +500,53 @@ describe('OptimizationProxyService', () => {
       await expect(call()).rejects.toThrow('could not be reached');
     });
 
+    it('forwards the engine\'s own sentence on a 4xx', async () => {
+      /*
+       * Every named refusal the engine can produce arrived here and was
+       * replaced by "The AI engine returned an error." — which is what the
+       * generate page then rendered. The messages exist and name the
+       * requirement, the group and the day; they were thrown away one layer
+       * below the screen that shows them.
+       */
+      const refused = new AxiosError('boom');
+      refused.response = {
+        status: 400,
+        data: {
+          code: 'INVALID_SCHEDULE_INPUT',
+          message:
+            'An availability rule leaves student group 7A no 30-minute lunch break on day 1.',
+        },
+      } as never;
+      http.post.mockReturnValue(throwError(() => refused));
+
+      await expect(call()).rejects.toThrow('no 30-minute lunch break on day 1');
+      await expect(call()).rejects.toMatchObject({ status: 400 });
+    });
+
+    it('keeps the generic sentence for a 5xx, whatever the body says', async () => {
+      // An internal failure's detail is ours to read in the logs. Forwarding it
+      // would put the engine's stack-trace text in a school's toast.
+      const broke = new AxiosError('boom');
+      broke.response = {
+        status: 500,
+        data: { code: 'SOLVER_BUILD_ERROR', message: 'CP-SAT rejected the model: ...' },
+      } as never;
+      http.post.mockReturnValue(throwError(() => broke));
+
+      await expect(call()).rejects.toThrow('The AI engine returned an error.');
+      await expect(call()).rejects.not.toThrow('CP-SAT');
+    });
+
+    it('falls back to the generic sentence when the body carries no message', async () => {
+      // A proxy or a load balancer can answer 4xx with HTML, or nothing.
+      const odd = new AxiosError('boom');
+      odd.response = { status: 413, data: '<html>too large</html>' } as never;
+      http.post.mockReturnValue(throwError(() => odd));
+
+      await expect(call()).rejects.toThrow('The AI engine returned an error.');
+      await expect(call()).rejects.toMatchObject({ status: 413 });
+    });
+
     it('maps an unrecognised transport failure to 503', async () => {
       http.post.mockReturnValue(throwError(() => new Error('socket closed')));
 

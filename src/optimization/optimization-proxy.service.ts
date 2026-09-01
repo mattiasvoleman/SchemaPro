@@ -909,10 +909,29 @@ export class OptimizationProxyService {
                     'The AI engine could not be reached.',
                   );
                 }
-                throw new HttpException(
-                  'The AI engine returned an error.',
-                  error.response.status,
-                );
+                /*
+                 * The engine's own sentence, not a generic one.
+                 *
+                 * Every named refusal the engine can produce — a lesson length
+                 * off the grid, a lunch an availability rule leaves no room
+                 * for, a frame too tight for its own stage — arrived here and
+                 * was replaced by "The AI engine returned an error.", which
+                 * tells a school nothing it can act on. The messages exist and
+                 * name the requirement, the group and the day; they were simply
+                 * thrown away one layer below the screen that shows them.
+                 *
+                 * Only the message is forwarded, and only when it is a string:
+                 * the engine's error body is {code, message}, and passing the
+                 * object through would put a JSON blob in a toast. A 5xx from
+                 * the engine keeps the generic text — an internal failure's
+                 * detail is ours to read in the logs, not the school's.
+                 */
+                const body = error.response.data as { message?: unknown } | null;
+                const detail =
+                  error.response.status < 500 && typeof body?.message === 'string'
+                    ? body.message
+                    : 'The AI engine returned an error.';
+                throw new HttpException(detail, error.response.status);
               }
               throw new ServiceUnavailableException('AI engine unavailable.');
             }),

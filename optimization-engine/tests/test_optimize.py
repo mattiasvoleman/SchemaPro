@@ -4083,3 +4083,216 @@ def test_the_two_builds_agree_on_lunch_variable_indices() -> None:
     # And the builds really are different models, so the agreement above is a
     # property worth pinning rather than a tautology.
     assert len(full_model.Proto().variables) > len(feas_model.Proto().variables)
+
+
+# ---------------------------------------------------------------------------
+# Lunch mot tillgänglighet
+#
+# The lunch interval had never seen an AvailabilityConstraint: availability is
+# applied before the lunch variable exists and only ever touched lesson
+# decisions. So an hour a school emptied pushed the LESSONS away and then
+# received the class for lunch instead — and since no objective term mentions
+# lunch, the emptied hour was the widest free region it could occupy.
+# ---------------------------------------------------------------------------
+
+
+def _closes(group_id: str, day: int, start: str, end: str) -> dict[str, object]:
+    return {
+        "id": str(uuid4()),
+        "resourceKind": "STUDENT_GROUP",
+        "resourceId": group_id,
+        "dayOfWeek": day,
+        "date": None,
+        "startTime": start,
+        "endTime": end,
+        "kind": "UNAVAILABLE",
+    }
+
+
+def _group_of(payload: dict[str, object]) -> str:
+    return payload["requirements"][0]["studentGroupId"]  # type: ignore[index,return-value]
+
+
+def _monday_lunch(body: dict[str, object]) -> list[str]:
+    return [
+        lunch["startTime"]
+        for lunch in body["lunches"]  # type: ignore[index]
+        if lunch["dayOfWeek"] == 1
+    ]
+
+
+def test_a_reservation_moves_the_sitting_off_itself(client: TestClient) -> None:
+    payload = _lunch_payload()
+    payload["constraints"] = [_closes(_group_of(payload), 1, "11:00:00", "12:00:00")]
+
+    body = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    ).json()
+
+    # The window is 11:00-13:00 and the first hour is closed, so the only
+    # admissible starts are 12:00 onwards. Before this the answer was 11:00.
+    assert _monday_lunch(body) == ["12:00:00"]
+    # ...and the other days are untouched: the rule named one weekday.
+    assert len(body["lunches"]) == 5
+
+
+def test_a_reservation_for_another_group_leaves_the_sitting_alone(
+    client: TestClient,
+) -> None:
+    payload = _lunch_payload()
+    payload["constraints"] = [
+        _closes(str(uuid4()), 1, "11:00:00", "12:00:00"),
+    ]
+
+    body = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    ).json()
+
+    assert _monday_lunch(body) == ["11:00:00"]
+
+
+def test_a_rule_about_a_group_that_never_eats_refuses_nothing(
+    client: TestClient,
+) -> None:
+    """A teaching group's own reservation must not refuse the school's week.
+
+    The builder only reads closures for groups that actually get a lunch, so a
+    stray key there is inert. _validate_request does not — it walks the whole
+    map — so without the membership test it would raise a 400 naming a group
+    that eats with its home class and has no sitting of its own. Scraps rather
+    than a whole-window block on purpose: a whole block is the exempt path and
+    would pass either way.
+    """
+    payload = _lunch_payload()
+    payload["rules"]["lunchEndTime"] = "12:00:00"  # type: ignore[index]
+    payload["constraints"] = [_closes(str(uuid4()), 1, "11:15:00", "11:45:00")]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200, response.text
+    assert _monday_lunch(response.json()) == ["11:00:00"]
+
+
+def test_a_wish_is_not_a_closure(client: TestClient) -> None:
+    """PREFERRED_FREE is a preference the solver trades off, not a statement.
+
+    Treating one as a closure would silently move a meal a school only nudged —
+    the same distinction the publish path draws when it honours UNAVAILABLE
+    alone.
+    """
+    payload = _lunch_payload()
+    payload["constraints"] = [
+        {**_closes(_group_of(payload), 1, "11:00:00", "12:00:00"), "kind": "PREFERRED_FREE"},
+    ]
+
+    body = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    ).json()
+
+    assert _monday_lunch(body) == ["11:00:00"]
+
+
+def test_a_dated_reservation_does_not_reach_the_weekly_sitting(
+    client: TestClient,
+) -> None:
+    # The model is one generic week with nowhere to put a single date, which is
+    # exactly how _add_availability_constraints treats a dated row.
+    payload = _lunch_payload()
+    payload["constraints"] = [
+        {**_closes(_group_of(payload), 1, "11:00:00", "12:00:00"), "date": "2027-03-01"},
+    ]
+
+    body = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    ).json()
+
+    assert _monday_lunch(body) == ["11:00:00"]
+
+
+def test_a_class_that_is_not_in_school_that_day_is_not_owed_a_lunch(
+    client: TestClient,
+) -> None:
+    """The praktik case, and the reason this is not simply a refusal.
+
+    "7A undervisas inte på tisdagar" has no other way to be written than a rule
+    covering the whole day, and the same row blocks that day's lessons too.
+    Answering a correct statement with "no timetable exists" would be an error
+    nobody can act on — so the day is exempt: no sitting, and no chairs booked
+    either, which is more accurate than the standing "every home class eats
+    every school day" simplification.
+    """
+    payload = _lunch_payload()
+    payload["constraints"] = [_closes(_group_of(payload), 1, "08:00:00", "17:45:00")]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert _monday_lunch(body) == []
+    # The rest of the week still eats — the exemption is per day, not per group.
+    assert {lunch["dayOfWeek"] for lunch in body["lunches"]} == {2, 3, 4, 5}
+
+
+def test_a_reservation_leaving_only_scraps_is_refused_by_name(
+    client: TestClient,
+) -> None:
+    """The other half of the same rule, and the one that must stay loud.
+
+    Fragments too short for the break mean the class IS in school and busy, and
+    the school has asked for something impossible. Left to CP-SAT this is an
+    empty variable domain — a proof of infeasibility reachable without touching
+    one assumption literal, which returns an empty core and takes every other
+    cause in the payload down with it.
+    """
+    payload = _lunch_payload()
+    payload["rules"]["lunchEndTime"] = "12:00:00"  # type: ignore[index]
+    # 11:00-11:15 and 11:45-12:00 survive; neither holds thirty minutes.
+    payload["constraints"] = [_closes(_group_of(payload), 1, "11:15:00", "11:45:00")]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400, response.text
+    message = response.json()["message"]
+    assert "availability rule" in message
+    assert "30-minute lunch break" in message
+    # An instruction, not just a verdict: three things the school could change.
+    assert "Shorten the rule" in message
+
+
+def test_a_locked_lesson_and_a_reservation_that_only_together_leave_nothing(
+    client: TestClient,
+) -> None:
+    """Each subtraction leaves room; their intersection does not.
+
+    Neither single-cause loop says a word about this, which is why the pair is
+    checked on its own.
+    """
+    payload = _lunch_payload()
+    payload["rules"]["lunchEndTime"] = "12:00:00"  # type: ignore[index]
+    group_id = _group_of(payload)
+    payload["constraints"] = [_closes(group_id, 1, "11:00:00", "11:30:00")]
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "teacherId": None,
+            "coTeacherId": None,
+            "studentGroupId": group_id,
+            "roomId": None,
+            "dayOfWeek": 1,
+            "startTime": "11:30:00",
+            "endTime": "12:00:00",
+        },
+    ]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400, response.text
+    assert "together" in response.json()["message"]

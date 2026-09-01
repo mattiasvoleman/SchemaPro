@@ -152,7 +152,8 @@ class SchedulerSolver:
         day_vars: dict[str, cp_model.IntVar] = {}
         lunch_starts = self._add_rules_constraints(
             model, registry, decisions, request.rules, day_vars,
-            request.fixed_lessons, request.groups, request.group_conflicts,
+            request.fixed_lessons, request.groups, request.constraints,
+            request.group_conflicts,
         )
         if include_objective:
             weights = self._resolve_weights(request)
@@ -574,6 +575,20 @@ class SchedulerSolver:
         # worst case. Nothing is charged for a payload with no locked lessons,
         # which is every payload the benchmarks build.
         lunch_lock_vars = day_count * lunch_groups if request.fixed_lessons else 0
+        # The same shape for the school's own reservations, which narrow the
+        # lunch domain under a literal of their own. Charged only when a
+        # STUDENT_GROUP row that could reach a lunch actually exists, so a
+        # payload whose rules are all about teachers and rooms pays nothing.
+        lunch_closure_vars = (
+            day_count * lunch_groups
+            if any(
+                constraint.kind == "UNAVAILABLE"
+                and constraint.date is None
+                and constraint.resource_kind == "STUDENT_GROUP"
+                for constraint in request.constraints
+            )
+            else 0
+        )
         # The seat rule's entire variable cost, charged whether or not the lunch
         # window that would build it is set — an estimate that is high by one is
         # still an upper bound.
@@ -597,6 +612,7 @@ class SchedulerSolver:
             + (1 + day_count) * total_lessons
             + day_count * lunch_groups
             + lunch_lock_vars
+            + lunch_closure_vars
             + dining_vars
             + spread_pairs
             + gap_vars
@@ -757,7 +773,20 @@ class SchedulerSolver:
             lunch_slots,
         )
         slots_per_day = self._grid.slots_per_day
+        # Computed before either loop: an exempt day is one the school has said
+        # the class is not in, and neither a locked lesson nor another rule can
+        # deny it a meal it was never owed.
+        closed_starts, exempt_days = self._lunch_starts_blocked_by_constraints(
+            request.constraints,
+            set(lunch_group_ids),
+            window_start,
+            window_end - lunch_slots,
+            window_end,
+            lunch_slots,
+        )
         for (group_id, day_index), forbidden in blocked_starts.items():
+            if (group_id, day_index) in exempt_days:
+                continue
             allowed = self._admissible_lunch_starts(
                 day_index * slots_per_day,
                 window_start,
@@ -770,6 +799,51 @@ class SchedulerSolver:
                     f"Locked lessons leave student group {group_id} no "
                     f"{rules.lunch_minutes}-minute lunch break inside "
                     f"{rules.lunch_start_time}-{rules.lunch_end_time} on day "
+                    f"{self._grid.schedule_days[day_index]}."
+                )
+                raise InvalidScheduleInputError(msg)
+
+        # The same question of the school's own reservations. Separate loop and
+        # separate sentence: a lesson to move and a rule to change are fixed in
+        # two different screens, and one message covering both would send half
+        # the schools to the wrong one.
+        for (group_id, day_index), closed in closed_starts.items():
+            allowed = self._admissible_lunch_starts(
+                day_index * slots_per_day,
+                window_start,
+                window_end,
+                lunch_slots,
+                closed,
+            )
+            if allowed.is_empty():
+                msg = (
+                    f"An availability rule leaves student group {group_id} no "
+                    f"{rules.lunch_minutes}-minute lunch break inside "
+                    f"{rules.lunch_start_time}-{rules.lunch_end_time} on day "
+                    f"{self._grid.schedule_days[day_index]}. Shorten the rule, "
+                    f"widen the lunch window, or shorten the break."
+                )
+                raise InvalidScheduleInputError(msg)
+
+        # And the pair together. Each subtraction can leave room on its own
+        # while their intersection is empty — a locked lesson over the first
+        # half of the window and a rule over the second is the ordinary way to
+        # get there, and neither loop above would say a word about it.
+        for key in (set(blocked_starts) | set(closed_starts)) - exempt_days:
+            group_id, day_index = key
+            allowed = self._admissible_lunch_starts(
+                day_index * slots_per_day,
+                window_start,
+                window_end,
+                lunch_slots,
+                blocked_starts.get(key, []) + closed_starts.get(key, []),
+            )
+            if allowed.is_empty():
+                msg = (
+                    f"Locked lessons and availability rules together leave "
+                    f"student group {group_id} no {rules.lunch_minutes}-minute "
+                    f"lunch break inside {rules.lunch_start_time}-"
+                    f"{rules.lunch_end_time} on day "
                     f"{self._grid.schedule_days[day_index]}."
                 )
                 raise InvalidScheduleInputError(msg)
@@ -1593,6 +1667,99 @@ class SchedulerSolver:
             )
         return allowed
 
+    def _lunch_starts_blocked_by_constraints(
+        self,
+        constraints: list[AnonymousConstraint],
+        lunch_group_ids: set[UUID],
+        earliest_start: int,
+        latest_start: int,
+        window_end: int,
+        lunch_slots: int,
+    ) -> tuple[dict[tuple[UUID, int], list[tuple[int, int]]], set[tuple[UUID, int]]]:
+        """Lunch starts a group may not take, because the school closed the time.
+
+        The lunch interval has never seen an AvailabilityConstraint. Availability
+        is applied in _add_availability_constraints, which runs before the lunch
+        variable exists and only ever touches LessonDecisions — so an hour a
+        school emptied for samling correctly pushed the LESSONS away and then
+        received the class for lunch instead. Worse than neutral: no objective
+        term mentions lunch, so the emptied hour is the widest free region the
+        mandatory interval can occupy, and it is where lunch tends to land.
+
+        STUDENT_GROUP rows only, deliberately. TEACHER and ROOM rows constrain
+        resources the lunch interval does not model. GRADE_LEVEL is left out
+        here for a sharper reason: this engine's own comments have been telling
+        schools that a year reservation is how you say "åk 7 eats at 11:30", so
+        subtracting those windows would forbid lunch in exactly the half hour
+        the admin reserved FOR it. That advice is retired once LunchServings can
+        state the intent properly, and GRADE_LEVEL joins this subtraction then.
+
+        Dated rows are skipped, matching _add_availability_constraints: the
+        model is one generic week and has nowhere to put a single date.
+
+        TWO ANSWERS, NOT ONE, and the difference is the whole of this method.
+        A rule that covers the ENTIRE lunch window is the school saying the
+        class is not here — "7A undervisas inte på tisdagar" has no other way to
+        be written, and the same row blocks that day's lessons too. Refusing the
+        timetable over it would answer a correct statement with an error nobody
+        can act on. Such a (group, day) is returned as EXEMPT: no lunch, and no
+        chairs booked either, which is strictly more accurate than the standing
+        "every home class eats every school day" simplification.
+
+        A rule that merely leaves fragments too short for the break is the
+        opposite case: the class is in school, busy, and the school has asked
+        for something impossible. That is subtracted, and refused by name if
+        nothing survives.
+
+        The arithmetic is _lunch_starts_blocked_by_fixed_lessons's, and the
+        blocked shape is the same so the two merge into one domain subtraction.
+        """
+        blocked: dict[tuple[UUID, int], list[tuple[int, int]]] = {}
+        exempt: set[tuple[UUID, int]] = set()
+        slots_per_day = self._grid.slots_per_day
+
+        for constraint in constraints:
+            if constraint.kind != "UNAVAILABLE" or constraint.date is not None:
+                continue
+            if constraint.resource_kind != "STUDENT_GROUP":
+                continue
+            group_id = constraint.resource_id
+            if group_id is None or group_id not in lunch_group_ids:
+                continue
+
+            try:
+                windows = self._grid.window_to_absolute_range(
+                    constraint.day_of_week,
+                    constraint.start_time,
+                    constraint.end_time,
+                )
+            except ValueError as exc:
+                raise InvalidScheduleInputError(str(exc)) from exc
+
+            for abs_start, abs_end in windows:
+                day_index = abs_start // slots_per_day
+                day_offset = day_index * slots_per_day
+                local_start = abs_start - day_offset
+                local_end = abs_end - day_offset
+
+                # Covers the lunch window whole: the class is not here.
+                if local_start <= earliest_start and local_end >= window_end:
+                    exempt.add((group_id, day_index))
+                    continue
+
+                first_bad = local_start - lunch_slots + 1
+                last_bad = local_end - 1
+                if last_bad < earliest_start or first_bad > latest_start:
+                    continue
+                blocked.setdefault((group_id, day_index), []).append(
+                    (max(first_bad, earliest_start), min(last_bad, latest_start)),
+                )
+
+        # An exempt day needs no subtraction: there is no lunch to place.
+        for key in exempt:
+            blocked.pop(key, None)
+        return blocked, exempt
+
     def _lunch_starts_blocked_by_fixed_lessons(
         self,
         fixed_lessons: list[FixedLesson],
@@ -1670,6 +1837,7 @@ class SchedulerSolver:
         day_vars: dict[str, cp_model.IntVar],
         fixed_lessons: list[FixedLesson],
         groups: list[AnonymousGroup],
+        constraints: list[AnonymousConstraint],
         group_conflicts: list[tuple[UUID, UUID]] | None = None,
     ) -> dict[tuple[UUID, int], cp_model.IntVar]:
         """Hard school rules: lunch break, dining hall seats, lessons per day.
@@ -1766,6 +1934,14 @@ class SchedulerSolver:
                 window_end - lunch_slots,
                 lunch_slots,
             )
+            closed_starts, exempt_days = self._lunch_starts_blocked_by_constraints(
+                constraints,
+                set(lunch_group_ids),
+                window_start,
+                window_end - lunch_slots,
+                window_end,
+                lunch_slots,
+            )
 
             # "There is a contiguous free window of `lunch_slots` inside the
             # lunch window" is exactly "a mandatory task of that length can be
@@ -1841,6 +2017,11 @@ class SchedulerSolver:
                 headcount = headcount_by_group.get(group_id, 0)
                 lunch_intervals: list[cp_model.IntervalVar] = []
                 for day_index in range(len(self._grid.schedule_days)):
+                    # The school has closed this day for this class. No lunch
+                    # variable, no mandatory interval, no seat demand — the
+                    # class is not in the building to eat.
+                    if (group_id, day_index) in exempt_days:
+                        continue
                     day_offset = day_index * slots_per_day
                     # Inclusive bounds matching the candidate enumeration this
                     # replaces: range(window_start, window_end - lunch_slots + 1).
@@ -1905,6 +2086,38 @@ class SchedulerSolver:
                                 forbidden,
                             ),
                         ).OnlyEnforceIf(lunch_literal)
+
+                    closed = closed_starts.get((group_id, day_index))
+                    if closed:
+                        # A SECOND literal rather than one domain merged with
+                        # the locked-lesson one above. The two fail for reasons
+                        # a school fixes in different places — a lesson to move
+                        # versus a reservation to change — and a merged literal
+                        # could only name one of them. AVAILABILITY here is
+                        # honest, unlike the locked-lesson case: this IS an
+                        # AvailabilityConstraint row and the id below is one an
+                        # admin can look up.
+                        closed_literal = registry.register(
+                            model,
+                            name=f"lunchclosed_{group_id}_{day_index}",
+                            category="AVAILABILITY",
+                            message=(
+                                f"An availability rule leaves student group "
+                                f"{group_id} no lunch break on day "
+                                f"{self._grid.schedule_days[day_index]}."
+                            ),
+                            resource_ids=[group_id],
+                        )
+                        model.AddLinearExpressionInDomain(
+                            lunch_start,
+                            self._admissible_lunch_starts(
+                                day_offset,
+                                window_start,
+                                window_end,
+                                lunch_slots,
+                                closed,
+                            ),
+                        ).OnlyEnforceIf(closed_literal)
                     lunch_intervals.append(
                         model.NewFixedSizeIntervalVar(
                             lunch_start,
