@@ -6,6 +6,7 @@ import {
   detectConflicts,
   findOpenSlots,
   suggestPlacements,
+  teacherIdsOf,
   toPlacement,
   weeksCanOverlap,
   validatePlacement,
@@ -203,6 +204,38 @@ describe("validatePlacement id handling", () => {
 // ---------------------------------------------------------------------------
 // validatePlacement — teachers
 // ---------------------------------------------------------------------------
+
+describe("teacherIdsOf", () => {
+  /*
+   * Exported for the same reason groupsOf is: the timetable kept its own copy
+   * of this one line as `lesson.teacherId === filter`, which hid every lesson a
+   * teacher only co-taught and filed a co-teacher-only lesson under "no teacher
+   * at all".
+   */
+  it("names both teachers in the room", () => {
+    expect(teacherIdsOf(makePlacement({ teacherId: "t1", coTeacherId: "t2" }))).toEqual([
+      "t1",
+      "t2",
+    ]);
+  });
+
+  it("names the primary alone when there is no second", () => {
+    expect(teacherIdsOf(makePlacement({ teacherId: "t1" }))).toEqual(["t1"]);
+  });
+
+  it("names the co-teacher when there is no primary", () => {
+    // The mis-filing case: this lesson has a teacher, so it is not "no teacher".
+    expect(
+      teacherIdsOf(makePlacement({ teacherId: null, coTeacherId: "t2" })),
+    ).toEqual(["t2"]);
+  });
+
+  it("is empty only when nobody teaches it", () => {
+    expect(
+      teacherIdsOf(makePlacement({ teacherId: null, coTeacherId: null })),
+    ).toEqual([]);
+  });
+});
 
 describe("validatePlacement teacher conflicts", () => {
   it("does not conflict when both lessons have no teacher", () => {

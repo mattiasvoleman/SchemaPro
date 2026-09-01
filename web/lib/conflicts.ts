@@ -98,7 +98,16 @@ export function groupsOf(placement: Placement): string[] {
   return [placement.studentGroupId, ...(placement.extraGroupIds ?? [])];
 }
 
-function teacherIdsOf(placement: Placement): string[] {
+/**
+ * Both teachers in the room, not just the one the lesson is filed under.
+ *
+ * Exported for the same reason its neighbour `groupsOf` is: the timetable's own
+ * filter asked `lesson.teacherId === filter` and therefore hid every lesson a
+ * teacher only CO-taught — and filed a lesson carrying only a coTeacherId
+ * under "no teacher at all" in the per-teacher lanes. A second copy of this one
+ * line in that file is how that stayed true.
+ */
+export function teacherIdsOf(placement: Placement): string[] {
   return [placement.teacherId, placement.coTeacherId ?? null].filter(
     (id): id is string => Boolean(id),
   );

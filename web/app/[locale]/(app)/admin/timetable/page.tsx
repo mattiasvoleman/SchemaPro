@@ -60,6 +60,7 @@ import {
   detectConflicts,
   findOpenSlots,
   suggestPlacements,
+  teacherIdsOf,
   toPlacement,
   validatePlacement,
   type OpenSlotMatch,
@@ -480,7 +481,11 @@ export default function TimetablePage() {
       (lessons ?? []).filter(
         (lesson) =>
           (groupFilter === ALL || lesson.studentGroupId === groupFilter) &&
-          (teacherFilter === ALL || lesson.teacherId === teacherFilter),
+          // Both teachers. A lesson somebody only CO-taught was missing from
+          // their own view — the filter asked a name question where the data
+          // is a set.
+          (teacherFilter === ALL ||
+            teacherIdsOf(toPlacement(lesson)).includes(teacherFilter)),
       ),
     [lessons, groupFilter, teacherFilter],
   );
@@ -540,10 +545,17 @@ export default function TimetablePage() {
         push(
           teacher.id,
           `${teacher.firstName} ${teacher.lastName}`,
-          (l) => l.teacherId === teacher.id,
+          (l) => teacherIdsOf(toPlacement(l)).includes(teacher.id),
         );
       }
-      push("__none__", t("noTeacher"), (l) => l.teacherId === null);
+      // "No teacher at all", which is not the same as "no primary teacher".
+      // This lane used to catch a lesson carrying only a coTeacherId and file
+      // it here — actively mis-filed, not merely absent from its own lane.
+      push(
+        "__none__",
+        t("noTeacher"),
+        (l) => teacherIdsOf(toPlacement(l)).length === 0,
+      );
     } else if (groupBy === "room") {
       for (const room of rooms ?? []) {
         push(room.id, room.name, (l) => l.roomId === room.id);
