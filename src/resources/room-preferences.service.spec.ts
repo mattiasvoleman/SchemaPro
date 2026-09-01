@@ -28,6 +28,15 @@ describe('RoomPreferencesService', () => {
     service = new RoomPreferencesService(prisma as unknown as PrismaService);
     tx.roomPreference.create.mockResolvedValue({ id: PREF_ID });
     tx.roomPreference.update.mockResolvedValue({ id: PREF_ID });
+    // update() reads the stored row before it validates the merge; without it
+    // every PATCH would be a 404.
+    tx.roomPreference.findUnique.mockResolvedValue({
+      id: PREF_ID,
+      kind: 'WISH',
+      minGradeLevel: null,
+      maxGradeLevel: null,
+      rooms: [{ roomId: ROOM_A }],
+    });
   });
 
   describe('create', () => {
@@ -41,6 +50,8 @@ describe('RoomPreferencesService', () => {
         data: {
           schoolId: testUser().schoolId,
           subjectId: SUBJECT_ID,
+          minGradeLevel: null,
+          maxGradeLevel: null,
           roomTypeId: null,
           weight: 200,
           rooms: {
@@ -166,6 +177,229 @@ describe('RoomPreferencesService', () => {
         orderBy: { createdAt: 'asc' },
         include: { rooms: { select: { roomId: true } } },
       });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Stadiet och låset
+  // -------------------------------------------------------------------------
+
+  describe('the stage and the lock', () => {
+    it('defaults to a wish, which is what every existing row means', async () => {
+      // A caller that forgets `kind` gets the half that cannot make a week
+      // impossible.
+      await service.create({ subjectId: SUBJECT_ID, roomIds: [ROOM_A] }, testUser());
+
+      expect('kind' in tx.roomPreference.create.mock.calls[0][0].data).toBe(false);
+    });
+
+    it('stores a lock with its years', async () => {
+      await service.create(
+        {
+          subjectId: SUBJECT_ID,
+          roomIds: [ROOM_A],
+          kind: 'LOCK',
+          minGradeLevel: 4,
+          maxGradeLevel: 4,
+        },
+        testUser(),
+      );
+
+      const data = tx.roomPreference.create.mock.calls[0][0].data;
+      expect(data.kind).toBe('LOCK');
+      expect([data.minGradeLevel, data.maxGradeLevel]).toEqual([4, 4]);
+    });
+
+    it('refuses half a span, which cannot be interpreted', async () => {
+      await expect(
+        service.create(
+          { subjectId: SUBJECT_ID, roomIds: [ROOM_A], minGradeLevel: 4 },
+          testUser(),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(tx.roomPreference.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a backwards span', async () => {
+      await expect(
+        service.create(
+          {
+            subjectId: SUBJECT_ID,
+            roomIds: [ROOM_A],
+            minGradeLevel: 9,
+            maxGradeLevel: 4,
+          },
+          testUser(),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('refuses a lock whose every room is fenced away from its years', async () => {
+      /*
+       * "Åk 4:s matte endast i Optimisten 4" when Optimisten 4 is reserved for
+       * years 7-9 is a contradiction, and only this layer can phrase it: it is
+       * the last place that still knows the room's NAME. The engine meets the
+       * same fact as an empty eligible set and can say no more than "no room
+       * satisfies capacity/type/years".
+       */
+      tx.room.findMany.mockResolvedValue([
+        { name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+      ]);
+
+      await expect(
+        service.create(
+          {
+            subjectId: SUBJECT_ID,
+            roomIds: [ROOM_A],
+            kind: 'LOCK',
+            minGradeLevel: 4,
+            maxGradeLevel: 4,
+          },
+          testUser(),
+        ),
+      ).rejects.toThrow('Optimisten 4');
+      expect(tx.roomPreference.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a lock whose span only HALF fits the room', async () => {
+      /*
+       * The case that separates containment from overlap, and the reason it is
+       * containment. A lock for åk 4-8 naming a room fenced to years 7-9
+       * OVERLAPS it — years 7 and 8 are in both — so an overlap test would
+       * accept the rule and then send the year-4 and year-5 children into a
+       * högstadie room. Containment asks whether the whole span fits, and it
+       * does not.
+       *
+       * A disjoint span (åk 4 vs a 7-9 room) cannot tell the two apart: both
+       * refuse it.
+       */
+      tx.room.findMany.mockResolvedValue([
+        { name: 'Hytt 1', minGradeLevel: 7, maxGradeLevel: 9 },
+      ]);
+
+      await expect(
+        service.create(
+          {
+            subjectId: SUBJECT_ID,
+            roomIds: [ROOM_A],
+            kind: 'LOCK',
+            minGradeLevel: 4,
+            maxGradeLevel: 8,
+          },
+          testUser(),
+        ),
+      ).rejects.toThrow('Hytt 1');
+    });
+
+    it('accepts a lock when one of its rooms fits, even if another does not', async () => {
+      // The rooms are alternatives, not a set that must all work.
+      tx.room.findMany.mockResolvedValue([
+        { name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+        { name: 'Bryggan 3', minGradeLevel: null, maxGradeLevel: null },
+      ]);
+
+      await expect(
+        service.create(
+          {
+            subjectId: SUBJECT_ID,
+            roomIds: [ROOM_A, ROOM_B],
+            kind: 'LOCK',
+            minGradeLevel: 4,
+            maxGradeLevel: 4,
+          },
+          testUser(),
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it('leaves an unreachable WISH alone', async () => {
+      /*
+       * A wish that cannot be met costs a constant the solver ignores. Refusing
+       * one would stop a school writing an aspiration before the room it needs
+       * has been re-fenced — and only a lock can make a week impossible.
+       */
+      tx.room.findMany.mockResolvedValue([
+        { name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+      ]);
+
+      await expect(
+        service.create(
+          {
+            subjectId: SUBJECT_ID,
+            roomIds: [ROOM_A],
+            minGradeLevel: 4,
+            maxGradeLevel: 4,
+          },
+          testUser(),
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it('checks the merge when a PATCH flips a wish into a lock', async () => {
+      /*
+       * The payload says nothing about the rooms it is about to start
+       * enforcing. Reading them off the DTO alone would arm a lock against a
+       * room list nobody re-checked.
+       */
+      tx.roomPreference.findUnique.mockResolvedValue({
+        id: PREF_ID,
+        kind: 'WISH',
+        minGradeLevel: 4,
+        maxGradeLevel: 4,
+        rooms: [{ roomId: ROOM_A }],
+      });
+      tx.room.findMany.mockResolvedValue([
+        { name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+      ]);
+
+      await expect(
+        service.update(PREF_ID, { kind: 'LOCK' }, testUser()),
+      ).rejects.toThrow('Optimisten 4');
+      expect(tx.roomPreference.update).not.toHaveBeenCalled();
+    });
+
+    it('checks the merge when a PATCH moves one year bound', async () => {
+      // The other bound is never sent, so validating the DTO alone passes and
+      // the database answers with a constraint name instead.
+      tx.roomPreference.findUnique.mockResolvedValue({
+        id: PREF_ID,
+        kind: 'WISH',
+        minGradeLevel: 4,
+        maxGradeLevel: 6,
+        rooms: [{ roomId: ROOM_A }],
+      });
+
+      await expect(
+        service.update(PREF_ID, { minGradeLevel: 9 }, testUser()),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(tx.roomPreference.update).not.toHaveBeenCalled();
+    });
+
+    it('can clear a span back to every year', async () => {
+      tx.roomPreference.findUnique.mockResolvedValue({
+        id: PREF_ID,
+        kind: 'WISH',
+        minGradeLevel: 4,
+        maxGradeLevel: 6,
+        rooms: [{ roomId: ROOM_A }],
+      });
+
+      await service.update(
+        PREF_ID,
+        { minGradeLevel: null, maxGradeLevel: null },
+        testUser(),
+      );
+
+      const data = tx.roomPreference.update.mock.calls[0][0].data;
+      expect([data.minGradeLevel, data.maxGradeLevel]).toEqual([null, null]);
+    });
+
+    it('reports an unknown rule as missing rather than as a write failure', async () => {
+      tx.roomPreference.findUnique.mockResolvedValue(null);
+
+      await expect(service.update(PREF_ID, { kind: 'LOCK' }, testUser())).rejects.toThrow(
+        /not found/,
+      );
     });
   });
 });

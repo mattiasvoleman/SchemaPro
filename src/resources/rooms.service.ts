@@ -63,9 +63,37 @@ export class RoomsService {
     }
   }
 
+  /**
+   * Deleting a room that is the last one a LOCK names is refused.
+   *
+   * RoomPreferenceRooms cascades, so the row would survive with an empty room
+   * list — a lock that forbids every room and permits none, which the engine
+   * meets as an unsatisfiable rule and the school meets as a week that stopped
+   * generating for no visible reason. A WISH in the same state is harmless (it
+   * simply stops being paid), so only locks are guarded.
+   *
+   * Refused rather than cascaded-and-warned because there is nowhere to put the
+   * warning: this returns 204 and the room list re-renders.
+   */
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
     try {
-      await this.prisma.withRls(user, (tx) => tx.room.delete({ where: { id } }));
+      await this.prisma.withRls(user, async (tx) => {
+        const orphaned = await tx.roomPreference.findMany({
+          where: { kind: 'LOCK', rooms: { some: { roomId: id } } },
+          select: { subject: { select: { name: true } }, rooms: { select: { roomId: true } } },
+        });
+        const emptied = orphaned.filter((rule) => rule.rooms.length === 1);
+        if (emptied.length > 0) {
+          const subjects = [
+            ...new Set(emptied.map((rule) => rule.subject?.name).filter(Boolean)),
+          ].join(', ');
+          throw new BadRequestException(
+            `Salen är den enda som är låst för ${subjects || 'ett ämne'}. ` +
+              `Ta bort eller ändra låsningen först.`,
+          );
+        }
+        return tx.room.delete({ where: { id } });
+      });
     } catch (error) {
       rethrowPrismaError(error);
     }

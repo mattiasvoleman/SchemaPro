@@ -1,12 +1,15 @@
+import { RoomRuleKind } from '@prisma/client';
 import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsEnum,
   IsInt,
   IsOptional,
   IsUUID,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 
 /**
@@ -19,6 +22,40 @@ import {
 export class CreateRoomPreferenceDto {
   @IsUUID('4')
   subjectId!: string;
+
+  /**
+   * WISH pays a price per lesson placed elsewhere; LOCK forbids everywhere else
+   * and refuses the week by name if that cannot be honoured.
+   *
+   * Omitted means WISH, which is what every row written before this field
+   * existed means. A caller that forgets it therefore gets the safe half.
+   */
+  @IsOptional()
+  @IsEnum(RoomRuleKind)
+  kind?: RoomRuleKind;
+
+  /**
+   * The years the rule applies to; omit both for every year.
+   *
+   * Matched by CONTAINMENT — a group's whole span must sit inside this one.
+   * Overlap would let an åk 7-9 rule seize a teaching group spanning 6-7 and
+   * send year-6 pupils to a högstadie room, which is the error that is not
+   * survivable. Both bounds or neither; the database enforces it too.
+   */
+  @ValidateIf((dto: { minGradeLevel?: number | null }) => dto.minGradeLevel !== null)
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  minGradeLevel?: number | null;
+
+  @ValidateIf((dto: { maxGradeLevel?: number | null }) => dto.maxGradeLevel !== null)
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  maxGradeLevel?: number | null;
+
 
   @IsOptional()
   @IsUUID('4')
@@ -46,6 +83,40 @@ export class UpdateRoomPreferenceDto {
   @IsOptional()
   @IsUUID('4')
   roomTypeId?: string | null;
+
+  /**
+   * WISH pays a price per lesson placed elsewhere; LOCK forbids everywhere else
+   * and refuses the week by name if that cannot be honoured.
+   *
+   * Omitted means WISH, which is what every row written before this field
+   * existed means. A caller that forgets it therefore gets the safe half.
+   */
+  @IsOptional()
+  @IsEnum(RoomRuleKind)
+  kind?: RoomRuleKind;
+
+  /**
+   * The years the rule applies to; omit both for every year.
+   *
+   * Matched by CONTAINMENT — a group's whole span must sit inside this one.
+   * Overlap would let an åk 7-9 rule seize a teaching group spanning 6-7 and
+   * send year-6 pupils to a högstadie room, which is the error that is not
+   * survivable. Both bounds or neither; the database enforces it too.
+   */
+  @ValidateIf((dto: { minGradeLevel?: number | null }) => dto.minGradeLevel !== null)
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  minGradeLevel?: number | null;
+
+  @ValidateIf((dto: { maxGradeLevel?: number | null }) => dto.maxGradeLevel !== null)
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(12)
+  maxGradeLevel?: number | null;
+
 
   @IsOptional()
   @IsArray()

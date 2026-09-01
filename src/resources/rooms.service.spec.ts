@@ -154,6 +154,57 @@ describe('RoomsService', () => {
       expect(tx.room.delete).toHaveBeenCalledWith({ where: { id: ROOM_ID } });
     });
 
+    it('refuses to delete the last room a lock names', async () => {
+      /*
+       * RoomPreferenceRooms cascades, so the rule would survive with an empty
+       * room list — a lock that forbids every room and permits none. The school
+       * would meet that as a week that stopped generating for no visible
+       * reason, and there is nowhere to put a warning: this returns 204 and the
+       * room list simply re-renders.
+       */
+      tx.roomPreference.findMany.mockResolvedValue([
+        { subject: { name: 'Matematik' }, rooms: [{ roomId: ROOM_ID }] },
+      ]);
+
+      await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow('Matematik');
+      expect(tx.room.delete).not.toHaveBeenCalled();
+    });
+
+    it('asks only about locks, never about wishes', async () => {
+      /*
+       * A wish left with no rooms simply stops being paid — harmless. A lock
+       * left with none forbids every room and permits none. Guarding both would
+       * refuse an ordinary delete for a rule that costs nothing.
+       *
+       * Asserted on the QUERY, which is weaker than a behavioural test and is
+       * the strongest thing available: the prisma mock returns what it is told
+       * regardless of `where`, so no fixture can make it filter. What this
+       * catches is the filter being dropped.
+       */
+      tx.roomPreference.findMany.mockResolvedValue([]);
+      tx.room.delete.mockResolvedValue({ id: ROOM_ID });
+
+      await service.remove(ROOM_ID, testUser());
+
+      expect(tx.roomPreference.findMany.mock.calls[0][0].where).toMatchObject({
+        kind: 'LOCK',
+      });
+    });
+
+    it('allows the delete when the lock still has another room', async () => {
+      // Two rooms named, one going away: the rule keeps meaning something.
+      tx.roomPreference.findMany.mockResolvedValue([
+        {
+          subject: { name: 'Matematik' },
+          rooms: [{ roomId: ROOM_ID }, { roomId: 'other' }],
+        },
+      ]);
+      tx.room.delete.mockResolvedValue({ id: ROOM_ID });
+
+      await expect(service.remove(ROOM_ID, testUser())).resolves.toBeUndefined();
+      expect(tx.room.delete).toHaveBeenCalled();
+    });
+
     it('maps P2025 (unknown or cross-tenant id) to 404', async () => {
       tx.room.delete.mockRejectedValue(prismaError('P2025'));
 
