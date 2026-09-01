@@ -860,7 +860,8 @@
     "publishWarningLink": "Set up lunch",
     "summary": "Lunch {start}–{end}, {minutes} min",
     "summarySeats": "{seats} seats in the dining hall",
-    "summaryNoSeats": "no seat limit"
+    "summaryNoSeats": "no seat limit",
+    "bandLabel": "Lunch"
   },
   "conflictCategories": {
     "AVAILABILITY": "Availability",

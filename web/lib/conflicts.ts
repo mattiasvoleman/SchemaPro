@@ -24,7 +24,13 @@ import { timeToMinutes } from "@/lib/utils";
  * rather than the lesson. Folding them together would make the grid say the
  * same sentence for both.
  */
-export type ConflictKind = "TEACHER" | "ROOM" | "GROUP" | "AVAILABILITY" | "FRAME";
+export type ConflictKind =
+  | "TEACHER"
+  | "ROOM"
+  | "GROUP"
+  | "AVAILABILITY"
+  | "FRAME"
+  | "LUNCH";
 
 export interface ConflictHit {
   kind: ConflictKind;
@@ -196,6 +202,14 @@ export function validatePlacement(
    * no frames, where every hour is inside the day.
    */
   frames?: FrameTime[],
+  /**
+   * The lunch each group was given, by groupId and weekday.
+   *
+   * Omitted, meals are not checked. A band drawn on the grid with no validator
+   * behind it looks like a rule and behaves like decoration: the lesson lands
+   * on top of the meal, the stripe still shows, and nothing says a word.
+   */
+  lunchOf?: Map<string, { startMinutes: number; endMinutes: number }>,
 ): ConflictHit[] {
   const hits: ConflictHit[] = [];
 
@@ -313,6 +327,27 @@ export function validatePlacement(
     hits.push({ kind: "FRAME" });
   }
 
+  // The meal last of all. A lesson dropped on a class's own lunch is a real
+  // clash — the children are in the dining hall — but it is the one the school
+  // is most likely to want anyway, so it reports after everything else.
+  if (lunchOf !== undefined) {
+    for (const groupId of groupsOf(candidate)) {
+      const sitting = lunchOf.get(`${groupId}:${candidate.dayOfWeek}`);
+      if (
+        sitting &&
+        overlaps(
+          candidate.startMinutes,
+          candidate.endMinutes,
+          sitting.startMinutes,
+          sitting.endMinutes,
+        )
+      ) {
+        hits.push({ kind: "LUNCH" });
+        break;
+      }
+    }
+  }
+
   return hits;
 }
 
@@ -330,6 +365,8 @@ export function detectConflicts(
   gradeSpanOf?: Map<string, GradeSpan>,
   /** The school's ramtider; without them frames are not checked. */
   frames?: FrameTime[],
+  /** Each group's meal by `groupId:weekday`; without it meals are not checked. */
+  lunchOf?: Map<string, { startMinutes: number; endMinutes: number }>,
 ): Map<string, ConflictHit[]> {
   const placements = lessons.map(toPlacement);
   const result = new Map<string, ConflictHit[]>();
@@ -343,6 +380,7 @@ export function detectConflicts(
       groupConflicts,
       gradeSpanOf,
       frames,
+      lunchOf,
     );
     if (hits.length > 0 && placement.id) {
       result.set(placement.id, hits);

@@ -222,6 +222,22 @@ export type { FrameTime } from "@/lib/frame-times";
 export type { LunchServing } from "@/lib/lunch-servings";
 
 /**
+ * The lunch the solver gave one group on one weekday.
+ *
+ * Distinct from a LunchServing, which is the WINDOW a school declared. This is
+ * the placement inside it, and the reason both exist is that the school writes
+ * one and the solver writes the other.
+ */
+export interface LunchSitting {
+  id: string;
+  studentGroupId: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  headcount: number;
+}
+
+/**
  * The school's lunch rules and the size of its dining hall — one row, so the
  * hooks read and write it as a single value rather than a collection.
  *

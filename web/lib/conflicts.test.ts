@@ -715,6 +715,128 @@ describe("validatePlacement frame times", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// validatePlacement — the meal
+// ---------------------------------------------------------------------------
+
+describe("validatePlacement lunch sittings", () => {
+  const spans = (entries: Record<string, { min: number; max: number }>) =>
+    new Map(Object.entries(entries));
+
+  /** gA eats 11:30-12:00 on Monday. */
+  const lunch = () =>
+    new Map([["gA:1", { startMinutes: 11 * 60 + 30, endMinutes: 12 * 60 }]]);
+
+  const at = (start: number, end: number) =>
+    makePlacement({ studentGroupId: "gA", startMinutes: start, endMinutes: end });
+
+  const check = (
+    placement: Placement,
+    lunchOf: ReturnType<typeof lunch> | undefined,
+  ) =>
+    validatePlacement(
+      placement,
+      [],
+      [],
+      undefined,
+      undefined,
+      spans({ gA: { min: 4, max: 4 } }),
+      [],
+      lunchOf,
+    );
+
+  it("is silent when no sittings were supplied", () => {
+    // A band with no validator looks like a rule and behaves like decoration.
+    // Absent is the honest reading of a query still in flight.
+    expect(check(at(11 * 60 + 30, 12 * 60), undefined)).toEqual([]);
+  });
+
+  it("flags a lesson dropped on the class's own meal", () => {
+    expect(check(at(11 * 60 + 45, 12 * 60 + 45), lunch())).toEqual([
+      { kind: "LUNCH" },
+    ]);
+  });
+
+  it("leaves a lesson that ends when the meal starts alone", () => {
+    expect(check(at(10 * 60 + 30, 11 * 60 + 30), lunch())).toEqual([]);
+  });
+
+  it("leaves a lesson that starts when the meal ends alone", () => {
+    expect(check(at(12 * 60, 13 * 60), lunch())).toEqual([]);
+  });
+
+  it("looks at the lesson's own weekday", () => {
+    const tuesday = makePlacement({
+      studentGroupId: "gA",
+      dayOfWeek: 2,
+      startMinutes: 11 * 60 + 45,
+      endMinutes: 12 * 60 + 45,
+    });
+    expect(check(tuesday, lunch())).toEqual([]);
+  });
+
+  it("reports LUNCH once for a lesson two classes attend, not twice", () => {
+    const shared = makePlacement({
+      studentGroupId: "gA",
+      extraGroupIds: ["gB"],
+      startMinutes: 11 * 60 + 45,
+      endMinutes: 12 * 60 + 45,
+    });
+    const both = new Map([
+      ["gA:1", { startMinutes: 11 * 60 + 30, endMinutes: 12 * 60 }],
+      ["gB:1", { startMinutes: 11 * 60 + 30, endMinutes: 12 * 60 }],
+    ]);
+
+    expect(check(shared, both)).toEqual([{ kind: "LUNCH" }]);
+  });
+
+  it("flags the lesson when only the second class is eating", () => {
+    const shared = makePlacement({
+      studentGroupId: "gA",
+      extraGroupIds: ["gB"],
+      startMinutes: 11 * 60 + 45,
+      endMinutes: 12 * 60 + 45,
+    });
+    const onlyB = new Map([
+      ["gB:1", { startMinutes: 11 * 60 + 30, endMinutes: 12 * 60 }],
+    ]);
+
+    expect(check(shared, onlyB)).toEqual([{ kind: "LUNCH" }]);
+  });
+
+  it("reports the double-booking before the meal", () => {
+    // Whichever is listed first is what the grid shows, and a booking's fix is
+    // the unambiguous one.
+    const late = makePlacement({
+      id: "L1",
+      studentGroupId: "gA",
+      teacherId: "t1",
+      startMinutes: 11 * 60 + 45,
+      endMinutes: 12 * 60 + 45,
+    });
+    const other = makePlacement({
+      id: "L2",
+      studentGroupId: "gB",
+      teacherId: "t1",
+      startMinutes: 11 * 60 + 45,
+      endMinutes: 12 * 60 + 45,
+    });
+
+    const hits = validatePlacement(
+      late,
+      [other],
+      [],
+      undefined,
+      undefined,
+      spans({ gA: { min: 4, max: 4 } }),
+      [],
+      lunch(),
+    );
+
+    expect(hits.map((hit) => hit.kind)).toEqual(["TEACHER", "LUNCH"]);
+  });
+});
+
 describe("detectConflicts", () => {
   it("returns an empty map for an empty timetable", () => {
     expect(detectConflicts([], []).size).toBe(0);

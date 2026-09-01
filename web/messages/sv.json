@@ -860,7 +860,8 @@
     "publishWarningLink": "Ställ in lunch",
     "summary": "Lunch {start}–{end}, {minutes} min",
     "summarySeats": "{seats} platser i matsalen",
-    "summaryNoSeats": "ingen platsgräns"
+    "summaryNoSeats": "ingen platsgräns",
+    "bandLabel": "Lunch"
   },
   "conflictCategories": {
     "AVAILABILITY": "Tillgänglighet",

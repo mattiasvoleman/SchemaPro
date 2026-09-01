@@ -31,6 +31,7 @@ import type {
   TeachingRequirement,
   FrameTime,
   LunchServing,
+  LunchSitting,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -273,6 +274,32 @@ export function useLunchServings() {
         "id, minGradeLevel, maxGradeLevel, dayOfWeek, startTime, endTime, seats",
         "minGradeLevel",
       ),
+  });
+}
+
+/**
+ * The lunch the solver gave each group, one row per group per weekday.
+ *
+ * Year-scoped and disabled until one is picked, unlike the SITTINGS a school
+ * declares: this is what the solver decided against ONE läsår's lessons, and it
+ * is meaningless against another's.
+ */
+export function useLunchSittings(academicYearId: string | null) {
+  return useQuery({
+    queryKey: ["lunch-sittings", academicYearId],
+    enabled: academicYearId !== null,
+    queryFn: async () => {
+      const supabase = createClient();
+      return fetchAllPages<LunchSitting>((from, to) =>
+        supabase
+          .from("LunchSittings")
+          .select("id, studentGroupId, dayOfWeek, startTime, endTime, headcount")
+          .eq("academicYearId", academicYearId!)
+          .order("dayOfWeek")
+          .order("id")
+          .range(from, to),
+      );
+    },
   });
 }
 

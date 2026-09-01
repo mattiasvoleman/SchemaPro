@@ -58,7 +58,25 @@ interface TimetableGridProps {
   onToggleSelect?: (id: string) => void;
   /** Click on an empty slot (create-lesson affordance). */
   onSlotClick?: (dayOfWeek: number, startMinutes: number) => void;
+  /**
+   * Stripes drawn behind the lessons — the lunch each class was given.
+   *
+   * Not lessons, and not passed as lessons: layoutDay applies ONE laneCount to
+   * a whole day, so folding a band into `lessons` would halve the width of
+   * every lesson beside it. They are also not clickable and must never be: see
+   * the `pointer-events-none` on the element below.
+   */
+  bands?: TimetableBand[];
   className?: string;
+}
+
+/** A stripe across one day, drawn behind the lessons. */
+export interface TimetableBand {
+  id: string;
+  dayOfWeek: number;
+  startMinutes: number;
+  endMinutes: number;
+  label: string;
 }
 
 interface PositionedLesson extends TimetableLesson {
@@ -131,6 +149,7 @@ export function TimetableGrid({
   selectedIds,
   onToggleSelect,
   onSlotClick,
+  bands,
   className,
 }: TimetableGridProps) {
   const t = useTranslations("common");
@@ -144,14 +163,23 @@ export function TimetableGrid({
   const dayCount = includeWeekend ? 7 : 5;
 
   const { startHour, endHour } = useMemo(() => {
-    if (lessons.length === 0) return { startHour: 8, endHour: 16 };
-    const min = Math.min(...lessons.map((l) => l.startMinutes));
-    const max = Math.max(...lessons.map((l) => l.endMinutes));
+    // The bands count towards the bounds. A lunch at 07:30 or 16:30 drawn on a
+    // grid derived from the lessons alone would be clipped off the edge — and
+    // silently, since a band has no other affordance to notice its absence by.
+    const starts = [
+      ...lessons.map((l) => l.startMinutes),
+      ...(bands ?? []).map((b) => b.startMinutes),
+    ];
+    const ends = [
+      ...lessons.map((l) => l.endMinutes),
+      ...(bands ?? []).map((b) => b.endMinutes),
+    ];
+    if (starts.length === 0) return { startHour: 8, endHour: 16 };
     return {
-      startHour: Math.min(8, Math.floor(min / 60)),
-      endHour: Math.max(16, Math.ceil(max / 60)),
+      startHour: Math.min(8, Math.floor(Math.min(...starts) / 60)),
+      endHour: Math.max(16, Math.ceil(Math.max(...ends) / 60)),
     };
-  }, [lessons]);
+  }, [lessons, bands]);
 
   const totalMinutes = (endHour - startHour) * 60;
   const gridHeight = totalMinutes * SLOT_HEIGHT_PX;
@@ -487,6 +515,33 @@ export function TimetableGrid({
                 className="relative border-l"
                 onClick={(event) => handleSlotClick(event, day)}
               >
+                {/*
+                  The bands, behind everything and inert.
+
+                  `pointer-events-none` is load-bearing, not cosmetic:
+                  handleSlotClick only fires when `event.target ===
+                  event.currentTarget`, so a band that swallowed pointer events
+                  would silently kill empty-slot lesson creation across its whole
+                  stripe — on exactly the hours a school is most likely to click.
+                */}
+                {(bands ?? [])
+                  .filter((band) => band.dayOfWeek === day)
+                  .map((band) => (
+                    <div
+                      key={band.id}
+                      className="pointer-events-none absolute inset-x-0 z-0 flex items-start justify-end border-y border-amber-500/30 bg-amber-500/10 px-1 py-0.5 text-[10px] leading-none text-amber-700 dark:text-amber-500"
+                      style={{
+                        top: `${(band.startMinutes - startHour * 60) * SLOT_HEIGHT_PX}px`,
+                        height: `${Math.max(
+                          12,
+                          (band.endMinutes - band.startMinutes) * SLOT_HEIGHT_PX,
+                        )}px`,
+                      }}
+                    >
+                      {band.label}
+                    </div>
+                  ))}
+
                 {/* Hour lines */}
                 {hours.slice(1, -1).map((hour) => (
                   <div

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { TimetableGrid, type TimetableLesson } from "./timetable-grid";
+import { TimetableGrid, type TimetableBand, type TimetableLesson } from "./timetable-grid";
 
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
@@ -746,5 +746,75 @@ describe("TimetableGrid date headers", () => {
 
     // No "d/m" text anywhere in the header.
     expect(screen.queryByText(/^\d{1,2}\/\d{1,2}$/)).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bands — the lunch drawn behind the lessons
+// ---------------------------------------------------------------------------
+
+describe("bands", () => {
+  const band = (overrides: Partial<TimetableBand> = {}): TimetableBand => ({
+    id: "b1",
+    dayOfWeek: 1,
+    startMinutes: 11 * 60,
+    endMinutes: 11 * 60 + 30,
+    label: "Lunch",
+    ...overrides,
+  });
+
+  it("draws a band on the day it names", () => {
+    render(<TimetableGrid lessons={[]} bands={[band()]} />);
+    expect(screen.getByText("Lunch")).toBeTruthy();
+  });
+
+  it("must never swallow a click meant for the column", () => {
+    /*
+     * handleSlotClick only fires when event.target === event.currentTarget, so
+     * a band without pointer-events-none would kill empty-slot lesson creation
+     * across its whole stripe — on exactly the hours a school clicks most.
+     * Asserting the class rather than simulating a click, because jsdom
+     * dispatches to the element under the cursor regardless of CSS: it cannot
+     * see pointer-events at all, so a click test here would pass either way.
+     */
+    render(<TimetableGrid lessons={[]} bands={[band()]} />);
+    const stripe = screen.getByText("Lunch");
+    expect(stripe.className).toContain("pointer-events-none");
+  });
+
+  it("does not change how wide the lessons are", () => {
+    // layoutDay applies ONE laneCount to a whole day, so a band folded into
+    // `lessons` would halve every lesson beside it. The lesson's own button
+    // carries the inline width, which is the value that would move.
+    const lesson = makeLesson({ dayOfWeek: 1 });
+    render(<TimetableGrid lessons={[lesson]} />);
+    const withoutBand = screen.getByRole("button", { name: /Math/ }).style.width;
+
+    cleanup();
+    render(<TimetableGrid lessons={[lesson]} bands={[band()]} />);
+    const withBand = screen.getByRole("button", { name: /Math/ }).style.width;
+
+    expect(withBand).toBe(withoutBand);
+  });
+
+  it("widens the grid to hold a band outside the default hours", () => {
+    // A band has no other affordance to notice its absence by, so a lunch at
+    // 07:00 clipped off the top would simply not exist for the reader.
+    render(
+      <TimetableGrid
+        lessons={[]}
+        bands={[band({ startMinutes: 7 * 60, endMinutes: 7 * 60 + 30 })]}
+      />,
+    );
+
+    // The axis leaves its FIRST label blank, so 07:00 itself is never drawn.
+    // 08:00 appearing is the evidence the grid now starts an hour earlier —
+    // with the default bounds it would be the blank one.
+    expect(screen.getByText("08:00")).toBeTruthy();
+  });
+
+  it("draws nothing when no bands are given", () => {
+    render(<TimetableGrid lessons={[makeLesson({ id: "L1" })]} />);
+    expect(screen.queryByText("Lunch")).toBeNull();
   });
 });

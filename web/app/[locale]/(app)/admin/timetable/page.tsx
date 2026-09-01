@@ -45,6 +45,7 @@ import {
   type VersionLesson,
   useGroupMemberships,
   useFrameTimes,
+  useLunchSittings,
 } from "@/lib/queries";
 import { buildIcs, downloadIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
@@ -249,6 +250,7 @@ export default function TimetablePage() {
   );
   const { data: memberships } = useGroupMemberships();
   const { data: frameTimes } = useFrameTimes();
+  const { data: lunchSittings } = useLunchSittings(activeYear?.id ?? null);
   /**
    * groupId -> the years it holds, so a GRADE_LEVEL rule can reach it.
    *
@@ -304,6 +306,26 @@ export default function TimetablePage() {
   // Validation always runs against ALL lessons, not just the filtered view.
   // -------------------------------------------------------------------
 
+  /**
+   * Each group's meal, keyed `groupId:weekday` for the conflict check.
+   *
+   * Built from every sitting, not only the filtered group's: the check runs on
+   * the lesson's own groups, and a lesson for a class that is not the one being
+   * looked at is still a lesson on that class's meal.
+   */
+  const lunchOf = useMemo(() => {
+    if (!lunchSittings) return undefined;
+    return new Map(
+      lunchSittings.map((sitting) => [
+        `${sitting.studentGroupId}:${sitting.dayOfWeek}`,
+        {
+          startMinutes: timeToMinutes(sitting.startTime),
+          endMinutes: timeToMinutes(sitting.endTime),
+        },
+      ]),
+    );
+  }, [lunchSittings]);
+
   const conflictMap = useMemo(
     () =>
       detectConflicts(
@@ -313,8 +335,17 @@ export default function TimetablePage() {
         groupConflictMap,
         gradeSpanOf,
         frameTimes,
+        lunchOf,
       ),
-    [lessons, constraints, studentGroupOf, groupConflictMap, gradeSpanOf, frameTimes],
+    [
+      lessons,
+      constraints,
+      studentGroupOf,
+      groupConflictMap,
+      gradeSpanOf,
+      frameTimes,
+      lunchOf,
+    ],
   );
 
   /** lessonId → collaborator label (soft edit-locks from presence). */
@@ -357,6 +388,7 @@ export default function TimetablePage() {
           groupConflictMap,
           gradeSpanOf,
           frameTimes,
+          lunchOf,
         ).length === 0
       );
     },
@@ -368,8 +400,31 @@ export default function TimetablePage() {
       groupConflictMap,
       gradeSpanOf,
       frameTimes,
+      lunchOf,
     ],
   );
+
+  /**
+   * The lunch drawn behind the lessons  /**
+   * The lunch drawn behind the lessons — but ONLY when one class is in view.
+   *
+   * A sitting belongs to a group. The default view is every group at once, and
+   * a stripe across that grid would say "everyone eats at 11:40" when the whole
+   * point of the flow is that they do not. Shown for a single group and hidden
+   * otherwise is the honest reading; the flow as a whole is on its own page.
+   */
+  const lunchBands = useMemo(() => {
+    if (groupFilter === ALL) return undefined;
+    return (lunchSittings ?? [])
+      .filter((sitting) => sitting.studentGroupId === groupFilter)
+      .map((sitting) => ({
+        id: sitting.id,
+        dayOfWeek: sitting.dayOfWeek,
+        startMinutes: timeToMinutes(sitting.startTime),
+        endMinutes: timeToMinutes(sitting.endTime),
+        label: tLunch("bandLabel"),
+      }));
+  }, [lunchSittings, groupFilter, tLunch]);
 
   const filtered = useMemo(
     () =>
@@ -1267,6 +1322,7 @@ export default function TimetablePage() {
                 selectedIds={selectedIds}
                 onToggleSelect={toggleSelect}
                 onSlotClick={openCreate}
+                bands={lunchBands}
               />
             </div>
           ))}
@@ -1282,6 +1338,7 @@ export default function TimetablePage() {
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onSlotClick={openCreate}
+          bands={lunchBands}
         />
       )}
 
