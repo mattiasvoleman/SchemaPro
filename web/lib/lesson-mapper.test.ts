@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { calendarLessonToGrid, isoWeekdayOf } from "./lesson-mapper";
-import type { CalendarLessonRow, Room, StudentGroup, Subject } from "@/lib/types";
+import { calendarLessonToGrid, calendarLunchToBand, isoWeekdayOf } from "./lesson-mapper";
+import type {
+  CalendarLessonRow,
+  CalendarLunch,
+  Room,
+  StudentGroup,
+  Subject,
+} from "@/lib/types";
 
 describe("isoWeekdayOf", () => {
   it("maps Monday to 1", () => {
@@ -144,5 +150,57 @@ describe("calendarLessonToGrid", () => {
     );
     expect(mapped.startMinutes).toBe(0);
     expect(mapped.endMinutes).toBe(23 * 60 + 59);
+  });
+});
+
+describe("calendarLunchToBand", () => {
+  const lunch = (overrides: Partial<CalendarLunch> = {}): CalendarLunch => ({
+    id: "cl-1",
+    studentGroupId: "g-7a",
+    date: "2026-08-10", // a Monday
+    startsAt: "2026-08-10T11:30:00.000Z",
+    endsAt: "2026-08-10T12:00:00.000Z",
+    ...overrides,
+  });
+
+  it("places the meal on the weekday of its own date", () => {
+    expect(calendarLunchToBand(lunch(), "Lunch").dayOfWeek).toBe(1);
+  });
+
+  it("carries the label it is given rather than inventing one", () => {
+    // The word is translated by the page; a hard-coded "Lunch" here would be
+    // Swedish in an English portal.
+    expect(calendarLunchToBand(lunch(), "Skollunch").label).toBe("Skollunch");
+  });
+
+  it("positions the meal the same way a lesson beside it is positioned", () => {
+    /*
+     * The shared `minutesOf` reads the instant in the READER's local time,
+     * which is a limitation the whole calendar has. What must not happen is the
+     * meal using a DIFFERENT rule: an hour's offset shared by everything is
+     * invisible, while a lunch sitting between the wrong two lessons reads as a
+     * bug. Asserting the two agree, not what the number is.
+     */
+    const band = calendarLunchToBand(lunch(), "Lunch");
+    const lesson = calendarLessonToGrid(
+      {
+        id: "l-1",
+        subjectId: "s-1",
+        studentGroupId: "g-7a",
+        roomId: null,
+        date: "2026-08-10",
+        startsAt: "2026-08-10T11:30:00.000Z",
+        endsAt: "2026-08-10T12:00:00.000Z",
+        status: "SCHEDULED",
+        note: null,
+      } as never,
+      new Map(),
+      new Map(),
+      new Map(),
+    );
+
+    expect(band.startMinutes).toBe(lesson.startMinutes);
+    expect(band.endMinutes).toBe(lesson.endMinutes);
+    expect(band.dayOfWeek).toBe(lesson.dayOfWeek);
   });
 });

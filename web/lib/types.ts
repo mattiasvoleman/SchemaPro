@@ -228,6 +228,16 @@ export type { LunchServing } from "@/lib/lunch-servings";
  * the placement inside it, and the reason both exist is that the school writes
  * one and the solver writes the other.
  */
+/** A dated meal, as publish materialised it. */
+export interface CalendarLunch {
+  id: string;
+  studentGroupId: string;
+  /** YYYY-MM-DD */
+  date: string;
+  startsAt: string;
+  endsAt: string;
+}
+
 export interface LunchSitting {
   id: string;
   studentGroupId: string;

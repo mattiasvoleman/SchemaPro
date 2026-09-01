@@ -422,12 +422,18 @@
     "empty": "Inga sittningar. Hela lunchfönstret är öppet för alla årskurser samtidigt.",
     "hint": "Du skriver när ett stadium äter. Solvern bestämmer vilken klass som går när inuti fönstret, och delar ett stadium som är större än matsalen i flera vågor.",
     "overlapHint": "Sittningar som når samma grupp läggs ihop — en 6-7-grupp får äta vid både 4-6:s och 7-9:s sittning. En rad för en viss veckodag ersätter alla-dagar-raden den dagen i stället för att vidga den.",
-    "flowTitle": "Dagens flöde",
-    "flowHint": "Uträknat ur raderna ovan, med samma regel som solvern använder.",
+    "flowTitle": "Lunchflöde",
     "flowOpen": "Hela lunchfönstret",
     "tooShort": "Kortare än lunchen ({minutes} min)",
     "noLunch": "Lunchen är inte definierad — sittningarna gäller ingenting förrän den är det.",
-    "lunchLink": "Ställ in lunch"
+    "lunchLink": "Ställ in lunch",
+    "flowSubtitle": "Vem äter när, dag för dag — listan köket kan skriva ut",
+    "flowEmpty": "Inga sittningar ännu. Generera ett schema så fyller solvern i dem.",
+    "flowSeated": "{count} elever",
+    "flowTotal": "Som mest {count} samtidigt",
+    "flowPrint": "Skriv ut",
+    "windowsTitle": "Så här blir veckan",
+    "windowsHint": "Uträknat ur raderna ovan, med samma regel som solvern använder."
   },
   "breaks": {
     "title": "Lov och studiedagar",

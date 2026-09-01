@@ -5,9 +5,17 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Link } from "@/i18n/navigation";
 import { Pencil, Plus, Trash2, TriangleAlert, UtensilsCrossed } from "lucide-react";
-import { useCrudMutations, useLunchServings, useLunchSettings } from "@/lib/queries";
+import {
+  useActiveYear,
+  useCrudMutations,
+  useGroups,
+  useLunchServings,
+  useLunchSettings,
+  useLunchSittings,
+} from "@/lib/queries";
 import type { LunchServing } from "@/lib/types";
 import { servingsFor } from "@/lib/lunch-servings";
+import { lunchFlow, peakSeated } from "@/lib/lunch-flow";
 import { formatTime, timeToMinutes } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -71,6 +79,9 @@ export default function LunchServingsPage() {
   const tGrades = useTranslations("grades");
   const { data: servings, isLoading } = useLunchServings();
   const { data: lunchSettings } = useLunchSettings();
+  const { activeYear } = useActiveYear();
+  const { data: sittings } = useLunchSittings(activeYear?.id ?? null);
+  const { data: groups } = useGroups();
 
   const mutations = useCrudMutations<{
     minGradeLevel: number;
@@ -108,6 +119,12 @@ export default function LunchServingsPage() {
     }
     return [...seen.values()].sort((a, b) => a.min - b.min || a.max - b.max);
   }, [servings]);
+
+  /** Group names for the kitchen's list; an id there would be useless. */
+  const groupNameOf = useMemo(
+    () => new Map((groups ?? []).map((group) => [group.id, group.name])),
+    [groups],
+  );
 
   /** The break's length, which decides whether a sitting is long enough. */
   const lunchMinutes = lunchSettings?.lunchEnabled
@@ -286,11 +303,11 @@ export default function LunchServingsPage() {
             with servingsFor, the same function the app's own checks use, rather
             than a second implementation that could disagree with the solver.
           */}
-          <section aria-labelledby="lunchflode" className="mt-8">
-            <h2 id="lunchflode" className="text-lg font-semibold">
-              {t("flowTitle")}
+          <section aria-labelledby="deklarerade-fonster" className="mt-8">
+            <h2 id="deklarerade-fonster" className="text-lg font-semibold">
+              {t("windowsTitle")}
             </h2>
-            <p className="mb-3 text-sm text-muted-foreground">{t("flowHint")}</p>
+            <p className="mb-3 text-sm text-muted-foreground">{t("windowsHint")}</p>
             <p className="mb-3 max-w-prose text-sm text-muted-foreground">
               {t("overlapHint")}
             </p>
@@ -354,6 +371,53 @@ export default function LunchServingsPage() {
           </section>
         </>
       )}
+
+      {/*
+        What the solver actually did, as opposed to what the school asked for.
+        The table above is the rule; this is the day. It is the cheapest useful
+        artefact in the whole feature — one page the kitchen can print — and it
+        exists only after a generation run, which is why it is absent rather
+        than empty until then.
+      */}
+      {sittings && sittings.length > 0 ? (
+        <section aria-labelledby="kitchen-flow" className="mt-10">
+          <h2 id="kitchen-flow" className="text-lg font-semibold">
+            {t("flowTitle")}
+          </h2>
+          <p className="mb-3 text-sm text-muted-foreground">{t("flowSubtitle")}</p>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {WEEKDAYS.map((day) => {
+              const waves = lunchFlow(sittings, day);
+              if (waves.length === 0) return null;
+              return (
+                <div key={day} className="rounded-lg border bg-card p-4">
+                  <h3 className="font-medium">{tDays(String(day))}</h3>
+                  <p className="mb-2 text-sm text-muted-foreground">
+                    {t("flowTotal", { count: peakSeated(sittings, day) })}
+                  </p>
+                  <ol className="space-y-1 text-sm">
+                    {waves.map((wave) => (
+                      <li key={wave.startMinutes} className="flex justify-between gap-3">
+                        <span className="tabular-nums">
+                          {clock(wave.startMinutes)}–{clock(wave.endMinutes)}
+                        </span>
+                        <span className="text-right">
+                          {wave.studentGroupIds
+                            .map((id) => groupNameOf.get(id) ?? "—")
+                            .join(", ")}
+                          <span className="ml-2 text-muted-foreground tabular-nums">
+                            {t("flowSeated", { count: wave.seated })}
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
@@ -500,4 +564,10 @@ export default function LunchServingsPage() {
       />
     </div>
   );
+}
+
+/** Minutes since midnight as HH:MM, for the kitchen's list. */
+function clock(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  return `${String(hours).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }

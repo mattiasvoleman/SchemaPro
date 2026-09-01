@@ -4,17 +4,19 @@ import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   useCalendarLessons,
+  useCalendarLunches,
   useGroups,
   useRooms,
   useSubjects,
 } from "@/lib/queries";
-import { calendarLessonToGrid } from "@/lib/lesson-mapper";
+import { calendarLessonToGrid, calendarLunchToBand } from "@/lib/lesson-mapper";
 import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { WeekSchedule } from "@/components/schedule/week-schedule";
 
 export default function StudentSchedulePage() {
   const t = useTranslations("schedule");
+  const tLunch = useTranslations("lunch");
   const [weekStart, setWeekStart] = useState(() => startOfIsoWeek(new Date()));
 
   const fromDate = toDateString(weekStart);
@@ -22,6 +24,9 @@ export default function StudentSchedulePage() {
 
   // RLS scopes this to the student's own group automatically.
   const { data: lessons, isLoading } = useCalendarLessons(fromDate, toDate);
+  // The meal, in the pupil's own week. RLS scopes it the same way the lessons
+  // are scoped, so no group filter is needed or wanted here.
+  const { data: lunches } = useCalendarLunches(fromDate, toDate);
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
   const { data: rooms } = useRooms();
@@ -47,6 +52,11 @@ export default function StudentSchedulePage() {
     [lessons, subjectById, groupById, roomById],
   );
 
+  const lunchBands = useMemo(
+    () => (lunches ?? []).map((lunch) => calendarLunchToBand(lunch, tLunch("bandLabel"))),
+    [lunches, tLunch],
+  );
+
   return (
     <div>
       <PageHeader title={t("title")} />
@@ -55,6 +65,7 @@ export default function StudentSchedulePage() {
         onWeekChange={setWeekStart}
         lessons={gridLessons}
         isLoading={isLoading}
+        bands={lunchBands}
       />
     </div>
   );

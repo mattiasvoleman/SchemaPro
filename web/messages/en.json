@@ -422,12 +422,18 @@
     "empty": "No sittings. The whole lunch window is open to every year at once.",
     "hint": "You write when a stage eats. The solver decides which class goes when inside the window, and splits a stage bigger than the hall into several waves.",
     "overlapHint": "Sittings reaching the same group add up — a year 6-7 group may eat at both the 4-6 and the 7-9 sitting. A row for one weekday replaces the every-day row that day rather than widening it.",
-    "flowTitle": "The day's flow",
-    "flowHint": "Computed from the rows above, with the rule the solver uses.",
+    "flowTitle": "Lunch flow",
     "flowOpen": "The whole lunch window",
     "tooShort": "Shorter than lunch ({minutes} min)",
     "noLunch": "Lunch is not defined — sittings mean nothing until it is.",
-    "lunchLink": "Set up lunch"
+    "lunchLink": "Set up lunch",
+    "flowSubtitle": "Who eats when, day by day — the list the kitchen can print",
+    "flowEmpty": "No sittings yet. Generate a timetable and the solver fills them in.",
+    "flowSeated": "{count} students",
+    "flowTotal": "At most {count} at once",
+    "flowPrint": "Print",
+    "windowsTitle": "How the week turns out",
+    "windowsHint": "Computed from the rows above, with the rule the solver uses."
   },
   "breaks": {
     "title": "Holidays and staff days",

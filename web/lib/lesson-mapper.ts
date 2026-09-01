@@ -1,6 +1,15 @@
-import type { CalendarLessonRow, Room, StudentGroup, Subject } from "@/lib/types";
+import type {
+  CalendarLessonRow,
+  CalendarLunch,
+  Room,
+  StudentGroup,
+  Subject,
+} from "@/lib/types";
 import { subjectColor } from "@/lib/utils";
-import type { TimetableLesson } from "@/components/schedule/timetable-grid";
+import type {
+  TimetableBand,
+  TimetableLesson,
+} from "@/components/schedule/timetable-grid";
 
 /** ISO weekday (1=Mon..7=Sun) from a YYYY-MM-DD date string. */
 export function isoWeekdayOf(dateString: string): number {
@@ -32,5 +41,25 @@ export function calendarLessonToGrid(
     room: room?.name,
     color: subjectColor(lesson.subjectId, subject?.color),
     cancelled: lesson.status === "CANCELLED",
+  };
+}
+
+/**
+ * A dated meal as a stripe for the grid.
+ *
+ * Shares `minutesOf` with the lessons deliberately. That helper reads the
+ * instant in the READER's local time, not the school's — which is a limitation
+ * the whole calendar has, not one this function introduces. Positioning the
+ * meal by a different rule would make it drift away from the lessons around it
+ * for anyone abroad, and a lunch sitting between the wrong two lessons reads as
+ * a bug in a way an hour's offset shared by everything does not.
+ */
+export function calendarLunchToBand(lunch: CalendarLunch, label: string): TimetableBand {
+  return {
+    id: lunch.id,
+    dayOfWeek: isoWeekdayOf(lunch.date),
+    startMinutes: minutesOf(lunch.startsAt),
+    endMinutes: minutesOf(lunch.endsAt),
+    label,
   };
 }

@@ -52,12 +52,22 @@ const removeMock = vi.fn();
 const state = vi.hoisted(() => ({
   servings: { data: [] as unknown[], isLoading: false },
   lunch: { data: null as unknown },
+  /** What the SOLVER decided, as opposed to what the school declared. */
+  sittings: { data: [] as unknown[] },
 }));
+
+const GROUPS = [
+  { id: "g-4a", name: "4A" },
+  { id: "g-4b", name: "4B" },
+];
 
 vi.mock("@/lib/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/queries")>()),
   useLunchServings: () => state.servings,
   useLunchSettings: () => state.lunch,
+  useActiveYear: () => ({ activeYear: { id: "y-1" } }),
+  useLunchSittings: () => state.sittings,
+  useGroups: () => ({ data: GROUPS }),
   useCrudMutations: () => ({
     create: { mutateAsync: createMock, isPending: false },
     update: { mutateAsync: updateMock, isPending: false },
@@ -108,11 +118,12 @@ beforeEach(() => {
   removeMock.mockReset().mockResolvedValue({});
   state.servings = { data: [], isLoading: false };
   state.lunch = { data: LUNCH };
+  state.sittings = { data: [] };
 });
 
 /** The flow, as "stage | mon | tue | wed | thu | fri". */
 const flowRows = () =>
-  within(screen.getByRole("region", { name: "flowTitle" }))
+  within(screen.getByRole("region", { name: "windowsTitle" }))
     .getAllByRole("row")
     .slice(1)
     .map((row) =>
@@ -126,7 +137,7 @@ const flowRows = () =>
 describe("the computed flow", () => {
   it("is not offered at all before anything is declared", () => {
     render(<LunchServingsPage />);
-    expect(screen.queryByRole("region", { name: "flowTitle" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "windowsTitle" })).toBeNull();
     expect(screen.getByText("empty")).toBeTruthy();
   });
 
@@ -210,6 +221,93 @@ describe("the computed flow", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The kitchen's list
+// ---------------------------------------------------------------------------
+
+describe("the kitchen's flow", () => {
+  const sitting = (
+    id: string,
+    groupId: string,
+    dayOfWeek: number,
+    start: string,
+    end: string,
+    headcount: number,
+  ) => ({
+    id,
+    studentGroupId: groupId,
+    dayOfWeek,
+    startTime: `${start}:00`,
+    endTime: `${end}:00`,
+    headcount,
+  });
+
+  it("is absent until a generation run has produced sittings", () => {
+    // Absent rather than empty: a printable list with nothing on it invites
+    // somebody to take it to the kitchen.
+    state.servings = { data: [serving("a", 4, 6, null, "11:00", "11:40")], isLoading: false };
+    render(<LunchServingsPage />);
+
+    expect(screen.queryByRole("region", { name: "flowTitle" })).toBeNull();
+  });
+
+  it("names the classes, not their ids", () => {
+    state.sittings = { data: [sitting("s1", "g-4a", 1, "11:00", "11:30", 28)] };
+    render(<LunchServingsPage />);
+
+    const region = screen.getByRole("region", { name: "flowTitle" });
+    expect(within(region).getByText(/4A/)).toBeTruthy();
+    expect(within(region).queryByText(/g-4a/)).toBeNull();
+  });
+
+  it("puts two classes that sit down together on one line", () => {
+    state.sittings = {
+      data: [
+        sitting("s1", "g-4a", 1, "11:00", "11:30", 28),
+        sitting("s2", "g-4b", 1, "11:00", "11:30", 30),
+      ],
+    };
+    render(<LunchServingsPage />);
+
+    const region = screen.getByRole("region", { name: "flowTitle" });
+    expect(within(region).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(region).getByText(/4A, 4B/)).toBeTruthy();
+    expect(within(region).getByText("flowSeated(58)")).toBeTruthy();
+  });
+
+  it("reports the peak in the hall, not the sum of the waves", () => {
+    // Two waves that never meet must not be added: whether the hall is big
+    // enough is a question about one moment.
+    state.sittings = {
+      data: [
+        sitting("s1", "g-4a", 1, "11:00", "11:30", 28),
+        sitting("s2", "g-4b", 1, "11:30", "12:00", 30),
+      ],
+    };
+    render(<LunchServingsPage />);
+
+    const region = screen.getByRole("region", { name: "flowTitle" });
+    expect(within(region).getByText("flowTotal(30)")).toBeTruthy();
+  });
+
+  it("gives each weekday its own card", () => {
+    state.sittings = {
+      data: [
+        sitting("s1", "g-4a", 1, "11:00", "11:30", 28),
+        sitting("s2", "g-4a", 5, "11:40", "12:10", 28),
+      ],
+    };
+    render(<LunchServingsPage />);
+
+    const region = screen.getByRole("region", { name: "flowTitle" });
+    // The mock echoes the key, and tDays is called with the bare weekday.
+    expect(
+      within(region).getAllByRole("heading", { level: 3 }).map((h) => h.textContent),
+    ).toEqual(["1", "5"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The warning that the rows mean nothing yet// ---------------------------------------------------------------------------
 // The warning that the rows mean nothing yet
 // ---------------------------------------------------------------------------
 

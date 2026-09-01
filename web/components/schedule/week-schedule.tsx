@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import { addDays, isoWeek } from "@/lib/utils";
 import {
   TimetableGrid,
+  type TimetableBand,
   type TimetableLesson,
 } from "@/components/schedule/timetable-grid";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,8 @@ interface WeekScheduleProps {
   lessons: TimetableLesson[];
   isLoading: boolean;
   onLessonClick?: (lesson: TimetableLesson) => void;
+  /** Stripes drawn behind the lessons — the meal, in a pupil's own week. */
+  bands?: TimetableBand[];
 }
 
 export function WeekSchedule({
@@ -25,6 +28,7 @@ export function WeekSchedule({
   lessons,
   isLoading,
   onLessonClick,
+  bands,
 }: WeekScheduleProps) {
   const t = useTranslations("schedule");
 
@@ -59,7 +63,12 @@ export function WeekSchedule({
       ) : lessons.length === 0 ? (
         <EmptyState icon={CalendarDays} title={t("noLessons")} />
       ) : (
-        <TimetableGrid lessons={lessons} dates={dates} onLessonClick={onLessonClick} />
+        <TimetableGrid
+          lessons={lessons}
+          dates={dates}
+          onLessonClick={onLessonClick}
+          bands={bands}
+        />
       )}
     </div>
   );

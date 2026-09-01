@@ -32,6 +32,7 @@ import type {
   FrameTime,
   LunchServing,
   LunchSitting,
+  CalendarLunch,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -296,6 +297,33 @@ export function useLunchSittings(academicYearId: string | null) {
           .select("id, studentGroupId, dayOfWeek, startTime, endTime, headcount")
           .eq("academicYearId", academicYearId!)
           .order("dayOfWeek")
+          .order("id")
+          .range(from, to),
+      );
+    },
+  });
+}
+
+/**
+ * The dated meals in one week — a pupil's own, by RLS.
+ *
+ * Its own table rather than a lesson, which is what makes it safe to read here
+ * at all: everything downstream of CalendarLessons assumes teaching, and a meal
+ * in that table would be exported to the kommun as undervisning and would tell
+ * a guardian their child was absent from "Lunch".
+ */
+export function useCalendarLunches(fromDate: string, toDate: string) {
+  return useQuery({
+    queryKey: ["calendar-lunches", fromDate, toDate],
+    queryFn: async () => {
+      const supabase = createClient();
+      return fetchAllPages<CalendarLunch>((from, to) =>
+        supabase
+          .from("CalendarLunches")
+          .select("id, studentGroupId, date, startsAt, endsAt")
+          .gte("date", fromDate)
+          .lte("date", toDate)
+          .order("date")
           .order("id")
           .range(from, to),
       );
