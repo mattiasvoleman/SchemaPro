@@ -12,11 +12,13 @@ import {
 import { calendarLessonToGrid, calendarLunchToBand } from "@/lib/lesson-mapper";
 import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
+import { useProfile } from "@/components/profile-context";
 import { WeekSchedule } from "@/components/schedule/week-schedule";
 
 export default function StudentSchedulePage() {
   const t = useTranslations("schedule");
   const tLunch = useTranslations("lunch");
+  const { profile } = useProfile();
   const [weekStart, setWeekStart] = useState(() => startOfIsoWeek(new Date()));
 
   const fromDate = toDateString(weekStart);
@@ -24,8 +26,6 @@ export default function StudentSchedulePage() {
 
   // RLS scopes this to the student's own group automatically.
   const { data: lessons, isLoading } = useCalendarLessons(fromDate, toDate);
-  // The meal, in the pupil's own week. RLS scopes it the same way the lessons
-  // are scoped, so no group filter is needed or wanted here.
   const { data: lunches } = useCalendarLunches(fromDate, toDate);
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
@@ -52,9 +52,22 @@ export default function StudentSchedulePage() {
     [lessons, subjectById, groupById, roomById],
   );
 
+  /**
+   * The meal of the class whose week this is.
+   *
+   * Filtered here as well as in the policy, and not as belt and braces: a
+   * guardian reading this page has more than one child's class in reach, and a
+   * teacher or an administrator has the whole school's. The policy decides what
+   * may be read; this decides whose week is on screen. Two comments used to
+   * stand here claiming RLS made a filter unnecessary — they were written
+   * against a policy that matched the entire school.
+   */
   const lunchBands = useMemo(
-    () => (lunches ?? []).map((lunch) => calendarLunchToBand(lunch, tLunch("bandLabel"))),
-    [lunches, tLunch],
+    () =>
+      (lunches ?? [])
+        .filter((lunch) => lunch.studentGroupId === profile.studentGroupId)
+        .map((lunch) => calendarLunchToBand(lunch, tLunch("bandLabel"))),
+    [lunches, profile.studentGroupId, tLunch],
   );
 
   return (

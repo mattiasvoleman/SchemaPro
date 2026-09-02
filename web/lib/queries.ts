@@ -305,12 +305,19 @@ export function useLunchSittings(academicYearId: string | null) {
 }
 
 /**
- * The dated meals in one week — a pupil's own, by RLS.
+ * The dated meals in one week.
  *
  * Its own table rather than a lesson, which is what makes it safe to read here
  * at all: everything downstream of CalendarLessons assumes teaching, and a meal
  * in that table would be exported to the kommun as undervisning and would tell
  * a guardian their child was absent from "Lunch".
+ *
+ * This docblock used to say "a pupil's own, by RLS", and it was false for as
+ * long as it stood: calendar_lunches_member_select matched the whole school.
+ * It is true now — see calendar_lunches_student_select in
+ * 20260904090000_en_lunch_hor_till_en_klass — and the caller filters anyway.
+ * A staff account and a guardian both legitimately read more than one class
+ * here, so who is asking decides what is shown, not the policy alone.
  */
 export function useCalendarLunches(fromDate: string, toDate: string) {
   return useQuery({

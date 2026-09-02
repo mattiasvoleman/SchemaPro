@@ -60,7 +60,11 @@ export function WeekSchedule({
 
       {isLoading ? (
         <Skeleton className="h-96 w-full" />
-      ) : lessons.length === 0 ? (
+      ) : lessons.length === 0 && (bands?.length ?? 0) === 0 ? (
+        // Bands count. A week with no lessons but a meal every day is a week
+        // with something in it, and replacing the grid with "inga lektioner"
+        // threw the meal away before it was ever drawn — the one case a pupil
+        // most needs the answer to is a day whose only entry is lunch.
         <EmptyState icon={CalendarDays} title={t("noLessons")} />
       ) : (
         <TimetableGrid
