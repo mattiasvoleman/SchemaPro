@@ -757,6 +757,212 @@ $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- 7e. The meal: a pupil sees their own class's, not the school's.
+--
+-- LunchSittings and CalendarLunches shipped with one read policy each, both
+-- saying `"schoolId" = current_school_id()`, and neither had a line in this
+-- file. That is the whole story: the pupil page carries two comments claiming
+-- RLS scopes the read the way it scopes lessons, and nothing here contradicted
+-- them for as long as they were wrong.
+--
+-- Four principals, four different answers, and the interesting one is the
+-- SECOND PUPIL. Asserting only that a pupil sees their own meal would pass
+-- against the school-wide policy this section was written to bury — a pupil
+-- sees their own class's row under both. What separates them is the row
+-- belonging to the OTHER class, so that is what is counted.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  n bigint;
+  class_a uuid;
+  class_b uuid;
+  year_id uuid;
+BEGIN
+  -- Class A is the guardian fixture's child's class, so the pupil arm and the
+  -- guardian arm below are asserted against the SAME meal. Choosing it any
+  -- other way couples this section to the order the fixture happened to pick a
+  -- child in, and the guardian then reads a class with no row and fails for a
+  -- reason that has nothing to do with the policy.
+  SELECT u."studentGroupId" INTO class_a
+    FROM "GuardianStudents" gs
+    JOIN "Users" u ON u.id = gs."studentId"
+   WHERE gs."guardianId" = (SELECT id FROM "Users"
+                             WHERE "authId" = '00000000-0000-4000-8000-000000000004')
+     AND u."studentGroupId" IS NOT NULL
+   LIMIT 1;
+  SELECT "studentGroupId" INTO class_b
+    FROM "Users"
+   WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+     AND "studentGroupId" IS NOT NULL AND "studentGroupId" IS DISTINCT FROM class_a
+   ORDER BY "studentGroupId" LIMIT 1;
+  IF class_a IS NULL OR class_b IS NULL THEN
+    RAISE EXCEPTION
+      'lunch-reads: no guardian child with a home class, or fewer than two classes with pupils; every assertion below would be vacuous';
+  END IF;
+  SELECT "academicYearId" INTO year_id FROM "StudentGroups" WHERE id = class_a;
+
+  INSERT INTO "LunchSittings"
+    ("schoolId", "academicYearId", "studentGroupId", "dayOfWeek",
+     "startTime", "endTime", "headcount", "updatedAt")
+  VALUES
+    (app.current_school_id(), year_id, class_a, 1, '11:40', '12:00', 24, now()),
+    (app.current_school_id(), year_id, class_b, 1, '12:00', '12:20', 22, now());
+
+  INSERT INTO "CalendarLunches"
+    ("schoolId", "studentGroupId", "date", "startsAt", "endsAt", "updatedAt")
+  VALUES
+    (app.current_school_id(), class_a, DATE '2026-09-07',
+     TIMESTAMPTZ '2026-09-07 11:40+02', TIMESTAMPTZ '2026-09-07 12:00+02', now()),
+    (app.current_school_id(), class_b, DATE '2026-09-07',
+     TIMESTAMPTZ '2026-09-07 12:00+02', TIMESTAMPTZ '2026-09-07 12:20+02', now());
+
+  SELECT count(*) INTO n FROM "CalendarLunches";
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'lunch-reads: an admin cannot see the meals they just wrote (% row(s))', n;
+  END IF;
+END
+$$;
+
+-- A teacher sees the whole school's, because /admin/lunch-servings draws the
+-- kitchen's waves from every sitting and /admin/timetable draws the bands.
+--
+-- The order of the four principals below is load-bearing: each set_config
+-- resolves the NEXT principal's authId while the CURRENT one is in force, and a
+-- pupil cannot read a teacher's row. Admin, teacher, pupil, guardian is the only
+-- order in which every lookup is legal.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "CalendarLunches";
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'lunch-reads: a teacher cannot see the school''s meals (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LunchSittings";
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'lunch-reads: a teacher cannot see the school''s sittings (% row(s))', n;
+  END IF;
+
+  BEGIN
+    DELETE FROM "CalendarLunches";
+    IF (SELECT count(*) FROM "CalendarLunches") <> 2 THEN
+      RAISE EXCEPTION 'lunch-reads: a teacher deleted a published meal';
+    END IF;
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$$;
+-- A pupil of that class. Sees theirs, and only theirs.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT u."authId" FROM "Users" u
+      WHERE u."schoolId" = app.current_school_id() AND u.role = 'STUDENT'
+        AND u."studentGroupId" = (
+          SELECT c."studentGroupId"
+            FROM "GuardianStudents" gs
+            JOIN "Users" c ON c.id = gs."studentId"
+           WHERE gs."guardianId" = (SELECT id FROM "Users"
+                                     WHERE "authId" = '00000000-0000-4000-8000-000000000004')
+             AND c."studentGroupId" IS NOT NULL
+           LIMIT 1)
+      ORDER BY u."authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE own bigint; others bigint;
+BEGIN
+  SELECT count(*) INTO own
+    FROM "CalendarLunches" WHERE "studentGroupId" = app.current_user_group_id();
+  SELECT count(*) INTO others
+    FROM "CalendarLunches" WHERE "studentGroupId" <> app.current_user_group_id();
+
+  IF own <> 1 THEN
+    RAISE EXCEPTION 'lunch-reads: a pupil cannot see their own class''s meal (% row(s))', own;
+  END IF;
+  -- The assertion the school-wide policy failed.
+  IF others <> 0 THEN
+    RAISE EXCEPTION
+      'lunch-reads: a pupil sees another class''s meal (% row(s)) — the read is school-wide again', others;
+  END IF;
+
+  SELECT count(*) INTO others
+    FROM "LunchSittings" WHERE "studentGroupId" <> app.current_user_group_id();
+  IF others <> 0 THEN
+    RAISE EXCEPTION
+      'lunch-reads: a pupil sees another class''s sitting (% row(s))', others;
+  END IF;
+END
+$$;
+
+-- The guardian of that pupil, joined through the HOME CLASS. Keying this on
+-- StudentGroupMembers instead — which is what calendar_lessons_guardian_*
+-- does — returns nothing, because nothing writes a membership row for a home
+-- class. That is the defect this arm was written to avoid, so it is the one
+-- asserted.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    -- The literal, not a lookup: the principal in force here is the pupil
+    -- above, who by design cannot read another user's row — a SELECT would
+    -- resolve to null and set no principal at all.
+    'sub', '00000000-0000-4000-8000-000000000004'
+  )::text,
+  true
+);
+
+DO $$
+DECLARE own bigint; others bigint; child_group uuid;
+BEGIN
+  SELECT u."studentGroupId" INTO child_group
+    FROM "GuardianStudents" gs
+    JOIN "Users" u ON u.id = gs."studentId"
+   WHERE gs."guardianId" = app.current_user_id()
+   LIMIT 1;
+  IF child_group IS NULL THEN
+    RAISE EXCEPTION
+      'lunch-reads: the guardian fixture has no child with a home class; the arm below is vacuous';
+  END IF;
+
+  SELECT count(*) INTO own
+    FROM "CalendarLunches" WHERE "studentGroupId" = child_group;
+  SELECT count(*) INTO others
+    FROM "CalendarLunches" WHERE "studentGroupId" <> child_group;
+
+  IF own <> 1 THEN
+    RAISE EXCEPTION 'lunch-reads: a guardian cannot see their child''s meal (% row(s))', own;
+  END IF;
+  IF others <> 0 THEN
+    RAISE EXCEPTION 'lunch-reads: a guardian sees another class''s meal (% row(s))', others;
+  END IF;
+END
+$$;
+
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 8: a guardian link cannot reach across schools.
 --
 -- This was a live cross-tenant hole, reproduced end to end before it was fixed:

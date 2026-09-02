@@ -67,6 +67,37 @@ ORDER BY s."createdAt" LIMIT 1;
 UPDATE "Users" SET "isActive" = false, "updatedAt" = now()
  WHERE "authId" = '00000000-0000-4000-8000-000000000003' AND "isActive";
 
+-- A GUARDIAN in the FIRST school, linked to one pupil who has a home class.
+--
+-- Section 7e needs one. The lunch and rast policies join a guardian to their
+-- child through Users."studentGroupId" — the home class — and the seed creates
+-- no guardian link at all, so without this the guardian arm would be asserted
+-- against an empty set and pass while proving nothing.
+INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+SELECT s.id, 'rls-fixture-guardian@example.invalid', 'Fixture', 'Guardian', 'GUARDIAN',
+       '00000000-0000-4000-8000-000000000004', true, now()
+FROM "Schools" s
+WHERE s.slug <> 'rls-fixture-school'
+  AND NOT EXISTS (
+    SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000004'
+  )
+ORDER BY s."createdAt" LIMIT 1;
+
+INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId", "createdAt")
+SELECT g."schoolId", g.id, c.id, now()
+FROM "Users" g
+CROSS JOIN LATERAL (
+  SELECT u.id FROM "Users" u
+  WHERE u."schoolId" = g."schoolId" AND u.role = 'STUDENT'
+    AND u."studentGroupId" IS NOT NULL
+  ORDER BY u.id LIMIT 1
+) c
+WHERE g."authId" = '00000000-0000-4000-8000-000000000004'
+  AND NOT EXISTS (
+    SELECT 1 FROM "GuardianStudents" gs
+    WHERE gs."guardianId" = g.id AND gs."studentId" = c.id
+  );
+
 -- An active key for the FIRST school, so the key-lookup assertions have
 -- something to find, and a revoked one so revocation can be asserted.
 INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", "createdAt")
