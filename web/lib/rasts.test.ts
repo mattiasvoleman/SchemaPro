@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { crossesARast, rastsFor, rastWindows, type Rast } from "./rasts";
+import {
+  crossesARast,
+  rastsFor,
+  rastWindows,
+  teacherRastBands,
+  type Rast,
+} from "./rasts";
 
 // ---------------------------------------------------------------------------
 // A school with the ordinary Swedish day: three rasts for the middle stage, and
@@ -151,5 +157,97 @@ describe("crossesARast", () => {
 
   it("finds a lesson wholly inside one", () => {
     expect(crossesARast(windows, 9 * 60 + 45, 9 * 60 + 50)).not.toBeNull();
+  });
+});
+
+describe("teacherRastBands", () => {
+  const MONDAY = "2026-09-07";
+  const published = (
+    id: string,
+    studentGroupId: string,
+    name: string,
+    start: string,
+    end: string,
+  ) => ({
+    id,
+    studentGroupId,
+    name,
+    date: MONDAY,
+    startsAt: `${MONDAY}T${start}:00.000Z`,
+    endsAt: `${MONDAY}T${end}:00.000Z`,
+  });
+
+  const toBand = (row: {
+    id: string;
+    studentGroupId: string;
+    name: string;
+    date: string;
+    startsAt: string;
+    endsAt: string;
+  }) => ({
+    id: row.id,
+    dayOfWeek: 1,
+    startMinutes: Number(row.startsAt.slice(11, 13)) * 60 + Number(row.startsAt.slice(14, 16)),
+    endMinutes: Number(row.endsAt.slice(11, 13)) * 60 + Number(row.endsAt.slice(14, 16)),
+    label: row.name,
+  });
+
+  const NAMES = new Map([
+    ["g-41", "4.1"],
+    ["g-42", "4.2"],
+    ["g-81", "8.1"],
+  ]);
+
+  it("draws every window, not only the ones the stages agree on", () => {
+    // The teacher who takes åk 4 in the morning and åk 8 in the afternoon. An
+    // intersection would give them no band at all — and they are the person who
+    // most needs to see two different breaks.
+    const bands = teacherRastBands(
+      [
+        published("a", "g-41", "Förmiddagsrast", "09:40", "10:00"),
+        published("b", "g-81", "Eftermiddagsrast", "13:00", "13:15"),
+      ],
+      NAMES,
+      toBand,
+    );
+
+    expect(bands).toHaveLength(2);
+  });
+
+  it("merges classes that share a window into one band", () => {
+    // Three classes of the same stage publish the same 09:40 rast. Three
+    // identical stripes on one column would read as three breaks.
+    const bands = teacherRastBands(
+      [
+        published("a", "g-41", "Förmiddagsrast", "09:40", "10:00"),
+        published("b", "g-42", "Förmiddagsrast", "09:40", "10:00"),
+      ],
+      NAMES,
+      toBand,
+    );
+
+    expect(bands).toHaveLength(1);
+    expect(bands[0].label).toBe("Förmiddagsrast");
+  });
+
+  it("names the classes when one name covers two different windows", () => {
+    // A bare "Förmiddagsrast" twice on one column says less than nothing.
+    const bands = teacherRastBands(
+      [
+        published("a", "g-41", "Förmiddagsrast", "09:40", "10:00"),
+        published("b", "g-81", "Förmiddagsrast", "10:00", "10:20"),
+      ],
+      NAMES,
+      toBand,
+    );
+
+    expect(bands.map((b) => b.label).sort()).toEqual([
+      "Förmiddagsrast · 4.1",
+      "Förmiddagsrast · 8.1",
+    ]);
+  });
+
+  it("says nothing when the teacher takes no class with a rast", () => {
+    expect(teacherRastBands([], NAMES, toBand)).toEqual([]);
   });
 });

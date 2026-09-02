@@ -4,12 +4,14 @@ import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useProfile } from "@/components/profile-context";
 import {
+  useCalendarRasts,
   useGroups,
   useRooms,
   useSubjects,
   useTeacherLessons,
 } from "@/lib/queries";
-import { calendarLessonToGrid } from "@/lib/lesson-mapper";
+import { calendarLessonToGrid, calendarRastToBand } from "@/lib/lesson-mapper";
+import { teacherRastBands } from "@/lib/rasts";
 import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { WeekSchedule } from "@/components/schedule/week-schedule";
@@ -26,6 +28,7 @@ export default function TeacherSchedulePage() {
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
   const { data: rooms } = useRooms();
+  const { data: rasts } = useCalendarRasts(fromDate, toDate);
 
   const subjectById = useMemo(
     () => new Map((subjects ?? []).map((subject) => [subject.id, subject])),
@@ -48,6 +51,27 @@ export default function TeacherSchedulePage() {
     [lessons, subjectById, groupById, roomById],
   );
 
+  /**
+   * The rasts of the classes this teacher actually takes this week.
+   *
+   * Narrowed here rather than in the query because only this page knows the
+   * week's lessons — staff RLS hands over the whole school's rows, and drawing
+   * twenty classes' breaks would be twenty stripes on every column.
+   *
+   * EVERY window is drawn, not only the ones every stage agrees on. The teacher
+   * who takes åk 3 in the morning and åk 8 in the afternoon is exactly the
+   * person who needs to see two different breaks, and an intersection would
+   * give them none.
+   */
+  const rastBands = useMemo(() => {
+    const taught = new Set((lessons ?? []).map((lesson) => lesson.studentGroupId));
+    const mine = (rasts ?? []).filter((rast) => taught.has(rast.studentGroupId));
+    const groupNameOf = new Map(
+      (groups ?? []).map((group) => [group.id, group.name] as const),
+    );
+    return teacherRastBands(mine, groupNameOf, calendarRastToBand);
+  }, [rasts, lessons, groups]);
+
   return (
     <div>
       <PageHeader title={t("title")} />
@@ -56,6 +80,7 @@ export default function TeacherSchedulePage() {
         onWeekChange={setWeekStart}
         lessons={gridLessons}
         isLoading={isLoading}
+        bands={rastBands}
       />
     </div>
   );
