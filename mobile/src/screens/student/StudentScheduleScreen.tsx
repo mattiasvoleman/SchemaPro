@@ -8,45 +8,39 @@ import {
   View,
   SafeAreaView,
 } from 'react-native';
-import { getSupabase } from '../../services/supabase';
-
-interface LessonRow {
-  readonly id: string;
-  readonly date: string;
-  readonly startsAt: string;
-  readonly endsAt: string;
-  readonly status: string;
-  readonly subject: { name: string } | null;
-  readonly room: { name: string } | null;
-}
+import {
+  entryKey,
+  fetchSchedule,
+  toSections,
+  type ScheduleEntry,
+} from '../../services/schedule';
 
 /**
- * Student weekly schedule. RLS returns the student's own lessons: their
- * class's, plus multi-class and elective lessons they participate in.
+ * Student weekly schedule: lessons and meals, in the order they are lived.
+ *
+ * RLS returns the pupil's own of both — their class's lessons plus the
+ * multi-class and elective ones they attend, and their class's meal. The
+ * fetching, merging and grouping are in services/schedule.ts, where the test
+ * runner can reach them; jest.config.js renders no screens by design, and this
+ * screen going a whole feature without a line of lunch code is what that costs
+ * when the logic lives here instead.
  */
-async function fetchLessons(): Promise<LessonRow[]> {
-  const from = new Date();
-  const to = new Date();
-  to.setDate(to.getDate() + 7);
-  const { data, error } = await getSupabase()
-    .from('CalendarLessons')
-    .select('id, date, startsAt, endsAt, status, subject:Subjects(name), room:Rooms(name)')
-    .gte('date', from.toISOString().slice(0, 10))
-    .lte('date', to.toISOString().slice(0, 10))
-    .order('startsAt');
-  if (error) throw new Error(error.message);
-  return (data ?? []) as unknown as LessonRow[];
-}
+
+const hhmm = (iso: string) =>
+  new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+const timeRange = (startsAt: string, endsAt: string) =>
+  `${hhmm(startsAt)} – ${hhmm(endsAt)}`;
 
 export function StudentScheduleScreen(): React.JSX.Element {
-  const [rows, setRows] = useState<LessonRow[]>([]);
+  const [rows, setRows] = useState<ScheduleEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setRows(await fetchLessons());
+      setRows(await fetchSchedule());
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Could not load.');
@@ -63,21 +57,22 @@ export function StudentScheduleScreen(): React.JSX.Element {
     setIsRefreshing(false);
   }, [load]);
 
-  const sections = useMemo(() => {
-    const byDate = new Map<string, LessonRow[]>();
-    for (const row of rows) {
-      const key = row.date.slice(0, 10);
-      byDate.set(key, [...(byDate.get(key) ?? []), row]);
-    }
-    return [...byDate.entries()].map(([date, data]) => ({
-      title: new Date(`${date}T00:00:00`).toLocaleDateString(undefined, {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'short',
-      }),
-      data,
-    }));
-  }, [rows]);
+  const sections = useMemo(
+    () =>
+      toSections(rows).map((section) => ({
+        ...section,
+        // The label is derived here and the section is keyed on the date, not on
+        // this string: two days can render the same label under a locale that
+        // omits the year, and a SectionList given two sections with one key
+        // drops one of them.
+        title: new Date(`${section.date}T00:00:00`).toLocaleDateString(undefined, {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'short',
+        }),
+      })),
+    [rows],
+  );
 
   if (isLoading) {
     return (
@@ -98,7 +93,7 @@ export function StudentScheduleScreen(): React.JSX.Element {
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       <SectionList
         sections={sections}
-        keyExtractor={(item) => item.id}
+        keyExtractor={entryKey}
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#6366f1" />
         }
@@ -106,6 +101,14 @@ export function StudentScheduleScreen(): React.JSX.Element {
           <Text style={styles.sectionHeader}>{section.title}</Text>
         )}
         renderItem={({ item }) => {
+          if (item.kind === 'LUNCH') {
+            return (
+              <View style={[styles.card, styles.cardLunch]}>
+                <Text style={styles.cardTitleLunch}>Lunch</Text>
+                <Text style={styles.cardMeta}>{timeRange(item.startsAt, item.endsAt)}</Text>
+              </View>
+            );
+          }
           const cancelled = item.status === 'CANCELLED';
           return (
             <View style={[styles.card, cancelled && styles.cardCancelled]}>
@@ -114,15 +117,7 @@ export function StudentScheduleScreen(): React.JSX.Element {
                 {cancelled ? ' · CANCELLED' : ''}
               </Text>
               <Text style={styles.cardMeta}>
-                {new Date(item.startsAt).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-                {' – '}
-                {new Date(item.endsAt).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
+                {timeRange(item.startsAt, item.endsAt)}
                 {item.room?.name ? ` · ${item.room.name}` : ''}
               </Text>
             </View>
@@ -130,7 +125,7 @@ export function StudentScheduleScreen(): React.JSX.Element {
         }}
         ListEmptyComponent={
           <View style={styles.center}>
-            <Text style={styles.emptyTitle}>No lessons in the next 7 days</Text>
+            <Text style={styles.emptyTitle}>Nothing in the next 7 days</Text>
           </View>
         }
       />
@@ -164,6 +159,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   cardCancelled: { opacity: 0.5 },
+  // Muted, and amber like the web band, so the meal reads as the day's shape
+  // rather than as one more thing to be somewhere for.
+  cardLunch: { backgroundColor: '#1c1a12', borderColor: '#3a3418' },
+  cardTitleLunch: { color: '#fbbf24', fontWeight: '600' },
   cardTitle: { color: '#e2e8f0', fontWeight: '600' },
   cancelledText: { textDecorationLine: 'line-through' },
   cardMeta: { color: '#94a3b8', fontSize: 12, marginTop: 2 },
