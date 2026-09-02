@@ -98,7 +98,13 @@ def _assemble(shape, enabled, model, solver, request, timings=None):
 
     decisions = step(
         "decisions",
-        lambda: solver._create_lesson_decisions(model, request.requirements, len(rooms)),
+        # Every argument _build_model passes, in its order. Frames narrow the
+        # start domain and rasts cut holes in it, so a call that omits them
+        # measures a domain the service never builds — and the corridor a frame
+        # carries decides whether padded intervals are created at all.
+        lambda: solver._create_lesson_decisions(
+            model, request.requirements, len(rooms), request.frame_times, request.rasts,
+        ),
     )
     step("capacity", lambda: solver._add_capacity_constraints(model, registry, decisions, rooms))
     step("teacher", lambda: solver._add_teacher_no_overlap(model, decisions))
@@ -122,7 +128,8 @@ def _assemble(shape, enabled, model, solver, request, timings=None):
     # wrong thing.
     step("rules", lambda: solver._add_rules_constraints(
         model, registry, decisions, request.rules, day_vars,
-        request.fixed_lessons, request.groups, request.group_conflicts))
+        request.fixed_lessons, request.groups, request.constraints,
+        request.lunch_servings, request.frame_times, request.group_conflicts))
 
     def objective():
         terms = [
@@ -131,7 +138,9 @@ def _assemble(shape, enabled, model, solver, request, timings=None):
             *solver._add_disruption_objective(
                 model, decisions, request.previous_lessons, weights),
             *solver._add_spread_objective(model, decisions, weights, day_vars),
-            *solver._add_teacher_gap_objective(model, decisions, weights, day_vars),
+            *solver._add_idle_time_objective(
+                model, decisions, request.constraints, weights, day_vars,
+            ),
         ]
         model.Minimize(sum(terms) if terms else 0)
 

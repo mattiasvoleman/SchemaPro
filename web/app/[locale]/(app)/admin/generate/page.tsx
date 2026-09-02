@@ -197,6 +197,18 @@ export default function GeneratePage() {
                       {weights[key]}
                     </span>
                   </div>
+                  {/*
+                    50, while the API accepts 1000 — and that is deliberate,
+                    not an oversight nobody documented.
+
+                    These weights are RELATIVE: only the ratios between them
+                    reach the objective, so a ceiling of 50 across all five
+                    expresses every ratio up to 50:1, which is far past the
+                    point where one term stops trading against another at all.
+                    Widening the track to 1000 would leave the useful range —
+                    nought to ten — inside the first one percent of it, and
+                    unhittable with a mouse.
+                  */}
                   <input
                     id={`weight-${key}`}
                     type="range"

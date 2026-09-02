@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from collections.abc import Callable
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date as date_type
 from uuid import UUID
@@ -234,7 +234,9 @@ class SchedulerSolver:
                 ),
                 *self._add_lunch_stability_objective(model, lunch_starts, weights),
                 *self._add_spread_objective(model, decisions, weights, day_vars),
-                *self._add_teacher_gap_objective(model, decisions, weights, day_vars),
+                *self._add_idle_time_objective(
+                    model, decisions, request.constraints, weights, day_vars,
+                ),
                 *self._add_room_preference_objective(
                     model, decisions, rooms, room_plan, request.room_preferences, weights,
                 ),
@@ -702,12 +704,24 @@ class SchedulerSolver:
             else 0
         )
 
-        gap_pair_cap = 600  # mirrors _add_teacher_gap_objective's own guard
-        gap_vars = 0
-        for teacher_lessons in lessons_by_teacher.values():
-            pairs = teacher_lessons * (teacher_lessons - 1) // 2
-            if 0 < pairs <= gap_pair_cap:
-                gap_vars += 2 * pairs
+        # _add_idle_time_objective, which replaced a pairwise encoding. The old
+        # term here was `2 * pairs(t)` under a 600-pair cap that mirrored the
+        # builder's own silent skip; both are gone with it. A teacher with two
+        # or more lessons now costs, per day: one literal per lesson, plus
+        # `first`, `last` and `idle`. Quadratic in a teacher's load became
+        # linear, which is why the cap could go.
+        #
+        # The credit variables are NOT charged. They exist only for teachers who
+        # wrote an UNAVAILABLE row on themselves, three per window, and this
+        # function's own contract is an UPPER BOUND on a payload it can read —
+        # counting them would mean walking the constraints a second time to
+        # learn which teacher each belongs to, for a term that is zero on almost
+        # every payload. Stated rather than silently omitted.
+        idle_vars = 0
+        if self._settings.weight_teacher_gap > 0:
+            for teacher_lessons in lessons_by_teacher.values():
+                if teacher_lessons >= 2:
+                    idle_vars += day_count * (teacher_lessons + 3)
 
         return (
             4 * total_lessons
@@ -720,7 +734,7 @@ class SchedulerSolver:
             + lunch_drift_vars
             + dining_vars
             + spread_pairs
-            + gap_vars
+            + idle_vars
             + 2 * len(request.previous_lessons)
         )
 
@@ -2066,19 +2080,60 @@ class SchedulerSolver:
 
         return penalties
 
-    def _add_teacher_gap_objective(
+    def _add_idle_time_objective(
         self,
         model: cp_model.CpModel,
         decisions: list[LessonDecision],
+        constraints: list[AnonymousConstraint],
         weights: ResolvedWeights,
         day_vars: dict[str, cp_model.IntVar],
     ) -> list[cp_model.LinearExpr]:
-        """Penalizes idle time between two same-day lessons of a teacher.
+        """Penalises a teacher's idle minutes, measured once per day.
 
-        For every same-teacher lesson pair on the same day, the pairwise gap
-        (positive distance between the intervals) is penalized. Compact
-        teacher days therefore score better; pairs on different days incur
-        no penalty. Co-taught lessons count for both teachers.
+        REPLACES a pairwise encoding that charged every unordered pair of a
+        teacher's same-day lessons the positive distance between them. Three
+        things were wrong with it and all three are gone.
+
+          IT CHARGED NON-ADJACENT PAIRS. With three lessons in an unbroken
+          chain the first and third are still an hour apart, so a teacher paid
+          for the middle lesson's own length — which quietly pushed their third
+          lesson off the day, an effect no comment, document or UI string
+          mentioned.
+
+          IT GAVE UP SILENTLY. Above 600 pairs a teacher's terms were skipped
+          with no log and nothing in the response, so the most heavily loaded
+          teacher — the one a compact day matters most to — was the one teacher
+          the objective ignored. A day is O(lessons) and needs no such guard.
+
+          IT PUNISHED A PROTECTED BREAK. The one way a teacher can reserve their
+          own time today is an UNAVAILABLE row on themselves, and the pairwise
+          gap read only lesson variables: the hole their own protection created
+          was charged to them at full price.
+
+        WHAT IS MEASURED. For each teacher and each day: the span from the first
+        lesson's start to the last lesson's end, minus the minutes actually
+        taught, minus the minutes the teacher had protected inside that span.
+        Floored at zero.
+
+        THE CREDIT IS MEASURED, NOT SUMMED. Adding up the lengths of the
+        matching windows double-counts two that overlap, and gives nothing at
+        all for a window that only partly falls inside the day's span. The
+        windows are merged into a disjoint union at build time and each one's
+        OVERLAP with [first, last] is what is credited.
+
+        ONLY THE TEACHER'S OWN WINDOWS ARE CREDITED. A stage's rast subtracts
+        from a GROUP's lesson domain and says nothing about where a teacher is;
+        crediting it here would pay a teacher for a break they spent teaching
+        another class — the very defect this codebase already documents
+        elsewhere, recreated inside the CP model where it is far harder to see.
+
+        AND THERE IS NO PUPIL EQUIVALENT, deliberately. lib/gaps.ts opens by
+        refusing the question — "'Where are 7A's håltimmar' cannot be asked that
+        way" — because while Ma71 runs, sixteen of 7A are taught and fourteen
+        may have nothing. A span-minus-taught term per group would price ghost
+        holes in every 7-9 school with språkval, and pull 7A's own lessons
+        together against the placements its teaching groups need. Pupils' holes
+        are closed by rasts, which are hard and which the school wrote itself.
         """
         if weights.teacher_gap <= 0:
             return []
@@ -2090,30 +2145,122 @@ class SchedulerSolver:
                 if teacher_id is not None:
                     by_teacher.setdefault(teacher_id, []).append(decision)
 
+        protected = self._protected_windows(constraints)
         penalties: list[cp_model.LinearExpr] = []
-        horizon = self._grid.horizon
-        max_pairs_per_teacher = 600  # model-size guard
+        slots_per_day = self._grid.slots_per_day
 
         for teacher_id, group in by_teacher.items():
-            if len(group) < 2 or len(group) * (len(group) - 1) // 2 > max_pairs_per_teacher:
+            if len(group) < 2:
+                # One lesson is a span equal to its own length: no idle time can
+                # exist, and the variables would be provably zero.
                 continue
             days = [self._day_var(model, d, day_vars) for d in group]
-            for i in range(len(group)):
-                for j in range(i + 1, len(group)):
-                    tag = f"tgap_{teacher_id}_{i}_{j}"
-                    same = model.NewBoolVar(f"same_{tag}")
-                    model.Add(days[i] == days[j]).OnlyEnforceIf(same)
-                    model.Add(days[i] != days[j]).OnlyEnforceIf(same.Not())
 
-                    gap = model.NewIntVar(0, horizon, f"gap_{tag}")
-                    # When on the same day, gap >= the positive distance
-                    # between the two intervals (0 if adjacent).
-                    model.Add(gap >= group[i].start - group[j].end).OnlyEnforceIf(same)
-                    model.Add(gap >= group[j].start - group[i].end).OnlyEnforceIf(same)
-                    model.Add(gap == 0).OnlyEnforceIf(same.Not())
-                    penalties.append(gap * weights.teacher_gap)
+            for day_index, day_of_week in enumerate(self._grid.schedule_days):
+                base = day_index * slots_per_day
+                on_day: list[cp_model.IntVar] = []
+                for k, decision in enumerate(group):
+                    literal = model.NewBoolVar(
+                        f"idle_on_{teacher_id}_{day_index}_{decision.lesson.key()}",
+                    )
+                    model.Add(days[k] == day_index).OnlyEnforceIf(literal)
+                    model.Add(days[k] != day_index).OnlyEnforceIf(literal.Not())
+                    on_day.append(literal)
+
+                tag = f"idle_{teacher_id}_{day_index}"
+                first = model.NewIntVar(base, base + slots_per_day, f"first_{tag}")
+                last = model.NewIntVar(base, base + slots_per_day, f"last_{tag}")
+                # ONE-SIDED ON PURPOSE. `first` is only bounded from above and
+                # `last` only from below, so nothing forces either to the true
+                # extreme — the OBJECTIVE does. Minimising `last - first` pushes
+                # first up to the earliest present start and last down to the
+                # latest present end, which is exactly the pair of equalities a
+                # two-sided encoding would cost twice as many constraints to
+                # state.
+                for k, decision in enumerate(group):
+                    model.Add(first <= decision.start).OnlyEnforceIf(on_day[k])
+                    model.Add(last >= decision.end).OnlyEnforceIf(on_day[k])
+
+                taught = sum(
+                    decision.duration * on_day[k] for k, decision in enumerate(group)
+                )
+                credit = self._protected_overlap(
+                    model, protected.get((teacher_id, day_of_week), ()), first, last, tag,
+                )
+
+                idle = model.NewIntVar(0, slots_per_day, f"idle_{tag}")
+                model.Add(idle >= last - first - taught - credit)
+                penalties.append(idle * weights.teacher_gap)
 
         return penalties
+
+    def _protected_windows(
+        self,
+        constraints: list[AnonymousConstraint],
+    ) -> dict[tuple[UUID, int], tuple[tuple[int, int], ...]]:
+        """(teacher, weekday) -> the teacher's own free windows, as a disjoint union.
+
+        Merged here rather than credited row by row: two rows that overlap would
+        otherwise be counted twice, and a teacher who wrote the same hour down
+        in two forms would be paid for it twice over.
+
+        Weekly rows only, matching _add_availability_constraints: the model is
+        one generic week and has nowhere to put a single date.
+        """
+        by_key: dict[tuple[UUID, int], list[tuple[int, int]]] = {}
+        for constraint in constraints:
+            if constraint.resource_kind != "TEACHER" or constraint.resource_id is None:
+                continue
+            if constraint.date is not None or constraint.day_of_week is None:
+                continue
+            window = self._grid.window_to_absolute_range(
+                constraint.day_of_week, constraint.start_time, constraint.end_time,
+            )
+            if not window:
+                continue
+            for start, end in window:
+                by_key.setdefault(
+                    (constraint.resource_id, constraint.day_of_week), [],
+                ).append((start, end))
+
+        merged: dict[tuple[UUID, int], tuple[tuple[int, int], ...]] = {}
+        for key, ranges in by_key.items():
+            ranges.sort()
+            union: list[tuple[int, int]] = []
+            for start, end in ranges:
+                if union and start <= union[-1][1]:
+                    union[-1] = (union[-1][0], max(union[-1][1], end))
+                else:
+                    union.append((start, end))
+            merged[key] = tuple(union)
+        return merged
+
+    def _protected_overlap(
+        self,
+        model: cp_model.CpModel,
+        windows: Sequence[tuple[int, int]],
+        first: cp_model.IntVar,
+        last: cp_model.IntVar,
+        tag: str,
+    ) -> cp_model.LinearExpr:
+        """Minutes of [first, last] the teacher had already reserved.
+
+        Built only for teachers who actually wrote a row, which in a real school
+        is a handful — so the three variables per window cost nothing on the
+        common path and the term is exactly zero without them.
+        """
+        if not windows:
+            return 0
+        parts: list[cp_model.IntVar] = []
+        for index, (start, end) in enumerate(windows):
+            lo = model.NewIntVar(0, self._grid.horizon, f"lo_{tag}_{index}")
+            hi = model.NewIntVar(0, self._grid.horizon, f"hi_{tag}_{index}")
+            model.AddMaxEquality(lo, [first, start])
+            model.AddMinEquality(hi, [last, end])
+            overlap = model.NewIntVar(0, self._grid.slots_per_day, f"ov_{tag}_{index}")
+            model.AddMaxEquality(overlap, [hi - lo, 0])
+            parts.append(overlap)
+        return sum(parts)
 
     def _lunch_window_slots(self, rules: ScheduleRules) -> tuple[int, int, int]:
         """The lunch window and break length in slots: (start, end, length).

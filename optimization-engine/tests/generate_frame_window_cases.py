@@ -6,9 +6,15 @@ and neither test suite can see the other, so the cases are generated once here
 and replayed there.
 """
 import json, random, sys
-sys.path.insert(0, 'optimization-engine')
+from pathlib import Path
+
+# The engine's own root, resolved from this file rather than from the working
+# directory: the old `sys.path.insert(0, 'optimization-engine')` only worked
+# when run from the repo root, which is not where a test runner stands.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from app.schemas.schedule import AnonymousRequirement, FrameTime
-from app.solver.frames import day_windows
+from app.solver.frames import day_windows, span_of
 from app.solver.time_grid import TimeGrid
 
 random.seed(20260831)
@@ -38,7 +44,11 @@ for _ in range(400):
         "studentGroupSize": 20, "minGradeLevel": lo, "maxGradeLevel": min(hi, 12),
     })
     models = [FrameTime.model_validate(f) for f in frames]
-    windows = day_windows(models, req, GRID)
+    # day_windows takes a SPAN, not a requirement — span_of is the lift, and it
+    # is what the solver itself passes. Calling it with the requirement raised
+    # "too many values to unpack", which is how this script came to be out of CI
+    # rather than merely unused.
+    windows = day_windows(models, span_of(req), GRID)
     # As wall-clock minutes, the unit the web works in.
     out = {}
     for day_index, (open_slot, close_slot) in windows.items():
