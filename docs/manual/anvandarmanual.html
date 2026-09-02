@@ -41,6 +41,7 @@
     <ol>
       <li><span>4.1 Timplan</span><span class="dots"></span><span class="pg" data-pg="s41"></span></li>
       <li><span>4.2 Tillgänglighet</span><span class="dots"></span><span class="pg" data-pg="s42"></span></li>
+      <li><span>4.3 Raster</span><span class="dots"></span><span class="pg" data-pg="s43"></span></li>
     </ol>
     <li><span>5 · Fas 3 — Schemaläggning</span><span class="dots"></span><span class="pg" data-pg="ch5"></span></li>
     <ol>
@@ -627,6 +628,77 @@
       titta på rutan <span class="ui">Förutsättningar</span>. Alla fyra raderna
       — aktivt läsår, timplansposter, lärare tilldelade och salar tillgängliga —
       ska vara uppfyllda innan du fortsätter.
+    </p>
+  </div>
+  <h3 id="s43"><span class="num">4.3</span>Raster</h3>
+  <p>
+    Gå till <span class="path">Planering › Raster</span>. Här anger du de
+    minuter av dagen ett stadium <strong>inte</strong> undervisas — förmiddagsrast,
+    mellanmål, den kvart efter lunchen som är på gården. Motorn lägger inga
+    lektioner tvärs över dem, och de syns i elevens, vårdnadshavarens och
+    lärarens schema.
+  </p>
+  <p>
+    En rast har ett <span class="ui">Namn</span>, ett spann av
+    <span class="ui">Årskurser</span>, en <span class="ui">Dag</span> och ett
+    klockslag. Namnet står på elevens schema, så
+    <em>Förmiddagsrast</em> och <em>Långrast</em> säger mer än <em>Rast</em>.
+  </p>
+  <p>
+    <strong>Flera raster per dag är det normala.</strong> Varje rad som matchar
+    stadiet gäller, och de adderas — till skillnad från ramtiderna, som snävar
+    in varandra. En rad för en enskild veckodag ersätter bara den
+    <span class="ui">Alla dagar</span>-rast vars klockslag den överlappar; de
+    övriga står kvar den dagen. Tabellen
+    <span class="ui">Så här blir veckan</span> längst ned visar vad raderna
+    tillsammans betyder, stadium för stadium och dag för dag. Läs den innan du
+    kör en generering.
+  </p>
+
+  <div class="note">
+    <span class="label">Lägg in rasterna före första genereringen</span>
+    <p>
+      Utan raster lägger motorn lektionerna dikt mot varandra — det finns
+      ingenting i modellen som säger att en klass behöver luft mellan två
+      lektioner. Raster är också det enda som stänger elevernas hål på ett sätt
+      skolan själv bestämmer.
+    </p>
+  </div>
+
+  <div class="warn">
+    <span class="label">En rast kan göra veckan omöjlig</span>
+    <p>
+      Rasterna hugger hål i dagen, och en lektion behöver en obruten sträcka.
+      Lämnar rasterna ingen sträcka som rymmer skolans längsta lektion vägras
+      genereringen med besked om vilket stadium, vilken kurs och hur lång den
+      längsta sträckan blev. Korta rasten, vidga ramtiden, eller dela lektionen.
+    </p>
+  </div>
+
+  <h4>Marginal mellan lektioner</h4>
+  <p>
+    Raster löser de hål skolan själv namngett. De når inte två lektioner som
+    ligger i följd inne i samma block. För det finns
+    <span class="ui">Marginal mellan lektioner</span> på
+    <span class="path">Planering › Ramtider</span>: antalet minuter en klass
+    eller lärare behöver för att förflytta sig, som motorn alltid lämnar mellan
+    två lektioner i rad.
+  </p>
+  <p>
+    Talet står på ramtiden eftersom en ramtid är skolans mening om formen på ett
+    stadiums dag. Matchar flera ramtider gäller den <em>största</em> marginalen
+    — en ramtid är en gräns och flera snävar in, en marginal är ett golv och den
+    vidaste vinner. Standardvärdet är 0, alltså ingen marginal, för varje skola
+    tills någon skriver ett tal.
+  </p>
+
+  <div class="note">
+    <span class="label">Börja med 0</span>
+    <p>
+      Varje lektion blir <em>undervisningstid plus marginal</em> lång för
+      motorn, så en vecka som redan var full kan gå från lösbar till olösbar.
+      Kör en generering med rasterna först, titta på schemat, och sätt sedan 5
+      minuter för det stadium som behöver det.
     </p>
   </div>
 </section>
