@@ -344,27 +344,12 @@ export class CalendarService {
           if (list) list.push(sitting);
           else sittingsByWeekday.set(sitting.dayOfWeek, [sitting]);
         }
-        // Already-materialised meals, so republishing a window does not fail on
-        // the (group, date) unique key — the same idempotency the lessons get
-        // from `existingKeys`.
-        const existingLunches = new Set(
-          (
-            await tx.calendarLunch.findMany({
-              where: {
-                schoolId,
-                date: { gte: parseUtcDate(fromDate), lte: parseUtcDate(toDate) },
-              },
-              select: { studentGroupId: true, date: true },
-            })
-          ).map((row) => `${row.studentGroupId}:${row.date.toISOString().slice(0, 10)}`),
-        );
         let lunchesCreated = 0;
 
         for (const date of iterateDates(fromDate, toDate)) {
           const weekday = isoWeekday(date);
 
           for (const sitting of sittingsByWeekday.get(weekday) ?? []) {
-            if (existingLunches.has(`${sitting.studentGroupId}:${date}`)) continue;
             // The class is not in school, so there is no meal to serve — the
             // same answer, and the same call, the lessons make below.
             if (
@@ -374,14 +359,45 @@ export class CalendarService {
             ) {
               continue;
             }
+            /*
+             * REPLACED, not skipped.
+             *
+             * This used to read the already-materialised meals into a set and
+             * `continue` past every one of them, calling it "the same
+             * idempotency the lessons get from existingKeys". It is not the
+             * same, and the difference is the whole bug: a CalendarLesson may
+             * carry AttendanceRecords, so rewriting one would rewrite what
+             * happened and skipping is the only honest answer. A CalendarLunch
+             * carries no attendance, no status and no participants — nothing
+             * about it records the past — so when the sitting has moved, the
+             * published meal is simply out of date, and skipping it kept last
+             * month's lunch time on a pupil's phone for ever.
+             *
+             * Upsert rather than delete-then-create so the (group, date) unique
+             * key is what makes it idempotent, rather than an ordering this
+             * loop would have to maintain.
+             */
+            const startsAt = zonedTimeToUtc(
+              date,
+              timeToString(sitting.startTime),
+              timezone,
+            );
+            const endsAt = zonedTimeToUtc(date, timeToString(sitting.endTime), timezone);
             pendingCreates.push(() =>
-              tx.calendarLunch.create({
-                data: {
+              tx.calendarLunch.upsert({
+                where: {
+                  studentGroupId_date: {
+                    studentGroupId: sitting.studentGroupId,
+                    date: parseUtcDate(date),
+                  },
+                },
+                update: { startsAt, endsAt },
+                create: {
                   schoolId,
                   studentGroupId: sitting.studentGroupId,
                   date: parseUtcDate(date),
-                  startsAt: zonedTimeToUtc(date, timeToString(sitting.startTime), timezone),
-                  endsAt: zonedTimeToUtc(date, timeToString(sitting.endTime), timezone),
+                  startsAt,
+                  endsAt,
                 },
               }),
             );

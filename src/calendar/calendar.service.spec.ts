@@ -325,10 +325,40 @@ describe('CalendarService', () => {
         ...overrides,
       });
 
+      // The meal is upserted, not created: a sitting that has moved must rewrite
+      // the published row rather than be skipped past. `create` is the branch
+      // that runs on a first publish, and it is what these assertions describe.
       const lunchData = () =>
-        tx.calendarLunch.create.mock.calls.map(
-          (call) => (call[0] as { data: Record<string, unknown> }).data,
+        tx.calendarLunch.upsert.mock.calls.map(
+          (call) => (call[0] as { create: Record<string, unknown> }).create,
         );
+
+      it('rewrites a meal whose sitting has moved', async () => {
+        // The bug this replaced. Publish read the already-materialised meals
+        // into a set and continued past every one, calling it "the same
+        // idempotency the lessons get from existingKeys". It is not the same: a
+        // CalendarLesson may carry AttendanceRecords, so rewriting one would
+        // rewrite what happened; a CalendarLunch carries no attendance, no
+        // status and no participants, so a skipped one is simply out of date —
+        // and stayed on a pupil's phone for ever.
+        arrangePublish([template()], { sittings: [sitting()] });
+
+        await publishOneDay();
+
+        const [[call]] = tx.calendarLunch.upsert.mock.calls as [
+          [{ where: unknown; update: Record<string, unknown> }],
+        ];
+        expect(call.where).toEqual({
+          studentGroupId_date: {
+            studentGroupId: GROUP_ID,
+            date: new Date('2026-08-10T00:00:00.000Z'),
+          },
+        });
+        expect(call.update).toEqual({
+          startsAt: new Date('2026-08-10T11:00:00.000Z'),
+          endsAt: new Date('2026-08-10T12:00:00.000Z'),
+        });
+      });
 
       it('materialises a meal on the weekday its sitting names', async () => {
         arrangePublish([template()], { sittings: [sitting()] });
@@ -351,7 +381,7 @@ describe('CalendarService', () => {
 
         await publishOneDay();
 
-        expect(tx.calendarLunch.create).not.toHaveBeenCalled();
+        expect(tx.calendarLunch.upsert).not.toHaveBeenCalled();
       });
 
       it('serves no meal on a lov day', async () => {
@@ -368,7 +398,7 @@ describe('CalendarService', () => {
 
         await publishOneDay();
 
-        expect(tx.calendarLunch.create).not.toHaveBeenCalled();
+        expect(tx.calendarLunch.upsert).not.toHaveBeenCalled();
       });
 
       it('serves no meal to a stage the lov names, and serves the others', async () => {
@@ -382,12 +412,25 @@ describe('CalendarService', () => {
         await publishOneDay();
 
         // GROUP_ID's own year is not 9 in this fixture, so the meal stands.
-        expect(tx.calendarLunch.create).toHaveBeenCalledTimes(1);
+        expect(tx.calendarLunch.upsert).toHaveBeenCalledTimes(1);
       });
 
-      it('does not write a meal that is already materialised', async () => {
-        // Republishing a window must not fail on the (group, date) unique key —
-        // the same idempotency the lessons get from their existing-key set.
+      it('republishes an unchanged window without failing on the unique key', async () => {
+        /*
+         * This test used to assert the opposite — that an already-materialised
+         * meal was SKIPPED — and called it "the same idempotency the lessons get
+         * from their existing-key set". Skipping is the right answer for a
+         * lesson, which may carry AttendanceRecords a rewrite would falsify. It
+         * was the wrong answer here, and it is the bug: a CalendarLunch carries
+         * no attendance, no status and no participants, so a skipped one is
+         * merely out of date, and a republished week kept last month's lunch
+         * time for ever.
+         *
+         * What survives is the requirement the old test was protecting: a second
+         * publish of the same window must not fail on (studentGroupId, date).
+         * The unique key now provides that through the upsert instead of
+         * through a set this loop had to build and consult.
+         */
         arrangePublish([template()], {
           sittings: [sitting()],
           existingLunches: [
@@ -397,7 +440,7 @@ describe('CalendarService', () => {
 
         await publishOneDay();
 
-        expect(tx.calendarLunch.create).not.toHaveBeenCalled();
+        expect(tx.calendarLunch.upsert).toHaveBeenCalledTimes(1);
       });
 
       it('writes the meals even when no lesson falls on the day', async () => {
@@ -407,7 +450,7 @@ describe('CalendarService', () => {
 
         await publishOneDay();
 
-        expect(tx.calendarLunch.create).toHaveBeenCalledTimes(1);
+        expect(tx.calendarLunch.upsert).toHaveBeenCalledTimes(1);
         expect(tx.calendarLesson.create).not.toHaveBeenCalled();
       });
     });

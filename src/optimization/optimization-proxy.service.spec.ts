@@ -273,6 +273,11 @@ describe('OptimizationProxyService', () => {
       tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
       tx.masterLesson.count.mockResolvedValue(0);
       tx.lunchSitting.deleteMany.mockResolvedValue({ count: 0 });
+      tx.calendarLunch.deleteMany.mockResolvedValue({ count: 0 });
+      // Which of the year's groups are classes. A sitting is written for a
+      // class and for nothing else, so an unstubbed lookup here means no
+      // sittings at all rather than a merge — see the teaching-group test.
+      tx.studentGroup.findMany.mockResolvedValue([{ id: 'g-7a' }]);
     });
 
     const sitting = (groupId = 'g-7a', dayOfWeek = 1) => ({
@@ -330,6 +335,57 @@ describe('OptimizationProxyService', () => {
       );
 
       expect(tx.lunchSitting.createMany.mock.calls[0][0].data[0].headcount).toBe(27);
+    });
+
+    it('writes no sitting for a teaching group', async () => {
+      // The engine gives a lunch interval to every group carrying a requirement
+      // — its own comment says EVERY HOME CLASS EATS EVERY SCHOOL DAY, and the
+      // set it walks unions the groups with lessons — so Ma71 arrives with
+      // headcount 0 and a sitting every school day. Right in the engine, where
+      // the interval keeps a teaching group's lessons out of its members' meal.
+      // Wrong in this table, which is the kitchen's list and the pupil's band.
+      await persist(
+        { status: 'OPTIMAL', lessons: [placement()] },
+        {
+          ...oneRequirement(1),
+          lunches: [sitting(), { ...sitting(), studentGroupId: 'g-ma71' }],
+          headcountByGroup: new Map([['g-7a', 24]]),
+        },
+      );
+
+      const [call] = tx.lunchSitting.createMany.mock.calls;
+      expect(call[0].data).toHaveLength(1);
+      expect(call[0].data[0].studentGroupId).toBe('g-7a');
+    });
+
+    it("drops the year's already-published meals in the same transaction", async () => {
+      // This file's own header states the rule: whoever replaces a generated
+      // timetable deletes its future materializations in the same transaction.
+      // The half for the lessons was written; the half for the meal was not, so
+      // a republished week kept last month's lunch time for ever.
+      await persist(
+        { status: 'OPTIMAL', lessons: [placement()] },
+        { ...oneRequirement(1), lunches: [sitting()] },
+      );
+
+      const [call] = tx.calendarLunch.deleteMany.mock.calls;
+      // Reached through the group's year rather than a column of its own: a
+      // backfilled academicYearId would join on (schoolId, studentGroupId,
+      // dayOfWeek) while LunchSittings' unique key includes the year, so a
+      // school in its second läsår has two matching rows.
+      expect(call[0].where.studentGroup).toEqual({ is: { academicYearId: ACADEMIC_YEAR } });
+      expect(call[0].where.date.gte).toBeInstanceOf(Date);
+    });
+
+    it('leaves a meal that has already been eaten alone', async () => {
+      await persist({ status: 'OPTIMAL', lessons: [placement()] }, oneRequirement(1));
+
+      // Only the future. A meal on a day that has been is a fact about that
+      // day, and there is no reason to rewrite it.
+      const [call] = tx.calendarLunch.deleteMany.mock.calls;
+      const cutoff: Date = call[0].where.date.gte;
+      expect(cutoff.getUTCHours()).toBe(0);
+      expect(cutoff.getUTCMinutes()).toBe(0);
     });
 
     it('clears the sittings when a run produces none', async () => {

@@ -1264,9 +1264,31 @@ export class OptimizationProxyService {
      * last week's flow exactly where it was.
      */
     await tx.lunchSitting.deleteMany({ where: { academicYearId } });
-    if (lunches.length > 0) {
+
+    /*
+     * Classes eat. Teaching groups do not.
+     *
+     * The engine gives a lunch interval to every group that carries a
+     * requirement — its own comment says so, EVERY HOME CLASS EATS EVERY SCHOOL
+     * DAY — and the set it iterates unions the groups with lessons, so Ma71
+     * arrives with headcount 0 and gets a sitting every school day. Those rows
+     * are not wrong in the engine, where the interval is what keeps a teaching
+     * group's lessons out of its members' meal; they are wrong in this table,
+     * which is the kitchen's list and the pupil's band. A pupil eats once, with
+     * their class.
+     */
+    const classIds = new Set(
+      (
+        await tx.studentGroup.findMany({
+          where: { academicYearId, kind: 'CLASS' },
+          select: { id: true },
+        })
+      ).map((group) => group.id),
+    );
+    const classSittings = lunches.filter((lunch) => classIds.has(lunch.studentGroupId));
+    if (classSittings.length > 0) {
       await tx.lunchSitting.createMany({
-        data: lunches.map((lunch) => ({
+        data: classSittings.map((lunch) => ({
           schoolId,
           academicYearId,
           studentGroupId: lunch.studentGroupId,
@@ -1277,6 +1299,38 @@ export class OptimizationProxyService {
         })),
       });
     }
+
+    /*
+     * And the meals already on the calendar go with them.
+     *
+     * This file's own header states the rule: whoever replaces a generated
+     * timetable deletes its future materializations in the same transaction.
+     * The half for the lessons was written; the half for the meal was not, and
+     * publish then skipped every (group, date) that already existed — so a
+     * republished week kept last month's lunch times for ever, and no screen
+     * anywhere said the two disagreed.
+     *
+     * No academicYearId column is needed to find them: a CalendarLunch belongs
+     * to a StudentGroup and a StudentGroup belongs to a year, so the relation
+     * filter reaches them. Adding the column and backfilling it from
+     * LunchSittings — the obvious alternative — joins on
+     * (schoolId, studentGroupId, dayOfWeek) while that table's unique key
+     * includes the year, so a school in its second läsår has two matching rows
+     * and the backfill is ambiguous.
+     *
+     * The same three-part guard the lessons use does NOT apply. A CalendarLesson
+     * may carry attendance, and rewriting one would be rewriting what happened;
+     * a CalendarLunch carries no attendance, no status and no participants, so
+     * there is nothing to preserve and no reason to keep the past. Only the
+     * future is deleted all the same, because a meal that was eaten is a fact
+     * about a day that has been.
+     */
+    await tx.calendarLunch.deleteMany({
+      where: {
+        studentGroup: { is: { academicYearId } },
+        date: { gte: today },
+      },
+    });
 
     // Append a REGENERATE entry to the schedule audit trail.
     await tx.scheduleChangeLog.create({
