@@ -963,6 +963,154 @@ $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- 7f. The rast: same three arms as the meal, asserted the same way.
+--
+-- CalendarRasts shipped with a pupil arm, a guardian arm and a staff arm and no
+-- line in this file — which is the exact pattern section 7e was written to
+-- bury. A table whose policies nothing exercises is a table whose policies are
+-- a guess.
+--
+-- The discriminating assertion is again the OTHER class's row: a pupil sees
+-- their own break under a school-wide policy too.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  n bigint;
+  class_a uuid;
+  class_b uuid;
+BEGIN
+  SELECT u."studentGroupId" INTO class_a
+    FROM "GuardianStudents" gs
+    JOIN "Users" u ON u.id = gs."studentId"
+   WHERE gs."guardianId" = (SELECT id FROM "Users"
+                             WHERE "authId" = '00000000-0000-4000-8000-000000000004')
+     AND u."studentGroupId" IS NOT NULL
+   LIMIT 1;
+  SELECT "studentGroupId" INTO class_b
+    FROM "Users"
+   WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+     AND "studentGroupId" IS NOT NULL AND "studentGroupId" IS DISTINCT FROM class_a
+   ORDER BY "studentGroupId" LIMIT 1;
+  IF class_a IS NULL OR class_b IS NULL THEN
+    RAISE EXCEPTION 'rast-reads: fewer than two classes with pupils; the assertions below would be vacuous';
+  END IF;
+
+  INSERT INTO "CalendarRasts"
+    ("schoolId", "studentGroupId", "name", "date", "startsAt", "endsAt", "updatedAt")
+  VALUES
+    (app.current_school_id(), class_a, 'Förmiddagsrast', DATE '2026-09-07',
+     TIMESTAMPTZ '2026-09-07 09:40+02', TIMESTAMPTZ '2026-09-07 10:00+02', now()),
+    (app.current_school_id(), class_b, 'Förmiddagsrast', DATE '2026-09-07',
+     TIMESTAMPTZ '2026-09-07 10:00+02', TIMESTAMPTZ '2026-09-07 10:20+02', now());
+
+  SELECT count(*) INTO n FROM "CalendarRasts";
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'rast-reads: an admin cannot see the rasts they just wrote (% row(s))', n;
+  END IF;
+END
+$$;
+
+-- A teacher sees the whole school's: /teacher narrows to the classes they take,
+-- and it can only narrow what it is allowed to read.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "CalendarRasts";
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'rast-reads: a teacher cannot see the school''s rasts (% row(s))', n;
+  END IF;
+END
+$$;
+
+-- A pupil of the guardian fixture's child's class.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT u."authId" FROM "Users" u
+      WHERE u."schoolId" = app.current_school_id() AND u.role = 'STUDENT'
+        AND u."studentGroupId" = (
+          SELECT c."studentGroupId"
+            FROM "GuardianStudents" gs
+            JOIN "Users" c ON c.id = gs."studentId"
+           WHERE gs."guardianId" = (SELECT id FROM "Users"
+                                     WHERE "authId" = '00000000-0000-4000-8000-000000000004')
+             AND c."studentGroupId" IS NOT NULL
+           LIMIT 1)
+      ORDER BY u."authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE own bigint; others bigint;
+BEGIN
+  SELECT count(*) INTO own
+    FROM "CalendarRasts" WHERE "studentGroupId" = app.current_user_group_id();
+  SELECT count(*) INTO others
+    FROM "CalendarRasts" WHERE "studentGroupId" <> app.current_user_group_id();
+
+  IF own <> 1 THEN
+    RAISE EXCEPTION 'rast-reads: a pupil cannot see their own class''s rast (% row(s))', own;
+  END IF;
+  IF others <> 0 THEN
+    RAISE EXCEPTION
+      'rast-reads: a pupil sees another class''s rast (% row(s)) — the read is school-wide', others;
+  END IF;
+END
+$$;
+
+-- And the guardian, through the home class.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+
+DO $$
+DECLARE own bigint; others bigint; child_group uuid;
+BEGIN
+  SELECT u."studentGroupId" INTO child_group
+    FROM "GuardianStudents" gs
+    JOIN "Users" u ON u.id = gs."studentId"
+   WHERE gs."guardianId" = app.current_user_id()
+   LIMIT 1;
+
+  SELECT count(*) INTO own
+    FROM "CalendarRasts" WHERE "studentGroupId" = child_group;
+  SELECT count(*) INTO others
+    FROM "CalendarRasts" WHERE "studentGroupId" <> child_group;
+
+  IF own <> 1 THEN
+    RAISE EXCEPTION 'rast-reads: a guardian cannot see their child''s rast (% row(s))', own;
+  END IF;
+  IF others <> 0 THEN
+    RAISE EXCEPTION 'rast-reads: a guardian sees another class''s rast (% row(s))', others;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 8: a guardian link cannot reach across schools.
 --
 -- This was a live cross-tenant hole, reproduced end to end before it was fixed:
