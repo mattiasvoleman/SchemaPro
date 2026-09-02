@@ -13,6 +13,7 @@ from ortools.sat.python import cp_model
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError, SolverBuildError
 from app.solver.frames import day_windows, span_of
+from app.solver.rasts import blocks_for, forbidden_starts
 from app.solver.servings import allowed_starts
 from app.schemas.schedule import (
     AnonymousRoomPreference,
@@ -26,6 +27,7 @@ from app.schemas.schedule import (
     OptimizeScheduleRequest,
     OptimizeScheduleResponse,
     PreviousLesson,
+    Rast,
     ScheduledLesson,
     ScheduledLunch,
     ScheduleRules,
@@ -71,6 +73,29 @@ class LessonDecision:
     end: cp_model.IntVar
     interval: cp_model.IntervalVar
     room_index: cp_model.IntVar
+
+
+def _widest_free_run(
+    open_slot: int,
+    close_slot: int,
+    blocks: list[tuple[int, int]],
+) -> int:
+    """The longest unbroken stretch of slots inside [open, close) after rasts.
+
+    A frame leaves ONE window and its width is the answer; rasts leave several
+    fragments, and a lesson needs one of them whole. Taking the total free time
+    instead would accept a day of ten five-minute gaps as room for an hour.
+    """
+    longest = 0
+    cursor = open_slot
+    for first, last in blocks:
+        start = max(first, open_slot)
+        end = min(last, close_slot)
+        if end <= start:
+            continue
+        longest = max(longest, start - cursor)
+        cursor = max(cursor, end)
+    return max(longest, close_slot - cursor)
 
 
 class SchedulerSolver:
@@ -134,7 +159,7 @@ class SchedulerSolver:
         registry = AssumptionRegistry(use_assumptions=use_assumptions)
         rooms = request.rooms
         decisions = self._create_lesson_decisions(
-            model, request.requirements, len(rooms), request.frame_times,
+            model, request.requirements, len(rooms), request.frame_times, request.rasts,
         )
 
         self._add_capacity_constraints(model, registry, decisions, rooms)
@@ -749,6 +774,43 @@ class SchedulerSolver:
                     )
                     raise InvalidScheduleInputError(msg)
 
+            # And a rast cuts holes in the same domain, so it can empty it the
+            # same way — worse, in fact: a frame leaves one narrow window, while
+            # rasts can leave several fragments none of which holds the lesson.
+            # An empty domain is a proof CP-SAT reaches without touching a
+            # single assumption literal, and an empty conflict core erases every
+            # other cause in the payload; the school is handed
+            # INSUFFICIENT_RESOURCES for a sentence it wrote itself.
+            if request.rasts:
+                span = span_of(requirement)
+                windows = day_windows(request.frame_times, span, self._grid)
+                widest = 0
+                for day_index, day_of_week in enumerate(self._grid.schedule_days):
+                    open_slot, close_slot = windows.get(
+                        day_index, (0, self._grid.slots_per_day),
+                    )
+                    blocks = blocks_for(request.rasts, span, day_of_week, self._grid)
+                    widest = max(
+                        widest,
+                        _widest_free_run(open_slot, close_slot, blocks),
+                    )
+                if widest < duration_slots:
+                    grades = (
+                        "any"
+                        if requirement.min_grade_level is None
+                        else f"{requirement.min_grade_level}-{requirement.max_grade_level}"
+                    )
+                    remaining = widest * self._grid.slot_minutes
+                    msg = (
+                        f"The rasts declared for years {grades} leave no room for "
+                        f"requirement {requirement.id}: its "
+                        f"{requirement.minutes_per_lesson}-minute lessons need an "
+                        f"unbroken stretch, and the longest any day still offers is "
+                        f"{remaining} minutes. Shorten a rast, widen the frame time, "
+                        f"or split the lesson."
+                    )
+                    raise InvalidScheduleInputError(msg)
+
             grades = (
                 "any"
                 if requirement.min_grade_level is None
@@ -1098,12 +1160,46 @@ class SchedulerSolver:
                 )
                 raise InvalidScheduleInputError(msg)
 
+    def _rast_free_starts(
+        self,
+        rasts: list[Rast],
+        span: tuple[int, int] | None,
+        duration: int,
+    ) -> cp_model.Domain:
+        """Every absolute start a lesson of `duration` may take, rasts removed.
+
+        Built as the COMPLEMENT of the forbidden ranges rather than as a union
+        of the free ones, because the free ranges are what is left over and
+        would have to be derived; the forbidden ones are what a rast says.
+        """
+        slots_per_day = self._grid.slots_per_day
+        forbidden: list[list[int]] = []
+        for day_index, day_of_week in enumerate(self._grid.schedule_days):
+            blocks = blocks_for(rasts, span, day_of_week, self._grid)
+            base = day_index * slots_per_day
+            forbidden.extend(
+                [base + first, base + last]
+                for first, last in forbidden_starts(blocks, duration)
+            )
+        if not forbidden:
+            return cp_model.Domain(0, self._grid.horizon)
+        # `complement()` over the whole integer line, then clipped back to the
+        # horizon. ortools' Domain has no `difference`, and complement-then-
+        # intersect is the composition it does have — the intersection with the
+        # caller's own domain in _create_lesson_decisions does the clipping, but
+        # doing it here too keeps this function's return value meaningful on its
+        # own rather than only in the one place it is used.
+        return cp_model.Domain.FromIntervals(forbidden).complement().intersection_with(
+            cp_model.Domain(0, self._grid.horizon),
+        )
+
     def _create_lesson_decisions(
         self,
         model: cp_model.CpModel,
         requirements: list[AnonymousRequirement],
         room_count: int,
         frames: list[FrameTime],
+        rasts: list[Rast],
     ) -> list[LessonDecision]:
         decisions: list[LessonDecision] = []
         horizon = self._grid.horizon
@@ -1127,7 +1223,8 @@ class SchedulerSolver:
             # it always was. _validate_request has already refused the case
             # where the windows leave a requirement nowhere to go, so every
             # interval below is non-empty.
-            windows = day_windows(frames, span_of(requirement), self._grid)
+            span = span_of(requirement)
+            windows = day_windows(frames, span, self._grid)
             start_domain = cp_model.Domain.FromIntervals(
                 [
                     [
@@ -1144,6 +1241,27 @@ class SchedulerSolver:
                     if close_slot - open_slot >= duration
                 ],
             )
+
+            # RASTER CUT HOLES IN THE SAME DOMAIN, for the reason the paragraph
+            # above gives for frames: the minutes a stage is free never become
+            # variable values at all. No new variables, no new constraints, and
+            # a strictly smaller search space than the same model without them.
+            # _validate_request has already refused the case where the holes
+            # leave a requirement nowhere to go on any day, so what remains here
+            # is never empty.
+            #
+            # LESSONS ONLY. The lunch interval is deliberately NOT narrowed the
+            # same way, and the reason is in the Swedish word: a lunchrast IS a
+            # rast. A school that writes "lunchrast 11:30-12:30" and lets the
+            # engine seat its classes inside it is describing the ordinary case,
+            # and subtracting the rast from the meal's domain would push the
+            # meal out of exactly the window the school reserved for it — then
+            # refuse the run when nowhere else is left. A rast keeps TEACHING
+            # out; it has nothing to say about a break.
+            if rasts:
+                start_domain = start_domain.intersection_with(
+                    self._rast_free_starts(rasts, span, duration),
+                )
             for lesson_index in range(requirement.lessons_per_week):
                 lesson = LessonInstance(requirement=requirement, lesson_index=lesson_index)
                 start = model.NewIntVarFromDomain(start_domain, f"start_{lesson.key()}")

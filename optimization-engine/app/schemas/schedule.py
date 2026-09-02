@@ -423,6 +423,12 @@ class OptimizeScheduleRequest(CamelModel):
     lunch_servings: list[LunchServing] = Field(
         default_factory=list, alias="lunchServings", max_length=500,
     )
+    # Raster. Empty means no stage has a declared break, which is the behaviour
+    # every school had before this field existed — and the behaviour the rektor
+    # reported as lessons placed edge to edge.
+    rasts: list[Rast] = Field(
+        default_factory=list, alias="rasts", max_length=500,
+    )
     room_preferences: list[AnonymousRoomPreference] = Field(
         default_factory=list,
         alias="roomPreferences",
@@ -505,6 +511,50 @@ class LunchServing(CamelModel):
         Checked here rather than left to the solver because an inverted window
         empties a stage's whole domain, and the model would then be infeasible
         with nothing to point at. A 422 naming the row is an answer.
+        """
+        if self.min_grade_level > self.max_grade_level:
+            msg = "minGradeLevel must not be above maxGradeLevel."
+            raise ValueError(msg)
+        if self.start_time >= self.end_time:
+            msg = "startTime must be before endTime."
+            raise ValueError(msg)
+        return self
+
+
+class Rast(CamelModel):
+    """A rast: minutes of a day one stage of the school is not taught.
+
+    The whole declaration, unlike a LunchServing — nothing about a rast is
+    chosen by the solver, so there is no second half. The engine subtracts it
+    from every matching lesson's start domain, which costs no variables and
+    leaves a strictly smaller search space.
+
+    Every matching row APPLIES, and the union is an obligation where a serving's
+    is a permission. A day-specific row shadows only the every-day rows it
+    OVERLAPS — narrower than the serving rule, because several rasts a day is
+    the ordinary Swedish week and replacing all of them would silently delete a
+    stage's other Friday breaks. See app/solver/rasts.py, which owns the rules.
+    """
+
+    min_grade_level: int = Field(alias="minGradeLevel", ge=0, le=12)
+    max_grade_level: int = Field(alias="maxGradeLevel", ge=0, le=12)
+    #: ISO weekday, or None for every teaching day.
+    day_of_week: DayOfWeek | None = Field(default=None, alias="dayOfWeek")
+    start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+
+    @model_validator(mode="after")
+    def validate_window(self) -> Rast:
+        """A rast has to hold something, and its years have to be a span.
+
+        Checked here rather than left to the solver for the same reason a
+        serving is: an inverted window would subtract a nonsensical range from
+        every matching lesson's domain, and the model would be infeasible with
+        nothing to point at. A 422 naming the row is an answer.
+
+        There is deliberately no MINIMUM length. Three minutes is what a
+        changeover between two rooms is, and blocks_for rounds outward to a
+        whole slot rather than to nothing.
         """
         if self.min_grade_level > self.max_grade_level:
             msg = "minGradeLevel must not be above maxGradeLevel."

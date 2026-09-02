@@ -794,7 +794,7 @@ def test_lessons_never_run_past_the_end_of_their_day() -> None:
     # can produce one. `domain` is a flat [lo, hi, lo, hi, …] bound list.
     model = cp_model.CpModel()
     decisions = solver._create_lesson_decisions(
-        model, request.requirements, len(request.rooms), request.frame_times,
+        model, request.requirements, len(request.rooms), request.frame_times, request.rasts,
     )
     slots_per_day = solver._grid.slots_per_day
     for decision in decisions:
@@ -2466,7 +2466,11 @@ def test_room_classes_merge_only_truly_interchangeable_rooms() -> None:
     request = OptimizeScheduleRequest.model_validate(payload)
     solver = SchedulerSolver(_settings())
     decisions = solver._create_lesson_decisions(
-        cp_model.CpModel(), request.requirements, len(request.rooms), request.frame_times,
+        cp_model.CpModel(),
+        request.requirements,
+        len(request.rooms),
+        request.frame_times,
+        request.rasts,
     )
 
     classes = build_room_classes(
@@ -3568,6 +3572,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         FrameTime,
         LunchServing,
         OptimizeScheduleRequest,
+        Rast,
         ScheduleRules,
     )
 
@@ -3580,12 +3585,22 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "constraints",
         "frameTimes",
         "lunchServings",
+        "rasts",
         "roomPreferences",
         "fixedLessons",
         "groupConflicts",
         "previousLessons",
         "weights",
         "rules",
+    }
+    # A rast, which is the whole declaration: nothing about it is chosen, so
+    # unlike a serving it has no solved second half to carry back.
+    assert _field_names(Rast) == {
+        "minGradeLevel",
+        "maxGradeLevel",
+        "dayOfWeek",
+        "startTime",
+        "endTime",
     }
     # The group's years, so a serving and a frame can reach a MEAL — which has
     # no requirement to read a span off.
@@ -4967,7 +4982,7 @@ def _terms_for(payload: dict[str, object], objective_only_wishes: bool) -> list:
     solver = SchedulerSolver(_settings())
     model = cp_model.CpModel()
     decisions = solver._create_lesson_decisions(
-        model, request.requirements, len(request.rooms), [],
+        model, request.requirements, len(request.rooms), [], [],
     )
     plan = solver._add_room_allocation(
         model, decisions, request.rooms, [], [], request.room_preferences,
@@ -5357,3 +5372,231 @@ def test_locks_that_cannot_hold_a_week_are_refused_by_volume(
     message = response.json()["message"]
     assert "Room locks put" in message
     assert "minutes a week" in message
+
+
+# ---------------------------------------------------------------------------
+# Raster, end to end: the minutes a stage declared free stay free.
+# ---------------------------------------------------------------------------
+
+
+def _rast_payload(
+    rasts: list[dict[str, object]],
+    *,
+    lessons_per_week: int = 4,
+    minutes_per_lesson: int = 60,
+) -> dict[str, object]:
+    """One class, one teacher, one room, a frame that leaves a short day.
+
+    The day is deliberately narrow — 08:00-12:00 — because a rast has to be
+    provably binding: on a ten-hour day a solver would avoid 09:40-10:00 by
+    accident often enough that a passing test would prove nothing.
+    """
+    requirement_id = str(uuid4())
+    group_id = str(uuid4())
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": requirement_id,
+                "subjectId": str(uuid4()),
+                "studentGroupId": group_id,
+                "teacherId": str(uuid4()),
+                "lessonsPerWeek": lessons_per_week,
+                "minutesPerLesson": minutes_per_lesson,
+                "studentGroupSize": 24,
+                "minGradeLevel": 4,
+                "maxGradeLevel": 6,
+            }
+        ],
+        "groups": [
+            {"id": group_id, "lunchHeadcount": 24, "minGradeLevel": 4, "maxGradeLevel": 6},
+        ],
+        "rooms": [{"id": str(uuid4()), "capacity": 30}],
+        "constraints": [],
+        "frameTimes": [
+            {
+                "minGradeLevel": 0,
+                "maxGradeLevel": 12,
+                "dayOfWeek": None,
+                "startTime": "08:00:00",
+                "endTime": "12:00:00",
+            },
+        ],
+        "rasts": rasts,
+    }
+
+
+def _rast(start: str, end: str, day: int | None = None) -> dict[str, object]:
+    return {
+        "minGradeLevel": 4,
+        "maxGradeLevel": 6,
+        "dayOfWeek": day,
+        "startTime": f"{start}:00",
+        "endTime": f"{end}:00",
+    }
+
+
+def test_the_rast_is_cut_out_of_the_start_domain() -> None:
+    """The discriminating test, asserted on the MODEL rather than an answer.
+
+    A solved week cannot prove this. With five days and four lessons the solver
+    avoids a twenty-minute rast most of the time by accident, so an end-to-end
+    assertion passes whether or not the constraint is there — which is exactly
+    what happened: removing the subtraction left every end-to-end test green.
+
+    The domain is where the rule lives, so the domain is what is asserted. A
+    sixty-minute lesson may not START in [09:00, 09:55] on any day: 09:00 is the
+    first start that would still be running at 09:40, and 09:55 the last that
+    begins before 10:00.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    request = OptimizeScheduleRequest.model_validate(
+        _rast_payload([_rast("09:40", "10:00")]),
+    )
+    model = cp_model.CpModel()
+
+    decisions = solver._create_lesson_decisions(
+        model, request.requirements, len(request.rooms), request.frame_times, request.rasts,
+    )
+
+    grid = solver._grid
+    forbidden = {
+        day * grid.slots_per_day + slot
+        for day in range(len(grid.schedule_days))
+        for slot in range((9 * 60 - 480) // 5, (9 * 60 + 60 - 480) // 5)
+    }
+    allowed = {
+        value
+        for decision in decisions
+        for value in decision.start.proto.domain
+    }
+    assert decisions
+    for decision in decisions:
+        values = cp_model.Domain.from_flat_intervals(
+            list(decision.start.proto.domain),
+        )
+        for slot in sorted(forbidden):
+            assert not values.contains(slot), (
+                f"slot {slot} would put a 60-minute lesson across the rast"
+            )
+        # And the day is not emptied: the starts outside the rast survive.
+        assert values.contains(0), "08:00 must still be a legal start"
+    assert allowed
+
+
+def test_no_lesson_is_placed_across_a_declared_rast() -> None:
+    """The same rule, seen from the answer rather than the model.
+
+    Weaker than the domain assertion above — with five days the solver often
+    avoids the rast by accident — and kept because it exercises the whole path
+    from payload to placement, which the domain test does not.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    request = OptimizeScheduleRequest.model_validate(
+        _rast_payload([_rast("09:40", "10:00")]),
+    )
+
+    response = solver.solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert response.lessons
+    for lesson in response.lessons:
+        start = int(lesson.start_time[:2]) * 60 + int(lesson.start_time[3:5])
+        end = int(lesson.end_time[:2]) * 60 + int(lesson.end_time[3:5])
+        assert not (start < 10 * 60 and 9 * 60 + 40 < end), (
+            f"{lesson.day_of_week} {lesson.start_time}-{lesson.end_time} "
+            f"runs across the 09:40-10:00 rast"
+        )
+
+
+def test_a_rast_that_leaves_no_room_is_refused_by_name() -> None:
+    """An empty domain, caught before CP-SAT can reach it with no core.
+
+    A start domain narrowed to nothing is a proof CP-SAT finds without touching
+    an assumption literal, and an empty conflict core erases every other cause in
+    the payload — the school is handed INSUFFICIENT_RESOURCES for a sentence it
+    wrote itself. So the message names the years, the requirement and the
+    longest unbroken stretch that is left.
+    """
+    from app.exceptions import InvalidScheduleInputError
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    # 08:00-12:00 chopped into three fragments, the longest of which is 100
+    # minutes, against a lesson that needs 120.
+    request = OptimizeScheduleRequest.model_validate(
+        _rast_payload(
+            [_rast("09:40", "10:00"), _rast("11:00", "11:20")],
+            lessons_per_week=1,
+            minutes_per_lesson=120,
+        ),
+    )
+
+    with pytest.raises(InvalidScheduleInputError) as error:
+        solver.solve(request)
+
+    message = str(error.value)
+    assert "rasts declared for years 4-6" in message
+    assert "100 minutes" in message
+
+
+def test_the_longest_stretch_is_measured_unbroken_not_summed() -> None:
+    """Total free time is not the question a lesson asks.
+
+    Two rasts leave 100 + 60 + 40 free minutes here. Summed, that is room for a
+    two-hour lesson; unbroken, the longest is 100 and there is not. Measuring the
+    total would accept a day of ten five-minute gaps as room for an hour.
+    """
+    from app.exceptions import InvalidScheduleInputError
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    request = OptimizeScheduleRequest.model_validate(
+        _rast_payload(
+            [_rast("09:40", "10:00"), _rast("11:00", "11:20")],
+            lessons_per_week=1,
+            minutes_per_lesson=105,
+        ),
+    )
+
+    with pytest.raises(InvalidScheduleInputError):
+        solver.solve(request)
+
+
+def test_a_rast_leaves_the_meal_alone() -> None:
+    """A lunchrast IS a rast, and the engine must not push the meal out of one.
+
+    A school that writes "lunchrast 11:00-12:00" and lets the engine seat its
+    classes inside it is describing the ordinary case. Subtracting the rast from
+    the MEAL's domain the way it is subtracted from a lesson's would move the
+    meal out of exactly the window that was reserved for it, and then refuse the
+    run when nowhere else was left.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _rast_payload([_rast("11:00", "12:00")], lessons_per_week=2)
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "12:00:00",
+        "lunchMinutes": 30,
+    }
+    request = OptimizeScheduleRequest.model_validate(payload)
+
+    response = solver.solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert response.lunches, "the meal must still be placed inside the lunchrast"
+    for lunch in response.lunches:
+        assert lunch.start_time >= "11:00:00"
+        assert lunch.end_time <= "12:00:00"

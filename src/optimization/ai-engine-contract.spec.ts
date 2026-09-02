@@ -33,6 +33,7 @@ const PAYLOAD_FIELDS = [
   'groups',
   'lunchServings',
   'previousLessons',
+  'rasts',
   'requestId',
   'requirements',
   'roomPreferences',

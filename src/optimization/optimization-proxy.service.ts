@@ -25,6 +25,7 @@ import type {
   AnonymousFixedLesson,
   AnonymousFrameTime,
   AnonymousLunchServing,
+  AnonymousRast,
   AnonymousGroup,
   AnonymousPreviousLesson,
   AnonymousRequirement,
@@ -135,6 +136,7 @@ export class OptimizationProxyService {
       constraints,
       frameTimes,
       lunchServings,
+      rasts,
       roomPreferences,
       fixedLessons,
       groups,
@@ -163,6 +165,7 @@ export class OptimizationProxyService {
       constraints,
       frameTimes,
       lunchServings,
+      rasts,
       roomPreferences,
       fixedLessons,
       groups,
@@ -264,6 +267,7 @@ export class OptimizationProxyService {
     constraints: AnonymousConstraint[];
     frameTimes: AnonymousFrameTime[];
     lunchServings: AnonymousLunchServing[];
+    rasts: AnonymousRast[];
     roomPreferences: AnonymousRoomPreference[];
     fixedLessons: AnonymousFixedLesson[];
     groups: AnonymousGroup[];
@@ -912,6 +916,31 @@ export class OptimizationProxyService {
       seats: serving.seats,
     }));
 
+    // Raster. School-scoped and read through the same year -> school hop as the
+    // frames and the sittings above, so a request for another school's year
+    // cannot pull this school's rows. The NAME is deliberately not sent: the
+    // engine subtracts minutes and has nothing to say about what they are
+    // called, and every field that reaches it is one more thing that could
+    // identify a school in a payload built to be anonymous.
+    const rawRasts = await tx.rast.findMany({
+      where: { school: { academicYears: { some: { id: academicYearId } } } },
+      select: {
+        minGradeLevel: true,
+        maxGradeLevel: true,
+        dayOfWeek: true,
+        startTime: true,
+        endTime: true,
+      },
+    });
+
+    const rasts: AnonymousRast[] = rawRasts.map((rast) => ({
+      minGradeLevel: rast.minGradeLevel,
+      maxGradeLevel: rast.maxGradeLevel,
+      dayOfWeek: rast.dayOfWeek as DayOfWeek | null,
+      startTime: this.timeToString(rast.startTime),
+      endTime: this.timeToString(rast.endTime),
+    }));
+
     // Anonymize the conflict pairs with the same group map the requirements
     // used, so the engine sees a consistent id space. Pairs whose groups never
     // reached the payload (no requirement and no fixed lesson references them)
@@ -930,6 +959,7 @@ export class OptimizationProxyService {
       constraints,
       frameTimes,
       lunchServings,
+      rasts,
       roomPreferences,
       fixedLessons,
       groups,

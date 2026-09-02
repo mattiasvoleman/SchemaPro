@@ -95,6 +95,25 @@ export interface AnonymousGroup {
  * reach one group UNION (a serving grants permission), which is the opposite of
  * what frame times do (a frame imposes a bound, so several intersect).
  */
+/**
+ * A rast: minutes of a day one stage of the school is not taught.
+ *
+ * The whole declaration — unlike a serving, nothing about a rast is chosen by
+ * the engine, so there is no solved half to carry back. Every matching row
+ * applies, and the union is an OBLIGATION where a serving's union is a
+ * permission. Nothing to anonymise: a rast names a span of years, not a person.
+ */
+export interface AnonymousRast {
+  minGradeLevel: number;
+  maxGradeLevel: number;
+  /** ISO weekday 1-7, or null for every teaching day. */
+  dayOfWeek: DayOfWeek | null;
+  /** HH:MM:SS */
+  startTime: string;
+  /** HH:MM:SS */
+  endTime: string;
+}
+
 export interface AnonymousLunchServing {
   minGradeLevel: number;
   maxGradeLevel: number;
@@ -257,6 +276,8 @@ export interface AiEngineScheduleRequest {
   frameTimes: AnonymousFrameTime[];
   /** Lunchsittningar. Empty means the whole lunch window is open to everyone. */
   lunchServings: AnonymousLunchServing[];
+  /** Raster. Empty means no stage has a declared break. */
+  rasts: AnonymousRast[];
   /** Locked master lessons the solver must plan around (never re-placed). */
   fixedLessons: AnonymousFixedLesson[];
   /** Every group the week concerns, with its dining-hall headcount. */
