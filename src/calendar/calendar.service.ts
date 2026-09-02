@@ -7,6 +7,7 @@ import {
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { runsOn } from './lesson-recurrence';
+import { rastsForSpan } from './rasts-for-span';
 import { requireSchoolId } from '../common/utils/request-context';
 import { zonedTimeToUtc } from '../common/utils/time';
 import type { PublishScheduleDto } from './dto/publish-schedule.dto';
@@ -249,8 +250,26 @@ export class CalendarService {
         // narrow themselves to a span of years. Read only when something in the
         // window actually asks the question, so an ordinary publish — no grade
         // closures, a school-wide lov — still pays nothing for it.
+        //
+        // The rasts add a third reason to want it, and an unconditional one: a
+        // rast is declared for a SPAN OF YEARS and published to a CLASS, so the
+        // walk below cannot start without knowing which year each class is in.
+        const rasts = await tx.rast.findMany({
+          where: { school: { academicYears: { some: { id: dto.academicYearId } } } },
+          select: {
+            name: true,
+            minGradeLevel: true,
+            maxGradeLevel: true,
+            dayOfWeek: true,
+            startTime: true,
+            endTime: true,
+          },
+        });
+
         const gradeOfGroup = new Map<string, number | null>();
+        const classIds: string[] = [];
         if (
+          rasts.length > 0 ||
           closures.some((closure) => closure.resourceType === 'GRADE_LEVEL') ||
           breaks.some(
             (entry) => entry.minGradeLevel !== null || entry.maxGradeLevel !== null,
@@ -258,9 +277,18 @@ export class CalendarService {
         ) {
           const groups = await tx.studentGroup.findMany({
             where: { academicYearId: dto.academicYearId },
-            select: { id: true, gradeLevel: true },
+            select: { id: true, gradeLevel: true, kind: true },
           });
-          for (const group of groups) gradeOfGroup.set(group.id, group.gradeLevel);
+          for (const group of groups) {
+            gradeOfGroup.set(group.id, group.gradeLevel);
+            // Classes only, and with a year. A teaching group is nobody's home
+            // and has no year of its own, so a rast published to it would be a
+            // second copy of a break its members already have through their
+            // class — the same answer the meal's own persist gives.
+            if (group.kind === 'CLASS' && typeof group.gradeLevel === 'number') {
+              classIds.push(group.id);
+            }
+          }
         }
 
         /**
@@ -345,6 +373,28 @@ export class CalendarService {
           else sittingsByWeekday.set(sitting.dayOfWeek, [sitting]);
         }
         let lunchesCreated = 0;
+        let rastsCreated = 0;
+
+        /*
+         * The window's rasts are cleared before they are written.
+         *
+         * An upsert alone keeps a rast the school has DELETED: nothing would
+         * ever remove the row, and a pupil would go on being told about a break
+         * that no longer exists. Delete-then-create is safe here for the reason
+         * it is not safe for a lesson — a CalendarRast carries no attendance,
+         * no status and no participants, so there is nothing in it to lose.
+         *
+         * Scoped to this publish's own window and this year's classes, so a
+         * republish of one week does not touch another.
+         */
+        {
+          await tx.calendarRast.deleteMany({
+            where: {
+              studentGroup: { is: { academicYearId: dto.academicYearId } },
+              date: { gte: parseUtcDate(fromDate), lte: parseUtcDate(toDate) },
+            },
+          });
+        }
 
         for (const date of iterateDates(fromDate, toDate)) {
           const weekday = isoWeekday(date);
@@ -402,6 +452,44 @@ export class CalendarService {
               }),
             );
             lunchesCreated++;
+          }
+
+          /*
+           * The rasts, in the same walk and through the same lov question.
+           *
+           * Resolved per class rather than per span because that is what a
+           * pupil reads, and resolved through rastsForSpan so the every-day and
+           * weekday rows compose by the ONE rule the engine also applies — a
+           * second reading of "which rasts does this stage have on a Friday"
+           * would be the third copy, and the one that drifts.
+           */
+          for (const studentGroupId of classIds) {
+            const grade = gradeOfGroup.get(studentGroupId);
+            if (typeof grade !== 'number') continue;
+            if (
+              (breakDays.get(date) ?? []).some((entry) =>
+                breakCoversGroup(entry, studentGroupId),
+              )
+            ) {
+              continue;
+            }
+            for (const rast of rastsForSpan(rasts, grade, weekday)) {
+              const startsAt = zonedTimeToUtc(date, timeToString(rast.startTime), timezone);
+              const endsAt = zonedTimeToUtc(date, timeToString(rast.endTime), timezone);
+              pendingCreates.push(() =>
+                tx.calendarRast.create({
+                  data: {
+                    schoolId,
+                    studentGroupId,
+                    name: rast.name,
+                    date: parseUtcDate(date),
+                    startsAt,
+                    endsAt,
+                  },
+                }),
+              );
+              rastsCreated++;
+            }
           }
 
           const templates = byWeekday.get(weekday);
@@ -573,7 +661,7 @@ export class CalendarService {
         }
 
         this.logger.log(
-          `Published schedule [year=${dto.academicYearId}, ${fromDate}..${toDate}, created=${created}, lunches=${lunchesCreated}, skipped=${skipped}]`,
+          `Published schedule [year=${dto.academicYearId}, ${fromDate}..${toDate}, created=${created}, lunches=${lunchesCreated}, rasts=${rastsCreated}, skipped=${skipped}]`,
         );
 
         return { created, cancelled, skipped, fromDate, toDate };

@@ -5,11 +5,16 @@ import { useTranslations } from "next-intl";
 import {
   useCalendarLessons,
   useCalendarLunches,
+  useCalendarRasts,
   useGroups,
   useRooms,
   useSubjects,
 } from "@/lib/queries";
-import { calendarLessonToGrid, calendarLunchToBand } from "@/lib/lesson-mapper";
+import {
+  calendarLessonToGrid,
+  calendarLunchToBand,
+  calendarRastToBand,
+} from "@/lib/lesson-mapper";
 import { addDays, startOfIsoWeek, toDateString } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
 import { useProfile } from "@/components/profile-context";
@@ -27,6 +32,7 @@ export default function StudentSchedulePage() {
   // RLS scopes this to the student's own group automatically.
   const { data: lessons, isLoading } = useCalendarLessons(fromDate, toDate);
   const { data: lunches } = useCalendarLunches(fromDate, toDate);
+  const { data: rasts } = useCalendarRasts(fromDate, toDate);
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
   const { data: rooms } = useRooms();
@@ -63,11 +69,18 @@ export default function StudentSchedulePage() {
    * against a policy that matched the entire school.
    */
   const lunchBands = useMemo(
-    () =>
-      (lunches ?? [])
+    () => [
+      ...(lunches ?? [])
         .filter((lunch) => lunch.studentGroupId === profile.studentGroupId)
         .map((lunch) => calendarLunchToBand(lunch, tLunch("bandLabel"))),
-    [lunches, profile.studentGroupId, tLunch],
+      // The rasts read the same way, filtered by the same rule and for the same
+      // reason: a guardian opening this page has more than one child's class in
+      // reach.
+      ...(rasts ?? [])
+        .filter((rast) => rast.studentGroupId === profile.studentGroupId)
+        .map(calendarRastToBand),
+    ],
+    [lunches, rasts, profile.studentGroupId, tLunch],
   );
 
   return (

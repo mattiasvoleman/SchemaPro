@@ -38,7 +38,17 @@ export interface LunchEntry {
   readonly endsAt: string;
 }
 
-export type ScheduleEntry = LessonEntry | LunchEntry;
+export interface RastEntry {
+  readonly kind: 'RAST';
+  readonly id: string;
+  readonly date: string;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  /** What the school calls it. "Rast" alone says too little. */
+  readonly name: string;
+}
+
+export type ScheduleEntry = LessonEntry | LunchEntry | RastEntry;
 
 export interface ScheduleSection {
   readonly date: string;
@@ -55,17 +65,17 @@ function window(now: Date): { from: string; to: string } {
 /**
  * Both tables, in one list, ordered by when they start.
  *
- * Sorted here rather than by the database: two ordered queries do not interleave
- * on their own, and a meal that arrived after the afternoon's lessons would be
- * drawn under them — the one entry a pupil scans the day for, in the wrong
- * place. Ties break lesson-first, so a lesson that ends exactly when the meal
- * starts still reads in the order it is lived.
+ * Sorted here rather than by the database: three ordered queries do not
+ * interleave on their own, and a meal that arrived after the afternoon's lessons
+ * would be drawn under them — the one entry a pupil scans the day for, in the
+ * wrong place. Ties break lesson, then rast, then lunch, so a lesson that ends
+ * exactly when the break starts still reads in the order it is lived.
  */
 export async function fetchSchedule(now: Date = new Date()): Promise<ScheduleEntry[]> {
   const { from, to } = window(now);
   const supabase = getSupabase();
 
-  const [lessons, lunches] = await Promise.all([
+  const [lessons, lunches, rasts] = await Promise.all([
     supabase
       .from('CalendarLessons')
       .select('id, date, startsAt, endsAt, status, subject:Subjects(name), room:Rooms(name)')
@@ -78,18 +88,25 @@ export async function fetchSchedule(now: Date = new Date()): Promise<ScheduleEnt
       .gte('date', from)
       .lte('date', to)
       .order('startsAt'),
+    supabase
+      .from('CalendarRasts')
+      .select('id, date, startsAt, endsAt, name')
+      .gte('date', from)
+      .lte('date', to)
+      .order('startsAt'),
   ]);
 
   if (lessons.error) throw new Error(lessons.error.message);
   /*
-   * A failed MEAL query is not a failed screen.
+   * A failed MEAL or RAST query is not a failed screen.
    *
-   * The lessons are the schedule; the meal is one stripe in it. A school that
-   * has not published its lunch flow, or a policy that will not let this pupil
-   * read it, must not cost them the timetable they came for — which is exactly
-   * what a shared `throw` would do.
+   * The lessons are the schedule; the meal and the breaks are stripes in it. A
+   * school that has not published its lunch flow, or a policy that will not let
+   * this pupil read it, must not cost them the timetable they came for — which
+   * is exactly what a shared `throw` would do.
    */
   const lunchRows = lunches.error ? [] : ((lunches.data ?? []) as LunchEntry[]);
+  const rastRows = rasts.error ? [] : ((rasts.data ?? []) as RastEntry[]);
 
   const entries: ScheduleEntry[] = [
     ...((lessons.data ?? []) as unknown as Omit<LessonEntry, 'kind'>[]).map(
@@ -102,11 +119,20 @@ export async function fetchSchedule(now: Date = new Date()): Promise<ScheduleEnt
       endsAt: row.endsAt,
       kind: 'LUNCH' as const,
     })),
+    ...rastRows.map((row) => ({
+      id: row.id,
+      date: row.date,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      name: row.name,
+      kind: 'RAST' as const,
+    })),
   ];
 
+  const order = { LESSON: 0, RAST: 1, LUNCH: 2 } as const;
   entries.sort((a, b) => {
     if (a.startsAt !== b.startsAt) return a.startsAt < b.startsAt ? -1 : 1;
-    return a.kind === b.kind ? 0 : a.kind === 'LESSON' ? -1 : 1;
+    return order[a.kind] - order[b.kind];
   });
   return entries;
 }

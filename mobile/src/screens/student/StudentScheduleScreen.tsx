@@ -101,6 +101,14 @@ export function StudentScheduleScreen(): React.JSX.Element {
           <Text style={styles.sectionHeader}>{section.title}</Text>
         )}
         renderItem={({ item }) => {
+          if (item.kind === 'RAST') {
+            return (
+              <View style={[styles.card, styles.cardRast]}>
+                <Text style={styles.cardTitleRast}>{item.name}</Text>
+                <Text style={styles.cardMeta}>{timeRange(item.startsAt, item.endsAt)}</Text>
+              </View>
+            );
+          }
           if (item.kind === 'LUNCH') {
             return (
               <View style={[styles.card, styles.cardLunch]}>
@@ -163,6 +171,9 @@ const styles = StyleSheet.create({
   // rather than as one more thing to be somewhere for.
   cardLunch: { backgroundColor: '#1c1a12', borderColor: '#3a3418' },
   cardTitleLunch: { color: '#fbbf24', fontWeight: '600' },
+  // Quieter than the meal: several a day, and none of them is somewhere to be.
+  cardRast: { backgroundColor: '#141a1c', borderColor: '#1e3038' },
+  cardTitleRast: { color: '#7dd3fc', fontWeight: '600' },
   cardTitle: { color: '#e2e8f0', fontWeight: '600' },
   cancelledText: { textDecorationLine: 'line-through' },
   cardMeta: { color: '#94a3b8', fontSize: 12, marginTop: 2 },

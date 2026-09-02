@@ -222,6 +222,17 @@ export type { FrameTime } from "@/lib/frame-times";
 export type { LunchServing } from "@/lib/lunch-servings";
 export type { Rast } from "@/lib/rasts";
 
+/** A published rast as PostgREST returns it. */
+export interface CalendarRast {
+  id: string;
+  studentGroupId: string;
+  name: string;
+  /** YYYY-MM-DD */
+  date: string;
+  startsAt: string;
+  endsAt: string;
+}
+
 /** WISH pays a price; LOCK forbids everywhere else. */
 export type { RoomRuleKind } from "@/lib/queries";
 

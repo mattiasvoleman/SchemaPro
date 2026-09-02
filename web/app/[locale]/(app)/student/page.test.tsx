@@ -15,12 +15,14 @@ import StudentSchedulePage from "./page";
 const state = vi.hoisted(() => ({
   lessons: [] as unknown[],
   lunches: [] as unknown[],
+  rasts: [] as unknown[],
   groupId: "g-41" as string | null,
 }));
 
 vi.mock("@/lib/queries", () => ({
   useCalendarLessons: () => ({ data: state.lessons, isLoading: false }),
   useCalendarLunches: () => ({ data: state.lunches }),
+  useCalendarRasts: () => ({ data: state.rasts }),
   useGroups: () => ({ data: GROUPS }),
   useRooms: () => ({ data: [] }),
   useSubjects: () => ({ data: SUBJECTS }),
@@ -90,6 +92,10 @@ beforeEach(() => {
     lunch("cl-41", "g-41", "11:40", "12:00"),
     lunch("cl-42", "g-42", "12:00", "12:20"),
   ];
+  state.rasts = [
+    { ...lunch("cr-41", "g-41", "09:40", "10:00"), name: "Förmiddagsrast" },
+    { ...lunch("cr-42", "g-42", "09:40", "10:00"), name: "Förmiddagsrast" },
+  ];
 });
 
 /** Where the single band sits, in pixels from the top of the grid. */
@@ -142,10 +148,36 @@ describe("a week that holds only a meal", () => {
     expect(bandsOnScreen()).toHaveLength(1);
   });
 
-  it("says so when there is neither", () => {
+  it("says so when the week holds nothing at all", () => {
+    state.lessons = [];
+    state.lunches = [];
+    state.rasts = [];
+    render(<StudentSchedulePage />);
+    expect(screen.getByText("schedule.noLessons")).toBeInTheDocument();
+  });
+});
+
+describe("the pupil's rasts", () => {
+  it("draws the class's own break, named by the school", () => {
+    render(<StudentSchedulePage />);
+    // Two classes' rasts are readable — a guardian has more than one child's
+    // class in reach — and one of them is this pupil's.
+    expect(screen.getAllByText("Förmiddagsrast")).toHaveLength(1);
+  });
+
+  it("names it rather than labelling it 'rast'", () => {
+    // "Rast" alone does not distinguish the ten minutes between two lessons
+    // from the half hour on the yard, which is why the declaration carries a
+    // name at all.
+    render(<StudentSchedulePage />);
+    expect(screen.queryByText("rasts.bandLabel")).toBeNull();
+  });
+
+  it("draws a week that holds only a rast", () => {
     state.lessons = [];
     state.lunches = [];
     render(<StudentSchedulePage />);
-    expect(screen.getByText("schedule.noLessons")).toBeInTheDocument();
+    expect(screen.queryByText("schedule.noLessons")).toBeNull();
+    expect(screen.getAllByText("Förmiddagsrast")).toHaveLength(1);
   });
 });

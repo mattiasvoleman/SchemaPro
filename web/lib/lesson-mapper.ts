@@ -1,6 +1,7 @@
 import type {
   CalendarLessonRow,
   CalendarLunch,
+  CalendarRast,
   Room,
   StudentGroup,
   Subject,
@@ -54,6 +55,24 @@ export function calendarLessonToGrid(
  * for anyone abroad, and a lunch sitting between the wrong two lessons reads as
  * a bug in a way an hour's offset shared by everything does not.
  */
+/**
+ * A published rast as a stripe behind the day.
+ *
+ * The same shape the meal takes, and named by the school rather than by a
+ * generic label: "rast" alone does not distinguish the ten minutes between two
+ * lessons from the half hour on the yard, which is why the declaration carries
+ * a name at all.
+ */
+export function calendarRastToBand(rast: CalendarRast): TimetableBand {
+  return {
+    id: rast.id,
+    dayOfWeek: isoWeekdayOf(rast.date),
+    startMinutes: minutesOf(rast.startsAt),
+    endMinutes: minutesOf(rast.endsAt),
+    label: rast.name,
+  };
+}
+
 export function calendarLunchToBand(lunch: CalendarLunch, label: string): TimetableBand {
   return {
     id: lunch.id,

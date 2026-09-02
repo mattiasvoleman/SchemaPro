@@ -143,6 +143,7 @@ model School {
   lunchServings           LunchServing[]
   lunchSittings           LunchSitting[]
   calendarLunches         CalendarLunch[]
+  calendarRasts           CalendarRast[]
   scheduleChangeLogs      ScheduleChangeLog[]
   scheduleVersions        ScheduleVersion[]
   optimizationJobs        OptimizationJob[]
@@ -384,6 +385,7 @@ model StudentGroup {
   extraMasterLessons      MasterLessonGroup[]      @relation("MasterLessonExtraGroup")
   extraCalendarLessons    CalendarLessonGroup[]    @relation("CalendarLessonExtraGroup")
   lunchSittings           LunchSitting[]
+  calendarRasts           CalendarRast[]
   calendarLunches         CalendarLunch[]
 
   @@unique([schoolId, academicYearId, name])
@@ -1107,6 +1109,35 @@ model Rast {
 
   @@index([schoolId, dayOfWeek])
   @@map("Rasts")
+}
+
+/// A rast as published: one class, one day, one break.
+///
+/// The dated half of Rast, and the only thing a pupil, guardian or teacher ever
+/// reads. Dated rather than derived in the client because a published week has
+/// to be a record of that week: a lov makes a Monday differ from the rule, and
+/// an admin editing a declaration in March must not rewrite February.
+///
+/// The name is COPIED, not referenced, for the same reason a CalendarLesson
+/// carries its own times rather than reading its template's.
+model CalendarRast {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  studentGroupId String   @db.Uuid
+  name           String
+  date           DateTime @db.Date
+  startsAt       DateTime @db.Timestamptz(6)
+  endsAt         DateTime @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  studentGroup StudentGroup @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@unique([studentGroupId, date, startsAt])
+  @@index([schoolId, date])
+  @@index([studentGroupId, date])
+  @@map("CalendarRasts")
 }
 
 /// The lunch the solver chose for one group, one weekday.

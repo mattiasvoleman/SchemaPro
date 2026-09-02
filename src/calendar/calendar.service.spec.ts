@@ -81,6 +81,25 @@ describe('CalendarService', () => {
     });
   };
 
+  /** A rast row as Prisma hands it back: `@db.Time` values anchored at 1970. */
+  const rastRow = (
+    overrides: {
+      name?: string;
+      minGradeLevel?: number;
+      maxGradeLevel?: number;
+      dayOfWeek?: number | null;
+      start?: string;
+      end?: string;
+    } = {},
+  ) => ({
+    name: overrides.name ?? 'Förmiddagsrast',
+    minGradeLevel: overrides.minGradeLevel ?? 4,
+    maxGradeLevel: overrides.maxGradeLevel ?? 6,
+    dayOfWeek: overrides.dayOfWeek ?? null,
+    startTime: new Date(`1970-01-01T${overrides.start ?? '09:40'}:00.000Z`),
+    endTime: new Date(`1970-01-01T${overrides.end ?? '10:00'}:00.000Z`),
+  });
+
   const arrangePublish = (
     templates: Record<string, unknown>[] = [template()],
     {
@@ -91,9 +110,16 @@ describe('CalendarService', () => {
       sittings = [] as Record<string, unknown>[],
       /** Meals already materialised in the window. */
       existingLunches = [] as Record<string, unknown>[],
+      /** Declared rasts, and the groups they are published to. */
+      rasts = [] as Record<string, unknown>[],
+      groups = [] as Record<string, unknown>[],
     } = {},
   ) => {
     arrangeYear();
+    tx.rast.findMany.mockResolvedValue(rasts);
+    tx.studentGroup.findMany.mockResolvedValue(groups);
+    tx.calendarRast.create.mockResolvedValue({ id: 'created-rast' });
+    tx.calendarRast.deleteMany.mockResolvedValue({ count: 0 });
     tx.masterLesson.findMany.mockResolvedValue(templates);
     tx.calendarLesson.findMany.mockResolvedValue(existing);
     tx.availabilityConstraint.findMany.mockResolvedValue(closures);
@@ -332,6 +358,115 @@ describe('CalendarService', () => {
         tx.calendarLunch.upsert.mock.calls.map(
           (call) => (call[0] as { create: Record<string, unknown> }).create,
         );
+
+      it('publishes a rast to every class the span reaches', async () => {
+        arrangePublish([template()], {
+          rasts: [rastRow()],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 5, kind: 'CLASS' },
+            { id: EXTRA_GROUP_ID, gradeLevel: 5, kind: 'CLASS' },
+          ],
+        });
+
+        await publishOneDay();
+
+        expect(tx.calendarRast.create).toHaveBeenCalledTimes(2);
+      });
+
+      it('publishes no rast to a teaching group', async () => {
+        // A teaching group is nobody's home and has no year of its own. A rast
+        // published to it would be a second copy of a break its members already
+        // have through their class — the same answer the meal's persist gives.
+        arrangePublish([template()], {
+          rasts: [rastRow()],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 5, kind: 'CLASS' },
+            // WITH a year, which is the case that discriminates: a null one is
+            // already refused by the grade lookup, so a fixture using it would
+            // pass with the kind check removed.
+            { id: 'g-ma71', gradeLevel: 5, kind: 'TEACHING_GROUP' },
+          ],
+        });
+
+        await publishOneDay();
+
+        expect(tx.calendarRast.create).toHaveBeenCalledTimes(1);
+      });
+
+      it('publishes no rast to a class the span does not reach', async () => {
+        arrangePublish([template()], {
+          rasts: [rastRow({ minGradeLevel: 7, maxGradeLevel: 9 })],
+          groups: [{ id: GROUP_ID, gradeLevel: 5, kind: 'CLASS' }],
+        });
+
+        await publishOneDay();
+
+        expect(tx.calendarRast.create).not.toHaveBeenCalled();
+      });
+
+      it('serves no rast on a day the lov covers', async () => {
+        // The same object, the same breakCoversGroup and the same walk the
+        // lessons and the meal use. Deriving "which days does this school
+        // teach" a second time is how a lov stops being honoured in two
+        // surfaces out of three.
+        arrangePublish([template()], {
+          rasts: [rastRow()],
+          groups: [{ id: GROUP_ID, gradeLevel: 5, kind: 'CLASS' }],
+          breaks: [schoolBreakFixture()],
+        });
+
+        await publishOneDay();
+
+        expect(tx.calendarRast.create).not.toHaveBeenCalled();
+      });
+
+      it('keeps a stage\'s other rasts on the day a weekday row replaces one', async () => {
+        // The rule that separates a rast from a lunch serving. Replacing every
+        // every-day row would publish a Monday missing this stage's afternoon
+        // break — silently, to every pupil in it.
+        arrangePublish([template()], {
+          rasts: [
+            rastRow({ name: 'Förmiddag', start: '09:40', end: '10:00' }),
+            rastRow({ name: 'Eftermiddag', start: '13:00', end: '13:15' }),
+            rastRow({ name: 'Måndag', start: '09:30', end: '09:50', dayOfWeek: 1 }),
+          ],
+          groups: [{ id: GROUP_ID, gradeLevel: 5, kind: 'CLASS' }],
+        });
+
+        await publishOneDay();
+
+        const names = tx.calendarRast.create.mock.calls.map(
+          ([call]) => (call as { data: { name: string } }).data.name,
+        );
+        expect(names).toEqual(['Måndag', 'Eftermiddag']);
+      });
+
+      it('clears the window before it writes, so a deleted rast disappears', async () => {
+        // An upsert alone keeps a rast the school has REMOVED: nothing would
+        // ever delete the row, and a pupil would go on being told about a break
+        // that no longer exists. Safe here for the reason it is not safe for a
+        // lesson — a CalendarRast carries no attendance and nothing about the
+        // past.
+        arrangePublish([template()], {
+          rasts: [],
+          groups: [{ id: GROUP_ID, gradeLevel: 5, kind: 'CLASS' }],
+        });
+
+        await publishOneDay();
+
+        const [[call]] = tx.calendarRast.deleteMany.mock.calls as [
+          [{ where: { studentGroup: unknown; date: unknown } }],
+        ];
+        expect(call.where.studentGroup).toEqual({
+          is: { academicYearId: YEAR_ID },
+        });
+        // Scoped to this publish's own window, so republishing one week does
+        // not empty another.
+        expect(call.where.date).toEqual({
+          gte: new Date('2026-08-10T00:00:00.000Z'),
+          lte: new Date('2026-08-10T00:00:00.000Z'),
+        });
+      });
 
       it('rewrites a meal whose sitting has moved', async () => {
         // The bug this replaced. Publish read the already-materialised meals

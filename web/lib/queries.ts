@@ -34,6 +34,7 @@ import type {
   LunchSitting,
   CalendarLunch,
   Rast,
+  CalendarRast,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -326,6 +327,16 @@ export function useLunchSittings(academicYearId: string | null) {
 }
 
 /**
+ * The dated rasts in one week — one row per class per break.
+ *
+ * Its own table rather than a band computed in the client, for the two reasons
+ * the migration gives: a lov makes a Monday differ from the declaration, and an
+ * admin editing a rast in March must not rewrite February. Scoped by RLS to the
+ * reader's own class, their children's, or the whole school for staff; the
+ * caller filters as well, because a guardian legitimately has more than one
+ * class in reach.
+ */
+/**
  * The dated meals in one week.
  *
  * Its own table rather than a lesson, which is what makes it safe to read here
@@ -340,6 +351,25 @@ export function useLunchSittings(academicYearId: string | null) {
  * A staff account and a guardian both legitimately read more than one class
  * here, so who is asking decides what is shown, not the policy alone.
  */
+export function useCalendarRasts(fromDate: string, toDate: string) {
+  return useQuery({
+    queryKey: ["calendar-rasts", fromDate, toDate],
+    queryFn: async () => {
+      const supabase = createClient();
+      return fetchAllPages<CalendarRast>((from, to) =>
+        supabase
+          .from("CalendarRasts")
+          .select("id, studentGroupId, name, date, startsAt, endsAt")
+          .gte("date", fromDate)
+          .lte("date", toDate)
+          .order("date")
+          .order("startsAt")
+          .range(from, to),
+      );
+    },
+  });
+}
+
 export function useCalendarLunches(fromDate: string, toDate: string) {
   return useQuery({
     queryKey: ["calendar-lunches", fromDate, toDate],

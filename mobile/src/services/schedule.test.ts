@@ -52,6 +52,14 @@ const meal = (id: string, hhmm: string, date = MONDAY) => ({
   endsAt: at(hhmm, date),
 });
 
+const rast = (id: string, hhmm: string, name = 'Förmiddagsrast', date = MONDAY) => ({
+  id,
+  date,
+  startsAt: at(hhmm, date),
+  endsAt: at(hhmm, date),
+  name,
+});
+
 describe('a pupil’s week on the phone', () => {
   it('asks for the meal at all', async () => {
     // The whole defect: three commits built the pupil-facing half of the lunch
@@ -141,5 +149,60 @@ describe('the days', () => {
     expect(entryKey({ ...same, kind: 'LUNCH' })).not.toBe(
       entryKey({ ...same, kind: 'LESSON', status: 'SCHEDULED', subject: null, room: null }),
     );
+  });
+});
+
+describe('the breaks', () => {
+  it('asks for them at all', async () => {
+    const stub = supabaseStub({});
+
+    await fetchSchedule(new Date(`${MONDAY}T07:00:00.000Z`));
+
+    expect(stub.asked).toContain('CalendarRasts');
+  });
+
+  it('puts each break where it is taken', async () => {
+    supabaseStub({
+      CalendarLessons: [lesson('l-1', '08:00'), lesson('l-2', '10:00')],
+      CalendarRasts: [rast('r-1', '09:40')],
+      CalendarLunches: [meal('m-1', '11:40')],
+    });
+
+    const entries = await fetchSchedule(new Date(`${MONDAY}T07:00:00.000Z`));
+
+    expect(entries.map((e) => e.id)).toEqual(['l-1', 'r-1', 'l-2', 'm-1']);
+  });
+
+  it('carries the name the school gave it', async () => {
+    // "Rast" alone does not distinguish the ten minutes between two lessons
+    // from the half hour on the yard.
+    supabaseStub({ CalendarRasts: [rast('r-1', '09:40', 'Långrast')] });
+
+    const [entry] = await fetchSchedule(new Date(`${MONDAY}T07:00:00.000Z`));
+
+    expect(entry?.kind === 'RAST' && entry.name).toBe('Långrast');
+  });
+
+  it('keeps the timetable when the breaks cannot be read', async () => {
+    supabaseStub(
+      { CalendarLessons: [lesson('l-1', '08:00')] },
+      { CalendarRasts: 'permission denied for table CalendarRasts' },
+    );
+
+    const entries = await fetchSchedule(new Date(`${MONDAY}T07:00:00.000Z`));
+
+    expect(entries.map((e) => e.id)).toEqual(['l-1']);
+  });
+
+  it('reads lesson, then break, then meal at the same minute', async () => {
+    supabaseStub({
+      CalendarLessons: [lesson('l-1', '11:40')],
+      CalendarRasts: [rast('r-1', '11:40')],
+      CalendarLunches: [meal('m-1', '11:40')],
+    });
+
+    const entries = await fetchSchedule(new Date(`${MONDAY}T07:00:00.000Z`));
+
+    expect(entries.map((e) => e.kind)).toEqual(['LESSON', 'RAST', 'LUNCH']);
   });
 });
