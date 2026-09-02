@@ -155,7 +155,8 @@
     "myAttendance": "My attendance",
     "leaveRequests": "Leave requests",
     "myChildren": "My children",
-    "integrations": "Integrations"
+    "integrations": "Integrations",
+    "rasts": "Breaks"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -956,5 +957,30 @@
     "durationHours": "{hours} h {minutes} min",
     "durationHoursOnly": "{hours} h",
     "durationMinutes": "{minutes} min"
+  },
+  "rasts": {
+    "title": "Breaks",
+    "subtitle": "When each stage is not taught",
+    "hint": "A break is minutes of the day a stage is free. The solver places no lessons across them, and they appear in the pupil's, guardian's and teacher's schedule. Several breaks a day is normal — every matching row applies.",
+    "add": "New break",
+    "addTitle": "New break",
+    "editTitle": "Edit break",
+    "defaultName": "Morning break",
+    "name": "Name",
+    "gradeSpan": "Years",
+    "day": "Day",
+    "everyDay": "Every day",
+    "startTime": "From",
+    "endTime": "To",
+    "empty": "No breaks have been entered. Without them the solver places lessons back to back.",
+    "rowsTitle": "Entered breaks",
+    "weekTitle": "The resulting week",
+    "weekHint": "The rows above read as a week. A day-specific break replaces only the every-day break whose time it overlaps — the others still stand that day.",
+    "noRast": "No break",
+    "editRast": "Edit {name}",
+    "deleteRast": "Delete {name}",
+    "deleteTitle": "Delete this break?",
+    "deleteBody": "{name} will be removed. The solver may then place lessons in that time on its next run.",
+    "bandLabel": "Break"
   }
 }

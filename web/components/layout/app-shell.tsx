@@ -19,6 +19,7 @@ import {
   UserCheck,
   UserX,
   SlidersHorizontal,
+  Coffee,
   UtensilsCrossed,
   Sparkles,
   GraduationCap,
@@ -71,6 +72,7 @@ const ADMIN_NAV: NavSection[] = [
       // tillgänglighet — that is the hall's size and the break's length, one
       // row for the school, where this is the flow through the day.
       { labelKey: "lunchServings", href: "/admin/lunch-servings", icon: UtensilsCrossed },
+      { labelKey: "rasts", href: "/admin/rasts", icon: Coffee },
       // Next to tillgänglighet, which is the other list of "not then": that one
       // says when a room or a teacher cannot be used, this one says when the
       // school is not teaching at all. It sits under Planering rather than

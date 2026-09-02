@@ -220,6 +220,7 @@ export type { FrameTime } from "@/lib/frame-times";
  * the rules that read it — the union across spans and the weekday shadow.
  */
 export type { LunchServing } from "@/lib/lunch-servings";
+export type { Rast } from "@/lib/rasts";
 
 /** WISH pays a price; LOCK forbids everywhere else. */
 export type { RoomRuleKind } from "@/lib/queries";

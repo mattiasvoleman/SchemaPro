@@ -33,6 +33,7 @@ import type {
   LunchServing,
   LunchSitting,
   CalendarLunch,
+  Rast,
 } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -254,6 +255,26 @@ export function useFrameTimes() {
       selectAll<FrameTime>(
         "FrameTimes",
         "id, minGradeLevel, maxGradeLevel, dayOfWeek, startTime, endTime",
+        "minGradeLevel",
+      ),
+  });
+}
+
+/**
+ * The school's raster — when each stage is not taught.
+ *
+ * School-scoped and unpaged for the same reasons useFrameTimes and
+ * useLunchServings are: the shape of the day describes the building and the
+ * yard rather than one läsår, and three or four stages across five weekdays is
+ * a table of tens.
+ */
+export function useRasts() {
+  return useQuery({
+    queryKey: ["rasts"],
+    queryFn: () =>
+      selectAll<Rast>(
+        "Rasts",
+        "id, name, minGradeLevel, maxGradeLevel, dayOfWeek, startTime, endTime",
         "minGradeLevel",
       ),
   });

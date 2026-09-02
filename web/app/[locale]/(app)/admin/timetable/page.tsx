@@ -47,6 +47,7 @@ import {
   useFrameTimes,
   useLunchSittings,
   useRoomPreferences,
+  useRasts,
 } from "@/lib/queries";
 import { buildIcs, downloadIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
@@ -55,6 +56,7 @@ import { ApiError } from "@/lib/api";
 import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { subjectColor, timeToMinutes } from "@/lib/utils";
+import { rastWindows } from "@/lib/rasts";
 import {
   audienceFor,
   buildRosterIndex,
@@ -293,6 +295,7 @@ export default function TimetablePage() {
   const { data: frameTimes } = useFrameTimes();
   const { data: lunchSittings } = useLunchSittings(activeYear?.id ?? null);
   const { data: roomRules } = useRoomPreferences();
+  const { data: rasts } = useRasts();
   /**
    * groupId -> the years it holds, so a GRADE_LEVEL rule can reach it.
    *
@@ -506,7 +509,7 @@ export default function TimetablePage() {
    */
   const lunchBands = useMemo(() => {
     if (groupFilter === ALL) return undefined;
-    return (lunchSittings ?? [])
+    const meals = (lunchSittings ?? [])
       .filter((sitting) => sitting.studentGroupId === groupFilter)
       .map((sitting) => ({
         id: sitting.id,
@@ -515,7 +518,33 @@ export default function TimetablePage() {
         endMinutes: timeToMinutes(sitting.endTime),
         label: tLunch("bandLabel"),
       }));
-  }, [lunchSittings, groupFilter, tLunch]);
+
+    /*
+     * The class's rasts, drawn the same way and for a sharper reason.
+     *
+     * This lands one commit BEFORE the engine obeys them, and that order is the
+     * safety mechanism: a school declaring rasts across its existing
+     * hand-placed lessons sees the collisions here, while they are still
+     * something to look at, rather than as an INFEASIBLE on the next
+     * generation run.
+     *
+     * Resolved through lib/rasts.ts rather than by filtering rows, because an
+     * every-day row and a weekday row that overlaps it are two rows and one
+     * day: the band has to show what the pair MEANS.
+     */
+    const span = gradeSpanOf.get(groupFilter);
+    const breaks = [1, 2, 3, 4, 5].flatMap((dayOfWeek) =>
+      rastWindows(rasts ?? [], span, dayOfWeek).map((window) => ({
+        id: `${window.id}:${dayOfWeek}`,
+        dayOfWeek,
+        startMinutes: window.startMinutes,
+        endMinutes: window.endMinutes,
+        label: window.name,
+      })),
+    );
+
+    return [...meals, ...breaks];
+  }, [lunchSittings, rasts, gradeSpanOf, groupFilter, tLunch]);
 
   /**
    * lessonId → what this lesson means for the class in view. Empty for "all".

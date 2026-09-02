@@ -139,6 +139,7 @@ model School {
   availabilityConstraints AvailabilityConstraint[]
   schoolBreaks            SchoolBreak[]
   frameTimes              FrameTime[]
+  rasts                   Rast[]
   lunchServings           LunchServing[]
   lunchSittings           LunchSitting[]
   calendarLunches         CalendarLunch[]
@@ -1069,6 +1070,43 @@ model LunchServing {
 
   @@index([schoolId, dayOfWeek])
   @@map("LunchServings")
+}
+
+/// Raster: the minutes of a day a stage of the school is NOT taught.
+///
+/// The declaration, and the whole of it — unlike the meal, which needs a second
+/// table because the solver CHOOSES when each class eats. Nothing about a rast
+/// is chosen: the school states it, the engine subtracts it from every matching
+/// lesson's start domain, and publish dates it. A middle table would store what
+/// this row already says, and two copies of "when does åk 4-6 have rast" are two
+/// things to disagree.
+///
+/// Windows UNION across spans and every matching row applies, but the union
+/// means the OPPOSITE of a LunchServing's: a serving that matches GRANTS
+/// permission, a rast that matches IMPOSES an obligation. A day-specific row
+/// shadows only the every-day rows whose window it OVERLAPS — narrower than the
+/// serving rule, because several rasts a day are normal and replacing all of
+/// them would silently delete a stage's other Friday breaks. No unique key, for
+/// the same reason. See the migration for the rest.
+model Rast {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId      String   @db.Uuid
+  /// What the school calls it, printed on the pupil's band.
+  name          String
+  /// Inclusive, 0-12, both required and ordered — the DB enforces all three.
+  minGradeLevel Int
+  maxGradeLevel Int
+  /// ISO weekday 1-7, or null for every teaching day.
+  dayOfWeek     Int?
+  startTime     DateTime @db.Time(0)
+  endTime       DateTime @db.Time(0)
+  createdAt     DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, dayOfWeek])
+  @@map("Rasts")
 }
 
 /// The lunch the solver chose for one group, one weekday.

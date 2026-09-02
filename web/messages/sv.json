@@ -155,7 +155,8 @@
     "myAttendance": "Min närvaro",
     "leaveRequests": "Ledighetsansökningar",
     "myChildren": "Mina barn",
-    "integrations": "Integrationer"
+    "integrations": "Integrationer",
+    "rasts": "Raster"
   },
   "dashboard": {
     "title": "Översikt",
@@ -956,5 +957,30 @@
     "durationHours": "{hours} h {minutes} min",
     "durationHoursOnly": "{hours} h",
     "durationMinutes": "{minutes} min"
+  },
+  "rasts": {
+    "title": "Raster",
+    "subtitle": "När varje stadium inte undervisas",
+    "hint": "En rast är minuter av dagen ett stadium är ledigt. Motorn lägger inga lektioner tvärs över dem, och de syns i elevens, vårdnadshavarens och lärarens schema. Flera raster per dag är det normala — varje rad som matchar gäller.",
+    "add": "Ny rast",
+    "addTitle": "Ny rast",
+    "editTitle": "Ändra rast",
+    "defaultName": "Förmiddagsrast",
+    "name": "Namn",
+    "gradeSpan": "Årskurser",
+    "day": "Dag",
+    "everyDay": "Alla dagar",
+    "startTime": "Från",
+    "endTime": "Till",
+    "empty": "Inga raster är inlagda. Utan dem lägger motorn lektionerna dikt mot varandra.",
+    "rowsTitle": "Inlagda raster",
+    "weekTitle": "Så här blir veckan",
+    "weekHint": "Raderna ovan lästa som en vecka. En dagsspecifik rast ersätter bara den varje-dag-rast vars tid den överlappar — de andra står kvar den dagen.",
+    "noRast": "Ingen rast",
+    "editRast": "Ändra {name}",
+    "deleteRast": "Ta bort {name}",
+    "deleteTitle": "Ta bort rasten?",
+    "deleteBody": "{name} tas bort. Motorn får då lägga lektioner i den tiden vid nästa körning.",
+    "bandLabel": "Rast"
   }
 }

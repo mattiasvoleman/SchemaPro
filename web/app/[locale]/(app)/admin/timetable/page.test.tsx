@@ -39,6 +39,7 @@ vi.mock("@/lib/queries", () => ({
   useLunchSettings: () => ({ data: null }),
   useLunchSittings: () => ({ data: [] }),
   useRoomPreferences: () => ({ data: [] }),
+  useRasts: () => ({ data: RASTS }),
   useScheduleVersions: () => ({ data: [] }),
   useScheduleVersionDetail: () => ({ data: null }),
   useScheduleVersionActions: () => ({ save: noMutation, restore: noMutation }),
@@ -85,6 +86,8 @@ const GROUPS = [
   { id: "g-41", academicYearId: "y-1", name: "4.1", kind: "CLASS", gradeLevel: 4 },
   { id: "g-42", academicYearId: "y-1", name: "4.2", kind: "CLASS", gradeLevel: 4 },
   { id: "g-51", academicYearId: "y-1", name: "5.1", kind: "CLASS", gradeLevel: 5 },
+  // Outside the 4-6 rast, so the band test has a class the rast does not reach.
+  { id: "g-71", academicYearId: "y-1", name: "7.1", kind: "CLASS", gradeLevel: 7 },
   {
     id: "g-ma1",
     academicYearId: "y-1",
@@ -98,6 +101,19 @@ const GROUPS = [
     name: "4ma2",
     kind: "TEACHING_GROUP",
     gradeLevel: null,
+  },
+];
+
+/** One every-day rast for year four, so the bands have something to draw. */
+const RASTS = [
+  {
+    id: "r-1",
+    name: "Förmiddagsrast",
+    minGradeLevel: 4,
+    maxGradeLevel: 6,
+    dayOfWeek: null,
+    startTime: "09:40:00",
+    endTime: "10:00:00",
   },
 ];
 
@@ -430,5 +446,38 @@ describe("exporting one class's week", () => {
       "4.2 + 4.1",
       "5.1 1/4",
     ]);
+  });
+});
+
+describe("the rasts a class must observe", () => {
+  it("draws a band for the class in view", async () => {
+    render(<TimetablePage />);
+    await filterTo("4.1");
+    // One every-day row for years 4-6, so 4.1 is bound by it on all five days.
+    expect(screen.getAllByText("Förmiddagsrast")).toHaveLength(5);
+  });
+
+  it("draws nothing for a class the rast does not reach", async () => {
+    render(<TimetablePage />);
+    // 7.1 is year seven; the rast is written for 4-6. A band drawn here would
+    // tell a stage it is free at an hour it is taught.
+    await filterTo("7.1");
+    expect(screen.queryByText("Förmiddagsrast")).toBeNull();
+  });
+
+  it("draws it for another class inside the same span", async () => {
+    render(<TimetablePage />);
+    await filterTo("5.1");
+    // Written for 4-6, and 5.1 is inside it. Matching is by overlap, so a
+    // class need not be the span to be bound by it.
+    expect(screen.getAllByText("Förmiddagsrast")).toHaveLength(5);
+  });
+
+  it("draws nothing before a class is picked", () => {
+    render(<TimetablePage />);
+    // The default view is every class at once, and a stripe across that grid
+    // would claim every stage keeps the same hours — the same reason the lunch
+    // bands are hidden there.
+    expect(screen.queryByText("Förmiddagsrast")).toBeNull();
   });
 });
