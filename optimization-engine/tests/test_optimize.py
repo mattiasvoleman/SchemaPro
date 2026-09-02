@@ -3637,6 +3637,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "dayOfWeek",
         "startTime",
         "endTime",
+        "changeoverMinutes",
     }
     assert _field_names(AnonymousRequirement) == {
         "id",
@@ -5600,3 +5601,174 @@ def test_a_rast_leaves_the_meal_alone() -> None:
     for lunch in response.lunches:
         assert lunch.start_time >= "11:00:00"
         assert lunch.end_time <= "12:00:00"
+
+
+# ---------------------------------------------------------------------------
+# Kortegen: the margin a body needs between two lessons inside one block.
+# ---------------------------------------------------------------------------
+
+
+def _changeover_payload(minutes: int, *, lessons_per_week: int = 4) -> dict[str, object]:
+    """One teacher, one class, one room, an 08:00-12:00 day.
+
+    Four sixty-minute lessons and a five-minute corridor need 4x65 - 5 = 255
+    minutes of the 240 the day has, so the week is refused unless the corridor
+    is honoured at exactly zero — which is what makes the difference visible
+    rather than a matter of the solver's taste.
+    """
+    requirement_id = str(uuid4())
+    group_id = str(uuid4())
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": requirement_id,
+                "subjectId": str(uuid4()),
+                "studentGroupId": group_id,
+                "teacherId": str(uuid4()),
+                "lessonsPerWeek": lessons_per_week,
+                "minutesPerLesson": 60,
+                "studentGroupSize": 24,
+                "minGradeLevel": 4,
+                "maxGradeLevel": 6,
+            }
+        ],
+        "groups": [
+            {"id": group_id, "lunchHeadcount": 24, "minGradeLevel": 4, "maxGradeLevel": 6},
+        ],
+        "rooms": [{"id": str(uuid4()), "capacity": 30}],
+        "constraints": [],
+        "frameTimes": [
+            {
+                "minGradeLevel": 0,
+                "maxGradeLevel": 12,
+                "dayOfWeek": None,
+                "startTime": "08:00:00",
+                "endTime": "12:00:00",
+                "changeoverMinutes": minutes,
+            },
+        ],
+    }
+
+
+def test_two_lessons_of_one_class_keep_the_declared_corridor() -> None:
+    """The other half of the rektor's first complaint.
+
+    CP-SAT intervals are half-open, so 08:00-09:00 and 09:00-10:00 do not
+    overlap and the class walks between two rooms in no time at all. With a
+    corridor declared, every same-day pair has to be at least that far apart.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2"))
+    request = OptimizeScheduleRequest.model_validate(_changeover_payload(10))
+
+    response = solver.solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    by_day: dict[int, list[tuple[int, int]]] = {}
+    for lesson in response.lessons:
+        start = int(lesson.start_time[:2]) * 60 + int(lesson.start_time[3:5])
+        end = int(lesson.end_time[:2]) * 60 + int(lesson.end_time[3:5])
+        by_day.setdefault(lesson.day_of_week, []).append((start, end))
+    for day, slots in by_day.items():
+        slots.sort()
+        for (_, first_end), (second_start, _) in zip(slots, slots[1:]):
+            assert second_start - first_end >= 10, (
+                f"day {day}: only {second_start - first_end} minutes between two lessons"
+            )
+
+
+def test_the_corridor_is_the_widest_of_the_frames_that_match() -> None:
+    """MAX, not the tightest — a window is a bound, a corridor is a floor."""
+    from app.schemas.schedule import FrameTime
+    from app.solver.frames import changeover_slots
+    from app.solver.time_grid import TimeGrid
+
+    grid = TimeGrid(
+        day_start_minutes=480, day_end_minutes=1080, slot_minutes=5,
+        schedule_days=(1, 2, 3, 4, 5),
+    )
+    frame = lambda lo, hi, minutes: FrameTime.model_validate(  # noqa: E731
+        {
+            "minGradeLevel": lo,
+            "maxGradeLevel": hi,
+            "dayOfWeek": None,
+            "startTime": "08:00:00",
+            "endTime": "16:00:00",
+            "changeoverMinutes": minutes,
+        },
+    )
+
+    assert changeover_slots([frame(0, 12, 5), frame(4, 6, 10)], (4, 6), grid) == 2
+    # A stage the wider frame alone reaches keeps the wider frame's number.
+    assert changeover_slots([frame(0, 12, 5), frame(4, 6, 10)], (7, 9), grid) == 1
+    # Rounded UP, for the reason a rast rounds outward: the margin is a minimum.
+    assert changeover_slots([frame(0, 12, 7)], (4, 6), grid) == 2
+    # A group whose years are unknown matches no frame, as everywhere else.
+    assert changeover_slots([frame(0, 12, 10)], None, grid) == 0
+
+
+def test_a_zero_corridor_leaves_the_model_exactly_as_it_was() -> None:
+    """Every school, until somebody writes a number.
+
+    The padded interval is built only when the margin is non-zero, so a run with
+    no corridor declared adds not one interval proto — which is what lets this
+    ship without a release note for anybody who has not asked for it.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2"))
+    request = OptimizeScheduleRequest.model_validate(_changeover_payload(0))
+    model = cp_model.CpModel()
+
+    decisions = solver._create_lesson_decisions(
+        model, request.requirements, len(request.rooms), request.frame_times, request.rasts,
+    )
+
+    assert decisions
+    assert all(decision.changeover == 0 for decision in decisions)
+    from app.solver.scheduler_solver import padded_of
+
+    assert all(padded_of(model, d) is d.interval for d in decisions)
+
+
+def test_a_padded_lesson_may_not_run_past_the_end_of_its_day() -> None:
+    """The clip, without a guard band and without an AddMinEquality.
+
+    A padded interval runs `changeover` slots past the lesson, and day d is
+    addressed as [d*spd, (d+1)*spd) — so an unclipped last lesson pads into
+    tomorrow morning and collides with a lesson that is not on the same day.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2"))
+    payload = _changeover_payload(10)
+    # No frame at all, so the clip is the only thing holding the day's edge.
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 0,
+            "maxGradeLevel": 12,
+            "dayOfWeek": None,
+            "startTime": "08:00:00",
+            "endTime": "18:00:00",
+            "changeoverMinutes": 10,
+        },
+    ]
+    request = OptimizeScheduleRequest.model_validate(payload)
+    model = cp_model.CpModel()
+
+    decisions = solver._create_lesson_decisions(
+        model, request.requirements, len(request.rooms), request.frame_times, request.rasts,
+    )
+
+    grid = solver._grid
+    # The last legal start on day 0: the day is 120 slots, the lesson 12, the
+    # corridor 2 — so 106, whose padded end is exactly the day's last slot.
+    domain = cp_model.Domain.from_flat_intervals(list(decisions[0].start.proto.domain))
+    assert domain.contains(grid.slots_per_day - 12 - 2)
+    assert not domain.contains(grid.slots_per_day - 12 - 1)

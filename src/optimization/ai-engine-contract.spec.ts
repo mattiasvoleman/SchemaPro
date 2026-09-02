@@ -84,6 +84,7 @@ const GRADE_CONSTRAINT_FIELDS = [
 
 /** A frame names a span of years, so there is nothing here to anonymise. */
 const FRAME_FIELDS = [
+  'changeoverMinutes',
   'dayOfWeek',
   'endTime',
   'maxGradeLevel',

@@ -15,6 +15,18 @@ export interface FrameTime {
   dayOfWeek: number | null;
   startTime: string;
   endTime: string;
+  /**
+   * Minutes a body needs between two lessons of this stage.
+   *
+   * Composes as MAX over matching frames, which is the opposite of the window's
+   * intersection: a window is a bound and several narrow it, a corridor is a
+   * floor and the widest wins.
+   *
+   * Optional on the way IN because rows written before the column existed carry
+   * no value in a fixture, and because every reader here treats absent and zero
+   * the same: no corridor. The database column is NOT NULL DEFAULT 0.
+   */
+  changeoverMinutes?: number;
 }
 
 /** The minutes a group may be taught in on one day. */

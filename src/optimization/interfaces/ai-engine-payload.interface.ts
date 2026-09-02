@@ -207,6 +207,13 @@ export interface AnonymousFrameTime {
   startTime: string;
   /** HH:MM:SS */
   endTime: string;
+  /**
+   * Minutes a body needs between two lessons for this stage.
+   *
+   * MAX over matching frames in the engine, which is the opposite of the
+   * window's intersection: a window is a bound, a corridor is a floor.
+   */
+  changeoverMinutes: number;
 }
 
 /**

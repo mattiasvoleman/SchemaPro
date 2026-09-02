@@ -212,6 +212,9 @@ describe("saving a frame", () => {
       dayOfWeek: null,
       startTime: "08:00",
       endTime: "15:00",
+      // Zero unless the school writes a corridor, which is every school until
+      // somebody does.
+      changeoverMinutes: 0,
     });
   });
 
@@ -320,5 +323,57 @@ describe("the list", () => {
     expect([...row.querySelectorAll("td")].map((cell) => cell.textContent)).toContain(
       "08:00–15:00",
     );
+  });
+});
+
+describe("the corridor between two lessons", () => {
+  /*
+   * Local helpers, not the ones in "saving a frame" above: those are scoped to
+   * that describe, and calling `open(user)` here silently resolved to the DOM's
+   * own `window.open` — a global that takes the same shape of argument, does
+   * nothing useful, and is invisible to the type checker.
+   */
+  const openDialog = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("button", { name: "add" }));
+  };
+  const saveDialog = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("button", { name: "save" }));
+  };
+
+  it("sends the minutes the admin typed", async () => {
+    const user = userEvent.setup();
+    render(<FrameTimesPage />);
+
+    await openDialog(user);
+    await user.clear(screen.getByLabelText("changeover"));
+    await user.type(screen.getByLabelText("changeover"), "10");
+    await saveDialog(user);
+
+    expect(createMock.mock.calls[0]?.[0]).toMatchObject({ changeoverMinutes: 10 });
+  });
+
+  it("reads a cleared field as no corridor", async () => {
+    // The input is type=number, so the only thing a cleared field can be is
+    // "", and Number("") is 0. An explicit guard for it was written and removed
+    // — no test could tell the two apart, which is what a dead branch is.
+    const user = userEvent.setup();
+    render(<FrameTimesPage />);
+
+    await openDialog(user);
+    await user.clear(screen.getByLabelText("changeover"));
+    await saveDialog(user);
+
+    expect(createMock.mock.calls[0]?.[0]).toMatchObject({ changeoverMinutes: 0 });
+  });
+
+  it("offers a whole-school frame when the school has none", async () => {
+    // The number lives on a frame, so a school with no frames could not write
+    // it at all. One click rather than a fourth table for one integer.
+    const user = userEvent.setup();
+    render(<FrameTimesPage />);
+
+    await user.click(screen.getByRole("button", { name: "offerWholeSchool" }));
+
+    expect(screen.getByLabelText("changeover")).toBeInTheDocument();
   });
 });

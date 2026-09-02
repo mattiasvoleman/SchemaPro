@@ -255,7 +255,7 @@ export function useFrameTimes() {
     queryFn: () =>
       selectAll<FrameTime>(
         "FrameTimes",
-        "id, minGradeLevel, maxGradeLevel, dayOfWeek, startTime, endTime",
+        "id, minGradeLevel, maxGradeLevel, dayOfWeek, startTime, endTime, changeoverMinutes",
         "minGradeLevel",
       ),
   });

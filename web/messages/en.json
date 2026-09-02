@@ -415,7 +415,10 @@
     "effectiveHint": "Computed from the rows above, one stage per row.",
     "closed": "Closed",
     "wholeDay": "All day",
-    "duplicate": "A frame time already exists for those years on that day."
+    "duplicate": "A frame time already exists for those years on that day.",
+    "changeover": "Margin between lessons (minutes)",
+    "changeoverHint": "Time a class or teacher needs to move. The solver leaves at least this much between two consecutive lessons. 0 means no margin. Several matching frames give the largest — a frame is a bound, a margin is a floor.",
+    "offerWholeSchool": "Add a frame for the whole school"
   },
   "lunchServings": {
     "title": "Lunch sittings",

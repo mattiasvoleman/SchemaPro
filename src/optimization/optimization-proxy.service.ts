@@ -880,6 +880,7 @@ export class OptimizationProxyService {
         dayOfWeek: true,
         startTime: true,
         endTime: true,
+        changeoverMinutes: true,
       },
     });
 
@@ -889,6 +890,7 @@ export class OptimizationProxyService {
       dayOfWeek: frame.dayOfWeek as DayOfWeek | null,
       startTime: this.timeToString(frame.startTime),
       endTime: this.timeToString(frame.endTime),
+      changeoverMinutes: frame.changeoverMinutes,
     }));
 
     // Lunchsittningar. School-scoped like the frames above and read through the

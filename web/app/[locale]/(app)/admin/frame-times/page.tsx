@@ -56,6 +56,7 @@ interface FrameForm {
   dayOfWeek: string;
   startTime: string;
   endTime: string;
+  changeoverMinutes: string;
 }
 
 const EMPTY_FORM: FrameForm = {
@@ -64,6 +65,7 @@ const EMPTY_FORM: FrameForm = {
   dayOfWeek: EVERY_DAY,
   startTime: "08:00",
   endTime: "15:00",
+  changeoverMinutes: "0",
 };
 
 export default function FrameTimesPage() {
@@ -79,6 +81,7 @@ export default function FrameTimesPage() {
     dayOfWeek: number | null;
     startTime: string;
     endTime: string;
+    changeoverMinutes: number;
   }>("/api/v1/frame-times", [["frame-times"]]);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -125,6 +128,21 @@ export default function FrameTimesPage() {
       dayOfWeek: frame.dayOfWeek === null ? EVERY_DAY : String(frame.dayOfWeek),
       startTime: formatTime(frame.startTime),
       endTime: formatTime(frame.endTime),
+      changeoverMinutes: String(frame.changeoverMinutes ?? 0),
+    });
+    setDialogOpen(true);
+  };
+
+  /** Open the dialog on a 0-12, every-day frame across the configured day. */
+  const offerWholeSchoolFrame = () => {
+    setEditing(null);
+    setForm({
+      ...EMPTY_FORM,
+      minGradeLevel: "0",
+      maxGradeLevel: "12",
+      dayOfWeek: EVERY_DAY,
+      startTime: "08:00",
+      endTime: "18:00",
     });
     setDialogOpen(true);
   };
@@ -136,6 +154,11 @@ export default function FrameTimesPage() {
       dayOfWeek: form.dayOfWeek === EVERY_DAY ? null : Number(form.dayOfWeek),
       startTime: form.startTime,
       endTime: form.endTime,
+      // A cleared field means no corridor, and Number("") is 0. An explicit
+      // empty-check was written here first and removed: it is a branch no test
+      // can tell from this one, because the input is type=number and cannot
+      // hold anything Number() would read as NaN.
+      changeoverMinutes: Number(form.changeoverMinutes),
     };
     try {
       if (editing) {
@@ -201,7 +224,23 @@ export default function FrameTimesPage() {
           <Skeleton className="h-10 w-full" />
         </div>
       ) : !frames || frames.length === 0 ? (
-        <EmptyState icon={CalendarRange} title={tCommon("noResults")} description={t("empty")} />
+        <EmptyState
+          icon={CalendarRange}
+          title={tCommon("noResults")}
+          description={t("empty")}
+          /*
+            A school with no ramtid cannot write a changeover at all, because
+            the number lives on a frame. Rather than a fourth table for one
+            integer, the offer is here: one click makes the whole-school frame
+            the deployment grid already assumes, and the corridor is then one
+            field away from where the admin is standing.
+          */
+          action={
+            <Button variant="outline" onClick={offerWholeSchoolFrame}>
+              {t("offerWholeSchool")}
+            </Button>
+          }
+        />
       ) : (
         <>
           <div className="overflow-x-auto rounded-lg border bg-card">
@@ -414,6 +453,21 @@ export default function FrameTimesPage() {
                   onChange={(event) => setForm({ ...form, endTime: event.target.value })}
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="ramtid-kortege">{t("changeover")}</Label>
+              <Input
+                id="ramtid-kortege"
+                type="number"
+                min={0}
+                max={60}
+                value={form.changeoverMinutes}
+                onChange={(event) =>
+                  setForm({ ...form, changeoverMinutes: event.target.value })
+                }
+              />
+              <p className="text-sm text-muted-foreground">{t("changeoverHint")}</p>
             </div>
 
             {duplicateOf ? (

@@ -24,6 +24,8 @@ export interface FrameTimeResponse {
   startTime: string;
   /** HH:MM */
   endTime: string;
+  /** Minutes a body needs between two lessons of this stage. */
+  changeoverMinutes: number;
 }
 
 @Injectable()
@@ -61,6 +63,7 @@ export class FrameTimesService {
             dayOfWeek: dto.dayOfWeek ?? null,
             startTime: parseTimeString(dto.startTime),
             endTime: parseTimeString(dto.endTime),
+            changeoverMinutes: dto.changeoverMinutes ?? 0,
           },
         }),
       );
@@ -107,6 +110,9 @@ export class FrameTimesService {
             ...(dto.dayOfWeek !== undefined ? { dayOfWeek: dto.dayOfWeek } : {}),
             ...(dto.startTime !== undefined ? { startTime: parseTimeString(dto.startTime) } : {}),
             ...(dto.endTime !== undefined ? { endTime: parseTimeString(dto.endTime) } : {}),
+            ...(dto.changeoverMinutes !== undefined
+              ? { changeoverMinutes: dto.changeoverMinutes }
+              : {}),
           },
         }),
       );
@@ -134,6 +140,7 @@ function toResponse(row: FrameTime): FrameTimeResponse {
     dayOfWeek: row.dayOfWeek,
     startTime: toWallClock(row.startTime),
     endTime: toWallClock(row.endTime),
+    changeoverMinutes: row.changeoverMinutes,
   };
 }
 

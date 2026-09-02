@@ -39,6 +39,19 @@ export class CreateFrameTimeDto {
 
   @Matches(TIME, { message: 'endTime must be HH:MM.' })
   endTime!: string;
+  /**
+   * Minutes a body needs between two lessons of this stage.
+   *
+   * Zero is the default and the answer for every school that has not asked for
+   * a corridor. The engine composes several matching frames as MAX — a window
+   * is a bound and intersects, a corridor is a floor and takes the widest.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(60)
+  changeoverMinutes?: number;
+
 }
 
 /**
@@ -74,4 +87,17 @@ export class UpdateFrameTimeDto {
   @IsOptional()
   @Matches(TIME, { message: 'endTime must be HH:MM.' })
   endTime?: string;
+  /**
+   * Minutes a body needs between two lessons of this stage.
+   *
+   * Zero is the default and the answer for every school that has not asked for
+   * a corridor. The engine composes several matching frames as MAX — a window
+   * is a bound and intersects, a corridor is a floor and takes the widest.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(60)
+  changeoverMinutes?: number;
+
 }

@@ -100,6 +100,9 @@ describe('FrameTimesService', () => {
 
       expect(tx.frameTime.create).toHaveBeenCalledWith({
         data: {
+          // Zero unless the school asks for a corridor, which is every school
+          // until somebody writes a number.
+          changeoverMinutes: 0,
           schoolId: SCHOOL_ID,
           minGradeLevel: 4,
           maxGradeLevel: 6,

@@ -415,7 +415,10 @@
     "effectiveHint": "Uträknat ur raderna ovan, ett stadium per rad.",
     "closed": "Stängt",
     "wholeDay": "Hela dagen",
-    "duplicate": "Det finns redan en ramtid för de årskurserna den dagen."
+    "duplicate": "Det finns redan en ramtid för de årskurserna den dagen.",
+    "changeover": "Marginal mellan lektioner (minuter)",
+    "changeoverHint": "Tid en klass eller lärare behöver för att förflytta sig. Motorn lämnar minst så mycket mellan två lektioner i följd. 0 betyder ingen marginal. Flera ramtider som matchar ger den största — en ramtid är en gräns, en marginal är ett golv.",
+    "offerWholeSchool": "Lägg in en ramtid för hela skolan"
   },
   "lunchServings": {
     "title": "Lunchsittningar",

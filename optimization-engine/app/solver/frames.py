@@ -107,3 +107,30 @@ def day_windows(
             windows[day_index] = (open_slot, close_slot)
 
     return windows
+
+
+def changeover_slots(
+    frames: Sequence[FrameTime],
+    span: tuple[int, int] | None,
+    grid: TimeGrid,
+) -> int:
+    """Slots of margin a body needs between two lessons for this stage.
+
+    MAX over the matching frames, which is the opposite of what `day_windows`
+    does with the same rows — and deliberately so. A window is a BOUND, so
+    several compose to the tightest; a changeover is a FLOOR, so several compose
+    to the widest. A 4-6 group under a 0-12 frame saying five minutes and a 4-6
+    frame saying ten gets ten.
+
+    Rounded UP, for the reason a rast rounds outward: the margin is a minimum, so
+    a value that misses the grid must take the next whole slot rather than lose
+    the remainder. Seven minutes on a five-minute grid is two slots.
+
+    A group whose years are unknown matches no frame and gets zero, the same
+    answer day_windows already gives it.
+    """
+    matching = [frame for frame in frames if _matches(frame, span)]
+    if not matching:
+        return 0
+    minutes = max(frame.changeover_minutes for frame in matching)
+    return -(-minutes // grid.slot_minutes)

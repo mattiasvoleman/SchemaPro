@@ -1031,6 +1031,13 @@ model FrameTime {
   dayOfWeek     Int?
   startTime     DateTime @db.Time(0)
   endTime       DateTime @db.Time(0)
+  /// Minutes a body needs between two lessons: the corridor, not the yard.
+  ///
+  /// Composes as MAX over matching frames — the opposite of the window, which
+  /// intersects — because a changeover is a floor and the widest floor wins.
+  /// Zero for every school until somebody writes a number, and the engine skips
+  /// the whole mechanism while every matching frame reads zero.
+  changeoverMinutes Int   @default(0)
   createdAt     DateTime @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime @updatedAt @db.Timestamptz(6)
 

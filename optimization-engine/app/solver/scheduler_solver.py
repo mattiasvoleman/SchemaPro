@@ -12,7 +12,7 @@ from ortools.sat.python import cp_model
 
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError, SolverBuildError
-from app.solver.frames import day_windows, span_of
+from app.solver.frames import changeover_slots, day_windows, span_of
 from app.solver.rasts import blocks_for, forbidden_starts
 from app.solver.servings import allowed_starts
 from app.schemas.schedule import (
@@ -73,6 +73,44 @@ class LessonDecision:
     end: cp_model.IntVar
     interval: cp_model.IntervalVar
     room_index: cp_model.IntVar
+    #: Slots of corridor this lesson's stage asks for after it. Zero by default.
+    changeover: int = 0
+    #: The interval plus that margin, built once and shared. See padded_of.
+    _padded: cp_model.IntervalVar | None = None
+
+
+def padded_of(model: cp_model.CpModel, decision: LessonDecision) -> cp_model.IntervalVar:
+    """The interval a NO-OVERLAP family should see: the lesson plus its corridor.
+
+    CP-SAT intervals are half-open, so a lesson ending 09:00 and one starting
+    09:00 do not overlap and the teacher walks between two rooms in no time at
+    all. Lengthening the interval the OVERLAP CHECK sees, while leaving the one
+    the school is shown alone, is the whole mechanism.
+
+    NO NEW VARIABLES. The padded interval reuses the same `start` and an affine
+    end, so it adds one interval proto and not a single IntVar or BoolVar —
+    which is why _estimate_model_size, which predicts variable counts, needs no
+    new term for it.
+
+    Padded at the END only. Padding both sides turns a ten-minute rule into a
+    silent twenty, and padding the front makes 08:00 an illegal start for the
+    first lesson of the day.
+
+    Memoised on the decision: a lesson appears in the teacher family, its own
+    group's family, one family per group that shares its pupils and the lunch
+    family, and four copies of the same interval would be four protos for one
+    fact.
+    """
+    if decision.changeover == 0:
+        return decision.interval
+    if decision._padded is None:
+        decision._padded = model.NewIntervalVar(
+            decision.start,
+            decision.duration + decision.changeover,
+            decision.end + decision.changeover,
+            f"padded_{decision.lesson.key()}",
+        )
+    return decision._padded
 
 
 def _widest_free_run(
@@ -1225,11 +1263,33 @@ class SchedulerSolver:
             # interval below is non-empty.
             span = span_of(requirement)
             windows = day_windows(frames, span, self._grid)
+            changeover = changeover_slots(frames, span, self._grid)
+            # THE DAY'S EDGE IS CLIPPED IN THE DOMAIN, not with a constraint.
+            #
+            # A padded interval runs `changeover` slots past the lesson, and the
+            # horizon addresses day d as [d*spd, (d+1)*spd) — so an unclipped
+            # last lesson would pad into tomorrow morning's slots and collide
+            # with a lesson that is not on the same day at all.
+            #
+            # Two other fixes were considered and both are worse. A guard band
+            # in TimeGrid (a `day_stride` wider than `slots_per_day`) re-encodes
+            # every absolute slot for every school, so the next regeneration
+            # moves lessons across the whole estate — and two places decode with
+            # `// slots_per_day` that a rename would miss silently. An
+            # AddMinEquality against the day's end costs an IntVar and a
+            # constraint per lesson. Clipping the upper bound costs nothing.
+            #
+            # The price is that the last lesson of a day may not END later than
+            # the day's close minus the margin, which binds only for a school
+            # teaching to 18:00 with no ramtid. Wherever a frame closes earlier,
+            # `close_slot - duration` is the tighter bound and nothing is lost.
             start_domain = cp_model.Domain.FromIntervals(
                 [
                     [
                         day * slots_per_day + open_slot,
-                        day * slots_per_day + close_slot - duration,
+                        day * slots_per_day
+                        + min(close_slot, slots_per_day - changeover)
+                        - duration,
                     ]
                     for day, (open_slot, close_slot) in sorted(windows.items())
                     # A day too narrow for this lesson drops out here rather
@@ -1238,7 +1298,7 @@ class SchedulerSolver:
                     # such a pair silently — but it is undocumented behaviour
                     # to hang a whole feature's correctness on, and "silently
                     # discards" is one release away from "raises".
-                    if close_slot - open_slot >= duration
+                    if min(close_slot, slots_per_day - changeover) - open_slot >= duration
                 ],
             )
 
@@ -1277,6 +1337,7 @@ class SchedulerSolver:
                         end=end,
                         interval=interval,
                         room_index=room_index,
+                        changeover=changeover,
                     ),
                 )
 
@@ -1331,7 +1392,9 @@ class SchedulerSolver:
 
         for teacher_decisions in grouped.values():
             if len(teacher_decisions) > 1:
-                model.AddNoOverlap([decision.interval for decision in teacher_decisions])
+                model.AddNoOverlap(
+                    [padded_of(model, decision) for decision in teacher_decisions],
+                )
 
     def _add_group_no_overlap(
         self,
@@ -1364,14 +1427,16 @@ class SchedulerSolver:
 
         for group_decisions in grouped.values():
             if len(group_decisions) > 1:
-                model.AddNoOverlap([decision.interval for decision in group_decisions])
+                model.AddNoOverlap(
+                    [padded_of(model, decision) for decision in group_decisions],
+                )
 
         for first_id, second_id in group_conflicts or []:
             if first_id == second_id:
                 continue
             combined = grouped.get(first_id, []) + grouped.get(second_id, [])
             if len(combined) > 1:
-                model.AddNoOverlap([decision.interval for decision in combined])
+                model.AddNoOverlap([padded_of(model, decision) for decision in combined])
 
     def _add_room_allocation(
         self,
@@ -1616,6 +1681,13 @@ class SchedulerSolver:
                         abs_end,
                         tag=f"fixed_{fixed.id}_{decision.lesson.key()}",
                         guard=None,
+                        # A hand-placed lesson is not an interval in this model
+                        # — it is a constant window — so padded_of never reaches
+                        # it. The margin has to be applied here or a generated
+                        # lesson lands flush against a locked one, which is the
+                        # very collision the corridor exists to prevent, on the
+                        # placements a human chose deliberately.
+                        margin=decision.changeover,
                     )
                     continue
 
@@ -1634,6 +1706,12 @@ class SchedulerSolver:
                         abs_end,
                         tag=f"fixed_roomwin_{fixed.id}_{decision.lesson.key()}",
                         guard=assigned_here,
+                        # NO margin on the room arm. The corridor is about a
+                        # body walking between two places; a room needs no time
+                        # to become itself again, and a school that wants the
+                        # room to breathe declares a rast. This mirrors the
+                        # decision not to pad the room cumulative.
+                        margin=0,
                     )
 
     def _add_window_avoidance(
@@ -1644,14 +1722,23 @@ class SchedulerSolver:
         abs_end: int,
         tag: str,
         guard: cp_model.IntVar | None,
+        margin: int = 0,
     ) -> None:
-        """decision must end before, or start after, the [abs_start, abs_end) window."""
+        """decision must end before, or start after, the [abs_start, abs_end) window.
+
+        `margin` widens the window by the same corridor padded_of gives a
+        generated pair — on BOTH sides, because the body moves in both
+        directions: out of the room the fixed lesson is about to fill, and into
+        it after the fixed lesson leaves. That is not the double-padding
+        padded_of avoids; there the two lessons each carry their own margin, so
+        padding both ends would count one corridor twice.
+        """
         before = model.NewBoolVar(f"before_{tag}")
         after = model.NewBoolVar(f"after_{tag}")
-        model.Add(decision.end <= abs_start).OnlyEnforceIf(before)
-        model.Add(decision.end > abs_start).OnlyEnforceIf(before.Not())
-        model.Add(decision.start >= abs_end).OnlyEnforceIf(after)
-        model.Add(decision.start < abs_end).OnlyEnforceIf(after.Not())
+        model.Add(decision.end + margin <= abs_start).OnlyEnforceIf(before)
+        model.Add(decision.end + margin > abs_start).OnlyEnforceIf(before.Not())
+        model.Add(decision.start >= abs_end + margin).OnlyEnforceIf(after)
+        model.Add(decision.start < abs_end + margin).OnlyEnforceIf(after.Not())
         if guard is None:
             model.AddBoolOr([before, after])
         else:
@@ -2656,7 +2743,8 @@ class SchedulerSolver:
                         headcounts.append(headcount)
                 if lunch_intervals:
                     model.AddNoOverlap(
-                        [decision.interval for decision in lessons] + lunch_intervals,
+                        [padded_of(model, decision) for decision in lessons]
+                        + lunch_intervals,
                     )
                     # The break also has to be free of the lessons this group's
                     # own children sit in elsewhere. 7A cannot be eating while
@@ -2678,7 +2766,7 @@ class SchedulerSolver:
                     # NoOverlap over there — that one carries no lunch.
                     for other_id in sharing:
                         model.AddNoOverlap(
-                            [decision.interval for decision in by_group[other_id]]
+                            [padded_of(model, decision) for decision in by_group[other_id]]
                             + lunch_intervals,
                         )
 

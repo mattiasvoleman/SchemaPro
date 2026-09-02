@@ -304,6 +304,10 @@ class FrameTime(CamelModel):
     day_of_week: DayOfWeek | None = Field(default=None, alias="dayOfWeek")
     start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
     end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    #: Minutes a body needs between two lessons. MAX over matching frames.
+    changeover_minutes: int = Field(
+        default=0, alias="changeoverMinutes", ge=0, le=60,
+    )
 
     @model_validator(mode="after")
     def validate_window(self) -> FrameTime:
