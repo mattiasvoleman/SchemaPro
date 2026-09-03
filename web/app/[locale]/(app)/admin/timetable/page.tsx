@@ -1593,6 +1593,46 @@ export default function TimetablePage() {
         ) : null}
       </div>
 
+      {/*
+        WHY THERE IS NO LUNCH BAND, said where the band would be.
+
+        Rasts are declared and drawn at once; the meal is placed by the solver
+        and exists only after a generation run. A school that has just declared
+        its rasts sees them appear and its lunch not, and the grid used to say
+        nothing about the difference — which reads as a bug in the product
+        rather than a run not yet made. Two states, two sentences: none placed
+        for the year (generate), or none for THIS class (the engine places a
+        meal only for a class with lessons of its own to place it around).
+      */}
+      {groupFilter !== ALL &&
+      lunchSettings?.lunchEnabled &&
+      lunchSittings !== undefined &&
+      !lunchSittings.some((sitting) => sitting.studentGroupId === groupFilter) ? (
+        <div
+          role="status"
+          className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+        >
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
+          {lunchSittings.length === 0 ? (
+            <div className="space-y-1">
+              <p>{t("noSittingsYear")}</p>
+              <Link
+                href="/admin/generate"
+                className="font-medium underline underline-offset-4"
+              >
+                {t("noSittingsYearLink")}
+              </Link>
+            </div>
+          ) : (
+            <p>
+              {t("noSittingsGroup", {
+                group: groupById.get(groupFilter)?.name ?? "",
+              })}
+            </p>
+          )}
+        </div>
+      ) : null}
+
       {selectedIds.size > 0 ? (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-md border bg-accent/40 px-3 py-2">
           <span className="text-sm font-medium">

@@ -633,7 +633,10 @@
     "parked": "{lesson} parked",
     "putBackDone": "{lesson} back on the grid",
     "parkedFrom": "from {day} {start}–{end}",
-    "dragToPlace": "Drag {lesson} onto the grid"
+    "dragToPlace": "Drag {lesson} onto the grid",
+    "noSittingsYear": "No lunch has been placed for this year yet. Breaks are drawn as soon as they are declared, but the meal is placed by the solver and appears only after a generation run.",
+    "noSittingsYearLink": "Generate the timetable",
+    "noSittingsGroup": "No lunch has been placed for {group}. The solver places a meal only for a class with lessons of its own to place it around."
   },
   "dayPlanner": {
     "title": "Day planner",

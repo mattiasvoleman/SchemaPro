@@ -735,7 +735,7 @@ describe("useCrudMutations", () => {
 });
 
 describe("optimization + publish mutations", () => {
-  it("useStartOptimization posts the job and refreshes lessons + history", async () => {
+  it("useStartOptimization posts the job and refreshes lessons, the meal and history", async () => {
     mockApi.post.mockResolvedValue({ jobId: "job-1" });
     const harness = createHarness();
     const { result } = renderHook(() => useStartOptimization(), {
@@ -752,10 +752,17 @@ describe("optimization + publish mutations", () => {
       academicYearId: "y-1",
       weights: { spread: 2 },
     });
-    expect(invalidatedKeys(harness)).toEqual([["masterLessons"], ["optimizationHistory"]]);
+    // The meal is written in the same transaction as the lessons and read by a
+    // query of its own. Left out of this list, the grid showed the new lessons
+    // and last run's lunch — or none — until a reload.
+    expect(invalidatedKeys(harness)).toEqual([
+      ["masterLessons"],
+      ["lunch-sittings"],
+      ["optimizationHistory"],
+    ]);
   });
 
-  it("usePublishSchedule refreshes only the calendar", async () => {
+  it("usePublishSchedule refreshes the calendar, the meals and the rasts", async () => {
     mockApi.post.mockResolvedValue({ created: 42 });
     const harness = createHarness();
     const { result } = renderHook(() => usePublishSchedule(), {
@@ -768,7 +775,13 @@ describe("optimization + publish mutations", () => {
     expect(mockApi.post).toHaveBeenCalledWith("/api/v1/calendar/publish", {
       academicYearId: "y-1",
     });
-    expect(invalidatedKeys(harness)).toEqual([["calendarLessons"]]);
+    // Publish dates the meal and the rasts too, into tables of their own, and
+    // the pupil page reads all three.
+    expect(invalidatedKeys(harness)).toEqual([
+      ["calendarLessons"],
+      ["calendar-lunches"],
+      ["calendar-rasts"],
+    ]);
   });
 });
 

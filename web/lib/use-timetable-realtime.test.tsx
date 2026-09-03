@@ -209,8 +209,13 @@ describe("useTimetableRealtime", () => {
 
     act(() => socket.fire("master_timetable_updated"));
 
-    expect(invalidate).toHaveBeenCalledTimes(3);
+    expect(invalidate).toHaveBeenCalledTimes(4);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["masterLessons"] });
+    // The meal is replaced in the same transaction as the lessons. Refreshing
+    // one and not the other showed a regenerated week with last run's lunch —
+    // reported as "rasterna syns men inte luncherna", since rasts are derived
+    // in the client and never wait on a fetch.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["lunch-sittings"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["calendarLessons"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["scheduleVersions"] });
   });

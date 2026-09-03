@@ -633,7 +633,10 @@
     "parked": "{lesson} parkerad",
     "putBackDone": "{lesson} tillbaka i schemat",
     "parkedFrom": "från {day} {start}–{end}",
-    "dragToPlace": "Dra {lesson} till schemat"
+    "dragToPlace": "Dra {lesson} till schemat",
+    "noSittingsYear": "Ingen lunch är lagd för läsåret ännu. Raster ritas direkt när de deklarerats, men lunchen läggs av motorn och syns först efter en generering.",
+    "noSittingsYearLink": "Generera schemat",
+    "noSittingsGroup": "Ingen lunch är lagd för {group}. Motorn lägger lunch bara för klasser som har egna lektioner i timplanen att lägga den runt."
   },
   "dayPlanner": {
     "title": "Dagsplanering",

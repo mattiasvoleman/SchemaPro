@@ -839,6 +839,12 @@ export function useStartOptimization() {
     }) => api.post<{ jobId: string }>("/api/v1/optimization/jobs", body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
+      // The meal is written in the same transaction as the lessons and read by
+      // a different query. Left out, the grid showed the new lessons at once and
+      // last run's lunch — or none — until the page was reloaded, while the
+      // rasts (derived in the client) appeared instantly. That gap was reported
+      // as "rasterna syns men inte luncherna".
+      void queryClient.invalidateQueries({ queryKey: ["lunch-sittings"] });
       void queryClient.invalidateQueries({ queryKey: ["optimizationHistory"] });
     },
   });
@@ -875,6 +881,11 @@ export function usePublishSchedule() {
       api.post<{ created: number }>("/api/v1/calendar/publish", body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
+      // Publish now dates the meal and the rasts too, into tables of their own.
+      // The pupil page reads all three; invalidating one of them left the other
+      // two showing last publish's week until a reload.
+      void queryClient.invalidateQueries({ queryKey: ["calendar-lunches"] });
+      void queryClient.invalidateQueries({ queryKey: ["calendar-rasts"] });
     },
   });
 }

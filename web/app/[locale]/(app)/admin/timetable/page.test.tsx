@@ -21,6 +21,10 @@ const state = vi.hoisted(() => ({
   // undefined models the query in flight, which is a different fact from an
   // empty roster and must reach the page as one.
   memberships: [] as unknown[] | undefined,
+  lunchSettings: null as unknown,
+  // undefined models the query in flight; [] is a year the solver has not
+  // yet placed a meal for. The notice must tell the two apart.
+  sittings: [] as unknown[] | undefined,
 }));
 
 const noMutation = { mutateAsync: vi.fn().mockResolvedValue({ id: "x" }), isPending: false };
@@ -36,8 +40,8 @@ vi.mock("@/lib/queries", () => ({
   useConstraints: () => ({ data: [] }),
   useGroupMemberships: () => ({ data: state.memberships }),
   useFrameTimes: () => ({ data: [] }),
-  useLunchSettings: () => ({ data: null }),
-  useLunchSittings: () => ({ data: [] }),
+  useLunchSettings: () => ({ data: state.lunchSettings }),
+  useLunchSittings: () => ({ data: state.sittings }),
   useRoomPreferences: () => ({ data: [] }),
   useRasts: () => ({ data: RASTS }),
   useScheduleVersions: () => ({ data: [] }),
@@ -244,6 +248,8 @@ beforeEach(() => {
   });
   state.lessons = LESSONS;
   state.memberships = MEMBERSHIPS;
+  state.lunchSettings = null;
+  state.sittings = [];
 });
 
 afterEach(() => {
@@ -670,5 +676,95 @@ describe("the tray", () => {
     expect(noMutation.mutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({ id: "l-slojd", dayOfWeek: 1, startTime: "08:00" }),
     );
+  });
+});
+
+describe("why there is no lunch band", () => {
+  const enabled = () => {
+    state.lunchSettings = {
+      id: "ls-1",
+      lunchEnabled: true,
+      lunchStartTime: "11:00",
+      lunchEndTime: "13:00",
+      lunchMinutes: 30,
+    };
+  };
+  const sitting = (studentGroupId: string) => ({
+    id: `s-${studentGroupId}`,
+    studentGroupId,
+    dayOfWeek: 1,
+    startTime: "11:40:00",
+    endTime: "12:00:00",
+    headcount: 24,
+  });
+
+  it("says the year has not been generated, and offers to", async () => {
+    // Rasts appear the moment they are declared; the meal only after a run.
+    // A school that has just declared its rasts reads the missing lunch as a
+    // bug unless the grid says which of the two it is.
+    enabled();
+    state.sittings = [];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    const status = screen.getByRole("status");
+    expect(status.textContent).toContain("timetable.noSittingsYear");
+    expect(screen.getByRole("link", { name: "timetable.noSittingsYearLink" })).toHaveAttribute(
+      "href",
+      "/admin/generate",
+    );
+  });
+
+  it("names the class when the year has meals but this class has none", async () => {
+    enabled();
+    state.sittings = [sitting("g-42")];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    expect(screen.getByRole("status").textContent).toContain(
+      "timetable.noSittingsGroup(4.1)",
+    );
+  });
+
+  it("says nothing when the class has its meal", async () => {
+    enabled();
+    state.sittings = [sitting("g-41")];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getAllByText("lunch.bandLabel")).toHaveLength(1);
+  });
+
+  it("says nothing while every class is in view", () => {
+    // The bands are hidden there on purpose; a notice about their absence
+    // would explain a choice, not a gap.
+    enabled();
+    state.sittings = [];
+    render(<TimetablePage />);
+
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("says nothing when lunch is switched off", async () => {
+    // Then there is no meal to miss. The publish dialog already carries that
+    // warning, at the moment it matters.
+    state.lunchSettings = { id: "ls-1", lunchEnabled: false };
+    state.sittings = [];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("says nothing while the sittings are still loading", async () => {
+    // undefined is the query in flight, not a year without a meal, and a
+    // warning that flashes on every page load teaches people to ignore it.
+    enabled();
+    state.sittings = undefined;
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });

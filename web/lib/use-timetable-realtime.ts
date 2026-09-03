@@ -62,6 +62,12 @@ export function useTimetableRealtime(): {
       });
       socket.on("master_timetable_updated", () => {
         void queryClient.invalidateQueries({ queryKey: ["masterLessons"] });
+        // A regeneration replaces the year's sittings in the same transaction
+        // as its lessons, and this broadcast is how the grid learns the run has
+        // landed. Refreshing the lessons and not the meal is exactly the screen
+        // that was reported: new lessons at once, the rasts (client-derived)
+        // at once, and last run's lunch — or none — until a reload.
+        void queryClient.invalidateQueries({ queryKey: ["lunch-sittings"] });
         void queryClient.invalidateQueries({ queryKey: ["calendarLessons"] });
         void queryClient.invalidateQueries({ queryKey: ["scheduleVersions"] });
       });
