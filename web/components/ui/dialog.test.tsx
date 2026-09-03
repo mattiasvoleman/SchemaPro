@@ -57,6 +57,10 @@ describe("Dialog", () => {
 
     const box = screen.getByRole("dialog");
     expect(box.className).toContain("overflow-y-auto");
+    // And never sideways. CSS forces overflow-x to `auto` once overflow-y is
+    // not `visible`, so without this a footer one button too wide becomes a
+    // scrollbar the reader has to operate rather than a wrap they can read.
+    expect(box.className).toContain("overflow-x-hidden");
     expect(box.className).toMatch(/max-h-\[calc\(100dvh/);
   });
   it("is closed until the trigger is clicked", async () => {

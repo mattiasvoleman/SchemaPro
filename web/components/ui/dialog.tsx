@@ -35,6 +35,15 @@ const DialogContent = React.forwardRef<
       ref={ref}
       className={cn(
         /*
+         * overflow-x-hidden IS NOT DECORATION. CSS resolves a single non-visible
+         * overflow axis by forcing the other to `auto`, so `overflow-y-auto`
+         * alone turns any content wider than the box into a sideways scrollbar
+         * — which is what the edit-lesson dialog grew the day its footer got a
+         * fifth button. A dialog that clips is a layout bug you can see and
+         * fix; a dialog that scrolls sideways is one the reader has to operate.
+         * The content below must therefore wrap or shrink; it may never widen.
+         */
+        /*
          * The height cap and the scroll are load-bearing, not polish.
          *
          * The box is centred with `top-1/2 -translate-y-1/2`, so a dialog taller
@@ -55,7 +64,7 @@ const DialogContent = React.forwardRef<
          * to be restructured to say which part is the middle; this fixes all
          * thirteen at once and does not lock that out later.
          */
-        "fixed left-1/2 top-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
+        "fixed left-1/2 top-1/2 z-50 grid max-h-[calc(100dvh-2rem)] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overflow-x-hidden border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
         className,
       )}
       {...props}

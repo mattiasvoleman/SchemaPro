@@ -1771,7 +1771,10 @@ export default function TimetablePage() {
           }
         }}
       >
-        <DialogContent className="max-w-md">
+        {/* The component's own max-w-lg, not the max-w-md this used to narrow it
+            to: two selects, two clocks and five buttons need the width, and a
+            dialog narrower than its content scrolls sideways. */}
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>{t("editTitle")}</DialogTitle>
             {/* WHICH lesson. Three maths lessons on a Tuesday all opened on the
@@ -1786,7 +1789,7 @@ export default function TimetablePage() {
               {t("editBody")}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
             <div className="col-span-2 space-y-2">
               <Label>{t("editDay")}</Label>
               <Select value={editDay} onValueChange={setEditDay}>
@@ -1878,7 +1881,10 @@ export default function TimetablePage() {
           </div>
           <p className="text-xs text-muted-foreground">{t("propagateHint")}</p>
           <DialogFooter className="gap-2 sm:justify-between">
-            <div className="flex gap-2">
+            {/* Both groups WRAP. Five buttons on one row is the overflow that
+                put a sideways scrollbar on this dialog; a second row is what a
+                narrow window gets instead. */}
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="destructive"
                 size="sm"
@@ -1906,7 +1912,7 @@ export default function TimetablePage() {
                 {t("park")}
               </Button>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={() => setEditing(null)}>
                 {tCommon("cancel")}
               </Button>

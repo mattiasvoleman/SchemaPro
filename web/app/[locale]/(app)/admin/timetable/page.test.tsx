@@ -533,6 +533,45 @@ describe("the edit dialog", () => {
   });
 });
 
+describe("the edit dialog's width", () => {
+  /*
+   * jsdom lays nothing out, so "does it scroll sideways" is unobservable here.
+   * What is asserted is the three tokens that decide it — the same way
+   * gaps/page.test.tsx asserts h-11 for a touch target it cannot measure.
+   */
+  const openSlojd = () => {
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    return screen.getByRole("dialog");
+  };
+
+  it("keeps the component's own width rather than narrowing it", () => {
+    const dialog = openSlojd();
+    expect(dialog.className).toContain("max-w-lg");
+    expect(dialog.className).not.toContain("max-w-md");
+  });
+
+  it("lets both button groups wrap onto a second row", () => {
+    openSlojd();
+    for (const name of ["timetable.park", "common.cancel"]) {
+      const group = screen.getByRole("button", { name }).parentElement!;
+      expect(group.className, name).toContain("flex-wrap");
+    }
+  });
+
+  it("lets a form cell shrink below its content", () => {
+    // A grid child defaults to min-width:auto and will widen the whole grid
+    // to fit a long teacher name rather than let the select ellipsize it.
+    const dialog = openSlojd();
+    const grid = dialog.querySelector(".grid-cols-2")!;
+    expect(grid.className).toContain("[&>*]:min-w-0");
+  });
+});
+
 describe("the tray", () => {
   const parkedSlojd = () =>
     LESSONS.map((l) => (l.id === "l-slojd" ? { ...l, isParked: true } : l));
