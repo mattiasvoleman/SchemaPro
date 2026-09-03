@@ -250,6 +250,76 @@ class SchedulerSolver:
             model.Minimize(sum(objective_terms) if objective_terms else 0)
         return model, registry, decisions, room_plan, lunch_starts
 
+    def _dining_hall_verdict(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
+        """The whole hall against the whole window, decided by arithmetic.
+
+        The validator refuses one class too big for the hall, and one sitting
+        too small for its stage. Between them sat the school in the report:
+        every class fits, no sittings declared, and 480 children eating thirty
+        minutes each in 115 seats over a 150-minute window is 14,400
+        student-minutes against 17,250 — a week with a timetable only if every
+        wave of the hall fills to within a class of capacity, every day. CP-SAT
+        hunted that needle for the whole budget and answered TIMEOUT, which
+        names nothing.
+
+        Student-minutes is the cumulative's own relaxation, so a payload that
+        fails it has no timetable, and this can say so without a solve. It says
+        so in the SAME SHAPE the solver would have: INFEASIBLE, a
+        DINING_CAPACITY conflict carrying the registry's own sentence, and the
+        numbers in the summary — the page already translates the category, and
+        a 400 for the same fact would be a second way of saying it. A payload
+        that passes narrowly is left to the solver, and to the probe.
+        """
+        rules = request.rules
+        if (
+            rules is None
+            or not _lunch_window_is_set(rules)
+            or rules.dining_seats is None
+            or rules.lunch_minutes is None
+            or not request.groups
+        ):
+            return None
+        window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
+        lunch_group_ids = _lunch_group_ids(request.groups)
+        _, exempt_days = self._lunch_starts_blocked_by_constraints(
+            request.constraints,
+            set(lunch_group_ids),
+            window_start,
+            window_end - lunch_slots,
+            window_end,
+            lunch_slots,
+        )
+        headcount_by_group = _lunch_headcounts(request.groups)
+        window_minutes = (window_end - window_start) * self._grid.slot_minutes
+        offered = rules.dining_seats * window_minutes
+        for day_index, day_of_week in enumerate(self._grid.schedule_days):
+            eating = sum(
+                headcount_by_group.get(group_id, 0)
+                for group_id in lunch_group_ids
+                if (group_id, day_index) not in exempt_days
+            )
+            needed = eating * rules.lunch_minutes
+            if needed > offered:
+                return ConflictAnalysis(
+                    summary=(
+                        f"The dining capacity cannot feed the school on day {day_of_week}: "
+                        f"{eating} students eating {rules.lunch_minutes} minutes each need "
+                        f"{needed} student-minutes, and {rules.dining_seats} seats over the "
+                        f"{rules.lunch_start_time}-{rules.lunch_end_time} window offer "
+                        f"{offered}. Add seats, widen the lunch window, or shorten the meal."
+                    ),
+                    conflicts=[
+                        ConflictDetail(
+                            category="DINING_CAPACITY",
+                            message=(
+                                f"Lunch cannot be staggered within the dining hall's "
+                                f"{rules.dining_seats} seats."
+                            ),
+                        ),
+                    ],
+                )
+        return None
+
     def _explain_infeasible(
         self,
         request: OptimizeScheduleRequest,
@@ -327,6 +397,16 @@ class SchedulerSolver:
         evaluated.
         """
         self._validate_request(request)
+        # Arithmetic first, models second: a hall the school cannot fit in is
+        # decided here in microseconds and reported the way a solve would have.
+        verdict = self._dining_hall_verdict(request)
+        if verdict is not None:
+            return OptimizeScheduleResponse(
+                request_id=request.request_id,
+                status="INFEASIBLE",
+                lessons=[],
+                conflicts=verdict,
+            )
 
         rooms = request.rooms
         model, _, decisions, room_plan, lunch_full = self._build_model(
@@ -1276,40 +1356,7 @@ class SchedulerSolver:
         if budget <= 0:
             return None
 
-        relaxations: list[tuple[str, OptimizeScheduleRequest]] = []
-        if any(f.changeover_minutes > 0 for f in request.frame_times):
-            relaxations.append((
-                "the corridor between lessons (changeoverMinutes) set to 0",
-                request.model_copy(update={
-                    "frame_times": [
-                        f.model_copy(update={"changeover_minutes": 0}) for f in request.frame_times
-                    ],
-                }),
-            ))
-        if request.rasts:
-            relaxations.append((
-                "the rasts removed",
-                request.model_copy(update={"rasts": []}),
-            ))
-        if request.rules is not None and _lunch_window_is_set(request.rules):
-            relaxations.append((
-                "the guaranteed lunch break switched off",
-                request.model_copy(update={
-                    "rules": request.rules.model_copy(update={
-                        "lunch_start_time": None,
-                        "lunch_end_time": None,
-                        "lunch_minutes": None,
-                        "dining_seats": None,
-                    }),
-                }),
-            ))
-        elif request.rules is not None and request.rules.dining_seats is not None:
-            relaxations.append((
-                "the dining hall's seat limit removed",
-                request.model_copy(update={
-                    "rules": request.rules.model_copy(update={"dining_seats": None}),
-                }),
-            ))
+        relaxations = self._timeout_relaxations(request)
         if not relaxations:
             return None
 
@@ -1354,6 +1401,59 @@ class SchedulerSolver:
                 for label, seconds in found
             ],
         )
+
+    def _timeout_relaxations(
+        self, request: OptimizeScheduleRequest,
+    ) -> list[tuple[str, OptimizeScheduleRequest]]:
+        """The rules a timed-out week can be probed without, one at a time.
+
+        Only what the payload carries, in the order the measurements rank them.
+        THE LUNCH IS THREE THINGS, NOT ONE: the school's sittings per stage, the
+        dining hall's seats, and the guaranteed break itself. The first probe
+        reported "with the guaranteed lunch break switched off, a timetable was
+        found in 0.1 s" — true, and useless, because a school cannot switch its
+        lunch off. Which of the three it is decides what they do next: widen a
+        sitting, count the chairs again, or move the window.
+        """
+        out: list[tuple[str, OptimizeScheduleRequest]] = []
+        if any(f.changeover_minutes > 0 for f in request.frame_times):
+            out.append((
+                "the corridor between lessons (changeoverMinutes) set to 0",
+                request.model_copy(update={
+                    "frame_times": [
+                        f.model_copy(update={"changeover_minutes": 0}) for f in request.frame_times
+                    ],
+                }),
+            ))
+        if request.rasts:
+            out.append(("the rasts removed", request.model_copy(update={"rasts": []})))
+        rules = request.rules
+        if rules is not None and _lunch_window_is_set(rules):
+            if request.lunch_servings:
+                out.append((
+                    "the lunch sittings per stage removed (whole window open to every stage)",
+                    request.model_copy(update={"lunch_servings": []}),
+                ))
+            if rules.dining_seats is not None:
+                out.append((
+                    "the dining hall's seat limit removed",
+                    request.model_copy(update={
+                        "rules": rules.model_copy(update={"dining_seats": None}),
+                    }),
+                ))
+            out.append((
+                "the guaranteed lunch break switched off",
+                request.model_copy(update={
+                    "lunch_servings": [],
+                    "rules": rules.model_copy(update={
+                        "lunch_start_time": None,
+                        "lunch_end_time": None,
+                        "lunch_minutes": None,
+                        "dining_seats": None,
+                    }),
+                }),
+            ))
+        return out
 
     def _timeout_diagnosis(self, request: OptimizeScheduleRequest, why: str) -> str:
         """One line naming what shaped the model that would not solve.

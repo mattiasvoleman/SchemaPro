@@ -5925,3 +5925,133 @@ def test_the_probe_can_be_switched_off() -> None:
     request = OptimizeScheduleRequest.model_validate(_changeover_payload(10))
 
     assert solver._probe_timeout(request) is None
+
+
+
+def test_the_probe_takes_the_lunch_apart_before_switching_it_off() -> None:
+    """Three relaxations for the lunch, not one — because a school cannot act on
+    "switch the lunch off". Which of the sittings, the seats and the break
+    itself does not fit decides whether they widen a window, count the chairs
+    again, or move the whole thing.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=4)
+    payload["rules"]["diningSeats"] = 115
+    payload["lunchServings"] = [
+        {"minGradeLevel": 4, "maxGradeLevel": 6, "dayOfWeek": None,
+         "startTime": "11:00:00", "endTime": "12:00:00"},
+    ]
+    payload["frameTimes"][0]["changeoverMinutes"] = 5
+    payload["rasts"] = [_rast("09:40", "10:00")]
+
+    labels = [label for label, _ in solver._timeout_relaxations(
+        OptimizeScheduleRequest.model_validate(payload),
+    )]
+
+    assert [l.split(" ")[1] for l in labels] == ["corridor", "rasts", "lunch", "dining", "guaranteed"]
+    # And each relaxation is a real change to the request, not a relabel.
+    relaxed = dict(solver._timeout_relaxations(OptimizeScheduleRequest.model_validate(payload)))
+    assert relaxed["the lunch sittings per stage removed (whole window open to every stage)"].lunch_servings == []
+    assert relaxed["the dining hall's seat limit removed"].rules.dining_seats is None
+    assert relaxed["the guaranteed lunch break switched off"].rules.lunch_minutes is None
+
+
+def test_the_probe_offers_only_what_the_payload_carries() -> None:
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    # A lunch window, no seats, no sittings: only the break itself can go.
+    labels = [label for label, _ in solver._timeout_relaxations(
+        OptimizeScheduleRequest.model_validate(_teaching_group_school(classes=2)),
+    )]
+    assert labels == ["the guaranteed lunch break switched off"]
+
+
+
+def test_a_hall_too_small_for_the_school_is_refused_by_name() -> None:
+    """The gap between the two seat checks the engine already had.
+
+    One refuses a class too big for the hall, the other a sitting too small
+    for its stage. Between them sat the report: every class fits, no sittings,
+    and the school as a whole does not — CP-SAT hunted a perfect packing for
+    the whole budget and answered TIMEOUT.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=20)
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00",
+        "lunchMinutes": 30, "diningSeats": 115,
+    }
+    # 20 x 30 = 600 pupils x 30 min = 18,000 student-minutes; 115 x 150 = 17,250.
+    for group in payload["groups"]:
+        group["lunchHeadcount"] = 30
+
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    # The SAME shape the solver would have produced after burning its budget:
+    # the category the page translates, the registry's own sentence, and — new
+    # — the numbers in the summary.
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert [c.category for c in response.conflicts.conflicts] == ["DINING_CAPACITY"]
+    assert response.conflicts.conflicts[0].message == (
+        "Lunch cannot be staggered within the dining hall's 115 seats."
+    )
+    assert "600 students" in response.conflicts.summary
+    assert "18000" in response.conflicts.summary
+    assert "dining capacity" in response.conflicts.summary
+
+
+def test_a_hall_that_can_feed_the_school_is_left_to_the_solver() -> None:
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=20)
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00",
+        "lunchMinutes": 30, "diningSeats": 115,
+    }
+    # 20 x 24 = 480 x 30 = 14,400 <= 17,250: narrow, and the solver's to decide.
+    assert solver._dining_hall_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
+
+
+
+def test_the_hall_check_leaves_out_a_class_that_is_not_in_school_that_day() -> None:
+    """Exempt days count for nothing, as they do in the sitting check beside it.
+
+    Twenty classes of thirty do not fit 115 seats (18,000 student-minutes
+    against 17,250). Send one of them home every weekday — a STUDENT_GROUP rule
+    covering the whole lunch window is the engine's own reading of "7A
+    undervisas inte på tisdagar" — and the remaining 570 do: 17,100. A check
+    that counted the absent class would refuse a week that has a timetable.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=20)
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00",
+        "lunchMinutes": 30, "diningSeats": 115,
+    }
+    for group in payload["groups"]:
+        group["lunchHeadcount"] = 30
+    absent = payload["groups"][0]["id"]
+    payload["constraints"] = [
+        {
+            "id": str(uuid4()), "resourceKind": "STUDENT_GROUP", "resourceId": absent,
+            "dayOfWeek": day, "date": None, "startTime": "10:30:00", "endTime": "13:00:00",
+            "kind": "UNAVAILABLE",
+        }
+        for day in (1, 2, 3, 4, 5)
+    ]
+
+    assert solver._dining_hall_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
