@@ -14,6 +14,7 @@ const lesson = (overrides: Partial<MasterLesson> = {}): MasterLesson => ({
   startTime: "09:00:00",
   endTime: "10:00:00",
   isLocked: false,
+  isParked: false,
   recurrence: "ALL_WEEKS",
   startDate: null,
   endDate: null,
@@ -72,7 +73,10 @@ describe("restorableInput", () => {
      * value — so the test that matters counts fields rather than checking them
      * one by one. A column added to MasterLesson and forgotten here fails this.
      */
-    const ignored = new Set(["id"]);
+    // A restored lesson comes back PLACED. The API's create has no isParked —
+    // you park a lesson that exists — so the tray state is the one field a
+    // row carries that its restoration deliberately does not.
+    const ignored = new Set(["id", "isParked"]);
     const row = lesson();
     const input = restorableInput(row) as unknown as Record<string, unknown>;
     const missing = Object.keys(row).filter(

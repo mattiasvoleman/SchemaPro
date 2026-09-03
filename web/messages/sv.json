@@ -624,7 +624,16 @@
     "sharePupils": "{attending} av {total} elever i {group}",
     "sharedMoveTitle": "Lektionen tillhör flera klasser",
     "sharedMoveBody": "Flyttar du den flyttas den för {classes}. Elever i de klasserna får den nya tiden i sina scheman.",
-    "sharedMoveConfirm": "Flytta ändå"
+    "sharedMoveConfirm": "Flytta ändå",
+    "trayTitle": "Parkering",
+    "trayHint": "Dra en lektion hit för att lyfta ut den tillfälligt — till exempel för att byta plats på två. En parkerad lektion upptar ingen tid, publiceras inte och skickas inte till solvern. Dra tillbaka den till schemat, eller sätt tillbaka den där den stod.",
+    "trayEmpty": "Inga parkerade lektioner.",
+    "park": "Parkera",
+    "putBack": "Sätt tillbaka",
+    "parked": "{lesson} parkerad",
+    "putBackDone": "{lesson} tillbaka i schemat",
+    "parkedFrom": "från {day} {start}–{end}",
+    "dragToPlace": "Dra {lesson} till schemat"
   },
   "dayPlanner": {
     "title": "Dagsplanering",

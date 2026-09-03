@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
@@ -13,6 +13,7 @@ import {
   Loader2,
   Lock,
   LockOpen,
+  ParkingSquare,
   FileText,
   Plus,
   Printer,
@@ -55,7 +56,7 @@ import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
 import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
-import { subjectColor, timeToMinutes } from "@/lib/utils";
+import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
 import { rastWindows } from "@/lib/rasts";
 import {
   audienceFor,
@@ -88,6 +89,7 @@ import {
   TimetableGrid,
   type LessonChange,
   type TimetableLesson,
+  type TimetableGridHandle,
 } from "@/components/schedule/timetable-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -134,6 +136,7 @@ interface LessonSnapshot {
   roomId: string | null;
   teacherId: string | null;
   isLocked: boolean;
+  isParked: boolean;
   recurrence: LessonRecurrence;
   startDate: string | null;
   endDate: string | null;
@@ -147,6 +150,7 @@ function snapshotOf(lesson: MasterLesson): LessonSnapshot {
     roomId: lesson.roomId,
     teacherId: lesson.teacherId,
     isLocked: lesson.isLocked,
+    isParked: lesson.isParked,
     recurrence: lesson.recurrence,
     startDate: lesson.startDate,
     endDate: lesson.endDate,
@@ -447,8 +451,13 @@ export default function TimetablePage() {
     return map;
   }, [peers, editing]);
 
+  /**
+   * Everything that OCCUPIES a slot. A parked lesson does not: it is on the
+   * tray, and its remembered day and time are not a placement. Reading them
+   * as one would refuse B the very slot A was lifted out of.
+   */
   const placements = useMemo(
-    () => (lessons ?? []).map(toPlacement),
+    () => (lessons ?? []).filter((lesson) => !lesson.isParked).map(toPlacement),
     [lessons],
   );
 
@@ -566,6 +575,9 @@ export default function TimetablePage() {
     () =>
       (lessons ?? []).filter(
         (lesson) =>
+          // Not the tray. `filtered` feeds the grid, the boards and both
+          // exports, and a parked lesson belongs on none of them.
+          !lesson.isParked &&
           // Every lesson holding one of this class's pupils, not only the ones
           // filed under its name: 4.1's maths is filed under 4ma1, and the
           // pupils in it already saw it on their own phones — the RLS policy
@@ -675,6 +687,34 @@ export default function TimetablePage() {
   const gridLessons: TimetableLesson[] = useMemo(
     () => filtered.map(toGridLesson),
     [filtered, toGridLesson],
+  );
+
+  /** The tray: lessons set aside, in the order they were lifted. */
+  const parked = useMemo(() => (lessons ?? []).filter((lesson) => lesson.isParked), [lessons]);
+  const trayRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<TimetableGridHandle>(null);
+
+  /**
+   * A lesson as a reader names it — "Matematik · 4.1 · K. Ek · A12".
+   *
+   * The edit dialog used to open on "Justera lektion" and nothing else, so
+   * an administrator with three maths lessons on Tuesday had to remember which
+   * one they had clicked. The same line names a card on the tray.
+   */
+  const lessonName = useCallback(
+    (lesson: MasterLesson): string => {
+      const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : undefined;
+      const room = lesson.roomId ? roomById.get(lesson.roomId) : undefined;
+      return [
+        subjectById.get(lesson.subjectId)?.name,
+        groupLabel(lesson),
+        teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : null,
+        room?.name,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    },
+    [subjectById, groupLabel, teacherById, roomById],
   );
 
   /** Resource lanes when the "group by" view is active. */
@@ -822,6 +862,10 @@ export default function TimetablePage() {
         dayOfWeek: change.dayOfWeek,
         startTime: minutesToHHMM(change.startMinutes),
         endTime: minutesToHHMM(change.endMinutes),
+        // A lesson dragged in from the tray arrives placed. Sent only then,
+        // so an ordinary move's patch is exactly what it was — and undo of an
+        // arrival, which restores the snapshot, parks it again.
+        ...(lesson.isParked ? { isParked: false } : {}),
       })
         .then((result) =>
           toast.success(editSavedMessage(result)),
@@ -845,6 +889,61 @@ export default function TimetablePage() {
       applyGridChange(lesson, change);
     },
     [lessonById, homeClassIds, rosterIndex, applyGridChange],
+  );
+
+  /**
+   * Set a lesson aside. No clash check anywhere — the whole point is that A
+   * may leave slot X while B still stands there. Undoable: the snapshot holds
+   * the slot it left, and restoring that IS a placement, checked as one.
+   */
+  const park = useCallback(
+    (lesson: MasterLesson) => {
+      void undoableUpdate(lesson, { isParked: true })
+        .then(() => toast.success(t("parked", { lesson: lessonName(lesson) })))
+        .catch(showError);
+    },
+    [undoableUpdate, showError, t, lessonName],
+  );
+
+  /** Put a parked lesson back where it was. The remembered slot may be taken. */
+  const putBack = useCallback(
+    (lesson: MasterLesson) => {
+      void undoableUpdate(lesson, { isParked: false })
+        .then(() => toast.success(t("putBackDone", { lesson: lessonName(lesson) })))
+        .catch(showError);
+    },
+    [undoableUpdate, showError, t, lessonName],
+  );
+
+  /** A drag that let go off the grid: on the tray, it parks; elsewhere, nothing. */
+  const handleDropOutside = useCallback(
+    (id: string, point: { clientX: number; clientY: number }) => {
+      const lesson = lessonById.get(id);
+      const tray = trayRef.current;
+      if (!lesson || !tray) return;
+      const rect = tray.getBoundingClientRect();
+      const onTray =
+        point.clientX >= rect.left &&
+        point.clientX <= rect.right &&
+        point.clientY >= rect.top &&
+        point.clientY <= rect.bottom;
+      if (onTray) park(lesson);
+    },
+    [lessonById, park],
+  );
+
+  /** Lift a card off the tray and hand it to the grid as a live drag. */
+  const beginTrayDrag = useCallback(
+    (lesson: MasterLesson, event: React.PointerEvent) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      gridRef.current?.beginExternalDrag(toGridLesson(lesson), {
+        pointerId: event.pointerId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      });
+    },
+    [toGridLesson],
   );
 
   /** Invalid drop → rank the nearest conflict-free slots and offer them. */
@@ -1539,6 +1638,7 @@ export default function TimetablePage() {
                 onLessonChange={handleGridChange}
                 validateChange={validateChange}
                 onInvalidDrop={handleInvalidDrop}
+                onDropOutside={handleDropOutside}
                 selectedIds={selectedIds}
                 onToggleSelect={toggleSelect}
                 onSlotClick={openCreate}
@@ -1549,18 +1649,79 @@ export default function TimetablePage() {
         </div>
       ) : (
         <TimetableGrid
+          ref={gridRef}
           lessons={gridLessons}
           editable
           onLessonClick={(lesson) => openEditor(lesson.id)}
           onLessonChange={handleGridChange}
           validateChange={validateChange}
           onInvalidDrop={handleInvalidDrop}
+          onDropOutside={handleDropOutside}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onSlotClick={openCreate}
           bands={lunchBands}
         />
       )}
+
+      {/*
+        The tray. Always rendered, even empty, because it is a DROP TARGET: a
+        lesson dragged off the grid has to have somewhere to land, and a zone
+        that appears only once something is in it cannot receive the first one.
+        Dragging a card back onto the grid works in the combined view, which is
+        the one grid the ref can reach; in the board views the card offers
+        "sätt tillbaka" instead.
+      */}
+      <section
+        ref={trayRef}
+        data-testid="lesson-tray"
+        aria-labelledby="lesson-tray-title"
+        className={cn(
+          "mt-4 rounded-lg border border-dashed p-3",
+          parked.length === 0 ? "text-muted-foreground" : "bg-card",
+        )}
+      >
+        <h2 id="lesson-tray-title" className="mb-1 text-sm font-semibold">
+          {t("trayTitle")}
+        </h2>
+        <p className="mb-2 text-xs text-muted-foreground">{t("trayHint")}</p>
+        {parked.length === 0 ? (
+          <p className="text-sm">{t("trayEmpty")}</p>
+        ) : (
+          <ul className="flex flex-wrap gap-2">
+            {parked.map((lesson) => (
+              <li
+                key={lesson.id}
+                className="flex items-center gap-2 rounded-md border bg-background px-2 py-1 text-sm"
+              >
+                <button
+                  type="button"
+                  aria-label={t("dragToPlace", { lesson: lessonName(lesson) })}
+                  className={cn(
+                    "text-left",
+                    groupBy === "none" ? "cursor-grab" : "cursor-default",
+                  )}
+                  onPointerDown={(event) => {
+                    if (groupBy === "none") beginTrayDrag(lesson, event);
+                  }}
+                >
+                  <span className="font-medium">{lessonName(lesson)}</span>
+                  <span className="ml-2 text-xs text-muted-foreground tabular-nums">
+                    {t("parkedFrom", {
+                      day: tDays(String(lesson.dayOfWeek)),
+                      start: toHHMM(lesson.startTime),
+                      end: toHHMM(lesson.endTime),
+                    })}
+                  </span>
+                </button>
+                <Button variant="ghost" size="sm" onClick={() => putBack(lesson)}>
+                  {t("putBack")}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       {/* ---------------- Edit dialog ---------------- */}
       {/* A drag that lands on classes the administrator was not looking at. */}
@@ -1613,7 +1774,17 @@ export default function TimetablePage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{t("editTitle")}</DialogTitle>
-            <DialogDescription>{t("editBody")}</DialogDescription>
+            {/* WHICH lesson. Three maths lessons on a Tuesday all opened on the
+                same "Justera lektion", and the reader had to remember which one
+                they had clicked. */}
+            <DialogDescription>
+              {editing ? (
+                <span className="block font-medium text-foreground">
+                  {lessonName(editing)}
+                </span>
+              ) : null}
+              {t("editBody")}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2 space-y-2">
@@ -1720,6 +1891,19 @@ export default function TimetablePage() {
               <Button variant="outline" size="sm" onClick={doDuplicate}>
                 <Copy />
                 {t("duplicateLesson")}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  if (!editing) return;
+                  park(editing);
+                  setEditing(null);
+                  setRemoteEditing(null);
+                }}
+              >
+                <ParkingSquare />
+                {t("park")}
               </Button>
             </div>
             <div className="flex gap-2">

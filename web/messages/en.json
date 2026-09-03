@@ -624,7 +624,16 @@
     "sharePupils": "{attending} of {total} pupils in {group}",
     "sharedMoveTitle": "This lesson belongs to several classes",
     "sharedMoveBody": "Moving it moves it for {classes}. Pupils in those classes get the new time in their timetables.",
-    "sharedMoveConfirm": "Move anyway"
+    "sharedMoveConfirm": "Move anyway",
+    "trayTitle": "Tray",
+    "trayHint": "Drag a lesson here to set it aside — to swap two, for instance. A parked lesson occupies no time, is not published and is not sent to the solver. Drag it back onto the grid, or put it back where it was.",
+    "trayEmpty": "No parked lessons.",
+    "park": "Park",
+    "putBack": "Put back",
+    "parked": "{lesson} parked",
+    "putBackDone": "{lesson} back on the grid",
+    "parkedFrom": "from {day} {start}–{end}",
+    "dragToPlace": "Drag {lesson} onto the grid"
   },
   "dayPlanner": {
     "title": "Day planner",

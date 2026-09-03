@@ -1,7 +1,13 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createRef } from "react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { TimetableGrid, type TimetableBand, type TimetableLesson } from "./timetable-grid";
+import {
+  TimetableGrid,
+  type TimetableBand,
+  type TimetableGridHandle,
+  type TimetableLesson,
+} from "./timetable-grid";
 
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
@@ -841,5 +847,102 @@ describe("bands", () => {
   it("draws nothing when no bands are given", () => {
     render(<TimetableGrid lessons={[makeLesson({ id: "L1" })]} />);
     expect(screen.queryByText("Lunch")).toBeNull();
+  });
+});
+
+describe("leaving the grid, and arriving on it", () => {
+  /*
+   * The tray. A lesson dragged off the grid has to land SOMEWHERE the page can
+   * name, and a lesson lifted off the tray has to become a drag the grid runs
+   * as its own. Both halves are the grid's: it reports where a drag let go,
+   * and it accepts a drag it did not start.
+   */
+  beforeEach(() => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue(GRID_RECT);
+  });
+
+  it("reports a drop that lets go outside the grid, and commits nothing", () => {
+    const onLessonChange = vi.fn();
+    const onDropOutside = vi.fn();
+    render(
+      <TimetableGrid
+        editable
+        lessons={[makeLesson()]}
+        onLessonChange={onLessonChange}
+        onDropOutside={onDropOutside}
+      />,
+    );
+
+    // The grid's body ends at x=556. `locate` would clamp 700 into Friday and
+    // the ghost would look like a perfectly good Friday drop — which is
+    // exactly why the point is checked before the ghost.
+    pointerDown(screen.getByRole("button", { name: /Math/ }), { clientX: 100, clientY: 110 });
+    pointerMove({ clientX: 700, clientY: 110 });
+    pointerUp({ clientX: 700, clientY: 110 });
+
+    expect(onDropOutside).toHaveBeenCalledWith("math-mon", { clientX: 700, clientY: 110 });
+    expect(onLessonChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps a drop inside the grid to itself", () => {
+    const onLessonChange = vi.fn();
+    const onDropOutside = vi.fn();
+    render(
+      <TimetableGrid
+        editable
+        lessons={[makeLesson()]}
+        onLessonChange={onLessonChange}
+        onDropOutside={onDropOutside}
+      />,
+    );
+
+    pointerDown(screen.getByRole("button", { name: /Math/ }), { clientX: 100, clientY: 110 });
+    pointerMove({ clientX: 200, clientY: 110 });
+    pointerUp({ clientX: 200, clientY: 110 });
+
+    expect(onDropOutside).not.toHaveBeenCalled();
+    expect(onLessonChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs a drag it did not start, and treats arriving as a change", () => {
+    // The lesson is NOT among `lessons` — it is on the tray. Dropped on the
+    // very slot it remembers, it is still arriving, not staying: a plain
+    // "did the slot change" would say no and leave it parked.
+    const onLessonChange = vi.fn();
+    const ref = createRef<TimetableGridHandle>();
+    render(<TimetableGrid ref={ref} editable lessons={[]} onLessonChange={onLessonChange} />);
+
+    act(() => {
+      ref.current!.beginExternalDrag(makeLesson({ id: "parked" }), {
+        pointerId: 1,
+        clientX: 100,
+        clientY: 66, // 540 minutes: the remembered 09:00 exactly
+      });
+    });
+    pointerMove({ clientX: 100, clientY: 66 });
+    pointerUp({ clientX: 100, clientY: 66 });
+
+    expect(onLessonChange).toHaveBeenCalledWith(
+      "parked",
+      expect.objectContaining({ dayOfWeek: 1, startMinutes: 540 }),
+    );
+  });
+
+  it("refuses an external drag when it is not editable", () => {
+    const onLessonChange = vi.fn();
+    const ref = createRef<TimetableGridHandle>();
+    render(<TimetableGrid ref={ref} lessons={[]} onLessonChange={onLessonChange} />);
+
+    act(() => {
+      ref.current!.beginExternalDrag(makeLesson({ id: "parked" }), {
+        pointerId: 1,
+        clientX: 100,
+        clientY: 66,
+      });
+    });
+    pointerMove({ clientX: 100, clientY: 66 });
+    pointerUp({ clientX: 100, clientY: 66 });
+
+    expect(onLessonChange).not.toHaveBeenCalled();
   });
 });

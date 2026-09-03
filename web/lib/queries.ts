@@ -544,7 +544,7 @@ export function useMasterLessons(academicYearId: string | null) {
         supabase
           .from("MasterLessons")
           .select(
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, roomId, dayOfWeek, startTime, endTime, isLocked, isParked, recurrence, startDate, endDate, extraGroups:MasterLessonGroups(studentGroupId), participants:MasterLessonStudents(studentId)",
           )
           .eq("academicYearId", academicYearId!)
           .order("dayOfWeek")

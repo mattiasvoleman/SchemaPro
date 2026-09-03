@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslations } from "next-intl";
 import { Lock, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -67,6 +75,15 @@ interface TimetableGridProps {
   validateChange?: (id: string, change: LessonChange) => boolean;
   /** Called when a drag ends on an invalid slot (e.g. to offer suggestions). */
   onInvalidDrop?: (id: string, change: LessonChange) => void;
+  /**
+   * Called when a drag ends OUTSIDE the grid, with where the pointer let go.
+   *
+   * The grid does not know what is out there — the page does — so it reports
+   * the point and commits nothing. `locate` clamps every position into a day
+   * column, which is right for a drag that wanders past the edge and wrong for
+   * one that is meant to leave; this is how the two are told apart.
+   */
+  onDropOutside?: (id: string, point: { clientX: number; clientY: number }) => void;
   /** Lessons rendered with a selection outline (bulk editing). */
   selectedIds?: ReadonlySet<string>;
   /** Shift+click toggles selection instead of opening the editor. */
@@ -84,6 +101,10 @@ interface TimetableGridProps {
   bands?: TimetableBand[];
   className?: string;
 }
+
+type TimetableGridInnerProps = TimetableGridProps & {
+  handleRef: React.ForwardedRef<TimetableGridHandle>;
+};
 
 /** A stripe across one day, drawn behind the lessons. */
 export interface TimetableBand {
@@ -108,10 +129,31 @@ const DRAG_THRESHOLD_PX = 5;
 const MIN_DURATION_MINUTES = 15;
 const RESIZE_HANDLE_PX = 8;
 
+/**
+ * What a parent may ask of the grid imperatively.
+ *
+ * One method, for one reason: a lesson on the tray is not among `lessons`, so
+ * nothing on the grid can start its drag. The tray starts it here, and from
+ * then on the grid's own move/up machinery carries it exactly as it would a
+ * lesson that began on the grid.
+ */
+export interface TimetableGridHandle {
+  beginExternalDrag: (
+    lesson: TimetableLesson,
+    pointer: { pointerId: number; clientX: number; clientY: number },
+  ) => void;
+}
+
 interface DragState {
   pointerId: number;
   lessonId: string;
   mode: "move" | "resize";
+  /**
+   * Began off the grid. The origin is then a remembered slot rather than a
+   * place the lesson is, so a drop ON that slot is still a change — the lesson
+   * is arriving, not staying.
+   */
+  external?: boolean;
   /** Minutes between pointer and lesson start at drag begin (move mode). */
   grabOffsetMinutes: number;
   origin: TimetableLesson;
@@ -153,7 +195,13 @@ function snap(minutes: number, step: number): number {
   return Math.round(minutes / step) * step;
 }
 
-export function TimetableGrid({
+export const TimetableGrid = forwardRef<TimetableGridHandle, TimetableGridProps>(
+  function TimetableGrid(props, ref) {
+    return <TimetableGridInner {...props} handleRef={ref} />;
+  },
+);
+
+function TimetableGridInner({
   lessons,
   dates,
   onLessonClick,
@@ -161,12 +209,14 @@ export function TimetableGrid({
   onLessonChange,
   validateChange,
   onInvalidDrop,
+  onDropOutside,
+  handleRef,
   selectedIds,
   onToggleSelect,
   onSlotClick,
   bands,
   className,
-}: TimetableGridProps) {
+}: TimetableGridInnerProps) {
   const t = useTranslations("common");
   const bodyRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -243,7 +293,7 @@ export function TimetableGrid({
   );
 
   const endDrag = useCallback(
-    (commit: boolean) => {
+    (commit: boolean, point?: { clientX: number; clientY: number }) => {
       const drag = dragRef.current;
       const currentGhost = ghostRef.current;
       dragRef.current = null;
@@ -251,7 +301,25 @@ export function TimetableGrid({
       updateGhost(null);
 
       if (!drag || !drag.moved) return;
-      if (!commit || !currentGhost) return;
+      if (!commit) return;
+
+      // Let go outside the grid: hand the point to the page and commit nothing.
+      // Checked before the ghost, because `locate` clamps into a column and
+      // the ghost therefore always looks like a valid drop somewhere.
+      if (point && onDropOutside && bodyRef.current) {
+        const rect = bodyRef.current.getBoundingClientRect();
+        const outside =
+          point.clientX < rect.left ||
+          point.clientX > rect.right ||
+          point.clientY < rect.top ||
+          point.clientY > rect.bottom;
+        if (outside) {
+          onDropOutside(drag.lessonId, point);
+          return;
+        }
+      }
+
+      if (!currentGhost) return;
       if (!currentGhost.valid) {
         if (onInvalidDrop) {
           onInvalidDrop(drag.lessonId, {
@@ -264,6 +332,7 @@ export function TimetableGrid({
       }
 
       const changed =
+        drag.external === true ||
         currentGhost.dayOfWeek !== drag.origin.dayOfWeek ||
         currentGhost.startMinutes !== drag.origin.startMinutes ||
         currentGhost.endMinutes !== drag.origin.endMinutes;
@@ -275,7 +344,34 @@ export function TimetableGrid({
         });
       }
     },
-    [onLessonChange, onInvalidDrop, updateGhost],
+    [onLessonChange, onInvalidDrop, onDropOutside, updateGhost],
+  );
+
+  useImperativeHandle(
+    handleRef,
+    () => ({
+      beginExternalDrag: (lesson, pointer) => {
+        if (!editable) return;
+        dragRef.current = {
+          pointerId: pointer.pointerId,
+          lessonId: lesson.id,
+          mode: "move",
+          // The grab is at the lesson's start: a card on the tray has no
+          // position on the clock for the pointer to be offset from.
+          grabOffsetMinutes: 0,
+          origin: lesson,
+          startClientX: pointer.clientX,
+          startClientY: pointer.clientY,
+          // Past the threshold from the first pixel. The tray card is already
+          // in hand; asking it to travel five pixels before the ghost appears
+          // would make the grid look dead until it did.
+          moved: true,
+          external: true,
+        };
+        setDraggingId(lesson.id);
+      },
+    }),
+    [editable],
   );
 
   useEffect(() => {
@@ -336,7 +432,7 @@ export function TimetableGrid({
       if (!drag || event.pointerId !== drag.pointerId) return;
       const wasClick = !drag.moved;
       const lesson = lessonById.get(drag.lessonId);
-      endDrag(true);
+      endDrag(true, { clientX: event.clientX, clientY: event.clientY });
       if (wasClick && lesson) {
         if (event.shiftKey && onToggleSelect) onToggleSelect(lesson.id);
         else if (onLessonClick) onLessonClick(lesson);

@@ -60,6 +60,7 @@ function makeLesson(overrides: Partial<MasterLesson> = {}): MasterLesson {
   return {
     id: "L1",
     academicYearId: "year-1",
+    isParked: false,
     subjectId: "subject-1",
     studentGroupId: `unique-group-${++groupSeq}`,
     teacherId: null,

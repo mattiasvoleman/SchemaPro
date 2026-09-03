@@ -303,6 +303,12 @@ export interface MasterLesson {
   endTime: string;
   /** Locked lessons survive regeneration and are pinned on the grid. */
   isLocked: boolean;
+  /**
+   * Set aside on the tray. Occupies nothing — not on the grid, not in a clash
+   * check, not published — and keeps its day and time only as a memory of
+   * where it was, so it can be put back.
+   */
+  isParked: boolean;
   /** Which weeks the lesson runs; ISO week parity, not a count from the start. */
   recurrence: LessonRecurrence;
   /** YYYY-MM-DD, or null for the academic year's own boundary. */

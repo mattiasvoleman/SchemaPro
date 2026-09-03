@@ -180,6 +180,7 @@ function lesson(
   return {
     id,
     academicYearId: "y-1",
+    isParked: false,
     subjectId: "sub-1",
     studentGroupId,
     teacherId,

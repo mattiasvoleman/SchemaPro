@@ -183,6 +183,7 @@ function lesson(
     startTime,
     endTime: `${String(Number(startTime.slice(0, 2)) + 1).padStart(2, "0")}:00`,
     isLocked: false,
+    isParked: false,
     recurrence: "WEEKLY",
     startDate: null,
     endDate: null,
@@ -216,12 +217,31 @@ const GRID_RECT = {
   toJSON: () => ({}),
 } as DOMRect;
 
+const TRAY_RECT = {
+  x: 600,
+  y: 0,
+  top: 0,
+  left: 600,
+  right: 800,
+  bottom: 200,
+  width: 200,
+  height: 200,
+  toJSON: () => ({}),
+} as DOMRect;
+
 beforeEach(() => {
   cleanup();
   noMutation.mutateAsync.mockClear();
   vi.mocked(buildIcs).mockClear();
   vi.mocked(exportTimetablePdf).mockClear();
-  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue(GRID_RECT);
+  // The tray sits well to the right of the grid's body, so a drop can be
+  // outside one and inside the other. jsdom lays nothing out; this is the
+  // whole geometry the tests have.
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+    this: Element,
+  ) {
+    return this.closest('[data-testid="lesson-tray"]') ? TRAY_RECT : GRID_RECT;
+  });
   state.lessons = LESSONS;
   state.memberships = MEMBERSHIPS;
 });
@@ -479,5 +499,137 @@ describe("the rasts a class must observe", () => {
     // would claim every stage keeps the same hours — the same reason the lunch
     // bands are hidden there.
     expect(screen.queryByText("Förmiddagsrast")).toBeNull();
+  });
+});
+
+describe("the edit dialog", () => {
+  it("names the lesson it opened on", () => {
+    // Three maths lessons on a Tuesday all opened on "Justera lektion" and
+    // nothing else, and the reader had to remember which one they clicked.
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+
+    expect(screen.getByRole("dialog").textContent).toContain("Slöjd · 5.1 · K. Ek");
+  });
+
+  it("can set the lesson aside from there", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+
+    await user.click(screen.getByRole("button", { name: "timetable.park" }));
+
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "l-slojd", isParked: true }),
+    );
+  });
+});
+
+describe("the tray", () => {
+  const parkedSlojd = () =>
+    LESSONS.map((l) => (l.id === "l-slojd" ? { ...l, isParked: true } : l));
+
+  it("holds a parked lesson, and the grid does not", () => {
+    state.lessons = parkedSlojd();
+    render(<TimetablePage />);
+
+    const tray = screen.getByTestId("lesson-tray");
+    expect(tray.textContent).toContain("Slöjd · 5.1 · K. Ek");
+    // Off the grid entirely — not dimmed, not pinned, gone. Its remembered
+    // slot is not a placement.
+    const onGrid = screen
+      .queryAllByRole("button")
+      .filter((el) => el.textContent?.includes("Slöjd") && !tray.contains(el));
+    expect(onGrid).toHaveLength(0);
+  });
+
+  it("puts a lesson back where it was", async () => {
+    const user = userEvent.setup();
+    state.lessons = parkedSlojd();
+    render(<TimetablePage />);
+
+    await user.click(screen.getByRole("button", { name: "timetable.putBack" }));
+
+    // Only the flag: the server reads the remembered day and time, and checks
+    // the slot like any placement — it may since have been taken.
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith({ id: "l-slojd", isParked: false });
+  });
+
+  it("parks a lesson dropped onto it", () => {
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 700, clientY: 100 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 700, clientY: 100 });
+
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "l-slojd", isParked: true }),
+    );
+  });
+
+  it("does nothing with a drop that is off the grid but not on the tray", () => {
+    // Letting go over the page header is a fumble, not an instruction.
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 700, clientY: 400 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 700, clientY: 400 });
+
+    expect(noMutation.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("places a lesson dragged from it onto the grid", () => {
+    state.lessons = parkedSlojd();
+    render(<TimetablePage />);
+    const handle = screen.getByRole("button", {
+      name: "timetable.dragToPlace(Slöjd · 5.1 · K. Ek)",
+    });
+    fireEvent.pointerDown(handle, { pointerId: 1, button: 0, clientX: 700, clientY: 100 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 200, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 200, clientY: 60 });
+
+    // Arrives PLACED, on Tuesday, in one call — the server checks the slot.
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "l-slojd", isParked: false, dayOfWeek: 2 }),
+    );
+  });
+
+  it("frees the slot a parked lesson remembers", () => {
+    /*
+     * The reason the tray exists. Matematik (4ma1) is parked from Monday
+     * 08:00; Slöjd is dragged into that hour. With the parked lesson still
+     * counted as an occupant — same teacher, same time — the grid would refuse
+     * the drop and open the suggestions instead.
+     */
+    state.lessons = LESSONS.map((l) => (l.id === "l-ma1" ? { ...l, isParked: true } : l));
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    // The card spans y 198–264 (11:00–12:00 at 1.1 px/min). Grabbed near its
+    // foot at y 260 (≈11:56, a grab offset of 56 min), the START lands on
+    // 08:00 when the pointer lets go at 480 + 56 min → y 62 — INSIDE the grid.
+    // A first draft released above the top edge, which is "outside" and quite
+    // rightly went to the tray handler instead of the grid.
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 260 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 62 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 62 });
+
+    expect(screen.queryByText("timetable.suggestTitle")).toBeNull();
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "l-slojd", dayOfWeek: 1, startTime: "08:00" }),
+    );
   });
 });
