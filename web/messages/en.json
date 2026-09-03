@@ -911,7 +911,8 @@
     "REQUIREMENT_DEMAND": "Too many lessons",
     "ROOM_CAPACITY": "Room capacity",
     "ROOM_OVERLAP": "Room clash",
-    "TEACHER_OVERLAP": "Teacher clash"
+    "TEACHER_OVERLAP": "Teacher clash",
+    "TIMEOUT_PROBE": "Rule that does not fit (measured, not proved)"
   },
   "gaps": {
     "title": "Gaps and idle time",

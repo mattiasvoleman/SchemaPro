@@ -35,6 +35,9 @@ ConflictCategory = Literal[
     "DINING_CAPACITY",
     "AVAILABILITY",
     "INSUFFICIENT_RESOURCES",
+    # Not a proof — a TIMEOUT has none — but a measurement: which single rule,
+    # switched off, let the same week solve inside a short probe budget.
+    "TIMEOUT_PROBE",
 ]
 
 

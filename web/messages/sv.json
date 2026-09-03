@@ -911,7 +911,8 @@
     "REQUIREMENT_DEMAND": "För många lektioner",
     "ROOM_CAPACITY": "Salskapacitet",
     "ROOM_OVERLAP": "Krock i sal",
-    "TEACHER_OVERLAP": "Krock för lärare"
+    "TEACHER_OVERLAP": "Krock för lärare",
+    "TIMEOUT_PROBE": "Regel som inte får plats (mätt, inte bevisat)"
   },
   "gaps": {
     "title": "Luckor och håltimmar",

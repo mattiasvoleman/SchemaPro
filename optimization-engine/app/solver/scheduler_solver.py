@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -18,6 +20,8 @@ from app.solver.servings import allowed_starts
 from app.schemas.schedule import (
     AnonymousRoomPreference,
     AnonymousConstraint,
+    ConflictAnalysis,
+    ConflictDetail,
     AnonymousGroup,
     AnonymousRequirement,
     AnonymousRoom,
@@ -33,6 +37,8 @@ from app.schemas.schedule import (
     ScheduleRules,
     SolverStatus,
 )
+
+logger = logging.getLogger(__name__)
 
 
 from app.solver.conflict_analyzer import AssumptionRegistry, build_conflict_analysis
@@ -393,11 +399,12 @@ class SchedulerSolver:
             # ---- phase 1b: the cleared clone takes what is left -------------
             remaining = _remaining()
             if remaining < self.MIN_PHASE_SECONDS:
+                logger.warning(self._timeout_diagnosis(request, "phase 1a used the whole budget"))
                 return OptimizeScheduleResponse(
                     request_id=request.request_id,
                     status="TIMEOUT",
                     lessons=[],
-                    conflicts=None,
+                    conflicts=self._probe_timeout(request),
                 )
             clone_model = model.Clone()
             clone_model.ClearObjective()
@@ -411,11 +418,12 @@ class SchedulerSolver:
             if phase1b_code == cp_model.INFEASIBLE:
                 return self._explain_infeasible(request)
             if phase1b_code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                logger.warning(self._timeout_diagnosis(request, "neither satisfaction encoding found a timetable"))
                 return OptimizeScheduleResponse(
                     request_id=request.request_id,
                     status="TIMEOUT",
                     lessons=[],
-                    conflicts=None,
+                    conflicts=self._probe_timeout(request),
                 )
             # Clone() preserves variable indices, so the full model's own
             # variables read their values straight off the clone's solver.
@@ -1241,6 +1249,140 @@ class SchedulerSolver:
         # own rather than only in the one place it is used.
         return cp_model.Domain.FromIntervals(forbidden).complement().intersection_with(
             cp_model.Domain(0, self._grid.horizon),
+        )
+
+    def _probe_timeout(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
+        """Name what does not fit, when nothing was proved.
+
+        _explain_infeasible works from a proof: CP-SAT said INFEASIBLE, so
+        assumptions can be asked which constraints the proof rests on. A TIMEOUT
+        is UNKNOWN — no proof, no core — and the school was being handed a bare
+        status with four freshly declared rules to guess between: the rasts, a
+        corridor, the meal, the dining hall.
+
+        So this measures instead. One rule at a time is switched off, the
+        satisfaction model is rebuilt and given a slice of a short budget, and
+        every relaxation that then FINDS a timetable is reported by name. Only
+        rules the payload actually carries are tried, in the order the
+        measurements rank them — the corridor first, because on a 12-class,
+        96-group school it alone turns a one-second solve into the whole budget.
+
+        Not a proof either: a relaxation that stays UNKNOWN in its slice says
+        nothing, and the summary says so. But "with the corridor at 0 this week
+        solves in four seconds" is a sentence a rektor can act on, and it is
+        true.
+        """
+        budget = self._settings.solver_probe_seconds
+        if budget <= 0:
+            return None
+
+        relaxations: list[tuple[str, OptimizeScheduleRequest]] = []
+        if any(f.changeover_minutes > 0 for f in request.frame_times):
+            relaxations.append((
+                "the corridor between lessons (changeoverMinutes) set to 0",
+                request.model_copy(update={
+                    "frame_times": [
+                        f.model_copy(update={"changeover_minutes": 0}) for f in request.frame_times
+                    ],
+                }),
+            ))
+        if request.rasts:
+            relaxations.append((
+                "the rasts removed",
+                request.model_copy(update={"rasts": []}),
+            ))
+        if request.rules is not None and _lunch_window_is_set(request.rules):
+            relaxations.append((
+                "the guaranteed lunch break switched off",
+                request.model_copy(update={
+                    "rules": request.rules.model_copy(update={
+                        "lunch_start_time": None,
+                        "lunch_end_time": None,
+                        "lunch_minutes": None,
+                        "dining_seats": None,
+                    }),
+                }),
+            ))
+        elif request.rules is not None and request.rules.dining_seats is not None:
+            relaxations.append((
+                "the dining hall's seat limit removed",
+                request.model_copy(update={
+                    "rules": request.rules.model_copy(update={"dining_seats": None}),
+                }),
+            ))
+        if not relaxations:
+            return None
+
+        slice_seconds = max(self.MIN_PHASE_SECONDS, budget / len(relaxations))
+        found: list[tuple[str, float]] = []
+        for label, relaxed in relaxations:
+            try:
+                feas_model, _, _, _, _ = self._build_model(
+                    relaxed, use_assumptions=False, include_objective=False,
+                )
+            except InvalidScheduleInputError:
+                # A relaxation can also make the payload refuse by name (a
+                # sitting that no longer reaches a stage, say). Not a finding.
+                continue
+            probe = cp_model.CpSolver()
+            probe.parameters.max_time_in_seconds = slice_seconds
+            started = time.perf_counter()
+            if probe.Solve(feas_model) in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                found.append((label, time.perf_counter() - started))
+
+        if not found:
+            return ConflictAnalysis(
+                summary=(
+                    f"No timetable was found within {self._settings.solver_max_time_seconds:.0f} s, "
+                    f"and none of the {len(relaxations)} rules probed made one appear inside "
+                    f"{slice_seconds:.0f} s each. The week may simply be large; try a longer budget."
+                ),
+                conflicts=[],
+            )
+        return ConflictAnalysis(
+            summary=(
+                f"No timetable was found within {self._settings.solver_max_time_seconds:.0f} s. "
+                f"With one rule relaxed, the same week solved: "
+                + "; ".join(f"{label} ({seconds:.1f} s)" for label, seconds in found)
+                + ". That rule is what does not fit — not a proof, a measurement."
+            ),
+            conflicts=[
+                ConflictDetail(
+                    category="TIMEOUT_PROBE",
+                    message=f"With {label}, a timetable was found in {seconds:.1f} s.",
+                )
+                for label, seconds in found
+            ],
+        )
+
+    def _timeout_diagnosis(self, request: OptimizeScheduleRequest, why: str) -> str:
+        """One line naming what shaped the model that would not solve.
+
+        A TIMEOUT carries no conflict core — UNKNOWN is not a proof — so the
+        response cannot say what made the week hard, and the school is left
+        guessing between the rasts it just declared, a corridor it just wrote
+        and a dining hall that became real. The log can say which of those
+        were in force. Measured on a 12-class, 96-group school: the same
+        payload solves in 1 s with no corridor and burns the whole budget with
+        five minutes of one, so the corridor is named first.
+        """
+        lessons = sum(r.lessons_per_week for r in request.requirements)
+        corridor = max((f.changeover_minutes for f in request.frame_times), default=0)
+        seats = request.rules.dining_seats if request.rules is not None else None
+        eating = len(request.groups)
+        return (
+            f"TIMEOUT ({why}) [requestId={request.request_id}]: {lessons} lessons, "
+            f"{len(request.requirements)} requirements, {eating} groups eating, "
+            f"changeoverMinutes={corridor}, rasts={len(request.rasts)}, "
+            f"frameTimes={len(request.frame_times)}, diningSeats={seats}, "
+            f"fixedLessons={len(request.fixed_lessons)}, "
+            f"budget={self._settings.solver_max_time_seconds}s. "
+            + (
+                "A changeover lengthens every lesson for the overlap check and is the "
+                "first thing to try at 0."
+                if corridor > 0
+                else ""
+            )
         )
 
     def _create_lesson_decisions(

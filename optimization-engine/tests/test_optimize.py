@@ -5776,3 +5776,152 @@ def test_a_padded_lesson_may_not_run_past_the_end_of_its_day() -> None:
     domain = cp_model.Domain.from_flat_intervals(list(decisions[0].start.proto.domain))
     assert domain.contains(grid.slots_per_day - 12 - 2)
     assert not domain.contains(grid.slots_per_day - 12 - 1)
+
+
+
+def test_a_timeout_names_what_shaped_the_model() -> None:
+    """UNKNOWN is not a proof, so a TIMEOUT has no core to explain itself with.
+
+    What the log CAN say is which of the things that make a week hard were in
+    force — and the corridor first, because measured on a 12-class school it is
+    the difference between one second and the whole budget.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _changeover_payload(10)
+    payload["rasts"] = [_rast("09:40", "10:00")]
+    request = OptimizeScheduleRequest.model_validate(payload)
+
+    line = solver._timeout_diagnosis(request, "test")
+
+    assert "changeoverMinutes=10" in line
+    assert "rasts=1" in line
+    assert "groups eating" in line
+    assert "first thing to try at 0" in line
+    assert "first thing to try at 0" not in solver._timeout_diagnosis(
+        OptimizeScheduleRequest.model_validate(_changeover_payload(0)), "test",
+    )
+
+
+
+def _teaching_group_school(
+    classes: int = 12,
+    tgs_per_class: int = 8,
+    lessons_per_tg: int = 3,
+    *,
+    changeover: int = 0,
+) -> dict[str, object]:
+    """The school in the report: every lesson on a teaching group, none on the class.
+
+    Each class has eight teaching groups that all share its pupils, so every
+    pair of them — and each of them with the class — is a shared-pupil pair.
+    The classes are who eat; the teaching groups are not.
+    """
+    reqs: list[dict[str, object]] = []
+    groups: list[dict[str, object]] = []
+    pairs: list[list[str]] = []
+    teachers = [str(uuid4()) for _ in range(classes * 2)]
+    rooms = [{"id": str(uuid4()), "capacity": 30} for _ in range(int(classes * 1.3))]
+    t = 0
+    for c in range(classes):
+        cls = str(uuid4())
+        grade = 4 + (c % 6)
+        tg_ids: list[str] = []
+        for _ in range(tgs_per_class):
+            tg = str(uuid4())
+            tg_ids.append(tg)
+            reqs.append({
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": tg,
+                "teacherId": teachers[t % len(teachers)], "lessonsPerWeek": lessons_per_tg,
+                "minutesPerLesson": 60, "studentGroupSize": 24,
+                "minGradeLevel": grade, "maxGradeLevel": grade,
+            })
+            t += 1
+            pairs.append([cls, tg])
+        for i in range(len(tg_ids)):
+            for j in range(i + 1, len(tg_ids)):
+                pairs.append([tg_ids[i], tg_ids[j]])
+        groups.append({"id": cls, "lunchHeadcount": 24, "minGradeLevel": grade, "maxGradeLevel": grade})
+    return {
+        "requestId": str(uuid4()), "academicYearId": str(uuid4()), "requirements": reqs,
+        "groups": groups, "rooms": rooms, "constraints": [], "groupConflicts": pairs,
+        "rules": {"lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30},
+        "frameTimes": [{
+            "minGradeLevel": 0, "maxGradeLevel": 12, "dayOfWeek": None,
+            "startTime": "08:00:00", "endTime": "15:30:00", "changeoverMinutes": changeover,
+        }],
+    }
+
+
+def test_the_probe_names_the_corridor_as_what_does_not_fit() -> None:
+    """The probe, measured on the school in the report.
+
+    UNKNOWN is not a proof, so nothing can be asked which constraints it rests
+    on. What CAN be done is to switch one rule off at a time and see which
+    relaxation lets the same week solve. Here the corridor is the only rule in
+    the payload besides the lunch, and with it at 0 the week solves at once.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=20.0))
+    request = OptimizeScheduleRequest.model_validate(
+        _teaching_group_school(classes=12, changeover=5),
+    )
+
+    analysis = solver._probe_timeout(request)
+
+    assert analysis is not None
+    assert analysis.conflicts, analysis.summary
+    assert analysis.conflicts[0].category == "TIMEOUT_PROBE"
+    assert "changeoverMinutes" in analysis.conflicts[0].message
+    assert "not a proof" in analysis.summary
+
+
+def test_a_timeout_carries_the_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The wiring: a phase-1 UNKNOWN reaches the caller WITH the measurement.
+
+    Forcing a real phase-1 timeout needs a week too hard for CP-SAT to place
+    inside a budget, and every fixture this file has solves in a second. So
+    CP-SAT is told to answer UNKNOWN and the probe is stubbed; what is asserted
+    is that the response built on that path carries what the probe returned.
+    """
+    from app.schemas.schedule import ConflictAnalysis, ConflictDetail, OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", lambda self, model: cp_model.UNKNOWN)
+    verdict = ConflictAnalysis(
+        summary="probe ran",
+        conflicts=[ConflictDetail(category="TIMEOUT_PROBE", message="with X, found in 1.0 s")],
+    )
+    monkeypatch.setattr(SchedulerSolver, "_probe_timeout", lambda self, request: verdict)
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=2.0))
+
+    response = solver.solve(OptimizeScheduleRequest.model_validate(_sample_payload()))
+
+    assert response.status == "TIMEOUT"
+    assert response.conflicts == verdict
+
+
+def test_the_probe_is_silent_when_there_is_nothing_to_relax() -> None:
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=5.0))
+    # No corridor, no rasts, no lunch rule: nothing this probe knows how to
+    # switch off, so it says nothing rather than something invented.
+    request = OptimizeScheduleRequest.model_validate(_sample_payload())
+
+    assert solver._probe_timeout(request) is None
+
+
+def test_the_probe_can_be_switched_off() -> None:
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_PROBE_SECONDS=0))
+    request = OptimizeScheduleRequest.model_validate(_changeover_payload(10))
+
+    assert solver._probe_timeout(request) is None

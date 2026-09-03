@@ -312,7 +312,10 @@ export type ConflictCategory =
   | 'ROOM_CAPACITY'
   | 'AVAILABILITY'
   | 'DINING_CAPACITY'
-  | 'INSUFFICIENT_RESOURCES';
+  | 'INSUFFICIENT_RESOURCES'
+  // A measurement, not a proof: which rule, switched off, let a timed-out week
+  // solve inside a short probe budget.
+  | 'TIMEOUT_PROBE';
 
 export interface AiEngineConflictDetail {
   category: ConflictCategory;

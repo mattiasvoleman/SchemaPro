@@ -39,6 +39,11 @@ class Settings(BaseSettings):
 
     solver_timeout_seconds: float = Field(default=60.0, alias="SOLVER_TIMEOUT_SECONDS")
     solver_max_time_seconds: float = Field(default=60.0, alias="SOLVER_MAX_TIME_SECONDS")
+    # Extra seconds spent AFTER a phase-1 timeout, relaxing one rule at a time to
+    # name the one that does not fit. Zero switches the probe off. Spent only on
+    # the failure path, where a week with no timetable and no explanation is the
+    # most expensive outcome the engine can produce.
+    solver_probe_seconds: float = Field(default=20.0, alias="SOLVER_PROBE_SECONDS")
 
     schedule_day_start_minutes: int = Field(default=480, alias="SCHEDULE_DAY_START_MINUTES")
     schedule_day_end_minutes: int = Field(default=1080, alias="SCHEDULE_DAY_END_MINUTES")
