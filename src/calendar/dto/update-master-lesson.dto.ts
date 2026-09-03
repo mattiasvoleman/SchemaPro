@@ -72,6 +72,18 @@ export class UpdateMasterLessonDto {
   isLocked?: boolean;
 
   /**
+   * Sets the lesson aside on the grid's tray, or puts it back.
+   *
+   * A parked lesson occupies nothing: it is skipped by every clash check, by
+   * publish, by the solver's fixed placements and by the SS12000 feed. Parking
+   * therefore never conflicts; UN-parking is a placement like any other and is
+   * checked like one, against the day and time sent with it.
+   */
+  @IsOptional()
+  @IsBoolean()
+  isParked?: boolean;
+
+  /**
    * Which weeks the lesson runs. Alternating weeks are anchored to ISO week
    * numbers — "udda veckor" — because that is what a school tells its
    * students and it reads the same whenever anyone checks.

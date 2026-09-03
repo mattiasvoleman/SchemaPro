@@ -500,6 +500,11 @@ model MasterLesson {
   // Locked lessons survive regeneration untouched: the optimizer treats them
   // as fixed placements and schedules the remaining demand around them.
   isLocked    Boolean  @default(false)
+  /// Set aside on the grid's tray. A parked lesson OCCUPIES NOTHING: it is
+  /// excluded from every clash check, from publish, from the solver's fixed
+  /// placements and from the SS12000 feed. Its day and time survive only as a
+  /// memory of where it was, so it can be put back. See the migration.
+  isParked    Boolean  @default(false)
   /// True only for lessons the optimizer itself produced, and the one thing
   /// regeneration is allowed to replace.
   ///

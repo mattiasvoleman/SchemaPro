@@ -94,6 +94,7 @@ describe('MasterLessonsService', () => {
     startTime: t('10:00'),
     endTime: t('11:00'),
     isLocked: false,
+    isParked: false,
     recurrence: 'ALL_WEEKS' as const,
     startDate: null as Date | null,
     endDate: null as Date | null,
@@ -165,6 +166,7 @@ describe('MasterLessonsService', () => {
         teacherId: TEACHER_ID,
         coTeacherId: null,
         isLocked: false,
+        isParked: false,
         // Defaults: every week, and the academic year's own boundaries.
         recurrence: 'ALL_WEEKS',
         startDate: null,
@@ -530,7 +532,7 @@ describe('MasterLessonsService', () => {
       await service.create(createDto(), testUser());
 
       expect(tx.masterLesson.findMany).toHaveBeenCalledWith({
-        where: { academicYearId: YEAR_ID, dayOfWeek: 1 },
+        where: { academicYearId: YEAR_ID, dayOfWeek: 1, isParked: false },
         select: expect.any(Object),
       });
       expect(tx.availabilityConstraint.findMany).toHaveBeenCalledWith({
@@ -642,6 +644,20 @@ describe('MasterLessonsService', () => {
           testUser(),
         ),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('reads no parked lesson as an occupant', async () => {
+      // A parked lesson keeps its old day and time only as a memory. Reading
+      // that as a placement would refuse B the very slot A was lifted out of.
+      arrangeCreate();
+
+      await service.create(createDto(), testUser());
+
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ isParked: false }),
+        }),
+      );
     });
 
     it("409s when the primary group is among the other lesson's extra groups", async () => {
@@ -881,6 +897,7 @@ describe('MasterLessonsService', () => {
         teacherId: TEACHER_ID,
         coTeacherId: null,
         isLocked: false,
+        isParked: false,
         // Untouched by a move: the lesson keeps the weeks it ran before.
         recurrence: 'ALL_WEEKS',
         startDate: null,
@@ -937,6 +954,7 @@ describe('MasterLessonsService', () => {
         where: {
           academicYearId: YEAR_ID,
           dayOfWeek: 4,
+          isParked: false,
           id: { not: LESSON_ID },
         },
         select: expect.any(Object),
@@ -956,6 +974,38 @@ describe('MasterLessonsService', () => {
         // Existing end is 11:00; the new start of 12:00 inverts the range.
         service.update(LESSON_ID, { startTime: '12:00' }, testUser()),
       ).rejects.toThrow(BadRequestException);
+      expect(tx.masterLesson.update).not.toHaveBeenCalled();
+    });
+
+    // -----------------------------------------------------------------
+    // The tray. A parked lesson occupies nothing; a lesson put back is a
+    // placement like any other.
+    // -----------------------------------------------------------------
+
+    it('parks a lesson without asking whether its old slot is free', async () => {
+      // The whole point of the tray: A leaves slot X while B is still there.
+      // A conflict scan here would refuse the very move that makes a swap
+      // possible, so none is run — not "run and ignored", none.
+      arrangeUpdate();
+      tx.masterLesson.findMany.mockResolvedValue([otherLesson({ teacherId: TEACHER_ID })]);
+
+      await service.update(LESSON_ID, { isParked: true }, testUser());
+
+      expect(tx.masterLesson.findMany).not.toHaveBeenCalled();
+      expect(tx.masterLesson.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ isParked: true }) }),
+      );
+    });
+
+    it('checks a lesson being put back like any other placement', async () => {
+      // Un-parking names a day and a time, and that slot may since have been
+      // taken — by the lesson it was lifted out to make room for.
+      arrangeUpdate({ isParked: true });
+      tx.masterLesson.findMany.mockResolvedValue([otherLesson({ teacherId: TEACHER_ID })]);
+
+      await expect(
+        service.update(LESSON_ID, { isParked: false, dayOfWeek: 1 }, testUser()),
+      ).rejects.toThrow(ConflictException);
       expect(tx.masterLesson.update).not.toHaveBeenCalled();
     });
 

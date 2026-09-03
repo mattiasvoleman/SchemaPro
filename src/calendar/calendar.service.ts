@@ -103,7 +103,9 @@ export class CalendarService {
         }
 
         const masterLessons = await tx.masterLesson.findMany({
-          where: { academicYearId: dto.academicYearId },
+          // A parked lesson is not on the timetable, so it is not on the
+          // calendar either. Its remembered slot is not a placement.
+          where: { academicYearId: dto.academicYearId, isParked: false },
           select: {
             id: true,
             subjectId: true,

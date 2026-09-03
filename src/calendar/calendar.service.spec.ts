@@ -468,6 +468,20 @@ describe('CalendarService', () => {
         });
       });
 
+      it('materialises no lesson that is set aside on the tray', async () => {
+        arrangePublish([template()]);
+
+        await publishOneDay();
+
+        // Excluded at the query, not filtered afterwards: the memory of where
+        // a parked lesson was is not a placement, and must not be read as one.
+        expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ isParked: false }),
+          }),
+        );
+      });
+
       it('rewrites a meal whose sitting has moved', async () => {
         // The bug this replaced. Publish read the already-materialised meals
         // into a set and continued past every one, calling it "the same

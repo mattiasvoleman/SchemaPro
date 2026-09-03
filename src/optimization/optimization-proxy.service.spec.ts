@@ -1064,6 +1064,22 @@ describe('OptimizationProxyService', () => {
       expect(result.lunches).toEqual([]);
     });
 
+    it('sends the engine no parked lesson as a fixed placement', async () => {
+      // A parked lesson is preserved like any hand-made one — regeneration
+      // does not own it — but blocking the engine out of a slot nobody is in
+      // would be reading its memory of where it was as where it is.
+      arrange({ lockedLessons: [lockedLesson()] });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ isParked: false, OR: expect.any(Array) }),
+        }),
+      );
+    });
+
     it('forwards no real database id — every resource is re-keyed anonymously', async () => {
       arrange({
         lockedLessons: [lockedLesson()],

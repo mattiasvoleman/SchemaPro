@@ -336,7 +336,11 @@ export class OptimizationProxyService {
     // period are subtracted from its weekly demand, so the solver re-places
     // only the machine-owned remainder.
     const preservedLessons = await tx.masterLesson.findMany({
-      where: { academicYearId, OR: PRESERVED_FROM_REGENERATION },
+      // A parked lesson is preserved like any hand-made one — regeneration
+      // does not own it — but it is NOT sent as a fixed placement: it occupies
+      // nothing, and blocking the engine out of a slot nobody is in would be
+      // reading its memory of where it was as where it is.
+      where: { academicYearId, isParked: false, OR: PRESERVED_FROM_REGENERATION },
       select: {
         id: true,
         subjectId: true,

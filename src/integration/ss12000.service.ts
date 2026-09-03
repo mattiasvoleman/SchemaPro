@@ -155,7 +155,9 @@ export class Ss12000Service {
   async activities(schoolId: string, limit?: string, offset?: string) {
     const { take, skip } = this.page(limit, offset);
     return this.prisma.withServicePrincipal(schoolId, async (tx) => {
-      const where = { schoolId, academicYear: { isActive: true } };
+      // Set-aside lessons are not activities: the kommun reads this as the
+      // weekly timetable, and a parked lesson is on nobody's.
+      const where = { schoolId, academicYear: { isActive: true }, isParked: false };
       const [totalCount, lessons] = await Promise.all([
         tx.masterLesson.count({ where }),
         tx.masterLesson.findMany({

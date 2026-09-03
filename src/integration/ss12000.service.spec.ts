@@ -261,6 +261,16 @@ describe('Ss12000Service', () => {
   });
 
   describe('activities', () => {
+    it('sends the kommun no lesson that is set aside', async () => {
+      await service.activities(SCHOOL_ID);
+
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ isParked: false }),
+        }),
+      );
+    });
+
     const masterLesson = (overrides: Record<string, unknown> = {}) => ({
       id: 'l1',
       dayOfWeek: 2,
@@ -282,7 +292,7 @@ describe('Ss12000Service', () => {
       await service.activities(SCHOOL_ID);
 
       expect(tx.masterLesson.count).toHaveBeenCalledWith({
-        where: { schoolId: SCHOOL_ID, academicYear: { isActive: true } },
+        where: { schoolId: SCHOOL_ID, academicYear: { isActive: true }, isParked: false },
       });
     });
 

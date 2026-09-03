@@ -35,6 +35,8 @@ export interface MasterLessonResult {
   teacherId: string | null;
   coTeacherId: string | null;
   isLocked: boolean;
+  /** Set aside on the tray; occupies nothing until put back. */
+  isParked: boolean;
   recurrence: LessonRecurrence;
   /** YYYY-MM-DD, or null for "the academic year's own boundary". */
   startDate: string | null;
@@ -266,15 +268,22 @@ export class MasterLessonsService {
         throw new BadRequestException('startTime must be before endTime.');
       }
 
-      const conflicts = await this.findConflicts(
-        tx,
-        {
-          id: lesson.id,
-          academicYearId: lesson.academicYearId,
-          studentGroupId: lesson.studentGroupId,
-        },
-        candidate,
-      );
+      // A lesson being set aside occupies nothing, so there is nothing for it
+      // to clash with — the whole point of the tray is that A can leave slot X
+      // while B is still there. Everything else, including putting a parked
+      // lesson back, is a placement and is checked like one.
+      const parking = dto.isParked === true;
+      const conflicts = parking
+        ? []
+        : await this.findConflicts(
+            tx,
+            {
+              id: lesson.id,
+              academicYearId: lesson.academicYearId,
+              studentGroupId: lesson.studentGroupId,
+            },
+            candidate,
+          );
       if (conflicts.length > 0) {
         // The exception filter forwards `message` as the problem detail, so
         // the conflict list is folded into it for the UI to display.
@@ -286,6 +295,7 @@ export class MasterLessonsService {
         where: { id },
         data: {
           dayOfWeek: candidate.dayOfWeek,
+          ...(dto.isParked !== undefined ? { isParked: dto.isParked } : {}),
           ...(dto.startTime !== undefined
             ? { startTime: parseTimeString(dto.startTime) }
             : {}),
@@ -543,6 +553,10 @@ export class MasterLessonsService {
       where: {
         academicYearId: lesson.academicYearId,
         dayOfWeek: candidate.dayOfWeek,
+        // A parked lesson keeps its old day and time only as a memory of where
+        // it was. Reading that as a placement would refuse B the very slot A
+        // was lifted out of to make room for it.
+        isParked: false,
         ...(lesson.id ? { id: { not: lesson.id } } : {}),
       },
       select: {
@@ -879,6 +893,7 @@ const LESSON_SELECT = {
   startTime: true,
   endTime: true,
   isLocked: true,
+  isParked: true,
   recurrence: true,
   startDate: true,
   endDate: true,
@@ -898,6 +913,7 @@ interface LessonRecord {
   startTime: Date;
   endTime: Date;
   isLocked: boolean;
+  isParked: boolean;
   recurrence: LessonRecurrence;
   startDate: Date | null;
   endDate: Date | null;
@@ -918,6 +934,7 @@ function toResult(lesson: LessonRecord): MasterLessonResult {
     teacherId: lesson.teacherId,
     coTeacherId: lesson.coTeacherId,
     isLocked: lesson.isLocked,
+    isParked: lesson.isParked,
     recurrence: lesson.recurrence,
     // Dates go out as YYYY-MM-DD: the column is a DATE, and an ISO timestamp
     // would invite a timezone shift on the way back in.
