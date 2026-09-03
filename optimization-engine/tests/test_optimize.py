@@ -866,6 +866,10 @@ def test_every_group_keeps_a_free_lunch_window() -> None:
                 "lunchEndTime": "13:00:00",
                 "lunchMinutes": 30,
             }
+            # The gateway names who eats. A group is owed a meal because it is
+            # listed here, not because it has lessons — a teaching group has
+            # lessons and eats with its class.
+            payload["groups"] = [{"id": first["studentGroupId"], "lunchHeadcount": 24}]
         return payload
 
     solver = SchedulerSolver(settings)

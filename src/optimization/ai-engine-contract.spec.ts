@@ -141,6 +141,11 @@ describe('AI engine wire contract', () => {
       diningSeats: 180,
       maxLessonsPerDayPerGroup: 7,
     });
+    // The requirement's group is a home class, so it is somebody who eats and
+    // reaches `groups` — which is what the group-field assertion inspects.
+    tx['studentGroup']!['findMany']!.mockResolvedValue([
+      { id: 'g1', gradeLevel: null, kind: 'CLASS' },
+    ]);
     tx['teachingRequirement']!['findMany']!.mockResolvedValue([
       {
         id: 'r1',

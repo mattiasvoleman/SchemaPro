@@ -882,7 +882,11 @@ describe('OptimizationProxyService', () => {
       unlockedLessons?: unknown[];
       rooms?: unknown[];
       constraints?: unknown[];
-      /** Rows of { id, gradeLevel }: the year each group belongs to. */
+      /**
+       * Rows of { id, gradeLevel, kind }. The year each group belongs to, and
+       * whether it is a home class — only a CLASS is sent to the engine as a
+       * group that eats.
+       */
       groups?: unknown[];
       /** Soft room wishes, as stored. */
       roomPreferences?: unknown[];
@@ -920,7 +924,11 @@ describe('OptimizationProxyService', () => {
         overrides.constraints ?? [],
       );
       // Year spans for rooms limited to a stage are derived from these.
-      tx.studentGroup.findMany.mockResolvedValue(overrides.groups ?? []);
+      // The default is the one class the default requirement belongs to, so a
+      // payload built with no overrides still names somebody who eats.
+      tx.studentGroup.findMany.mockResolvedValue(
+        overrides.groups ?? [{ id: GROUP_ID, gradeLevel: null, kind: 'CLASS' }],
+      );
       tx.roomPreference.findMany.mockResolvedValue(overrides.roomPreferences ?? []);
       tx.lunchSetting.findUnique.mockResolvedValue(overrides.lunchSettings ?? null);
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 2 });
@@ -1535,6 +1543,47 @@ describe('OptimizationProxyService', () => {
       expect(postedPayload().requirements[0].studentGroupSize).toBe(1);
     });
 
+    it('sends a class taught only through teaching groups as a group, with its headcount', async () => {
+      /*
+       * The school in the screenshot: every lesson on 4ma1, 4sv1, 4no1 — not
+       * one on 4.1 itself. Such a class has no requirement and no preserved
+       * lesson, so it never reached `groups`, so the engine owed it no lunch;
+       * the sittings it DID place, for the teaching groups, were dropped at
+       * persist because a pupil eats with their class. Zero rows, and a notice
+       * saying no lunch had been placed for the year.
+       */
+      const MA71 = '99999999-9999-4999-8999-999999999999';
+      const pupils = Array.from({ length: 24 }, (_, i) => ({
+        id: `00000000-0000-4000-8000-9000000000${String(i).padStart(2, '0')}`,
+        studentGroupId: GROUP_ID,
+      }));
+      arrange({
+        requirements: [requirement({ studentGroupId: MA71 })],
+        groups: [
+          { id: GROUP_ID, gradeLevel: 4, kind: 'CLASS' },
+          { id: MA71, gradeLevel: null, kind: 'TEACHING_GROUP' },
+        ],
+        homeMembers: pupils,
+        teachingMembers: pupils.map((pupil) => ({ studentId: pupil.id, studentGroupId: MA71 })),
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      const payload = postedPayload();
+      // Exactly one: the class. The teaching group is not sent as a group at
+      // all — a second mandatory meal for the same children would reserve
+      // thirty minutes of Ma71's day for a lunch nobody takes there.
+      expect(payload.groups).toHaveLength(1);
+      expect(payload.groups[0]).toMatchObject({ lunchHeadcount: 24, minGradeLevel: 4, maxGradeLevel: 4 });
+      // And the class's meal is kept clear of the teaching group's lessons:
+      // the shared-pupil pair reaches the payload even though the class has no
+      // requirement of its own, because the class got its anonymous id first.
+      expect(payload.groupConflicts).toHaveLength(1);
+      const [pair] = payload.groupConflicts;
+      expect(new Set(pair)).toEqual(new Set([payload.groups[0].id, payload.requirements[0].studentGroupId]));
+    });
+
     it('derives group-conflict pairs from students shared across groups', async () => {
       // Two scheduled groups: home class 7A and teaching group Ma71. Student
       // S1 has 7A as home class AND a Ma71 membership -> exactly one pair.
@@ -1944,11 +1993,12 @@ describe('OptimizationProxyService', () => {
 
       await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
-      expect(
-        postedPayload()
-          .groups.map((g: any) => g.lunchHeadcount)
-          .sort(),
-      ).toEqual([0, 2]);
+      // The class alone. The teaching group used to be sent with headcount 0
+      // and was then owed a mandatory meal of its own by the engine — thirty
+      // minutes reserved on Ma71's day for a lunch nobody takes there. Now it
+      // is not a group that eats at all; its lessons keep 7A's meal clear
+      // through the shared-pupil pair instead.
+      expect(postedPayload().groups.map((g: any) => g.lunchHeadcount)).toEqual([2]);
       // The fact belongs to the group, and is carried in exactly one place.
       expect(postedPayload().requirements[0]).not.toHaveProperty("lunchHeadcount");
     });
@@ -1978,6 +2028,10 @@ describe('OptimizationProxyService', () => {
           { id: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: GROUP_ID },
           { id: 'aaaaaaa2-0000-4000-8000-000000000002', studentGroupId: HANDPLACED },
           { id: 'aaaaaaa3-0000-4000-8000-000000000003', studentGroupId: HANDPLACED },
+        ],
+        groups: [
+          { id: GROUP_ID, gradeLevel: null, kind: 'CLASS' },
+          { id: HANDPLACED, gradeLevel: null, kind: 'CLASS' },
         ],
       });
       echoEngine();

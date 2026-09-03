@@ -659,7 +659,6 @@ class SchedulerSolver:
         # engine only through `groups` and still eats.
         lunch_groups = len(
             _lunch_group_ids(
-                (requirement.student_group_id for requirement in request.requirements),
                 request.groups,
             ),
         )
@@ -1003,7 +1002,6 @@ class SchedulerSolver:
         # every requirement carries lessons_per_week >= 1, so each one's group
         # is in `by_group` there exactly as it is in this list here.
         lunch_group_ids = _lunch_group_ids(
-            (requirement.student_group_id for requirement in request.requirements),
             request.groups,
         )
         blocked_starts = self._lunch_starts_blocked_by_fixed_lessons(
@@ -2634,7 +2632,7 @@ class SchedulerSolver:
             # such a class has no requirement left and so no decisions, and
             # while these came off the requirements it was invisible at lunch
             # while being plainly visible everywhere else.
-            lunch_group_ids = _lunch_group_ids(by_group, groups)
+            lunch_group_ids = _lunch_group_ids(groups)
             headcount_by_group = _lunch_headcounts(groups)
             # A meal has no requirement, so the stage it belongs to comes off
             # the group itself. A group with no derivable years matches no
@@ -3219,19 +3217,19 @@ def _lunch_window_is_set(rules: ScheduleRules) -> bool:
     )
 
 
-def _lunch_group_ids(
-    with_lessons: Iterable[UUID],
-    groups: list[AnonymousGroup],
-) -> list[UUID]:
+def _lunch_group_ids(groups: list[AnonymousGroup]) -> list[UUID]:
     """Every group the solver owes a lunch break, in a stable order.
 
-    The union, not the groups list on its own. The gateway sends an entry per
-    group that has a requirement or a locked lesson, so in contract the list
-    already covers everything here — but the engine deploys before the gateway
-    that fills it, and a groups-only reading would quietly withdraw the
-    free-window guarantee from the whole school for the length of that window.
-    A group with lessons and no entry keeps its break and books no seats,
-    which is the honest reading of "nobody told us who eats".
+    EXACTLY THE PAYLOAD'S `groups`, and nothing derived from the lessons. The
+    gateway decides who eats: it sends the HOME CLASSES, with their headcounts
+    and their years, and a teaching group is not among them because its pupils
+    already eat with their class. This used to union in every group that had a
+    requirement — a shim for the release in which the engine shipped before the
+    gateway that fills `groups` — and the shim had a cost once `groups` was
+    real: a mandatory thirty-minute reservation on every teaching group's day
+    for a meal nobody takes there, and an INFEASIBLE with a lunch cause on the
+    day it did not fit. A class's meal is still kept clear of its teaching
+    groups' lessons, through the shared-pupil pairs.
 
     Ordered rather than a set because both builds of the model iterate this
     and `solve` refuses to hint one from the other unless they agree
@@ -3239,7 +3237,7 @@ def _lunch_group_ids(
     """
     ordered: list[UUID] = []
     seen: set[UUID] = set()
-    for group_id in (*with_lessons, *(group.id for group in groups)):
+    for group_id in (group.id for group in groups):
         if group_id not in seen:
             seen.add(group_id)
             ordered.append(group_id)

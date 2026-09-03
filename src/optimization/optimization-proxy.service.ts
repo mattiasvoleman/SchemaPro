@@ -374,6 +374,31 @@ export class OptimizationProxyService {
      * books no seats while its children eat is the one error direction the seat
      * rule cannot afford.
      */
+    /*
+     * AND EVERY HOME CLASS, whether or not the timplan names it.
+     *
+     * The paragraph above covers a class whose lessons are hand-placed. It did
+     * not cover the school in the screenshot: every lesson on a teaching group
+     * (4ma1, 4sv1, 4no1 …) and not one on the class itself. Such a class has no
+     * requirement, no preserved lesson, and so no entry here — and a group not
+     * in `groups` is a group the engine owes no lunch. Its children were in the
+     * building all along; their meal was never placed, and the sittings the
+     * engine DID place — for the teaching groups, headcount 0 — were dropped at
+     * persist because a pupil eats with their class. Zero rows, and a notice
+     * saying no lunch had been placed for the year.
+     *
+     * A class is a class by `kind`, read here once and reused for the spans
+     * below. Fetched before the membership queries because those are scoped to
+     * this list, and a class's pupils have to be counted for its headcount.
+     */
+    const allGroups = await tx.studentGroup.findMany({
+      where: { academicYearId },
+      select: { id: true, gradeLevel: true, kind: true },
+    });
+    const homeClassIds = allGroups
+      .filter((group) => group.kind === 'CLASS')
+      .map((group) => group.id);
+
     const scheduledGroupIds = [
       ...new Set([
         ...rawRequirements.map((r) => r.studentGroupId),
@@ -381,6 +406,7 @@ export class OptimizationProxyService {
         ...preservedLessons.flatMap((lesson) =>
           lesson.extraGroups.map((entry) => entry.studentGroupId),
         ),
+        ...homeClassIds,
       ]),
     ];
     const [homeMembers, teachingMembers] = await Promise.all([
@@ -454,18 +480,13 @@ export class OptimizationProxyService {
      * it — half a group in an allowed year is not an allowed placement.
      */
     const involvedStudentIds = [...groupsByStudent.keys()];
-    const [studentHomeClasses, allGroups] = await Promise.all([
+    const studentHomeClasses =
       involvedStudentIds.length > 0
-        ? tx.user.findMany({
+        ? await tx.user.findMany({
             where: { id: { in: involvedStudentIds } },
             select: { id: true, studentGroupId: true },
           })
-        : Promise.resolve([] as { id: string; studentGroupId: string | null }[]),
-      tx.studentGroup.findMany({
-        where: { academicYearId },
-        select: { id: true, gradeLevel: true },
-      }),
-    ]);
+        : ([] as { id: string; studentGroupId: string | null }[]);
     const gradeOfGroup = new Map(allGroups.map((g) => [g.id, g.gradeLevel]));
     const homeClassOf = new Map(
       studentHomeClasses.map((student) => [student.id, student.studentGroupId]),
@@ -496,6 +517,21 @@ export class OptimizationProxyService {
           max: Math.max(...grades),
         });
       }
+    }
+    // A group the timplan names but whose year cannot be derived is bound by
+    // NO frame and NO rast — the engine reads "unknown" as "unrestricted", on
+    // purpose. That is how a slöjd group with no members and no gradeLevel of
+    // its own gets a lesson laid straight across förmiddagsrasten. Said in the
+    // log here and on the generate page, because the grid only ever shows the
+    // band and the lesson on top of it, never why.
+    const spanless = rawRequirements
+      .map((r) => r.studentGroupId)
+      .filter((groupId, index, all) => all.indexOf(groupId) === index)
+      .filter((groupId) => !gradeSpanByGroup.has(groupId));
+    if (spanless.length > 0) {
+      this.logger.warn(
+        `${spanless.length} group(s) with requirements have no derivable year; frame times and rasts will not bind their lessons [academicYearId=${academicYearId}].`,
+      );
     }
 
     // Groups sharing at least one student can never hold overlapping lessons —
@@ -675,7 +711,16 @@ export class OptimizationProxyService {
      * class whose lessons were all placed by hand disappeared from the count
      * along with its requirements, while its children kept eating.
      */
-    const groups: AnonymousGroup[] = scheduledGroupIds.map((groupId) => ({
+    // HOME CLASSES ONLY. `groups` is who eats, and a pupil eats once, with their
+    // class. A teaching group here would be a second mandatory meal for the
+    // same children — thirty minutes reserved on Ma71's day for a lunch nobody
+    // takes there, and an INFEASIBLE with a lunch cause on the day it does not
+    // fit. Its lessons still keep the class's meal clear, through the shared-
+    // pupil pairs below.
+    const homeClassSet = new Set(homeClassIds);
+    const groups: AnonymousGroup[] = scheduledGroupIds
+      .filter((groupId) => homeClassSet.has(groupId))
+      .map((groupId) => ({
       id: anonId(groupAnonMap, groupId),
       lunchHeadcount: homeCountByGroup.get(groupId) ?? 0,
       // The same span the requirements carry, sent on the group as well: a
