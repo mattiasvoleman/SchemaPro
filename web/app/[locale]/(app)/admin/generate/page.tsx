@@ -16,6 +16,8 @@ import {
 import { Link } from "@/i18n/navigation";
 import {
   useActiveYear,
+  useGroupMemberships,
+  useGroups,
   useLunchSettings,
   useOptimizationHistory,
   useOptimizationJob,
@@ -31,6 +33,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatTime } from "@/lib/utils";
+import { buildGradeSpans } from "@/lib/grade-span";
 import {
   Card,
   CardContent,
@@ -48,6 +51,45 @@ export default function GeneratePage() {
   const { data: requirements } = useRequirements(activeYear?.id ?? null);
   const { data: rooms } = useRooms();
   const { data: people } = usePeople();
+  const { data: groups } = useGroups();
+  const { data: memberships } = useGroupMemberships();
+
+  /**
+   * Groups the timplan names whose year cannot be derived.
+   *
+   * The engine reads "no year" as "unrestricted", on purpose — and so a group
+   * with requirements, no members and no gradeLevel of its own is bound by
+   * neither ramtider nor raster. The screenshot that prompted this had a slöjd
+   * group's lesson laid straight across förmiddagsrasten while every other
+   * lesson respected it. The grid shows the band and the lesson on top of it,
+   * never why; this is the one place the school stands before it runs.
+   *
+   * Same derivation the gateway uses for the payload (members' home classes,
+   * then the group's own year): a warning computed by a different rule than
+   * the one that decides would be worse than none.
+   */
+  const spanlessGroups = useMemo(() => {
+    if (!requirements || !groups) return [];
+    const spans = buildGradeSpans({
+      groups,
+      membersByGroup: (memberships ?? []).reduce((map, row) => {
+        const list = map.get(row.studentGroupId);
+        if (list) list.push(row.studentId);
+        else map.set(row.studentGroupId, [row.studentId]);
+        return map;
+      }, new Map<string, string[]>()),
+      homeClassOf: new Map(
+        (people ?? [])
+          .filter((person) => person.role === "STUDENT" && person.isActive)
+          .map((person) => [person.id, person.studentGroupId] as const),
+      ),
+    });
+    const named = new Set(requirements.map((requirement) => requirement.studentGroupId));
+    return groups
+      .filter((group) => named.has(group.id) && !spans.has(group.id))
+      .map((group) => group.name)
+      .sort();
+  }, [requirements, groups, memberships, people]);
 
   const startOptimization = useStartOptimization();
   const [jobId, setJobId] = useState<string | null>(null);
@@ -150,6 +192,27 @@ export default function GeneratePage() {
   return (
     <div className="mx-auto max-w-3xl">
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
+
+      {/* A warning, not a gate: the run is legal, and the school may mean it.
+          What it must not be is a surprise. */}
+      {spanlessGroups.length > 0 ? (
+        <div
+          role="status"
+          className="mb-6 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+        >
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
+          <div className="space-y-1">
+            <p className="font-medium">
+              {t("noYearTitle", { count: spanlessGroups.length })}
+            </p>
+            <p>{t("noYearBody")}</p>
+            <p className="font-medium">{spanlessGroups.join(", ")}</p>
+            <Link href="/admin/groups" className="underline underline-offset-4">
+              {t("noYearLink")}
+            </Link>
+          </div>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader>

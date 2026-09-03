@@ -516,7 +516,10 @@
     "rulesTitle": "Skolregler",
     "rulesHint": "Reglerna gäller hela skolan och ställs in under Tillgänglighet.",
     "ruleMaxPerDay": "Max lektioner per dag och klass",
-    "rulesEdit": "Ändra"
+    "rulesEdit": "Ändra",
+    "noYearTitle": "{count, plural, one {En grupp} other {# grupper}} i timplanen saknar årskurs",
+    "noYearBody": "Motorn läser ”ingen årskurs” som ”obegränsad”: ramtider och raster gäller inte för dessa gruppers lektioner, så de kan hamna rakt över en rast. Årskursen härleds ur medlemmarnas hemklasser, eller ur gruppens egen årskurs om den saknar medlemmar.",
+    "noYearLink": "Lägg till medlemmar eller årskurs under Klasser"
   },
   "timetable": {
     "title": "Grundschema",

@@ -516,7 +516,10 @@
     "rulesTitle": "School rules",
     "rulesHint": "The rules apply to the whole school and are set under Availability.",
     "ruleMaxPerDay": "Max lessons per day per class",
-    "rulesEdit": "Change"
+    "rulesEdit": "Change",
+    "noYearTitle": "{count, plural, one {One group} other {# groups}} in the timplan has no year",
+    "noYearBody": "The solver reads “no year” as “unrestricted”: frame times and breaks do not apply to these groups’ lessons, so they can land straight across a break. The year is derived from the members’ home classes, or from the group’s own year when it has no members.",
+    "noYearLink": "Add members or a year under Classes"
   },
   "timetable": {
     "title": "Master timetable",
