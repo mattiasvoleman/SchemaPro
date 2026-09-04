@@ -6148,20 +6148,15 @@ def test_the_hours_verdict_leaves_a_solvable_week_alone() -> None:
     assert solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
 
 
-def test_the_hours_verdict_never_sums_two_halves_that_may_overlap() -> None:
-    """SOUNDNESS. 4ma1 and 4ma2 both share pupils with 4.1 and not with each
-    other, so the model lets them run at once. Summing every group that shares
-    with the class would count both halves against the same hours and refuse a
-    week the model accepts. Only a clique is summed.
+def _twelve_halves_of_one_class() -> dict[str, object]:
+    """4ma1 and 4ma2 both share pupils with 4.1 and not with each other, so the
+    model lets them run at once. Twelve halves, three lessons each = 36 lessons
+    "for the class" if summed — far past the 25 a packed day holds — but they
+    pair off freely, so at most 18 need distinct slots and the week is fine.
     """
-    from app.schemas.schedule import OptimizeScheduleRequest
-    from app.solver.scheduler_solver import SchedulerSolver
-
-    solver = SchedulerSolver(_settings())
     cls = str(uuid4())
     halves = [str(uuid4()) for _ in range(12)]
-    teacher = str(uuid4())
-    payload = {
+    return {
         "requestId": str(uuid4()), "academicYearId": str(uuid4()),
         # Twelve halves, three lessons each = 36 lessons "for the class" if
         # summed — far past the 25 a packed day holds — but they pair off
@@ -6187,7 +6182,19 @@ def test_the_hours_verdict_never_sums_two_halves_that_may_overlap() -> None:
             "startTime": "08:00:00", "endTime": "13:30:00", "changeoverMinutes": 0,
         }],
     }
-    del teacher
+
+
+def test_the_hours_verdict_never_sums_two_halves_that_may_overlap() -> None:
+    """SOUNDNESS. 4ma1 and 4ma2 both share pupils with 4.1 and not with each
+    other, so the model lets them run at once. Summing every group that shares
+    with the class would count both halves against the same hours and refuse a
+    week the model accepts. Only a clique is summed.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _twelve_halves_of_one_class()
 
     assert solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
 
@@ -6223,3 +6230,362 @@ def test_a_locked_lesson_that_blocks_only_one_member_is_not_subtracted() -> None
     ]
 
     assert solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
+
+
+def _one_class_with_a_short_day(lessons_per_week: int, minutes: tuple[int, ...]) -> dict[str, object]:
+    """One class, no lunch, framed 08:00-09:45: 105 minutes a day, five days."""
+    cls = str(uuid4())
+    teacher = str(uuid4())
+    return {
+        "requestId": str(uuid4()), "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": cls,
+                "teacherId": teacher, "lessonsPerWeek": lessons_per_week,
+                "minutesPerLesson": length, "studentGroupSize": 24,
+                "minGradeLevel": 4, "maxGradeLevel": 4,
+            }
+            for length in minutes
+        ],
+        "groups": [{"id": cls, "lunchHeadcount": 24, "minGradeLevel": 4, "maxGradeLevel": 4}],
+        "rooms": [{"id": str(uuid4()), "capacity": 30}],
+        "constraints": [], "groupConflicts": [], "rules": {},
+        "frameTimes": [{
+            "minGradeLevel": 0, "maxGradeLevel": 12, "dayOfWeek": None,
+            "startTime": "08:00:00", "endTime": "09:45:00", "changeoverMinutes": 0,
+        }],
+    }
+
+
+def test_the_hours_verdict_measures_a_gap_by_the_lessons_common_measure() -> None:
+    """SOUNDNESS. A 105-minute day holds a 60- and a 45-minute lesson exactly.
+    Rounding the gap down to a multiple of the SHORTEST lesson called it 90
+    and refused five such days for a class the model schedules in a second."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    request = OptimizeScheduleRequest.model_validate(_one_class_with_a_short_day(5, (60, 45)))
+
+    assert solver._clique_hours_verdict(request) is None
+    assert solver.solve(request).status == "OPTIMAL"
+
+
+def test_the_hours_verdict_still_rounds_a_gap_down_to_whole_lessons() -> None:
+    """The measure is the lessons' common divisor, not the minute: a 105-minute
+    day holds ONE hour-long lesson, so eight a week do not fit in five days
+    although 8 x 60 = 480 < 5 x 105 = 525."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    verdict = solver._clique_hours_verdict(
+        OptimizeScheduleRequest.model_validate(_one_class_with_a_short_day(8, (60,))),
+    )
+
+    assert verdict is not None
+    assert verdict.conflicts[0].category == "REQUIREMENT_DEMAND"
+    assert "480 minutes" in verdict.conflicts[0].message
+    assert "300" in verdict.conflicts[0].message
+
+
+def _frames_that_pack_the_middle_years(payload: dict[str, object]) -> dict[str, object]:
+    """Reproduction G: years 4-6 framed 08:00-13:30 — exactly five hour-long
+    lessons and a thirty-minute meal — with 115 seats for a school of 480.
+    A five-lesson day is packed and its lunch can only start 11:00 or 12:00;
+    twenty-four lessons at most five a day force four packed days a class;
+    two disjoint sittings of four classes seat eight packed class-days a day,
+    forty a week, and the eleven classes of those years need forty-four."""
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30,
+        "diningSeats": 115, "maxLessonsPerDayPerGroup": 7,
+    }
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": low, "maxGradeLevel": high, "dayOfWeek": None,
+            "startTime": start, "endTime": end, "changeoverMinutes": 0,
+        }
+        for low, high, start, end in (
+            (0, 3, "08:00:00", "13:30:00"),
+            (4, 6, "08:00:00", "13:30:00"),
+            (7, 9, "08:10:00", "15:30:00"),
+        )
+    ]
+    return payload
+
+
+def test_a_frame_that_packs_a_stage_day_is_refused_by_the_lunch_stage() -> None:
+    """Reproduction G, decided in under a second by the lunch stage. Neither
+    arithmetic verdict sees it — the hall feeds the school's student-minutes
+    and every class's hours fit — and the full model answered UNKNOWN at 60 s."""
+    import time
+
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _frames_that_pack_the_middle_years(_teaching_group_school(classes=20))
+    request = OptimizeScheduleRequest.model_validate(payload)
+    assert solver._dining_hall_verdict(request) is None
+    assert solver._clique_hours_verdict(request) is None
+
+    started = time.monotonic()
+    response = solver.solve(request)
+
+    assert time.monotonic() - started < 20
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert "115 seats" in response.conflicts.summary
+    assert "11 class(es)" in response.conflicts.summary
+    detail = response.conflicts.conflicts[0]
+    assert detail.category == "DINING_CAPACITY"
+    # The classes named are exactly those that cannot avoid a packed day: the
+    # eleven of years 4-6, and none of years 7-9, whose frame leaves six a day.
+    middle_years = {g["id"] for g in payload["groups"] if g["maxGradeLevel"] <= 6}  # type: ignore[index]
+    assert len(middle_years) == 11
+    assert {str(group_id) for group_id in detail.resource_ids} == middle_years
+
+
+@pytest.mark.parametrize("seats", [None, 115])
+def test_the_lunch_stage_names_the_lunch_when_seats_are_not_the_difference(
+    monkeypatch: pytest.MonkeyPatch, seats: int | None,
+) -> None:
+    """Reproduction B with the hours verdict switched off, so the stage is what
+    decides it. Refused with the seats and without them alike, so it is the
+    lock beside the lunch that is named, never the hall — with 115 seats for
+    96 pupils the hall was never the problem."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    monkeypatch.setattr(SchedulerSolver, "_clique_hours_verdict", lambda self, request: None)
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=4)
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30,
+        **({"diningSeats": seats} if seats else {}),
+    }
+    _pin_lunch_with_locked_lessons(payload)
+
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert "1 class(es)" in response.conflicts.summary
+    detail = response.conflicts.conflicts[0]
+    assert detail.category == "LUNCH_WINDOW"
+    assert [str(group_id) for group_id in detail.resource_ids] == [payload["groups"][0]["id"]]  # type: ignore[index]
+
+
+def test_the_lunch_stage_settles_a_solvable_school_s_meals_within_its_seats() -> None:
+    """Four classes of 24 and a hall of 50: two waves. The stage hands back one
+    start per class and day, never more than the hall holds at any slot, and
+    the week then solves."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=4)
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30,
+        "diningSeats": 50,
+    }
+    request = OptimizeScheduleRequest.model_validate(payload)
+
+    verdict, hints = solver._lunch_stage_one(request)
+
+    assert verdict is None
+    classes = {UUID(g["id"]) for g in payload["groups"]}  # type: ignore[index]
+    assert set(hints) == {(cls, day) for cls in classes for day in range(5)}
+    lunch_slots = 6  # 30 minutes on a five-minute grid
+    for day in range(5):
+        starts = [slot for (_, hinted_day), slot in hints.items() if hinted_day == day]
+        assert all(day * 120 + 30 <= slot <= day * 120 + 54 for slot in starts)  # 10:30 .. 12:30
+        for slot in starts:
+            eating = sum(24 for other in starts if other <= slot < other + lunch_slots)
+            assert eating <= 50
+    assert solver.solve(request).status in ("OPTIMAL", "FEASIBLE")
+
+
+def test_the_lunch_stage_starts_are_hinted_into_the_existence_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What the stage settles reaches phase 1a as a hint on that lunch start,
+    and only that one: an unrelated variable carries no hint from it."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _teaching_group_school(classes=2)
+    payload["rules"] = {"lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30}
+    first = UUID(payload["groups"][0]["id"])  # type: ignore[index]
+    eleven = 36  # 11:00 on day 0, in slots from 08:00
+    monkeypatch.setattr(
+        SchedulerSolver, "_lunch_stage_one", lambda self, request: (None, {(first, 0): eleven}),
+    )
+    solved: list[cp_model.CpModel] = []
+    original = cp_model.CpSolver.Solve
+
+    def spy(self: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object) -> int:
+        solved.append(model)
+        return original(self, model, *args, **kwargs)
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", spy)
+
+    SchedulerSolver(_settings()).solve(OptimizeScheduleRequest.model_validate(payload))
+
+    phase_1a = solved[0].Proto()
+    hinted = dict(zip(phase_1a.solution_hint.vars, phase_1a.solution_hint.values))
+    index_of = {variable.name: index for index, variable in enumerate(phase_1a.variables)}
+    assert hinted[index_of[f"lunchstart_{first}_0"]] == eleven
+    assert index_of[f"lunchstart_{first}_1"] not in hinted
+
+
+def test_a_lunch_stage_that_cannot_decide_costs_the_week_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """UNKNOWN from the stage is not a verdict and not a hint: the full solve
+    runs exactly as before it existed."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _teaching_group_school(classes=2)
+    payload["rules"] = {"lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30}
+    solved: list[cp_model.CpModel] = []
+    original = cp_model.CpSolver.Solve
+
+    def first_call_runs_out(
+        self: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object,
+    ) -> int:
+        solved.append(model)
+        if len(solved) == 1:
+            return cp_model.UNKNOWN
+        return original(self, model, *args, **kwargs)
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", first_call_runs_out)
+
+    response = SchedulerSolver(_settings()).solve(OptimizeScheduleRequest.model_validate(payload))
+
+    assert response.status in ("OPTIMAL", "FEASIBLE")
+    assert len(response.lunches) == 10
+    # The first model solved was the stage's — lunch starts and nothing else.
+    assert all(v.name.startswith(("lunchstart_", "lunchat_", "lessons_")) for v in solved[0].Proto().variables)
+    assert len(solved[1].Proto().solution_hint.vars) == 0
+
+
+def test_the_lunch_stage_reads_the_lunch_starts_the_model_allows() -> None:
+    """One domain per class and day, composed from the same four facts the
+    model states as four constraints: the window, the stage's sitting, the
+    locked lesson beside it and the reservation on top of it."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver, _domain_intervals
+
+    payload = _teaching_group_school(classes=1)
+    cls = payload["groups"][0]["id"]  # type: ignore[index]
+    teaching_group = payload["requirements"][0]["studentGroupId"]  # type: ignore[index]
+    payload["rules"] = {"lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30}
+    # The sitting: years 4-6 eat 11:00-12:30, so a 30-minute meal starts 11:00-12:00.
+    payload["lunchServings"] = [_sitting(4, 6, "11:00", "12:30")]
+    # Monday: a locked lesson 11:00-11:30 on a teaching group of the class.
+    payload["fixedLessons"] = [{
+        "id": str(uuid4()), "teacherId": payload["requirements"][0]["teacherId"],  # type: ignore[index]
+        "coTeacherId": None, "studentGroupId": teaching_group, "extraGroupIds": [], "roomId": None,
+        "dayOfWeek": 1, "startTime": "11:00:00", "endTime": "11:30:00",
+    }]
+    # Tuesday: the class is reserved 12:00-13:00.
+    payload["constraints"] = [{
+        "id": str(uuid4()), "resourceKind": "STUDENT_GROUP", "resourceId": cls,
+        "dayOfWeek": 2, "date": None, "startTime": "12:00:00", "endTime": "13:00:00",
+        "kind": "UNAVAILABLE",
+    }]
+    solver = SchedulerSolver(_settings())
+
+    domains = solver._lunch_start_domains(OptimizeScheduleRequest.model_validate(payload))
+
+    assert domains is not None
+    day = 120  # slots per day on a five-minute grid, 08:00-18:00
+    key = UUID(cls)
+    # Slots from 08:00: 11:00 = 36, 11:30 = 42, 12:00 = 48.
+    assert _domain_intervals(domains[(key, 0)]) == [(42, 48)]
+    assert _domain_intervals(domains[(key, 1)]) == [(day + 36, day + 42)]
+    assert _domain_intervals(domains[(key, 2)]) == [(2 * day + 36, 2 * day + 48)]
+    assert len(domains) == 5
+
+
+def test_the_lunch_stage_is_silent_without_a_lunch_window() -> None:
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _teaching_group_school(classes=1)
+    payload["rules"] = {"diningSeats": 115}
+
+    assert SchedulerSolver(_settings())._lunch_stage_one(
+        OptimizeScheduleRequest.model_validate(payload),
+    ) == (None, {})
+
+
+def test_the_lunch_stage_steps_aside_when_a_sitting_and_a_lock_leave_no_start() -> None:
+    """A sitting of exactly one start and a locked lesson on that start: each
+    alone leaves a meal; together they leave none. Validation refuses that by
+    name before any solve, so the stage never sees it through solve() — and
+    a direct caller still gets no verdict and no empty variable handed to
+    CP-SAT, which would call the model invalid."""
+    from app.exceptions import InvalidScheduleInputError
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _teaching_group_school(classes=1)
+    payload["rules"] = {"lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30}
+    payload["lunchServings"] = [_sitting(4, 6, "11:00", "11:30")]
+    payload["fixedLessons"] = [{
+        "id": str(uuid4()), "teacherId": payload["requirements"][0]["teacherId"],  # type: ignore[index]
+        "coTeacherId": None, "studentGroupId": payload["requirements"][0]["studentGroupId"],  # type: ignore[index]
+        "extraGroupIds": [], "roomId": None,
+        "dayOfWeek": 1, "startTime": "11:00:00", "endTime": "11:30:00",
+    }]
+    solver = SchedulerSolver(_settings())
+    request = OptimizeScheduleRequest.model_validate(payload)
+
+    assert solver._lunch_stage_one(request) == (None, {})
+    with pytest.raises(InvalidScheduleInputError, match="Together, locked lessons and the declared"):
+        solver.solve(request)
+
+
+def test_a_reservation_moves_the_lunch_on_any_day_of_the_week() -> None:
+    """The reservations helper returned day-relative slots into an absolute
+    domain, so a reservation narrowed a lunch on Monday only — on Tuesday the
+    range met nothing and the class ate straight through its samling. Reserve
+    10:30-12:30 on Tuesday and the only start left is 12:30."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _teaching_group_school(classes=1)
+    cls = payload["groups"][0]["id"]  # type: ignore[index]
+    payload["rules"] = {"lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30}
+    payload["constraints"] = [{
+        "id": str(uuid4()), "resourceKind": "STUDENT_GROUP", "resourceId": cls,
+        "dayOfWeek": 2, "date": None, "startTime": "10:30:00", "endTime": "12:30:00",
+        "kind": "UNAVAILABLE",
+    }]
+
+    response = SchedulerSolver(_settings()).solve(OptimizeScheduleRequest.model_validate(payload))
+
+    assert response.status in ("OPTIMAL", "FEASIBLE")
+    tuesday = [lunch for lunch in response.lunches if lunch.day_of_week == 2]
+    assert [lunch.start_time for lunch in tuesday] == ["12:30:00"]
+
+
+
+def test_the_lunch_stage_never_refuses_two_halves_that_may_overlap() -> None:
+    """SOUNDNESS, the same as the hours verdict's: the stage counts a clique's
+    lessons against its free time, and halves that pair off freely are no
+    clique. Twelve halves, three lessons each, in a frame that holds five a
+    day — refused if summed, fine when they overlap."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    verdict, hints = solver._lunch_stage_one(
+        OptimizeScheduleRequest.model_validate(_twelve_halves_of_one_class()),
+    )
+
+    assert verdict is None
+    assert len(hints) == 5
