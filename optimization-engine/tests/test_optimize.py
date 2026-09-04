@@ -6055,3 +6055,171 @@ def test_the_hall_check_leaves_out_a_class_that_is_not_in_school_that_day() -> N
     ]
 
     assert solver._dining_hall_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
+
+
+
+def test_the_explanation_solve_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An INFEASIBLE is proved before its explanation is sought.
+
+    Measured on three overlapping lunch sittings: phase 1 proves INFEASIBLE in
+    under a second, and the single-threaded assumption solve then ran the full
+    sixty seconds and returned nothing. The cap decides how long a school waits
+    for names it may not get — not whether the verdict stands.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    seen: list[float] = []
+    real_solve = cp_model.CpSolver.Solve
+
+    def recording_solve(self: cp_model.CpSolver, model: cp_model.CpModel) -> int:
+        seen.append(self.parameters.max_time_in_seconds)
+        return real_solve(self, model)
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", recording_solve)
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=300.0))
+
+    solver._explain_infeasible(OptimizeScheduleRequest.model_validate(_sample_payload()))
+
+    assert seen == [SchedulerSolver.EXPLAIN_CAP_SECONDS]
+
+
+
+def _pin_lunch_with_locked_lessons(payload: dict[str, object]) -> dict[str, object]:
+    """Reproduction B: one class's first two teaching groups locked 11-12 and
+    12-13 every weekday, so its lunch can only start 10:30 and its pupils are
+    busy 10:30-13:00. Four lessons a day fit around that; the class needs
+    twenty-four a week."""
+    cls = payload["groups"][0]["id"]  # type: ignore[index]
+    tgs = [b for a, b in payload["groupConflicts"] if a == cls]  # type: ignore[union-attr]
+    teacher = {r["studentGroupId"]: r["teacherId"] for r in payload["requirements"]}  # type: ignore[union-attr]
+    fixed = []
+    for day in (1, 2, 3, 4, 5):
+        for tg, (start, end) in ((tgs[0], ("11:00:00", "12:00:00")), (tgs[1], ("12:00:00", "13:00:00"))):
+            fixed.append({
+                "id": str(uuid4()), "teacherId": teacher[tg], "coTeacherId": None,
+                "studentGroupId": tg, "extraGroupIds": [], "roomId": None,
+                "dayOfWeek": day, "startTime": start, "endTime": end,
+            })
+    payload["fixedLessons"] = fixed
+    return payload
+
+
+def test_locked_lessons_that_pin_the_lunch_are_refused_by_counting() -> None:
+    """Reproduction B, decided by arithmetic instead of 120 s of UNKNOWN."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=4)
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30,
+    }
+    _pin_lunch_with_locked_lessons(payload)
+
+    response = solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    detail = response.conflicts.conflicts[0]
+    assert detail.category == "REQUIREMENT_DEMAND"
+    # 24 x 60 = 1440 needed; 4 a day x 60 x 5 = 1200 offered.
+    assert "1440 minutes" in detail.message
+    assert "1200" in detail.message
+    assert len(detail.requirement_ids) == 8
+    # And the lunch is named as the difference: without it, 08:00-11:00 holds
+    # three and 13:00-15:30 two, 25 a week for a class that needs 24.
+    lunch = response.conflicts.conflicts[1]
+    assert lunch.category == "LUNCH_WINDOW"
+    assert "lunch break" in lunch.message
+    assert "1500 minutes free" in lunch.message
+
+
+def test_the_hours_verdict_leaves_a_solvable_week_alone() -> None:
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=4)
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30,
+    }
+
+    assert solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
+
+
+def test_the_hours_verdict_never_sums_two_halves_that_may_overlap() -> None:
+    """SOUNDNESS. 4ma1 and 4ma2 both share pupils with 4.1 and not with each
+    other, so the model lets them run at once. Summing every group that shares
+    with the class would count both halves against the same hours and refuse a
+    week the model accepts. Only a clique is summed.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    cls = str(uuid4())
+    halves = [str(uuid4()) for _ in range(12)]
+    teacher = str(uuid4())
+    payload = {
+        "requestId": str(uuid4()), "academicYearId": str(uuid4()),
+        # Twelve halves, three lessons each = 36 lessons "for the class" if
+        # summed — far past the 25 a packed day holds — but they pair off
+        # freely, so at most 18 need distinct slots and the week is fine.
+        "requirements": [
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": half,
+                "teacherId": str(uuid4()), "lessonsPerWeek": 3, "minutesPerLesson": 60,
+                "studentGroupSize": 12, "minGradeLevel": 4, "maxGradeLevel": 4,
+            }
+            for half in halves
+        ],
+        "groups": [{"id": cls, "lunchHeadcount": 24, "minGradeLevel": 4, "maxGradeLevel": 4}],
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(6)],
+        "constraints": [],
+        # Each half shares with the class; halves share with each other only in
+        # pairs (0,1), (2,3) ... — never a clique of three.
+        "groupConflicts": [[cls, half] for half in halves]
+        + [[halves[i], halves[i + 1]] for i in range(0, 12, 2)],
+        "rules": {"lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30},
+        "frameTimes": [{
+            "minGradeLevel": 0, "maxGradeLevel": 12, "dayOfWeek": None,
+            "startTime": "08:00:00", "endTime": "13:30:00", "changeoverMinutes": 0,
+        }],
+    }
+    del teacher
+
+    assert solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload)) is None
+
+
+def test_a_locked_lesson_that_blocks_only_one_member_is_not_subtracted() -> None:
+    """SOUNDNESS. A locked lesson of a group that shares pupils with one member
+    of the clique blocks that member's lessons and nobody else's; the others may
+    teach through it. Subtracting it from the clique's free time would refuse a
+    week the model accepts."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=2)
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30,
+    }
+    # A stranger group, sharing pupils with ONE teaching group of class 0 only,
+    # locked 11-13 every day. Were it subtracted from the whole clique, class 0
+    # would read as twenty lessons against twenty-four, as in reproduction B.
+    cls = payload["groups"][0]["id"]
+    tg0 = next(b for a, b in payload["groupConflicts"] if a == cls)
+    stranger = str(uuid4())
+    payload["groupConflicts"].append([stranger, tg0])
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()), "teacherId": None, "coTeacherId": None,
+            "studentGroupId": stranger, "extraGroupIds": [], "roomId": None,
+            "dayOfWeek": day, "startTime": start, "endTime": end,
+        }
+        for day in (1, 2, 3, 4, 5)
+        for start, end in (("11:00:00", "12:00:00"), ("12:00:00", "13:00:00"))
+    ]
+
+    assert solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload)) is None

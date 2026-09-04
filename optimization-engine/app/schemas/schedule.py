@@ -35,6 +35,10 @@ ConflictCategory = Literal[
     "DINING_CAPACITY",
     "AVAILABILITY",
     "INSUFFICIENT_RESOURCES",
+    # The guaranteed lunch break is what leaves no room. Named beside a
+    # REQUIREMENT_DEMAND when the same hours would have held the lessons
+    # without it; the web has carried a label for it since the lunch shipped.
+    "LUNCH_WINDOW",
     # Not a proof — a TIMEOUT has none — but a measurement: which single rule,
     # switched off, let the same week solve inside a short probe budget.
     "TIMEOUT_PROBE",

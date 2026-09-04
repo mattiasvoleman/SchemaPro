@@ -313,6 +313,7 @@ export type ConflictCategory =
   | 'AVAILABILITY'
   | 'DINING_CAPACITY'
   | 'INSUFFICIENT_RESOURCES'
+  | 'LUNCH_WINDOW'
   // A measurement, not a proof: which rule, switched off, let a timed-out week
   // solve inside a short probe budget.
   | 'TIMEOUT_PROBE';
