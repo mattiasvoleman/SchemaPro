@@ -498,7 +498,7 @@
     "statusINFEASIBLE": "Inget giltigt schema möjligt",
     "statusTIMEOUT": "Lösaren hann inte klart",
     "lessonsGenerated": "{count} grundschemapass genererade",
-    "infeasibleHint": "Begränsningarna är för snäva. Granska konflikterna nedan, lätta på tillgängligheten eller minska lektioner per vecka, och försök igen.",
+    "infeasibleHint": "Begränsningarna går inte att uppfylla samtidigt. Sammanfattningen och konflikterna nedan säger vad som behöver ändras.",
     "timeoutHint": "Lösaren hittade inget schema inom sin tidsbudget. Det betyder inte att dina krav är omöjliga — försök köra igen, eller be din administratör höja lösarens tidsgräns. Att lätta på snäva tillgänglighetsfönster gör också schemat lättare att hitta.",
     "conflicts": "Upptäckta konflikter",
     "noConflicts": "Inga konflikter rapporterade.",

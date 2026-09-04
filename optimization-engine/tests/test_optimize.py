@@ -6335,15 +6335,22 @@ def test_a_frame_that_packs_a_stage_day_is_refused_by_the_lunch_stage() -> None:
     assert time.monotonic() - started < 20
     assert response.status == "INFEASIBLE"
     assert response.conflicts is not None
-    assert "115 seats" in response.conflicts.summary
-    assert "11 class(es)" in response.conflicts.summary
-    detail = response.conflicts.conflicts[0]
-    assert detail.category == "DINING_CAPACITY"
-    # The classes named are exactly those that cannot avoid a packed day: the
-    # eleven of years 4-6, and none of years 7-9, whose frame leaves six a day.
+    assert "115 seats cannot seat the 11 classes named (264 children)" in response.conflicts.summary
+    details = response.conflicts.conflicts
+    assert details[0].category == "DINING_CAPACITY"
+    assert "115 seats" in details[0].message
+    # The classes named are exactly those the proof needs: the eleven of years
+    # 4-6, whose frame packs the day, and none of years 7-9, whose frame leaves
+    # six a day. Each is named twice — as at school, and as having the lessons
+    # — because dropping either sentence for any one of them lets the week
+    # solve. The frames themselves are not named: they narrow no lunch start.
     middle_years = {g["id"] for g in payload["groups"] if g["maxGradeLevel"] <= 6}  # type: ignore[index]
     assert len(middle_years) == 11
-    assert {str(group_id) for group_id in detail.resource_ids} == middle_years
+    named = {(d.category, str(g)) for d in details[1:] for g in d.resource_ids}
+    assert named == {(c, g) for c in ("DINING_CAPACITY", "LUNCH_WINDOW") for g in middle_years}
+    assert len(details) == 3
+    # The frame IS the lever, and the line about the lessons says which one.
+    assert "inside their frame time 08:00-13:30" in details[2].message
 
 
 @pytest.mark.parametrize("seats", [None, 115])
@@ -6370,10 +6377,17 @@ def test_the_lunch_stage_names_the_lunch_when_seats_are_not_the_difference(
 
     assert response.status == "INFEASIBLE"
     assert response.conflicts is not None
-    assert "1 class(es)" in response.conflicts.summary
-    detail = response.conflicts.conflicts[0]
-    assert detail.category == "LUNCH_WINDOW"
-    assert [str(group_id) for group_id in detail.resource_ids] == [payload["groups"][0]["id"]]  # type: ignore[index]
+    assert "for the 1 class named" in response.conflicts.summary
+    assert "seats" not in response.conflicts.summary
+    pinned = payload["groups"][0]["id"]  # type: ignore[index]
+    # Three sentences about one class: it is at school, it has the lessons,
+    # and the locks take the starts. Never the hall.
+    assert [
+        (d.category, [str(g) for g in d.resource_ids]) for d in response.conflicts.conflicts
+    ] == [
+        ("LUNCH_WINDOW", [pinned]), ("LUNCH_WINDOW", [pinned]), ("GROUP_OVERLAP", [pinned]),
+    ]
+    assert "Locked lessons" in response.conflicts.conflicts[2].message
 
 
 def test_the_lunch_stage_settles_a_solvable_school_s_meals_within_its_seats() -> None:
@@ -6466,8 +6480,14 @@ def test_a_lunch_stage_that_cannot_decide_costs_the_week_nothing(
 
     assert response.status in ("OPTIMAL", "FEASIBLE")
     assert len(response.lunches) == 10
-    # The first model solved was the stage's — lunch starts and nothing else.
-    assert all(v.name.startswith(("lunchstart_", "lunchat_", "lessons_")) for v in solved[0].Proto().variables)
+    # The first model solved was the stage's — lunch starts, the day counts,
+    # and the sentence literals the naming can drop, nothing else.
+    assert all(
+        v.name.startswith((
+            "lunchstart_", "lunchat_", "lessons_", "eats_", "hall_", "declared_", "locked_", "closed_",
+        ))
+        for v in solved[0].Proto().variables
+    )
     assert len(solved[1].Proto().solution_hint.vars) == 0
 
 
@@ -6589,3 +6609,171 @@ def test_the_lunch_stage_never_refuses_two_halves_that_may_overlap() -> None:
 
     assert verdict is None
     assert len(hints) == 5
+
+
+def _the_register(idle_classes: int, pupils: int) -> dict[str, object]:
+    """Two classes scheduled, and the rest of the school's register entered
+    with its pupils and no lessons — what a school looks like the week it
+    tries the tool on two classes."""
+    payload = _teaching_group_school(classes=2)
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30,
+        "diningSeats": 115,
+    }
+    for index in range(idle_classes):
+        payload["groups"].append({  # type: ignore[union-attr]
+            "id": str(uuid4()), "lunchHeadcount": pupils,
+            "minGradeLevel": 4 + index % 6, "maxGradeLevel": 4 + index % 6,
+        })
+    return payload
+
+
+def test_a_register_the_hall_cannot_seat_in_waves_is_named_by_its_classes() -> None:
+    """The school in the report: two classes with lessons and twenty without,
+    every one of them sent to a hall of 115 seats. 22 x 24 x 30 student-minutes
+    fit the window's 115 x 150, so the arithmetic verdict passes; but five
+    classes of 24 are 120, so a wave seats four, five waves seat twenty, and
+    twenty-two do not fit. No class has a packed day, so the first naming rule
+    found nobody and the school read "0 class(es)". Named by deletion: any
+    twenty-one classes are enough, and the lessons are no cause at all."""
+    import time
+
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _the_register(idle_classes=20, pupils=24)
+    request = OptimizeScheduleRequest.model_validate(payload)
+    assert solver._dining_hall_verdict(request) is None
+
+    started = time.monotonic()
+    response = solver.solve(request)
+
+    assert time.monotonic() - started < 20
+    assert response.status == "INFEASIBLE"
+    assert response.conflicts is not None
+    assert "115 seats cannot seat the 21 classes named (504 children)" in response.conflicts.summary
+    details = response.conflicts.conflicts
+    assert [d.category for d in details] == ["DINING_CAPACITY", "DINING_CAPACITY"]
+    every_class = {g["id"] for g in payload["groups"]}  # type: ignore[index]
+    named = {str(g) for g in details[1].resource_ids}
+    assert len(named) == 21
+    assert named <= every_class
+
+
+def test_the_naming_stays_true_when_the_clock_runs_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every naming solve re-proves the week impossible with fewer sentences
+    pinned, so whatever is still pinned when the time runs out is enough. Here
+    it runs out at once: the verdict stands, every class stays named, and the
+    summary says the hall question was never answered."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    calls = {"n": 0}
+    original = cp_model.CpSolver.Solve
+
+    def solve(self: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object) -> int:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return original(self, model, *args, **kwargs)  # the stage's own proof
+        return cp_model.UNKNOWN
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", solve)
+    solver = SchedulerSolver(_settings())
+    payload = _frames_that_pack_the_middle_years(_teaching_group_school(classes=20))
+
+    verdict, hints = solver._lunch_stage_one(OptimizeScheduleRequest.model_validate(payload))
+
+    assert hints == {}
+    assert verdict is not None
+    assert "ran out of time" in verdict.summary
+    assert "for the 20 classes named" in verdict.summary
+    named = {str(g) for d in verdict.conflicts for g in d.resource_ids}
+    assert named == {g["id"] for g in payload["groups"]}  # type: ignore[index]
+
+
+def _one_class(*, group_span: tuple[int, int] | None, requirement_spans: list[tuple[int, int] | None],
+               lessons_per_week: int, frame: tuple[int, int, str, str]) -> dict[str, object]:
+    """One class, one teacher, its lessons on requirements that may carry
+    other years than the group entry does — which the gateway never sends,
+    and the engine must not rely on."""
+    cls = str(uuid4())
+    teacher = str(uuid4())
+    group: dict[str, object] = {"id": cls, "lunchHeadcount": 24, "minGradeLevel": None, "maxGradeLevel": None}
+    if group_span is not None:
+        group["minGradeLevel"], group["maxGradeLevel"] = group_span
+    requirements = []
+    for span in requirement_spans:
+        requirements.append({
+            "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": cls, "teacherId": teacher,
+            "lessonsPerWeek": lessons_per_week, "minutesPerLesson": 60, "studentGroupSize": 24,
+            "minGradeLevel": span[0] if span else None, "maxGradeLevel": span[1] if span else None,
+        })
+    lo, hi, start, end = frame
+    return {
+        "requestId": str(uuid4()), "academicYearId": str(uuid4()), "requirements": requirements,
+        "groups": [group], "rooms": [{"id": str(uuid4()), "capacity": 30}], "constraints": [],
+        "groupConflicts": [],
+        "rules": {"lunchStartTime": "11:00:00", "lunchEndTime": "13:00:00", "lunchMinutes": 30},
+        "frameTimes": [{
+            "minGradeLevel": lo, "maxGradeLevel": hi, "dayOfWeek": None,
+            "startTime": f"{start}:00", "endTime": f"{end}:00", "changeoverMinutes": 0,
+        }],
+    }
+
+
+def test_the_clique_reads_each_lesson_by_its_own_years_not_the_group_s() -> None:
+    """SOUNDNESS, found by a panel. The group entry says years 4-4 and a frame
+    closes that stage's day at 12:30; the requirement carries no years, so the
+    model lets its lessons run to 18:00 and places 25 a week with ease. The
+    clique first read the class's window off the group entry, counted 25 hours
+    into a four-and-a-half-hour day, and both readers refused the week."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10))
+    payload = _one_class(group_span=(4, 4), requirement_spans=[None], lessons_per_week=25,
+                         frame=(4, 4, "08:00", "12:30"))
+    request = OptimizeScheduleRequest.model_validate(payload)
+
+    assert solver._clique_hours_verdict(request) is None
+    verdict, hints = solver._lunch_stage_one(request)
+    assert verdict is None
+    assert len(hints) == 5
+    assert solver.solve(request).status in ("OPTIMAL", "FEASIBLE")
+
+
+def test_the_clique_reads_every_requirement_of_a_member_not_its_first() -> None:
+    """The same hole from the other side: a member's first requirement carries
+    years 4-4, its second none. Only the first was read, and the second's
+    lessons — free to run all day in the model — were counted into the frame."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10))
+    payload = _one_class(group_span=(4, 4), requirement_spans=[(4, 4), None], lessons_per_week=10,
+                         frame=(4, 4, "08:00", "12:30"))
+    request = OptimizeScheduleRequest.model_validate(payload)
+
+    # Twenty hours a week; the frame holds four a day around the break, the
+    # spanless half is not bound by it, and the week is fine.
+    assert solver._clique_hours_verdict(request) is None
+    verdict, _ = solver._lunch_stage_one(request)
+    assert verdict is None
+    assert solver.solve(request).status in ("OPTIMAL", "FEASIBLE")
+
+
+def test_the_clique_still_refuses_when_the_years_agree() -> None:
+    """The control: group and requirement both say 4-4, the frame closes at
+    12:30, and 25 hours a week do not fit four a day. Refused by counting, as
+    before — the fix widened nothing it should not have."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _one_class(group_span=(4, 4), requirement_spans=[(4, 4)], lessons_per_week=25,
+                         frame=(4, 4, "08:00", "12:30"))
+    verdict = solver._clique_hours_verdict(OptimizeScheduleRequest.model_validate(payload))
+
+    assert verdict is not None
+    assert "1500 minutes" in verdict.conflicts[0].message

@@ -799,6 +799,8 @@ export function useCrudMutations<TBody>(
 export interface ConflictDetail {
   category: string;
   message: string;
+  /** The school's names for the groups the sentence is about; empty when it names none. */
+  resourceNames?: string[];
 }
 
 export interface OptimizationJob {

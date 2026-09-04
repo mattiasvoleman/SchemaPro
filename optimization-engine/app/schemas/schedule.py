@@ -106,8 +106,11 @@ class AnonymousGroup(CamelModel):
     visibly pushing every other group's lunch around. Thirty children were in
     the building and the hall was told about none of them.
 
-    The gateway sends one entry per group with at least one requirement OR a
-    locked lesson naming it.
+    The gateway sends one entry per HOME CLASS that is at school this week:
+    one with a requirement or a locked lesson of its own, or with a pupil who
+    sits in a teaching group that has one. Not every class in the register —
+    a school scheduling two classes as a trial had its other twenty-two sent
+    to the hall as well, and was told the hall was too small for two.
     """
 
     id: UUID4

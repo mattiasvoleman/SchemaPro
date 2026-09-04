@@ -18,6 +18,7 @@ import type { RecurrenceWindow } from '../calendar/lesson-recurrence';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import type {
+  AiEngineConflictAnalysis,
   AiEngineScheduleRequest,
   AiEngineScheduleResponse,
   AnonymousConstraint,
@@ -147,6 +148,7 @@ export class OptimizationProxyService {
       groupAnonMap,
       headcountByGroup,
       roomTypeAnonMap,
+      groupNameById,
       storedRules,
     } = await this.prisma.withRls(user, (tx) =>
       this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user)),
@@ -189,8 +191,13 @@ export class OptimizationProxyService {
         : { requestId, status: 'FEASIBLE', lessons: [], conflicts: null };
 
     // The sittings, with real group ids, computed once: they are both written
-    // below and returned to the caller.
+    // below and returned to the caller. Null when the engine was not asked.
     const realisedLunches = this.realiseLunches(response, groupAnonMap);
+    if (realisedLunches === null) {
+      this.logger.warn(
+        `Engine skipped (every requirement is hand-placed); the previous run's sittings stand [academicYearId=${academicYearId}].`,
+      );
+    }
 
     // Step 3: Persist the master-lesson output, translating anon ids back.
     // `requirements` rides along as the demand the response is checked against
@@ -214,11 +221,62 @@ export class OptimizationProxyService {
         `lessons=${response.lessons.length}, lunches=${response.lunches?.length ?? 0}]`,
     );
 
-    // The sittings leave this method carrying REAL group ids. Everything the
-    // engine sees is anonymised, so a caller handed the raw reply would get
-    // uuids that exist in no table — the same unactionable shape the engine's
-    // own conflict messages still have.
-    return { ...response, lunches: realisedLunches };
+    // The sittings and the refusal leave this method carrying REAL ids and
+    // the school's own names. Everything the engine sees is anonymised, so a
+    // caller handed the raw reply would get uuids that exist in no table.
+    return {
+      ...response,
+      lunches: realisedLunches ?? [],
+      conflicts: this.realiseConflicts(
+        response.conflicts,
+        { requirementAnonMap, roomAnonMap, groupAnonMap, roomTypeAnonMap },
+        groupNameById,
+      ),
+    };
+  }
+
+  /**
+   * The engine's refusal with its ids turned back and its classes named.
+   *
+   * Ids inside the text go back to real ones through deanonymise, and a
+   * group's real id goes one step further, to the name the school gave it:
+   * "student group 4A", not a uuid in either id space. The ids in
+   * resourceIds are mapped back the same way and, for groups, ALSO returned
+   * as resourceNames. The lunch stage's lines say "the classes named here"
+   * and carry the classes only in that field — which, until this, no layer
+   * mapped back and no screen showed, so a school read "0 class(es)" one
+   * week and "the classes named here" with nobody named the next.
+   */
+  private realiseConflicts(
+    conflicts: AiEngineConflictAnalysis | null | undefined,
+    maps: AnonMaps,
+    groupNameById: Map<string, string>,
+  ): AiEngineConflictAnalysis | null {
+    if (!conflicts) return null;
+    const realGroupByAnon = new Map(
+      [...maps.groupAnonMap].map(([realId, anonId]) => [anonId, realId]),
+    );
+    const named = (text: string): string => {
+      let out = this.deanonymise(text, maps);
+      for (const [realId, name] of groupNameById) out = out.split(realId).join(name);
+      return out;
+    };
+    return {
+      summary: named(conflicts.summary),
+      conflicts: conflicts.conflicts.map((detail) => {
+        const resourceIds = detail.resourceIds.map(
+          (anonId) => realGroupByAnon.get(anonId) ?? anonId,
+        );
+        return {
+          ...detail,
+          message: named(detail.message),
+          resourceIds,
+          resourceNames: resourceIds
+            .map((realId) => groupNameById.get(realId))
+            .filter((name): name is string => name !== undefined),
+        };
+      }),
+    };
   }
 
   /**
@@ -233,8 +291,17 @@ export class OptimizationProxyService {
   private realiseLunches(
     response: AiEngineScheduleResponse,
     groupAnonMap: Map<string, string>,
-  ): AiEngineLunch[] {
-    if (!response.lunches?.length) return [];
+  ): AiEngineLunch[] | null {
+    // No `lunches` at all is not the same as none: the engine answers with
+    // a list — empty when the school has no lunch rule — and only a reply
+    // built here without calling it carries none. That reply must not wipe
+    // the sittings: a week that is wholly hand-placed skips the engine, and
+    // its classes still eat where the last run put them. (A panel found the
+    // rows being deleted and nothing written.) Placing lunches around locked
+    // lessons alone would need the engine to accept an empty timplan; until
+    // it does, the last run's sittings stand and the log says so.
+    if (response.lunches === undefined) return null;
+    if (response.lunches.length === 0) return [];
 
     const realIdOf = new Map(
       [...groupAnonMap].map(([realId, anonId]) => [anonId, realId]),
@@ -285,6 +352,8 @@ export class OptimizationProxyService {
     headcountByGroup: Map<string, number>;
     /** Needed to translate "required type X" in an engine refusal. */
     roomTypeAnonMap: Map<string, string>;
+    /** Real group id → the school's name for it, for realiseConflicts. */
+    groupNameById: Map<string, string>;
     storedRules: ScheduleRules | null;
   }> {
     // Anonymous-id lookup tables: realId → anonId.
@@ -358,8 +427,18 @@ export class OptimizationProxyService {
         startDate: true,
         endDate: true,
         extraGroups: { select: { studentGroupId: true } },
+        // The pupils a hand-placed lesson names one by one. Not forwarded —
+        // the engine plans around the lesson's groups — but a pupil who is
+        // in the building for it puts their home class at lunch (see
+        // atSchool), and a panel found that class going without.
+        participants: { select: { studentId: true } },
       },
     });
+    const participantIds = new Set(
+      preservedLessons.flatMap((lesson) =>
+        (lesson.participants ?? []).map((entry) => entry.studentId),
+      ),
+    );
 
     // Student -> groups, from BOTH membership kinds: the home class
     // (Users.studentGroupId) and teaching groups (StudentGroupMembers). Only
@@ -393,8 +472,15 @@ export class OptimizationProxyService {
      */
     const allGroups = await tx.studentGroup.findMany({
       where: { academicYearId },
-      select: { id: true, gradeLevel: true, kind: true },
+      select: { id: true, gradeLevel: true, kind: true, name: true },
     });
+    // What the school calls each group, for the refusal on its way back.
+    const groupNameById = new Map<string, string>();
+    for (const group of allGroups) {
+      if (typeof group.name === 'string' && group.name.length > 0) {
+        groupNameById.set(group.id, group.name);
+      }
+    }
     const homeClassIds = allGroups
       .filter((group) => group.kind === 'CLASS')
       .map((group) => group.id);
@@ -479,7 +565,9 @@ export class OptimizationProxyService {
      * spanning several years takes the whole span, so a room must cover all of
      * it — half a group in an allowed year is not an allowed placement.
      */
-    const involvedStudentIds = [...groupsByStudent.keys()];
+    // The participants too: their home classes are read below for atSchool,
+    // and a pupil named on a lesson alone may sit in no group at all.
+    const involvedStudentIds = [...new Set([...groupsByStudent.keys(), ...participantIds])];
     const studentHomeClasses =
       involvedStudentIds.length > 0
         ? await tx.user.findMany({
@@ -717,9 +805,42 @@ export class OptimizationProxyService {
     // takes there, and an INFEASIBLE with a lunch cause on the day it does not
     // fit. Its lessons still keep the class's meal clear, through the shared-
     // pupil pairs below.
+    //
+    // AND ONLY THE CLASSES THAT ARE AT SCHOOL THIS WEEK: a class eats when the
+    // week holds a lesson its pupils sit in — a requirement or a locked lesson
+    // on the class itself, or on a teaching group one of its pupils belongs
+    // to. For one release every class of the year was sent, on the argument
+    // that a class in the register is a class in the building. A school that
+    // was scheduling two classes as a trial, with the other twenty-two entered
+    // and full of pupils but without a single lesson, had all twenty-four sent
+    // to the hall: 530 children in 115 seats, and it was told, in a second, by
+    // arithmetic, that its dining hall could not feed two classes of twenty.
+    // The register says who exists; the timplan says who is here.
+    const lessonGroupIds = new Set<string>([
+      ...rawRequirements.map((r) => r.studentGroupId),
+      ...preservedLessons.map((lesson) => lesson.studentGroupId),
+      ...preservedLessons.flatMap((lesson) =>
+        lesson.extraGroups.map((entry) => entry.studentGroupId),
+      ),
+    ]);
+    const classesWithAParticipant = new Set<string>();
+    for (const studentId of participantIds) {
+      const homeClass = homeClassOf.get(studentId);
+      if (homeClass) classesWithAParticipant.add(homeClass);
+    }
+    const atSchool = (classId: string): boolean => {
+      if (lessonGroupIds.has(classId)) return true;
+      if (classesWithAParticipant.has(classId)) return true;
+      for (const studentId of membersByGroup.get(classId) ?? []) {
+        for (const groupId of groupsByStudent.get(studentId) ?? []) {
+          if (lessonGroupIds.has(groupId)) return true;
+        }
+      }
+      return false;
+    };
     const homeClassSet = new Set(homeClassIds);
     const groups: AnonymousGroup[] = scheduledGroupIds
-      .filter((groupId) => homeClassSet.has(groupId))
+      .filter((groupId) => homeClassSet.has(groupId) && atSchool(groupId))
       .map((groupId) => ({
       id: anonId(groupAnonMap, groupId),
       lunchHeadcount: homeCountByGroup.get(groupId) ?? 0,
@@ -1021,6 +1142,7 @@ export class OptimizationProxyService {
       groupAnonMap,
       headcountByGroup: homeCountByGroup,
       roomTypeAnonMap,
+      groupNameById,
       // An empty object would send `rules: {}` and read as "rules were
       // considered and came to nothing", which the engine treats the same but
       // a reader of the payload would not.
@@ -1157,8 +1279,12 @@ export class OptimizationProxyService {
     requirements: AnonymousRequirement[],
     requirementAnonMap: Map<string, string>,
     roomAnonMap: Map<string, string>,
-    /** Sittings carrying REAL group ids — realiseLunches has already run. */
-    lunches: AiEngineLunch[],
+    /**
+     * Sittings carrying REAL group ids — realiseLunches has already run. Null
+     * when the engine was never asked, and then the stored sittings are left
+     * exactly as they were.
+     */
+    lunches: AiEngineLunch[] | null,
     /** groupId → children seated, so the kitchen's list needs no re-derivation. */
     headcountByGroup: Map<string, number>,
   ): Promise<void> {
@@ -1342,8 +1468,46 @@ export class OptimizationProxyService {
      * INFEASIBLE with no visible cause.
      *
      * Reached only after the guards above, so a run the gateway refused leaves
-     * last week's flow exactly where it was.
+     * last week's flow exactly where it was — and so does a run that never
+     * asked the engine, which has no sittings to replace them with.
      */
+    if (lunches !== null) {
+      await this.replaceSittings(tx, schoolId, academicYearId, lunches, headcountByGroup, today);
+    }
+
+    // Append a REGENERATE entry to the schedule audit trail.
+    await tx.scheduleChangeLog.create({
+      data: {
+        schoolId,
+        academicYearId,
+        masterLessonId: null,
+        actorId: user.userId ?? null,
+        action: 'REGENERATE',
+        after: {
+          solverStatus: response.status,
+          lessonsCreated: creates.length,
+          unlockedReplaced: removedUnlocked,
+          lockedPreserved,
+          calendarLessonsRemoved: removedCalendarLessons,
+        },
+      },
+    });
+  }
+
+  /**
+   * Replace the stored sittings with the engine's, classes only, and clear
+   * the calendar's future meals so publish re-derives them. The body that
+   * used to sit inline in persistMasterLessons; lifted out so a run that
+   * never asked the engine can skip it whole.
+   */
+  private async replaceSittings(
+    tx: PrismaClient,
+    schoolId: string,
+    academicYearId: string,
+    lunches: AiEngineLunch[],
+    headcountByGroup: Map<string, number>,
+    today: Date,
+  ): Promise<void> {
     await tx.lunchSitting.deleteMany({ where: { academicYearId } });
 
     /*
@@ -1410,24 +1574,6 @@ export class OptimizationProxyService {
       where: {
         studentGroup: { is: { academicYearId } },
         date: { gte: today },
-      },
-    });
-
-    // Append a REGENERATE entry to the schedule audit trail.
-    await tx.scheduleChangeLog.create({
-      data: {
-        schoolId,
-        academicYearId,
-        masterLessonId: null,
-        actorId: user.userId ?? null,
-        action: 'REGENERATE',
-        after: {
-          solverStatus: response.status,
-          lessonsCreated: creates.length,
-          unlockedReplaced: removedUnlocked,
-          lockedPreserved,
-          calendarLessonsRemoved: removedCalendarLessons,
-        },
       },
     });
   }

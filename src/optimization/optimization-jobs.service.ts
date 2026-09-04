@@ -12,13 +12,25 @@ import type {
 export type JobStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
 export type SolverStatus = 'OPTIMAL' | 'FEASIBLE' | 'INFEASIBLE' | 'TIMEOUT';
 
+/**
+ * What of a refusal the job row keeps: the category, the sentence, and the
+ * names of the groups the sentence is about. Not the id arrays — they are
+ * meaningless once the run is over, and were meaningless before too, when
+ * they were the engine's anonymous ones.
+ */
+export interface StoredConflict {
+  category: AiEngineConflictDetail['category'];
+  message: string;
+  resourceNames: string[];
+}
+
 export interface OptimizationJobView {
   id: string;
   status: JobStatus;
   solverStatus: SolverStatus | null;
   lessonsGenerated: number;
   conflictSummary: string | null;
-  conflicts: Array<Pick<AiEngineConflictDetail, 'category' | 'message'>>;
+  conflicts: StoredConflict[];
   error: string | null;
   createdAt: string;
   finishedAt: string | null;
@@ -149,10 +161,13 @@ export class OptimizationJobsService {
         solverStatus: response.status,
         lessonsGenerated: response.lessons.length,
         conflictSummary: response.conflicts?.summary ?? null,
-        conflicts: (response.conflicts?.conflicts ?? []).map((conflict) => ({
-          category: conflict.category,
-          message: conflict.message,
-        })) as unknown as Prisma.InputJsonValue,
+        conflicts: (response.conflicts?.conflicts ?? []).map(
+          (conflict): StoredConflict => ({
+            category: conflict.category,
+            message: conflict.message,
+            resourceNames: conflict.resourceNames ?? [],
+          }),
+        ) as unknown as Prisma.InputJsonValue,
         finishedAt: new Date(),
       });
     } catch (error) {
@@ -193,8 +208,12 @@ export class OptimizationJobsService {
       solverStatus: (job.solverStatus as SolverStatus | null) ?? null,
       lessonsGenerated: job.lessonsGenerated,
       conflictSummary: job.conflictSummary,
+      // Rows written before names were kept carry none; read as an empty
+      // list rather than as undefined, which the page would have to guard.
       conflicts: Array.isArray(job.conflicts)
-        ? (job.conflicts as Array<Pick<AiEngineConflictDetail, 'category' | 'message'>>)
+        ? (job.conflicts as Array<Partial<StoredConflict> & Pick<StoredConflict, 'category' | 'message'>>).map(
+            (conflict) => ({ ...conflict, resourceNames: conflict.resourceNames ?? [] }),
+          )
         : [],
       error: job.error,
       createdAt: job.createdAt.toISOString(),

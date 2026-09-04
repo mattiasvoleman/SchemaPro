@@ -2045,6 +2045,164 @@ describe('OptimizationProxyService', () => {
       ).toEqual([1, 2]);
     });
 
+    it('sends to the hall only the classes whose pupils have a lesson this week', async () => {
+      // The register at Kunskapsskolan: twenty-four home classes, none with a
+      // requirement of its own, every lesson on teaching groups drawn from two
+      // of them. For one release every class of the year ate — 530 children in
+      // 115 seats — and the school was told its dining hall could not feed the
+      // two classes it was scheduling. A class is at school when the week has
+      // a lesson its pupils sit in, on the class or on a teaching group.
+      const TG_ID = '66666666-6666-4666-8666-666666666666';
+      const IDLE = '55555555-5555-4555-8555-555555555555';
+      const HANDPLACED = '77777777-7777-4777-8777-777777777777';
+      arrange({
+        requirements: [requirement({ studentGroupId: TG_ID })],
+        lockedLessons: [
+          {
+            id: 'ml-1',
+            subjectId: SUBJECT_ID,
+            studentGroupId: HANDPLACED,
+            teacherId: null,
+            coTeacherId: null,
+            roomId: null,
+            dayOfWeek: 1,
+            startTime: eightAm,
+            endTime: nineAm,
+            extraGroups: [],
+          },
+        ],
+        homeMembers: [
+          { id: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: GROUP_ID },
+          { id: 'aaaaaaa2-0000-4000-8000-000000000002', studentGroupId: GROUP_ID },
+          { id: 'aaaaaaa3-0000-4000-8000-000000000003', studentGroupId: IDLE },
+          { id: 'aaaaaaa4-0000-4000-8000-000000000004', studentGroupId: IDLE },
+          { id: 'aaaaaaa5-0000-4000-8000-000000000005', studentGroupId: IDLE },
+          { id: 'aaaaaaa6-0000-4000-8000-000000000006', studentGroupId: HANDPLACED },
+        ],
+        // One pupil of the first class sits in the teaching group that has
+        // the week's only requirement. That is what puts the class at school.
+        teachingMembers: [
+          { studentId: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: TG_ID },
+        ],
+        groups: [
+          { id: GROUP_ID, gradeLevel: 4, kind: 'CLASS' },
+          { id: IDLE, gradeLevel: 5, kind: 'CLASS' },
+          { id: HANDPLACED, gradeLevel: 6, kind: 'CLASS' },
+          { id: TG_ID, gradeLevel: null, kind: 'TEACHING_GROUP' },
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      // The class with a pupil in the teaching group (two children) and the
+      // hand-placed class (one) eat. The idle class, five children strong, is
+      // not at school as far as this week knows, and takes no seat.
+      expect(
+        postedPayload()
+          .groups.map((g: any) => g.lunchHeadcount)
+          .sort(),
+      ).toEqual([1, 2]);
+    });
+
+    it('brings a refusal back with real ids, the school\'s names in the text, and the classes named', async () => {
+      // The engine names a class only by its anonymous id — in the summary's
+      // text and in resourceIds. Both are turned back here: the text says
+      // "student group 4A", and the detail carries resourceNames for the page
+      // to show under "the classes named here".
+      arrange({
+        groups: [{ id: GROUP_ID, gradeLevel: 4, kind: 'CLASS', name: '4A' }],
+      });
+      http.post.mockImplementation((_url: string, payload: any) =>
+        of({
+          data: {
+            requestId: payload.requestId,
+            status: 'INFEASIBLE',
+            lessons: [],
+            conflicts: {
+              summary: `Too many lessons for the hours: student group ${payload.groups[0].id} needs more.`,
+              conflicts: [
+                {
+                  category: 'DINING_CAPACITY',
+                  message: 'The classes named here bring their children to the hall every school day.',
+                  requirementIds: [],
+                  roomIds: [],
+                  constraintIds: [],
+                  resourceIds: [payload.groups[0].id],
+                },
+              ],
+            },
+          },
+        }),
+      );
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.conflicts?.summary).toBe(
+        'Too many lessons for the hours: student group 4A needs more.',
+      );
+      expect(result.conflicts?.conflicts[0]).toMatchObject({
+        resourceIds: [GROUP_ID],
+        resourceNames: ['4A'],
+      });
+    });
+
+    it('sends a class to the hall when one of its pupils attends a lesson as a participant', async () => {
+      // A hand-placed lesson may name pupils one by one rather than through a
+      // group. Those pupils are in the building for it, and so their home
+      // class eats — a panel found it going without, while a class reached
+      // through an extra group or a membership ate as it should.
+      const CLASS_B = '55555555-5555-4555-8555-555555555555';
+      arrange({
+        requirements: [requirement()],
+        lockedLessons: [
+          {
+            ...lockedLesson(),
+            participants: [{ studentId: 'aaaaaaa2-0000-4000-8000-000000000002' }],
+          },
+        ],
+        homeMembers: [
+          { id: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: GROUP_ID },
+          { id: 'aaaaaaa2-0000-4000-8000-000000000002', studentGroupId: CLASS_B },
+          { id: 'aaaaaaa3-0000-4000-8000-000000000003', studentGroupId: CLASS_B },
+        ],
+        groups: [
+          { id: GROUP_ID, gradeLevel: 4, kind: 'CLASS' },
+          { id: CLASS_B, gradeLevel: 5, kind: 'CLASS' },
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(
+        postedPayload()
+          .groups.map((g: any) => g.lunchHeadcount)
+          .sort(),
+      ).toEqual([1, 2]);
+    });
+
+    it("leaves the previous run's sittings standing when the engine is skipped", async () => {
+      // Every requirement hand-placed: nothing to solve, so the engine is not
+      // asked — and a reply built here carries no sittings. Wiping the table
+      // on that reply left a wholly hand-placed school with no lunch at all.
+      arrange({
+        requirements: [requirement({ lessonsPerWeek: 1 })],
+        lockedLessons: [lockedLesson()],
+      });
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(http.post).not.toHaveBeenCalled();
+      expect(result.lunches).toEqual([]);
+      expect(tx.lunchSitting.deleteMany).not.toHaveBeenCalled();
+      expect(tx.lunchSitting.createMany).not.toHaveBeenCalled();
+      expect(tx.calendarLunch.deleteMany).not.toHaveBeenCalled();
+      // The lessons' own clean-up still runs, and so does the audit entry.
+      expect(tx.masterLesson.deleteMany).toHaveBeenCalled();
+      expect(tx.scheduleChangeLog.create).toHaveBeenCalled();
+    });
+
     it('drops a constraint whose declared type names no resource', async () => {
       // This used to be forwarded with a freshly minted uuid, which the engine
       // could never match against anything: the rule was saved, listed and

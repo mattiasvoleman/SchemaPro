@@ -408,6 +408,9 @@ export default function GeneratePage() {
                           {conflictLabel(conflict.category)}
                         </Badge>
                         <p className="text-muted-foreground">{conflict.message}</p>
+                        {conflict.resourceNames && conflict.resourceNames.length > 0 ? (
+                          <p className="mt-1 font-medium">{conflict.resourceNames.join(", ")}</p>
+                        ) : null}
                       </div>
                     </li>
                   ))}

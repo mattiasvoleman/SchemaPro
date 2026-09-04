@@ -498,7 +498,7 @@
     "statusINFEASIBLE": "No valid schedule possible",
     "statusTIMEOUT": "The solver ran out of time",
     "lessonsGenerated": "{count} master lessons generated",
-    "infeasibleHint": "The constraints are too tight. Review the conflicts below, relax availability or reduce lessons per week, then try again.",
+    "infeasibleHint": "The constraints cannot all be met at once. The summary and the conflicts below say what needs to change.",
     "timeoutHint": "The solver did not find a schedule within its time budget. This does not mean your requirements are impossible — try running it again, or ask your administrator to raise the solver time limit. Relaxing tight availability windows also makes a schedule easier to find.",
     "conflicts": "Detected conflicts",
     "noConflicts": "No conflicts reported.",

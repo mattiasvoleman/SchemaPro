@@ -174,10 +174,10 @@ describe('OptimizationJobsService', () => {
           solverStatus: 'FEASIBLE',
           lessonsGenerated: 3,
           conflictSummary: '1 group collides',
-          // Only category + message survive; the anonymous-id arrays from the
+          // Category, message and the names survive; the id arrays from the
           // engine's conflict details must not be persisted on the job row.
           conflicts: [
-            { category: 'GROUP_OVERLAP', message: 'Group overlaps itself' },
+            { category: 'GROUP_OVERLAP', message: 'Group overlaps itself', resourceNames: [] },
           ],
           finishedAt: expect.any(Date),
         },
@@ -361,7 +361,9 @@ describe('OptimizationJobsService', () => {
         solverStatus: 'OPTIMAL',
         lessonsGenerated: 12,
         conflictSummary: null,
-        conflicts: [{ category: 'ROOM_OVERLAP', message: 'clash' }],
+        // A row written before names were kept: read back with an empty
+        // list, never an undefined the page would have to guard.
+        conflicts: [{ category: 'ROOM_OVERLAP', message: 'clash', resourceNames: [] }],
         error: null,
         createdAt: '2026-08-07T10:00:00.000Z',
         finishedAt: '2026-08-07T10:00:42.000Z',

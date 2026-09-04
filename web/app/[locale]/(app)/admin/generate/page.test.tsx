@@ -137,3 +137,34 @@ describe("a run that hit the time limit", () => {
     expect(screen.getByText(/changeoverMinutes\) set to 0/)).toBeInTheDocument();
   });
 });
+
+describe("a refusal that names classes", () => {
+  it("shows the school's names under the sentence that is about them", () => {
+    // The lunch stage's lines say "the classes named here" and carry the
+    // classes in a field no screen used to show: a school read the sentence
+    // with nobody named under it.
+    state.job = {
+      id: "job-2",
+      status: "SUCCEEDED",
+      solverStatus: "INFEASIBLE",
+      conflictSummary: "The dining hall's 115 seats cannot seat the 2 class(es) named (44 children).",
+      conflicts: [
+        {
+          category: "DINING_CAPACITY",
+          message: "The classes named here bring their children to the hall every school day.",
+          resourceNames: ["4A", "4B"],
+        },
+        {
+          category: "DINING_CAPACITY",
+          message: "The dining hall's 115 seats are all it holds at one time.",
+          resourceNames: [],
+        },
+      ],
+      createdAt: "2026-09-07T10:00:00.000Z",
+    };
+    render(<GeneratePage />);
+
+    expect(screen.getByText("4A, 4B")).toBeInTheDocument();
+    expect(screen.getAllByText("conflictCategories.DINING_CAPACITY")).toHaveLength(2);
+  });
+});

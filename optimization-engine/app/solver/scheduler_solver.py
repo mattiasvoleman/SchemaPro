@@ -189,11 +189,65 @@ class _Clique:
     demand: int
     measure: int
     free_by_day: dict[int, list[tuple[int, int]]]
+    #: The one frame window every open day shares, as "08:00-13:30", for a
+    #: sentence to quote; None when the days differ or nothing narrows them.
+    window_text: str | None
 
 
 def _holds(ranges: list[tuple[int, int]], measure: int) -> int:
     """Slots of lessons the ranges can hold, each rounded down to whole measures."""
     return sum(((end - start) // measure) * measure for start, end in ranges)
+
+
+@dataclass(frozen=True)
+class _LunchStarts:
+    """One class's lunch starts on one day, as the model's four sentences.
+
+    Absolute slots. The window is the school-wide rule and the variable's
+    bounds; the other three are the narrowings the builder adds as
+    constraints — the stage's sitting or frame, what the locked lessons
+    leave, what the reservations leave — None where nothing narrows. Kept
+    apart so a reader can name each one; composed() is what the variable
+    may actually take.
+    """
+
+    window: cp_model.Domain
+    declared: cp_model.Domain | None
+    locked: cp_model.Domain | None
+    closed: cp_model.Domain | None
+
+    def composed(self) -> cp_model.Domain:
+        domain = self.window
+        for narrowing in (self.declared, self.locked, self.closed):
+            if narrowing is not None:
+                domain = domain.intersection_with(narrowing)
+        return domain
+
+
+@dataclass(frozen=True)
+class _LunchStage:
+    """The lunch stage's model, with one free literal per sentence it makes.
+
+    `literals` is keyed (cause, group id): "eats", "lessons", "declared",
+    "locked" and "closed" per class, and "hall" for the school with no group.
+    pinned() fixes every literal for one solve — true unless relaxed — on a
+    clone, so the stage is built once and solved as many times as the
+    naming needs. Clone() keeps variable indices, which is what lets the
+    original's literals and starts address the clone's.
+    """
+
+    model: cp_model.CpModel
+    starts: dict[tuple[UUID, int], cp_model.IntVar]
+    literals: dict[tuple[str, UUID | None], cp_model.IntVar]
+    headcounts: dict[UUID, int]
+    #: Class -> the frame window its lessons share, for the sentence about them.
+    window_texts: dict[UUID, str | None]
+
+    def pinned(self, relaxed: set[tuple[str, UUID | None]]) -> cp_model.CpModel:
+        clone = self.model.Clone()
+        for key, literal in self.literals.items():
+            clone.Add(literal == (0 if key in relaxed else 1))
+        return clone
 
 
 class SchedulerSolver:
@@ -392,9 +446,10 @@ class SchedulerSolver:
 
         EVERYTHING LEANS THE OPTIMISTIC WAY, so a refusal built on these
         numbers is a refusal the model would have made: the free time is the
-        UNION of the members' windows, and only a locked lesson that blocks
-        EVERY member is subtracted — one that blocks some leaves the others
-        free, and subtracting it would refuse a week the model accepts.
+        UNION of the windows the model binds the clique's lessons by — each
+        requirement's own years, see below — and only a locked lesson that
+        blocks EVERY member is subtracted; one that blocks some leaves the
+        others free, and subtracting it would refuse a week the model accepts.
         """
         sharing = _groups_sharing_students(request.group_conflicts)
         requirements_of: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
@@ -421,25 +476,30 @@ class SchedulerSolver:
                 continue
             lengths = [self._grid.minutes_to_slots(r.minutes_per_lesson) for r in requirements]
 
-            # Whose span opens which window. The class reads its own; a member
-            # with a requirement reads the span the requirement carries.
-            spans: list[tuple[int, int] | None] = [
-                (group.min_grade_level, group.max_grade_level)
-                if group.min_grade_level is not None and group.max_grade_level is not None
-                else None,
-            ]
-            for member in members[1:]:
-                spans.append(span_of(requirements_of[member][0]))
+            # Whose years open which window: EVERY REQUIREMENT'S OWN, the way
+            # the model binds each lesson (span_of(requirement) in the
+            # decision builder), and never the group's. The group's span
+            # governs only where its lunch may sit. This first read the class
+            # off its group entry and a member off its first requirement, and
+            # a panel found the week it refuses: a class whose group carries
+            # years 4-4 under a frame closing 12:30 while its requirement
+            # carries none — the model lets those lessons run to 18:00, the
+            # count did not, and a schedulable week was refused twice over.
+            # The gateway sends one span to both today; the engine does not
+            # get to rely on that.
+            spans = {span_of(requirement) for requirement in requirements}
             windows_of = [day_windows(request.frame_times, span, self._grid) for span in spans]
             member_set = set(members)
 
             free_by_day: dict[int, list[tuple[int, int]]] = {}
+            open_by_day: dict[int, list[tuple[int, int]]] = {}
             for day_index in range(len(self._grid.schedule_days)):
                 base = day_index * slots_per_day
                 open_ranges = [windows[day_index] for windows in windows_of if day_index in windows]
                 if not open_ranges:
                     continue
                 free = _merge_ranges(open_ranges)
+                open_by_day[day_index] = free
                 for fixed, window in fixed_windows:
                     if window is None:
                         continue
@@ -467,9 +527,33 @@ class SchedulerSolver:
                     ),
                     measure=math.gcd(*lengths),
                     free_by_day=free_by_day,
+                    window_text=self._shared_window_text(open_by_day),
                 ),
             ))
         return cliques
+
+    def _shared_window_text(self, open_by_day: dict[int, list[tuple[int, int]]]) -> str | None:
+        """"08:00-13:30" when every open day is that one window, else None.
+
+        The sentence that names a packed day wants to quote the frame that
+        packs it, and can only do so honestly when there is one such frame;
+        a week of differing days, or one nothing narrows, gets no times.
+        """
+        windows = {tuple(ranges) for ranges in open_by_day.values()}
+        if len(windows) != 1:
+            return None
+        (ranges,) = windows
+        if len(ranges) != 1:
+            return None
+        (open_slot, close_slot) = ranges[0]
+        if open_slot == 0 and close_slot == self._grid.slots_per_day:
+            return None
+
+        def clock(slot: int) -> str:
+            minutes = self._grid.day_start_minutes + slot * self._grid.slot_minutes
+            return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+        return f"{clock(open_slot)}-{clock(close_slot)}"
 
     def _clique_hours_verdict(self, request: OptimizeScheduleRequest) -> ConflictAnalysis | None:
         """Hours against hours, for groups the model will never let overlap.
@@ -579,24 +663,24 @@ class SchedulerSolver:
                 )
         return None
 
-    def _lunch_start_domains(
+    def _lunch_start_narrowings(
         self, request: OptimizeScheduleRequest,
-    ) -> dict[tuple[UUID, int], cp_model.Domain] | None:
-        """Where each class's lunch may start on each day, in absolute slots.
+    ) -> dict[tuple[UUID, int], _LunchStarts] | None:
+        """Where each class's lunch may start on each day, as the model says it.
 
-        The model states the same fact as four constraints on one variable:
-        the window as its bounds, the stage's sitting or frame as a domain,
-        and the locked lessons and the reservations as two more, each under
-        the assumption literal that names it. Composed here as ONE domain per
-        (class, day), through the same helpers and in the same order, so a
-        reader that needs the set — the lunch stage — reads the model's and
-        not a second rounding of it. None when the school asked for no lunch,
-        the same test the builder makes.
+        The model states the fact as four constraints on one variable: the
+        window as its bounds, the stage's sitting or frame as a domain, and
+        the locked lessons and the reservations as two more, each under the
+        assumption literal that names it. Read here through the same helpers
+        and in the same order, and KEPT APART, so a reader that needs to name
+        one of them — the lunch stage — can put the same literal on the same
+        sentence. None when the school asked for no lunch, the same test the
+        builder makes.
 
-        Empty domains are allowed to come out: the builder's per-cause checks
-        in _validate_request refuse a sitting or a lock that alone leaves no
-        start, and only their intersection can still be empty here. The
-        caller decides what to make of that.
+        Empty compositions are allowed to come out: _validate_request refuses
+        a sitting or a lock that alone leaves no start, and only their
+        intersection can still be empty. The caller decides what to make of
+        that.
         """
         rules = request.rules
         if rules is None or not _lunch_window_is_set(rules) or not request.groups:
@@ -625,15 +709,12 @@ class SchedulerSolver:
             if group.min_grade_level is not None and group.max_grade_level is not None
         }
         slots_per_day = self._grid.slots_per_day
-        domains: dict[tuple[UUID, int], cp_model.Domain] = {}
+        starts: dict[tuple[UUID, int], _LunchStarts] = {}
         for group_id in lunch_group_ids:
             for day_index, day_of_week in enumerate(self._grid.schedule_days):
                 if (group_id, day_index) in exempt_days:
                     continue
                 day_offset = day_index * slots_per_day
-                domain = cp_model.Domain(
-                    day_offset + window_start, day_offset + window_end - lunch_slots,
-                )
                 declared = self._declared_lunch_domain(
                     request.lunch_servings,
                     request.frame_times,
@@ -644,20 +725,36 @@ class SchedulerSolver:
                     window_end,
                     lunch_slots,
                 )
-                if declared is not None:
-                    domain = domain.intersection_with(declared)
+                left: list[cp_model.Domain | None] = []
                 for forbidden in (
                     blocked_starts.get((group_id, day_index)),
                     closed_starts.get((group_id, day_index)),
                 ):
-                    if forbidden:
-                        domain = domain.intersection_with(
-                            self._admissible_lunch_starts(
-                                day_offset, window_start, window_end, lunch_slots, forbidden,
-                            ),
+                    left.append(
+                        self._admissible_lunch_starts(
+                            day_offset, window_start, window_end, lunch_slots, forbidden,
                         )
-                domains[(group_id, day_index)] = domain
-        return domains
+                        if forbidden
+                        else None,
+                    )
+                starts[(group_id, day_index)] = _LunchStarts(
+                    window=cp_model.Domain(
+                        day_offset + window_start, day_offset + window_end - lunch_slots,
+                    ),
+                    declared=declared,
+                    locked=left[0],
+                    closed=left[1],
+                )
+        return starts
+
+    def _lunch_start_domains(
+        self, request: OptimizeScheduleRequest,
+    ) -> dict[tuple[UUID, int], cp_model.Domain] | None:
+        """The four sentences of _lunch_start_narrowings composed into one domain."""
+        narrowings = self._lunch_start_narrowings(request)
+        if narrowings is None:
+            return None
+        return {key: parts.composed() for key, parts in narrowings.items()}
 
     def _lunch_stage_one(
         self, request: OptimizeScheduleRequest,
@@ -676,7 +773,7 @@ class SchedulerSolver:
         TIMEOUT, on a week that has no timetable.
 
         A model of ONLY the lunch starts finds it in under a second: one
-        boolean per admissible start, one linear seat row per slot — equal
+        boolean per start in the window, one linear seat row per slot — equal
         coefficients that presolve divides down to "at most four classes
         here" — and a per-day lesson count bounded by what the clique's free
         time holds around the chosen start. Measured on this week: the rows
@@ -687,12 +784,28 @@ class SchedulerSolver:
 
         EVERY CONSTRAINT HERE RELAXES ONE THE FULL MODEL ENFORCES, which is
         what makes INFEASIBLE here INFEASIBLE for the week: the starts are the
-        model's own domains (_lunch_start_domains); the seat rows say per slot
-        exactly what the model's cumulative says over fixed-length intervals;
-        the day count is the hours verdict's arithmetic, with the school's
-        maximum lessons per day on top.
-        Rasts, rooms, teachers and the lessons' actual placement are simply
-        absent, and absence only widens.
+        model's own four sentences (_lunch_start_narrowings); the seat rows
+        say per slot exactly what the model's cumulative says over
+        fixed-length intervals; the day count is the hours verdict's
+        arithmetic, with the school's maximum lessons per day on top. Rasts,
+        rooms, teachers and the lessons' actual placement are simply absent,
+        and absence only widens.
+
+        NAMED BY DELETION, not by a rule of thumb and not by CP-SAT's
+        assumption cores. The first version named "the classes that cannot
+        avoid a packed day", which is one way a week fails and not the way a
+        real one did: twenty-four classes with no lessons at all, sent to a
+        hall of 115 seats, cannot be seated in five thirty-minute waves — no
+        packed day anywhere — and the school read "0 class(es)". Assumption
+        literals were tried next and could not reproduce the proof in ten
+        seconds: with assumptions CP-SAT runs one thread and keeps presolve
+        from the very rewriting that IS the proof. So every sentence the
+        stage builds — a class at school, its lessons, the hall, a sitting or
+        frame, a lock, a reservation — is a literal the fast solve can pin
+        either way, and _name_lunch_causes drops sentences while the week
+        stays impossible. What is left is a sufficient set, from the first
+        solve to the last, so running out of time mid-way still names
+        truthfully; the summary says the set is sufficient, not smallest.
 
         On a feasible week the stage costs at most its cap and repays part of
         it: its starts are hinted into the existence search (measured 1.3x on
@@ -700,163 +813,339 @@ class SchedulerSolver:
         and decides nothing, and the full solve proceeds unhinted. Returns
         (verdict, hints): a verdict when the week is refused, else the chosen
         starts, empty when the stage could not decide.
-
-        The refusal is named as the difference, the way the hours verdict
-        names the lunch: refused with the seats but not without them, it is
-        the dining hall; refused without them too, it is the frame or the
-        lock that leaves the break nowhere to go. The classes named are those
-        whose week cannot avoid a day packed to the frame — for such a class
-        every unpacked day wastes a whole lesson-measure, so its slack in
-        measures bounds its unpacked days.
         """
-        domains = self._lunch_start_domains(request)
-        if domains is None:
+        narrowings = self._lunch_start_narrowings(request)
+        if narrowings is None:
             return None, {}
-        if any(domain.is_empty() for domain in domains.values()):
+        if any(parts.composed().is_empty() for parts in narrowings.values()):
             # A sitting and a lock that each leave a start and together leave
             # none. _validate_request refuses that by name before any solve;
             # kept because CP-SAT calls a model with an empty domain invalid,
             # and a direct caller must not be able to hand it one.
             return None, {}
+        stage = self._build_lunch_stage(request, narrowings)
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = self.LUNCH_STAGE_CAP_SECONDS
+        started = time.monotonic()
+        code = solver.Solve(stage.pinned(set()))
+        logger.info(
+            "lunch stage: %s in %.2fs over %d lunch starts",
+            solver.StatusName(code), time.monotonic() - started, len(stage.starts),
+        )
+        if code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return None, {key: solver.Value(start) for key, start in stage.starts.items()}
+        if code != cp_model.INFEASIBLE:
+            return None, {}
+        return self._name_lunch_causes(request, stage), {}
+
+    def _build_lunch_stage(
+        self,
+        request: OptimizeScheduleRequest,
+        narrowings: dict[tuple[UUID, int], _LunchStarts],
+    ) -> _LunchStage:
+        """The stage model with every sentence behind a literal of its own.
+
+        Literals are left FREE here; _LunchStage.pinned fixes each one true
+        or false per solve. Pinned true they are unit clauses presolve folds
+        away, so the first solve is the plain model. Pinned false they drop
+        the sentence: a class not at school chooses no start and takes no
+        seat, the hall has no limit, a narrowing does not apply, a clique's
+        count is not made.
+        """
         rules = request.rules
         _, _, lunch_slots = self._lunch_window_slots(rules)
         headcounts = _lunch_headcounts(request.groups)
         seats = rules.dining_seats
         max_per_day = rules.max_lessons_per_day_per_group
         slots_per_day = self._grid.slots_per_day
-        cliques = self._cliques(request)
+        hall_open = seats is not None and any(
+            headcounts.get(group_id, 0) > 0 for group_id, _ in narrowings
+        )
 
-        def build(with_seats: bool) -> tuple[cp_model.CpModel, dict, list[UUID]]:
-            model = cp_model.CpModel()
-            starts: dict[tuple[UUID, int], cp_model.IntVar] = {}
-            choices: dict[tuple[UUID, int], dict[int, cp_model.IntVar]] = {}
-            load: dict[int, list[tuple[int, cp_model.IntVar]]] = defaultdict(list)
-            for (group_id, day_index), domain in domains.items():
-                start = model.NewIntVarFromDomain(domain, f"lunchstart_{group_id}_{day_index}")
-                starts[(group_id, day_index)] = start
-                literals = {
-                    slot: model.NewBoolVar(f"lunchat_{group_id}_{day_index}_{slot}")
-                    for lo, hi in _domain_intervals(domain)
-                    for slot in range(lo, hi + 1)
-                }
-                model.AddExactlyOne(list(literals.values()))
-                model.Add(start == sum(slot * literal for slot, literal in literals.items()))
-                choices[(group_id, day_index)] = literals
-                headcount = headcounts.get(group_id, 0)
-                if with_seats and seats is not None and headcount > 0:
-                    for slot, literal in literals.items():
-                        for occupied in range(slot, slot + lunch_slots):
-                            load[occupied].append((headcount, literal))
+        model = cp_model.CpModel()
+        starts: dict[tuple[UUID, int], cp_model.IntVar] = {}
+        choices: dict[tuple[UUID, int], dict[int, cp_model.IntVar]] = {}
+        load: dict[int, list[tuple[int, cp_model.IntVar]]] = defaultdict(list)
+        literals: dict[tuple[str, UUID | None], cp_model.IntVar] = {}
+
+        def sentence(cause: str, group_id: UUID | None) -> cp_model.IntVar:
+            key = (cause, group_id)
+            literal = literals.get(key)
+            if literal is None:
+                literal = literals[key] = model.NewBoolVar(f"{cause}_{group_id}")
+            return literal
+
+        for (group_id, day_index), parts in narrowings.items():
+            present = sentence("eats", group_id)
+            start = model.NewIntVarFromDomain(parts.window, f"lunchstart_{group_id}_{day_index}")
+            options = {
+                slot: model.NewBoolVar(f"lunchat_{group_id}_{day_index}_{slot}")
+                for lo, hi in _domain_intervals(parts.window)
+                for slot in range(lo, hi + 1)
+            }
+            # Exactly one start while the class is at school. Nothing at all
+            # otherwise — not even "at most one": the start literals are free
+            # variables, all-zero is always open to them, and a solve looking
+            # for a solution never fills a hall it does not have to, so a
+            # constraint saying so could not change one verdict. (Tried; it
+            # did not.)
+            model.Add(sum(options.values()) == 1).OnlyEnforceIf(present)
+            model.Add(
+                start == sum(slot * literal for slot, literal in options.items()),
+            ).OnlyEnforceIf(present)
+            for cause in ("declared", "locked", "closed"):
+                narrowing = getattr(parts, cause)
+                if narrowing is None:
+                    continue
+                outside = [
+                    literal for slot, literal in options.items() if not narrowing.contains(slot)
+                ]
+                if outside:
+                    model.Add(sum(outside) == 0).OnlyEnforceIf(sentence(cause, group_id))
+            starts[(group_id, day_index)] = start
+            choices[(group_id, day_index)] = options
+            headcount = headcounts.get(group_id, 0)
+            if hall_open and headcount > 0:
+                for slot, literal in options.items():
+                    for occupied in range(slot, slot + lunch_slots):
+                        load[occupied].append((headcount, literal))
+        if load:
+            hall = sentence("hall", None)
             for terms in load.values():
-                model.Add(sum(headcount * literal for headcount, literal in terms) <= seats)
+                model.Add(
+                    sum(headcount * literal for headcount, literal in terms) <= seats,
+                ).OnlyEnforceIf(hall)
 
-            packed: list[UUID] = []
-            for group, clique in cliques:
-                measure = clique.measure
-                by_member: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
-                for requirement in clique.requirements:
-                    by_member[requirement.student_group_id].append(requirement)
-                # Each member places at most its weekly lessons, and at most
-                # the school's daily maximum, on one day — each no longer than
-                # its longest. A bound on the count, not a placement.
-                member_cap = 0
-                for member_requirements in by_member.values():
-                    weekly = sum(r.lessons_per_week for r in member_requirements)
-                    longest = max(
-                        self._grid.minutes_to_slots(r.minutes_per_lesson) for r in member_requirements
-                    )
-                    per_day = weekly if max_per_day is None else min(weekly, max_per_day)
-                    member_cap += per_day * longest
+        window_texts: dict[UUID, str | None] = {}
+        for group, clique in self._cliques(request):
+            window_texts[group.id] = clique.window_text
+            measure = clique.measure
+            by_member: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
+            for requirement in clique.requirements:
+                by_member[requirement.student_group_id].append(requirement)
+            # Each member places at most its weekly lessons, and at most the
+            # school's daily maximum, on one day — each no longer than its
+            # longest. A bound on the count, not a placement.
+            member_cap = 0
+            for member_requirements in by_member.values():
+                weekly = sum(r.lessons_per_week for r in member_requirements)
+                longest = max(
+                    self._grid.minutes_to_slots(r.minutes_per_lesson) for r in member_requirements
+                )
+                per_day = weekly if max_per_day is None else min(weekly, max_per_day)
+                member_cap += per_day * longest
 
-                def held(ranges: list[tuple[int, int]]) -> int:
-                    return min(_holds(ranges, measure), member_cap) // measure
+            def held(ranges: list[tuple[int, int]]) -> int:
+                return min(_holds(ranges, measure), member_cap) // measure
 
-                day_counts = []
-                best_total = 0
-                for day_index, free in clique.free_by_day.items():
-                    base = day_index * slots_per_day
-                    literals = choices.get((group.id, day_index))
-                    if literals is None:
-                        upper = held(free)
-                    else:
-                        caps = {
-                            slot: held(_subtract_range(free, (slot - base, slot - base + lunch_slots)))
-                            for slot in literals
-                        }
-                        upper = max(caps.values())
-                    count = model.NewIntVar(0, upper, f"lessons_{group.id}_{day_index}")
-                    if literals is not None:
-                        model.Add(count <= sum(caps[slot] * literal for slot, literal in literals.items()))
-                    day_counts.append(count)
-                    best_total += upper
-                model.Add(measure * sum(day_counts) == clique.demand)
-                slack = best_total - clique.demand // measure
-                if len(day_counts) - slack >= 1:
-                    packed.append(group.id)
-            return model, starts, packed
+            lessons = sentence("lessons", group.id)
+            day_counts = []
+            for day_index, free in clique.free_by_day.items():
+                base = day_index * slots_per_day
+                options = choices.get((group.id, day_index))
+                if options is None:
+                    count = model.NewIntVar(0, held(free), f"lessons_{group.id}_{day_index}")
+                else:
+                    caps = {
+                        slot: held(_subtract_range(free, (slot - base, slot - base + lunch_slots)))
+                        for slot in options
+                    }
+                    count = model.NewIntVar(0, max(caps.values()), f"lessons_{group.id}_{day_index}")
+                    # A class the naming leaves out chooses no start, and this
+                    # bound would then read that as a day with no room at all
+                    # — which is why the naming drops a class's sentences
+                    # together, never its presence alone.
+                    model.Add(
+                        count <= sum(caps[slot] * literal for slot, literal in options.items()),
+                    ).OnlyEnforceIf(lessons)
+                day_counts.append(count)
+            model.Add(measure * sum(day_counts) == clique.demand).OnlyEnforceIf(lessons)
 
-        def decide(with_seats: bool) -> tuple[int, cp_model.CpSolver, dict, list[UUID]]:
-            model, starts, packed = build(with_seats)
+        return _LunchStage(
+            model=model, starts=starts, literals=literals, headcounts=headcounts,
+            window_texts=window_texts,
+        )
+
+    def _name_lunch_causes(
+        self, request: OptimizeScheduleRequest, stage: _LunchStage,
+    ) -> ConflictAnalysis:
+        """Which sentences the refusal needs, by dropping the ones it does not.
+
+        Every solve here re-proves the week impossible with fewer sentences
+        pinned, so the set still pinned is sufficient at every step — which
+        is what lets the deadline cut the search anywhere and the answer stay
+        true. Coarse before fine: the hall alone, then each kind of narrowing
+        for the whole school, then the lessons for the whole school, then the
+        classes in chunks that split only when a chunk turns out to matter.
+        A solve that cannot decide in the time left counts as "needed", the
+        conservative reading.
+        """
+        rules = request.rules
+        seats = rules.dining_seats
+        deadline = time.monotonic() + self.LUNCH_STAGE_CAP_SECONDS
+        relaxed: set[tuple[str, UUID | None]] = set()
+
+        def still_impossible(extra: set[tuple[str, UUID | None]]) -> bool | None:
+            """True when the week stays impossible with `extra` dropped too;
+            None when the clock ran out before CP-SAT could say."""
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
             solver = cp_model.CpSolver()
-            solver.parameters.max_time_in_seconds = self.LUNCH_STAGE_CAP_SECONDS
-            started = time.monotonic()
-            code = solver.Solve(model)
-            logger.info(
-                "lunch stage %s: %s in %.2fs over %d lunch starts",
-                "with seats" if with_seats else "without seats",
-                solver.StatusName(code), time.monotonic() - started, len(starts),
-            )
-            return code, solver, starts, packed
+            solver.parameters.max_time_in_seconds = remaining
+            code = solver.Solve(stage.pinned(relaxed | extra))
+            if code == cp_model.INFEASIBLE:
+                return True
+            if code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                return False
+            return None
 
-        code, solver, starts, packed = decide(with_seats=True)
-        if code in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return None, {key: solver.Value(start) for key, start in starts.items()}
-        if code != cp_model.INFEASIBLE:
-            return None, {}
+        def drop_if_unneeded(candidates: set[tuple[str, UUID | None]]) -> None:
+            if candidates and still_impossible(candidates):
+                relaxed.update(candidates)
 
-        seats_are_the_difference = False
-        if seats is not None and any(headcounts.get(gid, 0) > 0 for gid, _ in domains):
-            without, _, _, _ = decide(with_seats=False)
-            seats_are_the_difference = without in (cp_model.OPTIMAL, cp_model.FEASIBLE)
-        count = len(packed)
-        if seats_are_the_difference:
-            return ConflictAnalysis(
-                summary=(
-                    f"The lunch breaks cannot be staggered: {count} class(es) must fill at least "
-                    f"one day to the edge of their frame, which leaves their break only a slot "
-                    f"or two to start in, and the dining hall's {seats} seats cannot take them "
-                    f"all at once. Widen those stages' frame times, add seats, or move a lesson "
-                    f"off those days."
+        by_cause: dict[str, set[tuple[str, UUID | None]]] = defaultdict(set)
+        for key in stage.literals:
+            by_cause[key[0]].add(key)
+
+        # The hall is the difference when the week is refused with its seats
+        # and not without them — the one question the summary leads with.
+        hall = by_cause.get("hall", set())
+        seats_matter: bool | None = False
+        if hall:
+            without = still_impossible(hall)
+            # None: the clock ran out before the question was answered. The
+            # hall then stays pinned — sufficiency needs nothing dropped
+            # unproved — and the summary says neither "the hall" nor "not".
+            seats_matter = None if without is None else not without
+            if seats_matter is False:
+                relaxed.update(hall)
+        for cause in ("declared", "closed", "locked", "lessons"):
+            drop_if_unneeded(by_cause.get(cause, set()))
+
+        # The classes, in chunks: a chunk that can go, goes whole; one that
+        # cannot is split until the classes that matter stand alone.
+        classes = [group_id for (cause, group_id) in stage.literals if cause == "eats"]
+
+        def sentences_of(group_ids: list[UUID]) -> set[tuple[str, UUID | None]]:
+            return {key for key in stage.literals if key[1] in set(group_ids)}
+
+        def prune(chunk: list[UUID]) -> None:
+            candidates = sentences_of(chunk) - relaxed
+            if not candidates:
+                return
+            verdict = still_impossible(candidates)
+            if verdict is True:
+                relaxed.update(candidates)
+            elif verdict is False and len(chunk) > 1:
+                half = len(chunk) // 2
+                prune(chunk[:half])
+                prune(chunk[half:])
+
+        chunk_size = max(1, -(-len(classes) // 4))
+        for index in range(0, len(classes), chunk_size):
+            prune(classes[index:index + chunk_size])
+
+        kept = {key for key in stage.literals if key not in relaxed}
+        named = sorted(
+            {group_id for (_, group_id) in kept if group_id is not None},
+            key=lambda group_id: classes.index(group_id),
+        )
+        children = sum(stage.headcounts.get(group_id, 0) for group_id in named)
+
+        def named_for(cause: str) -> list[UUID]:
+            return [group_id for group_id in named if (cause, group_id) in kept]
+
+        details: list[ConflictDetail] = []
+        if seats_matter is not False:
+            details.append(ConflictDetail(
+                category="DINING_CAPACITY",
+                message=f"The dining hall's {seats} seats are all it holds at one time.",
+            ))
+        # One sentence per cause, the same for every class, with the classes
+        # in the ids: a school reads one line, not twenty-four copies of it.
+        details.append(ConflictDetail(
+            category="LUNCH_WINDOW" if seats_matter is False else "DINING_CAPACITY",
+            message=(
+                "The classes named here take a lunch break every school day."
+                if seats_matter is False
+                else "The classes named here bring their children to the hall every school day."
+            ),
+            resource_ids=named_for("eats"),
+        ) if named_for("eats") else None)
+        # The lessons, quoting the frame that packs the day where there is
+        # one to quote: in the frame reproduction the frame IS the lever, and
+        # a line that only said "lessons" sent the school to its timplan.
+        # One line per distinct frame, so classes under different frames are
+        # not put under one sentence that fits neither.
+        by_window: dict[str | None, list[UUID]] = defaultdict(list)
+        for group_id in named_for("lessons"):
+            by_window[stage.window_texts.get(group_id)].append(group_id)
+        for window_text, group_ids in by_window.items():
+            inside = f" — inside their frame time {window_text} —" if window_text else ""
+            details.append(ConflictDetail(
+                category="LUNCH_WINDOW",
+                message=(
+                    f"The lessons of the classes named here fill the day so completely{inside} "
+                    f"around the break that few lunch starts are left for it."
                 ),
-                conflicts=[
-                    ConflictDetail(
-                        category="DINING_CAPACITY",
-                        message=(
-                            f"With {seats} seats the hall cannot seat every class whose day is "
-                            f"packed to its frame at the lunch starts left to them."
-                        ),
-                        resource_ids=packed,
-                    ),
-                ],
-            ), {}
+                resource_ids=group_ids,
+            ))
+        for cause, category, message in (
+            (
+                "declared", "LUNCH_WINDOW",
+                "A lunch sitting or a frame time narrows when the classes named here may eat.",
+            ),
+            (
+                "locked", "GROUP_OVERLAP",
+                "Locked lessons take lunch starts away from the classes named here.",
+            ),
+            (
+                "closed", "AVAILABILITY",
+                "A reservation takes lunch starts away from the classes named here.",
+            ),
+        ):
+            group_ids = named_for(cause)
+            if group_ids:
+                details.append(ConflictDetail(
+                    category=category, message=message, resource_ids=group_ids,
+                ))
+        details = [detail for detail in details if detail is not None]
+
+        classes = f"{len(named)} class" + ("" if len(named) == 1 else "es")
+        children_text = f"{children} child" + ("" if children == 1 else "ren")
+
+        if seats_matter is None:
+            lead = (
+                f"No placement of the lunch breaks satisfies the lunch window, the "
+                f"sittings, the frame times, the locked lessons and the dining hall's "
+                f"{seats} seats together for the {classes} named; the solver "
+                f"ran out of time before it could say whether the seats are the difference."
+            )
+        elif seats_matter:
+            lead = (
+                f"The dining hall's {seats} seats cannot seat the {classes} named "
+                f"({children_text}) at the lunch starts their days leave them, in "
+                f"{rules.lunch_minutes}-minute sittings between {rules.lunch_start_time[:5]} "
+                f"and {rules.lunch_end_time[:5]}. Add seats, widen the lunch window or the "
+                f"sittings, or free the starts a frame, a lock or a reservation takes away."
+            )
+        else:
+            lead = (
+                f"No placement of the lunch breaks works for the {classes} named: "
+                f"their lessons, sittings, frame times, locked lessons and "
+                f"reservations leave no day that holds both the lessons and the break. "
+                f"Widen the frame or the lunch window, or unlock a lesson in the middle of "
+                f"the day."
+            )
         return ConflictAnalysis(
             summary=(
-                f"No placement of the lunch breaks leaves every class enough teaching time "
-                f"around its meal: {count} class(es) need a day so full that the break has "
-                f"nowhere left to go. Widen the frame or the lunch window, or unlock a lesson "
-                f"in the middle of the day."
+                f"{lead} The causes listed are together enough to make the week "
+                f"impossible; the solver reports a sufficient set rather than the "
+                f"smallest one."
             ),
-            conflicts=[
-                ConflictDetail(
-                    category="LUNCH_WINDOW",
-                    message=(
-                        "The lunch window, the frame times and the locked lessons leave these "
-                        "classes no day that holds both their lessons and their break."
-                    ),
-                    resource_ids=packed,
-                ),
-            ],
-        ), {}
+            conflicts=details,
+        )
 
     def _explain_infeasible(
         self,

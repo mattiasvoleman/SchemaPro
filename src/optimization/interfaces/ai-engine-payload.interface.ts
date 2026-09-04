@@ -326,6 +326,12 @@ export interface AiEngineConflictDetail {
   roomIds: string[];
   constraintIds: string[];
   resourceIds: string[];
+  /**
+   * The school's names for the groups in resourceIds. Never sent by the
+   * engine, which knows no names; filled by the gateway on the way back, so
+   * a line that says "the classes named here" can show them.
+   */
+  resourceNames?: string[];
 }
 
 export interface AiEngineConflictAnalysis {
