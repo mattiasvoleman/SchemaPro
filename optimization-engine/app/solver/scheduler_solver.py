@@ -120,6 +120,19 @@ def padded_of(model: cp_model.CpModel, decision: LessonDecision) -> cp_model.Int
     return decision._padded
 
 
+def _grade_span_text(low: int | None, high: int | None) -> str:
+    """A year span as a sentence shows it: "7", "4–6", or "" when unknown.
+
+    An EN DASH, which is what the school's own screens use for a range, and a
+    single year written once rather than as "7-7". Typography rather than
+    language, so it belongs on this side: the value is substituted into every
+    translation unchanged.
+    """
+    if low is None or high is None:
+        return ""
+    return str(low) if low == high else f"{low}\u2013{high}"
+
+
 def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
     """Half-open [a, b) ranges, merged where they touch or overlap, in order."""
     merged: list[tuple[int, int]] = []
@@ -1736,7 +1749,9 @@ class SchedulerSolver:
                     grades = (
                         "any"
                         if requirement.min_grade_level is None
-                        else f"{requirement.min_grade_level}-{requirement.max_grade_level}"
+                        else _grade_span_text(
+                            requirement.min_grade_level, requirement.max_grade_level,
+                        )
                     )
                     remaining = widest * self._grid.slot_minutes
                     raise InvalidScheduleInputError.of("FRAME_NO_WINDOW_FOR_REQUIREMENT", {
@@ -1770,7 +1785,9 @@ class SchedulerSolver:
                     grades = (
                         "any"
                         if requirement.min_grade_level is None
-                        else f"{requirement.min_grade_level}-{requirement.max_grade_level}"
+                        else _grade_span_text(
+                            requirement.min_grade_level, requirement.max_grade_level,
+                        )
                     )
                     remaining = widest * self._grid.slot_minutes
                     raise InvalidScheduleInputError.of("RAST_NO_STRETCH_FOR_REQUIREMENT", {
@@ -1783,7 +1800,9 @@ class SchedulerSolver:
             grades = (
                 "any"
                 if requirement.min_grade_level is None
-                else f"{requirement.min_grade_level}-{requirement.max_grade_level}"
+                else _grade_span_text(
+                    requirement.min_grade_level, requirement.max_grade_level,
+                )
             )
             eligible_rooms = [
                 room for room in request.rooms if self._room_allowed(room, requirement)
@@ -2029,7 +2048,9 @@ class SchedulerSolver:
                         raise InvalidScheduleInputError.of("LUNCH_SERVING_CANNOT_FEED_STAGE", {
                             "servingStart": serving.start_time[:5],
                             "servingEnd": serving.end_time[:5],
-                            "grades": f"{serving.min_grade_level}-{serving.max_grade_level}",
+                            "grades": _grade_span_text(
+                                serving.min_grade_level, serving.max_grade_level,
+                            ),
                             "students": captive,
                             "minutes": rules.lunch_minutes,
                             "seats": seats,
@@ -2605,9 +2626,7 @@ class SchedulerSolver:
                 # from ("Time 11:07:00 is not aligned to 5-minute slots"), which
                 # leaves a school to find which of its reservations that was.
                 raise InvalidScheduleInputError.of("INPUT_CONSTRAINT_TIME_OFF_GRID", {
-                    "constraint": str(constraint.id),
-                    "start": constraint.start_time[:5],
-                    "end": constraint.end_time[:5],
+                    **self._constraint_params(constraint),
                     "slotMinutes": self._grid.slot_minutes,
                 }) from exc
 
@@ -2620,7 +2639,7 @@ class SchedulerSolver:
                 name=f"availability_{constraint.id}",
                 category="AVAILABILITY",
                 code="AVAIL_CONSTRAINT_BLOCKS_LESSONS",
-                params={"constraint": str(constraint.id)},
+                params=self._constraint_params(constraint),
                 constraint_ids=[constraint.id],
                 # A year reservation names no resource, and a conflict detail
                 # carries UUIDs only — the constraint id is what the admin has
@@ -2843,6 +2862,28 @@ class SchedulerSolver:
         else:
             model.AddBoolOr([before, after]).OnlyEnforceIf(guard)
 
+    def _constraint_params(self, constraint: AnonymousConstraint) -> dict[str, str | int]:
+        """The values a sentence about one reservation substitutes.
+
+        Structured, never a label assembled here: the gateway turns the
+        resource id into the school's own name and the reader puts the words
+        in its own order. `day` is the ISO weekday, or 0 for a one-off, which
+        is the branch that reads `date` instead — a reservation is written
+        either way round on the Tillgänglighet page.
+        """
+        return {
+            "constraint": str(constraint.id),
+            "kind": constraint.resource_kind,
+            "resource": str(constraint.resource_id or ""),
+            "grades": _grade_span_text(
+                constraint.min_grade_level, constraint.max_grade_level,
+            ),
+            "day": constraint.day_of_week or 0,
+            "date": constraint.date or "",
+            "start": constraint.start_time[:5],
+            "end": constraint.end_time[:5],
+        }
+
     def _fixed_window(self, fixed: FixedLesson) -> tuple[int, int] | None:
         """Absolute slot window blocked by a fixed lesson, rounded outward.
 
@@ -2952,9 +2993,7 @@ class SchedulerSolver:
                 # from ("Time 11:07:00 is not aligned to 5-minute slots"), which
                 # leaves a school to find which of its reservations that was.
                 raise InvalidScheduleInputError.of("INPUT_CONSTRAINT_TIME_OFF_GRID", {
-                    "constraint": str(constraint.id),
-                    "start": constraint.start_time[:5],
-                    "end": constraint.end_time[:5],
+                    **self._constraint_params(constraint),
                     "slotMinutes": self._grid.slot_minutes,
                 }) from exc
 
@@ -3555,9 +3594,7 @@ class SchedulerSolver:
                 # from ("Time 11:07:00 is not aligned to 5-minute slots"), which
                 # leaves a school to find which of its reservations that was.
                 raise InvalidScheduleInputError.of("INPUT_CONSTRAINT_TIME_OFF_GRID", {
-                    "constraint": str(constraint.id),
-                    "start": constraint.start_time[:5],
-                    "end": constraint.end_time[:5],
+                    **self._constraint_params(constraint),
                     "slotMinutes": self._grid.slot_minutes,
                 }) from exc
 

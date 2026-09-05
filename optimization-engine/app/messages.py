@@ -235,12 +235,12 @@ MESSAGES: dict[str, str] = {
         "other {# classes}} named ({students, plural, one {# student} other {# students}}) at the "
         "lunch starts their days leave them, in {lunchMinutes}-minute sittings between "
         "{windowStart} and {windowEnd}. Add seats, widen the lunch window or the sittings, or "
-        "free the starts a frame, a lock or a reservation takes away."
+        "free the starts a frame, a lock or a constraint takes away."
     ),
     "LUNCH_NO_PLACEMENT_FOR_CLASSES": (
         "No placement of the lunch breaks works for the {classes, plural, one {# class} "
         "other {# classes}} named: their lessons, sittings, frame times, locked lessons and "
-        "reservations leave no day that holds both the lessons and the break. Widen the frame or "
+        "constraints leave no day that holds both the lessons and the break. Widen the frame or "
         "the lunch window, or unlock a lesson in the middle of the day."
     ),
     "LUNCH_NO_PLACEMENT_SEATS_UNDECIDED": (
@@ -271,7 +271,7 @@ MESSAGES: dict[str, str] = {
         "Locked lessons take lunch starts away from the classes named here."
     ),
     "LUNCH_STARTS_TAKEN_BY_RESERVATION": (
-        "A reservation takes lunch starts away from the classes named here."
+        "An availability constraint takes lunch starts away from the classes named here."
     ),
 
     # ---- A lunch a rule leaves nowhere to go ----------------------------
@@ -281,17 +281,17 @@ MESSAGES: dict[str, str] = {
         "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}."
     ),
     "LUNCH_AVAILABILITY_LEAVES_NO_BREAK": (
-        "A reservation leaves student group {group} no {minutes}-minute lunch break inside "
+        "An availability constraint leaves student group {group} no {minutes}-minute lunch break inside "
         "{windowStart}-{windowEnd} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
         "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}. Shorten the "
-        "reservation, widen the lunch window, or shorten the break."
+        "constraint, widen the lunch window, or shorten the break."
     ),
     "LUNCH_CAUSES_LEAVE_NO_BREAK": (
-        "Together, {causes, select, locked {locked lessons} closed {reservations} "
-        "declared {the declared lunch sittings} locked_closed {locked lessons and reservations} "
+        "Together, {causes, select, locked {locked lessons} closed {availability constraints} "
+        "declared {the declared lunch sittings} locked_closed {locked lessons and availability constraints} "
         "locked_declared {locked lessons and the declared lunch sittings} "
-        "closed_declared {reservations and the declared lunch sittings} "
-        "locked_closed_declared {locked lessons, reservations and the declared lunch sittings} "
+        "closed_declared {availability constraints and the declared lunch sittings} "
+        "locked_closed_declared {locked lessons, availability constraints and the declared lunch sittings} "
         "other {these rules}} leave student group {group} no {minutes}-minute lunch break inside "
         "{windowStart}-{windowEnd} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
         "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}."
@@ -366,7 +366,11 @@ MESSAGES: dict[str, str] = {
         "{groupSize, plural, one {# student} other {# students}}."
     ),
     "AVAIL_CONSTRAINT_BLOCKS_LESSONS": (
-        "Reservation {constraint} blocks lessons that have to be placed."
+        "A constraint on {kind, select, TEACHER {a teacher} ROOM {room {resource}} "
+        "STUDENT_GROUP {class {resource}} other {years {grades}}} "
+        "{day, select, 0 {on {date}} 1 {on Mondays} 2 {on Tuesdays} 3 {on Wednesdays} "
+        "4 {on Thursdays} 5 {on Fridays} 6 {on Saturdays} 7 {on Sundays} other {on day {day}}} "
+        "{start}-{end} blocks lessons that have to be placed."
     ),
 
     # ---- The payload the engine will not take ----------------------------
@@ -380,7 +384,7 @@ MESSAGES: dict[str, str] = {
     ),
     "INPUT_MODEL_TOO_LARGE": (
         "This week is too large to build: about {variables} model variables against a limit of "
-        "{limit}. The usual causes are rooms with many different capacities, reservations that "
+        "{limit}. The usual causes are rooms with many different capacities, constraints that "
         "each touch many lessons, and very high per-teacher lesson loads."
     ),
     "INPUT_LESSON_LENGTH_OFF_GRID": (
@@ -392,8 +396,9 @@ MESSAGES: dict[str, str] = {
         "school day."
     ),
     "INPUT_CONSTRAINT_TIME_OFF_GRID": (
-        "Reservation {constraint} runs {start}-{end}, which does not fit the "
-        "{slotMinutes}-minute scheduling grid or falls outside the school day."
+        "The constraint on {kind, select, TEACHER {a teacher} ROOM {room {resource}} "
+        "STUDENT_GROUP {class {resource}} other {years {grades}}} runs {start}-{end}, which does "
+        "not fit the {slotMinutes}-minute scheduling grid or falls outside the school day."
     ),
     "FRAME_NO_WINDOW_FOR_REQUIREMENT": (
         "The frame times leave no room for requirement {requirement} "

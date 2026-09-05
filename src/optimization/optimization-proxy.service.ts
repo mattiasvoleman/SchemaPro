@@ -99,8 +99,10 @@ interface AnonMaps {
    * the one part of that sentence a school would actually look up untranslated.
    */
   roomTypeAnonMap: Map<string, string>;
+  /** And the reservation an engine refusal names. */
+  constraintAnonMap: Map<string, string>;
   /** Real group id -> the school's own name, the last step out of id space. */
-  groupNameById: Map<string, string>;
+  nameById: Map<string, string>;
 }
 
 @Injectable()
@@ -150,7 +152,8 @@ export class OptimizationProxyService {
       groupAnonMap,
       headcountByGroup,
       roomTypeAnonMap,
-      groupNameById,
+      constraintAnonMap,
+      nameById,
       storedRules,
     } = await this.prisma.withRls(user, (tx) =>
       this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user)),
@@ -161,7 +164,8 @@ export class OptimizationProxyService {
       roomAnonMap,
       groupAnonMap,
       roomTypeAnonMap,
-      groupNameById,
+      constraintAnonMap,
+      nameById,
     };
 
     // The school's saved lunch rules, unless this caller brought their own.
@@ -253,24 +257,39 @@ export class OptimizationProxyService {
     maps: AnonMaps,
   ): AiEngineConflictAnalysis | null {
     if (!conflicts) return null;
-    const realGroupByAnon = new Map(
-      [...maps.groupAnonMap].map(([realId, anonId]) => [anonId, realId]),
-    );
+    // EVERY id space, not only the groups'. `resourceIds` is mixed: the lunch
+    // lines put classes in it, and the reservation line puts whatever the
+    // reservation is about — a teacher, a room or a class. Reversing the
+    // group map alone left a teacher's anonymous uuid in the response and
+    // silently gave that detail fewer names than ids.
+    const realByAnon = new Map<string, string>();
+    for (const map of [
+      maps.groupAnonMap,
+      maps.roomAnonMap,
+      maps.requirementAnonMap,
+      maps.roomTypeAnonMap,
+      maps.constraintAnonMap,
+    ]) {
+      for (const [realId, anonId] of map) realByAnon.set(anonId, realId);
+    }
     return {
       summary: this.named(conflicts.summary, maps),
       summaryCode: conflicts.summaryCode,
       summaryParams: this.namedParams(conflicts.summaryParams ?? {}, maps),
       conflicts: conflicts.conflicts.map((detail) => {
         const resourceIds = detail.resourceIds.map(
-          (anonId) => realGroupByAnon.get(anonId) ?? anonId,
+          (anonId) => realByAnon.get(anonId) ?? anonId,
         );
         return {
           ...detail,
           message: this.named(detail.message, maps),
           params: this.namedParams(detail.params ?? {}, maps),
           resourceIds,
+          // Only the ones there IS a name for. A teacher is deliberately
+          // absent — see nameById — so a reservation about one names the
+          // reservation in its sentence and nobody in this list.
           resourceNames: resourceIds
-            .map((realId) => maps.groupNameById.get(realId))
+            .map((realId) => maps.nameById.get(realId))
             .filter((name): name is string => name !== undefined),
         };
       }),
@@ -280,7 +299,7 @@ export class OptimizationProxyService {
   /** An engine sentence with its ids turned back and its groups named. */
   private named(text: string, maps: AnonMaps): string {
     let out = this.deanonymise(text, maps);
-    for (const [realId, name] of maps.groupNameById) out = out.split(realId).join(name);
+    for (const [realId, name] of maps.nameById) out = out.split(realId).join(name);
     return out;
   }
 
@@ -376,8 +395,10 @@ export class OptimizationProxyService {
     headcountByGroup: Map<string, number>;
     /** Needed to translate "required type X" in an engine refusal. */
     roomTypeAnonMap: Map<string, string>;
+    /** And the reservation one names. */
+    constraintAnonMap: Map<string, string>;
     /** Real group id → the school's name for it, for realiseConflicts. */
-    groupNameById: Map<string, string>;
+    nameById: Map<string, string>;
     storedRules: ScheduleRules | null;
   }> {
     // Anonymous-id lookup tables: realId → anonId.
@@ -391,6 +412,7 @@ export class OptimizationProxyService {
     // to know that a room's type and a requirement's required type are the
     // SAME token, never what the school calls it.
     const roomTypeAnonMap = new Map<string, string>();
+    const constraintAnonMap = new Map<string, string>();
 
     const anonId = (map: Map<string, string>, realId: string): string => {
       const existing = map.get(realId);
@@ -420,7 +442,17 @@ export class OptimizationProxyService {
         recurrence: true,
         startDate: true,
         endDate: true,
-        subject: { select: { requiredRoomTypeId: true } },
+        // The names ride along on joins that were already being made. They
+        // are never forwarded to the engine, which sees anonymous tokens
+        // throughout; they are what a refusal is turned back into on its way
+        // to the school — see realiseConflicts.
+        subject: {
+          select: {
+            requiredRoomTypeId: true,
+            name: true,
+            requiredRoomType: { select: { name: true } },
+          },
+        },
       },
     });
 
@@ -498,12 +530,38 @@ export class OptimizationProxyService {
       where: { academicYearId },
       select: { id: true, gradeLevel: true, kind: true, name: true },
     });
-    // What the school calls each group, for the refusal on its way back.
-    const groupNameById = new Map<string, string>();
+    // What the school calls each thing, for the refusal on its way back.
+    //
+    // ONE MAP OVER EVERY KIND OF ID, because a refusal names whatever it is
+    // about and the ids are unique across the tables. A class is its own
+    // name; a timplan row has none of its own and is named the way the
+    // Timplan page names it, by subject and group. Nothing here is ever sent
+    // to the engine, which sees anonymous tokens throughout.
+    //
+    // NO PERSON'S NAME GOES IN. firstName/lastName are marked PII in the
+    // schema, and this map ends up denormalised into OptimizationJobs.conflicts
+    // — a copy that no rename or deletion would ever reach. A reservation is
+    // named by what it reserves and when, below.
+    const nameById = new Map<string, string>();
     for (const group of allGroups) {
       if (typeof group.name === 'string' && group.name.length > 0) {
-        groupNameById.set(group.id, group.name);
+        nameById.set(group.id, group.name);
       }
+    }
+    // A timplan row carries no name of its own, and is named the way the app
+    // already speaks it: `requirements.cellLabel` is "{subject} för {group}",
+    // the aria-label on exactly this cell. Unique by construction — the
+    // schema's @@unique(schoolId, academicYearId, studentGroupId, subjectId)
+    // means group + subject names one row inside a läsår. The groups go in
+    // first, above, because this reads them.
+    for (const requirement of rawRequirements) {
+      const subject = requirement.subject?.name;
+      if (!subject) continue;
+      const group = nameById.get(requirement.studentGroupId);
+      nameById.set(requirement.id, group ? `${subject} för ${group}` : subject);
+      const roomTypeId = requirement.subject.requiredRoomTypeId;
+      const roomType = requirement.subject.requiredRoomType?.name;
+      if (roomTypeId && roomType) nameById.set(roomTypeId, roomType);
     }
     const homeClassIds = allGroups
       .filter((group) => group.kind === 'CLASS')
@@ -876,7 +934,10 @@ export class OptimizationProxyService {
       maxGradeLevel: gradeSpanByGroup.get(groupId)?.max ?? null,
     }));
 
-    // Fetch rooms (drop name, code — capacity and type are non-PII enums/numbers).
+    // Fetch rooms. The name and the type's name are read for the way BACK —
+    // a refusal that names a room should name it the way the Salar page does
+    // — and never forwarded: what the engine gets is capacity, an anonymous
+    // type token and the year span.
     const rawRooms = await tx.room.findMany({
       where: {
         school: {
@@ -889,8 +950,18 @@ export class OptimizationProxyService {
         roomTypeId: true,
         minGradeLevel: true,
         maxGradeLevel: true,
+        // Same reason as the subject's name above: for the way back, never
+        // for the engine.
+        name: true,
+        roomType: { select: { name: true } },
       },
     });
+    for (const room of rawRooms) {
+      if (room.name) nameById.set(room.id, room.name);
+      if (room.roomTypeId && room.roomType?.name) {
+        nameById.set(room.roomTypeId, room.roomType.name);
+      }
+    }
 
     /*
      * The school's lunch rules, read inside this same RLS transaction.
@@ -1012,7 +1083,12 @@ export class OptimizationProxyService {
     const constraints: AnonymousConstraint[] = rawConstraints.flatMap(
       (c): AnonymousConstraint[] => {
         const common = {
-          id: randomUUID(),
+          // Through the map, not a fresh uuid. A bare randomUUID() here was an
+          // id that existed in no table in either id space: the engine put it
+          // in `constraintIds` and in the sentence it wrote, and what came out
+          // the other end could not be looked up by the school, by this
+          // gateway, or by a developer holding the database.
+          id: anonId(constraintAnonMap, c.id),
           resourceKind: c.resourceType as ResourceKind,
           dayOfWeek: c.dayOfWeek as DayOfWeek | null,
           date: c.date ? c.date.toISOString().slice(0, 10) : null,
@@ -1166,7 +1242,8 @@ export class OptimizationProxyService {
       groupAnonMap,
       headcountByGroup: homeCountByGroup,
       roomTypeAnonMap,
-      groupNameById,
+      constraintAnonMap,
+      nameById,
       // An empty object would send `rules: {}` and read as "rules were
       // considered and came to nothing", which the engine treats the same but
       // a reader of the payload would not.
@@ -1199,6 +1276,7 @@ export class OptimizationProxyService {
       maps.roomAnonMap,
       maps.groupAnonMap,
       maps.roomTypeAnonMap,
+      maps.constraintAnonMap,
     ]) {
       for (const [realId, anonId] of map) real.set(anonId, realId);
     }

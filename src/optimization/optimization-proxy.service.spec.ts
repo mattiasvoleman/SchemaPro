@@ -593,6 +593,8 @@ describe('OptimizationProxyService', () => {
       roomAnonMap: new Map<string, string>(),
       groupAnonMap: new Map<string, string>(),
       roomTypeAnonMap: new Map<string, string>(),
+      constraintAnonMap: new Map<string, string>(),
+      nameById: new Map<string, string>(),
     });
 
     const call = (payload = {}, anonMaps = maps()) =>
@@ -2155,6 +2157,104 @@ describe('OptimizationProxyService', () => {
         resourceIds: [GROUP_ID],
         resourceNames: ['4A'],
       });
+    });
+
+    it('names a timplan row by its subject and group, and a room type by its name', async () => {
+      // A refusal that said "Timplansposten 8f2c…" named something a rektor
+      // could not look up. A timplan row carries no name of its own, so it is
+      // named the way the Timplan page names it — and the subject and the
+      // room type ride along on joins the fetch was already making.
+      arrange({
+        requirements: [
+          requirement({ subject: { requiredRoomTypeId: 'room-type-lab', name: 'Matematik', requiredRoomType: { name: 'Slöjdsal' } } }),
+        ],
+        groups: [{ id: GROUP_ID, gradeLevel: 4, kind: 'CLASS', name: '4A' }],
+      });
+      http.post.mockImplementation((_url: string, payload: any) =>
+        of({
+          data: {
+            requestId: payload.requestId,
+            status: 'INFEASIBLE',
+            lessons: [],
+            conflicts: {
+              summary: `No room fits requirement ${payload.requirements[0].id}.`,
+              summaryCode: 'ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT',
+              summaryParams: {
+                requirement: payload.requirements[0].id,
+                roomType: payload.requirements[0].requiredRoomType,
+              },
+              conflicts: [],
+            },
+          },
+        }),
+      );
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.conflicts?.summaryParams).toEqual({
+        requirement: 'Matematik för 4A',
+        roomType: 'Slöjdsal',
+      });
+      expect(result.conflicts?.summary).toBe('No room fits requirement Matematik för 4A.');
+    });
+
+    it('brings a refusal back naming a reservation and a room that are real rows', async () => {
+      /*
+       * Two ids used to leave this method meaning nothing.
+       *
+       * The anonymous constraint was minted with a bare randomUUID(), recorded
+       * in no map — so the id the engine put in its sentence and in
+       * `constraintIds` existed in NO table in either id space, and could not
+       * be looked up by the school, by this gateway, or by a developer holding
+       * the database. And `resourceIds` was read through the GROUP map alone,
+       * although a reservation puts whatever it is about in there: a teacher's
+       * or a room's anonymous uuid was handed to the client unchanged.
+       */
+      arrange({
+        constraints: [
+          constraintRow({ id: 'constraint-real-id', resourceType: 'ROOM', roomId: ROOM_ID }),
+        ],
+        rooms: [{ id: ROOM_ID, capacity: 30, type: 'CLASSROOM', name: 'Aulan', roomType: null }],
+      });
+      http.post.mockImplementation((_url: string, payload: any) =>
+        of({
+          data: {
+            requestId: payload.requestId,
+            status: 'INFEASIBLE',
+            lessons: [],
+            conflicts: {
+              summary: 'blocked',
+              summaryCode: 'CONFLICT_CORE_SUMMARY',
+              summaryParams: {},
+              conflicts: [
+                {
+                  category: 'AVAILABILITY',
+                  code: 'AVAIL_CONSTRAINT_BLOCKS_LESSONS',
+                  params: {
+                    constraint: payload.constraints[0].id,
+                    resource: payload.constraints[0].resourceId,
+                  },
+                  message: `A constraint ${payload.constraints[0].id} on room ${payload.constraints[0].resourceId}.`,
+                  requirementIds: [],
+                  roomIds: [],
+                  constraintIds: [payload.constraints[0].id],
+                  resourceIds: [payload.constraints[0].resourceId],
+                },
+              ],
+            },
+          },
+        }),
+      );
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+      const detail = (await service.triggerScheduling(ACADEMIC_YEAR, testUser()))
+        .conflicts!.conflicts[0];
+
+      expect(detail.params.constraint).toBe('constraint-real-id');
+      expect(detail.resourceIds).toEqual([ROOM_ID]);
+      // And the room, which the school named itself, is named.
+      expect(detail.params.resource).toBe('Aulan');
+      expect(detail.resourceNames).toEqual(['Aulan']);
     });
 
     it('sends a class to the hall when one of its pupils attends a lesson as a participant', async () => {

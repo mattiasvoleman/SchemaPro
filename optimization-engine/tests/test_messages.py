@@ -87,9 +87,14 @@ def test_arguments_ignore_a_plural_s_own_branches() -> None:
 def test_every_message_renders_with_the_arguments_it_declares() -> None:
     """A typo in a placeholder is invisible until the day the message is used,
     and the day it is used is the day a school's week was refused."""
+    import re
+
     for code, template in MESSAGES.items():
         params: dict[str, str | int] = {}
-        for name in arguments_of(template):
+        # EVERY name, branches included — not arguments_of, which reads the top
+        # level only. A select's `other` branch may itself substitute a value,
+        # and that value is exactly what a dummy render has to supply.
+        for name in set(re.findall(r"\{(\w+)[,}]", template)):
             # Numbers where a plural needs one, text elsewhere. A plural over a
             # string raises, which is exactly the check; a select falls to its
             # `other` branch, which every template here must have.
@@ -102,6 +107,19 @@ def test_every_code_is_screaming_snake_and_says_what_it_is_about() -> None:
     for code in MESSAGES:
         assert code.isupper()
         assert code.replace("_", "").isalnum()
+
+
+def _keys_of(params_node: object, helpers: dict[str, set[str]]) -> set[str]:
+    """The param names a call site supplies, following one level of helper."""
+    import ast
+
+    keys: set[str] = set()
+    for node in ast.walk(params_node):  # type: ignore[arg-type]
+        if isinstance(node, ast.Dict):
+            keys |= {k.value for k in node.keys if isinstance(k, ast.Constant)}
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            keys |= helpers.get(node.func.attr, set())
+    return keys
 
 
 def test_every_call_site_passes_the_arguments_its_message_needs() -> None:
@@ -120,7 +138,21 @@ def test_every_call_site_passes_the_arguments_its_message_needs() -> None:
     for path in sorted(pathlib.Path("app").rglob("*.py")):
         if path.name == "messages.py":
             continue
-        for node in ast.walk(ast.parse(path.read_text())):
+        tree = ast.parse(path.read_text())
+        # Several sites share a helper that returns the values for one kind of
+        # thing — `**self._constraint_params(constraint)`. Read that helper's
+        # own literal keys, or the check would report every caller as missing
+        # everything the helper supplies.
+        helpers = {
+            fn.name: {
+                key.value
+                for n in ast.walk(fn) if isinstance(n, ast.Dict)
+                for key in n.keys if isinstance(key, ast.Constant)
+            }
+            for n in ast.walk(tree)
+            if isinstance(fn := n, ast.FunctionDef) and fn.name.endswith("_params")
+        }
+        for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             keywords = {k.arg: k.value for k in node.keywords if k.arg}
@@ -141,11 +173,7 @@ def test_every_call_site_passes_the_arguments_its_message_needs() -> None:
                 for n in ast.walk(code_node)
                 if isinstance(n, ast.Constant) and isinstance(n.value, str)
             ]
-            given = {
-                key.value
-                for n in ast.walk(params_node) if isinstance(n, ast.Dict)
-                for key in n.keys if isinstance(key, ast.Constant)
-            } if params_node is not None else set()
+            given = _keys_of(params_node, helpers) if params_node is not None else set()
             for code in codes:
                 if code not in MESSAGES:
                     # main.py's error_payload names the KIND of HTTP failure,

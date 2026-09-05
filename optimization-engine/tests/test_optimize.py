@@ -3177,7 +3177,7 @@ def test_no_room_for_the_years_is_reported_as_such(client: TestClient) -> None:
     # 400: the request is well-formed but describes a school where this group
     # has nowhere to be — a configuration error, not a solver failure.
     assert response.status_code == 400
-    assert "years 9-9" in str(response.json())
+    assert "years 9" in str(response.json())
 
 
 # ---------------------------------------------------------------------------
@@ -4361,10 +4361,10 @@ def test_a_reservation_leaving_only_scraps_is_refused_by_name(
 
     assert response.status_code == 400, response.text
     message = response.json()["message"]
-    assert "reservation" in message
+    assert "availability constraint" in message
     assert "30-minute lunch break" in message
     # An instruction, not just a verdict: three things the school could change.
-    assert "Shorten the reservation" in message
+    assert "Shorten the constraint" in message
 
 
 def test_a_locked_lesson_and_a_reservation_that_only_together_leave_nothing(
