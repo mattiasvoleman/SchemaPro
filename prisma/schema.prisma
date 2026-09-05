@@ -790,27 +790,36 @@ model ScheduleVersion {
 // -----------------------------------------------------------------------------
 
 model OptimizationJob {
-  id               String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  schoolId         String                @db.Uuid
-  academicYearId   String                @db.Uuid
-  actorId          String?               @db.Uuid
-  status           OptimizationJobStatus @default(PENDING)
-  solverStatus     String?
-  lessonsGenerated Int                   @default(0)
-  conflictSummary  String?
-  conflicts        Json?
-  error            String?
+  id                    String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId              String                @db.Uuid
+  academicYearId        String                @db.Uuid
+  actorId               String?               @db.Uuid
+  status                OptimizationJobStatus @default(PENDING)
+  solverStatus          String?
+  lessonsGenerated      Int                   @default(0)
+  conflictSummary       String?
+  /// The summary's message code and values, so the screen can say it in the
+  /// reader's language; the string above is the engine's own English, and it
+  /// is what a row written before the codes — or a sentence the web has not
+  /// translated yet — still shows. See optimization-engine/app/messages.py.
+  conflictSummaryCode   String?
+  conflictSummaryParams Json?
+  conflicts             Json?
+  error                 String?
+  /// The same for a refused payload: the engine's 400 names its reason.
+  errorCode             String?
+  errorParams           Json?
   /// Objective weights used for this run (null = server defaults).
-  weights          Json?
+  weights               Json?
   /// Effective schedule rules used for this run — the lunch window, the dining
   /// hall's seat count and the daily lesson cap, after the stored settings and
   /// any per-run override were merged. Snapshotted for the same reason
   /// `weights` is, and it became necessary the moment lunch stopped being a
   /// per-request blob: the settings row is edited in place, so without this a
   /// timetable generated in September cannot be explained in November.
-  rules            Json?
-  createdAt        DateTime              @default(now()) @db.Timestamptz(6)
-  finishedAt       DateTime?             @db.Timestamptz(6)
+  rules                 Json?
+  createdAt             DateTime              @default(now()) @db.Timestamptz(6)
+  finishedAt            DateTime?             @db.Timestamptz(6)
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 

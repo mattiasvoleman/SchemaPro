@@ -11,6 +11,8 @@ import GeneratePage from "./page";
 
 const state = vi.hoisted(() => ({
   job: undefined as unknown,
+  /** Message keys this build has no translation for; see the next-intl stub. */
+  untranslated: [] as string[],
   requirements: [] as unknown[],
   groups: [] as unknown[],
   memberships: [] as unknown[],
@@ -38,15 +40,17 @@ vi.mock("@/i18n/navigation", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
-  // The page asks `tConflicts.has(category)` before translating, so the echo
-  // carries a `has` too — every key is "known", which is what the label test
-  // wants: an unknown category would fall back to the raw string.
+  // The page asks `.has(key)` before translating — for a conflict category and
+  // for an engine sentence — so the echo carries a `has` too. Every key is
+  // "known" unless a test says otherwise through `state.untranslated`, which
+  // is how the fallback gets exercised: the engine ships a sentence this build
+  // has no Swedish for, and the admin must still read something.
   useTranslations: (namespace: string) => {
     const t = (key: string, values?: Record<string, unknown>) =>
       values
         ? `${namespace}.${key}(${Object.values(values).join("|")})`
         : `${namespace}.${key}`;
-    return Object.assign(t, { has: () => true });
+    return Object.assign(t, { has: (key: string) => !state.untranslated.includes(key) });
   },
 }));
 
@@ -168,3 +172,57 @@ describe("a refusal that names classes", () => {
     expect(screen.getAllByText("conflictCategories.DINING_CAPACITY")).toHaveLength(2);
   });
 });
+
+describe("a refusal the engine named", () => {
+  it("shows the Swedish for the code, not the engine's English", () => {
+    // The engine writes English and names each sentence; the page renders the
+    // name from `engineMessages` with the values beside it. The stub echoes
+    // the key and the values, so what this asserts is that the page reached
+    // for the translation and handed it the engine's numbers — not that it
+    // printed the English it was also sent.
+    state.job = {
+      id: "job-3",
+      status: "SUCCEEDED",
+      solverStatus: "INFEASIBLE",
+      conflictSummary: "The dining hall's 115 seats cannot seat the 2 classes named.",
+      conflictSummaryCode: "LUNCH_HALL_CANNOT_SEAT_CLASSES",
+      conflictSummaryParams: { seats: 115, classes: 2 },
+      conflicts: [
+        {
+          category: "DINING_CAPACITY",
+          code: "LUNCH_SEATS_CAP",
+          params: { seats: 115 },
+          message: "The dining hall's 115 seats are all it holds at one time.",
+          resourceNames: [],
+        },
+      ],
+      createdAt: "2026-09-07T10:00:00.000Z",
+    };
+    render(<GeneratePage />);
+
+    expect(
+      screen.getByText("engineMessages.LUNCH_HALL_CANNOT_SEAT_CLASSES(115|2)"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("engineMessages.LUNCH_SEATS_CAP(115)")).toBeInTheDocument();
+  });
+
+  it("falls back to the engine's English for a sentence it cannot translate", () => {
+    // The engine and the web deploy separately. An untranslated sentence must
+    // reach the admin as the engine wrote it, never as an empty card.
+    state.untranslated = ["SOMETHING_NEW"];
+    state.job = {
+      id: "job-4",
+      status: "FAILED",
+      solverStatus: null,
+      error: "A rule this build has never heard of.",
+      errorCode: "SOMETHING_NEW",
+      errorParams: {},
+      conflicts: [],
+      createdAt: "2026-09-07T10:00:00.000Z",
+    };
+    render(<GeneratePage />);
+
+    expect(screen.getByText("A rule this build has never heard of.")).toBeInTheDocument();
+  });
+});
+

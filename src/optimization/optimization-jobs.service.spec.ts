@@ -1,4 +1,8 @@
-import { NotFoundException } from '@nestjs/common';
+import { HttpException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+
+const { DbNull } = Prisma;
+
 import {
   createPrismaMock,
   createTxMock,
@@ -146,9 +150,13 @@ describe('OptimizationJobsService', () => {
           lessons: [lesson(), lesson(), lesson()],
           conflicts: {
             summary: '1 group collides',
+            summaryCode: 'GROUP_COLLIDES',
+            summaryParams: { count: 1 },
             conflicts: [
               {
                 category: 'GROUP_OVERLAP',
+                code: 'GROUP_OVERLAPS_ITSELF',
+                params: { group: '4A' },
                 message: 'Group overlaps itself',
                 requirementIds: ['anon-1'],
                 roomIds: [],
@@ -174,10 +182,18 @@ describe('OptimizationJobsService', () => {
           solverStatus: 'FEASIBLE',
           lessonsGenerated: 3,
           conflictSummary: '1 group collides',
+          conflictSummaryCode: 'GROUP_COLLIDES',
+          conflictSummaryParams: { count: 1 },
           // Category, message and the names survive; the id arrays from the
           // engine's conflict details must not be persisted on the job row.
           conflicts: [
-            { category: 'GROUP_OVERLAP', message: 'Group overlaps itself', resourceNames: [] },
+            {
+              category: 'GROUP_OVERLAP',
+              code: 'GROUP_OVERLAPS_ITSELF',
+              params: { group: '4A' },
+              message: 'Group overlaps itself',
+              resourceNames: [],
+            },
           ],
           finishedAt: expect.any(Date),
         },
@@ -193,6 +209,7 @@ describe('OptimizationJobsService', () => {
           data: expect.objectContaining({
             status: 'SUCCEEDED',
             conflictSummary: null,
+            conflictSummaryCode: null,
             conflicts: [],
             lessonsGenerated: 0,
           }),
@@ -213,9 +230,63 @@ describe('OptimizationJobsService', () => {
         data: {
           status: 'FAILED',
           error: 'AI engine unavailable.',
+          errorCode: null,
+          errorParams: DbNull,
           finishedAt: expect.any(Date),
         },
       });
+    });
+
+    it('keeps the refusal\'s own name and values when the engine refuses the payload', async () => {
+      // The engine refuses a payload it cannot schedule and names the reason;
+      // the proxy throws that on as an HttpException whose body carries the
+      // code and the values beside the English. Without them the screen has
+      // nothing to render Swedish from, and an admin reads the fallback.
+      proxy.triggerScheduling.mockRejectedValue(
+        new HttpException(
+          {
+            message: 'Locked lessons leave student group 4A no 30-minute lunch break.',
+            code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK',
+            params: { group: '4A', minutes: 30, day: 2 },
+          },
+          400,
+        ),
+      );
+
+      await service.start(YEAR_ID, testUser());
+      await flushBackgroundRun();
+
+      expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
+        where: { id: JOB_ID },
+        data: {
+          status: 'FAILED',
+          error: 'Locked lessons leave student group 4A no 30-minute lunch break.',
+          errorCode: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK',
+          errorParams: { group: '4A', minutes: 30, day: 2 },
+          finishedAt: expect.any(Date),
+        },
+      });
+    });
+
+    it('keeps no code for a failure of ours rather than of the school\'s data', async () => {
+      // A lost connection to the engine has nothing for a school to act on and
+      // nothing to translate; a Swedish sentence over it would be a promise
+      // that the fault is theirs.
+      proxy.triggerScheduling.mockRejectedValue(
+        new HttpException('The AI engine returned an error.', 502),
+      );
+
+      await service.start(YEAR_ID, testUser());
+      await flushBackgroundRun();
+
+      expect(tx.optimizationJob.update).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            error: 'The AI engine returned an error.',
+            errorCode: null,
+          }),
+        }),
+      );
     });
 
     it('falls back to a generic message when the failure is not an Error', async () => {
@@ -307,6 +378,8 @@ describe('OptimizationJobsService', () => {
         data: {
           status: 'FAILED',
           error: 'db down',
+          errorCode: null,
+          errorParams: DbNull,
           finishedAt: expect.any(Date),
         },
       });
@@ -361,13 +434,35 @@ describe('OptimizationJobsService', () => {
         solverStatus: 'OPTIMAL',
         lessonsGenerated: 12,
         conflictSummary: null,
-        // A row written before names were kept: read back with an empty
-        // list, never an undefined the page would have to guard.
+        // A row written before names and codes were kept: read back with an
+        // empty list and explicit nulls, never an undefined the page would
+        // have to guard or a JSON body would drop.
+        conflictSummaryCode: null,
+        conflictSummaryParams: null,
         conflicts: [{ category: 'ROOM_OVERLAP', message: 'clash', resourceNames: [] }],
         error: null,
+        errorCode: null,
+        errorParams: null,
         createdAt: '2026-08-07T10:00:00.000Z',
         finishedAt: '2026-08-07T10:00:42.000Z',
       });
+    });
+
+    it('drops a stored value that is not a scalar rather than rendering it', async () => {
+      // The column is written by this service alone, but a hand-edited row
+      // must not put an object where a sentence expects a number: next-intl
+      // renders that as [object Object] in the middle of a refusal.
+      tx.optimizationJob.findUnique.mockResolvedValue({
+        ...row(),
+        conflictSummaryCode: 'LUNCH_SEATS_CAP',
+        conflictSummaryParams: { seats: 115, nested: { deep: true }, list: [1, 2] },
+        errorParams: 'not an object',
+      });
+
+      const view = await service.get(JOB_ID, testUser());
+
+      expect(view.conflictSummaryParams).toEqual({ seats: 115 });
+      expect(view.errorParams).toBeNull();
     });
 
     it('looks the job up by id under the caller RLS session', async () => {
@@ -453,8 +548,14 @@ describe('OptimizationJobsService', () => {
           solverStatus: null,
           lessonsGenerated: 0,
           conflictSummary: null,
+          // A row from before the codes: explicit nulls, so the screen reads
+          // "no code, show the English" rather than losing the field.
+          conflictSummaryCode: null,
+          conflictSummaryParams: null,
           conflicts: [],
           error: 'The AI engine returned an error.',
+          errorCode: null,
+          errorParams: null,
           createdAt: '2026-08-07T09:00:00.000Z',
           finishedAt: null,
         },

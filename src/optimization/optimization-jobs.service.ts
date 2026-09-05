@@ -1,5 +1,5 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { HttpException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { OptimizationProxyService } from './optimization-proxy.service';
@@ -8,6 +8,65 @@ import type {
   ObjectiveWeights,
   ScheduleRules,
 } from './interfaces/ai-engine-payload.interface';
+
+/**
+ * A stored params blob, read back as the scalars the engine promised.
+ *
+ * Prisma hands a Json column back as `unknown`, and the column is written by
+ * this service alone — but a hand-edited row must not put an object where a
+ * message expects a number, because next-intl renders that as [object Object]
+ * in the middle of a school's refusal. Anything that is not a scalar is
+ * dropped, and the sentence falls back to the engine's English.
+ */
+function asParams(value: unknown): Record<string, string | number> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const params: Record<string, string | number> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === 'string' || typeof entry === 'number') params[key] = entry;
+  }
+  return params;
+}
+
+/**
+ * What a failed run has to say for itself.
+ *
+ * The engine refuses a payload it cannot schedule — a lunch window a locked
+ * lesson leaves nothing of, a sitting too small for a stage — and the proxy
+ * throws that on as an HttpException whose body carries the refusal's own
+ * name and values beside its English. Read them here so the screen can say it
+ * in Swedish. Anything else that went wrong is a fault of ours, and gets its
+ * message and no code: there is nothing to translate about a lost connection
+ * to the engine, and pretending otherwise would put a Swedish sentence on an
+ * error a school cannot act on anyway.
+ */
+function refusalOf(error: unknown): {
+  message: string;
+  code: string | null;
+  params: Record<string, string | number> | null;
+} {
+  const fallback = 'The optimization run failed.';
+  if (error instanceof HttpException) {
+    const body = error.getResponse();
+    if (typeof body === 'object' && body !== null) {
+      const shape = body as {
+        message?: unknown;
+        code?: unknown;
+        params?: unknown;
+      };
+      return {
+        message: typeof shape.message === 'string' ? shape.message : error.message,
+        code: typeof shape.code === 'string' ? shape.code : null,
+        params: asParams(shape.params),
+      };
+    }
+    return { message: typeof body === 'string' ? body : error.message, code: null, params: null };
+  }
+  return {
+    message: error instanceof Error ? error.message : fallback,
+    code: null,
+    params: null,
+  };
+}
 
 export type JobStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
 export type SolverStatus = 'OPTIMAL' | 'FEASIBLE' | 'INFEASIBLE' | 'TIMEOUT';
@@ -20,6 +79,14 @@ export type SolverStatus = 'OPTIMAL' | 'FEASIBLE' | 'INFEASIBLE' | 'TIMEOUT';
  */
 export interface StoredConflict {
   category: AiEngineConflictDetail['category'];
+  /**
+   * The sentence's name and values, so the screen renders it in the reader's
+   * language. Optional because a row written before the engine named its
+   * sentences has neither, and the screen then shows `message` — the same
+   * path a sentence takes when the web has no translation for it yet.
+   */
+  code?: string;
+  params?: Record<string, string | number>;
   message: string;
   resourceNames: string[];
 }
@@ -30,8 +97,12 @@ export interface OptimizationJobView {
   solverStatus: SolverStatus | null;
   lessonsGenerated: number;
   conflictSummary: string | null;
+  conflictSummaryCode: string | null;
+  conflictSummaryParams: Record<string, string | number> | null;
   conflicts: StoredConflict[];
   error: string | null;
+  errorCode: string | null;
+  errorParams: Record<string, string | number> | null;
   createdAt: string;
   finishedAt: string | null;
 }
@@ -42,8 +113,12 @@ const JOB_SELECT = {
   solverStatus: true,
   lessonsGenerated: true,
   conflictSummary: true,
+  conflictSummaryCode: true,
+  conflictSummaryParams: true,
   conflicts: true,
   error: true,
+  errorCode: true,
+  errorParams: true,
   createdAt: true,
   finishedAt: true,
 } as const;
@@ -161,9 +236,14 @@ export class OptimizationJobsService {
         solverStatus: response.status,
         lessonsGenerated: response.lessons.length,
         conflictSummary: response.conflicts?.summary ?? null,
+        conflictSummaryCode: response.conflicts?.summaryCode ?? null,
+        conflictSummaryParams:
+          (response.conflicts?.summaryParams as Prisma.InputJsonValue) ?? Prisma.DbNull,
         conflicts: (response.conflicts?.conflicts ?? []).map(
           (conflict): StoredConflict => ({
             category: conflict.category,
+            code: conflict.code,
+            params: conflict.params ?? {},
             message: conflict.message,
             resourceNames: conflict.resourceNames ?? [],
           }),
@@ -172,10 +252,12 @@ export class OptimizationJobsService {
       });
     } catch (error) {
       this.logger.warn(`Optimization job failed [jobId=${jobId}]`);
+      const refusal = refusalOf(error);
       await this.update(jobId, user, {
         status: 'FAILED',
-        error:
-          error instanceof Error ? error.message : 'The optimization run failed.',
+        error: refusal.message,
+        errorCode: refusal.code,
+        errorParams: (refusal.params as Prisma.InputJsonValue) ?? Prisma.DbNull,
         finishedAt: new Date(),
       }).catch(() => undefined);
     }
@@ -197,8 +279,12 @@ export class OptimizationJobsService {
     solverStatus: string | null;
     lessonsGenerated: number;
     conflictSummary: string | null;
+    conflictSummaryCode?: string | null;
+    conflictSummaryParams?: unknown;
     conflicts: unknown;
     error: string | null;
+    errorCode?: string | null;
+    errorParams?: unknown;
     createdAt: Date;
     finishedAt: Date | null;
   }): OptimizationJobView {
@@ -208,6 +294,14 @@ export class OptimizationJobsService {
       solverStatus: (job.solverStatus as SolverStatus | null) ?? null,
       lessonsGenerated: job.lessonsGenerated,
       conflictSummary: job.conflictSummary,
+      // `?? null` rather than the value: a row read back from a database that
+      // predates these columns has undefined where the view promises null,
+      // and undefined disappears from a JSON body instead of arriving as
+      // "no code, show the English".
+      conflictSummaryCode: job.conflictSummaryCode ?? null,
+      conflictSummaryParams: asParams(job.conflictSummaryParams),
+      errorCode: job.errorCode ?? null,
+      errorParams: asParams(job.errorParams),
       // Rows written before names were kept carry none; read as an empty
       // list rather than as undefined, which the page would have to guard.
       conflicts: Array.isArray(job.conflicts)

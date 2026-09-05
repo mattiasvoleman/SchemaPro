@@ -12,7 +12,10 @@ from app.schemas.schedule import ConflictAnalysis, ConflictCategory, ConflictDet
 class AssumptionRecord:
     literal: cp_model.IntVar
     category: ConflictCategory
-    message: str
+    #: The sentence's name and the values it substitutes; the English is
+    #: rendered from them by ConflictDetail. See app/messages.py.
+    code: str
+    params: dict[str, str | int | float] = field(default_factory=dict)
     requirement_ids: list[UUID] = field(default_factory=list)
     room_ids: list[UUID] = field(default_factory=list)
     constraint_ids: list[UUID] = field(default_factory=list)
@@ -55,7 +58,8 @@ class AssumptionRegistry:
         *,
         name: str,
         category: ConflictCategory,
-        message: str,
+        code: str,
+        params: dict[str, str | int | float] | None = None,
         requirement_ids: list[UUID] | None = None,
         room_ids: list[UUID] | None = None,
         constraint_ids: list[UUID] | None = None,
@@ -72,7 +76,8 @@ class AssumptionRegistry:
             AssumptionRecord(
                 literal=literal,
                 category=category,
-                message=message,
+                code=code,
+                params=params or {},
                 requirement_ids=requirement_ids or [],
                 room_ids=room_ids or [],
                 constraint_ids=constraint_ids or [],
@@ -116,14 +121,11 @@ def build_conflict_analysis(
 
     if not records:
         return ConflictAnalysis(
-            summary="The timetable is infeasible, but no conflict core was returned.",
+            summary_code="CONFLICT_NO_CORE",
             conflicts=[
                 ConflictDetail(
                     category="INSUFFICIENT_RESOURCES",
-                    message=(
-                        "Total teaching demand likely exceeds available room or teacher time. "
-                        "Review lessons per week, unavailable windows, and room capacity."
-                    ),
+                    code="CONFLICT_NO_CORE_GUESS",
                 ),
             ],
         )
@@ -132,10 +134,12 @@ def build_conflict_analysis(
     # than per cause — _add_capacity_constraints does it once for every lesson
     # of a requirement — so a requirement with forty lessons a week put forty
     # word-for-word identical details in front of an administrator, and a real
-    # payload buried the other causes under them. The category and the message
-    # together are what identify a cause: the message already names the
-    # requirement, the constraint, the seat count or the group and day, so two
-    # records that agree on both are the same sentence about the same thing.
+    # payload buried the other causes under them. The category, the CODE and
+    # the VALUES together are what identify a cause: the values already name
+    # the requirement, the constraint, the seat count or the group and day, so
+    # two records that agree on all three are the same sentence about the same
+    # thing. Keyed on those rather than on the rendered English, which says the
+    # same but only until somebody translates it.
     #
     # Merged rather than dropped, though on today's builders the two are
     # equivalent. Every message written here names the ids of what it is about,
@@ -146,9 +150,9 @@ def build_conflict_analysis(
     # function, and the first builder to register one sentence about several
     # resources would, under a drop, show an administrator an arbitrary member
     # of the set. A dict and four appends buy not having to notice.
-    merged: dict[tuple[str, str], AssumptionRecord] = {}
+    merged: dict[tuple[str, str, tuple[tuple[str, object], ...]], AssumptionRecord] = {}
     for record in records:
-        key = (record.category, record.message)
+        key = (record.category, record.code, tuple(sorted(record.params.items())))
         existing = merged.get(key)
         if existing is None:
             # A copy with id lists of its own, so appending below cannot reach
@@ -175,7 +179,8 @@ def build_conflict_analysis(
     conflicts = [
         ConflictDetail(
             category=record.category,
-            message=record.message,
+            code=record.code,
+            params=record.params,
             requirement_ids=record.requirement_ids,
             room_ids=record.room_ids,
             constraint_ids=record.constraint_ids,
@@ -184,9 +189,6 @@ def build_conflict_analysis(
         for record in merged.values()
     ]
 
-    categories = ", ".join(
-        sorted({conflict.category.lower().replace("_", " ") for conflict in conflicts}),
-    )
     # Not "infeasible because of these". SufficientAssumptionsForInfeasibility
     # returns a core that is SUFFICIENT, not minimal: it routinely carries
     # literals that constrain nothing here, and the solver never claimed
@@ -194,10 +196,8 @@ def build_conflict_analysis(
     # nothing proved — and this text is read by a school, which will go and
     # change whatever it names. So: where to look, what is actually
     # established, and the caveat, in that order.
-    summary = (
-        f"No timetable satisfies every rule. Start with these: {categories}. "
-        "Together they are enough to make the week impossible, but the solver "
-        "reports a sufficient set rather than the smallest one, so some of "
-        "them may carry no blame."
-    )
-    return ConflictAnalysis(summary=summary, conflicts=conflicts)
+    #
+    # The categories used to be listed here, lower-cased and joined — in
+    # English, sorted in English, and repeating what the rows below already
+    # show as a labelled badge each. The summary points at them instead.
+    return ConflictAnalysis(summary_code="CONFLICT_CORE_SUMMARY", conflicts=conflicts)

@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.messages import render
+
 DayOfWeek = Literal[1, 2, 3, 4, 5, 6, 7]
 ConstraintKind = Literal["UNAVAILABLE", "PREFERRED_FREE", "PREFERRED_BUSY"]
 # GRADE_LEVEL is the odd one out: it names no resource at all, only a span of
@@ -603,17 +605,58 @@ class ScheduledLunch(CamelModel):
 
 
 class ConflictDetail(CamelModel):
+    """One cause, in a form every reader can render in its own language.
+
+    `code` names the sentence and `params` are the values it substitutes;
+    `message` is that sentence rendered in English by app/messages.py, and is
+    derived rather than passed — a call site that wrote its own text would,
+    sooner or later, name one sentence and say another, and a school would
+    read the Swedish for the first and the English for the second.
+
+    PARAMS ARE SCALARS. A sentence about several groups names them through
+    `resource_ids`, which the gateway turns into the school's own names and
+    the page lists itself; a list joined into a string here would be a list
+    punctuated in English inside a Swedish sentence.
+    """
+
     category: ConflictCategory
-    message: str
+    code: str
+    #: Floats allowed for the one thing measured rather than counted: the
+    #: seconds a probe took. ICU renders a number in the reader's own
+    #: notation, so 0.1 s reaches a Swedish screen as "0,1 s".
+    params: dict[str, str | int | float] = Field(default_factory=dict)
+    message: str = ""
     requirement_ids: list[UUID4] = Field(default_factory=list, alias="requirementIds")
     room_ids: list[UUID4] = Field(default_factory=list, alias="roomIds")
     constraint_ids: list[UUID4] = Field(default_factory=list, alias="constraintIds")
     resource_ids: list[UUID4] = Field(default_factory=list, alias="resourceIds")
 
+    @model_validator(mode="after")
+    def _render_message(self) -> ConflictDetail:
+        if not self.message:
+            object.__setattr__(self, "message", render(self.code, self.params))
+        return self
+
 
 class ConflictAnalysis(CamelModel):
-    summary: str
+    """The refusal: a headline and the causes under it.
+
+    `summary_code` and `summary_params` are to `summary` what a detail's code
+    is to its message — see ConflictDetail.
+    """
+
+    summary: str = ""
+    summary_code: str = Field(default="", alias="summaryCode")
+    summary_params: dict[str, str | int | float] = Field(
+        default_factory=dict, alias="summaryParams",
+    )
     conflicts: list[ConflictDetail]
+
+    @model_validator(mode="after")
+    def _render_summary(self) -> ConflictAnalysis:
+        if not self.summary and self.summary_code:
+            object.__setattr__(self, "summary", render(self.summary_code, self.summary_params))
+        return self
 
 
 class OptimizeScheduleResponse(CamelModel):

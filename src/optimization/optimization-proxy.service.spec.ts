@@ -2121,10 +2121,14 @@ describe('OptimizationProxyService', () => {
             lessons: [],
             conflicts: {
               summary: `Too many lessons for the hours: student group ${payload.groups[0].id} needs more.`,
+              summaryCode: 'DEMAND_CLIQUE_HOURS_SHORT',
+              summaryParams: { group: payload.groups[0].id, sharingGroups: 2 },
               conflicts: [
                 {
                   category: 'DINING_CAPACITY',
-                  message: 'The classes named here bring their children to the hall every school day.',
+                  code: 'LUNCH_CLASSES_FILL_THE_HALL_DAILY',
+                  params: { group: payload.groups[0].id, seats: 115 },
+                  message: 'The classes named here bring their students to the hall every school day.',
                   requirementIds: [],
                   roomIds: [],
                   constraintIds: [],
@@ -2141,7 +2145,13 @@ describe('OptimizationProxyService', () => {
       expect(result.conflicts?.summary).toBe(
         'Too many lessons for the hours: student group 4A needs more.',
       );
+      // The VALUES go through the same substitution as the text: a Swedish
+      // sentence renders {group} itself, and an anonymous uuid there would
+      // name a row that exists in no table. Numbers are left alone.
+      expect(result.conflicts?.summaryParams).toEqual({ group: '4A', sharingGroups: 2 });
       expect(result.conflicts?.conflicts[0]).toMatchObject({
+        code: 'LUNCH_CLASSES_FILL_THE_HALL_DAILY',
+        params: { group: '4A', seats: 115 },
         resourceIds: [GROUP_ID],
         resourceNames: ['4A'],
       });

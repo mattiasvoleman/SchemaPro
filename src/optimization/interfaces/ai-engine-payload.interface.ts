@@ -320,6 +320,21 @@ export type ConflictCategory =
 
 export interface AiEngineConflictDetail {
   category: ConflictCategory;
+  /**
+   * The sentence's stable name, and the values it substitutes.
+   *
+   * The engine has no idea who is reading, and a Swedish school reading an
+   * English refusal is what these are for: the web renders `code` from its own
+   * message catalogue with `params`, and falls back to `message` when it has
+   * no translation. See optimization-engine/app/messages.py.
+   *
+   * Values are scalars only, never a list — a sentence that needs to name
+   * several classes names them through `resourceIds`, which the gateway turns
+   * into `resourceNames` and the page renders itself. A comma-separated list
+   * built in the engine would be a list punctuated in English.
+   */
+  code: string;
+  params: Record<string, string | number>;
   /** Human-readable but PII-free — the engine only ever saw anonymous ids. */
   message: string;
   requirementIds: string[];
@@ -336,6 +351,9 @@ export interface AiEngineConflictDetail {
 
 export interface AiEngineConflictAnalysis {
   summary: string;
+  /** The summary's own code and values; see AiEngineConflictDetail. */
+  summaryCode: string;
+  summaryParams: Record<string, string | number>;
   conflicts: AiEngineConflictDetail[];
 }
 

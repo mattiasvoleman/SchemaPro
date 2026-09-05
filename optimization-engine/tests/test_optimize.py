@@ -264,7 +264,11 @@ def test_provably_infeasible_request_still_reports_infeasible(client: TestClient
         "every reservation that helped make the week impossible has to be "
         "nameable, or the admin has nothing to open"
     )
-    assert "availability" in body["conflicts"]["summary"]
+    # The summary points at the rows rather than listing their categories:
+    # the page shows each as a translated badge, and a list built in the
+    # engine could only ever be an English one.
+    assert body["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY"
+    assert "AVAILABILITY" in {c["category"] for c in conflicts}
 
 
 def test_short_api_key_is_rejected_at_config() -> None:
@@ -488,10 +492,21 @@ def test_co_teacher_prevents_overlap(client: TestClient) -> None:
 
 
 def test_lunch_break_rule_is_enforced(client: TestClient) -> None:
-    """Each group keeps a free 45-min window inside 11:00-13:00 every day."""
+    """Each group keeps a free 45-min window inside 11:00-13:00 every day.
+
+    The payload has to NAME the class that eats. `groups` is who gets a break
+    — a teaching group's pupils eat with their class, so the engine owes a
+    meal to nobody it was not told about — and this test ran for a while
+    without one: no lunch interval was built at all, and it passed on the days
+    the solver happened to leave a gap and failed on the days it did not. A
+    flaky test over a rule that was never in force.
+    """
     payload = _sample_payload()
     requirement = payload["requirements"][0]  # type: ignore[index]
     requirement["lessonsPerWeek"] = 10  # type: ignore[index]
+    payload["groups"] = [
+        {"id": requirement["studentGroupId"], "lunchHeadcount": 24},  # type: ignore[index]
+    ]
     payload["rules"] = {
         "lunchStartTime": "11:00:00",
         "lunchEndTime": "13:00:00",
@@ -510,18 +525,31 @@ def test_lunch_break_rule_is_enforced(client: TestClient) -> None:
         h, m, _ = value.split(":")
         return int(h) * 60 + int(m)
 
+    # THE MEAL ITSELF, not a gap that happens to be there. The old assertion
+    # looked for any free 45 minutes among the LESSONS, which a loose week
+    # leaves by luck whether or not the engine promised one — it passed with
+    # the whole lunch mechanism switched off. What the engine undertakes is to
+    # place a break and return it, so that is what is read.
+    group_id = requirement["studentGroupId"]  # type: ignore[index]
+    lunches = [lunch for lunch in body["lunches"] if lunch["studentGroupId"] == group_id]
+    assert len(lunches) == 5, f"one meal per school day, got {lunches}"
+    for lunch in lunches:
+        start, end = minutes(lunch["startTime"]), minutes(lunch["endTime"])
+        assert end - start == 45
+        assert 11 * 60 <= start and end <= 13 * 60, lunch
+
+    # And no lesson of the class runs through its own meal.
     by_day: dict[int, list[tuple[int, int]]] = {}
     for lesson in body["lessons"]:
         by_day.setdefault(lesson["dayOfWeek"], []).append(
             (minutes(lesson["startTime"]), minutes(lesson["endTime"]))
         )
-    for day, intervals in by_day.items():
-        found_window = False
-        for cand in range(11 * 60, 13 * 60 - 45 + 1, 15):
-            if all(end <= cand or start >= cand + 45 for start, end in intervals):
-                found_window = True
-                break
-        assert found_window, f"no 45-min lunch window on day {day}: {sorted(intervals)}"
+    for lunch in lunches:
+        start, end = minutes(lunch["startTime"]), minutes(lunch["endTime"])
+        for lesson_start, lesson_end in by_day.get(lunch["dayOfWeek"], []):
+            assert lesson_end <= start or lesson_start >= end, (
+                f"a lesson runs through the meal on day {lunch['dayOfWeek']}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -659,9 +687,12 @@ def test_proven_infeasible_reports_infeasible_with_conflicts(client: TestClient)
     # response lost the id has been told a room is too small and not which
     # lesson wanted it.
     assert conflicts[0]["requirementIds"] == [requirement_id]
+    # The summary points at the rows rather than listing their categories in
+    # English; the page shows each as its own translated badge.
+    assert body["conflicts"]["summaryCode"] == "CONFLICT_CORE_SUMMARY"
     assert body["conflicts"]["summary"] == (
-        "No timetable satisfies every rule. Start with these: room capacity. "
-        "Together they are enough to make the week impossible, but the solver "
+        "No timetable satisfies every rule. Start with the causes listed below: "
+        "together they are enough to make the week impossible, but the solver "
         "reports a sufficient set rather than the smallest one, so some of "
         "them may carry no blame."
     )
@@ -1495,7 +1526,7 @@ def test_a_class_is_never_sent_to_lunch_on_top_of_a_locked_lesson() -> None:
     assert "no 60-minute lunch break" in _refusal(
         lambda g: ([_locked_lesson(g, *lunch_hour)], []),
     ), "7A would have been sent to the hall during a lesson of its own"
-    assert "on day 1" in _refusal(
+    assert "on Monday" in _refusal(
         # 11:05-11:50 is inside the same slots once _fixed_window rounds it
         # outward, and locked lessons are hand-typed times that rarely land on
         # the grid.
@@ -1908,10 +1939,12 @@ def test_a_full_dining_hall_is_named_in_the_infeasible_response() -> None:
         for conflict in body["conflicts"]["conflicts"]
         if conflict["category"] == "DINING_CAPACITY"
     )
+    assert named["code"] == "LUNCH_SEATS_CANNOT_STAGGER"
+    assert named["params"] == {"seats": 30}
     assert named["message"] == (
         "Lunch cannot be staggered within the dining hall's 30 seats."
     )
-    assert "dining capacity" in body["conflicts"]["summary"]
+    assert body["conflicts"]["summaryCode"] == "LUNCH_HALL_CANNOT_FEED_THE_SCHOOL"
 
     # And a school that never named a seat count is never told about seats. The
     # hall is a rule the model does not contain, so an assumption standing for
@@ -2007,8 +2040,13 @@ def test_an_off_grid_lunch_break_is_a_400_not_a_500(client: TestClient) -> None:
     assert response.status_code == 400
     body = response.json()
     assert body["code"] == "INVALID_SCHEDULE_INPUT"
+    # Named for the lunch. The grid's own complaint says "Lesson duration 37
+    # minutes", and a school that typed a 37-minute LUNCH went looking through
+    # its timplan for a lesson that was not there.
+    assert body["details"]["code"] == "LUNCH_WINDOW_OFF_GRID"
     assert body["message"] == (
-        "Lesson duration 37 minutes is not aligned to 5-minute slots."
+        "The lunch window 11:00-13:00 and its 37-minute break do not fit the "
+        "5-minute scheduling grid. Use whole multiples of 5 minutes."
     )
 
     payload["rules"] = _lunch_rules(lunchEndTime="11:30:00")
@@ -2019,7 +2057,8 @@ def test_an_off_grid_lunch_break_is_a_400_not_a_500(client: TestClient) -> None:
     )
     assert response.status_code == 400
     assert response.json()["message"] == (
-        "Lunch window is shorter than the required lunch break."
+        "The lunch window 11:00-11:30 is shorter than the 60-minute lunch "
+        "break it has to hold."
     )
 
 
@@ -2146,7 +2185,7 @@ def test_a_conflict_core_is_read_as_literal_references_not_list_positions() -> N
 
     registry = AssumptionRegistry(use_assumptions=True)
     literals = [
-        registry.register(model, name=name, category=category, message=name)
+        registry.register(model, name=name, category=category, code=name)
         for name, category in (
             ("full_room", "ROOM_CAPACITY"),
             ("blocked_window", "AVAILABILITY"),
@@ -2201,7 +2240,8 @@ def test_an_infeasibility_no_assumption_explains_still_says_something() -> None:
         model,
         name="innocent",
         category="ROOM_CAPACITY",
-        message="a rule that has nothing to do with what follows",
+        code="ROOM_NO_ROOM_FOR_REQUIREMENT",
+        params={"requirement": str(uuid4()), "groupSize": 30},
     )
     hours = model.NewIntVar(0, 5, "hours")
     model.Add(hours >= 4)
@@ -2219,7 +2259,8 @@ def test_an_infeasibility_no_assumption_explains_still_says_something() -> None:
         "INSUFFICIENT_RESOURCES",
     ]
     assert analysis.summary == (
-        "The timetable is infeasible, but no conflict core was returned."
+        "No timetable satisfies every rule, and the solver could not name "
+        "which of them collide."
     )
     assert analysis.conflicts[0].message, "a guess still has to say something"
 
@@ -2244,7 +2285,9 @@ def test_one_sentence_twice_becomes_one_line_that_names_both_causes() -> None:
 
     first_requirement = uuid4()
     second_requirement = uuid4()
-    same_sentence = "Requirement needs a room with capacity >= 30."
+    # One code and one set of values is what makes two records the same
+    # sentence — not the English, which is only what that pair renders to.
+    same_sentence = {"requirement": str(uuid4()), "groupSize": 30}
 
     model = cp_model.CpModel()
     registry = AssumptionRegistry(use_assumptions=True)
@@ -2257,7 +2300,8 @@ def test_one_sentence_twice_becomes_one_line_that_names_both_causes() -> None:
             model,
             name=f"capacity_{requirement_id}",
             category="ROOM_CAPACITY",
-            message=same_sentence,
+            code="ROOM_NO_ROOM_FOR_REQUIREMENT",
+            params=same_sentence,
             requirement_ids=[requirement_id],
         )
         model.Add(bound).OnlyEnforceIf(literal)
@@ -3949,7 +3993,7 @@ def test_a_frame_too_tight_for_the_lesson_is_named(client: TestClient) -> None:
 
     assert response.status_code == 400, response.text
     detail = response.json()["message"]
-    assert "Frame times" in detail
+    assert "The frame times" in detail
     assert "90-minute" in detail
     assert "60 minutes" in detail
 
@@ -4317,10 +4361,10 @@ def test_a_reservation_leaving_only_scraps_is_refused_by_name(
 
     assert response.status_code == 400, response.text
     message = response.json()["message"]
-    assert "availability rule" in message
+    assert "reservation" in message
     assert "30-minute lunch break" in message
     # An instruction, not just a verdict: three things the school could change.
-    assert "Shorten the rule" in message
+    assert "Shorten the reservation" in message
 
 
 def test_a_locked_lesson_and_a_reservation_that_only_together_leave_nothing(
@@ -4484,7 +4528,7 @@ def test_a_sitting_too_short_for_the_meal_is_named(client: TestClient) -> None:
 
     assert response.status_code == 400, response.text
     message = response.json()["message"]
-    assert "No lunch serving leaves student group" in message
+    assert "No lunch sitting leaves student group" in message
     assert "30-minute meal" in message
 
 
@@ -5549,7 +5593,7 @@ def test_a_rast_that_leaves_no_room_is_refused_by_name() -> None:
         solver.solve(request)
 
     message = str(error.value)
-    assert "rasts declared for years 4-6" in message
+    assert "rasts leave no room for requirement" in message
     assert "100 minutes" in message
 
 
@@ -5876,7 +5920,12 @@ def test_the_probe_names_the_corridor_as_what_does_not_fit() -> None:
     assert analysis is not None
     assert analysis.conflicts, analysis.summary
     assert analysis.conflicts[0].category == "TIMEOUT_PROBE"
-    assert "changeoverMinutes" in analysis.conflicts[0].message
+    # One whole named sentence per relaxation, never a fragment glued into
+    # the summary: a fragment cannot be translated into a language that
+    # inflects around it.
+    assert analysis.conflicts[0].code == "PROBE_SOLVED_WITHOUT_CHANGEOVER"
+    assert "margin between lessons" in analysis.conflicts[0].message
+    assert analysis.summary_code == "PROBE_ONE_RULE_HELPED"
     assert "not a proof" in analysis.summary
 
 
@@ -5893,8 +5942,13 @@ def test_a_timeout_carries_the_probe(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(cp_model.CpSolver, "Solve", lambda self, model: cp_model.UNKNOWN)
     verdict = ConflictAnalysis(
-        summary="probe ran",
-        conflicts=[ConflictDetail(category="TIMEOUT_PROBE", message="with X, found in 1.0 s")],
+        summary_code="PROBE_ONE_RULE_HELPED",
+        summary_params={"budget": 2, "rules": 1},
+        conflicts=[ConflictDetail(
+            category="TIMEOUT_PROBE",
+            code="PROBE_SOLVED_WITHOUT_RASTS",
+            params={"seconds": 1.0},
+        )],
     )
     monkeypatch.setattr(SchedulerSolver, "_probe_timeout", lambda self, request: verdict)
     solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=2.0))
@@ -5947,16 +6001,22 @@ def test_the_probe_takes_the_lunch_apart_before_switching_it_off() -> None:
     payload["frameTimes"][0]["changeoverMinutes"] = 5
     payload["rasts"] = [_rast("09:40", "10:00")]
 
-    labels = [label for label, _ in solver._timeout_relaxations(
+    codes = [code for code, _ in solver._timeout_relaxations(
         OptimizeScheduleRequest.model_validate(payload),
     )]
 
-    assert [l.split(" ")[1] for l in labels] == ["corridor", "rasts", "lunch", "dining", "guaranteed"]
+    assert codes == [
+        "PROBE_SOLVED_WITHOUT_CHANGEOVER",
+        "PROBE_SOLVED_WITHOUT_RASTS",
+        "PROBE_SOLVED_WITHOUT_SERVINGS",
+        "PROBE_SOLVED_WITHOUT_DINING_SEATS",
+        "PROBE_SOLVED_WITHOUT_LUNCH",
+    ]
     # And each relaxation is a real change to the request, not a relabel.
     relaxed = dict(solver._timeout_relaxations(OptimizeScheduleRequest.model_validate(payload)))
-    assert relaxed["the lunch sittings per stage removed (whole window open to every stage)"].lunch_servings == []
-    assert relaxed["the dining hall's seat limit removed"].rules.dining_seats is None
-    assert relaxed["the guaranteed lunch break switched off"].rules.lunch_minutes is None
+    assert relaxed["PROBE_SOLVED_WITHOUT_SERVINGS"].lunch_servings == []
+    assert relaxed["PROBE_SOLVED_WITHOUT_DINING_SEATS"].rules.dining_seats is None
+    assert relaxed["PROBE_SOLVED_WITHOUT_LUNCH"].rules.lunch_minutes is None
 
 
 def test_the_probe_offers_only_what_the_payload_carries() -> None:
@@ -5965,10 +6025,10 @@ def test_the_probe_offers_only_what_the_payload_carries() -> None:
 
     solver = SchedulerSolver(_settings())
     # A lunch window, no seats, no sittings: only the break itself can go.
-    labels = [label for label, _ in solver._timeout_relaxations(
+    codes = [code for code, _ in solver._timeout_relaxations(
         OptimizeScheduleRequest.model_validate(_teaching_group_school(classes=2)),
     )]
-    assert labels == ["the guaranteed lunch break switched off"]
+    assert codes == ["PROBE_SOLVED_WITHOUT_LUNCH"]
 
 
 
@@ -6004,9 +6064,10 @@ def test_a_hall_too_small_for_the_school_is_refused_by_name() -> None:
     assert response.conflicts.conflicts[0].message == (
         "Lunch cannot be staggered within the dining hall's 115 seats."
     )
+    assert response.conflicts.summary_code == "LUNCH_HALL_CANNOT_FEED_THE_SCHOOL"
+    assert response.conflicts.summary_params["students"] == 600
+    assert response.conflicts.summary_params["needed"] == 18000
     assert "600 students" in response.conflicts.summary
-    assert "18000" in response.conflicts.summary
-    assert "dining capacity" in response.conflicts.summary
 
 
 def test_a_hall_that_can_feed_the_school_is_left_to_the_solver() -> None:
@@ -6335,7 +6396,7 @@ def test_a_frame_that_packs_a_stage_day_is_refused_by_the_lunch_stage() -> None:
     assert time.monotonic() - started < 20
     assert response.status == "INFEASIBLE"
     assert response.conflicts is not None
-    assert "115 seats cannot seat the 11 classes named (264 children)" in response.conflicts.summary
+    assert "115 seats cannot seat the 11 classes named (264 students)" in response.conflicts.summary
     details = response.conflicts.conflicts
     assert details[0].category == "DINING_CAPACITY"
     assert "115 seats" in details[0].message
@@ -6350,7 +6411,8 @@ def test_a_frame_that_packs_a_stage_day_is_refused_by_the_lunch_stage() -> None:
     assert named == {(c, g) for c in ("DINING_CAPACITY", "LUNCH_WINDOW") for g in middle_years}
     assert len(details) == 3
     # The frame IS the lever, and the line about the lessons says which one.
-    assert "inside their frame time 08:00-13:30" in details[2].message
+    assert details[2].code == "LUNCH_LESSONS_FILL_THE_FRAMED_DAY"
+    assert details[2].params == {"window": "08:00-13:30"}
 
 
 @pytest.mark.parametrize("seats", [None, 115])
@@ -6652,7 +6714,7 @@ def test_a_register_the_hall_cannot_seat_in_waves_is_named_by_its_classes() -> N
     assert time.monotonic() - started < 20
     assert response.status == "INFEASIBLE"
     assert response.conflicts is not None
-    assert "115 seats cannot seat the 21 classes named (504 children)" in response.conflicts.summary
+    assert "115 seats cannot seat the 21 classes named (504 students)" in response.conflicts.summary
     details = response.conflicts.conflicts
     assert [d.category for d in details] == ["DINING_CAPACITY", "DINING_CAPACITY"]
     every_class = {g["id"] for g in payload["groups"]}  # type: ignore[index]

@@ -99,6 +99,8 @@ interface AnonMaps {
    * the one part of that sentence a school would actually look up untranslated.
    */
   roomTypeAnonMap: Map<string, string>;
+  /** Real group id -> the school's own name, the last step out of id space. */
+  groupNameById: Map<string, string>;
 }
 
 @Injectable()
@@ -154,6 +156,14 @@ export class OptimizationProxyService {
       this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user)),
     );
 
+    const anonMaps: AnonMaps = {
+      requirementAnonMap,
+      roomAnonMap,
+      groupAnonMap,
+      roomTypeAnonMap,
+      groupNameById,
+    };
+
     // The school's saved lunch rules, unless this caller brought their own.
     // Body-wins rather than merge-per-field: two half-specified rule sets
     // silently combining into a third nobody wrote is worse than either.
@@ -182,12 +192,7 @@ export class OptimizationProxyService {
     // to solve — skip the engine and just clean up unlocked leftovers.
     const response: AiEngineScheduleResponse =
       requirements.length > 0
-        ? await this.callAiEngine(payload, {
-            requirementAnonMap,
-            roomAnonMap,
-            groupAnonMap,
-            roomTypeAnonMap,
-          })
+        ? await this.callAiEngine(payload, anonMaps)
         : { requestId, status: 'FEASIBLE', lessons: [], conflicts: null };
 
     // The sittings, with real group ids, computed once: they are both written
@@ -227,11 +232,7 @@ export class OptimizationProxyService {
     return {
       ...response,
       lunches: realisedLunches ?? [],
-      conflicts: this.realiseConflicts(
-        response.conflicts,
-        { requirementAnonMap, roomAnonMap, groupAnonMap, roomTypeAnonMap },
-        groupNameById,
-      ),
+      conflicts: this.realiseConflicts(response.conflicts, anonMaps),
     };
   }
 
@@ -250,33 +251,56 @@ export class OptimizationProxyService {
   private realiseConflicts(
     conflicts: AiEngineConflictAnalysis | null | undefined,
     maps: AnonMaps,
-    groupNameById: Map<string, string>,
   ): AiEngineConflictAnalysis | null {
     if (!conflicts) return null;
     const realGroupByAnon = new Map(
       [...maps.groupAnonMap].map(([realId, anonId]) => [anonId, realId]),
     );
-    const named = (text: string): string => {
-      let out = this.deanonymise(text, maps);
-      for (const [realId, name] of groupNameById) out = out.split(realId).join(name);
-      return out;
-    };
     return {
-      summary: named(conflicts.summary),
+      summary: this.named(conflicts.summary, maps),
+      summaryCode: conflicts.summaryCode,
+      summaryParams: this.namedParams(conflicts.summaryParams ?? {}, maps),
       conflicts: conflicts.conflicts.map((detail) => {
         const resourceIds = detail.resourceIds.map(
           (anonId) => realGroupByAnon.get(anonId) ?? anonId,
         );
         return {
           ...detail,
-          message: named(detail.message),
+          message: this.named(detail.message, maps),
+          params: this.namedParams(detail.params ?? {}, maps),
           resourceIds,
           resourceNames: resourceIds
-            .map((realId) => groupNameById.get(realId))
+            .map((realId) => maps.groupNameById.get(realId))
             .filter((name): name is string => name !== undefined),
         };
       }),
     };
+  }
+
+  /** An engine sentence with its ids turned back and its groups named. */
+  private named(text: string, maps: AnonMaps): string {
+    let out = this.deanonymise(text, maps);
+    for (const [realId, name] of maps.groupNameById) out = out.split(realId).join(name);
+    return out;
+  }
+
+  /**
+   * The same substitution over the values a sentence carries.
+   *
+   * A param holding a group's id is an anonymous uuid, and the Swedish
+   * sentence rendering it would otherwise name a row that exists in no table.
+   * Numbers pass through untouched.
+   */
+  private namedParams(
+    params: Record<string, string | number>,
+    maps: AnonMaps,
+  ): Record<string, string | number> {
+    return Object.fromEntries(
+      Object.entries(params).map(([key, value]) => [
+        key,
+        typeof value === 'string' ? this.named(value, maps) : value,
+      ]),
+    );
   }
 
   /**
@@ -1252,12 +1276,34 @@ export class OptimizationProxyService {
                  * the engine keeps the generic text — an internal failure's
                  * detail is ours to read in the logs, not the school's.
                  */
-                const body = error.response.data as { message?: unknown } | null;
-                const detail =
-                  error.response.status < 500 && typeof body?.message === 'string'
-                    ? this.deanonymise(body.message, maps)
-                    : 'The AI engine returned an error.';
-                throw new HttpException(detail, error.response.status);
+                const body = error.response.data as {
+                  message?: unknown;
+                  details?: { code?: unknown; params?: unknown } | null;
+                } | null;
+                const readable =
+                  error.response.status < 500 && typeof body?.message === 'string';
+                const detail = readable
+                  ? this.deanonymise(body.message as string, maps)
+                  : 'The AI engine returned an error.';
+                // The refusal's own name and values travel with it, so the
+                // screen can say in Swedish what the engine said in English.
+                // An object body rather than a string: Nest returns it as the
+                // response body, where `message` is still where every reader
+                // of this API already looks.
+                const named =
+                  readable && body?.details && typeof body.details.code === 'string'
+                    ? {
+                        code: body.details.code,
+                        params: this.namedParams(
+                          (body.details.params ?? {}) as Record<string, string | number>,
+                          maps,
+                        ),
+                      }
+                    : {};
+                throw new HttpException(
+                  { message: detail, ...named },
+                  error.response.status,
+                );
               }
               throw new ServiceUnavailableException('AI engine unavailable.');
             }),

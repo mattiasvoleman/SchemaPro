@@ -409,20 +409,22 @@ class SchedulerSolver:
             needed = eating * rules.lunch_minutes
             if needed > offered:
                 return ConflictAnalysis(
-                    summary=(
-                        f"The dining capacity cannot feed the school on day {day_of_week}: "
-                        f"{eating} students eating {rules.lunch_minutes} minutes each need "
-                        f"{needed} student-minutes, and {rules.dining_seats} seats over the "
-                        f"{rules.lunch_start_time}-{rules.lunch_end_time} window offer "
-                        f"{offered}. Add seats, widen the lunch window, or shorten the meal."
-                    ),
+                    summary_code="LUNCH_HALL_CANNOT_FEED_THE_SCHOOL",
+                    summary_params={
+                        "day": day_of_week,
+                        "students": eating,
+                        "minutes": rules.lunch_minutes,
+                        "needed": needed,
+                        "seats": rules.dining_seats,
+                        "windowStart": rules.lunch_start_time[:5],
+                        "windowEnd": rules.lunch_end_time[:5],
+                        "offered": offered,
+                    },
                     conflicts=[
                         ConflictDetail(
                             category="DINING_CAPACITY",
-                            message=(
-                                f"Lunch cannot be staggered within the dining hall's "
-                                f"{rules.dining_seats} seats."
-                            ),
+                            code="LUNCH_SEATS_CANNOT_STAGGER",
+                            params={"seats": rules.dining_seats},
                         ),
                     ],
                 )
@@ -630,31 +632,31 @@ class SchedulerSolver:
                     details.append(
                         ConflictDetail(
                             category="LUNCH_WINDOW",
-                            message=(
-                                f"The {rules.lunch_minutes}-minute lunch break is what leaves no "
-                                f"room: without it the week would hold these lessons "
-                                f"({capacity_without_lunch * minutes} minutes free)."
-                            ),
+                            code="LUNCH_BREAK_IS_THE_DIFFERENCE",
+                            params={
+                                "lunchMinutes": rules.lunch_minutes,
+                                "freeMinutes": capacity_without_lunch * minutes,
+                            },
                             resource_ids=[group.id],
                         ),
                     )
                 return ConflictAnalysis(
-                    summary=(
-                        f"Too many lessons for the hours: student group {group.id} and the "
-                        f"{len(clique.members) - 1} teaching group(s) sharing its pupils may never "
-                        f"overlap, and between them need {demand * minutes} minutes of "
-                        f"lessons a week, but the frame times, the locked lessons and the "
-                        f"lunch leave at most {capacity * minutes}. Widen the frame, unlock a "
-                        f"lesson in the middle of the day, or move the lunch window."
-                    ),
+                    summary_code="DEMAND_CLIQUE_HOURS_SHORT",
+                    summary_params={
+                        "group": str(group.id),
+                        "sharingGroups": len(clique.members) - 1,
+                        "demandMinutes": demand * minutes,
+                        "capacityMinutes": capacity * minutes,
+                    },
                     conflicts=[
                         ConflictDetail(
                             category="REQUIREMENT_DEMAND",
-                            message=(
-                                f"Lessons of {len(clique.requirements)} requirement(s) need "
-                                f"{demand * minutes} minutes a week and the week offers "
-                                f"{capacity * minutes}."
-                            ),
+                            code="DEMAND_REQUIREMENTS_EXCEED_WEEK",
+                            params={
+                                "requirements": len(clique.requirements),
+                                "demandMinutes": demand * minutes,
+                                "capacityMinutes": capacity * minutes,
+                            },
                             requirement_ids=[r.id for r in clique.requirements],
                             resource_ids=[group.id],
                         ),
@@ -1060,91 +1062,74 @@ class SchedulerSolver:
         if seats_matter is not False:
             details.append(ConflictDetail(
                 category="DINING_CAPACITY",
-                message=f"The dining hall's {seats} seats are all it holds at one time.",
+                code="LUNCH_SEATS_CAP",
+                params={"seats": seats},
             ))
         # One sentence per cause, the same for every class, with the classes
         # in the ids: a school reads one line, not twenty-four copies of it.
-        details.append(ConflictDetail(
-            category="LUNCH_WINDOW" if seats_matter is False else "DINING_CAPACITY",
-            message=(
-                "The classes named here take a lunch break every school day."
-                if seats_matter is False
-                else "The classes named here bring their children to the hall every school day."
-            ),
-            resource_ids=named_for("eats"),
-        ) if named_for("eats") else None)
+        if named_for("eats"):
+            details.append(ConflictDetail(
+                category="LUNCH_WINDOW" if seats_matter is False else "DINING_CAPACITY",
+                code=(
+                    "LUNCH_CLASSES_EAT_DAILY"
+                    if seats_matter is False
+                    else "LUNCH_CLASSES_FILL_THE_HALL_DAILY"
+                ),
+                resource_ids=named_for("eats"),
+            ))
         # The lessons, quoting the frame that packs the day where there is
         # one to quote: in the frame reproduction the frame IS the lever, and
         # a line that only said "lessons" sent the school to its timplan.
         # One line per distinct frame, so classes under different frames are
-        # not put under one sentence that fits neither.
+        # not put under one sentence that fits neither. Two codes rather than
+        # one with an optional clause: a translator cannot inflect a sentence
+        # around a hole that is sometimes empty.
         by_window: dict[str | None, list[UUID]] = defaultdict(list)
         for group_id in named_for("lessons"):
             by_window[stage.window_texts.get(group_id)].append(group_id)
         for window_text, group_ids in by_window.items():
-            inside = f" — inside their frame time {window_text} —" if window_text else ""
             details.append(ConflictDetail(
                 category="LUNCH_WINDOW",
-                message=(
-                    f"The lessons of the classes named here fill the day so completely{inside} "
-                    f"around the break that few lunch starts are left for it."
+                code=(
+                    "LUNCH_LESSONS_FILL_THE_FRAMED_DAY"
+                    if window_text
+                    else "LUNCH_LESSONS_FILL_THE_DAY"
                 ),
+                params={"window": window_text} if window_text else {},
                 resource_ids=group_ids,
             ))
-        for cause, category, message in (
-            (
-                "declared", "LUNCH_WINDOW",
-                "A lunch sitting or a frame time narrows when the classes named here may eat.",
-            ),
-            (
-                "locked", "GROUP_OVERLAP",
-                "Locked lessons take lunch starts away from the classes named here.",
-            ),
-            (
-                "closed", "AVAILABILITY",
-                "A reservation takes lunch starts away from the classes named here.",
-            ),
+        for cause, category, code in (
+            ("declared", "LUNCH_WINDOW", "LUNCH_STARTS_NARROWED_BY_SITTING_OR_FRAME"),
+            ("locked", "GROUP_OVERLAP", "LUNCH_STARTS_TAKEN_BY_LOCKED_LESSONS"),
+            ("closed", "AVAILABILITY", "LUNCH_STARTS_TAKEN_BY_RESERVATION"),
         ):
             group_ids = named_for(cause)
             if group_ids:
                 details.append(ConflictDetail(
-                    category=category, message=message, resource_ids=group_ids,
+                    category=category, code=code, resource_ids=group_ids,
                 ))
-        details = [detail for detail in details if detail is not None]
 
-        classes = f"{len(named)} class" + ("" if len(named) == 1 else "es")
-        children_text = f"{children} child" + ("" if children == 1 else "ren")
-
+        # Three summaries rather than one with a substituted lead: a lead
+        # built here would arrive at the translator as a finished English
+        # sentence with a Swedish tail stapled to it.
         if seats_matter is None:
-            lead = (
-                f"No placement of the lunch breaks satisfies the lunch window, the "
-                f"sittings, the frame times, the locked lessons and the dining hall's "
-                f"{seats} seats together for the {classes} named; the solver "
-                f"ran out of time before it could say whether the seats are the difference."
-            )
+            code = "LUNCH_NO_PLACEMENT_SEATS_UNDECIDED"
+            params: dict[str, str | int] = {"seats": seats, "classes": len(named)}
         elif seats_matter:
-            lead = (
-                f"The dining hall's {seats} seats cannot seat the {classes} named "
-                f"({children_text}) at the lunch starts their days leave them, in "
-                f"{rules.lunch_minutes}-minute sittings between {rules.lunch_start_time[:5]} "
-                f"and {rules.lunch_end_time[:5]}. Add seats, widen the lunch window or the "
-                f"sittings, or free the starts a frame, a lock or a reservation takes away."
-            )
+            code = "LUNCH_HALL_CANNOT_SEAT_CLASSES"
+            params = {
+                "seats": seats,
+                "classes": len(named),
+                "students": children,
+                "lunchMinutes": rules.lunch_minutes,
+                "windowStart": rules.lunch_start_time[:5],
+                "windowEnd": rules.lunch_end_time[:5],
+            }
         else:
-            lead = (
-                f"No placement of the lunch breaks works for the {classes} named: "
-                f"their lessons, sittings, frame times, locked lessons and "
-                f"reservations leave no day that holds both the lessons and the break. "
-                f"Widen the frame or the lunch window, or unlock a lesson in the middle of "
-                f"the day."
-            )
+            code = "LUNCH_NO_PLACEMENT_FOR_CLASSES"
+            params = {"classes": len(named)}
         return ConflictAnalysis(
-            summary=(
-                f"{lead} The causes listed are together enough to make the week "
-                f"impossible; the solver reports a sufficient set rather than the "
-                f"smallest one."
-            ),
-            conflicts=details,
+            summary_code=code, summary_params=params, conflicts=details,
         )
 
     def _explain_infeasible(
@@ -1687,29 +1672,22 @@ class SchedulerSolver:
 
     def _validate_request(self, request: OptimizeScheduleRequest) -> None:
         if not request.requirements:
-            raise InvalidScheduleInputError("At least one teaching requirement is required.")
+            raise InvalidScheduleInputError.of("INPUT_NO_REQUIREMENTS")
         if not request.rooms:
-            raise InvalidScheduleInputError("At least one room is required.")
+            raise InvalidScheduleInputError.of("INPUT_NO_ROOMS")
 
         # Aggregate complexity budget — reject oversized models before building.
         total_lessons = sum(r.lessons_per_week for r in request.requirements)
         if total_lessons > self.MAX_LESSON_INSTANCES:
-            msg = (
-                f"Too many lesson instances ({total_lessons}); "
-                f"limit is {self.MAX_LESSON_INSTANCES}."
-            )
-            raise InvalidScheduleInputError(msg)
+            raise InvalidScheduleInputError.of("INPUT_TOO_MANY_LESSONS", {
+                "lessons": total_lessons, "limit": self.MAX_LESSON_INSTANCES,
+            })
 
         estimated_size = self._estimate_model_size(request)
         if estimated_size > self.MAX_MODEL_COMPLEXITY:
-            msg = (
-                f"Scheduling request is too large to build "
-                f"(estimated {estimated_size:,} model variables; "
-                f"limit {self.MAX_MODEL_COMPLEXITY:,}). The usual drivers are "
-                f"rooms with many distinct capacities, constraints that each "
-                f"touch many lessons, and very high per-teacher lesson loads."
-            )
-            raise InvalidScheduleInputError(msg)
+            raise InvalidScheduleInputError.of("INPUT_MODEL_TOO_LARGE", {
+                "variables": estimated_size, "limit": self.MAX_MODEL_COMPLEXITY,
+            })
 
         # Resolved once for the whole request: the same map _add_room_allocation
         # builds, so a refusal here describes the model that would have been
@@ -1731,19 +1709,16 @@ class SchedulerSolver:
                     requirement.minutes_per_lesson
                 )
             except ValueError as error:
-                msg = (
-                    f"Requirement {requirement.id} asks for "
-                    f"{requirement.minutes_per_lesson}-minute lessons, which do not "
-                    f"fit the {self._grid.slot_minutes}-minute scheduling grid. "
-                    f"Use a whole multiple of {self._grid.slot_minutes} minutes."
-                )
-                raise InvalidScheduleInputError(msg) from error
+                raise InvalidScheduleInputError.of("INPUT_LESSON_LENGTH_OFF_GRID", {
+                    "requirement": str(requirement.id),
+                    "minutes": requirement.minutes_per_lesson,
+                    "slotMinutes": self._grid.slot_minutes,
+                }) from error
             if duration_slots > self._grid.slots_per_day:
-                msg = (
-                    f"Requirement {requirement.id} exceeds the daily scheduling window "
-                    f"({requirement.minutes_per_lesson} minutes)."
-                )
-                raise InvalidScheduleInputError(msg)
+                raise InvalidScheduleInputError.of("INPUT_LESSON_LONGER_THAN_DAY", {
+                    "requirement": str(requirement.id),
+                    "minutes": requirement.minutes_per_lesson,
+                })
 
             # A frame narrows the start domain, and a domain can be narrowed to
             # nothing. Left to CP-SAT that is an ordinary INFEASIBLE with no
@@ -1764,14 +1739,12 @@ class SchedulerSolver:
                         else f"{requirement.min_grade_level}-{requirement.max_grade_level}"
                     )
                     remaining = widest * self._grid.slot_minutes
-                    msg = (
-                        f"Frame times leave no room for requirement "
-                        f"{requirement.id} (years {grades}): its "
-                        f"{requirement.minutes_per_lesson}-minute lessons need a "
-                        f"window, and the widest any day still offers is "
-                        f"{remaining} minutes."
-                    )
-                    raise InvalidScheduleInputError(msg)
+                    raise InvalidScheduleInputError.of("FRAME_NO_WINDOW_FOR_REQUIREMENT", {
+                        "requirement": str(requirement.id),
+                        "grades": grades,
+                        "minutes": requirement.minutes_per_lesson,
+                        "remaining": remaining,
+                    })
 
             # And a rast cuts holes in the same domain, so it can empty it the
             # same way — worse, in fact: a frame leaves one narrow window, while
@@ -1800,15 +1773,12 @@ class SchedulerSolver:
                         else f"{requirement.min_grade_level}-{requirement.max_grade_level}"
                     )
                     remaining = widest * self._grid.slot_minutes
-                    msg = (
-                        f"The rasts declared for years {grades} leave no room for "
-                        f"requirement {requirement.id}: its "
-                        f"{requirement.minutes_per_lesson}-minute lessons need an "
-                        f"unbroken stretch, and the longest any day still offers is "
-                        f"{remaining} minutes. Shorten a rast, widen the frame time, "
-                        f"or split the lesson."
-                    )
-                    raise InvalidScheduleInputError(msg)
+                    raise InvalidScheduleInputError.of("RAST_NO_STRETCH_FOR_REQUIREMENT", {
+                        "requirement": str(requirement.id),
+                        "grades": grades,
+                        "minutes": requirement.minutes_per_lesson,
+                        "remaining": remaining,
+                    })
 
             grades = (
                 "any"
@@ -1819,13 +1789,12 @@ class SchedulerSolver:
                 room for room in request.rooms if self._room_allowed(room, requirement)
             ]
             if not eligible_rooms:
-                msg = (
-                    f"No room satisfies capacity/type/years for requirement "
-                    f"{requirement.id} (group size "
-                    f"{requirement.student_group_size}, required type "
-                    f"{requirement.required_room_type or 'any'}, years {grades})."
-                )
-                raise InvalidScheduleInputError(msg)
+                raise InvalidScheduleInputError.of("ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT", {
+                    "requirement": str(requirement.id),
+                    "groupSize": requirement.student_group_size,
+                    "roomType": str(requirement.required_room_type or "any"),
+                    "grades": grades,
+                })
 
             # THE LOCK GETS ITS OWN SENTENCE, and the branch is the point. The
             # message above sends a school to the room list to change a seat
@@ -1842,14 +1811,9 @@ class SchedulerSolver:
                     room for room in eligible_rooms if room.id in locked_rooms
                 ]
                 if not survivors:
-                    msg = (
-                        f"A room lock leaves requirement {requirement.id} "
-                        f"(years {grades}) nowhere to go: the rooms it names are "
-                        f"too small, of the wrong type, or reserved for other "
-                        f"years. Widen the lock, name another room, or change "
-                        f"the room."
-                    )
-                    raise InvalidScheduleInputError(msg)
+                    raise InvalidScheduleInputError.of("ROOM_LOCK_LEAVES_NO_ROOM", {
+                        "requirement": str(requirement.id), "grades": grades,
+                    })
 
         # THE WEEK, not the lesson. Every locked requirement above can have a
         # room and the set of them still not fit: three subjects locked into one
@@ -1897,14 +1861,12 @@ class SchedulerSolver:
             available = usable * days * slots_per_day
             if needed > available:
                 minutes = self._grid.slot_minutes
-                msg = (
-                    f"Room locks put {len(group)} requirement(s) into "
-                    f"{usable} room(s) that cannot hold them: they need "
-                    f"{needed * minutes} minutes a week and those rooms offer "
-                    f"{available * minutes}. Name another room, or narrow which "
-                    f"years the lock applies to."
-                )
-                raise InvalidScheduleInputError(msg)
+                raise InvalidScheduleInputError.of("ROOM_LOCK_WEEK_TOO_SMALL", {
+                    "requirements": len(group),
+                    "rooms": usable,
+                    "neededMinutes": needed * minutes,
+                    "offeredMinutes": available * minutes,
+                })
 
         rules = request.rules
         if rules is None or not _lunch_window_is_set(rules):
@@ -1928,12 +1890,11 @@ class SchedulerSolver:
             # the number the hall has to reach.
             largest = max(request.groups, key=lambda group: group.lunch_headcount)
             if largest.lunch_headcount > rules.dining_seats:
-                msg = (
-                    f"Student group {largest.id} brings "
-                    f"{largest.lunch_headcount} students to lunch, more than the "
-                    f"dining hall's {rules.dining_seats} seats."
-                )
-                raise InvalidScheduleInputError(msg)
+                raise InvalidScheduleInputError.of("LUNCH_GROUP_LARGER_THAN_HALL", {
+                    "group": str(largest.id),
+                    "students": largest.lunch_headcount,
+                    "seats": rules.dining_seats,
+                })
 
         # Whether locked lessons leave a group any admissible lunch start is
         # arithmetic on constants — no search decides it. Left to the model it
@@ -1983,13 +1944,13 @@ class SchedulerSolver:
                 forbidden,
             )
             if allowed.is_empty():
-                msg = (
-                    f"Locked lessons leave student group {group_id} no "
-                    f"{rules.lunch_minutes}-minute lunch break inside "
-                    f"{rules.lunch_start_time}-{rules.lunch_end_time} on day "
-                    f"{self._grid.schedule_days[day_index]}."
-                )
-                raise InvalidScheduleInputError(msg)
+                raise InvalidScheduleInputError.of("LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK", {
+                    "group": str(group_id),
+                    "minutes": rules.lunch_minutes,
+                    "windowStart": rules.lunch_start_time[:5],
+                    "windowEnd": rules.lunch_end_time[:5],
+                    "day": self._grid.schedule_days[day_index],
+                })
 
         # The declarations, before either subtraction: a serving or a frame too
         # tight to hold the break empties the domain outright, and an empty
@@ -2017,13 +1978,11 @@ class SchedulerSolver:
                         lunch_slots,
                     )
                     if declared is not None and declared.is_empty():
-                        msg = (
-                            f"No lunch serving leaves student group {group_id} "
-                            f"room for a {rules.lunch_minutes}-minute meal on "
-                            f"day {day_of_week}. Widen the sitting, shorten the "
-                            f"break, or check the stage's frame times."
-                        )
-                        raise InvalidScheduleInputError(msg)
+                        raise InvalidScheduleInputError.of("LUNCH_NO_SERVING_FOR_GROUP", {
+                            "group": str(group_id),
+                            "minutes": rules.lunch_minutes,
+                            "day": day_of_week,
+                        })
 
         # Can the declared sittings physically feed the stages that must use
         # them? A window wide enough to hold ONE meal can still be far too small
@@ -2067,15 +2026,14 @@ class SchedulerSolver:
                         serving.start_time,
                     )
                     if captive * rules.lunch_minutes > seats * minutes:
-                        msg = (
-                            f"The {serving.start_time[:5]}-{serving.end_time[:5]} "
-                            f"sitting for years {serving.min_grade_level}-"
-                            f"{serving.max_grade_level} cannot feed {captive} "
-                            f"students {rules.lunch_minutes} minutes each with "
-                            f"{seats} seats. Widen the sitting, add seats, or "
-                            f"split the stage across two sittings."
-                        )
-                        raise InvalidScheduleInputError(msg)
+                        raise InvalidScheduleInputError.of("LUNCH_SERVING_CANNOT_FEED_STAGE", {
+                            "servingStart": serving.start_time[:5],
+                            "servingEnd": serving.end_time[:5],
+                            "grades": f"{serving.min_grade_level}-{serving.max_grade_level}",
+                            "students": captive,
+                            "minutes": rules.lunch_minutes,
+                            "seats": seats,
+                        })
 
         # The same question of the school's own reservations. Separate loop and
         # separate sentence: a lesson to move and a rule to change are fixed in
@@ -2090,14 +2048,13 @@ class SchedulerSolver:
                 closed,
             )
             if allowed.is_empty():
-                msg = (
-                    f"An availability rule leaves student group {group_id} no "
-                    f"{rules.lunch_minutes}-minute lunch break inside "
-                    f"{rules.lunch_start_time}-{rules.lunch_end_time} on day "
-                    f"{self._grid.schedule_days[day_index]}. Shorten the rule, "
-                    f"widen the lunch window, or shorten the break."
-                )
-                raise InvalidScheduleInputError(msg)
+                raise InvalidScheduleInputError.of("LUNCH_AVAILABILITY_LEAVES_NO_BREAK", {
+                    "group": str(group_id),
+                    "minutes": rules.lunch_minutes,
+                    "windowStart": rules.lunch_start_time[:5],
+                    "windowEnd": rules.lunch_end_time[:5],
+                    "day": self._grid.schedule_days[day_index],
+                })
 
         # ALL FOUR SOURCES TOGETHER, last, because each can leave room on its own
         # while the intersection is empty. A locked lesson over the first half
@@ -2137,26 +2094,26 @@ class SchedulerSolver:
                     continue
 
                 # Name what is actually in play, so the sentence sends the
-                # reader to the screen that holds the fix.
+                # reader to the screen that holds the fix. As ONE key rather
+                # than a joined list: "locked lessons and availability rules"
+                # is an English list, and a language that inflects the members
+                # cannot be handed it already punctuated. The sentence branches
+                # on the key instead, in whatever language reads it.
                 causes: list[str] = []
                 if blocked_starts.get(key):
-                    causes.append("locked lessons")
+                    causes.append("locked")
                 if closed_starts.get(key):
-                    causes.append("availability rules")
+                    causes.append("closed")
                 if declared is not None:
-                    causes.append("the declared lunch sittings")
-                named = (
-                    " and ".join(causes)
-                    if len(causes) < 3
-                    else ", ".join(causes[:-1]) + " and " + causes[-1]
-                )
-                msg = (
-                    f"Together, {named} leave student group {group_id} no "
-                    f"{rules.lunch_minutes}-minute lunch break inside "
-                    f"{rules.lunch_start_time}-{rules.lunch_end_time} on day "
-                    f"{day_of_week}."
-                )
-                raise InvalidScheduleInputError(msg)
+                    causes.append("declared")
+                raise InvalidScheduleInputError.of("LUNCH_CAUSES_LEAVE_NO_BREAK", {
+                    "causes": "_".join(causes),
+                    "group": str(group_id),
+                    "minutes": rules.lunch_minutes,
+                    "windowStart": rules.lunch_start_time[:5],
+                    "windowEnd": rules.lunch_end_time[:5],
+                    "day": day_of_week,
+                })
 
     def _rast_free_starts(
         self,
@@ -2222,7 +2179,7 @@ class SchedulerSolver:
 
         slice_seconds = max(self.MIN_PHASE_SECONDS, budget / len(relaxations))
         found: list[tuple[str, float]] = []
-        for label, relaxed in relaxations:
+        for code, relaxed in relaxations:
             try:
                 feas_model, _, _, _, _ = self._build_model(
                     relaxed, use_assumptions=False, include_objective=False,
@@ -2235,30 +2192,32 @@ class SchedulerSolver:
             probe.parameters.max_time_in_seconds = slice_seconds
             started = time.perf_counter()
             if probe.Solve(feas_model) in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-                found.append((label, time.perf_counter() - started))
+                found.append((code, time.perf_counter() - started))
 
+        budget = round(self._settings.solver_max_time_seconds)
         if not found:
             return ConflictAnalysis(
-                summary=(
-                    f"No timetable was found within {self._settings.solver_max_time_seconds:.0f} s, "
-                    f"and none of the {len(relaxations)} rules probed made one appear inside "
-                    f"{slice_seconds:.0f} s each. The week may simply be large; try a longer budget."
-                ),
+                summary_code="PROBE_NOTHING_HELPED",
+                summary_params={
+                    "budget": budget,
+                    "rules": len(relaxations),
+                    "slice": round(slice_seconds),
+                },
                 conflicts=[],
             )
+        # The rules are named in the details, one complete sentence each,
+        # never joined into the summary: a list punctuated in English inside a
+        # Swedish sentence is what a fragment param buys.
         return ConflictAnalysis(
-            summary=(
-                f"No timetable was found within {self._settings.solver_max_time_seconds:.0f} s. "
-                f"With one rule relaxed, the same week solved: "
-                + "; ".join(f"{label} ({seconds:.1f} s)" for label, seconds in found)
-                + ". That rule is what does not fit — not a proof, a measurement."
-            ),
+            summary_code="PROBE_ONE_RULE_HELPED",
+            summary_params={"budget": budget, "rules": len(found)},
             conflicts=[
                 ConflictDetail(
                     category="TIMEOUT_PROBE",
-                    message=f"With {label}, a timetable was found in {seconds:.1f} s.",
+                    code=code,
+                    params={"seconds": round(seconds, 1)},
                 )
-                for label, seconds in found
+                for code, seconds in found
             ],
         )
 
@@ -2266,6 +2225,11 @@ class SchedulerSolver:
         self, request: OptimizeScheduleRequest,
     ) -> list[tuple[str, OptimizeScheduleRequest]]:
         """The rules a timed-out week can be probed without, one at a time.
+
+        Each is returned as the CODE of the sentence that reports it, so the
+        finding reaches a school as one whole named sentence rather than an
+        English fragment glued into a summary — a fragment cannot be
+        translated into a language that inflects around it.
 
         Only what the payload carries, in the order the measurements rank them.
         THE LUNCH IS THREE THINGS, NOT ONE: the school's sittings per stage, the
@@ -2278,7 +2242,7 @@ class SchedulerSolver:
         out: list[tuple[str, OptimizeScheduleRequest]] = []
         if any(f.changeover_minutes > 0 for f in request.frame_times):
             out.append((
-                "the corridor between lessons (changeoverMinutes) set to 0",
+                "PROBE_SOLVED_WITHOUT_CHANGEOVER",
                 request.model_copy(update={
                     "frame_times": [
                         f.model_copy(update={"changeover_minutes": 0}) for f in request.frame_times
@@ -2286,23 +2250,23 @@ class SchedulerSolver:
                 }),
             ))
         if request.rasts:
-            out.append(("the rasts removed", request.model_copy(update={"rasts": []})))
+            out.append(("PROBE_SOLVED_WITHOUT_RASTS", request.model_copy(update={"rasts": []})))
         rules = request.rules
         if rules is not None and _lunch_window_is_set(rules):
             if request.lunch_servings:
                 out.append((
-                    "the lunch sittings per stage removed (whole window open to every stage)",
+                    "PROBE_SOLVED_WITHOUT_SERVINGS",
                     request.model_copy(update={"lunch_servings": []}),
                 ))
             if rules.dining_seats is not None:
                 out.append((
-                    "the dining hall's seat limit removed",
+                    "PROBE_SOLVED_WITHOUT_DINING_SEATS",
                     request.model_copy(update={
                         "rules": rules.model_copy(update={"dining_seats": None}),
                     }),
                 ))
             out.append((
-                "the guaranteed lunch break switched off",
+                "PROBE_SOLVED_WITHOUT_LUNCH",
                 request.model_copy(update={
                     "lunch_servings": [],
                     "rules": rules.model_copy(update={
@@ -2476,14 +2440,26 @@ class SchedulerSolver:
                 model,
                 name=f"capacity_{requirement.id}_{decision.lesson.lesson_index}",
                 category="ROOM_CAPACITY",
-                message=(
-                    f"Requirement {requirement.id} needs a room with capacity "
-                    f">= {requirement.student_group_size}"
-                    + (
-                        f" and type {requirement.required_room_type}."
-                        if requirement.required_room_type
-                        else "."
-                    )
+                # Two codes rather than one sentence with an optional tail:
+                # a translator cannot inflect around a clause that is
+                # sometimes absent, and the room type is a token the school
+                # named itself.
+                code=(
+                    "ROOM_NO_ROOM_OF_TYPE_FOR_REQUIREMENT"
+                    if requirement.required_room_type
+                    else "ROOM_NO_ROOM_FOR_REQUIREMENT"
+                ),
+                params=(
+                    {
+                        "requirement": str(requirement.id),
+                        "groupSize": requirement.student_group_size,
+                        "roomType": str(requirement.required_room_type),
+                    }
+                    if requirement.required_room_type
+                    else {
+                        "requirement": str(requirement.id),
+                        "groupSize": requirement.student_group_size,
+                    }
                 ),
                 requirement_ids=[requirement.id],
             )
@@ -2625,7 +2601,15 @@ class SchedulerSolver:
                     constraint.end_time,
                 )
             except ValueError as exc:
-                raise InvalidScheduleInputError(str(exc)) from exc
+                # The grid's own complaint names a time and not the row it came
+                # from ("Time 11:07:00 is not aligned to 5-minute slots"), which
+                # leaves a school to find which of its reservations that was.
+                raise InvalidScheduleInputError.of("INPUT_CONSTRAINT_TIME_OFF_GRID", {
+                    "constraint": str(constraint.id),
+                    "start": constraint.start_time[:5],
+                    "end": constraint.end_time[:5],
+                    "slotMinutes": self._grid.slot_minutes,
+                }) from exc
 
             affected = self._decisions_for_constraint(constraint, decisions, room_index_by_id, model)
             if not affected:
@@ -2635,7 +2619,8 @@ class SchedulerSolver:
                 model,
                 name=f"availability_{constraint.id}",
                 category="AVAILABILITY",
-                message=f"Availability constraint {constraint.id} blocks required lesson placement.",
+                code="AVAIL_CONSTRAINT_BLOCKS_LESSONS",
+                params={"constraint": str(constraint.id)},
                 constraint_ids=[constraint.id],
                 # A year reservation names no resource, and a conflict detail
                 # carries UUIDs only — the constraint id is what the admin has
@@ -2963,7 +2948,15 @@ class SchedulerSolver:
                     constraint.end_time,
                 )
             except ValueError as exc:
-                raise InvalidScheduleInputError(str(exc)) from exc
+                # The grid's own complaint names a time and not the row it came
+                # from ("Time 11:07:00 is not aligned to 5-minute slots"), which
+                # leaves a school to find which of its reservations that was.
+                raise InvalidScheduleInputError.of("INPUT_CONSTRAINT_TIME_OFF_GRID", {
+                    "constraint": str(constraint.id),
+                    "start": constraint.start_time[:5],
+                    "end": constraint.end_time[:5],
+                    "slotMinutes": self._grid.slot_minutes,
+                }) from exc
 
             affected = self._decisions_for_constraint(
                 constraint, decisions, room_index_by_id, model,
@@ -3383,11 +3376,22 @@ class SchedulerSolver:
             window_end = self._grid.parse_hhmmss(rules.lunch_end_time)
             lunch_slots = self._grid.minutes_to_slots(rules.lunch_minutes)
         except ValueError as exc:
-            raise InvalidScheduleInputError(str(exc)) from exc
+            # Named for the lunch rather than passed through: the grid's
+            # duration complaint reads "Lesson duration 40 minutes is not
+            # aligned", and a school that typed a 40-minute LUNCH on a
+            # 15-minute grid went looking through its timplan for a lesson.
+            raise InvalidScheduleInputError.of("LUNCH_WINDOW_OFF_GRID", {
+                "windowStart": rules.lunch_start_time[:5],
+                "windowEnd": rules.lunch_end_time[:5],
+                "minutes": rules.lunch_minutes,
+                "slotMinutes": self._grid.slot_minutes,
+            }) from exc
         if window_end - window_start < lunch_slots:
-            raise InvalidScheduleInputError(
-                "Lunch window is shorter than the required lunch break.",
-            )
+            raise InvalidScheduleInputError.of("LUNCH_WINDOW_SHORTER_THAN_BREAK", {
+                "windowStart": rules.lunch_start_time[:5],
+                "windowEnd": rules.lunch_end_time[:5],
+                "minutes": rules.lunch_minutes,
+            })
         return window_start, window_end, lunch_slots
 
     def _admissible_lunch_starts(
@@ -3547,7 +3551,15 @@ class SchedulerSolver:
                     constraint.end_time,
                 )
             except ValueError as exc:
-                raise InvalidScheduleInputError(str(exc)) from exc
+                # The grid's own complaint names a time and not the row it came
+                # from ("Time 11:07:00 is not aligned to 5-minute slots"), which
+                # leaves a school to find which of its reservations that was.
+                raise InvalidScheduleInputError.of("INPUT_CONSTRAINT_TIME_OFF_GRID", {
+                    "constraint": str(constraint.id),
+                    "start": constraint.start_time[:5],
+                    "end": constraint.end_time[:5],
+                    "slotMinutes": self._grid.slot_minutes,
+                }) from exc
 
             for abs_start, abs_end in windows:
                 day_index = abs_start // slots_per_day
@@ -3730,10 +3742,8 @@ class SchedulerSolver:
                     model,
                     name="dining_capacity",
                     category="DINING_CAPACITY",
-                    message=(
-                        f"Lunch cannot be staggered within the dining hall's "
-                        f"{seats} seats."
-                    ),
+                    code="LUNCH_SEATS_CANNOT_STAGGER",
+                    params={"seats": seats},
                 )
 
             # Everyone who gets a break, and what each of them needs in chairs.
@@ -3923,11 +3933,17 @@ class SchedulerSolver:
                             model,
                             name=f"lunchlock_{group_id}_{day_index}",
                             category="GROUP_OVERLAP",
-                            message=(
-                                f"Locked lessons block student group {group_id}'s "
-                                f"lunch break on day "
-                                f"{self._grid.schedule_days[day_index]}."
-                            ),
+                            # The same fact _validate_request refuses by
+                            # name when the locks alone leave nothing, said
+                            # through the one code both use.
+                            code="LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
+                            params={
+                                "group": str(group_id),
+                                "minutes": rules.lunch_minutes,
+                                "windowStart": rules.lunch_start_time[:5],
+                                "windowEnd": rules.lunch_end_time[:5],
+                                "day": self._grid.schedule_days[day_index],
+                            },
                             resource_ids=[group_id],
                         )
                         model.AddLinearExpressionInDomain(
@@ -3955,11 +3971,14 @@ class SchedulerSolver:
                             model,
                             name=f"lunchclosed_{group_id}_{day_index}",
                             category="AVAILABILITY",
-                            message=(
-                                f"An availability rule leaves student group "
-                                f"{group_id} no lunch break on day "
-                                f"{self._grid.schedule_days[day_index]}."
-                            ),
+                            code="LUNCH_AVAILABILITY_LEAVES_NO_BREAK",
+                            params={
+                                "group": str(group_id),
+                                "minutes": rules.lunch_minutes,
+                                "windowStart": rules.lunch_start_time[:5],
+                                "windowEnd": rules.lunch_end_time[:5],
+                                "day": self._grid.schedule_days[day_index],
+                            },
                             resource_ids=[group_id],
                         )
                         model.AddLinearExpressionInDomain(

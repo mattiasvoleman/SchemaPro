@@ -799,6 +799,13 @@ export function useCrudMutations<TBody>(
 export interface ConflictDetail {
   category: string;
   message: string;
+  /**
+   * The sentence's own name and the values it substitutes, so the page can
+   * render it in Swedish. Absent on a run stored before the engine named its
+   * sentences, and then `message` — the engine's English — is what shows.
+   */
+  code?: string | null;
+  params?: Record<string, string | number> | null;
   /** The school's names for the groups the sentence is about; empty when it names none. */
   resourceNames?: string[];
 }
@@ -809,8 +816,12 @@ export interface OptimizationJob {
   solverStatus: "OPTIMAL" | "FEASIBLE" | "INFEASIBLE" | "TIMEOUT" | null;
   lessonsGenerated: number;
   conflictSummary: string | null;
+  conflictSummaryCode: string | null;
+  conflictSummaryParams: Record<string, string | number> | null;
   conflicts: ConflictDetail[];
   error: string | null;
+  errorCode: string | null;
+  errorParams: Record<string, string | number> | null;
   createdAt: string;
   finishedAt: string | null;
 }

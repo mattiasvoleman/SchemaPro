@@ -159,9 +159,17 @@ def register_exception_handlers(application: FastAPI) -> None:
         exc: InvalidScheduleInputError,
     ) -> JSONResponse:
         logger.warning("invalid_schedule_input", path=request.url.path, error=str(exc))
+        # `details` carries the refusal's own name and values beside the
+        # English, so the gateway can hand them to a screen that says it in
+        # the reader's language. The top-level code stays what it was: it
+        # names the KIND of failure for an HTTP client, not the sentence.
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            content=error_payload(code="INVALID_SCHEDULE_INPUT", message=str(exc)),
+            content=error_payload(
+                code="INVALID_SCHEDULE_INPUT",
+                message=str(exc),
+                details={"code": exc.code, "params": exc.params} if exc.code else None,
+            ),
         )
 
     @application.exception_handler(SolverBuildError)

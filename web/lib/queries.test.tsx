@@ -612,8 +612,12 @@ describe("useOptimizationJob", () => {
     solverStatus: status === "SUCCEEDED" ? "OPTIMAL" : null,
     lessonsGenerated: 0,
     conflictSummary: null,
+    conflictSummaryCode: null,
+    conflictSummaryParams: null,
     conflicts: [],
     error: null,
+    errorCode: null,
+    errorParams: null,
     createdAt: "2026-08-08T10:00:00.000Z",
     finishedAt: null,
   });

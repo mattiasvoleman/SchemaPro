@@ -14,6 +14,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
+import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import {
   useActiveYear,
   useGroupMemberships,
@@ -46,6 +47,7 @@ export default function GeneratePage() {
   const t = useTranslations("generate");
   const tLunch = useTranslations("lunch");
   const tConflicts = useTranslations("conflictCategories");
+  const tEngine = useTranslations("engineMessages");
   const tCommon = useTranslations("common");
   const { activeYear } = useActiveYear();
   const { data: requirements } = useRequirements(activeYear?.id ?? null);
@@ -142,6 +144,18 @@ export default function GeneratePage() {
    */
   const conflictLabel = (category: string): string =>
     tConflicts.has(category as never) ? tConflicts(category as never) : category;
+
+  /**
+   * The solver writes its refusals in English and names each one; the Swedish
+   * lives in `engineMessages` and is rendered from that name. A sentence with
+   * no name, or none this build has a translation for, shows the engine's own
+   * words — see lib/engine-message.ts.
+   */
+  const engineText = (sentence: {
+    code?: string | null;
+    message: string;
+    params?: Record<string, string | number> | null;
+  }): string => engineMessage(tEngine as unknown as MessageLookup, sentence);
 
   const teacherCount = useMemo(
     () => (people ?? []).filter((person) => person.role === "TEACHER" && person.isActive).length,
@@ -361,7 +375,13 @@ export default function GeneratePage() {
             </CardTitle>
             <CardDescription>
               {job.status === "FAILED"
-                ? (job.error ?? tCommon("error"))
+                ? job.error
+                  ? engineText({
+                      code: job.errorCode,
+                      message: job.error,
+                      params: job.errorParams,
+                    })
+                  : tCommon("error")
                 : solverStatus
                   ? t(`status${solverStatus}`)
                   : ""}
@@ -394,7 +414,13 @@ export default function GeneratePage() {
               <div>
                 <h3 className="mb-2 text-sm font-semibold">{t("conflicts")}</h3>
                 {job.conflictSummary ? (
-                  <p className="mb-3 text-sm text-muted-foreground">{job.conflictSummary}</p>
+                  <p className="mb-3 text-sm text-muted-foreground">
+                    {engineText({
+                      code: job.conflictSummaryCode,
+                      message: job.conflictSummary,
+                      params: job.conflictSummaryParams,
+                    })}
+                  </p>
                 ) : null}
                 <ul className="space-y-2">
                   {job.conflicts.map((conflict, index) => (
@@ -407,7 +433,7 @@ export default function GeneratePage() {
                         <Badge variant="warning" className="mb-1">
                           {conflictLabel(conflict.category)}
                         </Badge>
-                        <p className="text-muted-foreground">{conflict.message}</p>
+                        <p className="text-muted-foreground">{engineText(conflict)}</p>
                         {conflict.resourceNames && conflict.resourceNames.length > 0 ? (
                           <p className="mt-1 font-medium">{conflict.resourceNames.join(", ")}</p>
                         ) : null}
