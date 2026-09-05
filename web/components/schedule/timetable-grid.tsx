@@ -106,6 +106,13 @@ type TimetableGridInnerProps = TimetableGridProps & {
   handleRef: React.ForwardedRef<TimetableGridHandle>;
 };
 
+/** Minutes since midnight as "13:05". */
+function clockOf(minutes: number): string {
+  const hour = Math.floor(minutes / 60);
+  const minute = Math.floor(minutes % 60);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 /** A stripe across one day, drawn behind the lessons. */
 export interface TimetableBand {
   id: string;
@@ -121,7 +128,44 @@ interface PositionedLesson extends TimetableLesson {
 }
 
 const DAY_KEYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"] as const;
-const SLOT_HEIGHT_PX = 1.1; // pixels per minute
+/*
+ * HOW TALL A MINUTE IS, and why it is not a constant.
+ *
+ * It was 1.1 px, which suits a school of hour-long lessons and cuts a
+ * 40-minute one in half: 40 x 1.1 = 44 px, less 12 px of padding, leaves
+ * exactly two 16 px rows — the title and the group — and the room begins at
+ * pixel 32 and is clipped mid-glyph. That is not an edge case anywhere: at
+ * Kunskapsskolan half the week is 40-minute lessons.
+ *
+ * So the grid is measured against the lessons it actually draws, and a school
+ * of hour-long lessons keeps the compact grid it has (60 / 60 = 1.0, below the
+ * base). It reads the MOST COMMON length rather than the shortest: one
+ * 20-minute pass among forties should not double the height of everybody's
+ * day, and what does not fit its box is handled by the box instead — see
+ * `linesThatFit` below.
+ *
+ * The scale can only change when a committed edit shifts which length is most
+ * common; a drag draws a ghost and leaves `lessons` alone, so the grid never
+ * rescales under the pointer.
+ */
+const BASE_PX_PER_MINUTE = 1.1;
+/*
+ * The ceiling stops a short pass from stretching the day past what a screen
+ * holds. A 15-minute lesson would ask for 4 px per minute — a 10-hour day
+ * 2,400 px tall — and it is the compact layout's job to fit it, not the
+ * grid's.
+ */
+const MAX_PX_PER_MINUTE = 2.2;
+/** One row of `text-xs`: 12 px on a 16 px line. */
+const LINE_PX = 16;
+/** `p-1.5`, top and bottom. */
+const BLOCK_PADDING_PX = 12;
+/**
+ * Title, group-and-teacher, room. The recurrence note is a fourth row and is
+ * deliberately not counted: it is present on a handful of lessons, and sizing
+ * every school's grid for it would cost 16 px a lesson to spare a merge.
+ */
+const LINES_A_LESSON_WANTS = 3;
 const TIME_AXIS_PX = 56; // 3.5rem
 const DRAG_SNAP_MINUTES = 5;
 const SLOT_CLICK_SNAP_MINUTES = 15;
@@ -246,8 +290,24 @@ function TimetableGridInner({
     };
   }, [lessons, bands]);
 
+  /** The most common lesson length, which is what the grid is measured for. */
+  const pxPerMinute = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const lesson of lessons) {
+      const minutes = lesson.endMinutes - lesson.startMinutes;
+      if (minutes > 0) counts.set(minutes, (counts.get(minutes) ?? 0) + 1);
+    }
+    if (counts.size === 0) return BASE_PX_PER_MINUTE;
+    // Ties go to the SHORTER length, which is the one at risk of being cut.
+    const typical = [...counts.entries()].reduce((best, entry) =>
+      entry[1] > best[1] || (entry[1] === best[1] && entry[0] < best[0]) ? entry : best,
+    )[0];
+    const wanted = (BLOCK_PADDING_PX + LINES_A_LESSON_WANTS * LINE_PX) / typical;
+    return Math.min(MAX_PX_PER_MINUTE, Math.max(BASE_PX_PER_MINUTE, wanted));
+  }, [lessons]);
+
   const totalMinutes = (endHour - startHour) * 60;
-  const gridHeight = totalMinutes * SLOT_HEIGHT_PX;
+  const gridHeight = totalMinutes * pxPerMinute;
   const dayStartMinutes = startHour * 60;
   const dayEndMinutes = endHour * 60;
 
@@ -278,10 +338,10 @@ function TimetableGridInner({
       const dayWidth = (rect.width - TIME_AXIS_PX) / dayCount;
       if (dayWidth <= 0) return null;
       const day = Math.min(dayCount, Math.max(1, Math.floor(x / dayWidth) + 1));
-      const minute = dayStartMinutes + y / SLOT_HEIGHT_PX;
+      const minute = dayStartMinutes + y / pxPerMinute;
       return { day, minute };
     },
-    [dayCount, dayStartMinutes],
+    [dayCount, dayStartMinutes, pxPerMinute],
   );
 
   const updateGhost = useCallback(
@@ -609,7 +669,7 @@ function TimetableGridInner({
               <div
                 key={hour}
                 className="absolute right-2 -translate-y-1/2 text-[11px] tabular-nums text-muted-foreground"
-                style={{ top: `${(hour - startHour) * 60 * SLOT_HEIGHT_PX}px` }}
+                style={{ top: `${(hour - startHour) * 60 * pxPerMinute}px` }}
               >
                 {hour !== startHour ? `${String(hour).padStart(2, "0")}:00` : ""}
               </div>
@@ -642,10 +702,10 @@ function TimetableGridInner({
                       key={band.id}
                       className="pointer-events-none absolute inset-x-0 z-0 flex items-start justify-end border-y border-amber-500/30 bg-amber-500/10 px-1 py-0.5 text-[10px] leading-none text-amber-700 dark:text-amber-500"
                       style={{
-                        top: `${(band.startMinutes - startHour * 60) * SLOT_HEIGHT_PX}px`,
+                        top: `${(band.startMinutes - startHour * 60) * pxPerMinute}px`,
                         height: `${Math.max(
                           12,
-                          (band.endMinutes - band.startMinutes) * SLOT_HEIGHT_PX,
+                          (band.endMinutes - band.startMinutes) * pxPerMinute,
                         )}px`,
                       }}
                     >
@@ -658,16 +718,42 @@ function TimetableGridInner({
                   <div
                     key={hour}
                     className="pointer-events-none absolute inset-x-0 border-t border-border/60"
-                    style={{ top: `${(hour - startHour) * 60 * SLOT_HEIGHT_PX}px` }}
+                    style={{ top: `${(hour - startHour) * 60 * pxPerMinute}px` }}
                   />
                 ))}
 
                 {dayLessons.map((lesson) => {
-                  const top = (lesson.startMinutes - startHour * 60) * SLOT_HEIGHT_PX;
+                  const top = (lesson.startMinutes - startHour * 60) * pxPerMinute;
                   const height = Math.max(
                     28,
-                    (lesson.endMinutes - lesson.startMinutes) * SLOT_HEIGHT_PX,
+                    (lesson.endMinutes - lesson.startMinutes) * pxPerMinute,
                   );
+                  /*
+                   * WHAT THE BOX CAN HOLD, and what to do when it holds less
+                   * than the lesson has to say.
+                   *
+                   * The grid is measured for the school's usual lesson, so a
+                   * shorter one still arrives here with more rows than room —
+                   * and the rows used to be drawn anyway and clipped by
+                   * `overflow-hidden`, which cuts the last one through the
+                   * middle of its letters. A half-letter is not information;
+                   * it reads as a rendering fault.
+                   *
+                   * So the facts collapse onto one line before they are cut,
+                   * and below two lines only the title survives. The full text
+                   * is on the block's `title` either way — see below — so
+                   * nothing is ever only half-said.
+                   */
+                  const facts = [
+                    lesson.subtitle,
+                    lesson.room,
+                    lesson.recurrenceNote,
+                  ].filter((fact): fact is string => Boolean(fact));
+                  const linesThatFit = Math.max(
+                    1,
+                    Math.floor((height - BLOCK_PADDING_PX) / LINE_PX),
+                  );
+                  const stacked = 1 + facts.length <= linesThatFit;
                   const widthPct = 100 / lesson.laneCount;
                   const isDragSource = draggingId === lesson.id;
                   return (
@@ -689,6 +775,22 @@ function TimetableGridInner({
                           ? (event) => handleLessonKey(event, lesson)
                           : undefined
                       }
+                      /*
+                       * The whole of it, one hover away.
+                       *
+                       * A block is a rectangle sized by the clock, so there is
+                       * always a lesson somewhere that does not fit in it —
+                       * and until this there was no way to read what had been
+                       * left out without opening the editor. The time is here
+                       * too, which the grid shows nowhere else: the axis is
+                       * hourly, and a 40-minute lesson starts between its
+                       * lines.
+                       */
+                      title={[
+                        `${clockOf(lesson.startMinutes)}-${clockOf(lesson.endMinutes)}`,
+                        lesson.title,
+                        ...facts,
+                      ].join(" · ")}
                       className={cn(
                         "absolute overflow-hidden rounded-md border-l-4 p-1.5 text-left text-xs shadow-sm transition-shadow",
                         onLessonClick || editable
@@ -745,16 +847,31 @@ function TimetableGridInner({
                           ) : null}
                         </div>
                       </div>
-                      {lesson.subtitle ? (
-                        <div className="truncate text-muted-foreground">{lesson.subtitle}</div>
-                      ) : null}
-                      {lesson.room ? (
-                        <div className="truncate text-muted-foreground">{lesson.room}</div>
-                      ) : null}
-                      {lesson.recurrenceNote ? (
-                        <div className="truncate font-medium uppercase tracking-wide text-[9px] text-muted-foreground">
-                          {lesson.recurrenceNote}
+                      {stacked ? (
+                        <>
+                          {lesson.subtitle ? (
+                            <div className="truncate text-muted-foreground">
+                              {lesson.subtitle}
+                            </div>
+                          ) : null}
+                          {lesson.room ? (
+                            <div className="truncate text-muted-foreground">{lesson.room}</div>
+                          ) : null}
+                          {lesson.recurrenceNote ? (
+                            <div className="truncate font-medium uppercase tracking-wide text-[9px] text-muted-foreground">
+                              {lesson.recurrenceNote}
+                            </div>
+                          ) : null}
+                        </>
+                      ) : linesThatFit >= 2 && facts.length > 0 ? (
+                        <div className="truncate text-muted-foreground">
+                          {facts.join(" · ")}
                         </div>
+                      ) : facts.length > 0 ? (
+                        // Nowhere to draw them, but a reader who is listening
+                        // rather than looking is not short of pixels. The
+                        // sighted reader has the same text on the tooltip.
+                        <span className="sr-only">{facts.join(" · ")}</span>
                       ) : null}
                       {editable ? (
                         <div className="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize" />
@@ -773,10 +890,10 @@ function TimetableGridInner({
                         : "border-red-500 bg-red-500/15 text-red-700",
                     )}
                     style={{
-                      top: `${(ghost.startMinutes - startHour * 60) * SLOT_HEIGHT_PX}px`,
+                      top: `${(ghost.startMinutes - startHour * 60) * pxPerMinute}px`,
                       height: `${Math.max(
                         20,
-                        (ghost.endMinutes - ghost.startMinutes) * SLOT_HEIGHT_PX,
+                        (ghost.endMinutes - ghost.startMinutes) * pxPerMinute,
                       )}px`,
                     }}
                   >

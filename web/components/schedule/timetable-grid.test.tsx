@@ -119,13 +119,181 @@ describe("TimetableGrid time axis and vertical placement", () => {
     expect(button.style.height).toBe("66px");
   });
 
-  it("clamps very short lessons to a minimum readable height", () => {
+  it("clamps a lesson far shorter than the school's own to a readable height", () => {
+    // A school of hour-long lessons keeps the compact grid (1.1 px a minute),
+    // and the odd quarter-hour pass in it would be 16.5px — under the floor.
     render(
-      <TimetableGrid lessons={[makeLesson({ startMinutes: 540, endMinutes: 555 })]} />,
+      <TimetableGrid
+        lessons={[
+          makeLesson({ id: "a" }),
+          makeLesson({ id: "b", dayOfWeek: 2 }),
+          makeLesson({ id: "c", dayOfWeek: 3, startMinutes: 540, endMinutes: 555 }),
+        ]}
+      />,
     );
 
-    // 15 minutes would be 16.5px; the floor is 28px.
-    expect(screen.getByRole("button", { name: /Math/ }).style.height).toBe("28px");
+    const short = screen.getAllByRole("button", { name: /Math/ })[2]!;
+    expect(short.style.height).toBe("28px");
+  });
+
+  describe("the grid is measured for the lessons it draws", () => {
+    /*
+     * A 40-minute lesson at the old fixed 1.1 px a minute was 44px, less 12px
+     * of padding, leaving exactly two 16px rows — so the room began at pixel
+     * 32 and was clipped through the middle of its letters. Half the week is
+     * 40 minutes long at the school that reported it.
+     */
+    it("gives the school's usual lesson room for its three rows", () => {
+      render(
+        <TimetableGrid
+          lessons={[
+            makeLesson({ id: "a", startMinutes: 540, endMinutes: 580 }),
+            makeLesson({ id: "b", dayOfWeek: 2, startMinutes: 540, endMinutes: 580 }),
+          ]}
+        />,
+      );
+
+      // 12px of padding plus three 16px rows is 60px, over 40 minutes: 1.5.
+      expect(screen.getAllByRole("button", { name: /Math/ })[0]!.style.height).toBe("60px");
+    });
+
+    it("leaves a school of hour-long lessons the compact grid it had", () => {
+      render(
+        <TimetableGrid
+          lessons={[
+            makeLesson({ id: "a" }),
+            makeLesson({ id: "b", dayOfWeek: 2 }),
+          ]}
+        />,
+      );
+
+      // 60 minutes wants 1.0 and the base is 1.1, so nothing is stretched.
+      expect(screen.getAllByRole("button", { name: /Math/ })[0]!.style.height).toBe("66px");
+    });
+
+    it("does not stretch the day for one short pass among long ones", () => {
+      render(
+        <TimetableGrid
+          lessons={[
+            makeLesson({ id: "a" }),
+            makeLesson({ id: "b", dayOfWeek: 2 }),
+            makeLesson({ id: "c", dayOfWeek: 3, startMinutes: 540, endMinutes: 560 }),
+          ]}
+        />,
+      );
+
+      // Measured for the 60-minute plurality, not for the 20-minute outlier —
+      // which would have asked for 3 px a minute and a day twice as tall.
+      expect(screen.getAllByRole("button", { name: /Math/ })[0]!.style.height).toBe("66px");
+    });
+
+    it("measures for the shorter length when two are equally common", () => {
+      // An even split of 40s and 60s: measuring for the 60s would cut every
+      // 40-minute block, and measuring for the 40s costs the 60s nothing but
+      // height they have no use for.
+      // The hour-long ones FIRST, so the shorter length can only win on the
+      // tie-break and not by being seen first.
+      render(
+        <TimetableGrid
+          lessons={[
+            makeLesson({ id: "a" }),
+            makeLesson({ id: "b", dayOfWeek: 2 }),
+            makeLesson({ id: "c", dayOfWeek: 3, startMinutes: 540, endMinutes: 580 }),
+            makeLesson({ id: "d", dayOfWeek: 4, startMinutes: 540, endMinutes: 580 }),
+          ]}
+        />,
+      );
+
+      // 1.5 px a minute, so the 40-minute blocks are 60px and the hours 90px.
+      const heights = screen
+        .getAllByRole("button", { name: /Math/ })
+        .map((button) => button.style.height);
+      expect(heights).toEqual(["90px", "90px", "60px", "60px"]);
+    });
+
+    it("caps the stretch so a short pass cannot run the day off the screen", () => {
+      render(
+        <TimetableGrid
+          lessons={[makeLesson({ startMinutes: 540, endMinutes: 555 })]} />,
+      );
+
+      // 15 minutes wants 4 px a minute; the ceiling is 2.2.
+      expect(screen.getByRole("button", { name: /Math/ })!.style.height).toBe("33px");
+    });
+  });
+
+  describe("what a block says when the box is too small for it", () => {
+    const detailed = (overrides: Partial<TimetableLesson> = {}) =>
+      makeLesson({ subtitle: "7A", room: "A1", recurrenceNote: "PERIOD", ...overrides });
+
+    it("folds the facts onto one line rather than letting the last be cut", () => {
+      // Two 40-minute lessons: 60px, three rows of room, four rows wanted.
+      render(
+        <TimetableGrid
+          lessons={[
+            detailed({ id: "a", startMinutes: 540, endMinutes: 580 }),
+            detailed({ id: "b", dayOfWeek: 2, startMinutes: 540, endMinutes: 580 }),
+          ]}
+        />,
+      );
+
+      expect(screen.getAllByText("7A · A1 · PERIOD")).toHaveLength(2);
+      expect(screen.queryByText("A1")).not.toBeInTheDocument();
+    });
+
+    it("keeps a row of its own for each fact when they all fit", () => {
+      render(
+        <TimetableGrid
+          lessons={[
+            makeLesson({ id: "a", subtitle: "7A", room: "A1" }),
+            makeLesson({ id: "b", dayOfWeek: 2, subtitle: "7A", room: "A1" }),
+          ]}
+        />,
+      );
+
+      // 66px holds three rows and three are wanted, so nothing is folded.
+      expect(screen.getAllByText("A1")).toHaveLength(2);
+      expect(screen.queryByText("7A · A1")).not.toBeInTheDocument();
+    });
+
+    it("says only the title when even one fact would not fit", () => {
+      render(
+        <TimetableGrid
+          lessons={[
+            makeLesson({ id: "a" }),
+            makeLesson({ id: "b", dayOfWeek: 2 }),
+            detailed({ id: "c", dayOfWeek: 3, startMinutes: 540, endMinutes: 555 }),
+          ]}
+        />,
+      );
+
+      // 28px is one row, and a half-drawn second row is not information. The
+      // facts are still there for a reader who is listening, and on the
+      // tooltip for one who is not.
+      const short = screen.getAllByRole("button", { name: /Math/ })[2]!;
+      expect(short.querySelector(".sr-only")?.textContent).toBe("7A · A1 · PERIOD");
+      expect(
+        [...short.querySelectorAll("div")].some(
+          (row) => row.textContent === "7A · A1 · PERIOD",
+        ),
+      ).toBe(false);
+    });
+
+    it("carries the whole lesson, and its clock, on the block itself", () => {
+      /*
+       * Whatever the box holds, the rest has to be readable without opening
+       * the editor — and the time is here for a second reason: the axis is
+       * hourly and a 40-minute lesson starts between its lines.
+       */
+      render(
+        <TimetableGrid
+          lessons={[detailed({ startMinutes: 545, endMinutes: 585 })]} />,
+      );
+
+      expect(screen.getByRole("button", { name: /Math/ }).title).toBe(
+        "09:05-09:45 · Math · 7A · A1 · PERIOD",
+      );
+    });
   });
 
   it("widens the hour window to fit early and late lessons", () => {
