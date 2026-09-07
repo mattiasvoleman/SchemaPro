@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import { useTranslations } from "next-intl";
-import { Lock, TriangleAlert } from "lucide-react";
+import { Check, Lock, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface TimetableLesson {
@@ -754,6 +754,7 @@ function TimetableGridInner({
                     Math.floor((height - BLOCK_PADDING_PX) / LINE_PX),
                   );
                   const stacked = 1 + facts.length <= linesThatFit;
+                  const selected = selectedIds?.has(lesson.id) ?? false;
                   const widthPct = 100 / lesson.laneCount;
                   const isDragSource = draggingId === lesson.id;
                   return (
@@ -799,8 +800,21 @@ function TimetableGridInner({
                         editable && "touch-none",
                         lesson.cancelled && "opacity-45 line-through",
                         lesson.conflicted && "ring-2 ring-red-500/80",
-                        selectedIds?.has(lesson.id) &&
-                          "outline outline-2 outline-offset-1 outline-blue-500",
+                        /*
+                         * THE FOREGROUND COLOUR, not a blue one.
+                         *
+                         * A block is tinted with its subject's colour at a
+                         * tenth of an opacity, so every one of them is pale —
+                         * against which the foreground reads, and a mid-blue
+                         * outline reads on a green lesson and disappears on a
+                         * blue one. Which half of the timetable a selection is
+                         * visible on should not depend on the subject.
+                         *
+                         * `outline` and not `ring`: the red clash mark above
+                         * is a ring, and the two would be the same CSS
+                         * property fighting over one lesson.
+                         */
+                        selected && "outline outline-2 outline-offset-1 outline-foreground",
                         isDragSource && "opacity-40",
                       )}
                       style={{
@@ -820,6 +834,16 @@ function TimetableGridInner({
                           {lesson.title}
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
+                          {selected ? (
+                            // Beside the outline rather than instead of it: an
+                            // icon is independent of colour and contrast, and
+                            // it settles one block on its own without holding
+                            // it up against its neighbours.
+                            <span className="rounded bg-foreground px-0.5 text-background">
+                              <Check className="h-3 w-3" />
+                              <span className="sr-only">{t("selected")}</span>
+                            </span>
+                          ) : null}
                           {lesson.share ? (
                             <span
                               title={lesson.shareLabel}

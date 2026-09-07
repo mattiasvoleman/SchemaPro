@@ -71,7 +71,8 @@
     "saturday": "Lör",
     "sunday": "Sön",
     "copied": "Kopierat till urklipp",
-    "select": "Välj…"
+    "select": "Välj…",
+    "selected": "Vald"
   },
   "days": {
     "1": "Måndag",

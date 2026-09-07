@@ -71,7 +71,8 @@
     "saturday": "Sat",
     "sunday": "Sun",
     "copied": "Copied to clipboard",
-    "select": "Select…"
+    "select": "Select…",
+    "selected": "Selected"
   },
   "days": {
     "1": "Monday",

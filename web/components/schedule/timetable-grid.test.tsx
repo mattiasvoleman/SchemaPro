@@ -460,9 +460,29 @@ describe("TimetableGrid lesson appearance", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /Math/ })).toHaveClass("outline-blue-500");
+    // The FOREGROUND colour: every block is its subject's colour at a tenth
+    // of an opacity, so a mid-blue outline read on the green lessons and
+    // vanished on the blue ones.
+    expect(screen.getByRole("button", { name: /Math/ })).toHaveClass("outline-foreground");
     expect(screen.getByRole("button", { name: /Physics/ })).not.toHaveClass(
-      "outline-blue-500",
+      "outline-foreground",
+    );
+  });
+
+  it("marks a selected lesson with a badge that does not depend on colour", () => {
+    // A rektor asked how to tell what shift-click had picked. The outline was
+    // the only answer and it competed with the subject's own colour; an icon
+    // settles one block on its own, and reaches a screen reader too.
+    render(
+      <TimetableGrid
+        lessons={[makeLesson(), makeLesson({ id: "other", title: "Physics", dayOfWeek: 2 })]}
+        selectedIds={new Set(["math-mon"])}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Math/ }).textContent).toContain("selected");
+    expect(screen.getByRole("button", { name: /Physics/ }).textContent).not.toContain(
+      "selected",
     );
   });
 });
