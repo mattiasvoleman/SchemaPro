@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { GroupFilter } from "./group-filter";
-import type { StudentGroup } from "@/lib/types";
+import { FilterPicker, type FilterSection } from "./filter-picker";
 
 vi.mock("next-intl", () => ({
   // The namespace rides along, as in the page's own mock: the component asks
@@ -13,20 +12,39 @@ vi.mock("next-intl", () => ({
       : `${namespace}.${key}`,
 }));
 
-const GROUPS = [
-  { id: "g-41", academicYearId: "y", name: "4.1", kind: "CLASS", gradeLevel: 4 },
-  { id: "g-42", academicYearId: "y", name: "4.2", kind: "CLASS", gradeLevel: 4 },
-  { id: "g-ma1", academicYearId: "y", name: "4ma1", kind: "TEACHING_GROUP", gradeLevel: null },
-  { id: "g-sv1", academicYearId: "y", name: "Svenska åk 5", kind: "TEACHING_GROUP", gradeLevel: null },
-] as StudentGroup[];
+const SECTIONS = [
+  {
+    label: "timetable.filterKindClasses",
+    options: [
+      { id: "g-41", name: "4.1" },
+      { id: "g-42", name: "4.2" },
+    ],
+  },
+  {
+    label: "timetable.filterKindTeachingGroups",
+    options: [
+      { id: "g-ma1", name: "4ma1" },
+      { id: "g-sv1", name: "Svenska åk 5" },
+    ],
+  },
+];
 
-function open(value: string[] = []) {
+function open(value: string[] = [], sections: FilterSection[] = SECTIONS) {
   const onChange = vi.fn();
-  render(<GroupFilter groups={GROUPS} value={value} onChange={onChange} />);
+  render(
+    <FilterPicker
+      sections={sections}
+      value={value}
+      onChange={onChange}
+      label="timetable.filterGroup"
+      allLabel="timetable.allGroups"
+      countLabel={(count) => `timetable.groupsSelected ${count}`}
+    />,
+  );
   return { onChange, user: userEvent.setup() };
 }
 
-describe("the group filter's trigger", () => {
+describe("the picker's trigger", () => {
   it("says every group when nothing is picked", () => {
     open();
     expect(screen.getByRole("button", { name: "timetable.filterGroup" })).toHaveTextContent(
@@ -132,5 +150,20 @@ describe("finding a group among hundreds", () => {
 
     expect(await screen.findByText("common.noResults")).toBeInTheDocument();
     expect(screen.queryByRole("menuitemcheckbox")).toBeNull();
+  });
+});
+
+describe("a list that needs no sections", () => {
+  it("draws no heading for a single unlabelled section", async () => {
+    // Teachers and rooms are one list each. A heading over the only section
+    // would be a label for "everything", which says nothing.
+    const { user } = open([], [{ options: [{ id: "t-1", name: "Anna Andersson" }] }]);
+
+    await user.click(screen.getByRole("button", { name: "timetable.filterGroup" }));
+
+    expect(
+      await screen.findByRole("menuitemcheckbox", { name: "Anna Andersson" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("timetable.filterKindClasses")).toBeNull();
   });
 });

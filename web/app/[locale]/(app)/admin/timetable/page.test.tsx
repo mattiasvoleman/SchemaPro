@@ -34,7 +34,7 @@ vi.mock("@/lib/queries", () => ({
   useMasterLessons: () => ({ data: state.lessons, isLoading: false }),
   useGroups: () => ({ data: GROUPS }),
   usePeople: () => ({ data: PEOPLE }),
-  useRooms: () => ({ data: [] }),
+  useRooms: () => ({ data: ROOMS }),
   useSubjects: () => ({ data: SUBJECTS }),
   useRequirements: () => ({ data: [] }),
   useConstraints: () => ({ data: [] }),
@@ -152,6 +152,17 @@ const PEOPLE = [
     invitedAt: null,
     studentGroupId: null,
   },
+  {
+    id: "t-2",
+    role: "TEACHER" as const,
+    firstName: "Nils",
+    lastName: "Berg",
+    email: "nils@skola.se",
+    phone: null,
+    isActive: true,
+    invitedAt: null,
+    studentGroupId: null,
+  },
   pupil("p-alva", "Alva", "g-41"),
   pupil("p-bo", "Bo", "g-41"),
   pupil("p-cim", "Cim", "g-41"),
@@ -173,16 +184,21 @@ function lesson(
   subjectId: string,
   studentGroupId: string,
   startTime: string,
-  overrides: { extraGroupIds?: string[]; studentIds?: string[] } = {},
+  overrides: {
+    extraGroupIds?: string[];
+    studentIds?: string[];
+    teacherId?: string;
+    roomId?: string;
+  } = {},
 ) {
   return {
     id,
     academicYearId: "y-1",
     subjectId,
     studentGroupId,
-    teacherId: "t-1",
+    teacherId: overrides.teacherId ?? "t-1",
     coTeacherId: null,
-    roomId: null,
+    roomId: overrides.roomId ?? null,
     dayOfWeek: 1,
     startTime,
     endTime: `${String(Number(startTime.slice(0, 2)) + 1).padStart(2, "0")}:00`,
@@ -196,12 +212,28 @@ function lesson(
   };
 }
 
+/*
+ * Two rooms, so the room filter has something to tell apart. Named so that
+ * neither contains a subject name: subjectsOnScreen matches substrings across
+ * every button on the page, and a room called "Slöjdsalen" would be counted as
+ * the subject Slöjd being on screen.
+ */
+const ROOMS = [
+  { id: "r-sal", name: "A1" },
+  { id: "r-verkstad", name: "Verkstaden" },
+];
+
 const LESSONS = [
   lesson("l-ma1", "s-ma", "g-ma1", "08:00"),
-  lesson("l-ma2", "s-ma", "g-ma2", "09:00"),
+  // The one lesson that is somebody else's and somewhere: it is what the
+  // teacher and room filters are read against.
+  lesson("l-ma2", "s-ma", "g-ma2", "09:00", { teacherId: "t-2", roomId: "r-sal" }),
   lesson("l-idrott", "s-id", "g-42", "10:00", { extraGroupIds: ["g-41"] }),
   lesson("l-slojd", "s-sl", "g-51", "11:00"),
-  lesson("l-musik", "s-mu", "g-51", "12:00", { studentIds: ["p-alva"] }),
+  lesson("l-musik", "s-mu", "g-51", "12:00", {
+    studentIds: ["p-alva"],
+    roomId: "r-verkstad",
+  }),
 ];
 
 /**
@@ -273,15 +305,19 @@ function dragToTuesday(subject: string) {
   fireEvent.pointerUp(window, { pointerId: 1, clientX: 200, clientY: 60 });
 }
 
-/** Tick a group in the filter. The menu stays open, so several may be picked. */
-async function filterTo(...names: string[]) {
+/** Tick options in one of the three pickers. The menu stays open between them. */
+async function tick(picker: string, ...names: string[]) {
   const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "timetable.filterGroup" }));
+  await user.click(screen.getByRole("button", { name: picker }));
   for (const name of names) {
     await user.click(await screen.findByRole("menuitemcheckbox", { name }));
   }
   await user.keyboard("{Escape}");
 }
+
+const filterTo = (...names: string[]) => tick("timetable.filterGroup", ...names);
+const filterToTeacher = (...names: string[]) => tick("timetable.filterTeacher", ...names);
+const filterToRoom = (...names: string[]) => tick("timetable.filterRoom", ...names);
 
 /** The subjects on screen, which is the whole question this page answers. */
 function subjectsOnScreen(): string[] {
@@ -289,6 +325,64 @@ function subjectsOnScreen(): string[] {
     screen.queryAllByRole("button").some((el) => el.textContent?.includes(subject.name)),
   ).map((subject) => subject.name);
 }
+
+describe("the week of one teacher, or several", () => {
+  it("shows only what that teacher takes", async () => {
+    render(<TimetablePage />);
+    await filterToTeacher("Nils Berg");
+
+    // Nils has the 4ma2 half of maths; everything else is Karin's.
+    expect(subjectsOnScreen()).toEqual(["Matematik"]);
+  });
+
+  it("shows the union when two teachers are picked", async () => {
+    render(<TimetablePage />);
+    await filterToTeacher("Nils Berg", "Karin Ek");
+
+    expect(subjectsOnScreen()).toEqual(["Matematik", "Idrott", "Slöjd", "Musik"]);
+  });
+});
+
+describe("what is in a room, or in several", () => {
+  it("shows only the lessons placed in it", async () => {
+    render(<TimetablePage />);
+    await filterToRoom("Verkstaden");
+
+    expect(subjectsOnScreen()).toEqual(["Musik"]);
+  });
+
+  it("shows the union when two rooms are picked", async () => {
+    render(<TimetablePage />);
+    await filterToRoom("A1", "Verkstaden");
+
+    expect(subjectsOnScreen()).toEqual(["Matematik", "Musik"]);
+  });
+
+  it("leaves out a lesson that has no room at all", async () => {
+    // "Show me what is in the workshop" cannot honestly include a lesson that
+    // is nowhere. Unfiltered they are all there, which is the contrast.
+    render(<TimetablePage />);
+    expect(subjectsOnScreen()).toContain("Idrott");
+
+    await filterToRoom("A1");
+    expect(subjectsOnScreen()).not.toContain("Idrott");
+  });
+});
+
+describe("the three filters together", () => {
+  it("narrows by all of them at once", async () => {
+    render(<TimetablePage />);
+    await filterTo("4.1");
+    await filterToTeacher("Nils Berg");
+
+    // 4.1's week holds both maths halves; only the 4ma2 one is Nils's.
+    expect(subjectsOnScreen()).toEqual(["Matematik"]);
+
+    await filterToRoom("Verkstaden");
+    // ...and that one is in A1, not the workshop, so nothing is left.
+    expect(subjectsOnScreen()).toEqual([]);
+  });
+});
 
 describe("the week of one class", () => {
   it("shows every lesson holding one of the class's pupils", async () => {
@@ -543,6 +637,53 @@ describe("the rasts a class must observe", () => {
     // would claim every stage keeps the same hours — the same reason the lunch
     // bands are hidden there.
     expect(screen.queryByText("Förmiddagsrast")).toBeNull();
+  });
+});
+
+describe("what a new lesson starts out as", () => {
+  /** Click the empty part of a day column, which is what opens the dialog. */
+  function clickEmptySlot() {
+    const column = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!.parentElement as HTMLElement;
+    fireEvent.click(column, { clientX: 100, clientY: 400 });
+  }
+
+  it("presets the group and the teacher when exactly one of each is picked", async () => {
+    render(<TimetablePage />);
+    await filterTo("5.1");
+    await filterToTeacher("Karin Ek");
+    clickEmptySlot();
+
+    // A rektor who has narrowed to one class and one teacher is about to
+    // create a lesson for them; asking again would be asking twice.
+    expect(
+      screen.getByRole("combobox", { name: "timetable.addGroup" }).textContent,
+    ).toBe("5.1");
+    expect(
+      screen.getByRole("combobox", { name: "timetable.editTeacher" }).textContent,
+    ).toBe("Karin Ek");
+  });
+
+  it("presets neither when several are picked", async () => {
+    /*
+     * With two teachers on screen there is no answer to "whose lesson is
+     * this", and guessing one of them would put a name on a lesson the reader
+     * never chose. A closed Select shows only its selected item, so the
+     * dialog's own text is the whole answer.
+     */
+    render(<TimetablePage />);
+    await filterTo("4.1", "5.1");
+    await filterToTeacher("Karin Ek", "Nils Berg");
+    clickEmptySlot();
+
+    expect(
+      screen.getByRole("combobox", { name: "timetable.editTeacher" }).textContent,
+    ).toBe("timetable.noTeacher");
+    // The group placeholder, not one of the two picked.
+    expect(
+      screen.getByRole("combobox", { name: "timetable.addGroup" }).textContent,
+    ).toBe("timetable.addGroup");
   });
 });
 

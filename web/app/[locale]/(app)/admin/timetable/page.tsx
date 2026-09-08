@@ -54,7 +54,7 @@ import { buildIcs, downloadIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
-import { GroupFilter } from "@/components/schedule/group-filter";
+import { FilterPicker } from "@/components/schedule/filter-picker";
 import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
@@ -115,7 +115,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const ALL = "__all__";
 const NONE = "__none__";
 
 /** Normalizes DB time values ("HH:MM:SS") to input-friendly "HH:MM". */
@@ -252,7 +251,15 @@ export default function TimetablePage() {
    * derived once so the four cannot drift apart.
    */
   const onlyGroup = groupFilters.length === 1 ? groupFilters[0]! : null;
-  const [teacherFilter, setTeacherFilter] = useState<string>(ALL);
+  /*
+   * The same set-shaped filter as the groups, for the same reason: a rektor
+   * comparing two teachers' weeks, or looking at what the two slöjd rooms hold
+   * between them, had to choose between one of them and the whole school.
+   */
+  const [teacherFilters, setTeacherFilters] = useState<string[]>([]);
+  const [roomFilters, setRoomFilters] = useState<string[]>([]);
+  /** The one teacher in view, or null — see onlyGroup. */
+  const onlyTeacher = teacherFilters.length === 1 ? teacherFilters[0]! : null;
   const [publishOpen, setPublishOpen] = useState(false);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -288,7 +295,12 @@ export default function TimetablePage() {
    * removed three lessons the admin could no longer see, with the undo toast
    * naming a count and nothing else.
    */
-  const changeFilter = (set: (value: string) => void) => (value: string) => {
+  /*
+   * Changing what is on screen drops the bulk selection. Keeping it would
+   * leave lessons ticked that the filter has just hidden, and the next Ta bort
+   * would take them with it.
+   */
+  const pickFilter = (set: (value: string[]) => void) => (value: string[]) => {
     set(value);
     setSelectedIds(new Set());
   };
@@ -300,6 +312,25 @@ export default function TimetablePage() {
   const versionActions = useScheduleVersionActions();
   const [comparingId, setComparingId] = useState<string | null>(null);
   const { data: comparing } = useScheduleVersionDetail(comparingId);
+
+  /*
+   * The groups, split by kind. A school has a couple of dozen classes and can
+   * have hundreds of teaching groups — Kunskapsskolan has 24 and 300 — so one
+   * flat list buries the class a rektor is looking for.
+   */
+  const groupSections = useMemo(() => {
+    const named = (group: { id: string; name: string }) => ({ id: group.id, name: group.name });
+    return [
+      {
+        label: t("filterKindClasses"),
+        options: (groups ?? []).filter((group) => group.kind === "CLASS").map(named),
+      },
+      {
+        label: t("filterKindTeachingGroups"),
+        options: (groups ?? []).filter((group) => group.kind !== "CLASS").map(named),
+      },
+    ];
+  }, [groups, t]);
 
   const teachers = useMemo(
     () => (people ?? []).filter((person) => person.role === "TEACHER"),
@@ -627,10 +658,14 @@ export default function TimetablePage() {
           // Both teachers. A lesson somebody only CO-taught was missing from
           // their own view — the filter asked a name question where the data
           // is a set.
-          (teacherFilter === ALL ||
-            teacherIdsOf(toPlacement(lesson)).includes(teacherFilter)),
+          (teacherFilters.length === 0 ||
+            teacherIdsOf(toPlacement(lesson)).some((id) => teacherFilters.includes(id))) &&
+          // A lesson with no room is in none of the rooms picked, which is the
+          // honest reading of "show me what is in the slöjd rooms".
+          (roomFilters.length === 0 ||
+            (lesson.roomId !== null && roomFilters.includes(lesson.roomId))),
       ),
-    [lessons, groupFilters, teacherFilter, shownGroups],
+    [lessons, groupFilters, teacherFilters, roomFilters, shownGroups],
   );
 
   /**
@@ -1162,7 +1197,7 @@ export default function TimetablePage() {
       startTime: minutesToHHMM(startMinutes),
       endTime: minutesToHHMM(Math.min(startMinutes + 60, 23 * 60 + 45)),
       roomId: NONE,
-      teacherId: teacherFilter !== ALL ? teacherFilter : NONE,
+      teacherId: onlyTeacher ?? NONE,
       isLocked: true,
     });
   };
@@ -1568,27 +1603,39 @@ export default function TimetablePage() {
         {/* Labelled inside, because it sits beside the teacher combobox and a
             screen reader read both as "Alla …" with nothing to tell them
             apart. */}
-        <GroupFilter
-          groups={groups ?? []}
+        <FilterPicker
+          sections={groupSections}
           value={groupFilters}
-          onChange={(next) => {
-            setGroupFilters(next);
-            setSelectedIds(new Set());
-          }}
+          onChange={pickFilter(setGroupFilters)}
+          label={t("filterGroup")}
+          allLabel={t("allGroups")}
+          countLabel={(count) => t("groupsSelected", { count })}
         />
-        <Select value={teacherFilter} onValueChange={changeFilter(setTeacherFilter)}>
-          <SelectTrigger className="w-52" aria-label={t("filterTeacher")}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>{t("allTeachers")}</SelectItem>
-            {teachers.map((teacher) => (
-              <SelectItem key={teacher.id} value={teacher.id}>
-                {teacher.firstName} {teacher.lastName}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <FilterPicker
+          sections={[
+            {
+              options: teachers.map((teacher) => ({
+                id: teacher.id,
+                name: `${teacher.firstName} ${teacher.lastName}`,
+              })),
+            },
+          ]}
+          value={teacherFilters}
+          onChange={pickFilter(setTeacherFilters)}
+          label={t("filterTeacher")}
+          allLabel={t("allTeachers")}
+          countLabel={(count) => t("teachersSelected", { count })}
+        />
+        <FilterPicker
+          sections={[
+            { options: (rooms ?? []).map((room) => ({ id: room.id, name: room.name })) },
+          ]}
+          value={roomFilters}
+          onChange={pickFilter(setRoomFilters)}
+          label={t("filterRoom")}
+          allLabel={t("allRooms")}
+          countLabel={(count) => t("roomsSelected", { count })}
+        />
         <Select value={groupBy} onValueChange={(value) => setGroupBy(value as GroupBy)}>
           <SelectTrigger className="w-40">
             <SelectValue />
@@ -2054,7 +2101,9 @@ export default function TimetablePage() {
                     setCreating({ ...creating, studentGroupId: value })
                   }
                 >
-                  <SelectTrigger>
+                  {/* Named here: a Label beside a Radix trigger is not tied to
+                      it, so this dialog read as a row of unnamed comboboxes. */}
+                  <SelectTrigger aria-label={t("addGroup")}>
                     <SelectValue placeholder={t("addGroup")} />
                   </SelectTrigger>
                   <SelectContent>
@@ -2307,7 +2356,7 @@ export default function TimetablePage() {
                     setCreating({ ...creating, teacherId: value })
                   }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger aria-label={t("editTeacher")}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
