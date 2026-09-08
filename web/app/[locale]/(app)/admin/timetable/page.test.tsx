@@ -273,11 +273,14 @@ function dragToTuesday(subject: string) {
   fireEvent.pointerUp(window, { pointerId: 1, clientX: 200, clientY: 60 });
 }
 
-/** Pick a class in the group filter. */
-async function filterTo(name: string) {
+/** Tick a group in the filter. The menu stays open, so several may be picked. */
+async function filterTo(...names: string[]) {
   const user = userEvent.setup();
-  await user.click(screen.getByRole("combobox", { name: "timetable.filterGroup" }));
-  await user.click(await screen.findByRole("option", { name }));
+  await user.click(screen.getByRole("button", { name: "timetable.filterGroup" }));
+  for (const name of names) {
+    await user.click(await screen.findByRole("menuitemcheckbox", { name }));
+  }
+  await user.keyboard("{Escape}");
 }
 
 /** The subjects on screen, which is the whole question this page answers. */
@@ -295,6 +298,41 @@ describe("the week of one class", () => {
     // Idrott is filed under 4.2. All three are 4.1's week. Slöjd is 5.1's, and
     // Musik reaches Alva individually.
     expect(subjectsOnScreen()).toEqual(["Matematik", "Idrott", "Musik"]);
+  });
+
+  it("shows the union when several groups are picked", async () => {
+    // A rektor comparing two classes had to choose between one of them and the
+    // whole school. Slöjd is 5.1's alone, so it stays out and the pair is not
+    // quietly the same as "all".
+    render(<TimetablePage />);
+    await filterTo("4.1", "5.1");
+
+    const shown = subjectsOnScreen();
+    expect(shown).toContain("Matematik");
+    expect(shown).toContain("Slöjd");
+  });
+
+  it("keeps a lesson out that reaches none of the groups picked", async () => {
+    render(<TimetablePage />);
+    await filterTo("4.1", "4.2");
+
+    // Slöjd is 5.1's week and 5.1 is not in the selection.
+    expect(subjectsOnScreen()).not.toContain("Slöjd");
+  });
+
+  it("stops answering the one-class questions when several are picked", async () => {
+    /*
+     * The rast stripe and the "2/4" badge are about a single class: whose
+     * rast, and how much of WHICH class is here. With four classes on the grid
+     * neither has an answer, and drawing one anyway would be drawing an answer
+     * to a question nobody asked.
+     */
+    render(<TimetablePage />);
+    await filterTo("4.1");
+    expect(screen.getAllByText("Förmiddagsrast")).toHaveLength(5);
+
+    await filterTo("5.1");
+    expect(screen.queryByText("Förmiddagsrast")).toBeNull();
   });
 
   it("keeps out a lesson that holds none of the class's pupils", async () => {

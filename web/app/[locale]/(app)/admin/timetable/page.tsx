@@ -54,6 +54,7 @@ import { buildIcs, downloadIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
+import { GroupFilter } from "@/components/schedule/group-filter";
 import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
@@ -232,7 +233,25 @@ export default function TimetablePage() {
     classes: string[];
   } | null>(null);
 
-  const [groupFilter, setGroupFilter] = useState<string>(ALL);
+  /*
+   * WHICH GROUPS THE GRID SHOWS — empty meaning all of them.
+   *
+   * A set rather than one id: a rektor comparing 4.1 with 4.2, or reading the
+   * three teaching groups a class is cut into, had to choose between one of
+   * them and the whole school. See components/schedule/group-filter.tsx for
+   * why empty is "all" rather than a sentinel beside the ids.
+   */
+  const [groupFilters, setGroupFilters] = useState<string[]>([]);
+  /*
+   * THE ONE GROUP IN VIEW, or null when that is not a question with an answer.
+   *
+   * Several things here are about a single class and cannot be about four: the
+   * lunch and rast stripes behind the grid, the "2/4" share badge, the group a
+   * new lesson is created for, and the warning that a class has no sitting.
+   * Each already declined to answer for "all groups"; this is the same rule,
+   * derived once so the four cannot drift apart.
+   */
+  const onlyGroup = groupFilters.length === 1 ? groupFilters[0]! : null;
   const [teacherFilter, setTeacherFilter] = useState<string>(ALL);
   const [publishOpen, setPublishOpen] = useState(false);
   const [fromDate, setFromDate] = useState("");
@@ -517,9 +536,9 @@ export default function TimetablePage() {
    * otherwise is the honest reading; the flow as a whole is on its own page.
    */
   const lunchBands = useMemo(() => {
-    if (groupFilter === ALL) return undefined;
+    if (onlyGroup === null) return undefined;
     const meals = (lunchSittings ?? [])
-      .filter((sitting) => sitting.studentGroupId === groupFilter)
+      .filter((sitting) => sitting.studentGroupId === onlyGroup)
       .map((sitting) => ({
         id: sitting.id,
         dayOfWeek: sitting.dayOfWeek,
@@ -541,7 +560,7 @@ export default function TimetablePage() {
      * every-day row and a weekday row that overlaps it are two rows and one
      * day: the band has to show what the pair MEANS.
      */
-    const span = gradeSpanOf.get(groupFilter);
+    const span = gradeSpanOf.get(onlyGroup);
     const breaks = [1, 2, 3, 4, 5].flatMap((dayOfWeek) =>
       rastWindows(rasts ?? [], span, dayOfWeek).map((window) => ({
         id: `${window.id}:${dayOfWeek}`,
@@ -553,7 +572,7 @@ export default function TimetablePage() {
     );
 
     return [...meals, ...breaks];
-  }, [lunchSittings, rasts, gradeSpanOf, groupFilter, tLunch]);
+  }, [lunchSittings, rasts, gradeSpanOf, onlyGroup, tLunch]);
 
   /**
    * lessonId → what this lesson means for the class in view. Empty for "all".
@@ -563,13 +582,34 @@ export default function TimetablePage() {
    */
   const audienceByLesson = useMemo(() => {
     const map = new Map<string, Audience>();
-    if (groupFilter === ALL) return map;
+    if (onlyGroup === null) return map;
     for (const lesson of lessons ?? []) {
-      const audience = audienceFor(lesson, groupFilter, rosterIndex);
+      const audience = audienceFor(lesson, onlyGroup, rosterIndex);
       if (audience) map.set(lesson.id, audience);
     }
     return map;
-  }, [lessons, groupFilter, rosterIndex]);
+  }, [lessons, onlyGroup, rosterIndex]);
+
+  /**
+   * The lessons that reach ANY of the chosen groups, by id.
+   *
+   * The same reach `audienceByLesson` works out for one class — a lesson filed
+   * under 4ma1 holds 4.1's pupils — asked of each chosen group in turn. Its
+   * own memo rather than a widening of that one, because the two answer
+   * different questions: this one is "is it shown", which four classes can
+   * answer together, and that one is "what does it MEAN for the class in
+   * view", which they cannot.
+   */
+  const shownGroups = useMemo(() => {
+    const shown = new Set<string>();
+    if (groupFilters.length === 0) return shown;
+    for (const lesson of lessons ?? []) {
+      if (groupFilters.some((groupId) => audienceFor(lesson, groupId, rosterIndex))) {
+        shown.add(lesson.id);
+      }
+    }
+    return shown;
+  }, [lessons, groupFilters, rosterIndex]);
 
   const filtered = useMemo(
     () =>
@@ -583,14 +623,14 @@ export default function TimetablePage() {
           // pupils in it already saw it on their own phones — the RLS policy
           // calendar_lessons_teaching_group_select grants exactly that — while
           // the administrator filtering to 4.1 did not.
-          (groupFilter === ALL || audienceByLesson.has(lesson.id)) &&
+          (groupFilters.length === 0 || shownGroups.has(lesson.id)) &&
           // Both teachers. A lesson somebody only CO-taught was missing from
           // their own view — the filter asked a name question where the data
           // is a set.
           (teacherFilter === ALL ||
             teacherIdsOf(toPlacement(lesson)).includes(teacherFilter)),
       ),
-    [lessons, groupFilter, teacherFilter, audienceByLesson],
+    [lessons, groupFilters, teacherFilter, shownGroups],
   );
 
   /**
@@ -664,7 +704,7 @@ export default function TimetablePage() {
               shareLabel: t("sharePupils", {
                 attending: audience.attending,
                 total: audience.cohortSize,
-                group: groupById.get(groupFilter)?.name ?? "",
+                group: onlyGroup ? (groupById.get(onlyGroup)?.name ?? "") : "",
               }),
             }
           : {}),
@@ -678,7 +718,7 @@ export default function TimetablePage() {
       conflictMap,
       remoteEditors,
       audienceByLesson,
-      groupFilter,
+      onlyGroup,
       groupLabel,
       t,
     ],
@@ -1112,7 +1152,7 @@ export default function TimetablePage() {
     setSlotMatches(null);
     setCreating({
       subjectId: "",
-      studentGroupId: groupFilter !== ALL ? groupFilter : "",
+      studentGroupId: onlyGroup ?? "",
       extraGroupIds: [],
       studentIds: [],
       dayOfWeek: String(dayOfWeek),
@@ -1365,7 +1405,7 @@ export default function TimetablePage() {
                 ? t("sharePupils", {
                     attending: audienceByLesson.get(lesson.id)!.attending,
                     total: audienceByLesson.get(lesson.id)!.cohortSize,
-                    group: groupById.get(groupFilter)?.name ?? "",
+                    group: onlyGroup ? (groupById.get(onlyGroup)?.name ?? "") : "",
                   })
                 : null,
             ]
@@ -1525,22 +1565,17 @@ export default function TimetablePage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Select value={groupFilter} onValueChange={changeFilter(setGroupFilter)}>
-          {/* Named because two unlabelled comboboxes sit side by side: a screen
-              reader read both as "Alla klasser"/"Alla lärare" with nothing to
-              say which was which. The keys existed already and went unused. */}
-          <SelectTrigger className="w-44" aria-label={t("filterGroup")}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>{t("allGroups")}</SelectItem>
-            {(groups ?? []).map((group) => (
-              <SelectItem key={group.id} value={group.id}>
-                {group.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {/* Labelled inside, because it sits beside the teacher combobox and a
+            screen reader read both as "Alla …" with nothing to tell them
+            apart. */}
+        <GroupFilter
+          groups={groups ?? []}
+          value={groupFilters}
+          onChange={(next) => {
+            setGroupFilters(next);
+            setSelectedIds(new Set());
+          }}
+        />
         <Select value={teacherFilter} onValueChange={changeFilter(setTeacherFilter)}>
           <SelectTrigger className="w-52" aria-label={t("filterTeacher")}>
             <SelectValue />
@@ -1604,10 +1639,10 @@ export default function TimetablePage() {
         for the year (generate), or none for THIS class (the engine places a
         meal only for a class with lessons of its own to place it around).
       */}
-      {groupFilter !== ALL &&
+      {onlyGroup !== null &&
       lunchSettings?.lunchEnabled &&
       lunchSittings !== undefined &&
-      !lunchSittings.some((sitting) => sitting.studentGroupId === groupFilter) ? (
+      !lunchSittings.some((sitting) => sitting.studentGroupId === onlyGroup) ? (
         <div
           role="status"
           className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
@@ -1626,7 +1661,7 @@ export default function TimetablePage() {
           ) : (
             <p>
               {t("noSittingsGroup", {
-                group: groupById.get(groupFilter)?.name ?? "",
+                group: onlyGroup ? (groupById.get(onlyGroup)?.name ?? "") : "",
               })}
             </p>
           )}
