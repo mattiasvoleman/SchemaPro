@@ -23,7 +23,7 @@ from __future__ import annotations
 import pytest
 
 from app.schemas.schedule import Rast
-from app.solver.rasts import blocks_for, forbidden_starts
+from app.solver.rasts import blocks_for, blocks_with_demand, forbidden_starts
 from app.solver.time_grid import TimeGrid
 
 # 08:00-18:00, five days, five-minute slots. The real grid.
@@ -41,7 +41,12 @@ def rast(
     day: int | None = None,
     min_grade: int = 4,
     max_grade: int = 6,
+    *,
+    asks: bool = False,
+    grades: tuple[int, int] | None = None,
 ) -> Rast:
+    if grades is not None:
+        min_grade, max_grade = grades
     return Rast.model_validate(
         {
             "minGradeLevel": min_grade,
@@ -49,6 +54,7 @@ def rast(
             "dayOfWeek": day,
             "startTime": f"{start}:00",
             "endTime": f"{end}:00",
+            "requiresLessonBefore": asks,
         },
     )
 
@@ -146,6 +152,82 @@ class TestWeekdayShadowing:
             (slots("11:30"), slots("11:45")),
             (slots("13:00"), slots("13:15")),
         ]
+
+
+class TestTheDemandRidesTheMerge:
+    """Which blocks ask for a lesson before them, once shadowing has run.
+
+    The ordering rule used to ask each row on its own — `blocks_for([rast], …)`
+    — and a row read alone cannot know it has been replaced. Every case here
+    fails under that reading, and none of them is visible in a finished
+    schedule: the week simply comes back missing a day, or missing the rule.
+    """
+
+    def test_a_day_that_replaces_an_asking_row_replaces_its_demand(self) -> None:
+        """The Friday that cost a school its Friday.
+
+        An every-day break at 09:40 asks for a lesson before it; Friday starts
+        at 11:00 instead, written as one long rast. Read row by row, Friday
+        still had to be taught before 09:40 and could not be taught before
+        11:00 — so the class was barred from Friday altogether, and a week that
+        solved in five seconds spent the whole budget.
+        """
+        rows = [rast("09:40", "10:00", asks=True), rast("08:00", "11:00", day=5)]
+
+        monday = blocks_with_demand(rows, MIDDLE, 1, GRID)
+        assert monday == [(20, 24, True)]
+
+        friday = blocks_with_demand(rows, MIDDLE, 5, GRID)
+        assert friday == [(0, 36, False)], "the 09:40 break does not exist on Friday"
+
+    def test_a_replacement_that_also_asks_keeps_the_demand(self) -> None:
+        """Shadowing replaces the row, not the school's intention.
+
+        The Friday row carries the tick too, so Friday owes a lesson — before
+        ELEVEN, which is where Friday's break actually is.
+        """
+        rows = [
+            rast("09:40", "10:00", asks=True),
+            rast("08:00", "11:00", day=5, asks=True),
+        ]
+
+        assert blocks_with_demand(rows, MIDDLE, 5, GRID) == [(0, 36, True)]
+
+    def test_a_silent_neighbour_moves_the_boundary_it_does_not_cancel_it(self) -> None:
+        """Two rows that touch are one break as it is lived.
+
+        09:20-09:40 is silent and 09:40-10:00 asks; the class is owed a lesson
+        before the pair, not before the second row's start, because 09:20-09:40
+        is not a minute anyone can be taught in.
+        """
+        rows = [rast("09:20", "09:40"), rast("09:40", "10:00", asks=True)]
+
+        assert blocks_with_demand(rows, MIDDLE, 1, GRID) == [(16, 24, True)]
+
+    def test_a_stage_the_asking_row_does_not_reach_is_owed_nothing(self) -> None:
+        """The demand matches on years like everything else here."""
+        rows = [rast("09:40", "10:00", asks=True, grades=(7, 9))]
+
+        assert blocks_with_demand(rows, MIDDLE, 1, GRID) == []
+
+    def test_blocks_for_is_the_same_list_without_the_flag(self) -> None:
+        """One implementation, two readings — so they can never disagree.
+
+        Asserted rather than assumed: `blocks_for` is what subtracts the
+        minutes from every lesson's domain, and a second merge written beside
+        it would eventually round one of them differently.
+        """
+        rows = [
+            rast("09:40", "10:00", asks=True),
+            rast("11:00", "11:20"),
+            rast("08:00", "11:00", day=5),
+        ]
+
+        for day in (1, 5):
+            assert blocks_for(rows, MIDDLE, day, GRID) == [
+                (first, last)
+                for first, last, _asks in blocks_with_demand(rows, MIDDLE, day, GRID)
+            ]
 
 
 class TestForbiddenStarts:

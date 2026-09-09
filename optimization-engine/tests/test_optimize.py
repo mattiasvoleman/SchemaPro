@@ -5721,6 +5721,239 @@ def _solve(payload: dict[str, object], **settings: object):  # type: ignore[no-u
     return solver.solve(OptimizeScheduleRequest.model_validate(payload))
 
 
+def _refusal(payload: dict[str, object], **settings: object):  # type: ignore[no-untyped-def]
+    """Solve, expecting the named 400 rather than a verdict."""
+    from app.exceptions import InvalidScheduleInputError
+
+    with pytest.raises(InvalidScheduleInputError) as raised:
+        _solve(payload, **settings)
+    return raised.value
+
+
+def test_a_break_the_meal_leaves_no_room_before_is_refused_by_name() -> None:
+    """The timeout a school reported, and the sentence it should have read.
+
+    An 11:00-12:30 lunch window with a 60-minute meal frees the class at 12:00
+    at the earliest, and a break at 12:30 asking for a lesson between them is
+    asking a 60-minute lesson to fit in thirty minutes. The engine used to
+    build the demand anyway: every flag was unsatisfiable, so the only way left
+    to satisfy the clause was for the class to have gone home, and the rule
+    quietly became "empty the afternoon". The week that was left was over
+    capacity, infeasible, and past the reach of any counting argument in the
+    model — sixty seconds of silence and a TIMEOUT naming nothing.
+
+    The arithmetic is on four constants, so it is answered before the solve.
+    """
+    payload = _rast_payload(
+        [_rast("12:30", "12:45", asks=True)],
+        lessons_per_week=4,
+    )
+    payload["frameTimes"][0]["endTime"] = "14:00:00"  # type: ignore[index]
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "12:30:00",
+        "lunchMinutes": 60,
+    }
+
+    refusal = _refusal(payload)
+
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
+    # The numbers a rektor acts on: half an hour between the meal's earliest
+    # end and the break, against a lesson that needs an hour.
+    assert refusal.params["remaining"] == 30
+    assert refusal.params["minutes"] == 60
+    assert refusal.params["bound"] == "lunch"
+
+
+def test_the_same_break_is_fine_once_the_meal_is_short_enough() -> None:
+    """The control, and it is the whole reason the refusal is not "no rast
+    may sit after a lunch window".
+
+    Thirty minutes of meal frees the class at 11:30, which leaves an hour
+    before the same break — room for the same lesson. Nothing is refused and
+    the rule still binds.
+    """
+    payload = _rast_payload(
+        [_rast("12:30", "12:45", asks=True)],
+        lessons_per_week=4,
+    )
+    payload["frameTimes"][0]["endTime"] = "14:00:00"  # type: ignore[index]
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "12:30:00",
+        "lunchMinutes": 30,
+    }
+
+    assert _solve(payload).status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_a_stretch_only_a_locked_lesson_fits_is_not_refused() -> None:
+    """The refusal asks whether a lesson CAN be there, not whether one can be placed.
+
+    The stretch is thirty minutes and the class's placeable lessons are sixty,
+    so the arithmetic alone says nothing fits and the payload would be refused.
+    But the school has already hand-placed a thirty-minute lesson into exactly
+    those minutes: the class is taught before the break, the demand is met, and
+    a refusal here would be the engine turning down a week that works.
+    """
+    payload = _ordering_payload(
+        [_rast("08:30", "08:50", asks=True)], closed=[("08:50", "10:00")],
+    )
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "studentGroupId": payload["groups"][0]["id"],  # type: ignore[index]
+            "teacherId": str(uuid4()),
+            "roomId": payload["rooms"][0]["id"],  # type: ignore[index]
+            "dayOfWeek": 1,
+            "startTime": "08:00:00",
+            "endTime": "08:30:00",
+        },
+    ]
+
+    assert _solve(payload).status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_a_late_sitting_moves_the_break_the_meal_leaves_room_before() -> None:
+    """The window is not the whole story; the stage's own sitting is.
+
+    The school-wide window opens 11:00, so a 30-minute meal looks like it frees
+    the class at 11:30 and leaves an hour before a 12:30 break. This stage eats
+    in the second sitting, 12:00-12:30, so it is free at 12:30 and has nothing
+    before the break at all. Read off the window alone, the demand is built
+    against flags no meal can satisfy and the afternoon quietly disappears.
+    """
+    payload = _rast_payload([_rast("12:30", "12:45", asks=True)], lessons_per_week=4)
+    payload["frameTimes"][0]["endTime"] = "14:00:00"  # type: ignore[index]
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "12:30:00",
+        "lunchMinutes": 30,
+    }
+    payload["lunchServings"] = [
+        {
+            "minGradeLevel": 4,
+            "maxGradeLevel": 6,
+            "dayOfWeek": None,
+            "startTime": "12:00:00",
+            "endTime": "12:30:00",
+        },
+    ]
+
+    refusal = _refusal(payload)
+
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
+    assert refusal.params["remaining"] == 0
+    assert refusal.params["bound"] == "lunch"
+
+
+def test_a_break_too_soon_after_the_frame_opens_is_refused_by_name() -> None:
+    """The frame's opening is where the day's first stretch starts.
+
+    Measured from the grid's 08:00 instead, a break at 09:40 on a day that
+    opens 09:20 looked like a hundred roomy minutes; the class had twenty. The
+    same collapse follows, by the same route, without a lunch anywhere near it.
+    """
+    payload = _rast_payload([_rast("09:40", "10:00", asks=True)], lessons_per_week=2)
+    payload["frameTimes"][0]["startTime"] = "09:20:00"  # type: ignore[index]
+
+    refusal = _refusal(payload)
+
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
+    assert refusal.params["remaining"] == 20
+    assert refusal.params["bound"] == "day"
+
+
+def test_a_lesson_the_school_placed_by_hand_is_a_lesson() -> None:
+    """A locked lesson in the stretch has already answered the demand.
+
+    Without this the engine reads a school that hand-placed 08:00-09:00 as a
+    class with nothing before its 09:40 break: it demands another lesson in a
+    stretch the lock has filled, finds none, and concludes the class went home
+    — deleting the rest of that day and every day like it. Measured on one
+    class with three locked mornings: OPTIMAL in half a second without the
+    rule, sixty seconds of silence with it.
+    """
+    payload = _rast_payload([_rast("09:40", "10:00", asks=True)], lessons_per_week=1)
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "studentGroupId": payload["groups"][0]["id"],  # type: ignore[index]
+            "teacherId": payload["requirements"][0]["teacherId"],  # type: ignore[index]
+            "roomId": payload["rooms"][0]["id"],  # type: ignore[index]
+            "dayOfWeek": 1,
+            "startTime": "08:00:00",
+            "endTime": "09:00:00",
+        },
+    ]
+
+    response = _solve(payload)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    # And the placed lesson is free to sit AFTER the break, which is the whole
+    # point: the class was taught before it.
+    assert response.lessons
+
+
+def test_a_locked_afternoon_makes_the_demand_unconditional() -> None:
+    """The mirror, and the other half of the same hole.
+
+    "Still at school" is read off the lessons the solver places, so a class
+    whose only afternoon is hand-placed looked like a class that had gone home
+    — and the break's demand was excused by a lesson the school had already
+    written down. The class is plainly there at 10:30, so the morning owes a
+    lesson, and its one placeable lesson has nowhere else to go but before the
+    break.
+    """
+    payload = _rast_payload([_rast("09:40", "10:00", asks=True)], lessons_per_week=1)
+    payload["fixedLessons"] = [
+        {
+            "id": str(uuid4()),
+            "studentGroupId": payload["groups"][0]["id"],  # type: ignore[index]
+            "teacherId": str(uuid4()),
+            "roomId": payload["rooms"][0]["id"],  # type: ignore[index]
+            "dayOfWeek": 1,
+            "startTime": "10:30:00",
+            "endTime": "11:30:00",
+        },
+    ]
+
+    response = _solve(payload)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lesson.start_time for lesson in response.lessons] == ["08:00:00"], (
+        "the only placeable lesson must land before the break"
+    )
+
+
+def test_a_day_that_replaces_the_asking_break_keeps_its_lessons() -> None:
+    """The shadowing bug, end to end and on the schedule itself.
+
+    Monday's 09:40 break asks for a lesson before it. Friday replaces the
+    morning with one long rast, so Friday has no 09:40 break and owes it
+    nothing — but the demand was read off the every-day row alone, which no
+    Friday lesson could satisfy, and the class lost the day. The assertion is
+    the Friday column, because that is where the damage was: status stayed
+    OPTIMAL throughout.
+    """
+    payload = _rast_payload(
+        [
+            _rast("09:40", "10:00", asks=True),
+            _rast("08:00", "11:00", day=5),
+        ],
+        lessons_per_week=8,
+        minutes_per_lesson=60,
+    )
+    payload["frameTimes"][0]["endTime"] = "16:00:00"  # type: ignore[index]
+
+    response = _solve(payload, SCHEDULE_DAYS="1,5")
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert any(lesson.day_of_week == 5 for lesson in response.lessons), (
+        "Friday is a teaching day; the break it does not have may not empty it"
+    )
+
+
 def test_a_week_that_solves_without_the_rule_is_refused_with_it() -> None:
     """The discriminating pair, and the whole rule in two solves.
 
@@ -5927,25 +6160,37 @@ def test_a_lunch_before_the_stretch_opens_does_not_bound_it() -> None:
 
 
 @pytest.mark.parametrize(
-    ("start", "end", "why"),
+    ("start", "end", "remaining", "why"),
     [
-        ("08:00", "08:20", "the day opens with it, so the stretch is empty"),
-        ("08:30", "08:50", "the stretch is 30 minutes and the lesson is 60"),
+        ("08:00", "08:20", 0, "the day opens with it, so the stretch is empty"),
+        ("08:30", "08:50", 30, "the stretch is 30 minutes and the lesson is 60"),
     ],
 )
-def test_a_stretch_no_lesson_fits_asks_for_nothing(start: str, end: str, why: str) -> None:
-    """No lesson fits, so no lesson is demanded — an empty demand is not one.
+def test_a_stretch_no_lesson_fits_is_refused_by_name(
+    start: str, end: str, remaining: int, why: str,
+) -> None:
+    """No lesson fits, so the demand is a contradiction — and it is said out loud.
 
-    An `AddBoolOr([])` is false, which is an INFEASIBLE CP-SAT proves before
-    it touches an assumption literal: the school would be told its week is
-    impossible and nothing would say why. A rast at the start of a day is a
-    legal thing for a school to write, not a refusal.
+    This used to pass silently, and the argument for silence was sound as far
+    as it went: an `AddBoolOr([])` is false, which is an INFEASIBLE CP-SAT
+    proves before it touches an assumption literal, so the school would be told
+    its week is impossible and nothing would say why. Between a bad refusal and
+    saying nothing, nothing was better.
+
+    It is not the choice any more, because there is now a third thing to do.
+    The stretch is arithmetic on constants — where the day opens, where the
+    previous break ended, when the meal can be over — so the payload can be
+    refused with the numbers in it before a solver runs. Silence had a cost of
+    its own: a rektor ticked a box, the engine ignored it, and nothing on any
+    screen said so.
     """
-    response = _solve(
+    refusal = _refusal(
         _ordering_payload([_rast(start, end, asks=True)], closed=[("08:00", "10:00")]),
     )
 
-    assert response.status in {"OPTIMAL", "FEASIBLE"}, why
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT", why
+    assert refusal.params["remaining"] == remaining
+    assert refusal.params["minutes"] == 60
 
 
 def test_a_rast_written_for_another_stage_asks_this_class_nothing() -> None:

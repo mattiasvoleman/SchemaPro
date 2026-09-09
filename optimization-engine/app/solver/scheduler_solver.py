@@ -16,7 +16,7 @@ from ortools.sat.python import cp_model
 from app.config import Settings
 from app.exceptions import InvalidScheduleInputError, SolverBuildError
 from app.solver.frames import changeover_slots, day_windows, span_of
-from app.solver.rasts import blocks_for, forbidden_starts
+from app.solver.rasts import blocks_for, blocks_with_demand, forbidden_starts
 from app.solver.servings import allowed_starts
 from app.schemas.schedule import (
     AnonymousRoomPreference,
@@ -1165,6 +1165,15 @@ class SchedulerSolver:
         stands — it was proved by the first solve — and the response degrades to
         an unexplained INFEASIBLE rather than an invented explanation.
         """
+        # WITH the objective, though the proof came from a model without one,
+        # and that is not an oversight. Dropping it here shortens some solves —
+        # measured on the lunch-bounded rast payload, UNKNOWN at the 15-second
+        # cap becomes INFEASIBLE in 5.3 s with the rule named — but a
+        # sufficient assumption set is not unique, and the objective-free model
+        # answers an oversubscribed week with INSUFFICIENT_RESOURCES where this
+        # one names ROOM_CAPACITY. Trading one school's precise cause for
+        # another's is a change that needs its own measurement across the
+        # refusal suite, not a line borrowed from a rast fix.
         model, registry, _, _, _ = self._build_model(request, use_assumptions=True)
         solver = cp_model.CpSolver()
         # Capped, because the verdict is already in. Measured: a payload phase 1
@@ -1866,6 +1875,12 @@ class SchedulerSolver:
                         "requirement": str(requirement.id), "grades": grades,
                     })
 
+        # THE BREAKS THAT ASK FOR A LESSON, before any of the counting below:
+        # a demand no stretch can hold is a contradiction between two of the
+        # school's own sentences, and every verdict that follows would be
+        # measuring a week the solver is about to be told to empty.
+        self._verify_rast_demands(request)
+
         # THE WEEK, not the lesson. Every locked requirement above can have a
         # room and the set of them still not fit: three subjects locked into one
         # room, forty lessons each, against a week that holds fifty. Left to
@@ -2168,6 +2183,243 @@ class SchedulerSolver:
                     "day": day_of_week,
                 })
 
+    def _locks_in_stretch(
+        self,
+        request: OptimizeScheduleRequest,
+        members: set[UUID],
+        day_index: int,
+        opens: int,
+        first: int,
+    ) -> bool:
+        """Has a hand-placed lesson already taught this class in this stretch?
+
+        A LOCKED LESSON IS A LESSON, and the rule asks whether the class was
+        taught before the break, not whether the SOLVER put it there. Without
+        this the engine reads a school that has hand-placed Monday 08:00-09:10
+        as a class with nothing before its 09:40 break: it demands another
+        lesson in a stretch the locks have already filled, cannot find one, and
+        concludes the class must have gone home — deleting the rest of every
+        such day. Measured on one class with three locked mornings: OPTIMAL in
+        0.5 s without the rule, sixty seconds of silence with it.
+
+        The window is the one _fixed_window rounds OUTWARD, so a lock is only
+        counted when it fits inside the stretch with the rounding against it —
+        which is the safe direction for a test that excuses an obligation.
+        """
+        base = day_index * self._grid.slots_per_day
+        for fixed in request.fixed_lessons:
+            if not ({fixed.student_group_id, *fixed.extra_group_ids} & members):
+                continue
+            window = self._fixed_window(fixed)
+            if window is None:
+                continue
+            if base + opens <= window[0] and window[1] <= base + first:
+                return True
+        return False
+
+    def _locked_after(
+        self,
+        request: OptimizeScheduleRequest,
+        members: set[UUID],
+        day_index: int,
+        last: int,
+    ) -> bool:
+        """Is the class hand-placed into a lesson AFTER the break?
+
+        The mirror of the test above, and it closes the other half of the same
+        hole. "Still at school" is read off the lessons the solver places, so a
+        class whose only afternoon is locked looked like a class that had gone
+        home, and the break's demand was excused by a lesson the school had
+        already written down. Here the demand is unconditional instead.
+        """
+        base = day_index * self._grid.slots_per_day
+        for fixed in request.fixed_lessons:
+            if not ({fixed.student_group_id, *fixed.extra_group_ids} & members):
+                continue
+            window = self._fixed_window(fixed)
+            if window is not None and window[0] >= base + last:
+                return True
+        return False
+
+    def _verify_rast_demands(self, request: OptimizeScheduleRequest) -> None:
+        """A break that asks for a lesson no stretch can hold is a contradiction.
+
+        THE SCHOOL WROTE TWO SENTENCES THAT CANNOT BOTH BE TRUE, and this says
+        so before the solve rather than after it. An 11:00-12:30 lunch window
+        with a 60-minute meal leaves the meal ending at 12:00 at the earliest;
+        a break at 12:30 that demands a lesson between them is asking for a
+        forty-minute lesson to fit in thirty minutes. So is a break twenty
+        minutes after the frame opens, and so is one right after a previous
+        break.
+
+        The alternative is what the engine did before: build the demand anyway
+        and let CP-SAT discover that no lesson can satisfy it. What CP-SAT then
+        proves is not "this is impossible" but "the class must have gone home",
+        because that is the only other way to satisfy the clause — and a week
+        with every afternoon deleted is over capacity, infeasible, and beyond
+        the reach of any counting argument in the model. The school waited
+        sixty seconds for TIMEOUT, which names nothing. This is arithmetic on
+        four constants and it names everything.
+
+        MEASURED AGAINST THE SHORTEST LESSON THE CLASS HAS, not the longest: a
+        stretch holding the short one is a stretch the rule can bind, and it is
+        only when NOTHING fits that the demand is empty. And only for a class
+        with lessons to place — a class whose week is entirely hand-placed owes
+        a break nothing, the same reading the builder takes.
+        """
+        if not any(rast.requires_lesson_before for rast in request.rasts):
+            return
+        sharing = _groups_sharing_students(request.group_conflicts)
+        shortest: dict[UUID, int] = {}
+        for requirement in request.requirements:
+            slots = self._grid.minutes_to_slots(requirement.minutes_per_lesson)
+            group_id = requirement.student_group_id
+            shortest[group_id] = min(shortest.get(group_id, slots), slots)
+
+        for group in request.groups:
+            if group.min_grade_level is None or group.max_grade_level is None:
+                continue
+            members = {group.id, *sharing.get(group.id, ())}
+            lengths = [shortest[member] for member in members if member in shortest]
+            if not lengths:
+                continue
+            duration = min(lengths)
+            for day_index, _opens, room, first, _last, meal in self._asked_stretches(
+                request, (group.min_grade_level, group.max_grade_level),
+            ):
+                if first - room >= duration:
+                    continue
+                # Unless the school has already hand-placed one there, in which
+                # case the stretch holds the lesson it asked for and there is
+                # nothing to refuse.
+                #
+                # MEASURED FROM THE EARLIEST THE MEAL CAN END, which is the
+                # permissive reading, and the choice is deliberate. The strict
+                # one — a lock only counts if it sits after EVERY admissible
+                # meal — refuses a school whose lock is what forces the meal
+                # early in the first place, and a refused week that has a
+                # timetable is the worst answer this engine can give. The cost
+                # of being wrong the other way is that a rule goes unenforced
+                # on one day, which is the same lean _cliques takes and for the
+                # same reason.
+                if self._locks_in_stretch(request, members, day_index, room, first):
+                    continue
+                raise InvalidScheduleInputError.of("RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT", {
+                    "day": self._grid.schedule_days[day_index],
+                    "grades": _grade_span_text(
+                        group.min_grade_level, group.max_grade_level,
+                    ),
+                    "rast": self._grid.format_hhmmss(first, 0)[0][:5],
+                    "opens": self._grid.format_hhmmss(room, 0)[0][:5],
+                    "remaining": (first - room) * self._grid.slot_minutes,
+                    "minutes": duration * self._grid.slot_minutes,
+                    "bound": "lunch" if meal else "day",
+                })
+
+    def _earliest_meal_end(
+        self,
+        request: OptimizeScheduleRequest,
+        span: tuple[int, int] | None,
+        day_of_week: int,
+    ) -> int:
+        """The first slot this stage's meal can possibly free, today.
+
+        THE SITTINGS COUNT, not just the school-wide window, and a stage that
+        eats in the second sitting is the case this exists for: a school whose
+        window opens 11:00 but whose åk 4-6 sitting is 12:00-12:45 frees those
+        classes at 12:45 at the earliest, and a break at 13:00 has fifteen
+        minutes before it rather than the hour the window alone suggests.
+
+        A LOWER BOUND, deliberately, and it may only ever be raised by
+        something the payload PROVES. Everything downstream skips an obligation
+        or refuses a payload on this number, so an over-estimate would drop a
+        rule the school asked for or refuse a week that has a timetable. The
+        dining hall's seats can push a class later still — the solver decides
+        that, not arithmetic — so a week narrow enough to need that reasoning
+        is left to the solver, exactly as it was before.
+        """
+        rules = request.rules
+        if rules is None or not _lunch_window_is_set(rules):
+            return 0
+        window_start, _window_end, lunch_slots = self._lunch_window_slots(rules)
+        starts = allowed_starts(
+            request.lunch_servings, span, day_of_week, lunch_slots, self._grid,
+        )
+        intervals = _domain_intervals(starts) if starts is not None else []
+        earliest = max(window_start, intervals[0][0]) if intervals else window_start
+        return earliest + lunch_slots
+
+    def _asked_stretches(
+        self,
+        request: OptimizeScheduleRequest,
+        span: tuple[int, int] | None,
+    ) -> list[tuple[int, int, int, int, int, bool]]:
+        """A stretch a rast demands a lesson of: (day, opens, room, first, last, meal).
+
+        ONE READER FOR TWO CALLERS, and the reason is the bug this was written
+        after. The builder used to measure the stretch one way and BOUND it
+        another: it skipped a lesson longer than `rast start - previous rast
+        end`, then wrote the flag against `lunch start + meal` whenever the meal
+        lay inside. Where the meal ended less than a lesson before the break —
+        an 11:00-12:30 window with a 60-minute meal and a break at 12:30, which
+        is an ordinary Swedish lunch hour — the filter measured a roomy 150
+        minutes, kept every flag, and every flag was unsatisfiable. The clause
+        then collapsed to "nobody is here after this break", the rule stopped
+        meaning "be taught before it" and started meaning "go home at it", and
+        the class lost every afternoon of the week. The week that was left was
+        over capacity and infeasible, and no counting argument in the model
+        could prove it: sixty seconds of silence and a TIMEOUT, on one class
+        with twenty-four lessons. Measured: 0.2 s OPTIMAL without the flag.
+
+        So the stretch is measured ONCE, honestly, and both the filter and the
+        refusal read the same number.
+
+          `opens` is where a lesson in the stretch may first START by the
+          constants alone: the end of the previous break, or the frame's
+          opening, whichever is later. The frame belongs here for the same
+          reason the previous break does — a day that opens 09:20 has no
+          08:00 — and leaving it out was half of the same bug.
+
+          `room` is what the stretch can hold AT BEST, which is `opens` unless
+          the whole lunch window lies inside it, and then the EARLIEST slot the
+          meal can free. Earliest, not latest: a lesson is skipped only when no
+          admissible meal leaves space for it. The latest meal end would skip
+          obligations a legal early meal could still honour.
+
+        Days the frames close entirely are absent from `day_windows` and absent
+        from here: a stage with no Friday owes its Friday breaks nothing.
+        """
+        rules = request.rules
+        lunch_on = rules is not None and _lunch_window_is_set(rules)
+        if lunch_on:
+            window_start, window_end, _lunch_slots = self._lunch_window_slots(rules)
+        windows = day_windows(request.frame_times, span, self._grid)
+
+        out: list[tuple[int, int, int, int, int, bool]] = []
+        for day_index, day_of_week in enumerate(self._grid.schedule_days):
+            window = windows.get(day_index)
+            if window is None:
+                continue
+            frame_open, _frame_close = window
+            blocks = blocks_with_demand(request.rasts, span, day_of_week, self._grid)
+            for first, last, demands in blocks:
+                if not demands:
+                    continue
+                opens = max(
+                    max((end for _start, end, _asks in blocks if end <= first), default=0),
+                    frame_open,
+                )
+                bounded_by_lunch = (
+                    lunch_on and opens <= window_start and window_end <= first
+                )
+                room = (
+                    max(opens, self._earliest_meal_end(request, span, day_of_week))
+                    if bounded_by_lunch
+                    else opens
+                )
+                out.append((day_index, opens, room, first, last, bounded_by_lunch))
+        return out
+
     def _add_rast_ordering_constraints(
         self,
         model: cp_model.CpModel,
@@ -2219,6 +2471,13 @@ class SchedulerSolver:
         one anyway would refuse a schedule for a question nobody asked. That
         test is on constants and costs nothing.
 
+        WHERE THE STRETCH IS MEASURED, _asked_stretches owns — and it is not a
+        detail. Measuring it one way and bounding the flag another left every
+        flag unsatisfiable on an ordinary lunch hour, which turned this clause
+        into "go home at the break" and cost a school its whole afternoon and
+        the engine its whole budget. Read that function before changing this
+        one.
+
         THE CLASS'S LESSONS ARE ITS TEACHING GROUPS', the same reach the lunch
         and the hours verdict use: 4.1's maths is filed under 4ma1, and a rule
         reading only lessons filed under "4.1" would find a class with no
@@ -2246,9 +2505,11 @@ class SchedulerSolver:
             by_group[decision.lesson.requirement.student_group_id].append(decision)
 
         rules = request.rules
-        lunch_on = rules is not None and _lunch_window_is_set(rules)
-        if lunch_on:
-            lunch_window_start, lunch_window_end, lunch_slots = self._lunch_window_slots(rules)
+        lunch_slots = (
+            self._lunch_window_slots(rules)[2]
+            if rules is not None and _lunch_window_is_set(rules)
+            else 0
+        )
 
         span_by_group = {
             group.id: (group.min_grade_level, group.max_grade_level)
@@ -2267,99 +2528,100 @@ class SchedulerSolver:
             # Built lazily: a class no asking rast reaches adds no literal, and
             # a payload where nobody asked adds none at all.
             asks: cp_model.IntVar | None = None
-            for day_index, day_of_week in enumerate(grid.schedule_days):
+            for day_index, opens, room, first, last, meal_bounds in self._asked_stretches(
+                request, span,
+            ):
                 base = day_index * slots_per_day
-                # Every rast this stage has today, in the order they fall, so
-                # each one's stretch starts where the one before it ended.
-                blocks = blocks_for(request.rasts, span, day_of_week, grid)
-                asked = {
-                    (first, last)
-                    for rast in wanted
-                    for first, last in blocks_for([rast], span, day_of_week, grid)
-                }
-                if not asked:
-                    continue
                 lunch_start = lunch_starts.get((group.id, day_index))
-                for first, last in sorted(asked):
-                    # Where the stretch opens: the end of the last rast before
-                    # this one, or the day's first slot.
-                    opens: int = max(
-                        (end for start, end in blocks if end <= first),
-                        default=0,
-                    )
-                    after_lunch = (
-                        lunch_on
-                        and lunch_start is not None
-                        and opens <= lunch_window_start
-                        and lunch_window_end <= first
-                    )
-                    inside = []
-                    for decision in lessons:
-                        # A lesson too long for the stretch can never be in it,
-                        # whatever the lunch does. Skipping it here is one
-                        # boolean and two rows the model never sees.
-                        if decision.duration > first - opens:
-                            continue
-                        flag = model.NewBoolVar(
-                            f"before_{group.id}_{day_index}_{first}_{decision.lesson.key()}",
-                        )
-                        # The lunch's own start, not an intermediate variable
-                        # equal to its end: one linear row rather than two, and
-                        # presolve reads straight through to the meal.
-                        if after_lunch:
-                            model.Add(
-                                decision.start >= lunch_start + lunch_slots,
-                            ).OnlyEnforceIf(flag)
-                        else:
-                            model.Add(decision.start >= base + opens).OnlyEnforceIf(flag)
-                        model.Add(decision.end <= base + first).OnlyEnforceIf(flag)
-                        inside.append(flag)
-                    # Nothing short enough to fit: the stretch cannot hold a
-                    # lesson at all, and an empty BoolOr is an unexplained
-                    # INFEASIBLE. _validate_request refuses that by name.
-                    if not inside:
+                after_lunch = meal_bounds and lunch_start is not None
+                # A lesson the school placed by hand is a lesson: when one sits
+                # in the stretch the demand is already met, and the cheapest
+                # obligation is the one never written. `room` and not `opens`,
+                # so this reads the same stretch _verify_rast_demands does —
+                # see there for why the permissive end of the meal is the right
+                # one to measure from.
+                if self._locks_in_stretch(request, members, day_index, room, first):
+                    continue
+                inside = []
+                for decision in lessons:
+                    # A lesson too long for the stretch can never be in it,
+                    # and `room` is measured against the same boundary the
+                    # flag below is written against — the meal's earliest
+                    # end when the meal bounds the stretch. Skipping it here
+                    # is one boolean and two rows the model never sees; NOT
+                    # skipping it was the timeout, because a flag that can
+                    # never be true turns the clause into "go home".
+                    if decision.duration > first - room:
                         continue
-                    # WHO IS STILL AT SCHOOL AFTER THE RAST. Read without this
-                    # the rule demands a lesson in the stretch on every school
-                    # day, which is a different sentence: two asking rasts
-                    # would oblige every class to be taught ten times a week,
-                    # and a class with eight lessons is refused outright.
-                    # Measured on a five-day week with one class: 8 lessons
-                    # INFEASIBLE, 10 the first that solved.
-                    #
-                    # Fully reified, unlike the flags above, and that is the
-                    # whole reason it costs a second boolean per lesson: the
-                    # solver WANTS these false — false is what excuses it from
-                    # the stretch — so only the reverse implication, "a lesson
-                    # here means the class is still at school", makes them
-                    # true. `inside` needs no such thing.
-                    still_here = model.NewBoolVar(
-                        f"after_{group.id}_{day_index}_{first}",
+                    flag = model.NewBoolVar(
+                        f"before_{group.id}_{day_index}_{first}_{decision.lesson.key()}",
                     )
-                    rest_of_day = cp_model.Domain(
-                        base + last, base + slots_per_day - 1,
+                    # The lunch's own start, not an intermediate variable
+                    # equal to its end: one linear row rather than two, and
+                    # presolve reads straight through to the meal.
+                    if after_lunch:
+                        model.Add(
+                            decision.start >= lunch_start + lunch_slots,
+                        ).OnlyEnforceIf(flag)
+                    else:
+                        model.Add(decision.start >= base + opens).OnlyEnforceIf(flag)
+                    model.Add(decision.end <= base + first).OnlyEnforceIf(flag)
+                    inside.append(flag)
+                # Nothing short enough to fit: the stretch cannot hold a
+                # lesson at all, and an empty BoolOr is an unexplained
+                # INFEASIBLE. _verify_rast_demands has already refused that by
+                # name, so this is only reached for a class whose own lessons
+                # are all too long for a stretch another class can use.
+                if not inside:
+                    continue
+                # WHO IS STILL AT SCHOOL AFTER THE RAST. Read without this
+                # the rule demands a lesson in the stretch on every school
+                # day, which is a different sentence: two asking rasts
+                # would oblige every class to be taught ten times a week,
+                # and a class with eight lessons is refused outright.
+                # Measured on a five-day week with one class: 8 lessons
+                # INFEASIBLE, 10 the first that solved.
+                #
+                # Fully reified, unlike the flags above, and that is the
+                # whole reason it costs a second boolean per lesson: the
+                # solver WANTS these false — false is what excuses it from
+                # the stretch — so only the reverse implication, "a lesson
+                # here means the class is still at school", makes them
+                # true. `inside` needs no such thing.
+                if asks is None:
+                    asks = registry.register(
+                        model,
+                        name=f"rast_order_{group.id}",
+                        category="AVAILABILITY",
+                        code="RAST_NO_LESSON_FITS_BEFORE_IT",
+                        resource_ids=[group.id],
                     )
-                    for decision in lessons:
-                        late = model.NewBoolVar(
-                            f"late_{group.id}_{day_index}_{first}_"
-                            f"{decision.lesson.key()}",
-                        )
-                        model.AddLinearExpressionInDomain(
-                            decision.start, rest_of_day,
-                        ).OnlyEnforceIf(late)
-                        model.AddLinearExpressionInDomain(
-                            decision.start, rest_of_day.complement(),
-                        ).OnlyEnforceIf(late.Not())
-                        model.AddImplication(late, still_here)
-                    if asks is None:
-                        asks = registry.register(
-                            model,
-                            name=f"rast_order_{group.id}",
-                            category="AVAILABILITY",
-                            code="RAST_NO_LESSON_FITS_BEFORE_IT",
-                            resource_ids=[group.id],
-                        )
-                    model.AddBoolOr([*inside, still_here.Not(), asks.Not()])
+                # A lock after the break has already answered the question the
+                # literals below exist to ask, and answered it yes. The demand
+                # is then unconditional, and costs one clause instead of a
+                # boolean and three rows per lesson.
+                if self._locked_after(request, members, day_index, last):
+                    model.AddBoolOr([*inside, asks.Not()])
+                    continue
+                still_here = model.NewBoolVar(
+                    f"after_{group.id}_{day_index}_{first}",
+                )
+                rest_of_day = cp_model.Domain(
+                    base + last, base + slots_per_day - 1,
+                )
+                for decision in lessons:
+                    late = model.NewBoolVar(
+                        f"late_{group.id}_{day_index}_{first}_"
+                        f"{decision.lesson.key()}",
+                    )
+                    model.AddLinearExpressionInDomain(
+                        decision.start, rest_of_day,
+                    ).OnlyEnforceIf(late)
+                    model.AddLinearExpressionInDomain(
+                        decision.start, rest_of_day.complement(),
+                    ).OnlyEnforceIf(late.Not())
+                    model.AddImplication(late, still_here)
+                model.AddBoolOr([*inside, still_here.Not(), asks.Not()])
 
     def _rast_free_starts(
         self,

@@ -85,6 +85,41 @@ def blocks_for(
     overlaps of its own. Clipped to the configured day: a rast written outside
     08:00-18:00 constrains nothing rather than producing negative slots.
     """
+    return [
+        (first, last)
+        for first, last, _demands in blocks_with_demand(rasts, span, day_of_week, grid)
+    ]
+
+
+def blocks_with_demand(
+    rasts: Sequence[Rast],
+    span: tuple[int, int] | None,
+    day_of_week: int,
+    grid: TimeGrid,
+) -> list[tuple[int, int, bool]]:
+    """The same blocks, each carrying whether a lesson is owed before it.
+
+    THE DEMAND RIDES ALONG THE MERGE, and that is the whole reason this lives
+    here rather than in a caller asking each row on its own. A row read alone
+    cannot know it has been shadowed: `blocks_for([rast], ...)` hands back the
+    minutes an every-day rast WOULD reserve on a Friday that has already
+    replaced it. The ordering rule asked exactly that question and got exactly
+    that answer — a school whose Friday morning was one long rast still had to
+    be taught before 09:40 on it, and could not be taught at all before 11:00,
+    so it was barred from Friday altogether. Measured on two classes of 32
+    lessons each: ten Friday lessons and an OPTIMAL week in five seconds became
+    no Friday lessons and the whole sixty-second budget spent.
+
+    It reads the other way too. A Friday row that MOVES the break to 09:20-09:50
+    left the demand pointing at 09:40-10:00, so a class taught from 09:50 did
+    not count as being there after the break and the rule quietly stopped
+    applying. Neither error is visible in a finished schedule; both are visible
+    here.
+
+    A block that several rows form asks if ANY of them asks, and the boundary is
+    the MERGED one: the break as it is lived runs from the first row's start to
+    the last one's end, and the lesson the school wants is the one before that.
+    """
     matching = [rast for rast in rasts if _matches(rast, span)]
     if not matching:
         return []
@@ -97,7 +132,7 @@ def blocks_for(
         and not any(_overlaps(rast, specific) for specific in today)
     ]
 
-    ranges: list[tuple[int, int]] = []
+    ranges: list[tuple[int, int, bool]] = []
     for rast in [*today, *every_day]:
         start = _minutes(rast.start_time)
         end = _minutes(rast.end_time)
@@ -107,15 +142,16 @@ def blocks_for(
         first = max(first, 0)
         last = min(last, grid.slots_per_day)
         if last > first:
-            ranges.append((first, last))
+            ranges.append((first, last, rast.requires_lesson_before))
 
     ranges.sort()
-    merged: list[tuple[int, int]] = []
-    for start, end in ranges:
+    merged: list[tuple[int, int, bool]] = []
+    for start, end, demands in ranges:
         if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            first_slot, last_slot, asked = merged[-1]
+            merged[-1] = (first_slot, max(last_slot, end), asked or demands)
         else:
-            merged.append((start, end))
+            merged.append((start, end, demands))
     return merged
 
 

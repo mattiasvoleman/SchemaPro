@@ -415,6 +415,16 @@ MESSAGES: dict[str, str] = {
         "lessons need an unbroken stretch, and the longest any day still offers is {remaining} "
         "minutes. Shorten a rast, widen the frame time, or split the lesson."
     ),
+    "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT": (
+        "The break at {rast} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} asks for a lesson "
+        "before it, and none can fit: {grades, select, any {classes with unknown years} "
+        "other {years {grades}}} have {remaining, plural, one {# minute} other {# minutes}} "
+        "between {opens} — {bound, select, lunch {the earliest their lunch can end} "
+        "other {where the stretch opens}} — and that break, and their shortest lesson is "
+        "{minutes} minutes. Move the break, shorten the meal or widen its window, or turn "
+        "the requirement off for that break."
+    ),
     "RAST_NO_LESSON_FITS_BEFORE_IT": (
         "The classes named here require a lesson before a break, and their week leaves nowhere "
         "to put one: between the start of their day — or their previous break or lunch — and "
