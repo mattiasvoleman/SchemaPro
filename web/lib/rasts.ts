@@ -16,6 +16,13 @@ export interface Rast {
   dayOfWeek: number | null;
   startTime: string;
   endTime: string;
+  /**
+   * Whether the stretch ending at this rast must hold a lesson.
+   *
+   * A rast is otherwise only a hole in the day, and a class whose Monday
+   * begins at the morning break has broken no rule the engine knows.
+   */
+  requiresLessonBefore: boolean;
 }
 
 /** A rast resolved onto a clock, in minutes from midnight. */

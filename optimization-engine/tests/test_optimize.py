@@ -3649,6 +3649,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "dayOfWeek",
         "startTime",
         "endTime",
+        "requiresLessonBefore",
     }
     # The group's years, so a serving and a frame can reach a MEAL — which has
     # no requirement to read a span off.
@@ -5476,13 +5477,21 @@ def _rast_payload(
     }
 
 
-def _rast(start: str, end: str, day: int | None = None) -> dict[str, object]:
+def _rast(
+    start: str,
+    end: str,
+    day: int | None = None,
+    *,
+    asks: bool = False,
+    grades: tuple[int, int] = (4, 6),
+) -> dict[str, object]:
     return {
-        "minGradeLevel": 4,
-        "maxGradeLevel": 6,
+        "minGradeLevel": grades[0],
+        "maxGradeLevel": grades[1],
         "dayOfWeek": day,
         "startTime": f"{start}:00",
         "endTime": f"{end}:00",
+        "requiresLessonBefore": asks,
     }
 
 
@@ -5649,6 +5658,374 @@ def test_a_rast_leaves_the_meal_alone() -> None:
     for lunch in response.lunches:
         assert lunch.start_time >= "11:00:00"
         assert lunch.end_time <= "12:00:00"
+
+
+# ---------------------------------------------------------------------------
+# "Minst en lektion före rasten": a class still at school after a rast was
+# taught before it.
+#
+# A rast has otherwise only been a hole in the day. Nothing stopped a class's
+# Monday from opening with the morning break, or its whole afternoon from
+# being empty — measured before the rule was written, about one class-day
+# stretch in five came out that way, and at twenty-four classes EVERY
+# afternoon stretch did once a morning lesson satisfied the afternoon's rast.
+#
+# ASSERTED AS INFEASIBLE-VERSUS-FEASIBLE wherever it can be, not on a returned
+# week, for the reason test_the_rast_is_cut_out_of_the_start_domain gives about
+# its own rule: a solved week is compatible with the rule being absent. A week
+# that solves with the flag off and is refused with it on can only be the flag.
+# ---------------------------------------------------------------------------
+
+MONDAY = {"SCHEDULE_DAYS": "1"}
+
+
+def _ordering_payload(
+    rasts: list[dict[str, object]],
+    *,
+    lessons_per_week: int = 1,
+    minutes_per_lesson: int = 60,
+    frame_end: str = "12:00:00",
+    closed: list[tuple[str, str]] | None = None,
+) -> dict[str, object]:
+    """A rast payload on a day of the caller's length, with a window shut.
+
+    `closed` reserves the class's own time, which is how a lesson is pushed
+    to the far side of a rast: the frame and the timplan alone leave the
+    solver free to put the week wherever it likes, and a rule about ORDER
+    cannot be read off a week that had no order forced on it.
+    """
+    payload = _rast_payload(
+        rasts, lessons_per_week=lessons_per_week, minutes_per_lesson=minutes_per_lesson,
+    )
+    payload["frameTimes"][0]["endTime"] = frame_end  # type: ignore[index]
+    payload["constraints"] = [
+        {
+            "id": str(uuid4()),
+            "resourceKind": "STUDENT_GROUP",
+            "resourceId": payload["groups"][0]["id"],  # type: ignore[index]
+            "kind": "UNAVAILABLE",
+            "dayOfWeek": None,
+            "startTime": f"{start}:00",
+            "endTime": f"{end}:00",
+        }
+        for start, end in closed or []
+    ]
+    return payload
+
+
+def _solve(payload: dict[str, object], **settings: object):  # type: ignore[no-untyped-def]
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(**{**MONDAY, **settings}))
+    return solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+
+def test_a_week_that_solves_without_the_rule_is_refused_with_it() -> None:
+    """The discriminating pair, and the whole rule in two solves.
+
+    The class is free from 10:00 and has one lesson, so its Monday begins at
+    10:00 — on the far side of the 09:40 break, with nothing before it. That
+    is precisely the day the rule exists to refuse, and with the flag off it
+    is an ordinary Monday. Nothing but `requiresLessonBefore` separates them.
+    """
+    def payload(asks: bool) -> dict[str, object]:
+        return _ordering_payload(
+            [_rast("09:40", "10:00", asks=asks)], closed=[("08:00", "10:00")],
+        )
+
+    assert _solve(payload(asks=False)).status in {"OPTIMAL", "FEASIBLE"}
+
+    refused = _solve(payload(asks=True))
+    assert refused.status == "INFEASIBLE"
+    # And the refusal NAMES the rule. A hard row here would be an INFEASIBLE
+    # with no assumption behind it: the core comes back empty or made of
+    # unrelated rows, and the school is told its timetable is impossible for
+    # sentences it did not write.
+    assert refused.conflicts is not None
+    codes = {conflict.code for conflict in refused.conflicts.conflicts}
+    assert "RAST_NO_LESSON_FITS_BEFORE_IT" in codes, refused.conflicts
+
+
+def test_a_class_that_has_gone_home_owes_the_rast_nothing() -> None:
+    """The obligation is on the stretch a lesson FOLLOWS, and only then.
+
+    Read as a demand on every stretch of every school day instead, two asking
+    rasts oblige every class to be taught ten times a week — measured on this
+    payload before the condition was there: eight lessons INFEASIBLE, ten the
+    first count that solved. A class with eight lessons a week is an ordinary
+    åk 1, and refusing its week over a rule about breaks is not what the
+    school asked for.
+    """
+    response = _solve(
+        _ordering_payload(
+            [_rast("09:40", "10:00", asks=True), _rast("14:00", "14:20", asks=True)],
+            lessons_per_week=8,
+            frame_end="16:00:00",
+        ),
+        SCHEDULE_DAYS="1,2,3,4,5",
+    )
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 8
+
+
+def test_a_class_at_school_after_the_rast_is_taught_before_it() -> None:
+    """The rule in the affirmative, on a week that could have broken it.
+
+    Three forty-minute lessons and a morning that holds one, so at least one
+    lesson lies after the break whatever the solver does — and the moment one
+    does, the morning owes a lesson too. Without the rule all three fit in
+    10:00-12:00 and the morning stands empty, which is the week this refuses.
+    """
+    response = _solve(
+        _ordering_payload(
+            [_rast("09:40", "10:00", asks=True)],
+            lessons_per_week=3,
+            minutes_per_lesson=40,
+        ),
+    )
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    placed = [
+        (_minutes(lesson.start_time), _minutes(lesson.end_time))
+        for lesson in response.lessons
+    ]
+    assert any(start >= 10 * 60 for start, _ in placed), placed
+    assert any(end <= 9 * 60 + 40 for _, end in placed), placed
+
+
+def test_the_afternoon_is_counted_from_the_lunch_not_from_the_morning() -> None:
+    """The reading that makes the rule mean anything after midday.
+
+    "A lesson before the afternoon rast" read literally is satisfied by a
+    lesson before lunch, and the whole afternoon may still be empty; measured
+    at twenty-four classes, all one hundred and twenty afternoon stretches
+    were. So the stretch is counted from the MEAL when the meal falls inside
+    it.
+
+    The day here holds exactly three lessons — one before the morning rast,
+    one between it and the 11:00 meal, one after the afternoon rast — so the
+    class is provably at school after 14:20 and the stretch between the meal
+    and the 14:00 rast is shut. Nothing can lie in it, and the week is
+    refused. Under the literal reading the 10:00 lesson answers for the
+    afternoon and this same Monday solves.
+    """
+    payload = _ordering_payload(
+        [_rast("09:40", "10:00"), _rast("14:00", "14:20", asks=True)],
+        lessons_per_week=3,
+        frame_end="16:00:00",
+        closed=[("12:00", "14:00")],
+    )
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "12:00:00",
+        "lunchMinutes": 60,
+    }
+
+    assert _solve(payload).status == "INFEASIBLE"
+
+    # The same day with the rast asking nothing is an ordinary Monday, so the
+    # closure and the meal are not what refused it.
+    payload["rasts"] = [_rast("09:40", "10:00"), _rast("14:00", "14:20")]
+    assert _solve(payload).status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_a_lunch_window_that_straddles_the_rast_bounds_nothing() -> None:
+    """An order nobody has decided yet is not an obligation.
+
+    The window is 11:00-13:00 and the rast is at 12:00, so whether the meal
+    comes before the rast or after it is the solver's own choice — "a lesson
+    between them" is not yet a sentence about a week. Counted from the meal
+    anyway, the stretch would be 11:45-12:00 at best and this Monday would be
+    refused for a question the school never asked.
+
+    The class is free from 11:00 and has two lessons, so one is provably after
+    the break and the rule is live; the other has exactly one place to be, and
+    the assertion is that it is allowed to be there.
+    """
+    payload = _ordering_payload(
+        [_rast("12:00", "12:20", asks=True)],
+        lessons_per_week=2,
+        frame_end="16:00:00",
+        closed=[("08:00", "11:00")],
+    )
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "13:00:00",
+        "lunchMinutes": 45,
+    }
+
+    response = _solve(payload)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    placed = [
+        (_minutes(lesson.start_time), _minutes(lesson.end_time))
+        for lesson in response.lessons
+    ]
+    assert any(start >= 12 * 60 + 20 for start, _ in placed), placed
+    assert any(
+        start >= 11 * 60 and end <= 12 * 60 for start, end in placed
+    ), placed
+
+
+def test_the_stretch_begins_at_the_previous_rast_not_at_the_day() -> None:
+    """A lesson two breaks ago does not answer for this one.
+
+    That is the difference between "a lesson before the rast" and "a lesson
+    since the last rast", and it is the whole reason a Swedish day with three
+    breaks needs this rule rather than one test on the morning. Here the
+    10:00-11:00 stretch is shut, so the class is taught at 08:00 and again
+    after 11:20 — which leaves the 11:00 break opening its own half of the day,
+    and the week is refused. Bounded from the start of the day instead, the
+    08:00 lesson would answer for the 11:00 break and this Monday would solve.
+    """
+    payload = _ordering_payload(
+        [_rast("09:40", "10:00"), _rast("11:00", "11:20", asks=True)],
+        lessons_per_week=2,
+        frame_end="13:00:00",
+        closed=[("10:00", "11:00")],
+    )
+
+    assert _solve(payload).status == "INFEASIBLE"
+
+    payload["rasts"] = [_rast("09:40", "10:00"), _rast("11:00", "11:20")]
+    assert _solve(payload).status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_a_lunch_before_the_stretch_opens_does_not_bound_it() -> None:
+    """The meal bounds a stretch it lies INSIDE, and no other.
+
+    A class that ate at 10:30 and has a break at 13:00 owes a lesson since
+    12:20 — the break before it — not since the meal two hours earlier. Read
+    from the meal, the 11:00 lesson would answer for the 13:00 break and the
+    afternoon would again be free to stand empty, which is the reading this
+    whole section exists to refuse.
+
+    So the day here is shut except 11:00-11:40 and everything after 13:20: the
+    class is provably still at school after the break, and the stretch that
+    ends at it holds nothing. Refused — unless the meal is allowed to open a
+    stretch it is not in.
+    """
+    payload = _ordering_payload(
+        [_rast("12:00", "12:20"), _rast("13:00", "13:20", asks=True)],
+        lessons_per_week=2,
+        minutes_per_lesson=40,
+        frame_end="16:00:00",
+        closed=[("08:00", "10:30"), ("11:40", "13:20")],
+    )
+    payload["rules"] = {
+        "lunchStartTime": "10:30:00",
+        "lunchEndTime": "11:00:00",
+        "lunchMinutes": 30,
+    }
+
+    assert _solve(payload).status == "INFEASIBLE"
+
+    payload["rasts"] = [_rast("12:00", "12:20"), _rast("13:00", "13:20")]
+    assert _solve(payload).status in {"OPTIMAL", "FEASIBLE"}
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "why"),
+    [
+        ("08:00", "08:20", "the day opens with it, so the stretch is empty"),
+        ("08:30", "08:50", "the stretch is 30 minutes and the lesson is 60"),
+    ],
+)
+def test_a_stretch_no_lesson_fits_asks_for_nothing(start: str, end: str, why: str) -> None:
+    """No lesson fits, so no lesson is demanded — an empty demand is not one.
+
+    An `AddBoolOr([])` is false, which is an INFEASIBLE CP-SAT proves before
+    it touches an assumption literal: the school would be told its week is
+    impossible and nothing would say why. A rast at the start of a day is a
+    legal thing for a school to write, not a refusal.
+    """
+    response = _solve(
+        _ordering_payload([_rast(start, end, asks=True)], closed=[("08:00", "10:00")]),
+    )
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}, why
+
+
+def test_a_rast_written_for_another_stage_asks_this_class_nothing() -> None:
+    """The obligation reaches exactly as far as the rast does.
+
+    Read on a 4-6 class this payload is the refused one from the pair above.
+    Written for years 7-9 the rast does not reach it, and the Monday stands —
+    the same overlap test blocks_for applies to the minutes, applied to the
+    demand.
+    """
+    response = _solve(
+        _ordering_payload(
+            [_rast("09:40", "10:00", asks=True, grades=(7, 9))],
+            closed=[("08:00", "10:00")],
+        ),
+    )
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_the_estimate_charges_for_the_lesson_before_a_rast() -> None:
+    """The complexity guard has to describe the model it guards.
+
+    Every other rast term is zero: the minutes a rast reserves are subtracted
+    from a start domain and cost no variable at all. This one is the exception
+    and the estimator says so in the same commit that built it, which is what
+    _estimate_model_size's own docstring asks of a changed builder.
+
+    Asserted both ways round. A rast that asks nothing must charge nothing —
+    an estimator that read the count of rasts rather than the count of ASKING
+    rasts would refuse a large school for a rule it never turned on. And with
+    the flag on the estimate must still be an upper bound on the model that is
+    actually built, because a bound that is too low is not a conservative
+    guess but a wrong one.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _rast_payload([_rast("09:40", "10:00")], lessons_per_week=4)
+    quiet = OptimizeScheduleRequest.model_validate(payload)
+    payload["rasts"] = [_rast("09:40", "10:00", asks=True)]
+    asking = OptimizeScheduleRequest.model_validate(payload)
+
+    assert solver._estimate_model_size(quiet) == solver._estimate_model_size(
+        OptimizeScheduleRequest.model_validate({**payload, "rasts": []}),
+    ), "a rast that asks for nothing is free, and the estimate must say so"
+
+    built_quiet, _, _, _, _ = solver._build_model(quiet, use_assumptions=False)
+    built_asking, _, _, _, _ = solver._build_model(asking, use_assumptions=False)
+    grew = len(built_asking.Proto().variables) - len(built_quiet.Proto().variables)
+    assert grew > 0, "the rule builds variables, or it is not in the model"
+    assert solver._estimate_model_size(asking) >= len(built_asking.Proto().variables)
+    assert solver._estimate_model_size(asking) - solver._estimate_model_size(quiet) >= grew
+
+
+def test_a_class_answers_with_its_teaching_groups_lessons() -> None:
+    """4.1's maths is filed under 4ma1, and the rule has to know it.
+
+    The class carries the years, the lunch and the rast; the lessons are filed
+    under the teaching groups cut out of it. A rule reading only what is filed
+    under "4.1" finds a class with no lessons at all, has nothing to put in any
+    stretch and nothing to follow one either, and passes every week in silence.
+
+    So the payload is the refused pair with the lesson moved to a teaching
+    group. It must still be refused.
+    """
+    payload = _ordering_payload(
+        [_rast("09:40", "10:00", asks=True)], closed=[("08:00", "10:00")],
+    )
+    home_class = payload["groups"][0]["id"]  # type: ignore[index]
+    teaching_group = str(uuid4())
+    payload["requirements"][0]["studentGroupId"] = teaching_group  # type: ignore[index]
+    payload["groupConflicts"] = [[home_class, teaching_group]]
+    # The closure follows the lessons: an availability constraint on a home
+    # class does not reach the teaching groups cut out of it, and one left
+    # pointing at 4.1 would shut a group that has nothing to place.
+    payload["constraints"][0]["resourceId"] = teaching_group  # type: ignore[index]
+
+    assert _solve(payload).status == "INFEASIBLE"
 
 
 # ---------------------------------------------------------------------------
@@ -6029,6 +6406,44 @@ def test_the_probe_offers_only_what_the_payload_carries() -> None:
         OptimizeScheduleRequest.model_validate(_teaching_group_school(classes=2)),
     )]
     assert codes == ["PROBE_SOLVED_WITHOUT_LUNCH"]
+
+
+def test_the_probe_takes_the_rasts_apart_the_same_way_as_the_lunch() -> None:
+    """The demand for a lesson before the break is its own relaxation.
+
+    For the reason the lunch has three: "with the rasts removed" is true and
+    unactionable, because a school cannot delete its breaks. The requirement
+    of a lesson before one it CAN act on — it is a switch somebody ticked, and
+    the only rast setting that makes the model bigger rather than smaller.
+    Offered only when a rast asks; a school that ticked nothing is not shown a
+    rule it does not have.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _teaching_group_school(classes=2)
+    payload["rasts"] = [_rast("09:40", "10:00")]
+
+    codes = [code for code, _ in solver._timeout_relaxations(
+        OptimizeScheduleRequest.model_validate(payload),
+    )]
+    assert codes == ["PROBE_SOLVED_WITHOUT_RASTS", "PROBE_SOLVED_WITHOUT_LUNCH"]
+
+    payload["rasts"] = [_rast("09:40", "10:00", asks=True)]
+    relaxations = dict(solver._timeout_relaxations(
+        OptimizeScheduleRequest.model_validate(payload),
+    ))
+    assert list(relaxations) == [
+        "PROBE_SOLVED_WITHOUT_LESSON_BEFORE_RAST",
+        "PROBE_SOLVED_WITHOUT_RASTS",
+        "PROBE_SOLVED_WITHOUT_LUNCH",
+    ]
+    # The minutes stay reserved, which is the whole point of separating them.
+    dropped = relaxations["PROBE_SOLVED_WITHOUT_LESSON_BEFORE_RAST"]
+    assert len(dropped.rasts) == 1
+    assert dropped.rasts[0].start_time == "09:40:00"
+    assert dropped.rasts[0].requires_lesson_before is False
 
 
 

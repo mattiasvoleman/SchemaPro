@@ -1,0 +1,34 @@
+-- A rast can require a lesson before it.
+--
+-- A rast has been a hole in the day: minutes no lesson may occupy, and nothing
+-- more. That leaves a week where a class's Monday begins at the morning break
+-- — the engine has met every rule and the children have arrived to nothing.
+--
+-- The flag is what turns the hole into an obligation: a class still at school
+-- after this rast must have a lesson in the stretch that ENDS at it, counted
+-- from the previous break or from its own lunch. Measured on twenty-four
+-- classes (2026-09): of the 110 mornings where a class was still at school
+-- after its break, today's engine leaves 16 with nothing before it, and 2
+-- afternoons of 39. So this changes real schedules rather than restating what
+-- the solver already does.
+--
+-- "Still at school" is the condition, not the calendar. Read as a demand on
+-- every school day it would oblige every class to be taught once in every
+-- stretch of every day — with a morning and an afternoon rast, ten times a
+-- week — and refuse an åk 1 with eight lessons over a rule about breaks.
+--
+-- PER ROW, not per school. A morning break that opens the day is exactly where
+-- a school wants this; a short afternoon one it may not care about, and a rast
+-- written for a stage that starts its day late cannot have a lesson before it
+-- at all. One switch for the school would make the second case unschedulable
+-- in order to fix the first.
+--
+-- FALSE by default, so every school already using rasts keeps the week it has
+-- until somebody turns this on deliberately. The constraint is not free — it
+-- is the only rast setting that makes the model BIGGER, about six times the
+-- variables, and on twenty-four classes the whole solve went from 20 to 38
+-- seconds — and paying for that uninvited on a week nobody complained about
+-- is not a trade this migration gets to make.
+
+ALTER TABLE "Rasts"
+    ADD COLUMN "requiresLessonBefore" BOOLEAN NOT NULL DEFAULT false;

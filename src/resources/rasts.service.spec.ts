@@ -24,6 +24,7 @@ const storedRast = (overrides: Record<string, unknown> = {}) => ({
   dayOfWeek: null,
   startTime: wallClock('09:40'),
   endTime: wallClock('10:00'),
+  requiresLessonBefore: false,
   createdAt: new Date('2026-09-05T09:00:00.000Z'),
   updatedAt: new Date('2026-09-05T09:00:00.000Z'),
   ...overrides,
@@ -183,6 +184,70 @@ describe('RastsService', () => {
 
       const [[call]] = tx.rast.create.mock.calls as [[{ data: { name: string } }]];
       expect(call.data.name).toBe('Förmiddagsrast');
+    });
+  });
+
+  describe('the lesson before the rast', () => {
+    it('is off when the payload does not name it', async () => {
+      // A column with a default is not a service with one: `create` writes an
+      // explicit value, and `undefined` reaching Prisma here would be the
+      // database's default rather than this service's — the same value today
+      // and a silent difference the day the default changes.
+      tx.rast.create.mockResolvedValue(storedRast());
+
+      await service.create(createDto(), testUser({ schoolId: SCHOOL_ID }));
+
+      const [[call]] = tx.rast.create.mock.calls as [
+        [{ data: { requiresLessonBefore: boolean } }]
+      ];
+      expect(call.data.requiresLessonBefore).toBe(false);
+    });
+
+    it('is written when the payload asks for it', async () => {
+      tx.rast.create.mockResolvedValue(storedRast({ requiresLessonBefore: true }));
+
+      const response = await service.create(
+        createDto({ requiresLessonBefore: true }),
+        testUser({ schoolId: SCHOOL_ID }),
+      );
+
+      const [[call]] = tx.rast.create.mock.calls as [
+        [{ data: { requiresLessonBefore: boolean } }]
+      ];
+      expect(call.data.requiresLessonBefore).toBe(true);
+      expect(response.requiresLessonBefore).toBe(true);
+    });
+
+    it('survives a PATCH that names something else', async () => {
+      // The flag is a boolean, so `dto.requiresLessonBefore ?? current` would
+      // read an omitted field as false and turn the rule OFF every time the
+      // school renamed a rast. The service tests `!== undefined` for exactly
+      // this, and a boolean is the one type where the mistake is invisible.
+      tx.rast.findUnique.mockResolvedValue(storedRast({ requiresLessonBefore: true }));
+      tx.rast.update.mockResolvedValue(storedRast({ requiresLessonBefore: true }));
+
+      await service.update(RAST_ID, { name: 'X' }, testUser({ schoolId: SCHOOL_ID }));
+
+      expect(tx.rast.update).toHaveBeenCalledWith({
+        where: { id: RAST_ID },
+        data: { name: 'X' },
+      });
+    });
+
+    it('can be switched off by a PATCH that names it false', async () => {
+      tx.rast.findUnique.mockResolvedValue(storedRast({ requiresLessonBefore: true }));
+      tx.rast.update.mockResolvedValue(storedRast({ requiresLessonBefore: false }));
+
+      await service.update(
+        RAST_ID,
+        { requiresLessonBefore: false },
+        testUser({ schoolId: SCHOOL_ID }),
+      );
+
+      expect(tx.rast.update).toHaveBeenCalledWith({
+        where: { id: RAST_ID },
+        data: { requiresLessonBefore: false },
+      });
     });
   });
 

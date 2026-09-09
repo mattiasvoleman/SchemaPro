@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
 
@@ -46,6 +46,17 @@ export class CreateRastDto {
 
   @Matches(TIME, { message: 'endTime must be HH:MM.' })
   endTime!: string;
+
+  /**
+   * Whether the stretch ending at this rast must hold a lesson.
+   *
+   * Optional and false by default: a rast is otherwise only a hole in the day,
+   * and every school already using them keeps the week it has until somebody
+   * turns this on. The constraint is not free — see the migration.
+   */
+  @IsOptional()
+  @IsBoolean()
+  requiresLessonBefore?: boolean;
 }
 
 /**
@@ -78,6 +89,10 @@ export class UpdateRastDto {
   @Min(1)
   @Max(7)
   dayOfWeek?: number | null;
+
+  @IsOptional()
+  @IsBoolean()
+  requiresLessonBefore?: boolean;
 
   @IsOptional()
   @Matches(TIME, { message: 'startTime must be HH:MM.' })

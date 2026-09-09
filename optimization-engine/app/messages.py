@@ -330,6 +330,10 @@ MESSAGES: dict[str, str] = {
     "PROBE_SOLVED_WITHOUT_CHANGEOVER": (
         "With the margin between lessons set to 0, a timetable was found in {seconds} s."
     ),
+    "PROBE_SOLVED_WITHOUT_LESSON_BEFORE_RAST": (
+        "With the requirement of a lesson before a break dropped, a timetable was found in "
+        "{seconds} s. The breaks themselves were left in place."
+    ),
     "PROBE_SOLVED_WITHOUT_RASTS": (
         "With the rasts removed, a timetable was found in {seconds} s."
     ),
@@ -410,6 +414,12 @@ MESSAGES: dict[str, str] = {
         "({grades, select, any {years unknown} other {years {grades}}}): its {minutes}-minute "
         "lessons need an unbroken stretch, and the longest any day still offers is {remaining} "
         "minutes. Shorten a rast, widen the frame time, or split the lesson."
+    ),
+    "RAST_NO_LESSON_FITS_BEFORE_IT": (
+        "The classes named here require a lesson before a break, and their week leaves nowhere "
+        "to put one: between the start of their day — or their previous break or lunch — and "
+        "that break, no lesson of theirs fits. Move the break, shorten a lesson, or turn the "
+        "requirement off for that break."
     ),
     "ROOM_NONE_ELIGIBLE_FOR_REQUIREMENT": (
         "No room fits requirement {requirement} "

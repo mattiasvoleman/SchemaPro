@@ -558,6 +558,19 @@ class Rast(CamelModel):
     day_of_week: DayOfWeek | None = Field(default=None, alias="dayOfWeek")
     start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
     end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+    #: Whether the stretch ENDING at this rast must hold a lesson.
+    #:
+    #: A rast is otherwise only a hole in the day, and a class whose Monday
+    #: begins at the morning break has broken no rule the engine knows. This
+    #: turns the hole into an obligation, counted from the previous break —
+    #: the rast before it, or the class's own lunch. See
+    #: SchedulerSolver._add_rast_ordering_constraints, which owns the counting.
+    #:
+    #: False by default: the constraint roughly doubles the model's variables,
+    #: and a school that has not asked for it should not pay for it.
+    requires_lesson_before: bool = Field(
+        default=False, alias="requiresLessonBefore",
+    )
 
     @model_validator(mode="after")
     def validate_window(self) -> Rast:

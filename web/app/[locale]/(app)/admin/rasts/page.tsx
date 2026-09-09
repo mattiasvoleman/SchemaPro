@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -67,6 +68,7 @@ interface RastForm {
   dayOfWeek: string;
   startTime: string;
   endTime: string;
+  requiresLessonBefore: boolean;
 }
 
 const EMPTY_FORM: RastForm = {
@@ -76,6 +78,9 @@ const EMPTY_FORM: RastForm = {
   dayOfWeek: EVERY_DAY,
   startTime: "09:40",
   endTime: "10:00",
+  // Off, like the column's default: a school that has not asked for the rule
+  // keeps the week it has, and the rule is not free for the solver.
+  requiresLessonBefore: false,
 };
 
 export default function RastsPage() {
@@ -92,6 +97,7 @@ export default function RastsPage() {
     dayOfWeek: number | null;
     startTime: string;
     endTime: string;
+    requiresLessonBefore: boolean;
   }>("/api/v1/rasts", [["rasts"]]);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -135,6 +141,7 @@ export default function RastsPage() {
       minGradeLevel: rast.minGradeLevel,
       maxGradeLevel: rast.maxGradeLevel,
       dayOfWeek: rast.dayOfWeek === null ? EVERY_DAY : String(rast.dayOfWeek),
+      requiresLessonBefore: rast.requiresLessonBefore,
       startTime: formatTime(rast.startTime),
       endTime: formatTime(rast.endTime),
     });
@@ -149,6 +156,7 @@ export default function RastsPage() {
       dayOfWeek: form.dayOfWeek === EVERY_DAY ? null : Number(form.dayOfWeek),
       startTime: form.startTime,
       endTime: form.endTime,
+      requiresLessonBefore: form.requiresLessonBefore,
     };
     try {
       if (editing) {
@@ -221,7 +229,20 @@ export default function RastsPage() {
                 <TableBody>
                   {rasts.map((rast) => (
                     <TableRow key={rast.id}>
-                      <TableCell className="font-medium">{rast.name}</TableCell>
+                      <TableCell className="font-medium">
+                        <span className="flex flex-wrap items-center gap-2">
+                          {rast.name}
+                          {/*
+                            Beside the name rather than in a column of its own:
+                            the flag is off for most schools, and a column that
+                            is empty on every row costs width the day and the
+                            clock need more.
+                          */}
+                          {rast.requiresLessonBefore ? (
+                            <Badge variant="secondary">{t("lessonBeforeShort")}</Badge>
+                          ) : null}
+                        </span>
+                      </TableCell>
                       <TableCell>
                         {spanLabel(rast.minGradeLevel, rast.maxGradeLevel)}
                       </TableCell>
@@ -380,6 +401,19 @@ export default function RastsPage() {
                   onChange={(e) => setForm({ ...form, endTime: e.target.value })}
                 />
               </div>
+            </div>
+            <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="rast-lesson-before">{t("lessonBefore")}</Label>
+                <p className="text-xs text-muted-foreground">{t("lessonBeforeHint")}</p>
+              </div>
+              <Switch
+                id="rast-lesson-before"
+                checked={form.requiresLessonBefore}
+                onCheckedChange={(checked) =>
+                  setForm({ ...form, requiresLessonBefore: checked })
+                }
+              />
             </div>
           </div>
           <DialogFooter>

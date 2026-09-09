@@ -1202,6 +1202,7 @@ export class OptimizationProxyService {
         dayOfWeek: true,
         startTime: true,
         endTime: true,
+        requiresLessonBefore: true,
       },
     });
 
@@ -1211,6 +1212,7 @@ export class OptimizationProxyService {
       dayOfWeek: rast.dayOfWeek as DayOfWeek | null,
       startTime: this.timeToString(rast.startTime),
       endTime: this.timeToString(rast.endTime),
+      requiresLessonBefore: rast.requiresLessonBefore,
     }));
 
     // Anonymize the conflict pairs with the same group map the requirements

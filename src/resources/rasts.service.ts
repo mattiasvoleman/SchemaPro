@@ -18,6 +18,8 @@ export interface RastResponse {
   startTime: string;
   /** HH:MM */
   endTime: string;
+  /** Whether the stretch ending at this rast must hold a lesson. */
+  requiresLessonBefore: boolean;
 }
 
 @Injectable()
@@ -57,6 +59,7 @@ export class RastsService {
             dayOfWeek: dto.dayOfWeek ?? null,
             startTime: parseTimeString(dto.startTime),
             endTime: parseTimeString(dto.endTime),
+            requiresLessonBefore: dto.requiresLessonBefore ?? false,
           },
         }),
       );
@@ -106,6 +109,9 @@ export class RastsService {
             ...(dto.dayOfWeek !== undefined ? { dayOfWeek: dto.dayOfWeek } : {}),
             ...(dto.startTime !== undefined ? { startTime: parseTimeString(dto.startTime) } : {}),
             ...(dto.endTime !== undefined ? { endTime: parseTimeString(dto.endTime) } : {}),
+            ...(dto.requiresLessonBefore !== undefined
+              ? { requiresLessonBefore: dto.requiresLessonBefore }
+              : {}),
           },
         }),
       );
@@ -134,6 +140,7 @@ function toResponse(row: Rast): RastResponse {
     dayOfWeek: row.dayOfWeek,
     startTime: toWallClock(row.startTime),
     endTime: toWallClock(row.endTime),
+    requiresLessonBefore: row.requiresLessonBefore,
   };
 }
 

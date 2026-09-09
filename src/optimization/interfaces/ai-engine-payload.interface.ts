@@ -112,6 +112,13 @@ export interface AnonymousRast {
   startTime: string;
   /** HH:MM:SS */
   endTime: string;
+  /**
+   * Whether the stretch ending at this rast must hold a lesson.
+   *
+   * A rast is otherwise only a hole in the day, and a class whose Monday
+   * begins at the morning break has broken no rule the engine knows.
+   */
+  requiresLessonBefore: boolean;
 }
 
 export interface AnonymousLunchServing {

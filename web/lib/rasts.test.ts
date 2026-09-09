@@ -24,6 +24,7 @@ function rast(overrides: Partial<Rast> = {}): Rast {
     dayOfWeek: null,
     startTime: "09:40:00",
     endTime: "10:00:00",
+    requiresLessonBefore: false,
     ...overrides,
   };
 }
