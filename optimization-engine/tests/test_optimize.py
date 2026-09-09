@@ -2265,6 +2265,206 @@ def test_an_infeasibility_no_assumption_explains_still_says_something() -> None:
     assert analysis.conflicts[0].message, "a guess still has to say something"
 
 
+def test_the_causes_a_school_can_check_are_listed_first() -> None:
+    """The order is the difference between a report and a wall of text.
+
+    Taken from a real one. A school of two classes got twenty-four true lines
+    saying "the requirement X needs a room of type Klassrum that holds 20", one
+    per teaching group, and below them four lines naming a class and a weekday
+    — "locked lessons leave 4.1 no lunch gap on Tuesday" — one of which was the
+    week's actual problem. Same set, same sentences; the reader had to get past
+    two dozen lines about rooms that were not short to reach the Tuesday that
+    was full.
+
+    Asserted on the ORDER and not on the membership, because nothing here drops
+    a cause: the core is sufficient and not minimal, the summary says so, and a
+    line that reads as innocent today is the one somebody needs tomorrow.
+    """
+    from app.schemas.schedule import ConflictDetail
+    from app.solver.conflict_analyzer import _how_far_it_narrows
+
+    rooms = [
+        ConflictDetail(
+            category="ROOM_CAPACITY",
+            code="ROOM_NO_ROOM_OF_TYPE_FOR_REQUIREMENT",
+            params={"requirement": str(uuid4()), "groupSize": 20, "roomType": "Klassrum"},
+            requirementIds=[uuid4()],
+        )
+        for _ in range(24)
+    ]
+    hall = ConflictDetail(
+        category="DINING_CAPACITY",
+        code="LUNCH_SEATS_CANNOT_STAGGER",
+        params={"seats": 115},
+    )
+    days = [
+        ConflictDetail(
+            category="GROUP_OVERLAP",
+            code="LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
+            params={
+                "group": str(uuid4()), "minutes": 15, "day": day,
+                "windowStart": "10:30", "windowEnd": "13:00",
+            },
+            resourceIds=[uuid4()],
+        )
+        for day in (2, 3, 1, 5)
+    ]
+
+    found = [*rooms, hall, *days]
+    found.sort(key=_how_far_it_narrows(found))
+
+    assert [conflict.category for conflict in found[:4]] == ["GROUP_OVERLAP"] * 4, (
+        "a class and a weekday is a thing to open and look at"
+    )
+    assert found[-1] is hall, (
+        "the hall's seats describe the whole week and narrow nothing"
+    )
+    assert len(found) == 29, "ordering may not drop a cause"
+
+
+def test_a_weekday_outranks_a_rarer_cause_that_names_none() -> None:
+    """The day is worth more than the rarity, and only this shape shows it.
+
+    Where the two agree the order comes out right either way, which is most
+    payloads and is why this case is built rather than found: one lonely line
+    about a room against three about a class and a weekday. Rarity alone would
+    put the room first — it is stated once — and the school would open its room
+    list to look for a shortage while the Tuesday that is full waits below.
+    """
+    from app.schemas.schedule import ConflictDetail
+    from app.solver.conflict_analyzer import _how_far_it_narrows
+
+    room = ConflictDetail(
+        category="ROOM_CAPACITY",
+        code="ROOM_NO_ROOM_FOR_REQUIREMENT",
+        params={"requirement": str(uuid4()), "groupSize": 20},
+        requirementIds=[uuid4()],
+    )
+    days = [
+        ConflictDetail(
+            category="GROUP_OVERLAP",
+            code="LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
+            params={
+                "group": str(uuid4()), "minutes": 15, "day": day,
+                "windowStart": "10:30", "windowEnd": "13:00",
+            },
+            resourceIds=[uuid4()],
+        )
+        for day in (1, 2, 3)
+    ]
+
+    found = [room, *days]
+    found.sort(key=_how_far_it_narrows(found))
+
+    assert found[0] in days, "one class on one day beats one line about rooms"
+    assert found[-1] is room
+
+
+def test_the_rarer_sentence_goes_first_where_nothing_else_separates_them() -> None:
+    """Twenty variations on one code are a property many things share.
+
+    Both of these name a requirement and neither names a day, so the tier
+    cannot separate them; what is left is that one of them was said once and
+    the other three times, and the one said once is likelier to be the
+    particular thing that went wrong.
+    """
+    from app.schemas.schedule import ConflictDetail
+    from app.solver.conflict_analyzer import _how_far_it_narrows
+
+    common = [
+        ConflictDetail(
+            category="ROOM_CAPACITY",
+            code="ROOM_NO_ROOM_FOR_REQUIREMENT",
+            params={"requirement": str(uuid4()), "groupSize": 20},
+            requirementIds=[uuid4()],
+        )
+        for _ in range(3)
+    ]
+    lone = ConflictDetail(
+        category="ROOM_CAPACITY",
+        code="ROOM_LOCK_LEAVES_NO_ROOM",
+        params={"requirement": str(uuid4()), "grades": "4-6"},
+        requirementIds=[uuid4()],
+    )
+
+    found = [*common, lone]
+    found.sort(key=_how_far_it_narrows(found))
+
+    assert found[0] is lone
+
+
+def test_the_analysis_the_school_receives_is_the_ordered_one() -> None:
+    """Through the real path, because the key function alone proves nothing.
+
+    Ordering that is written and then not applied looks exactly like ordering
+    that works, right up until a school reads the report. So this asserts on
+    what build_conflict_analysis returns, with a core CP-SAT actually produced.
+    """
+    from ortools.sat.python import cp_model
+
+    from app.solver.conflict_analyzer import AssumptionRegistry, build_conflict_analysis
+
+    model = cp_model.CpModel()
+    registry = AssumptionRegistry(use_assumptions=True)
+    vague = registry.register(
+        model,
+        name="hall",
+        category="DINING_CAPACITY",
+        code="LUNCH_SEATS_CANNOT_STAGGER",
+        params={"seats": 115},
+    )
+    precise = registry.register(
+        model,
+        name="tuesday",
+        category="GROUP_OVERLAP",
+        code="LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK",
+        params={
+            "group": str(uuid4()), "minutes": 15, "day": 2,
+            "windowStart": "10:30", "windowEnd": "13:00",
+        },
+        resource_ids=[uuid4()],
+    )
+    # Registered vague-first, so a returned list in registration order fails.
+    hours = model.NewIntVar(0, 5, "hours")
+    model.Add(hours >= 4).OnlyEnforceIf(vague)
+    model.Add(hours <= 2).OnlyEnforceIf(precise)
+
+    solver = cp_model.CpSolver()
+    assert solver.Solve(model) == cp_model.INFEASIBLE
+
+    analysis = build_conflict_analysis(solver, registry)
+
+    assert [conflict.category for conflict in analysis.conflicts] == [
+        "GROUP_OVERLAP", "DINING_CAPACITY",
+    ]
+
+
+def test_the_reading_order_is_stable_when_nothing_separates_two_causes() -> None:
+    """Two lines the rule cannot tell apart keep the order they arrived in.
+
+    A report that reshuffles itself between two runs of the same payload reads
+    as though something changed in the school's data, and an administrator
+    comparing this run with the last one would go looking for it.
+    """
+    from app.schemas.schedule import ConflictDetail
+    from app.solver.conflict_analyzer import _how_far_it_narrows
+
+    twins = [
+        ConflictDetail(
+            category="ROOM_CAPACITY",
+            code="ROOM_NO_ROOM_FOR_REQUIREMENT",
+            params={"requirement": str(uuid4()), "groupSize": 20},
+            requirementIds=[uuid4()],
+        )
+        for _ in range(5)
+    ]
+
+    ordered = list(twins)
+    ordered.sort(key=_how_far_it_narrows(ordered))
+
+    assert ordered == twins
+
+
 def test_one_sentence_twice_becomes_one_line_that_names_both_causes() -> None:
     """De-duplication merges the ids; it does not pick a survivor.
 

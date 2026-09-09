@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from uuid import UUID
 
@@ -111,6 +113,57 @@ class AssumptionRegistry:
         return [by_reference[index] for index in indices if index in by_reference]
 
 
+def _how_far_it_narrows(
+    conflicts: list[ConflictDetail],
+) -> Callable[[ConflictDetail], tuple[int, int, int]]:
+    """Order the causes by how much of the week each one rules out.
+
+    THE ORDER IS A READING ORDER AND NOT A RANKING OF BLAME. The core is
+    sufficient and not minimal, which the summary says in as many words, so
+    nothing here claims the first line is the culprit. What it claims is
+    narrower and true: the first line is the one an administrator can go and
+    CHECK, and checking is what turns a sufficient set into a fixed week.
+
+    A real report from a school of two classes made the case. Twenty-four lines
+    said "the requirement X needs a room of type Klassrum that holds 20", one
+    per teaching group and every one of them true; below them sat four lines
+    naming a class and a weekday — "locked lessons leave 4.1 no 15-minute lunch
+    gap inside 10:30-13:00 on Tuesday" — and one of those was the week's actual
+    problem. The reader had to get past two dozen lines about rooms that were
+    not short to reach the Tuesday that was full. Same set, same sentences, and
+    the order was the whole difference between a report and a wall of text.
+
+    So: a line naming a DAY and a RESOURCE narrows the search to one class on
+    one day, which is a thing to open and look at. A line naming one or the
+    other narrows it to a class or to a day. A line naming neither — the dining
+    hall's seats, a bare fallback — describes the whole week, and is the last
+    thing worth reading rather than the first.
+
+    Within a tier, the rarer sentence goes first. Twenty-four variations on one
+    code are a property that many things share, and the code stated once is
+    likelier to be the particular thing that went wrong; ties keep the order
+    the merge produced, so the output stays stable run to run.
+    """
+    occurrences = Counter(conflict.code for conflict in conflicts)
+    order = {id(conflict): index for index, conflict in enumerate(conflicts)}
+
+    def key(conflict: ConflictDetail) -> tuple[int, int, int]:
+        names_day = "day" in conflict.params
+        names_resource = bool(
+            conflict.resource_ids
+            or conflict.requirement_ids
+            or conflict.room_ids
+            or conflict.constraint_ids,
+        )
+        return (
+            0 if names_day and names_resource else 1 if names_day or names_resource else 2,
+            occurrences[conflict.code],
+            order[id(conflict)],
+        )
+
+    return key
+
+
 def build_conflict_analysis(
     solver: cp_model.CpSolver,
     registry: AssumptionRegistry,
@@ -188,6 +241,7 @@ def build_conflict_analysis(
         )
         for record in merged.values()
     ]
+    conflicts.sort(key=_how_far_it_narrows(conflicts))
 
     # Not "infeasible because of these". SufficientAssumptionsForInfeasibility
     # returns a core that is SUFFICIENT, not minimal: it routinely carries
