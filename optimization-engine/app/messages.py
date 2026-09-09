@@ -421,9 +421,12 @@ MESSAGES: dict[str, str] = {
         "before it, and none can fit: {grades, select, any {classes with unknown years} "
         "other {years {grades}}} have {remaining, plural, one {# minute} other {# minutes}} "
         "between {opens} — {bound, select, lunch {the earliest their lunch can end} "
-        "other {where the stretch opens}} — and that break, and their shortest lesson is "
-        "{minutes} minutes. Move the break, shorten the meal or widen its window, or turn "
-        "the requirement off for that break."
+        "closed {what a reservation leaves of it} other {where the stretch opens}} — and that "
+        "break, and their shortest lesson is "
+        "{minutes} minutes. They can therefore never be at school after that break, and the "
+        "days that are left hold {capacityMinutes} minutes against the {demandMinutes} their "
+        "lessons need. Move the break, shorten the meal or widen its window, free the minutes "
+        "a reservation holds, or turn the requirement off for that break."
     ),
     "RAST_NO_LESSON_FITS_BEFORE_IT": (
         "The classes named here require a lesson before a break, and their week leaves nowhere "

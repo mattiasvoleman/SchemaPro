@@ -5787,6 +5787,140 @@ def test_the_same_break_is_fine_once_the_meal_is_short_enough() -> None:
     assert _solve(payload).status in {"OPTIMAL", "FEASIBLE"}
 
 
+def _reserved_payload(
+    *, lessons_per_week: int, kind: str = "STUDENT_GROUP", date: str | None = None,
+) -> dict[str, object]:
+    """A class whose stretch before the 11:10 break is reserved away entirely.
+
+    Two breaks and a reservation over the whole of the second stretch: the
+    calendar shows fifty roomy minutes between 10:20 and 11:10, and the school
+    has already given every one of them away. This is the shape the payloads
+    that survived the first fix all had.
+    """
+    payload = _rast_payload(
+        [_rast("10:00", "10:20"), _rast("10:00", "10:20")],
+        lessons_per_week=lessons_per_week,
+        minutes_per_lesson=40,
+    )
+    payload["rasts"] = [
+        _rast("10:00", "10:20"),
+        _rast("11:10", "11:30", asks=True),
+    ]
+    payload["frameTimes"][0]["endTime"] = "16:00:00"  # type: ignore[index]
+    requirement = payload["requirements"][0]
+    payload["constraints"] = [
+        {
+            "id": str(uuid4()),
+            "resourceKind": kind,
+            "resourceId": (
+                payload["groups"][0]["id"]  # type: ignore[index]
+                if kind == "STUDENT_GROUP"
+                else requirement["teacherId"]  # type: ignore[index]
+                if kind == "TEACHER"
+                else payload["rooms"][0]["id"]  # type: ignore[index]
+            ),
+            "kind": "UNAVAILABLE",
+            "dayOfWeek": None,
+            "date": date,
+            "startTime": "10:20:00",
+            "endTime": "11:10:00",
+        },
+    ]
+    return payload
+
+
+def test_a_reservation_over_the_stretch_closes_the_day_and_can_refuse_the_week() -> None:
+    """The timeout that survived measuring the stretch from the calendar.
+
+    Fifty minutes between the breaks, every one of them reserved. No lesson can
+    ever sit there, so the class can never be at school after 11:30 — and its
+    mornings hold three forty-minute lessons a day against sixteen a week. A
+    shortfall of one lesson, and the proof is a pigeonhole across five separate
+    days that CP-SAT's encoding never assembles: sixty seconds of silence
+    before this, refused in milliseconds after.
+    """
+    refusal = _refusal(_reserved_payload(lessons_per_week=16), SCHEDULE_DAYS="1,2,3,4,5")
+
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
+    assert refusal.params["bound"] == "closed"
+    assert refusal.params["remaining"] == 0
+    assert refusal.params["demandMinutes"] > refusal.params["capacityMinutes"]
+
+
+def test_the_same_reservation_on_a_week_that_still_fits_is_not_refused() -> None:
+    """The other half of the rule, and the half that makes it sound.
+
+    A stretch that can hold nothing does not make a week impossible: the demand
+    is satisfied just as well by a class that has GONE HOME before the break.
+    The first version of this refused on the closure alone and turned down
+    weeks that had a timetable — measured on this very payload, which solves
+    with every lesson in the morning.
+    """
+    response = _solve(_reserved_payload(lessons_per_week=6), SCHEDULE_DAYS="1,2,3,4,5")
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert response.lessons
+    assert all(lesson.end_time <= "10:00:00" for lesson in response.lessons), (
+        "the closed afternoon is the rule working, not the rule refusing"
+    )
+
+
+def test_a_dated_reservation_is_not_counted_against_the_stretch() -> None:
+    """The sharpest way this could refuse a week that has a timetable.
+
+    _add_availability_constraints skips a dated row — the engine places a
+    generic week and a single date is not part of one — so a stretch measured
+    as if the row applied would refuse a payload the solver would place without
+    complaint. Same sixteen lessons as the refused case, and it must solve.
+    """
+    response = _solve(
+        _reserved_payload(lessons_per_week=16, date="2026-09-14"),
+        SCHEDULE_DAYS="1,2,3,4,5",
+    )
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_a_room_reservation_is_not_counted_against_the_stretch() -> None:
+    """A room row blocks the lessons assigned to that room, and no others.
+
+    Which room a lesson takes is a decision the solver has not made when this
+    arithmetic runs, so a class is stuck only when NO eligible room is free —
+    not a fact about one row. Counted here it would close a stretch the class
+    can use, and refuse a week that has a timetable.
+    """
+    # Asserted as "not refused" rather than "solved": a room row still closes
+    # the day inside the model, and the week that is left is over capacity and
+    # beyond the reach of any counting argument the engine can make from
+    # constants. That week still times out, and saying so here is the honest
+    # boundary of this change.
+    response = _solve(
+        _reserved_payload(lessons_per_week=16, kind="ROOM"), SCHEDULE_DAYS="1,2,3,4,5",
+    )
+
+    assert response.status != "REFUSED"
+
+
+def test_a_reservation_on_one_teacher_leaves_the_stretch_open_to_the_others() -> None:
+    """The demand is for A lesson, not a particular one.
+
+    The maths teacher is away over the whole stretch; the music teacher is not,
+    and one music lesson answers the break for the whole class. Measured
+    against the shortest lesson of the class alone, this closes a day that is
+    plainly open.
+    """
+    payload = _reserved_payload(lessons_per_week=8, kind="TEACHER")
+    music = dict(payload["requirements"][0])  # type: ignore[index]
+    music["id"] = str(uuid4())
+    music["subjectId"] = str(uuid4())
+    music["teacherId"] = str(uuid4())
+    payload["requirements"].append(music)  # type: ignore[union-attr]
+
+    response = _solve(payload, SCHEDULE_DAYS="1,2,3,4,5")
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+
+
 def test_a_stretch_only_a_locked_lesson_fits_is_not_refused() -> None:
     """The refusal asks whether a lesson CAN be there, not whether one can be placed.
 
@@ -5840,11 +5974,17 @@ def test_a_late_sitting_moves_the_break_the_meal_leaves_room_before() -> None:
         },
     ]
 
-    refusal = _refusal(payload)
+    # And it is NOT refused, because the class can simply go home at 12:30:
+    # four sixty-minute lessons and a thirty-minute meal fit in 08:00-12:30
+    # exactly. A break may close a class's afternoon without closing its week,
+    # and refusing here — which an earlier version of this did — turns down a
+    # timetable that exists.
+    response = _solve(payload)
 
-    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
-    assert refusal.params["remaining"] == 0
-    assert refusal.params["bound"] == "lunch"
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert all(lesson.end_time <= "12:00:00" for lesson in response.lessons), (
+        "the sitting bars the afternoon, so the week has to fit before it"
+    )
 
 
 def test_a_break_too_soon_after_the_frame_opens_is_refused_by_name() -> None:
@@ -5969,12 +6109,52 @@ def test_a_week_that_solves_without_the_rule_is_refused_with_it() -> None:
 
     assert _solve(payload(asks=False)).status in {"OPTIMAL", "FEASIBLE"}
 
-    refused = _solve(payload(asks=True))
+    # Refused before the solve now, and by name. The reservation that pushes
+    # the class past the break takes the whole stretch with it, so no lesson
+    # can ever answer the demand, so the class can never be there after it —
+    # and its one lesson has nowhere left to go. The arithmetic reaches that in
+    # milliseconds; the model used to reach it in a solve, and on a bigger week
+    # it did not reach it at all.
+    refusal = _refusal(payload(asks=True))
+    assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
+
+
+def test_the_model_refuses_by_name_when_the_arithmetic_cannot() -> None:
+    """The core path, and it needs a payload the arithmetic has to let through.
+
+    Every refusal above is settled before the solve, on constants. This one
+    cannot be: the stretch is open, nothing is reserved, and whether a class
+    can be taught in it depends on who gets the only room — which is the
+    solver's decision, not arithmetic. Two classes, one room, one stretch that
+    holds a single lesson, and both classes with a lesson stranded after the
+    break. One of them must break the rule.
+
+    So the model does the refusing, and the assumption literal is what makes it
+    sayable: without one the core comes back empty or made of unrelated rows,
+    and a school is told its timetable is impossible for sentences it did not
+    write.
+    """
+    payload = _ordering_payload(
+        [_rast("09:40", "10:00", asks=True)], lessons_per_week=2, frame_end="12:00:00",
+    )
+    first = payload["groups"][0]["id"]  # type: ignore[index]
+    second = str(uuid4())
+    payload["groups"].append(  # type: ignore[union-attr]
+        {"id": second, "lunchHeadcount": 24, "minGradeLevel": 4, "maxGradeLevel": 6},
+    )
+    twin = dict(payload["requirements"][0])  # type: ignore[index]
+    twin["id"] = str(uuid4())
+    twin["subjectId"] = str(uuid4())
+    twin["teacherId"] = str(uuid4())
+    twin["studentGroupId"] = second
+    payload["requirements"].append(twin)  # type: ignore[union-attr]
+    # One room for both, and a morning that holds one lesson: 08:00-09:40 fits
+    # a single sixty-minute lesson, and the two classes cannot share it.
+    payload["frameTimes"][0]["startTime"] = "08:40:00"  # type: ignore[index]
+
+    refused = _solve(payload)
+
     assert refused.status == "INFEASIBLE"
-    # And the refusal NAMES the rule. A hard row here would be an INFEASIBLE
-    # with no assumption behind it: the core comes back empty or made of
-    # unrelated rows, and the school is told its timetable is impossible for
-    # sentences it did not write.
     assert refused.conflicts is not None
     codes = {conflict.code for conflict in refused.conflicts.conflicts}
     assert "RAST_NO_LESSON_FITS_BEFORE_IT" in codes, refused.conflicts
@@ -6153,7 +6333,11 @@ def test_a_lunch_before_the_stretch_opens_does_not_bound_it() -> None:
         "lunchMinutes": 30,
     }
 
-    assert _solve(payload).status == "INFEASIBLE"
+    # Refused before the solve, and by name: the reservation takes the whole
+    # stretch, so the class can never be there after the break, and the days
+    # that are left hold forty minutes against the eighty its lessons need.
+    # The verdict is the one the model used to reach; only the route changed.
+    assert _refusal(payload).code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
 
     payload["rasts"] = [_rast("12:00", "12:20"), _rast("13:00", "13:20")]
     assert _solve(payload).status in {"OPTIMAL", "FEASIBLE"}
@@ -6163,7 +6347,7 @@ def test_a_lunch_before_the_stretch_opens_does_not_bound_it() -> None:
     ("start", "end", "remaining", "why"),
     [
         ("08:00", "08:20", 0, "the day opens with it, so the stretch is empty"),
-        ("08:30", "08:50", 30, "the stretch is 30 minutes and the lesson is 60"),
+        ("08:30", "08:50", 0, "the stretch is 30 minutes and a reservation holds all of it"),
     ],
 )
 def test_a_stretch_no_lesson_fits_is_refused_by_name(
@@ -6189,6 +6373,8 @@ def test_a_stretch_no_lesson_fits_is_refused_by_name(
     )
 
     assert refusal.code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT", why
+    # Nothing, not the thirty minutes the calendar shows: the payload closes
+    # 08:00-10:00 for this class, and the stretch is measured after that.
     assert refusal.params["remaining"] == remaining
     assert refusal.params["minutes"] == 60
 
@@ -6270,7 +6456,7 @@ def test_a_class_answers_with_its_teaching_groups_lessons() -> None:
     # pointing at 4.1 would shut a group that has nothing to place.
     payload["constraints"][0]["resourceId"] = teaching_group  # type: ignore[index]
 
-    assert _solve(payload).status == "INFEASIBLE"
+    assert _refusal(payload).code == "RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT"
 
 
 # ---------------------------------------------------------------------------

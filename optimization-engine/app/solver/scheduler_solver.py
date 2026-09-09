@@ -2241,80 +2241,257 @@ class SchedulerSolver:
                 return True
         return False
 
+    def _reserved_ranges(
+        self,
+        request: OptimizeScheduleRequest,
+        requirement: AnonymousRequirement,
+        day_index: int,
+    ) -> list[tuple[int, int]]:
+        """Day-local ranges a reservation provably keeps this requirement out of.
+
+        The stretch before a break is measured from the calendar — the frame,
+        the previous break, the meal — and a calendar cannot see a school that
+        has reserved those very minutes. Measured on the payloads that survived
+        the first fix: a class with a break at 11:10, a stretch of fifty roomy
+        minutes behind it, and an availability row over 10:20-11:10 taking
+        every one of them. Nothing fits, the rule concludes the class has gone
+        home, the afternoons close, and three lessons a day against sixteen a
+        week is a pigeonhole no counting argument in the model ever assembles:
+        sixty seconds of silence.
+
+        EXACTLY THE ROWS THE MODEL ITSELF APPLIES, and no others. This decides
+        whether an obligation is dropped and whether a week is refused, so a row
+        counted here that the solver does not enforce refuses a timetable that
+        exists. Three exclusions, each for its own reason:
+
+          A DATED ROW IS SKIPPED, because _add_availability_constraints skips
+          it: the engine places a generic week and a single date is not part of
+          one. Subtracting it here would refuse a week the solver would place
+          without complaint — the sharpest way this could go wrong, and the
+          first thing a measurement of it caught.
+
+          A ROOM ROW IS SKIPPED, because it blocks only the lessons actually
+          assigned to that room, which is a decision the solver has not made
+          yet. A class is stuck only when NO eligible room is free, and that is
+          not arithmetic on one row.
+
+          ONLY UNAVAILABLE. A reservation of any other kind does not empty the
+          minutes.
+
+        The remaining three match exactly as _decisions_for_constraint matches
+        them, which is the point: a teacher's row reaches the requirements that
+        teacher carries, a group's row reaches its own, and a year's row
+        reaches every requirement whose years OVERLAP it.
+        """
+        blocked: list[tuple[int, int]] = []
+        day_of_week = self._grid.schedule_days[day_index]
+        for constraint in request.constraints:
+            if constraint.kind != "UNAVAILABLE" or constraint.date is not None:
+                continue
+            if constraint.day_of_week not in (None, day_of_week):
+                continue
+            if constraint.resource_kind == "TEACHER":
+                reaches = constraint.resource_id in (
+                    requirement.teacher_id, requirement.co_teacher_id,
+                )
+            elif constraint.resource_kind == "STUDENT_GROUP":
+                reaches = requirement.student_group_id == constraint.resource_id
+            elif constraint.resource_kind == "GRADE_LEVEL":
+                reaches = _grade_span_overlaps(constraint, requirement)
+            else:
+                reaches = False
+            if not reaches:
+                continue
+            start = self._grid.clamp_to_grid(constraint.start_time)
+            end = self._grid.clamp_to_grid(constraint.end_time)
+            if start is None or end is None or end <= start:
+                continue
+            blocked.append((start, end))
+        return blocked
+
+    def _reserved_for_all(
+        self,
+        request: OptimizeScheduleRequest,
+        requirements: list[AnonymousRequirement],
+        day_index: int,
+    ) -> list[tuple[int, int]]:
+        """Minutes no requirement of this class may be taught in, today.
+
+        The INTERSECTION of what each one is barred from, because the class is
+        only barred where all of them are: a row against one teacher leaves the
+        hour open to every other subject, and counting it against the class
+        would shrink a week that has not shrunk.
+        """
+        common: list[tuple[int, int]] | None = None
+        for requirement in requirements:
+            blocked = self._reserved_ranges(request, requirement, day_index)
+            if common is None:
+                common = blocked
+                continue
+            common = [
+                (max(a, c), min(b, d))
+                for a, b in common
+                for c, d in blocked
+                if max(a, c) < min(b, d)
+            ]
+            if not common:
+                return []
+        return common or []
+
+    def _room_in_stretch(
+        self,
+        blocked: list[tuple[int, int]],
+        opens: int,
+        first: int,
+    ) -> int:
+        """The longest unbroken run left of [opens, first) once those are gone.
+
+        A run, not a total: a lesson needs its minutes in one piece, which is
+        the same thing _widest_free_run says about a day full of rasts.
+        """
+        free = [(opens, first)] if first > opens else []
+        for start, end in blocked:
+            free = _subtract_range(free, (start, end))
+        return max((end - start for start, end in free), default=0)
+
     def _verify_rast_demands(self, request: OptimizeScheduleRequest) -> None:
-        """A break that asks for a lesson no stretch can hold is a contradiction.
+        """A break whose demand can never be met, on a week that then has no room.
 
-        THE SCHOOL WROTE TWO SENTENCES THAT CANNOT BOTH BE TRUE, and this says
-        so before the solve rather than after it. An 11:00-12:30 lunch window
-        with a 60-minute meal leaves the meal ending at 12:00 at the earliest;
-        a break at 12:30 that demands a lesson between them is asking for a
-        forty-minute lesson to fit in thirty minutes. So is a break twenty
-        minutes after the frame opens, and so is one right after a previous
-        break.
+        BOTH HALVES, and the second one is what makes this sound. A stretch that
+        cannot hold a lesson does not by itself make a week impossible: the rule
+        is satisfied just as well by a class that has GONE HOME before the
+        break, and a class whose Friday ends at noon owes a 12:30 break nothing.
+        Refusing on the first half alone — which is what the first version of
+        this did — turns down weeks that have a timetable, and that is the worst
+        answer this engine can give.
 
-        The alternative is what the engine did before: build the demand anyway
-        and let CP-SAT discover that no lesson can satisfy it. What CP-SAT then
-        proves is not "this is impossible" but "the class must have gone home",
-        because that is the only other way to satisfy the clause — and a week
-        with every afternoon deleted is over capacity, infeasible, and beyond
-        the reach of any counting argument in the model. The school waited
-        sixty seconds for TIMEOUT, which names nothing. This is arithmetic on
-        four constants and it names everything.
+        So the arithmetic runs the whole way. When no lesson of the class can
+        ever sit in the stretch, the class can never be at school after that
+        break: the only remaining way to satisfy the clause is to be gone, so
+        that day is worth only its minutes BEFORE the break. Cap the closed days
+        that way, count what the week still holds, and refuse only when the
+        class needs more than that. Then the refusal is one the model would have
+        made too — it just could not make it in a minute, because the proof is a
+        pigeonhole across five separate days and the search never assembles it.
 
-        MEASURED AGAINST THE SHORTEST LESSON THE CLASS HAS, not the longest: a
-        stretch holding the short one is a stretch the rule can bind, and it is
-        only when NOTHING fits that the demand is empty. And only for a class
-        with lessons to place — a class whose week is entirely hand-placed owes
-        a break nothing, the same reading the builder takes.
+        Measured: a class with an availability row over the whole stretch, 16
+        lessons of 40 minutes, and mornings holding 3 a day — 15 against 16, a
+        shortfall of one lesson. Sixty seconds of silence before, refused by
+        name in milliseconds after.
+
+        THE CAPACITY IS COUNTED GENEROUSLY, on purpose. No lunch is subtracted
+        and no fragment is discounted beyond what _holds already does, because
+        every minute this over-counts is a week that goes to the solver instead
+        of being refused, and that is the direction to be wrong in.
         """
         if not any(rast.requires_lesson_before for rast in request.rasts):
             return
-        sharing = _groups_sharing_students(request.group_conflicts)
-        shortest: dict[UUID, int] = {}
+        by_group: dict[UUID, list[AnonymousRequirement]] = defaultdict(list)
         for requirement in request.requirements:
-            slots = self._grid.minutes_to_slots(requirement.minutes_per_lesson)
-            group_id = requirement.student_group_id
-            shortest[group_id] = min(shortest.get(group_id, slots), slots)
+            by_group[requirement.student_group_id].append(requirement)
 
-        for group in request.groups:
+        for group, clique in self._cliques(request):
             if group.min_grade_level is None or group.max_grade_level is None:
                 continue
-            members = {group.id, *sharing.get(group.id, ())}
-            lengths = [shortest[member] for member in members if member in shortest]
-            if not lengths:
+            owned = [r for member in clique.members for r in by_group.get(member, [])]
+            if not owned:
                 continue
-            duration = min(lengths)
-            for day_index, _opens, room, first, _last, meal in self._asked_stretches(
+
+            # The days this class is shut out of the rest of, and the break that
+            # shuts it — the first one found, which is the one to name.
+            closed: dict[int, tuple[int, int]] = {}
+            for day_index, _opens, room, first, last, meal in self._asked_stretches(
                 request, (group.min_grade_level, group.max_grade_level),
             ):
-                if first - room >= duration:
+                # THE BEST-PLACED REQUIREMENT DECIDES, because the demand is for
+                # A lesson and not a particular one: one subject whose teacher
+                # is free and whose lessons are short enough answers it for the
+                # whole class. Measuring the shortest lesson alone would close a
+                # day whose maths teacher is away and whose music teacher is not.
+                if any(
+                    self._room_in_stretch(
+                        self._reserved_ranges(request, requirement, day_index), room, first,
+                    ) >= self._grid.minutes_to_slots(requirement.minutes_per_lesson)
+                    for requirement in owned
+                ):
                     continue
-                # Unless the school has already hand-placed one there, in which
-                # case the stretch holds the lesson it asked for and there is
-                # nothing to refuse.
-                #
-                # MEASURED FROM THE EARLIEST THE MEAL CAN END, which is the
-                # permissive reading, and the choice is deliberate. The strict
-                # one — a lock only counts if it sits after EVERY admissible
-                # meal — refuses a school whose lock is what forces the meal
-                # early in the first place, and a refused week that has a
-                # timetable is the worst answer this engine can give. The cost
-                # of being wrong the other way is that a rule goes unenforced
-                # on one day, which is the same lean _cliques takes and for the
-                # same reason.
-                if self._locks_in_stretch(request, members, day_index, room, first):
+                # A lesson the school placed by hand is a lesson, so a stretch
+                # a lock already fills is not closed at all.
+                if self._locks_in_stretch(
+                    request, set(clique.members), day_index, room, first,
+                ):
                     continue
-                raise InvalidScheduleInputError.of("RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT", {
-                    "day": self._grid.schedule_days[day_index],
-                    "grades": _grade_span_text(
-                        group.min_grade_level, group.max_grade_level,
-                    ),
-                    "rast": self._grid.format_hhmmss(first, 0)[0][:5],
-                    "opens": self._grid.format_hhmmss(room, 0)[0][:5],
-                    "remaining": (first - room) * self._grid.slot_minutes,
-                    "minutes": duration * self._grid.slot_minutes,
-                    "bound": "lunch" if meal else "day",
-                })
+                closed.setdefault(day_index, (first, last, room, meal))
+            if not closed:
+                continue
+
+            rules = request.rules
+            lunch_on = rules is not None and _lunch_window_is_set(rules)
+            if lunch_on:
+                window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
+            capacity = 0
+            for day_index, free in clique.free_by_day.items():
+                shut = closed.get(day_index)
+                if shut is not None:
+                    free = [
+                        (start, min(end, shut[0])) for start, end in free
+                        if start < shut[0]
+                    ]
+                # And the minutes reserved away from EVERY requirement the
+                # class has. Every one, not any: a row that stops the maths
+                # teacher leaves the hour open to music, and subtracting it
+                # would count a week as smaller than it is — which is the
+                # direction that refuses a timetable.
+                for start, end in self._reserved_for_all(request, owned, day_index):
+                    free = _subtract_range(free, (start, end))
+                if not lunch_on:
+                    capacity += _holds(free, clique.measure)
+                    continue
+                # The meal placed where it wastes least, the same search the
+                # hours verdict makes: the class must eat, and counting a day
+                # as if it need not would over-count exactly the hour that
+                # decides these weeks. Best-case, so the count stays generous
+                # and a refusal stays one the model would have made.
+                best = 0
+                fits = False
+                for start in range(window_start, window_end - lunch_slots + 1):
+                    if any(a <= start and start + lunch_slots <= b for a, b in free):
+                        fits = True
+                        best = max(best, _holds(
+                            _subtract_range(free, (start, start + lunch_slots)),
+                            clique.measure,
+                        ))
+                # No meal fits this day at all: a refusal of its own, made
+                # elsewhere by name, and not this one's to make.
+                capacity += best if fits else _holds(free, clique.measure)
+            if clique.demand <= capacity:
+                continue
+
+            day_index, (first, _last, room, meal) = next(iter(closed.items()))
+            widest = max(
+                self._room_in_stretch(
+                    self._reserved_ranges(request, requirement, day_index), room, first,
+                )
+                for requirement in owned
+            )
+            minutes = self._grid.slot_minutes
+            raise InvalidScheduleInputError.of("RAST_DEMANDS_A_LESSON_THAT_CANNOT_FIT", {
+                "day": self._grid.schedule_days[day_index],
+                "grades": _grade_span_text(group.min_grade_level, group.max_grade_level),
+                "rast": self._grid.format_hhmmss(first, 0)[0][:5],
+                "opens": self._grid.format_hhmmss(room, 0)[0][:5],
+                "remaining": widest * minutes,
+                "minutes": min(
+                    self._grid.minutes_to_slots(r.minutes_per_lesson) for r in owned
+                ) * minutes,
+                # Which of the three took the minutes, so the school is sent to
+                # the screen that holds the lever.
+                "bound": (
+                    "closed" if widest < first - room else "lunch" if meal else "day"
+                ),
+                "demandMinutes": clique.demand * minutes,
+                "capacityMinutes": capacity * minutes,
+            })
 
     def _earliest_meal_end(
         self,
@@ -2517,6 +2694,19 @@ class SchedulerSolver:
             if group.min_grade_level is not None and group.max_grade_level is not None
         }
 
+        # One read per (requirement, day) for the whole build: the same
+        # requirement is looked at once per class that shares its pupils, once
+        # per day, once per asking break.
+        cache: dict[tuple[UUID, int], list[tuple[int, int]]] = {}
+
+        def reserved(
+            requirement: AnonymousRequirement, day_index: int,
+        ) -> list[tuple[int, int]]:
+            key = (requirement.id, day_index)
+            if key not in cache:
+                cache[key] = self._reserved_ranges(request, requirement, day_index)
+            return cache[key]
+
         for group in request.groups:
             members = {group.id, *sharing.get(group.id, ())}
             lessons = [
@@ -2551,7 +2741,15 @@ class SchedulerSolver:
                     # is one boolean and two rows the model never sees; NOT
                     # skipping it was the timeout, because a flag that can
                     # never be true turns the clause into "go home".
-                    if decision.duration > first - room:
+                    #
+                    # PER LESSON, not per stretch, because a reservation
+                    # reaches a teacher rather than a class: the maths teacher
+                    # being away leaves the stretch open to every other
+                    # subject, and a room measured across the class would close
+                    # it for all of them.
+                    if decision.duration > self._room_in_stretch(
+                        reserved(decision.lesson.requirement, day_index), room, first,
+                    ):
                         continue
                     flag = model.NewBoolVar(
                         f"before_{group.id}_{day_index}_{first}_{decision.lesson.key()}",
@@ -2567,12 +2765,33 @@ class SchedulerSolver:
                         model.Add(decision.start >= base + opens).OnlyEnforceIf(flag)
                     model.Add(decision.end <= base + first).OnlyEnforceIf(flag)
                     inside.append(flag)
-                # Nothing short enough to fit: the stretch cannot hold a
-                # lesson at all, and an empty BoolOr is an unexplained
-                # INFEASIBLE. _verify_rast_demands has already refused that by
-                # name, so this is only reached for a class whose own lessons
-                # are all too long for a stretch another class can use.
+                if asks is None:
+                    asks = registry.register(
+                        model,
+                        name=f"rast_order_{group.id}",
+                        category="AVAILABILITY",
+                        code="RAST_NO_LESSON_FITS_BEFORE_IT",
+                        resource_ids=[group.id],
+                    )
                 if not inside:
+                    # NOTHING CAN EVER SIT IN THIS STRETCH, so the demand has
+                    # exactly one remaining way to be met: the class is gone by
+                    # then. Said outright, as a hole in every one of its
+                    # lessons' start domains, and NOT left to a clause over
+                    # flags that can never be true — that was the timeout, and
+                    # an empty BoolOr would be an unexplained INFEASIBLE
+                    # besides. A domain is also the cheapest thing this engine
+                    # has: no boolean, no row, and presolve reads it directly.
+                    #
+                    # Whether the week then still holds the class's lessons is
+                    # _verify_rast_demands' question, asked before the solve.
+                    for decision in lessons:
+                        model.AddLinearExpressionInDomain(
+                            decision.start,
+                            cp_model.Domain(
+                                base + last, base + slots_per_day - 1,
+                            ).complement(),
+                        ).OnlyEnforceIf(asks)
                     continue
                 # WHO IS STILL AT SCHOOL AFTER THE RAST. Read without this
                 # the rule demands a lesson in the stretch on every school
@@ -2588,14 +2807,6 @@ class SchedulerSolver:
                 # the stretch — so only the reverse implication, "a lesson
                 # here means the class is still at school", makes them
                 # true. `inside` needs no such thing.
-                if asks is None:
-                    asks = registry.register(
-                        model,
-                        name=f"rast_order_{group.id}",
-                        category="AVAILABILITY",
-                        code="RAST_NO_LESSON_FITS_BEFORE_IT",
-                        resource_ids=[group.id],
-                    )
                 # A lock after the break has already answered the question the
                 # literals below exist to ask, and answered it yes. The demand
                 # is then unconditional, and costs one clause instead of a
