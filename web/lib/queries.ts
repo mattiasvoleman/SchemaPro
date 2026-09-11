@@ -1167,6 +1167,15 @@ export interface VersionLesson {
   isParked?: boolean;
   extraGroupIds?: string[];
   studentIds?: string[];
+  /**
+   * Absent in snapshots stored before the gateway carried it, and restored as
+   * ALL_WEEKS — see VersionLesson in src/calendar/schedule-versions.service.ts.
+   */
+  recurrence?: LessonRecurrence;
+  /** YYYY-MM-DD. Absent or null means from the start of the academic year. */
+  startDate?: string | null;
+  /** YYYY-MM-DD. Absent or null means until the year ends. */
+  endDate?: string | null;
 }
 
 /** Snapshot content, used for diffing a version against the live timetable. */

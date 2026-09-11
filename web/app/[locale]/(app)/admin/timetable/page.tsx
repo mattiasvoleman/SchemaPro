@@ -175,6 +175,27 @@ function isOnTray(lesson: { isParked?: boolean }): boolean {
   return lesson.isParked ?? false;
 }
 
+/** A lesson on either side of the version diff. */
+type DiffLesson = VersionLesson | MasterLesson;
+
+/**
+ * Which weeks a lesson runs. A snapshot stored before the gateway carried it
+ * has no key, and restore writes ALL_WEEKS for that — so the diff reads it so.
+ */
+function weeksOf(lesson: { recurrence?: LessonRecurrence }): LessonRecurrence {
+  return lesson.recurrence ?? "ALL_WEEKS";
+}
+
+/**
+ * One end of a lesson's date window, read the way restore reads it: the first
+ * ten characters, and null for an absent or empty value. Both sides send
+ * YYYY-MM-DD, but restore takes a full timestamp too, and the diff must not
+ * call a snapshot different for how it spelled a date restore reads the same.
+ */
+function dayOf(value: string | null | undefined): string | null {
+  return value ? value.slice(0, 10) : null;
+}
+
 function minutesToHHMM(minutes: number): string {
   const h = String(Math.floor(minutes / 60)).padStart(2, "0");
   const m = String(minutes % 60).padStart(2, "0");
@@ -485,6 +506,11 @@ export default function TimetablePage() {
     () => new Map(teachers.map((teacher) => [teacher.id, teacher])),
     [teachers],
   );
+  /** Everyone, pupils who have left included: a saved version still names them. */
+  const personById = useMemo(
+    () => new Map((people ?? []).map((person) => [person.id, person])),
+    [people],
+  );
   const lessonById = useMemo(
     () => new Map((lessons ?? []).map((lesson) => [lesson.id, lesson])),
     [lessons],
@@ -753,7 +779,7 @@ export default function TimetablePage() {
    * calendar got "Idrott — 4.2" with nothing saying 4.1 was in the hall too.
    */
   const groupLabel = useCallback(
-    (lesson: MasterLesson) =>
+    (lesson: Pick<MasterLesson, "studentGroupId" | "extraGroupIds">) =>
       [
         groupById.get(lesson.studentGroupId)?.name,
         ...lesson.extraGroupIds.map((id) => groupById.get(id)?.name),
@@ -1575,24 +1601,64 @@ export default function TimetablePage() {
   // Export & diff
   // -------------------------------------------------------------------
 
+  /**
+   * One line of the version diff. Every part of the diff's key shows here:
+   * a part the key holds and the line leaves out turns a teacher swap into a
+   * + and a − that read the same, a difference reported and then hidden.
+   *
+   * The pupils are counted unless `namePupils`. A list of them is too long for
+   * every line, so they are named only where they are what differs.
+   */
   const lessonLabel = useCallback(
-    (l: {
-      subjectId: string;
-      studentGroupId: string;
-      dayOfWeek: number;
-      startTime: string;
-      endTime: string;
-      isParked?: boolean;
-    }) =>
-      `${subjectById.get(l.subjectId)?.name ?? "?"} · ${
-        groupById.get(l.studentGroupId)?.name ?? "?"
-      } · ${
+    (l: DiffLesson, namePupils: boolean) => {
+      const nameOf = (id: string) => {
+        const teacher = teacherById.get(id);
+        return teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : "?";
+      };
+      const startDate = dayOf(l.startDate);
+      const endDate = dayOf(l.endDate);
+      const period =
+        startDate && endDate
+          ? `${startDate}–${endDate}`
+          : startDate
+            ? t("diffFrom", { date: startDate })
+            : endDate
+              ? t("diffUntil", { date: endDate })
+              : null;
+      const pupils = l.studentIds ?? [];
+      const pupilNames = () =>
+        pupils
+          .map((id) => {
+            const pupil = personById.get(id);
+            return pupil ? `${pupil.firstName} ${pupil.lastName}` : "?";
+          })
+          .sort()
+          .join(", ");
+      return [
+        subjectById.get(l.subjectId)?.name ?? "?",
+        groupLabel({
+          studentGroupId: l.studentGroupId,
+          extraGroupIds: l.extraGroupIds ?? [],
+        }) || "?",
         // Where a parked lesson was is not where it is: the tray is.
         isOnTray(l)
           ? t("diffOnTray")
-          : `${tDays(String(l.dayOfWeek))} ${toHHMM(l.startTime)}–${toHHMM(l.endTime)}`
-      }`,
-    [subjectById, groupById, t, tDays],
+          : `${tDays(String(l.dayOfWeek))} ${toHHMM(l.startTime)}–${toHHMM(l.endTime)}`,
+        l.teacherId ? nameOf(l.teacherId) : null,
+        l.coTeacherId ? t("diffCoTeacher", { name: nameOf(l.coTeacherId) }) : null,
+        l.roomId ? t("diffRoom", { name: roomById.get(l.roomId)?.name ?? "?" }) : null,
+        recurrenceBadge({ recurrence: weeksOf(l), startDate, endDate }, t),
+        period,
+        pupils.length === 0
+          ? null
+          : namePupils
+            ? `⊕ ${pupilNames()}`
+            : `⊕${pupils.length}`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    },
+    [subjectById, groupLabel, teacherById, roomById, personById, t, tDays],
   );
 
   const versionDiff = useMemo(() => {
@@ -1601,23 +1667,34 @@ export default function TimetablePage() {
     // is a memory, so two versions whose parked lessons remember different
     // hours hold the same timetable — while a lesson parked in one and placed
     // at its remembered hour in the other is a change, the one a restore makes.
-    const key = (l: VersionLesson | MasterLesson) =>
+    //
+    // Everything else a restore writes that says who is in the room, and in
+    // which weeks, is in the key too, each read the way restore reads a key
+    // the snapshot lacks. Without them a lesson moved to odd weeks, or cut to
+    // half a term, came out identical to a snapshot that restoring would
+    // change. The classes and pupils are sets, so they are compared sorted.
+    // `pupils` false leaves the pupils out, to find pairs differing in nothing
+    // else.
+    const key = (l: DiffLesson, pupils = true) =>
       [
         l.subjectId,
         l.studentGroupId,
         l.teacherId ?? "",
+        l.coTeacherId ?? "",
         l.roomId ?? "",
         ...(isOnTray(l)
           ? ["tray"]
           : [l.dayOfWeek, toHHMM(l.startTime), toHHMM(l.endTime)]),
+        weeksOf(l),
+        dayOf(l.startDate) ?? "",
+        dayOf(l.endDate) ?? "",
+        [...(l.extraGroupIds ?? [])].sort().join(","),
+        pupils ? [...(l.studentIds ?? [])].sort().join(",") : "",
       ].join("|");
     // Counted rather than put in a map: without the slot, two lessons of one
     // class and teacher on the tray share a key, and a map keeps only one of
     // them — parking a second would read as no change at all.
-    const unmatched = (
-      side: (VersionLesson | MasterLesson)[],
-      other: (VersionLesson | MasterLesson)[],
-    ) => {
+    const unmatched = (side: DiffLesson[], other: DiffLesson[]) => {
       const left = new Map<string, number>();
       for (const l of other) left.set(key(l), (left.get(key(l)) ?? 0) + 1);
       return side.filter((l) => {
@@ -1627,10 +1704,16 @@ export default function TimetablePage() {
         return n === 0;
       });
     };
-    return {
-      added: unmatched(lessons, comparing.lessons),
-      removed: unmatched(comparing.lessons, lessons),
+    const added = unmatched(lessons, comparing.lessons);
+    const removed = unmatched(comparing.lessons, lessons);
+    // An added and a removed line never share a whole key, so two that agree
+    // on everything but the pupils differ in the pupils alone. Counted, such a
+    // pair would print alike; those lines name them.
+    const lines = (side: DiffLesson[], other: DiffLesson[]) => {
+      const rest = new Set(other.map((l) => key(l, false)));
+      return side.map((lesson) => ({ lesson, namePupils: rest.has(key(lesson, false)) }));
     };
+    return { added: lines(added, removed), removed: lines(removed, added) };
   }, [comparing, lessons]);
 
   const doExportIcs = async () => {
@@ -2827,8 +2910,8 @@ export default function TimetablePage() {
                       {t("diffAdded", { count: versionDiff.added.length })}
                     </div>
                     <ul className="space-y-1 text-xs text-muted-foreground">
-                      {versionDiff.added.slice(0, 8).map((lesson, index) => (
-                        <li key={index}>+ {lessonLabel(lesson)}</li>
+                      {versionDiff.added.slice(0, 8).map(({ lesson, namePupils }, index) => (
+                        <li key={index}>+ {lessonLabel(lesson, namePupils)}</li>
                       ))}
                       {versionDiff.added.length > 8 ? <li>…</li> : null}
                     </ul>
@@ -2838,8 +2921,8 @@ export default function TimetablePage() {
                       {t("diffRemoved", { count: versionDiff.removed.length })}
                     </div>
                     <ul className="space-y-1 text-xs text-muted-foreground">
-                      {versionDiff.removed.slice(0, 8).map((lesson, index) => (
-                        <li key={index}>− {lessonLabel(lesson)}</li>
+                      {versionDiff.removed.slice(0, 8).map(({ lesson, namePupils }, index) => (
+                        <li key={index}>− {lessonLabel(lesson, namePupils)}</li>
                       ))}
                       {versionDiff.removed.length > 8 ? <li>…</li> : null}
                     </ul>
