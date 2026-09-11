@@ -28,6 +28,7 @@ from app.schemas.schedule import (
     AnonymousRoom,
     FixedLesson,
     FrameTime,
+    LunchPlacement,
     LunchServing,
     OptimizeScheduleRequest,
     OptimizeScheduleResponse,
@@ -228,10 +229,17 @@ class _LunchStarts:
     declared: cp_model.Domain | None
     locked: cp_model.Domain | None
     closed: cp_model.Domain | None
+    #: The start the school placed by hand, as a domain of one. Where it is set
+    #: the other three are None — a pin outranks the window and the sitting,
+    #: and the locks and reservations were checked against it before any build
+    #: — and `window` is widened to hold it, so a meal drawn outside the school
+    #: window is a narrowing like any other and never a variable that cannot
+    #: be built.
+    pinned: cp_model.Domain | None = None
 
     def composed(self) -> cp_model.Domain:
         domain = self.window
-        for narrowing in (self.declared, self.locked, self.closed):
+        for narrowing in (self.declared, self.locked, self.closed, self.pinned):
             if narrowing is not None:
                 domain = domain.intersection_with(narrowing)
         return domain
@@ -348,7 +356,7 @@ class SchedulerSolver:
             model, registry, decisions, request.rules, day_vars,
             request.fixed_lessons, request.groups, request.constraints,
             request.lunch_servings, request.frame_times,
-            request.group_conflicts,
+            request.group_conflicts, request.lunch_placements,
         )
         # After the lunch, because a rast's stretch is counted from the
         # previous break and the class's own meal can be that break.
@@ -416,6 +424,12 @@ class SchedulerSolver:
             lunch_slots,
         )
         headcount_by_group = _lunch_headcounts(request.groups)
+        # A meal the school placed outside the window takes no chair inside it,
+        # and counting it would refuse a week whose hall is fine. Left out
+        # generously — a pin partly inside is left out whole — because this is
+        # a proof of impossibility, and every child it under-counts only hands
+        # the question to the solver.
+        pins = self._lunch_pins(request.lunch_placements, lunch_group_ids)
         window_minutes = (window_end - window_start) * self._grid.slot_minutes
         offered = rules.dining_seats * window_minutes
         for day_index, day_of_week in enumerate(self._grid.schedule_days):
@@ -423,6 +437,10 @@ class SchedulerSolver:
                 headcount_by_group.get(group_id, 0)
                 for group_id in lunch_group_ids
                 if (group_id, day_index) not in exempt_days
+                and (
+                    (group_id, day_index) not in pins
+                    or window_start <= pins[(group_id, day_index)] <= window_end - lunch_slots
+                )
             )
             needed = eating * rules.lunch_minutes
             if needed > offered:
@@ -683,6 +701,153 @@ class SchedulerSolver:
                 )
         return None
 
+    def _lunch_pins(
+        self,
+        placements: list[LunchPlacement],
+        lunch_group_ids: list[UUID] | set[UUID],
+    ) -> dict[tuple[UUID, int], int]:
+        """(class, day index) -> the day-local slot the school put the meal at.
+
+        One reader for the builder, the lunch stage, the narrowings and the
+        dining-hall verdict, so the four can never disagree about which meals
+        are pinned. Placements that cannot stand — off the grid, on a day the
+        engine does not teach — are left out rather than raised: every one of
+        them is refused by name in _verify_lunch_placements before any of these
+        readers runs, and a reader that also refused would be a second rule.
+
+        Only classes the payload feeds. A placement for a group with no lunch
+        variable has nothing to pin; the gateway sends placements only for the
+        classes it also sends in `groups`.
+        """
+        eating = set(lunch_group_ids)
+        pins: dict[tuple[UUID, int], int] = {}
+        for placement in placements:
+            if placement.student_group_id not in eating:
+                continue
+            if placement.day_of_week not in self._grid.schedule_days:
+                continue
+            try:
+                slot = self._grid.parse_hhmmss(placement.start_time)
+            except ValueError:
+                continue
+            day_index = self._grid.day_index(placement.day_of_week)
+            pins[(placement.student_group_id, day_index)] = slot
+        return pins
+
+    @staticmethod
+    def _lunch_start_bounds(
+        pin: int | None,
+        day_offset: int,
+        window_start: int,
+        window_end: int,
+        lunch_slots: int,
+    ) -> tuple[int, int]:
+        """The lunch variable's inclusive bounds, widened to hold a pin.
+
+        THE WHOLE FEATURE HANGS ON THIS. The variable used to be built on the
+        school window unconditionally, and a pin outside it is not an
+        infeasible model but an invalid one — MODEL_INVALID, a crash. That is
+        exactly the school this exists for: locked lessons fill 10:30-13:00, so
+        the meal they place goes at 13:00, outside the window. The hull of the
+        window and the pin holds it; the pin itself is then a constraint under
+        a literal, so relaxing it widens the meal's choices instead of leaving
+        a variable with nowhere to be.
+        """
+        low, high = day_offset + window_start, day_offset + window_end - lunch_slots
+        if pin is not None:
+            low, high = min(low, day_offset + pin), max(high, day_offset + pin)
+        return low, high
+
+    def _verify_lunch_placements(
+        self,
+        request: OptimizeScheduleRequest,
+        lunch_group_ids: list[UUID],
+        exempt_days: set[tuple[UUID, int]],
+        lunch_slots: int,
+    ) -> dict[tuple[UUID, int], int]:
+        """Refuse a hand-placed meal that cannot stand; return the ones that can.
+
+        A PIN OUTRANKS THE WINDOW AND THE SITTING, and nothing else. The window
+        and the stage's sitting are rules about when a STAGE eats, and a school
+        placing one class's meal by hand is overriding them on purpose. A
+        locked lesson and a reservation are facts about the CLASS's own time,
+        and a meal placed on top of one is two of the school's sentences that
+        cannot both be true — refused here, by name, rather than left to the
+        model.
+
+        And it has to be refused here, not merely because a name is better
+        than a core. The locked lessons reach the meal only as a narrowing of
+        its domain — they are never intervals beside it — and a pinned day
+        drops that narrowing. A pin on a lock that got past this check would
+        not be refused at all: the meal would be served in a classroom.
+
+        Tested on the PIN'S OWN SLOT, not on the starts the window leaves:
+        blocked_starts is computed across the lunch window, and a meal placed
+        outside it — the whole point — would be checked against nothing. The
+        same two helpers the builder uses, asked about one start, so the check
+        and the model can never round a locked lesson differently.
+        """
+        eating = set(lunch_group_ids)
+        sharing = _groups_sharing_students(request.group_conflicts)
+        slots_per_day = self._grid.slots_per_day
+        pins: dict[tuple[UUID, int], int] = {}
+        for placement in request.lunch_placements:
+            group_id = placement.student_group_id
+            if group_id not in eating:
+                continue
+            try:
+                if placement.day_of_week not in self._grid.schedule_days:
+                    msg = f"{placement.day_of_week} is not a teaching day"
+                    raise ValueError(msg)
+                slot = self._grid.parse_hhmmss(placement.start_time)
+                if slot + lunch_slots > slots_per_day:
+                    msg = "the meal runs past the end of the day"
+                    raise ValueError(msg)
+            except ValueError as exc:
+                raise InvalidScheduleInputError.of("LUNCH_PLACEMENT_OFF_GRID", {
+                    "group": str(group_id),
+                    "day": placement.day_of_week,
+                    "start": placement.start_time[:5],
+                    "slotMinutes": self._grid.slot_minutes,
+                }) from exc
+
+            day_index = self._grid.day_index(placement.day_of_week)
+            key = (group_id, day_index)
+            day_offset = day_index * slots_per_day
+            what: str | None = None
+            if key in exempt_days:
+                # The school has said the class is not here that day. A meal
+                # placed on it would have no variable to pin and would vanish
+                # without a word.
+                what = "day"
+            else:
+                locked = self._lunch_starts_blocked_by_fixed_lessons(
+                    request.fixed_lessons, {group_id}, sharing, slot, slot, lunch_slots,
+                ).get(key)
+                closed, covered = self._lunch_starts_blocked_by_constraints(
+                    request.constraints, {group_id}, slot, slot, slot + lunch_slots, lunch_slots,
+                )
+                if locked and self._admissible_lunch_starts(
+                    day_offset, slot, slot + lunch_slots, lunch_slots, locked,
+                ).is_empty():
+                    what = "locked"
+                elif key in covered or (
+                    closed.get(key)
+                    and self._admissible_lunch_starts(
+                        day_offset, slot, slot + lunch_slots, lunch_slots, closed[key],
+                    ).is_empty()
+                ):
+                    what = "closed"
+            if what is not None:
+                raise InvalidScheduleInputError.of("LUNCH_PLACEMENT_COLLIDES", {
+                    "group": str(group_id),
+                    "day": placement.day_of_week,
+                    "start": placement.start_time[:5],
+                    "what": what,
+                })
+            pins[key] = slot
+        return pins
+
     def _lunch_start_narrowings(
         self, request: OptimizeScheduleRequest,
     ) -> dict[tuple[UUID, int], _LunchStarts] | None:
@@ -729,12 +894,26 @@ class SchedulerSolver:
             if group.min_grade_level is not None and group.max_grade_level is not None
         }
         slots_per_day = self._grid.slots_per_day
+        pins = self._lunch_pins(request.lunch_placements, lunch_group_ids)
         starts: dict[tuple[UUID, int], _LunchStarts] = {}
         for group_id in lunch_group_ids:
             for day_index, day_of_week in enumerate(self._grid.schedule_days):
                 if (group_id, day_index) in exempt_days:
                     continue
                 day_offset = day_index * slots_per_day
+                pin = pins.get((group_id, day_index))
+                if pin is not None:
+                    low, high = self._lunch_start_bounds(
+                        pin, day_offset, window_start, window_end, lunch_slots,
+                    )
+                    starts[(group_id, day_index)] = _LunchStarts(
+                        window=cp_model.Domain(low, high),
+                        declared=None,
+                        locked=None,
+                        closed=None,
+                        pinned=cp_model.Domain(day_offset + pin, day_offset + pin),
+                    )
+                    continue
                 declared = self._declared_lunch_domain(
                     request.lunch_servings,
                     request.frame_times,
@@ -913,7 +1092,7 @@ class SchedulerSolver:
             model.Add(
                 start == sum(slot * literal for slot, literal in options.items()),
             ).OnlyEnforceIf(present)
-            for cause in ("declared", "locked", "closed"):
+            for cause in ("declared", "locked", "closed", "pinned"):
                 narrowing = getattr(parts, cause)
                 if narrowing is None:
                     continue
@@ -1040,7 +1219,7 @@ class SchedulerSolver:
             seats_matter = None if without is None else not without
             if seats_matter is False:
                 relaxed.update(hall)
-        for cause in ("declared", "closed", "locked", "lessons"):
+        for cause in ("pinned", "declared", "closed", "locked", "lessons"):
             drop_if_unneeded(by_cause.get(cause, set()))
 
         # The classes, in chunks: a chunk that can go, goes whole; one that
@@ -1117,6 +1296,7 @@ class SchedulerSolver:
                 resource_ids=group_ids,
             ))
         for cause, category, code in (
+            ("pinned", "LUNCH_WINDOW", "LUNCH_STARTS_PLACED_BY_HAND"),
             ("declared", "LUNCH_WINDOW", "LUNCH_STARTS_NARROWED_BY_SITTING_OR_FRAME"),
             ("locked", "GROUP_OVERLAP", "LUNCH_STARTS_TAKEN_BY_LOCKED_LESSONS"),
             ("closed", "AVAILABILITY", "LUNCH_STARTS_TAKEN_BY_RESERVATION"),
@@ -1716,6 +1896,8 @@ class SchedulerSolver:
             + day_count * lunch_groups
             + lunch_lock_vars
             + lunch_closure_vars
+            # One literal per meal the school placed by hand.
+            + len(request.lunch_placements)
             + lunch_drift_vars
             + dining_vars
             + spread_pairs
@@ -1999,8 +2181,19 @@ class SchedulerSolver:
             window_end,
             lunch_slots,
         )
+        # THE MEALS THE SCHOOL PLACED BY HAND, before any check that would
+        # refuse the day they rescue. Then every lunch refusal below skips a
+        # pinned day, and the skip list is the feature: miss one and a school
+        # that drew its meal to escape "locked lessons leave 4.1 no lunch gap"
+        # is refused by the NEXT loop for the same class on the same day —
+        # the worst thing this can do, and the default if a loop is added
+        # later without it. Five places: the locks, the sitting, the captive
+        # count, the reservations and the four sources together.
+        pins = self._verify_lunch_placements(
+            request, lunch_group_ids, exempt_days, lunch_slots,
+        )
         for (group_id, day_index), forbidden in blocked_starts.items():
-            if (group_id, day_index) in exempt_days:
+            if (group_id, day_index) in exempt_days or (group_id, day_index) in pins:
                 continue
             allowed = self._admissible_lunch_starts(
                 day_index * slots_per_day,
@@ -2031,7 +2224,7 @@ class SchedulerSolver:
         if request.lunch_servings or request.frame_times:
             for group_id in lunch_group_ids:
                 for day_index, day_of_week in enumerate(self._grid.schedule_days):
-                    if (group_id, day_index) in exempt_days:
+                    if (group_id, day_index) in exempt_days or (group_id, day_index) in pins:
                         continue
                     declared = self._declared_lunch_domain(
                         request.lunch_servings,
@@ -2071,7 +2264,10 @@ class SchedulerSolver:
             for day_index, day_of_week in enumerate(self._grid.schedule_days):
                 applicable: dict[UUID, list[LunchServing]] = {}
                 for group_id in lunch_group_ids:
-                    if (group_id, day_index) in exempt_days:
+                    # A pinned class eats where it was placed, not in this
+                    # sitting, and counting it here would refuse a flow that
+                    # works.
+                    if (group_id, day_index) in exempt_days or (group_id, day_index) in pins:
                         continue
                     matching = _servings_for(
                         request.lunch_servings, span_by_group.get(group_id), day_of_week,
@@ -2108,6 +2304,8 @@ class SchedulerSolver:
         # two different screens, and one message covering both would send half
         # the schools to the wrong one.
         for (group_id, day_index), closed in closed_starts.items():
+            if (group_id, day_index) in pins:
+                continue
             allowed = self._admissible_lunch_starts(
                 day_index * slots_per_day,
                 window_start,
@@ -2137,7 +2335,7 @@ class SchedulerSolver:
         for group_id in lunch_group_ids:
             for day_index, day_of_week in enumerate(self._grid.schedule_days):
                 key = (group_id, day_index)
-                if key in exempt_days:
+                if key in exempt_days or key in pins:
                     continue
                 allowed = self._admissible_lunch_starts(
                     day_index * slots_per_day,
@@ -4424,6 +4622,7 @@ class SchedulerSolver:
         servings: list[LunchServing],
         frames: list[FrameTime],
         group_conflicts: list[tuple[UUID, UUID]] | None = None,
+        lunch_placements: list[LunchPlacement] | None = None,
     ) -> dict[tuple[UUID, int], cp_model.IntVar]:
         """Hard school rules: lunch break, dining hall seats, lessons per day.
 
@@ -4513,6 +4712,9 @@ class SchedulerSolver:
                 for group in groups
                 if group.min_grade_level is not None and group.max_grade_level is not None
             }
+
+            # The meals the school placed by hand, read once for the model.
+            pins = self._lunch_pins(lunch_placements or [], lunch_group_ids)
 
             # Lunch starts a locked lesson has already taken away. Computed
             # once for the whole model: the windows are constant, so this is
@@ -4616,10 +4818,12 @@ class SchedulerSolver:
                     day_offset = day_index * slots_per_day
                     # Inclusive bounds matching the candidate enumeration this
                     # replaces: range(window_start, window_end - lunch_slots + 1).
+                    pin = pins.get((group_id, day_index))
+                    low, high = self._lunch_start_bounds(
+                        pin, day_offset, window_start, window_end, lunch_slots,
+                    )
                     lunch_start = model.NewIntVar(
-                        day_offset + window_start,
-                        day_offset + window_end - lunch_slots,
-                        f"lunchstart_{group_id}_{day_index}",
+                        low, high, f"lunchstart_{group_id}_{day_index}",
                     )
                     lunch_starts[(group_id, day_index)] = lunch_start
 
@@ -4643,10 +4847,15 @@ class SchedulerSolver:
                         window_end,
                         lunch_slots,
                     )
-                    if declared is not None:
+                    # A pinned meal outranks the sitting and the frame: that
+                    # is what placing it by hand means.
+                    if declared is not None and pin is None:
                         model.AddLinearExpressionInDomain(lunch_start, declared)
 
-                    forbidden = blocked_starts.get((group_id, day_index))
+                    # And the locks and reservations are not narrowings of a
+                    # pinned meal: _verify_lunch_placements refused any pin
+                    # that lands on one, so on a pinned day they say nothing.
+                    forbidden = None if pin is not None else blocked_starts.get((group_id, day_index))
                     if forbidden:
                         # UNDER AN ASSUMPTION LITERAL, not bare. A bare domain
                         # subtraction lets CP-SAT prove infeasibility without
@@ -4708,7 +4917,7 @@ class SchedulerSolver:
                             ),
                         ).OnlyEnforceIf(lunch_literal)
 
-                    closed = closed_starts.get((group_id, day_index))
+                    closed = None if pin is not None else closed_starts.get((group_id, day_index))
                     if closed:
                         # A SECOND literal rather than one domain merged with
                         # the locked-lesson one above. The two fail for reasons
@@ -4742,6 +4951,29 @@ class SchedulerSolver:
                                 closed,
                             ),
                         ).OnlyEnforceIf(closed_literal)
+                    if pin is not None:
+                        # THE SCHOOL'S OWN MEAL, held where it was placed. Under
+                        # a literal, never bare, for the reason the locked
+                        # lessons above give: a bare equality lets CP-SAT prove
+                        # a week impossible without touching an assumption, and
+                        # the empty core that follows erases every other cause
+                        # in the payload. The mandatory interval below is
+                        # unchanged — the lessons still route round the meal —
+                        # and so is the seat interval, because a meal the
+                        # school placed does not make the hall any larger.
+                        pin_literal = registry.register(
+                            model,
+                            name=f"lunchpin_{group_id}_{day_index}",
+                            category="LUNCH_WINDOW",
+                            code="LUNCH_PLACED_BY_HAND",
+                            params={
+                                "group": str(group_id),
+                                "day": self._grid.schedule_days[day_index],
+                                "start": self._grid.format_hhmmss(pin, 0)[0][:5],
+                            },
+                            resource_ids=[group_id],
+                        )
+                        model.Add(lunch_start == day_offset + pin).OnlyEnforceIf(pin_literal)
                     lunch_intervals.append(
                         model.NewFixedSizeIntervalVar(
                             lunch_start,

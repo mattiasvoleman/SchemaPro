@@ -134,6 +134,22 @@ export interface AnonymousLunchServing {
   seats: number | null;
 }
 
+/**
+ * A meal the school placed by hand: one class, one weekday, one start.
+ *
+ * The engine PINS the lunch variable it already builds for that class and day.
+ * Deliberately not a fixedLesson, which would add a second mandatory interval
+ * beside a variable that is still free — two reservations in one window, and
+ * an INFEASIBLE with no visible cause. Only the start: the meal's length is the
+ * school's one lunchMinutes.
+ */
+export interface AnonymousLunchPlacement {
+  studentGroupId: string;
+  dayOfWeek: DayOfWeek;
+  /** HH:MM:SS */
+  startTime: string;
+}
+
 export interface AnonymousRoom {
   id: string;
   capacity: number | null;
@@ -290,6 +306,8 @@ export interface AiEngineScheduleRequest {
   frameTimes: AnonymousFrameTime[];
   /** Lunchsittningar. Empty means the whole lunch window is open to everyone. */
   lunchServings: AnonymousLunchServing[];
+  /** Meals placed by hand. Empty means the solver places every one. */
+  lunchPlacements: AnonymousLunchPlacement[];
   /** Raster. Empty means no stage has a declared break. */
   rasts: AnonymousRast[];
   /** Locked master lessons the solver must plan around (never re-placed). */

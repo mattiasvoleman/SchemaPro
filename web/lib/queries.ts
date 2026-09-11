@@ -316,7 +316,7 @@ export function useLunchSittings(academicYearId: string | null) {
       return fetchAllPages<LunchSitting>((from, to) =>
         supabase
           .from("LunchSittings")
-          .select("id, studentGroupId, dayOfWeek, startTime, endTime, headcount")
+          .select("id, studentGroupId, dayOfWeek, startTime, endTime, headcount, isGenerated")
           .eq("academicYearId", academicYearId!)
           .order("dayOfWeek")
           .order("id")
@@ -790,6 +790,23 @@ export function useCrudMutations<TBody>(
   });
 
   return { create, update, remove };
+}
+
+/**
+ * Meals placed by hand in the Grundschema: place, move, remove.
+ *
+ * The same three verbs as every CRUD screen, over a resource that has no GET —
+ * the sittings are read above, straight from PostgREST, like every other screen
+ * that shows a meal. A move names only what changed; the meal's length is the
+ * school's lunchMinutes and is never sent.
+ */
+export function useLunchSittingMutations() {
+  return useCrudMutations<{
+    academicYearId: string;
+    studentGroupId: string;
+    dayOfWeek: number;
+    startTime: string;
+  }>("/api/v1/lunch-sittings", [["lunch-sittings"]]);
 }
 
 // ---------------------------------------------------------------------------

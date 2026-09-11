@@ -29,6 +29,13 @@ const state = vi.hoisted(() => ({
 
 const noMutation = { mutateAsync: vi.fn().mockResolvedValue({ id: "x" }), isPending: false };
 
+/** The three verbs of a meal placed by hand, each a spy a test can read. */
+const lunch = {
+  create: { mutateAsync: vi.fn(), isPending: false },
+  update: { mutateAsync: vi.fn(), isPending: false },
+  remove: { mutateAsync: vi.fn(), isPending: false },
+};
+
 vi.mock("@/lib/queries", () => ({
   useActiveYear: () => ({ activeYear: { id: "y-1" } }),
   useMasterLessons: () => ({ data: state.lessons, isLoading: false }),
@@ -42,6 +49,7 @@ vi.mock("@/lib/queries", () => ({
   useFrameTimes: () => ({ data: [] }),
   useLunchSettings: () => ({ data: state.lunchSettings }),
   useLunchSittings: () => ({ data: state.sittings }),
+  useLunchSittingMutations: () => lunch,
   useRoomPreferences: () => ({ data: [] }),
   useRasts: () => ({ data: RASTS }),
   useScheduleVersions: () => ({ data: [] }),
@@ -947,3 +955,131 @@ describe("why there is no lunch band", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 });
+
+describe("placing a lunch by hand", () => {
+  /*
+   * The school's case: a run refused because locked lessons left 4.1 no lunch
+   * gap. The meal has to go somewhere the solver will not put it, and this is
+   * the screen where the school can say where.
+   */
+  beforeEach(() => {
+    lunch.create.mutateAsync.mockReset().mockResolvedValue({ id: "placed-1" });
+    lunch.update.mutateAsync.mockReset().mockResolvedValue({});
+    lunch.remove.mutateAsync.mockReset().mockResolvedValue(undefined);
+    state.lunchSettings = {
+      id: "ls-1",
+      lunchEnabled: true,
+      lunchStartTime: "10:30",
+      lunchEndTime: "13:00",
+      lunchMinutes: 30,
+    };
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const meal = (dayOfWeek: number, isGenerated: boolean) => ({
+    id: `m-${dayOfWeek}`,
+    studentGroupId: "g-41",
+    dayOfWeek,
+    startTime: "11:40:00",
+    endTime: "12:10:00",
+    headcount: 24,
+    isGenerated,
+  });
+
+  it("offers the mode only with one class in view", async () => {
+    // A meal belongs to a class. On a grid of several there is no answer to
+    // "whose", so there is nothing to place.
+    state.sittings = [];
+    render(<TimetablePage />);
+    expect(screen.queryByRole("button", { name: /^timetable\.placeLunch$/ })).toBeNull();
+
+    await filterTo("4.1");
+    expect(screen.getByRole("button", { name: /^timetable\.placeLunch$/ })).toBeTruthy();
+  });
+
+  it("offers nothing when the school has no lunch to place", async () => {
+    state.lunchSettings = { ...(state.lunchSettings as object), lunchEnabled: false };
+    state.sittings = [];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    expect(screen.queryByRole("button", { name: /^timetable\.placeLunch$/ })).toBeNull();
+  });
+
+  it("gives the refused school a way out instead of a loop", async () => {
+    // The notice used to link only to the generation screen — the screen that
+    // had just refused this school, for exactly this reason.
+    state.sittings = [];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    fireEvent.click(screen.getByRole("button", { name: "timetable.noSittingsPlace" }));
+
+    expect(screen.getByText("timetable.placeLunchHint(30)")).toBeTruthy();
+  });
+
+  it("places the class's meal where empty time is clicked, not a lesson", async () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 556, bottom: 528, width: 556, height: 528,
+      toJSON: () => ({}),
+    } as DOMRect);
+    state.sittings = [];
+    const { container } = render(<TimetablePage />);
+    await filterTo("4.1");
+    fireEvent.click(screen.getByRole("button", { name: /^timetable\.placeLunch$/ }));
+
+    const columns = container.querySelectorAll('div[class="relative border-l"]');
+    expect(columns.length).toBeGreaterThan(0);
+    fireEvent.click(columns[0], { clientX: 106, clientY: 200 });
+
+    expect(lunch.create.mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ academicYearId: "y-1", studentGroupId: "g-41", dayOfWeek: 1 }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("moves the meal with the keyboard", async () => {
+    state.sittings = [meal(1, true)];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "timetable.lunchMove" }), {
+      key: "ArrowDown",
+    });
+
+    expect(lunch.update.mutateAsync).toHaveBeenCalledWith({
+      id: "m-1",
+      dayOfWeek: 1,
+      startTime: "11:55",
+    });
+  });
+
+  it("will not drop a meal on a day that already has one", async () => {
+    // The server would replace the other meal. A drag that silently deleted
+    // Tuesday's lunch is the worst thing this gesture could do.
+    state.sittings = [meal(1, false), meal(2, false)];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+
+    const [monday] = screen.getAllByRole("button", { name: "timetable.lunchMove" });
+    fireEvent.keyDown(monday, { key: "ArrowRight" });
+
+    expect(lunch.update.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("removes a meal the school placed, and only one it placed", async () => {
+    state.sittings = [meal(1, true)];
+    const { unmount } = render(<TimetablePage />);
+    await filterTo("4.1");
+    expect(screen.queryByRole("button", { name: "timetable.lunchRemove" })).toBeNull();
+    unmount();
+
+    state.sittings = [meal(1, false)];
+    render(<TimetablePage />);
+    await filterTo("4.1");
+    fireEvent.click(screen.getByRole("button", { name: "timetable.lunchRemove" }));
+
+    expect(lunch.remove.mutateAsync).toHaveBeenCalledWith("m-1");
+  });
+});
+

@@ -3818,6 +3818,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         AnonymousRequirement,
         AnonymousRoomPreference,
         FrameTime,
+        LunchPlacement,
         LunchServing,
         OptimizeScheduleRequest,
         Rast,
@@ -3833,6 +3834,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "constraints",
         "frameTimes",
         "lunchServings",
+        "lunchPlacements",
         "rasts",
         "roomPreferences",
         "fixedLessons",
@@ -3871,6 +3873,14 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "kind",
         "minGradeLevel",
         "maxGradeLevel",
+    }
+    # A meal placed by hand is a START and nothing else: the meal's length is
+    # the school's one lunchMinutes, and an end here would be a second answer
+    # to "how long is lunch".
+    assert _field_names(LunchPlacement) == {
+        "studentGroupId",
+        "dayOfWeek",
+        "startTime",
     }
     assert _field_names(LunchServing) == {
         "minGradeLevel",
@@ -6292,6 +6302,337 @@ def test_a_day_that_replaces_the_asking_break_keeps_its_lessons() -> None:
     assert any(lesson.day_of_week == 5 for lesson in response.lessons), (
         "Friday is a teaching day; the break it does not have may not empty it"
     )
+
+
+# ---------------------------------------------------------------------------
+# A lunch the school placed by hand.
+# ---------------------------------------------------------------------------
+
+
+def _placed_payload(
+    *pins: str,
+    window: tuple[str, str] = ("11:00", "12:00"),
+    lessons_per_week: int = 2,
+) -> dict[str, object]:
+    """One class on a Monday 08:00-14:00, a lunch window, and meals placed by hand."""
+    payload = _rast_payload([], lessons_per_week=lessons_per_week)
+    payload["frameTimes"][0]["endTime"] = "14:00:00"  # type: ignore[index]
+    payload["rules"] = {
+        "lunchStartTime": f"{window[0]}:00",
+        "lunchEndTime": f"{window[1]}:00",
+        "lunchMinutes": 30,
+    }
+    group = payload["groups"][0]["id"]  # type: ignore[index]
+    payload["lunchPlacements"] = [
+        {"studentGroupId": group, "dayOfWeek": 1, "startTime": f"{pin}:00"} for pin in pins
+    ]
+    return payload
+
+
+def _lock(payload: dict[str, object], start: str, end: str) -> None:
+    """A lesson placed by hand for the payload's class, on its Monday."""
+    payload.setdefault("fixedLessons", []).append({  # type: ignore[union-attr]
+        "id": str(uuid4()),
+        "studentGroupId": payload["groups"][0]["id"],  # type: ignore[index]
+        "teacherId": str(uuid4()),
+        "roomId": payload["rooms"][0]["id"],  # type: ignore[index]
+        "dayOfWeek": 1,
+        "startTime": f"{start}:00",
+        "endTime": f"{end}:00",
+    })
+
+
+def test_a_placed_meal_outside_the_window_is_where_the_class_eats() -> None:
+    """The line the whole feature hangs on.
+
+    The lunch variable used to be built on the school window unconditionally,
+    so a meal placed at 12:30 against an 11:00-12:00 window was not an
+    infeasible model but an invalid one — MODEL_INVALID, raised as a build
+    error, a crash. And outside the window is exactly where this school's meal
+    has to go: its locked lessons fill the window.
+    """
+    response = _solve(_placed_payload("12:30"))
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lunch.start_time for lunch in response.lunches] == ["12:30:00"]
+
+
+def test_a_placed_meal_rescues_a_day_the_locks_left_no_lunch_in() -> None:
+    """The school's own case, end to end.
+
+    A lesson locked over the whole 11:00-12:00 window leaves the class no
+    thirty-minute lunch start, and the week is refused by name. The school
+    places the meal at 12:00, and the same week solves with it there. The skip
+    list is what this proves: without it the pin escapes the lock refusal only
+    to be refused by the next check for the same class on the same day.
+    """
+    refused = _placed_payload()
+    _lock(refused, "11:00", "12:00")
+    assert _refusal(refused).code == "LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK"
+
+    rescued = _placed_payload("12:00")
+    _lock(rescued, "11:00", "12:00")
+    response = _solve(rescued)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lunch.start_time for lunch in response.lunches] == ["12:00:00"]
+
+
+def test_a_placed_meal_on_a_locked_lesson_is_refused_by_name() -> None:
+    """Outside the window, where the lock check used to look at nothing.
+
+    blocked_starts is computed across the lunch window, so a meal placed at
+    12:30 on a lesson locked 12:30-13:30 would be checked against no start at
+    all — and a pinned day drops the lock narrowing, since the lock reaches the
+    meal only through it. Let past, the meal is served in a classroom.
+    """
+    payload = _placed_payload("12:30")
+    _lock(payload, "12:30", "13:30")
+
+    refusal = _refusal(payload)
+
+    assert refusal.code == "LUNCH_PLACEMENT_COLLIDES"
+    assert refusal.params["what"] == "locked"
+
+
+def test_a_placed_meal_on_a_reservation_is_refused_by_name() -> None:
+    """The class's own reserved time is a fact the pin does not outrank."""
+    payload = _placed_payload("12:30")
+    payload["constraints"] = [{
+        "id": str(uuid4()),
+        "resourceKind": "STUDENT_GROUP",
+        "resourceId": payload["groups"][0]["id"],  # type: ignore[index]
+        "kind": "UNAVAILABLE",
+        "dayOfWeek": 1,
+        "startTime": "12:30:00",
+        "endTime": "13:00:00",
+    }]
+
+    refusal = _refusal(payload)
+
+    assert refusal.code == "LUNCH_PLACEMENT_COLLIDES"
+    assert refusal.params["what"] == "closed"
+
+
+@pytest.mark.parametrize(
+    ("start", "why"),
+    [
+        ("12:07", "off the five-minute grid"),
+        ("17:45", "a thirty-minute meal would run past the end of the day"),
+    ],
+)
+def test_a_placed_meal_off_the_grid_is_refused_by_name(start: str, why: str) -> None:
+    """Refused as the school's own input, not crashed into as a bad model."""
+    refusal = _refusal(_placed_payload(start))
+
+    assert refusal.code == "LUNCH_PLACEMENT_OFF_GRID", why
+
+
+def test_a_placed_meal_outranks_the_stages_sitting() -> None:
+    """Placing a meal by hand is overriding the sitting on purpose.
+
+    Years 4-6 are declared to eat 11:00-11:30, and this class's meal is placed
+    at 12:00. Were the sitting still a narrowing of a pinned meal, the two would
+    contradict and the week would be refused for a choice the school made.
+    """
+    payload = _placed_payload("12:00")
+    payload["lunchServings"] = [{
+        "minGradeLevel": 4, "maxGradeLevel": 6, "dayOfWeek": None,
+        "startTime": "11:00:00", "endTime": "11:30:00",
+    }]
+
+    response = _solve(payload)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lunch.start_time for lunch in response.lunches] == ["12:00:00"]
+
+
+def _second_class(payload: dict[str, object], pin: str | None = None) -> str:
+    """A second class of twenty-four beside the first, with a room of its own."""
+    second = str(uuid4())
+    payload["groups"].append(  # type: ignore[union-attr]
+        {"id": second, "lunchHeadcount": 24, "minGradeLevel": 4, "maxGradeLevel": 6},
+    )
+    twin = dict(payload["requirements"][0])  # type: ignore[index]
+    twin.update({
+        "id": str(uuid4()), "subjectId": str(uuid4()), "teacherId": str(uuid4()),
+        "studentGroupId": second,
+    })
+    payload["requirements"].append(twin)  # type: ignore[union-attr]
+    payload["rooms"].append({"id": str(uuid4()), "capacity": 30})  # type: ignore[union-attr]
+    if pin is not None:
+        payload["lunchPlacements"].append(  # type: ignore[union-attr]
+            {"studentGroupId": second, "dayOfWeek": 1, "startTime": f"{pin}:00"},
+        )
+    return second
+
+
+def test_a_placed_meal_rescues_a_day_the_sitting_left_no_lunch_in() -> None:
+    """The sitting refusal skips a pinned day, or the pin cannot outrank it.
+
+    Years 4-6 are declared to eat 13:00-13:30, which the 11:00-12:00 window
+    does not reach, so the stage has no admissible start and the week is
+    refused by name. The class's meal placed at 12:30 is the school overriding
+    that sitting on purpose, and the same week solves.
+    """
+    def payload(*pins: str) -> dict[str, object]:
+        built = _placed_payload(*pins)
+        built["lunchServings"] = [{
+            "minGradeLevel": 4, "maxGradeLevel": 6, "dayOfWeek": None,
+            "startTime": "13:00:00", "endTime": "13:30:00",
+        }]
+        return built
+
+    assert _refusal(payload()).code == "LUNCH_NO_SERVING_FOR_GROUP"
+    response = _solve(payload("12:30"))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lunch.start_time for lunch in response.lunches] == ["12:30:00"]
+
+
+def test_a_placed_meal_rescues_a_day_a_reservation_left_no_lunch_in() -> None:
+    """The reservation refusal and the builder both let a pinned day go.
+
+    A reservation over 11:00-11:45 leaves a thirty-minute meal no start in an
+    11:00-12:00 window. Placed at 12:30 — clear of the reservation — the meal
+    rescues the day; were the reservation still a narrowing of a pinned meal,
+    the model would be infeasible for a choice that breaks nothing.
+    """
+    def payload(*pins: str) -> dict[str, object]:
+        built = _placed_payload(*pins)
+        built["constraints"] = [{
+            "id": str(uuid4()),
+            "resourceKind": "STUDENT_GROUP",
+            "resourceId": built["groups"][0]["id"],  # type: ignore[index]
+            "kind": "UNAVAILABLE",
+            "dayOfWeek": 1,
+            "startTime": "11:00:00",
+            "endTime": "11:45:00",
+        }]
+        return built
+
+    assert _refusal(payload()).code == "LUNCH_AVAILABILITY_LEAVES_NO_BREAK"
+    response = _solve(payload("12:30"))
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert [lunch.start_time for lunch in response.lunches] == ["12:30:00"]
+
+
+def test_a_placed_meal_on_a_day_the_class_is_not_at_school_is_refused() -> None:
+    """A day the school closed for the class has no meal to pin.
+
+    The engine builds no lunch variable for an exempt day, so a meal placed on
+    one would vanish without a word. Refused, naming the day.
+    """
+    payload = _placed_payload("12:30")
+    payload["constraints"] = [{
+        "id": str(uuid4()),
+        "resourceKind": "STUDENT_GROUP",
+        "resourceId": payload["groups"][0]["id"],  # type: ignore[index]
+        "kind": "UNAVAILABLE",
+        "dayOfWeek": 1,
+        "startTime": "08:00:00",
+        "endTime": "14:00:00",
+    }]
+
+    refusal = _refusal(payload)
+
+    assert refusal.code == "LUNCH_PLACEMENT_COLLIDES"
+    assert refusal.params["what"] == "day"
+
+
+def test_a_class_placed_outside_the_sitting_is_not_counted_in_it() -> None:
+    """A pinned class eats where it was placed, not in the stage's sitting.
+
+    Two classes of twenty-four, twenty-four seats, and one thirty-minute sitting
+    both are captive to: forty-eight children in a room for twenty-four, refused
+    by name. With the second class's meal placed at 12:00 the sitting feeds one
+    class, which it can, and the week solves.
+    """
+    def payload(pin: str | None) -> dict[str, object]:
+        built = _placed_payload()
+        _second_class(built, pin)
+        built["rules"]["diningSeats"] = 24  # type: ignore[index]
+        built["lunchServings"] = [{
+            "minGradeLevel": 4, "maxGradeLevel": 6, "dayOfWeek": None,
+            "startTime": "11:00:00", "endTime": "11:30:00",
+        }]
+        return built
+
+    assert _refusal(payload(None)).code == "LUNCH_SERVING_CANNOT_FEED_STAGE"
+    assert _solve(payload("12:00")).status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_a_meal_placed_outside_the_window_takes_no_chair_inside_it() -> None:
+    """The hall verdict counts only the meals the window has to seat.
+
+    Twenty-four seats over a thirty-minute window can feed one class of
+    twenty-four, not two, and that is refused before any solve. A class whose
+    meal is placed at 12:00 is not eating in the window at all.
+    """
+    def payload(pin: str | None) -> dict[str, object]:
+        built = _placed_payload(window=("11:00", "11:30"))
+        _second_class(built, pin)
+        built["rules"]["diningSeats"] = 24  # type: ignore[index]
+        return built
+
+    assert _solve(payload(None)).conflicts.summary_code == "LUNCH_HALL_CANNOT_FEED_THE_SCHOOL"
+    assert _solve(payload("12:00")).status in {"OPTIMAL", "FEASIBLE"}
+
+
+def test_each_placed_meal_is_charged_to_the_size_estimate() -> None:
+    """One literal per pin, and the estimate says so.
+
+    The estimate is a sum of per-construct upper bounds, and the test that
+    compares it with a built model reads the total — which has slack enough
+    to hide a missing term. Asserted term by term instead.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(**MONDAY))
+    bare = OptimizeScheduleRequest.model_validate(_placed_payload())
+    pinned = OptimizeScheduleRequest.model_validate(_placed_payload("12:30"))
+
+    assert solver._estimate_model_size(pinned) - solver._estimate_model_size(bare) == 1
+
+
+def test_a_placed_meal_still_takes_its_chairs() -> None:
+    """A meal the school placed does not make the hall any larger.
+
+    Two classes of twenty-four and twenty-four seats. Placed at the same minute
+    they cannot both be seated, and the week is refused; placed half an hour
+    apart it is fine. Were a pinned meal left out of the hall, the first would
+    solve and the kitchen would be told to seat forty-eight in a room for
+    twenty-four.
+    """
+    def payload(second: str) -> dict[str, object]:
+        built = _placed_payload("12:00")
+        second_class = str(uuid4())
+        built["groups"].append(  # type: ignore[union-attr]
+            {"id": second_class, "lunchHeadcount": 24, "minGradeLevel": 4, "maxGradeLevel": 6},
+        )
+        twin = dict(built["requirements"][0])  # type: ignore[index]
+        twin.update({
+            "id": str(uuid4()), "subjectId": str(uuid4()), "teacherId": str(uuid4()),
+            "studentGroupId": second_class,
+        })
+        built["requirements"].append(twin)  # type: ignore[union-attr]
+        built["rooms"].append({"id": str(uuid4()), "capacity": 30})  # type: ignore[union-attr]
+        built["rules"]["diningSeats"] = 24  # type: ignore[index]
+        built["lunchPlacements"].append(  # type: ignore[union-attr]
+            {"studentGroupId": second_class, "dayOfWeek": 1, "startTime": f"{second}:00"},
+        )
+        return built
+
+    assert _solve(payload("12:30")).status in {"OPTIMAL", "FEASIBLE"}
+    refused = _solve(payload("12:00"))
+    assert refused.status == "INFEASIBLE"
+    # Refused by the lunch stage, which has to carry the pin exactly as the full
+    # model does: without it the stage waves the week through, the full model
+    # then refuses it with a bare core, and the sentence that says the SCHOOL'S
+    # placement is part of why the hall cannot seat them is never written.
+    assert refused.conflicts is not None
+    codes = {conflict.code for conflict in refused.conflicts.conflicts}
+    assert "LUNCH_STARTS_PLACED_BY_HAND" in codes, refused.conflicts
 
 
 def test_a_week_that_solves_without_the_rule_is_refused_with_it() -> None:

@@ -16,6 +16,7 @@ const sitting = (
   startTime: `${start}:00`,
   endTime: `${end}:00`,
   headcount,
+  isGenerated: true,
 });
 
 const at = (clock: string) => {

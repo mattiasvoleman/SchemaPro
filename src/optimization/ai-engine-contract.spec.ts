@@ -31,6 +31,7 @@ const PAYLOAD_FIELDS = [
   'frameTimes',
   'groupConflicts',
   'groups',
+  'lunchPlacements',
   'lunchServings',
   'previousLessons',
   'rasts',
@@ -103,6 +104,13 @@ const PREFERENCE_FIELDS = [
   'subjectId',
   'weight',
 ];
+
+/**
+ * A meal placed by hand is a START on one class's day and nothing else. Its
+ * length is the school's one lunchMinutes; an end here would be a second
+ * answer to "how long is lunch".
+ */
+const PLACEMENT_FIELDS = ['dayOfWeek', 'startTime', 'studentGroupId'];
 
 const RULES_FIELDS = [
   'diningSeats',
@@ -196,6 +204,16 @@ describe('AI engine wire contract', () => {
         seats: null,
       },
     ]);
+    // One meal the school placed by hand, so the pins reach the payload and
+    // their shape is pinned too. `id` because regeneration reads the row back.
+    tx['lunchSitting']!['findMany']!.mockResolvedValue([
+      {
+        id: 'hand-1',
+        studentGroupId: 'g1',
+        dayOfWeek: 2,
+        startTime: new Date('1970-01-01T13:00:00.000Z'),
+      },
+    ]);
     tx['frameTime']!['findMany']!.mockResolvedValue([
       {
         minGradeLevel: 4,
@@ -271,6 +289,14 @@ describe('AI engine wire contract', () => {
 
   it('sends exactly the top-level fields the engine declares', async () => {
     expect(Object.keys(await buildPayload()).sort()).toEqual(PAYLOAD_FIELDS);
+  });
+
+  it('sends exactly the placement fields the engine declares', async () => {
+    const payload = await buildPayload();
+    const placements = payload['lunchPlacements'] as Array<Record<string, unknown>>;
+
+    expect(placements).toHaveLength(1);
+    expect(Object.keys(placements[0]!).sort()).toEqual(PLACEMENT_FIELDS);
   });
 
   it('reads every room-rule field it forwards out of the database', async () => {

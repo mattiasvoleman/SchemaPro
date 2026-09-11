@@ -204,6 +204,22 @@ MESSAGES: dict[str, str] = {
         "need {needed} student-minutes, and {seats} seats over {windowStart}-{windowEnd} offer "
         "{offered}. Add seats, widen the lunch window, or shorten the meal."
     ),
+    "LUNCH_PLACED_BY_HAND": (
+        "The lunch placed by hand for student group {group} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} at {start} is one "
+        "of the rules that cannot all hold at once. Move it, or remove it and let the solver "
+        "place the meal."
+    ),
+    "LUNCH_PLACEMENT_COLLIDES": (
+        "The lunch placed by hand for student group {group} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} at {start} lands on "
+        "{what, select, locked {a locked lesson} closed {time reserved for the class} "
+        "day {a day the class is not at school} other {time the class cannot give up}}. "
+        "Move the lunch, or change what it lands on."
+    ),
+    "LUNCH_PLACEMENT_OFF_GRID": (
+        "The lunch placed by hand for student group {group} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} starts at {start}, "
+        "which does not fit the {slotMinutes}-minute scheduling grid or the school day. "
+        "Move it to a time the day holds."
+    ),
     "LUNCH_SEATS_CANNOT_STAGGER": (
         "Lunch cannot be staggered within the dining hall's {seats} seats."
     ),
@@ -266,6 +282,10 @@ MESSAGES: dict[str, str] = {
     ),
     "LUNCH_STARTS_NARROWED_BY_SITTING_OR_FRAME": (
         "A lunch sitting or a frame time narrows when the classes named here may eat."
+    ),
+    "LUNCH_STARTS_PLACED_BY_HAND": (
+        "The classes named here have a lunch the school placed by hand, and the other "
+        "lunches have to fit around it."
     ),
     "LUNCH_STARTS_TAKEN_BY_LOCKED_LESSONS": (
         "Locked lessons take lunch starts away from the classes named here."

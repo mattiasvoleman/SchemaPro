@@ -439,6 +439,11 @@ class OptimizeScheduleRequest(CamelModel):
     lunch_servings: list[LunchServing] = Field(
         default_factory=list, alias="lunchServings", max_length=500,
     )
+    #: Meals the school placed by hand. Empty means the solver places every one,
+    #: which is what every payload before this field looked like.
+    lunch_placements: list[LunchPlacement] = Field(
+        default_factory=list, alias="lunchPlacements", max_length=5000,
+    )
     # Raster. Empty means no stage has a declared break, which is the behaviour
     # every school had before this field existed — and the behaviour the rektor
     # reported as lessons placed edge to edge.
@@ -496,6 +501,32 @@ class ScheduledLesson(CamelModel):
     day_of_week: DayOfWeek = Field(alias="dayOfWeek")
     start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
     end_time: str = Field(alias="endTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
+
+
+class LunchPlacement(CamelModel):
+    """A lunch the school placed by hand: one class, one weekday, one start.
+
+    A PIN ON THE MEAL THE ENGINE ALREADY OWNS, and deliberately not a fixed
+    lesson. The migration that made a meal its own row refused an isLocked flag
+    for exactly the reason this shape avoids: a preserved sitting forwarded as a
+    fixed lesson sits beside a lunch variable the solver still builds for the
+    same class — two mandatory reservations in one window, and an INFEASIBLE
+    whose cause nobody can see. Here there is one reservation, the solver's own,
+    held where the school put it.
+
+    It OUTRANKS the lunch window and the stage's sitting, because a school that
+    places a meal by hand is overriding those on purpose — a Tuesday whose
+    locked lessons fill 10:30-13:00 has its meal at 13:00 or nowhere. It does
+    NOT outrank a locked lesson or a reservation on the class: those are facts
+    about the class's own time, and a pin on top of one is refused by name.
+
+    Only the start. The meal's length is the school's one lunchMinutes, and a
+    second length here would be a second answer to "how long is lunch".
+    """
+
+    student_group_id: UUID4 = Field(alias="studentGroupId")
+    day_of_week: DayOfWeek = Field(alias="dayOfWeek")
+    start_time: str = Field(alias="startTime", pattern=r"^\d{2}:\d{2}:\d{2}$")
 
 
 class LunchServing(CamelModel):

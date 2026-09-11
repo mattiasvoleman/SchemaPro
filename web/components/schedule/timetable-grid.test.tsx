@@ -1134,3 +1134,164 @@ describe("leaving the grid, and arriving on it", () => {
     expect(onLessonChange).not.toHaveBeenCalled();
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// A meal this screen may move — placed by hand in the Grundschema
+// ---------------------------------------------------------------------------
+
+describe("movable bands", () => {
+  beforeEach(() => mockGridGeometry());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    cleanup();
+  });
+
+  // 08:00-16:00 at 1.1 px/min with a 56px axis and 100px days (see GRID_RECT):
+  // minute m sits at y = (m - 480) * 1.1, day d at x = 56 + (d - 1) * 100 + 50.
+  const y = (minute: number) => (minute - 480) * 1.1;
+  const x = (day: number) => 56 + (day - 1) * 100 + 50;
+
+  const meal = (overrides: Partial<TimetableBand> = {}): TimetableBand => ({
+    id: "meal-mon",
+    dayOfWeek: 1,
+    startMinutes: 11 * 60,
+    endMinutes: 11 * 60 + 30,
+    label: "Lunch",
+    movable: true,
+    moveLabel: "Flytta lunchen",
+    ...overrides,
+  });
+
+  it("moves where it is dropped, on the day it is dropped on", () => {
+    const onBandMove = vi.fn();
+    render(
+      <TimetableGrid lessons={[]} bands={[meal()]} editable onBandMove={onBandMove} />,
+    );
+
+    pointerDown(screen.getByRole("button", { name: "Flytta lunchen" }), {
+      clientX: x(1),
+      clientY: y(660),
+    });
+    pointerMove({ clientX: x(3), clientY: y(720) });
+    pointerUp({ clientX: x(3), clientY: y(720) });
+
+    expect(onBandMove).toHaveBeenCalledWith("meal-mon", 3, 720);
+  });
+
+  it("does nothing on a press that never travels", () => {
+    // A click on the grip is not a move. Committing one would write the meal
+    // back to where it already was — a round trip, an undo entry, and a
+    // "touched" meal the solver no longer owns.
+    const onBandMove = vi.fn();
+    render(
+      <TimetableGrid lessons={[]} bands={[meal()]} editable onBandMove={onBandMove} />,
+    );
+
+    const grip = screen.getByRole("button", { name: "Flytta lunchen" });
+    pointerDown(grip, { clientX: x(1), clientY: y(660) });
+    pointerUp({ clientX: x(1), clientY: y(660) });
+
+    expect(onBandMove).not.toHaveBeenCalled();
+  });
+
+  it("lets Escape put it back", () => {
+    const onBandMove = vi.fn();
+    render(
+      <TimetableGrid lessons={[]} bands={[meal()]} editable onBandMove={onBandMove} />,
+    );
+
+    pointerDown(screen.getByRole("button", { name: "Flytta lunchen" }), {
+      clientX: x(1),
+      clientY: y(660),
+    });
+    pointerMove({ clientX: x(2), clientY: y(720) });
+    fireEvent.keyDown(window, { key: "Escape" });
+    pointerUp({ clientX: x(2), clientY: y(720) });
+
+    expect(onBandMove).not.toHaveBeenCalled();
+  });
+
+  it("draws a ghost while it travels", () => {
+    render(<TimetableGrid lessons={[]} bands={[meal()]} editable onBandMove={vi.fn()} />);
+
+    pointerDown(screen.getByRole("button", { name: "Flytta lunchen" }), {
+      clientX: x(1),
+      clientY: y(660),
+    });
+    pointerMove({ clientX: x(2), clientY: y(720) });
+
+    expect(screen.getByTestId("band-ghost")).toBeInTheDocument();
+  });
+
+  it("moves with the arrow keys, the way a lesson does", () => {
+    const onBandMove = vi.fn();
+    render(
+      <TimetableGrid lessons={[]} bands={[meal()]} editable onBandMove={onBandMove} />,
+    );
+    const grip = screen.getByRole("button", { name: "Flytta lunchen" });
+
+    fireEvent.keyDown(grip, { key: "ArrowDown" });
+    expect(onBandMove).toHaveBeenLastCalledWith("meal-mon", 1, 11 * 60 + 15);
+
+    fireEvent.keyDown(grip, { key: "ArrowRight" });
+    expect(onBandMove).toHaveBeenLastCalledWith("meal-mon", 2, 11 * 60);
+  });
+
+  it("offers removal only for a meal that can be removed", () => {
+    // The solver's own meal is replaced by the next run; removing it here
+    // would leave the day blank for a reason the screen cannot show.
+    const onBandRemove = vi.fn();
+    const { rerender } = render(
+      <TimetableGrid
+        lessons={[]}
+        bands={[meal()]}
+        editable
+        onBandMove={vi.fn()}
+        onBandRemove={onBandRemove}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Ta bort" })).not.toBeInTheDocument();
+
+    rerender(
+      <TimetableGrid
+        lessons={[]}
+        bands={[meal({ removeLabel: "Ta bort", handPlaced: true })]}
+        editable
+        onBandMove={vi.fn()}
+        onBandRemove={onBandRemove}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ta bort" }));
+    expect(onBandRemove).toHaveBeenCalledWith("meal-mon");
+
+    fireEvent.keyDown(screen.getByRole("button", { name: "Flytta lunchen" }), { key: "Delete" });
+    expect(onBandRemove).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the stripe itself inert, and gives only the grip the pointer", () => {
+    /*
+     * The stripe spans the whole column, and handleSlotClick fires only on the
+     * column itself. A movable stripe that took the pointer would kill lesson
+     * creation across it; a handle the size of its label does not. Asserted on
+     * the classes for the reason the band tests above give: jsdom cannot see
+     * pointer-events at all.
+     */
+    render(<TimetableGrid lessons={[]} bands={[meal()]} editable onBandMove={vi.fn()} />);
+
+    const grip = screen.getByRole("button", { name: "Flytta lunchen" });
+    const stripe = grip.closest("div");
+    expect(stripe?.className).toContain("pointer-events-none");
+    expect(grip.parentElement?.className).toContain("pointer-events-auto");
+  });
+
+  it("is only a label when the grid is not editable, or nothing may move it", () => {
+    const { rerender } = render(<TimetableGrid lessons={[]} bands={[meal()]} />);
+    expect(screen.queryByRole("button", { name: "Flytta lunchen" })).not.toBeInTheDocument();
+
+    rerender(<TimetableGrid lessons={[]} bands={[meal()]} editable />);
+    expect(screen.queryByRole("button", { name: "Flytta lunchen" })).not.toBeInTheDocument();
+    expect(screen.getByText("Lunch")).toBeInTheDocument();
+  });
+});
+

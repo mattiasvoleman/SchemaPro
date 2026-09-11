@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import { useTranslations } from "next-intl";
-import { Check, Lock, TriangleAlert } from "lucide-react";
+import { Check, Lock, TriangleAlert, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface TimetableLesson {
@@ -99,6 +99,10 @@ interface TimetableGridProps {
    * the `pointer-events-none` on the element below.
    */
   bands?: TimetableBand[];
+  /** A movable band dropped at a new day and start (drag, or the arrow keys). */
+  onBandMove?: (id: string, dayOfWeek: number, startMinutes: number) => void;
+  /** A removable band's × pressed, or Delete on its grip. */
+  onBandRemove?: (id: string) => void;
   className?: string;
 }
 
@@ -120,6 +124,14 @@ export interface TimetableBand {
   startMinutes: number;
   endMinutes: number;
   label: string;
+  /** Can be dragged to another time — a meal this screen may move. */
+  movable?: boolean;
+  /** Placed by hand, and a run keeps it where it is: drawn with a padlock. */
+  handPlaced?: boolean;
+  /** The grip's accessible name. Defaults to the label. */
+  moveLabel?: string;
+  /** Present only when the band can be removed — a meal placed by hand. */
+  removeLabel?: string;
 }
 
 interface PositionedLesson extends TimetableLesson {
@@ -258,6 +270,8 @@ function TimetableGridInner({
   selectedIds,
   onToggleSelect,
   onSlotClick,
+  onBandMove,
+  onBandRemove,
   bands,
   className,
 }: TimetableGridInnerProps) {
@@ -267,6 +281,38 @@ function TimetableGridInner({
   const ghostRef = useRef<GhostState | null>(null);
   const [ghost, setGhost] = useState<GhostState | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  /*
+   * A meal being dragged, in state of its own beside the lessons'. Not folded
+   * into DragState: a band is not a lesson — no validateChange, no tray, no
+   * resize, a length that is the school's and not the grid's — and sharing that
+   * machinery would thread "is this a band?" through every branch of it. The
+   * ghost lives in a ref as well as state for the reason the lesson ghost does:
+   * the pointerup handler must read the last position synchronously, and a
+   * side effect inside a setState updater runs twice under StrictMode.
+   */
+  const bandDragRef = useRef<{
+    id: string;
+    pointerId: number;
+    grabOffsetMinutes: number;
+    duration: number;
+    originDay: number;
+    originStart: number;
+    startClientX: number;
+    startClientY: number;
+    moved: boolean;
+  } | null>(null);
+  const bandGhostRef = useRef<{
+    dayOfWeek: number;
+    startMinutes: number;
+    endMinutes: number;
+  } | null>(null);
+  const [bandGhost, setBandGhost] = useState<{
+    id: string;
+    dayOfWeek: number;
+    startMinutes: number;
+    endMinutes: number;
+  } | null>(null);
+  const [bandDraggingId, setBandDraggingId] = useState<string | null>(null);
 
   const includeWeekend = lessons.some((lesson) => lesson.dayOfWeek > 5);
   const dayCount = includeWeekend ? 7 : 5;
@@ -524,6 +570,117 @@ function TimetableGridInner({
     dayEndMinutes,
   ]);
 
+  useEffect(() => {
+    if (!bandDraggingId) return;
+
+    const clear = () => {
+      bandDragRef.current = null;
+      bandGhostRef.current = null;
+      setBandDraggingId(null);
+      setBandGhost(null);
+    };
+
+    const onMove = (event: PointerEvent) => {
+      const drag = bandDragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      if (!drag.moved) {
+        const dx = Math.abs(event.clientX - drag.startClientX);
+        const dy = Math.abs(event.clientY - drag.startClientY);
+        if (dx + dy < DRAG_THRESHOLD_PX) return;
+        drag.moved = true;
+      }
+      const located = locate(event.clientX, event.clientY);
+      if (!located) return;
+      let start = snap(located.minute - drag.grabOffsetMinutes, DRAG_SNAP_MINUTES);
+      start = Math.max(dayStartMinutes, Math.min(start, dayEndMinutes - drag.duration));
+      const next = {
+        dayOfWeek: located.day,
+        startMinutes: start,
+        endMinutes: start + drag.duration,
+      };
+      bandGhostRef.current = next;
+      setBandGhost({ id: drag.id, ...next });
+    };
+
+    const onUp = (event: PointerEvent) => {
+      const drag = bandDragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const ghost = bandGhostRef.current;
+      clear();
+      if (
+        drag.moved &&
+        ghost &&
+        onBandMove &&
+        (ghost.dayOfWeek !== drag.originDay || ghost.startMinutes !== drag.originStart)
+      ) {
+        onBandMove(drag.id, ghost.dayOfWeek, ghost.startMinutes);
+      }
+    };
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") clear();
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [bandDraggingId, locate, dayStartMinutes, dayEndMinutes, onBandMove]);
+
+  const startBandDrag = (event: React.PointerEvent, band: TimetableBand) => {
+    if (!editable || !onBandMove || event.button !== 0) return;
+    event.preventDefault();
+    // The column behind the band creates a lesson on a click. This press is
+    // the meal's, and must not become that.
+    event.stopPropagation();
+    const located = locate(event.clientX, event.clientY);
+    bandDragRef.current = {
+      id: band.id,
+      pointerId: event.pointerId,
+      grabOffsetMinutes: located ? located.minute - band.startMinutes : 0,
+      duration: band.endMinutes - band.startMinutes,
+      originDay: band.dayOfWeek,
+      originStart: band.startMinutes,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+    setBandDraggingId(band.id);
+  };
+
+  /** Keyboard parity with a lesson: arrows move it, Delete removes a hand-placed one. */
+  const handleBandKey = (event: React.KeyboardEvent, band: TimetableBand) => {
+    if (!editable) return;
+    if (
+      (event.key === "Delete" || event.key === "Backspace") &&
+      band.removeLabel &&
+      onBandRemove
+    ) {
+      event.preventDefault();
+      onBandRemove(band.id);
+      return;
+    }
+    if (!onBandMove) return;
+    const duration = band.endMinutes - band.startMinutes;
+    let day = band.dayOfWeek;
+    let start = band.startMinutes;
+    if (event.key === "ArrowUp") start -= SLOT_CLICK_SNAP_MINUTES;
+    else if (event.key === "ArrowDown") start += SLOT_CLICK_SNAP_MINUTES;
+    else if (event.key === "ArrowLeft") day -= 1;
+    else if (event.key === "ArrowRight") day += 1;
+    else return;
+    event.preventDefault();
+    day = Math.max(1, Math.min(dayCount, day));
+    start = Math.max(dayStartMinutes, Math.min(start, dayEndMinutes - duration));
+    if (day !== band.dayOfWeek || start !== band.startMinutes) {
+      onBandMove(band.id, day, start);
+    }
+  };
+
   const startDrag = (event: React.PointerEvent, lesson: TimetableLesson) => {
     if (!editable || event.button !== 0) return;
     event.preventDefault();
@@ -613,7 +770,7 @@ function TimetableGridInner({
     <div
       className={cn(
         "overflow-x-auto rounded-lg border bg-card",
-        draggingId && "select-none",
+        (draggingId || bandDraggingId) && "select-none",
         className,
       )}
     >
@@ -700,7 +857,10 @@ function TimetableGridInner({
                   .map((band) => (
                     <div
                       key={band.id}
-                      className="pointer-events-none absolute inset-x-0 z-0 flex items-start justify-end border-y border-amber-500/30 bg-amber-500/10 px-1 py-0.5 text-[10px] leading-none text-amber-700 dark:text-amber-500"
+                      className={cn(
+                        "pointer-events-none absolute inset-x-0 z-0 flex items-start justify-end border-y border-amber-500/30 bg-amber-500/10 px-1 py-0.5 text-[10px] leading-none text-amber-700 dark:text-amber-500",
+                        bandDraggingId === band.id && "opacity-40",
+                      )}
                       style={{
                         top: `${(band.startMinutes - startHour * 60) * pxPerMinute}px`,
                         height: `${Math.max(
@@ -709,9 +869,57 @@ function TimetableGridInner({
                         )}px`,
                       }}
                     >
-                      {band.label}
+                      {/*
+                        A meal this screen may move gets a GRIP, and only the grip
+                        takes the pointer. The stripe itself stays inert for the
+                        reason given above — it spans the whole column, and a
+                        stripe that swallowed clicks would kill lesson creation
+                        across it. A handle the size of its label does not.
+                      */}
+                      {band.movable && editable && onBandMove ? (
+                        <span className="pointer-events-auto flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            aria-label={band.moveLabel ?? band.label}
+                            title={band.moveLabel ?? band.label}
+                            onPointerDown={(event) => startBandDrag(event, band)}
+                            onKeyDown={(event) => handleBandKey(event, band)}
+                            className="flex cursor-grab items-center gap-0.5 rounded px-0.5 hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-amber-600 active:cursor-grabbing"
+                          >
+                            {band.handPlaced ? <Lock aria-hidden className="size-2.5" /> : null}
+                            {band.label}
+                          </button>
+                          {band.removeLabel && onBandRemove ? (
+                            <button
+                              type="button"
+                              aria-label={band.removeLabel}
+                              title={band.removeLabel}
+                              onClick={() => onBandRemove(band.id)}
+                              className="rounded px-0.5 hover:bg-amber-500/20 focus-visible:outline-2 focus-visible:outline-amber-600"
+                            >
+                              <X aria-hidden className="size-2.5" />
+                            </button>
+                          ) : null}
+                        </span>
+                      ) : (
+                        band.label
+                      )}
                     </div>
                   ))}
+                {bandGhost && bandGhost.dayOfWeek === day ? (
+                  <div
+                    data-testid="band-ghost"
+                    aria-hidden
+                    className="pointer-events-none absolute inset-x-0 z-20 border-2 border-dotted border-amber-500 bg-amber-500/20"
+                    style={{
+                      top: `${(bandGhost.startMinutes - startHour * 60) * pxPerMinute}px`,
+                      height: `${Math.max(
+                        12,
+                        (bandGhost.endMinutes - bandGhost.startMinutes) * pxPerMinute,
+                      )}px`,
+                    }}
+                  />
+                ) : null}
 
                 {/* Hour lines */}
                 {hours.slice(1, -1).map((hour) => (

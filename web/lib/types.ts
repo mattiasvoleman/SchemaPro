@@ -260,6 +260,11 @@ export interface LunchSitting {
   startTime: string;
   endTime: string;
   headcount: number;
+  /**
+   * Whether the SOLVER wrote this row. False for a meal the school placed by
+   * hand in the Grundschema — which the next run keeps, and pins where it is.
+   */
+  isGenerated: boolean;
 }
 
 /**

@@ -25,6 +25,7 @@ import type {
   AiEngineLunch,
   AnonymousFixedLesson,
   AnonymousFrameTime,
+  AnonymousLunchPlacement,
   AnonymousLunchServing,
   AnonymousRast,
   AnonymousGroup,
@@ -141,6 +142,7 @@ export class OptimizationProxyService {
       constraints,
       frameTimes,
       lunchServings,
+      lunchPlacements,
       rasts,
       roomPreferences,
       fixedLessons,
@@ -181,6 +183,7 @@ export class OptimizationProxyService {
       constraints,
       frameTimes,
       lunchServings,
+      lunchPlacements,
       rasts,
       roomPreferences,
       fixedLessons,
@@ -377,6 +380,7 @@ export class OptimizationProxyService {
     constraints: AnonymousConstraint[];
     frameTimes: AnonymousFrameTime[];
     lunchServings: AnonymousLunchServing[];
+    lunchPlacements: AnonymousLunchPlacement[];
     rasts: AnonymousRast[];
     roomPreferences: AnonymousRoomPreference[];
     fixedLessons: AnonymousFixedLesson[];
@@ -1188,6 +1192,27 @@ export class OptimizationProxyService {
       seats: serving.seats,
     }));
 
+    // Meals the school placed by hand. YEAR-scoped, like every sitting: this
+    // is what the school decided against one läsår's lessons. Anonymised
+    // through the group map, and a row whose class the map does not know is
+    // left out — the engine would have no lunch variable to pin for it.
+    const handSittings = await tx.lunchSitting.findMany({
+      where: { academicYearId, isGenerated: false },
+      select: { studentGroupId: true, dayOfWeek: true, startTime: true },
+    });
+    const lunchPlacements: AnonymousLunchPlacement[] = handSittings.flatMap((sitting) => {
+      const anonymous = groupAnonMap.get(sitting.studentGroupId);
+      return anonymous === undefined
+        ? []
+        : [
+            {
+              studentGroupId: anonymous,
+              dayOfWeek: sitting.dayOfWeek as DayOfWeek,
+              startTime: this.timeToString(sitting.startTime),
+            },
+          ];
+    });
+
     // Raster. School-scoped and read through the same year -> school hop as the
     // frames and the sittings above, so a request for another school's year
     // cannot pull this school's rows. The NAME is deliberately not sent: the
@@ -1233,6 +1258,7 @@ export class OptimizationProxyService {
       constraints,
       frameTimes,
       lunchServings,
+      lunchPlacements,
       rasts,
       roomPreferences,
       fixedLessons,
@@ -1587,11 +1613,10 @@ export class OptimizationProxyService {
      * The sittings, in the same transaction and with the same all-or-nothing
      * shape as the lessons above.
      *
-     * Replaced outright rather than merged: the meal is wholly engine-owned,
-     * there is no isLocked and no isGenerated, and a preserved sitting would be
-     * sent back to the engine as a fixed lesson while the solver still builds
-     * its own lunch variable — two mandatory reservations in one window and an
-     * INFEASIBLE with no visible cause.
+     * The solver's rows are replaced; the school's are kept. A hand-placed
+     * sitting went to the engine as a pin on the lunch variable it builds, not
+     * as a fixed lesson beside it, so there is one reservation per meal and the
+     * row survives the run that honoured it. See replaceSittings.
      *
      * Reached only after the guards above, so a run the gateway refused leaves
      * last week's flow exactly where it was — and so does a run that never
@@ -1634,7 +1659,19 @@ export class OptimizationProxyService {
     headcountByGroup: Map<string, number>,
     today: Date,
   ): Promise<void> {
-    await tx.lunchSitting.deleteMany({ where: { academicYearId } });
+    /*
+     * The solver's rows only. A meal the school placed by hand is an
+     * instruction, not an output: it went to the engine as a pin, and a run
+     * that deleted it would honour it once and forget it for the next.
+     */
+    await tx.lunchSitting.deleteMany({ where: { academicYearId, isGenerated: true } });
+    const handPlaced = await tx.lunchSitting.findMany({
+      where: { academicYearId, isGenerated: false },
+      select: { id: true, studentGroupId: true, dayOfWeek: true, startTime: true },
+    });
+    const handByKey = new Map(
+      handPlaced.map((row) => [`${row.studentGroupId}:${row.dayOfWeek}`, row]),
+    );
 
     /*
      * Classes eat. Teaching groups do not.
@@ -1657,9 +1694,62 @@ export class OptimizationProxyService {
       ).map((group) => group.id),
     );
     const classSittings = lunches.filter((lunch) => classIds.has(lunch.studentGroupId));
-    if (classSittings.length > 0) {
+
+    /*
+     * The engine reports a pinned meal back like any other, so the answer for a
+     * hand-placed day lands on a row that already exists — and creating over it
+     * would break LunchSittings_group_day_key inside this transaction, after a
+     * solve the school watched succeed. So a hand row keeps its start, the one
+     * thing the school said, and takes the rest from the answer: the length,
+     * because lunchMinutes may have changed since it was placed, and the
+     * headcount, because the class may have. If the answer's start is not the
+     * school's, the pin did not bind — two halves of one seam have drifted, and
+     * that is said loudly rather than papered over.
+     */
+    const fresh = classSittings.filter(
+      (lunch) => !handByKey.has(`${lunch.studentGroupId}:${lunch.dayOfWeek}`),
+    );
+    for (const lunch of classSittings) {
+      const hand = handByKey.get(`${lunch.studentGroupId}:${lunch.dayOfWeek}`);
+      if (hand === undefined) continue;
+      if (this.timeToString(hand.startTime) !== lunch.startTime) {
+        this.logger.error(
+          `A hand-placed lunch did not bind: group ${lunch.studentGroupId} day ${lunch.dayOfWeek} ` +
+            `was placed at ${this.timeToString(hand.startTime)} and the engine answered ${lunch.startTime}.`,
+        );
+      }
+      await tx.lunchSitting.update({
+        where: { id: hand.id },
+        data: {
+          endTime: this.parseTime(lunch.endTime),
+          headcount: headcountByGroup.get(lunch.studentGroupId) ?? 0,
+        },
+      });
+    }
+    /*
+     * A hand-placed row the engine did not answer for was not honoured: the
+     * school switched lunch off, or the class is not at school this week. It
+     * goes, for the rule the spec states for the solver's rows — a school that
+     * switched lunch off must not keep last term's flow on the grid — and here
+     * with a sharper reason: with no meal in the model the lessons were placed
+     * straight across it, and kept it would reach the pupil's calendar on top
+     * of one.
+     */
+    const answered = new Set(
+      classSittings.map((lunch) => `${lunch.studentGroupId}:${lunch.dayOfWeek}`),
+    );
+    const unanswered = handPlaced.filter(
+      (row) => !answered.has(`${row.studentGroupId}:${row.dayOfWeek}`),
+    );
+    if (unanswered.length > 0) {
+      await tx.lunchSitting.deleteMany({
+        where: { id: { in: unanswered.map((row) => row.id) } },
+      });
+    }
+
+    if (fresh.length > 0) {
       await tx.lunchSitting.createMany({
-        data: classSittings.map((lunch) => ({
+        data: fresh.map((lunch) => ({
           schoolId,
           academicYearId,
           studentGroupId: lunch.studentGroupId,
@@ -1667,6 +1757,7 @@ export class OptimizationProxyService {
           startTime: this.parseTime(lunch.startTime),
           endTime: this.parseTime(lunch.endTime),
           headcount: headcountByGroup.get(lunch.studentGroupId) ?? 0,
+          isGenerated: true,
         })),
       });
     }

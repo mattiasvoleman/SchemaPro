@@ -287,13 +287,12 @@ describe('OptimizationProxyService', () => {
       endTime: '12:00:00',
     });
 
-    it('replaces the year\'s sittings outright rather than merging them', async () => {
+    it("replaces the solver's sittings and only the solver's", async () => {
       /*
-       * The meal is wholly engine-owned. Merging would need a notion of a
-       * preserved sitting, and a preserved sitting is exactly what must not
-       * exist: it would be sent back as a fixed lesson while the solver still
-       * builds its own lunch variable — two mandatory reservations in one
-       * window, and an INFEASIBLE with no visible cause.
+       * A run deletes what it wrote. A meal the school placed by hand went to
+       * the engine as a pin on the lunch variable it builds anyway — one
+       * reservation, not the fixed lesson beside a live variable that would be
+       * two — so it is an instruction to keep, not an output to replace.
        */
       await persist(
         { status: 'OPTIMAL', lessons: [placement()] },
@@ -305,7 +304,7 @@ describe('OptimizationProxyService', () => {
       );
 
       expect(tx.lunchSitting.deleteMany).toHaveBeenCalledWith({
-        where: { academicYearId: ACADEMIC_YEAR },
+        where: { academicYearId: ACADEMIC_YEAR, isGenerated: true },
       });
       expect(tx.lunchSitting.createMany).toHaveBeenCalledWith({
         data: [
@@ -317,8 +316,43 @@ describe('OptimizationProxyService', () => {
             startTime: new Date('1970-01-01T11:30:00.000Z'),
             endTime: new Date('1970-01-01T12:00:00.000Z'),
             headcount: 24,
+            isGenerated: true,
           },
         ],
+      });
+    });
+
+    it('keeps a meal the school placed by hand, and writes nothing over it', async () => {
+      /*
+       * The engine reports a pinned meal back like any other, so its answer for
+       * a hand-placed day lands on a row that already exists. Creating over it
+       * would break LunchSittings_group_day_key inside this transaction, after
+       * a solve the school watched succeed. The hand row keeps its start and
+       * takes the length and headcount from the answer instead.
+       */
+      tx.lunchSitting.findMany.mockResolvedValue([
+        {
+          id: 'hand-1',
+          studentGroupId: 'g-7a',
+          dayOfWeek: 1,
+          startTime: new Date('1970-01-01T11:30:00.000Z'),
+        },
+      ]);
+
+      await persist(
+        { status: 'OPTIMAL', lessons: [placement()] },
+        {
+          ...oneRequirement(1),
+          lunches: [sitting('g-7a', 1), sitting('g-7a', 2)],
+          headcountByGroup: new Map([['g-7a', 26]]),
+        },
+      );
+
+      const created = tx.lunchSitting.createMany.mock.calls[0][0].data;
+      expect(created.map((row: { dayOfWeek: number }) => row.dayOfWeek)).toEqual([2]);
+      expect(tx.lunchSitting.update).toHaveBeenCalledWith({
+        where: { id: 'hand-1' },
+        data: { endTime: new Date('1970-01-01T12:00:00.000Z'), headcount: 26 },
       });
     });
 
@@ -356,6 +390,83 @@ describe('OptimizationProxyService', () => {
       const [call] = tx.lunchSitting.createMany.mock.calls;
       expect(call[0].data).toHaveLength(1);
       expect(call[0].data[0].studentGroupId).toBe('g-7a');
+    });
+
+    it('drops a meal placed by hand that the run did not honour', async () => {
+      /*
+       * With lunch switched off the engine builds no meal and pins nothing, so
+       * the lessons were placed straight across the hand-placed row. Kept, it
+       * would sit on the grid and reach the pupil's calendar on top of one.
+       */
+      tx.lunchSitting.findMany.mockResolvedValue([
+        {
+          id: 'hand-1',
+          studentGroupId: 'g-7a',
+          dayOfWeek: 1,
+          startTime: new Date('1970-01-01T13:00:00.000Z'),
+        },
+      ]);
+
+      await persist(
+        { status: 'OPTIMAL', lessons: [placement()] },
+        { ...oneRequirement(1), lunches: [] },
+      );
+
+      expect(tx.lunchSitting.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: ['hand-1'] } },
+      });
+      expect(tx.lunchSitting.update).not.toHaveBeenCalled();
+    });
+
+    it('says so loudly when a hand-placed meal came back somewhere else', async () => {
+      /*
+       * The pin is the whole contract across this seam: the gateway sends the
+       * school's start, the engine holds its own lunch variable there. An
+       * answer at another start means the two halves have drifted — and the row
+       * is still the school's, so it keeps the school's start rather than
+       * quietly taking the engine's.
+       */
+      const logger = (service as unknown as { logger: { error: (message: string) => void } })
+        .logger;
+      const error = jest.spyOn(logger, 'error').mockImplementation(() => undefined);
+      tx.lunchSitting.findMany.mockResolvedValue([
+        {
+          id: 'hand-1',
+          studentGroupId: 'g-7a',
+          dayOfWeek: 1,
+          startTime: new Date('1970-01-01T13:00:00.000Z'),
+        },
+      ]);
+
+      await persist(
+        { status: 'OPTIMAL', lessons: [placement()] },
+        { ...oneRequirement(1), lunches: [sitting('g-7a', 1)] },
+      );
+
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error.mock.calls[0][0]).toContain('did not bind');
+      expect(tx.lunchSitting.update.mock.calls[0][0].data).not.toHaveProperty('startTime');
+    });
+
+    it('says nothing when the engine held the meal where it was placed', async () => {
+      const logger = (service as unknown as { logger: { error: (message: string) => void } })
+        .logger;
+      const error = jest.spyOn(logger, 'error').mockImplementation(() => undefined);
+      tx.lunchSitting.findMany.mockResolvedValue([
+        {
+          id: 'hand-1',
+          studentGroupId: 'g-7a',
+          dayOfWeek: 1,
+          startTime: new Date('1970-01-01T11:30:00.000Z'),
+        },
+      ]);
+
+      await persist(
+        { status: 'OPTIMAL', lessons: [placement()] },
+        { ...oneRequirement(1), lunches: [sitting('g-7a', 1)] },
+      );
+
+      expect(error).not.toHaveBeenCalled();
     });
 
     it("drops the year's already-published meals in the same transaction", async () => {
@@ -971,6 +1082,36 @@ describe('OptimizationProxyService', () => {
 
     const postedPayload = (): AiEngineScheduleRequest =>
       http.post.mock.calls[0][1] as AiEngineScheduleRequest;
+
+    it('sends a meal the school placed as a pin, under the class\u2019s anonymous id', async () => {
+      /*
+       * Only the rows the school wrote, and only as a start: the engine pins the
+       * lunch variable it builds anyway. The id is the same anonymous id the
+       * class carries in \`groups\` — a pin under any other id would have no
+       * variable to pin, and a pin under the real one would be a real id
+       * reaching the engine.
+       */
+      arrange();
+      tx.lunchSitting.findMany.mockResolvedValue([
+        {
+          studentGroupId: GROUP_ID,
+          dayOfWeek: 2,
+          startTime: new Date('1970-01-01T13:00:00.000Z'),
+        },
+      ]);
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      const { lunchPlacements, groups } = postedPayload();
+      expect(lunchPlacements).toHaveLength(1);
+      expect(lunchPlacements[0]).toMatchObject({ dayOfWeek: 2, startTime: '13:00:00' });
+      expect(lunchPlacements[0].studentGroupId).not.toBe(GROUP_ID);
+      expect(groups.map((group) => group.id)).toContain(lunchPlacements[0].studentGroupId);
+      expect(tx.lunchSitting.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ isGenerated: false }) }),
+      );
+    });
 
     // -----------------------------------------------------------------------
     // Sittningarna, on their way back

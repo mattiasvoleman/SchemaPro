@@ -21,6 +21,7 @@ import {
   Sparkles,
   Trash2,
   TriangleAlert,
+  UtensilsCrossed,
   Undo2,
   Upload,
   X,
@@ -47,6 +48,7 @@ import {
   useGroupMemberships,
   useFrameTimes,
   useLunchSittings,
+  useLunchSittingMutations,
   useRoomPreferences,
   useRasts,
 } from "@/lib/queries";
@@ -348,6 +350,19 @@ export default function TimetablePage() {
   const { data: memberships } = useGroupMemberships();
   const { data: frameTimes } = useFrameTimes();
   const { data: lunchSittings } = useLunchSittings(activeYear?.id ?? null);
+  const lunchMutations = useLunchSittingMutations();
+  /*
+   * Placing a lunch by hand. A mode rather than a new gesture: a click on empty
+   * time already means "put something here", and in this mode the something is
+   * the class's meal instead of a lesson. Only with ONE class in view, for the
+   * reason the bands give — a meal belongs to a class, and on a grid of several
+   * there is no answer to "whose". Derived rather than reset on a filter
+   * change, so picking a second class simply takes the mode away.
+   */
+  const [placingLunch, setPlacingLunch] = useState(false);
+  const canPlaceLunch =
+    onlyGroup !== null && lunchSettings?.lunchEnabled === true && activeYear != null;
+  const lunchMode = placingLunch && canPlaceLunch;
   const { data: roomRules } = useRoomPreferences();
   const { data: rasts } = useRasts();
   /**
@@ -576,6 +591,13 @@ export default function TimetablePage() {
         startMinutes: timeToMinutes(sitting.startTime),
         endMinutes: timeToMinutes(sitting.endTime),
         label: tLunch("bandLabel"),
+        // Every meal can be moved — touching one makes it the school's — and
+        // only one the school placed can be removed: the solver's own is
+        // replaced by the next run, and removing it would leave the day blank.
+        movable: true,
+        handPlaced: !sitting.isGenerated,
+        moveLabel: t("lunchMove"),
+        removeLabel: sitting.isGenerated ? undefined : t("lunchRemove"),
       }));
 
     /*
@@ -603,7 +625,7 @@ export default function TimetablePage() {
     );
 
     return [...meals, ...breaks];
-  }, [lunchSittings, rasts, gradeSpanOf, onlyGroup, tLunch]);
+  }, [lunchSittings, rasts, gradeSpanOf, onlyGroup, tLunch, t]);
 
   /**
    * lessonId → what this lesson means for the class in view. Empty for "all".
@@ -1183,6 +1205,115 @@ export default function TimetablePage() {
     }
   };
 
+  const lunchError = (error: unknown) =>
+    toast.error(error instanceof ApiError ? error.message : tCommon("error"));
+
+  const sittingOn = (dayOfWeek: number) =>
+    (lunchSittings ?? []).find(
+      (sitting) => sitting.studentGroupId === onlyGroup && sitting.dayOfWeek === dayOfWeek,
+    );
+
+  /**
+   * The class's meal on that day, placed where the school clicked.
+   *
+   * Undone to what the day MEANT before, not merely to where the band was. A
+   * day with a meal the school had placed goes back to that start. A day the
+   * solver had fed goes back to the solver: the hand row is removed and the
+   * next run places the meal again. A day with no meal goes back to none.
+   */
+  const placeLunch = async (dayOfWeek: number, startMinutes: number) => {
+    if (!onlyGroup || !activeYear) return;
+    const before = sittingOn(dayOfWeek);
+    const body = {
+      academicYearId: activeYear.id,
+      studentGroupId: onlyGroup,
+      dayOfWeek,
+      startTime: minutesToHHMM(startMinutes),
+    };
+    try {
+      const placed = (await lunchMutations.create.mutateAsync(body)) as { id: string };
+      const ref = { id: placed.id };
+      history.push({
+        label: "lunch",
+        undo: async () => {
+          if (before && !before.isGenerated) {
+            await lunchMutations.update.mutateAsync({
+              id: ref.id,
+              startTime: before.startTime.slice(0, 5),
+            });
+          } else {
+            await lunchMutations.remove.mutateAsync(ref.id);
+          }
+        },
+        redo: async () => {
+          const again = (await lunchMutations.create.mutateAsync(body)) as { id: string };
+          ref.id = again.id;
+        },
+      });
+    } catch (error) {
+      lunchError(error);
+    }
+  };
+
+  /**
+   * A meal dragged to another day or time.
+   *
+   * Onto a day that already has a meal for this class it is refused HERE, not
+   * left to the server — which would replace the other meal, and a drag that
+   * silently deleted Wednesday's lunch is the worst thing this gesture could do.
+   */
+  const moveLunch = async (id: string, dayOfWeek: number, startMinutes: number) => {
+    const sitting = (lunchSittings ?? []).find((row) => row.id === id);
+    if (!sitting) return;
+    if (dayOfWeek !== sitting.dayOfWeek && sittingOn(dayOfWeek)) {
+      toast.error(t("lunchDayTaken"));
+      return;
+    }
+    const before = { dayOfWeek: sitting.dayOfWeek, startTime: sitting.startTime.slice(0, 5) };
+    const after = { dayOfWeek, startTime: minutesToHHMM(startMinutes) };
+    try {
+      await lunchMutations.update.mutateAsync({ id, ...after });
+      history.push({
+        label: "lunch",
+        undo: async () => {
+          await lunchMutations.update.mutateAsync({ id, ...before });
+        },
+        redo: async () => {
+          await lunchMutations.update.mutateAsync({ id, ...after });
+        },
+      });
+    } catch (error) {
+      lunchError(error);
+    }
+  };
+
+  const removeLunch = async (id: string) => {
+    const sitting = (lunchSittings ?? []).find((row) => row.id === id);
+    if (!sitting || !activeYear) return;
+    const body = {
+      academicYearId: activeYear.id,
+      studentGroupId: sitting.studentGroupId,
+      dayOfWeek: sitting.dayOfWeek,
+      startTime: sitting.startTime.slice(0, 5),
+    };
+    const ref = { id };
+    try {
+      await lunchMutations.remove.mutateAsync(id);
+      history.push({
+        label: "lunch",
+        undo: async () => {
+          const again = (await lunchMutations.create.mutateAsync(body)) as { id: string };
+          ref.id = again.id;
+        },
+        redo: async () => {
+          await lunchMutations.remove.mutateAsync(ref.id);
+        },
+      });
+    } catch (error) {
+      lunchError(error);
+    }
+  };
+
   const openCreate = (dayOfWeek: number, startMinutes: number) => {
     setSlotMatches(null);
     setCreating({
@@ -1647,6 +1778,17 @@ export default function TimetablePage() {
             <SelectItem value="group">{t("viewByGroup")}</SelectItem>
           </SelectContent>
         </Select>
+        {canPlaceLunch ? (
+          <Button
+            size="sm"
+            variant={lunchMode ? "default" : "outline"}
+            aria-pressed={lunchMode}
+            onClick={() => setPlacingLunch((on) => !on)}
+          >
+            <UtensilsCrossed />
+            {lunchMode ? t("placeLunchOn") : t("placeLunch")}
+          </Button>
+        ) : null}
         {filtered.length > 0 ? (
           <span className="text-sm text-muted-foreground">
             {t("lessonCount", { count: filtered.length })}
@@ -1704,15 +1846,38 @@ export default function TimetablePage() {
               >
                 {t("noSittingsYearLink")}
               </Link>
+              {canPlaceLunch ? (
+                <Button size="sm" variant="outline" onClick={() => setPlacingLunch(true)}>
+                  <UtensilsCrossed />
+                  {t("noSittingsPlace")}
+                </Button>
+              ) : null}
             </div>
           ) : (
-            <p>
-              {t("noSittingsGroup", {
-                group: onlyGroup ? (groupById.get(onlyGroup)?.name ?? "") : "",
-              })}
-            </p>
+            <div className="space-y-1">
+              <p>
+                {t("noSittingsGroup", {
+                  group: onlyGroup ? (groupById.get(onlyGroup)?.name ?? "") : "",
+                })}
+              </p>
+              {canPlaceLunch ? (
+                <Button size="sm" variant="outline" onClick={() => setPlacingLunch(true)}>
+                  <UtensilsCrossed />
+                  {t("noSittingsPlace")}
+                </Button>
+              ) : null}
+            </div>
           )}
         </div>
+      ) : null}
+
+      {lunchMode ? (
+        <p
+          role="status"
+          className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+        >
+          {t("placeLunchHint", { minutes: lunchSettings?.lunchMinutes ?? 0 })}
+        </p>
       ) : null}
 
       {selectedIds.size > 0 ? (
@@ -1763,8 +1928,12 @@ export default function TimetablePage() {
                 onDropOutside={handleDropOutside}
                 selectedIds={selectedIds}
                 onToggleSelect={toggleSelect}
-                onSlotClick={openCreate}
+                onSlotClick={
+                  lunchMode ? (day, minute) => void placeLunch(day, minute) : openCreate
+                }
                 bands={lunchBands}
+                onBandMove={(id, day, minute) => void moveLunch(id, day, minute)}
+                onBandRemove={(id) => void removeLunch(id)}
               />
             </div>
           ))}
@@ -1781,8 +1950,10 @@ export default function TimetablePage() {
           onDropOutside={handleDropOutside}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
-          onSlotClick={openCreate}
+          onSlotClick={lunchMode ? (day, minute) => void placeLunch(day, minute) : openCreate}
           bands={lunchBands}
+          onBandMove={(id, day, minute) => void moveLunch(id, day, minute)}
+          onBandRemove={(id) => void removeLunch(id)}
         />
       )}
 

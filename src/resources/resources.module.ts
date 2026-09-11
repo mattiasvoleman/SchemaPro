@@ -22,6 +22,8 @@ import { LunchServingsController } from './lunch-servings.controller';
 import { RastsController } from './rasts.controller';
 import { LunchServingsService } from './lunch-servings.service';
 import { RastsService } from './rasts.service';
+import { LunchSittingsController } from './lunch-sittings.controller';
+import { LunchSittingsService } from './lunch-sittings.service';
 import { FrameTimesService } from './frame-times.service';
 import { SchoolBreaksController } from './school-breaks.controller';
 import { SchoolBreaksService } from './school-breaks.service';
@@ -45,6 +47,7 @@ import { SchoolBreaksService } from './school-breaks.service';
     FrameTimesController,
     LunchServingsController,
     RastsController,
+    LunchSittingsController,
     SchoolBreaksController,
   ],
   providers: [
@@ -60,6 +63,7 @@ import { SchoolBreaksService } from './school-breaks.service';
     FrameTimesService,
     LunchServingsService,
     RastsService,
+    LunchSittingsService,
     SchoolBreaksService,
   ],
 })

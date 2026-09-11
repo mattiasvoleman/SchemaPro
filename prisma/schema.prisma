@@ -1167,13 +1167,14 @@ model CalendarRast {
   @@map("CalendarRasts")
 }
 
-/// The lunch the solver chose for one group, one weekday.
+/// The lunch one class has on one weekday — the solver's choice, or the school's.
 ///
-/// The meal's half of the MasterLesson -> CalendarLesson path. Wholly
-/// engine-owned: every run replaces the year's sittings, a failed run leaves
-/// them alone, and there is no isLocked — a preserved sitting would be sent
-/// back as a fixed lesson while the solver still builds its own lunch variable,
-/// giving two mandatory reservations in one window. See the migration.
+/// The meal's half of the MasterLesson -> CalendarLesson path. A run replaces
+/// the rows the SOLVER wrote (isGenerated) and leaves the ones the school
+/// placed by hand; a failed run leaves them all alone. A hand-placed row is
+/// sent to the engine as a PIN on the lunch variable it already builds — one
+/// reservation, not the fixed lesson beside a live variable that the migration
+/// creating this table refused. See 20260911090000.
 model LunchSitting {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId       String   @db.Uuid
@@ -1186,6 +1187,11 @@ model LunchSitting {
   /// Children seated, as the engine was told. Kept so the kitchen's list does
   /// not have to re-derive a roster that may have changed since the run.
   headcount      Int      @default(0)
+  /// Whether the SOLVER wrote this row. The one thing regeneration may replace,
+  /// spelled as MasterLesson spells it, and defaulting false for the same
+  /// reason: a creation path that forgets to say is treated as handmade and
+  /// survives, which is the error a school can see and undo.
+  isGenerated    Boolean  @default(false)
   createdAt      DateTime @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @db.Timestamptz(6)
 
