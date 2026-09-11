@@ -5636,6 +5636,11 @@ def _counter_wish(names: dict[str, str]) -> dict[str, object]:
     room and only 100 for staying, so it stays; a group it does not reach
     pays only this, so it leaves. A scope that leaked would keep the group in
     the wanted room on every run, not on an unlucky one.
+
+    The argument holds at a PROVEN optimum only, so the tests that use this
+    require OPTIMAL. FEASIBLE is either phase 2 stopping early or phase 1's
+    answer returned as it stands — and phase 1's placement of an unreached
+    group is exactly the tie this helper exists to remove.
     """
     return _rule(names, roomIds=[names["other"]], weight=100)
 
@@ -5688,7 +5693,7 @@ def test_a_wish_scoped_to_a_stage_leaves_the_other_alone(client: TestClient) -> 
     request = OptimizeScheduleRequest.model_validate(payload)
     response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
 
-    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert response.status == "OPTIMAL", "only a proven optimum is evidence"
     by_span = _rooms_by_span(response, request)
     assert by_span[(4, 4)] == {names["wanted"]}
     assert by_span[(7, 9)] == {names["other"]}, (
@@ -5727,7 +5732,7 @@ def test_a_wish_does_not_reach_a_group_only_half_inside_its_span(
     request = OptimizeScheduleRequest.model_validate(payload)
     response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
 
-    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert response.status == "OPTIMAL", "only a proven optimum is evidence"
     by_span = _rooms_by_span(response, request)
     assert by_span[(7, 7)] == {names["wanted"]}
     assert by_span[(6, 7)] == {names["other"]}, (
@@ -5756,7 +5761,7 @@ def test_a_wish_says_nothing_about_a_group_with_unknown_years(
     request = OptimizeScheduleRequest.model_validate(payload)
     response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
 
-    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert response.status == "OPTIMAL", "only a proven optimum is evidence"
     by_span = _rooms_by_span(response, request)
     assert by_span[(4, 4)] == {names["wanted"]}
     assert by_span[(None, None)] == {names["other"]}, (
