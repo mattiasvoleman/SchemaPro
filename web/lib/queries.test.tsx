@@ -30,6 +30,7 @@ import {
   useRoomBookingActions,
   useRoomBookingRequests,
   useRoomBookings,
+  useRoomOptimization,
   useRooms,
   useRoomTypes,
   useScheduleVersionActions,
@@ -984,6 +985,66 @@ describe("useScheduleVersionActions", () => {
   });
 });
 
+describe("useRoomOptimization", () => {
+  const moves = [{ lessonId: "l-1", fromRoomId: "r-1", toRoomId: "r-10" }];
+
+  it("propose asks the gateway and invalidates nothing, because it writes nothing", async () => {
+    mockApi.post.mockResolvedValue({ basis: "b-1", changes: moves });
+    const harness = createHarness();
+    const { result } = renderHook(() => useRoomOptimization(), {
+      wrapper: harness.wrapper,
+    });
+
+    await act(async () => {
+      await result.current.propose.mutateAsync({ academicYearId: "y-1", walkers: "TEACHERS" });
+    });
+    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/optimization/rooms/proposal", {
+      academicYearId: "y-1",
+      walkers: "TEACHERS",
+    });
+    expect(invalidatedKeys(harness)).toEqual([]);
+  });
+
+  it("apply refreshes the lessons, the versions and every view of the calendar", async () => {
+    mockApi.post.mockResolvedValue({
+      updated: 1,
+      basis: "b-2",
+      versionId: "v-1",
+      calendarUpdated: 3,
+    });
+    const harness = createHarness();
+    const { result } = renderHook(() => useRoomOptimization(), {
+      wrapper: harness.wrapper,
+    });
+
+    await act(async () => {
+      await result.current.apply.mutateAsync({
+        academicYearId: "y-1",
+        basis: "b-1",
+        changes: moves,
+      });
+    });
+    expect(mockApi.post).toHaveBeenCalledWith("/api/v1/optimization/rooms/apply", {
+      academicYearId: "y-1",
+      basis: "b-1",
+      changes: moves,
+    });
+    // The "Före salsoptimering" snapshot is written in the same transaction,
+    // so the version list is as stale as the grid. The future calendar lessons
+    // move with their template, so every query showing a calendar lesson's
+    // room is stale too.
+    expect(invalidatedKeys(harness)).toEqual([
+      ["masterLessons"],
+      ["scheduleVersions"],
+      ["calendarLessons"],
+      ["teacherLessons"],
+      ["dayLessons"],
+      ["teacherAbsenceLessons"],
+      ["lesson"],
+    ]);
+  });
+});
+
 describe("useReportAttendance", () => {
   it("invalidates exactly the reported lesson's attendance", async () => {
     mockApi.post.mockResolvedValue({ created: 2, updated: 1 });
@@ -1667,6 +1728,19 @@ describe("Swedish ordering across the remaining lists", () => {
       "Ängen",
       "Örnen",
     ]);
+  });
+
+  it("fetches building and floor, which the room optimisation dialog reads", async () => {
+    // The dialog counts the rooms without a floor from this list, before any
+    // proposal exists. A select that forgot the column reads every room as
+    // floorless, and the rooms page would show every Plats as "—".
+    stubTable("Rooms", ok([]));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useRooms(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    const columns = String(argsFor("Rooms", "select")[0]?.[0]).split(", ");
+    expect(columns).toEqual(expect.arrayContaining(["building", "floor"]));
   });
 
   it("orders room types even though the API already sorted them", async () => {

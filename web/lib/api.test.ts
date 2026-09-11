@@ -17,6 +17,27 @@ const jsonResponse = (body: unknown, status = 200) =>
     headers: { "Content-Type": "application/json" },
   });
 
+/** An error body exactly as the gateway's HttpExceptionFilter renders one. */
+const problemResponse = (
+  status: number,
+  title: string,
+  detail: string,
+  instance: string,
+  code?: string,
+) =>
+  new Response(
+    JSON.stringify({
+      type: "about:blank",
+      title,
+      status,
+      detail,
+      instance,
+      traceId: "5f0c7a52-3d1e-4b8a-9a37-2f1b6c1d9e04",
+      ...(code ? { code } : {}),
+    }),
+    { status, headers: { "Content-Type": "application/problem+json" } },
+  );
+
 describe("api client", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -124,6 +145,33 @@ describe("api client", () => {
       status: 403,
       message: "Forbidden.",
     });
+  });
+
+  it("carries the gateway's error code beside the message", async () => {
+    // Two different 409s come back from the room optimisation, and only the
+    // code tells a stale proposal from a clash.
+    fetchMock.mockResolvedValue(
+      problemResponse(
+        409,
+        "Conflict",
+        "Grundschemat har ändrats sedan förslaget beräknades. Beräkna ett nytt förslag.",
+        "/api/v1/optimization/rooms/apply",
+        "ROOM_PROPOSAL_STALE",
+      ),
+    );
+    const { api } = await loadApi();
+    await expect(api.post("/api/v1/optimization/rooms/apply", {})).rejects.toMatchObject({
+      status: 409,
+      message: "Grundschemat har ändrats sedan förslaget beräknades. Beräkna ett nytt förslag.",
+      code: "ROOM_PROPOSAL_STALE",
+    });
+  });
+
+  it("leaves the code empty when the body has none", async () => {
+    fetchMock.mockResolvedValue(problemResponse(403, "Forbidden", "Forbidden resource", "/admin"));
+    const { api } = await loadApi();
+    const error = await api.get("/admin").catch((caught: unknown) => caught);
+    expect((error as { code?: string }).code).toBeUndefined();
   });
 
   it("keeps a generic HTTP message for a non-JSON error body", async () => {

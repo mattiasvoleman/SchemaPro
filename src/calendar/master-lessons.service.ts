@@ -948,19 +948,24 @@ function toResult(lesson: LessonRecord): MasterLessonResult {
 /**
  * The materialized lessons a template change may still rewrite or remove.
  *
- * One definition for both callers: deleting the template and narrowing it
- * throw away the same rows, and a difference between the two rules would mean
- * a lesson that survives one and not the other. Anything in the past, no
+ * One definition for every caller: deleting the template, narrowing it, and
+ * the room optimisation moving its room (RoomOptimizationService.apply) reach
+ * the same rows, and a difference between the rules would mean a lesson that
+ * one of them rewrites and another leaves alone. Anything in the past, no
  * longer merely SCHEDULED (cancelled, completed, rescheduled by hand), or
  * with attendance recorded is what happened, and stays as it happened.
+ *
+ * Several templates at once for the room optimisation, which moves hundreds
+ * of lessons in one transaction and would otherwise pay a statement each.
  */
-function reconcilableLessons(
-  masterLessonId: string,
+export function reconcilableLessons(
+  masterLessonIds: string | string[],
 ): Prisma.CalendarLessonWhereInput {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
   return {
-    masterLessonId,
+    masterLessonId:
+      typeof masterLessonIds === 'string' ? masterLessonIds : { in: masterLessonIds },
     status: 'SCHEDULED',
     date: { gte: today },
     attendanceRecords: { none: {} },

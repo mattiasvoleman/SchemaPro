@@ -45,6 +45,8 @@ const room: Room = {
   minGradeLevel: null,
   maxGradeLevel: null,
   requiresApproval: false,
+  building: null,
+  floor: null,
 };
 
 const row = (overrides: Partial<CalendarLessonRow> = {}): CalendarLessonRow => ({

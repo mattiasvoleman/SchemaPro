@@ -1,5 +1,10 @@
 import { of } from 'rxjs';
 import { OptimizationProxyService } from './optimization-proxy.service';
+import { RoomOptimizationService } from './room-optimization.service';
+import type {
+  OptimizeRoomsResponse,
+  Walk,
+} from './interfaces/room-walks.interface';
 import {
   createPrismaMock,
   createTxMock,
@@ -374,5 +379,217 @@ describe('AI engine wire contract', () => {
   it('sends exactly the rule fields the engine declares', async () => {
     const payload = await buildPayload();
     expect(Object.keys(payload['rules'] as object).sort()).toEqual(RULES_FIELDS);
+  });
+});
+
+/*
+ * The room optimisation's half of the same contract: POST /api/v1/optimize-rooms.
+ * Mirrored in optimization-engine/tests/test_room_walks.py
+ * (test_the_wire_contract_is_exactly_what_the_gateway_sends_and_reads) against
+ * the pydantic models, which forbid extra fields exactly as the schedule
+ * route's do.
+ */
+
+const ROOMS_REQUEST_FIELDS = [
+  'constraints',
+  'lessons',
+  'requestId',
+  'roomPreferences',
+  'rooms',
+  'walkers',
+];
+
+/** Times and weeks as they are; the engine never moves either. */
+const ROOMS_LESSON_FIELDS = [
+  'coTeacherId',
+  'dayOfWeek',
+  'endDate',
+  'endTime',
+  'extraGroupIds',
+  'id',
+  'maxGradeLevel',
+  'minGradeLevel',
+  'movable',
+  'recurrence',
+  'requiredRoomType',
+  'roomId',
+  'startDate',
+  'startTime',
+  'studentGroupId',
+  'studentGroupSize',
+  'subjectId',
+  'teacherId',
+];
+
+/** The building is a token, never the school's name for it. */
+const ROOMS_ROOM_FIELDS = [
+  'building',
+  'capacity',
+  'floor',
+  'id',
+  'maxGradeLevel',
+  'minGradeLevel',
+  'type',
+];
+
+/** A room closed on a weekday, the one kind of constraint this route reads. */
+const ROOMS_CONSTRAINT_FIELDS = [
+  'date',
+  'dayOfWeek',
+  'endTime',
+  'id',
+  'kind',
+  'resourceId',
+  'resourceKind',
+  'startTime',
+];
+
+const ROOMS_RESPONSE_FIELDS = [
+  'changes',
+  'frozenLessonIds',
+  'groups',
+  'missedWishes',
+  'requestId',
+  'status',
+  'teachers',
+  'walkers',
+];
+
+const WALK_FIELDS = ['buildingChanges', 'floorChanges', 'roomChanges'];
+
+describe('AI engine wire contract — room optimisation', () => {
+  const walk = (roomChanges: number): Walk => ({
+    roomChanges,
+    floorChanges: 1,
+    buildingChanges: 2,
+  });
+
+  /**
+   * One of everything the engine sends back, typed against the interface: a
+   * field added to OptimizeRoomsResponse without being added here fails the
+   * type-check, and one added here without the list fails the key assertion.
+   */
+  const engineReply = (requestId: string): OptimizeRoomsResponse => ({
+    requestId,
+    status: 'FEASIBLE',
+    changes: [],
+    teachers: { before: walk(3), after: walk(1) },
+    groups: { before: walk(4), after: walk(2) },
+    missedWishes: { before: 2, after: 1 },
+    walkers: [],
+    frozenLessonIds: [],
+  });
+
+  const run = async (reply: (requestId: string) => object = engineReply) => {
+    const tx = createTxMock();
+    const prisma = createPrismaMock(tx);
+    tx['academicYear']!['findUnique']!.mockResolvedValue({ id: 'year-1', schoolId: 'school-1' });
+    tx['masterLesson']!['findMany']!.mockResolvedValue([
+      {
+        id: 'ml-1',
+        subjectId: 's1',
+        studentGroupId: 'g1',
+        teacherId: 't1',
+        coTeacherId: null,
+        roomId: 'rm1',
+        dayOfWeek: 1,
+        startTime: new Date('1970-01-01T08:00:00.000Z'),
+        endTime: new Date('1970-01-01T09:00:00.000Z'),
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        isLocked: false,
+        isParked: false,
+        extraGroups: [],
+        participants: [],
+        subject: { requiredRoomTypeId: null },
+      },
+    ]);
+    tx['room']!['findMany']!.mockResolvedValue([
+      {
+        id: 'rm1',
+        capacity: 30,
+        roomTypeId: null,
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        building: 'Hus A',
+        floor: 2,
+      },
+    ]);
+    tx['availabilityConstraint']!['findMany']!.mockResolvedValue([
+      {
+        id: 'c1',
+        roomId: 'rm1',
+        dayOfWeek: 2,
+        startTime: new Date('1970-01-01T12:00:00.000Z'),
+        endTime: new Date('1970-01-01T13:00:00.000Z'),
+      },
+    ]);
+
+    let sent: Record<string, unknown> = {};
+    const http = {
+      post: jest.fn((_url: string, payload: Record<string, unknown>) => {
+        sent = payload;
+        return of({ data: reply(payload['requestId'] as string) });
+      }),
+    };
+    const config = {
+      getOrThrow: () => ({ baseUrl: 'http://engine', apiKey: 'k', timeoutMs: 1000 }),
+    };
+    const proxy = new OptimizationProxyService(prisma as never, http as never, config as never);
+    const proposal = await new RoomOptimizationService(
+      prisma as never,
+      proxy,
+      {} as never,
+      {} as never,
+    ).propose({ academicYearId: 'year-1', walkers: 'TEACHERS' }, testUser());
+
+    return { sent, proposal };
+  };
+
+  it('sends exactly the top-level fields the engine declares', async () => {
+    const { sent } = await run();
+    expect(Object.keys(sent).sort()).toEqual(ROOMS_REQUEST_FIELDS);
+  });
+
+  it('sends exactly the lesson fields the engine declares', async () => {
+    const { sent } = await run();
+    const lessons = sent['lessons'] as Array<Record<string, unknown>>;
+    expect(lessons).toHaveLength(1);
+    expect(Object.keys(lessons[0]!).sort()).toEqual(ROOMS_LESSON_FIELDS);
+  });
+
+  it('sends exactly the room fields the engine declares', async () => {
+    const { sent } = await run();
+    const rooms = sent['rooms'] as Array<Record<string, unknown>>;
+    expect(Object.keys(rooms[0]!).sort()).toEqual(ROOMS_ROOM_FIELDS);
+  });
+
+  it('sends exactly the constraint fields the engine declares', async () => {
+    const { sent } = await run();
+    const constraints = sent['constraints'] as Array<Record<string, unknown>>;
+    expect(constraints).toHaveLength(1);
+    expect(Object.keys(constraints[0]!).sort()).toEqual(ROOMS_CONSTRAINT_FIELDS);
+  });
+
+  it('reads exactly the response fields the engine declares', async () => {
+    const reply = engineReply('r');
+    expect(Object.keys(reply).sort()).toEqual(ROOMS_RESPONSE_FIELDS);
+    expect(Object.keys(reply.teachers.before).sort()).toEqual(WALK_FIELDS);
+
+    // And every one of them reaches the proposal, under the name it had.
+    const { proposal } = await run();
+    expect(proposal.status).toBe('FEASIBLE');
+    expect(proposal.teachers).toEqual({ before: walk(3), after: walk(1) });
+    expect(proposal.groups).toEqual({ before: walk(4), after: walk(2) });
+    expect(proposal.missedWishes).toEqual({ before: 2, after: 1 });
+  });
+
+  it('passes a walk on with exactly the walk fields, whatever else the engine adds', async () => {
+    const { proposal } = await run((requestId) => {
+      const reply = engineReply(requestId);
+      return { ...reply, teachers: { ...reply.teachers, before: { ...walk(3), stairs: 9 } } };
+    });
+    expect(Object.keys(proposal.teachers.before).sort()).toEqual(WALK_FIELDS);
   });
 });

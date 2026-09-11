@@ -15,6 +15,7 @@ import {
   LockOpen,
   ParkingSquare,
   FileText,
+  Footprints,
   Plus,
   Printer,
   Redo2,
@@ -57,6 +58,7 @@ import { exportTimetablePdf } from "@/lib/pdf";
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
 import { FilterPicker } from "@/components/schedule/filter-picker";
+import { RoomOptimizationDialog } from "@/components/schedule/room-optimization-dialog";
 import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
@@ -286,6 +288,7 @@ export default function TimetablePage() {
   } | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versionName, setVersionName] = useState("");
+  const [roomsOpen, setRoomsOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
 
   /**
@@ -1205,6 +1208,21 @@ export default function TimetablePage() {
     }
   };
 
+  /*
+   * After a room optimisation is applied — or its Ångra — the page's own undo
+   * stack is cleared, exactly as a version restore clears it. Both rewrite
+   * lessons underneath the stack, and every entry in it holds a snapshot of a
+   * lesson as it was, room included. Undoing an earlier drag would then put
+   * that one lesson back in its pre-optimisation room: a piece of the proposal
+   * reversed with no toast saying so, into a room another moved lesson may
+   * now hold. The apply's own Ångra is the way back, and after it the entries
+   * made in between carry the optimised rooms, so the stack goes again.
+   *
+   * The selection stays, unlike after a restore: a restore recreates lessons
+   * under new ids, while here the ids are the same lessons in other rooms.
+   */
+  const afterRoomOptimization = useCallback(() => history.clear(), [history]);
+
   const lunchError = (error: unknown) =>
     toast.error(error instanceof ApiError ? error.message : tCommon("error"));
 
@@ -1688,6 +1706,14 @@ export default function TimetablePage() {
             >
               <History />
               {t("versions")}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setRoomsOpen(true)}
+              disabled={!activeYear || !lessons || lessons.length === 0}
+            >
+              <Footprints />
+              {t("optimizeRooms")}
             </Button>
             <Button
               variant="outline"
@@ -2746,6 +2772,17 @@ export default function TimetablePage() {
           ) : null}
         </DialogContent>
       </Dialog>
+
+      {/* ---------------- Room optimisation dialog ---------------- */}
+      <RoomOptimizationDialog
+        open={roomsOpen}
+        onOpenChange={setRoomsOpen}
+        academicYearId={activeYear?.id ?? null}
+        rooms={rooms ?? []}
+        teachers={teachers}
+        groups={groups ?? []}
+        onApplied={afterRoomOptimization}
+      />
 
       {/* ---------------- Publish dialog ---------------- */}
       <Dialog open={publishOpen} onOpenChange={setPublishOpen}>

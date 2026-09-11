@@ -19,6 +19,7 @@ import type {
   AiEngineScheduleResponse,
 } from './interfaces/ai-engine-payload.interface';
 import { OptimizationProxyService } from './optimization-proxy.service';
+import * as eligibility from './room-eligibility';
 
 const ACADEMIC_YEAR = '44444444-4444-4444-8444-444444444444';
 /** One requirement, as the database holds it and as the engine sees it. */
@@ -706,14 +707,15 @@ describe('OptimizationProxyService', () => {
       roomTypeAnonMap: new Map<string, string>(),
       constraintAnonMap: new Map<string, string>(),
       nameById: new Map<string, string>(),
+      lessonAnonMap: new Map<string, string>(),
     });
 
     const call = (payload = {}, anonMaps = maps()) =>
       (
         service as unknown as {
-          callAiEngine: (p: unknown, m: unknown) => Promise<AiEngineScheduleResponse>;
+          callAiEngine: (path: string, p: unknown, m: unknown) => Promise<AiEngineScheduleResponse>;
         }
-      ).callAiEngine(payload, anonMaps);
+      ).callAiEngine('/v1/schedule', payload, anonMaps);
 
     it('returns the engine payload on success', async () => {
       http.post.mockReturnValue(
@@ -856,6 +858,23 @@ describe('OptimizationProxyService', () => {
       await expect(
         call({}, { ...maps(), roomTypeAnonMap: new Map([[realType, anonType]]) }),
       ).rejects.toThrow(realType);
+    });
+
+    it('turns a lesson id in a room-optimisation refusal back into the real one', async () => {
+      // The room route names placed lessons, not requirements; the same
+      // translation has to reach them or the refusal names a row in no table.
+      const anonLesson = 'aaaaaaaa-6666-4666-8666-aaaaaaaaaaaa';
+      const realLesson = 'bbbbbbbb-7777-4777-8777-bbbbbbbbbbbb';
+      const refused = new AxiosError('boom');
+      refused.response = {
+        status: 422,
+        data: { code: 'X', message: `Lesson ${anonLesson} names a room not in rooms.` },
+      } as never;
+      http.post.mockReturnValue(throwError(() => refused));
+
+      await expect(
+        call({}, { ...maps(), lessonAnonMap: new Map([[realLesson, anonLesson]]) }),
+      ).rejects.toThrow(realLesson);
     });
 
     it('leaves a uuid it has no mapping for exactly as it was', async () => {
@@ -1082,6 +1101,34 @@ describe('OptimizationProxyService', () => {
 
     const postedPayload = (): AiEngineScheduleRequest =>
       http.post.mock.calls[0][1] as AiEngineScheduleRequest;
+
+    it('reads a requirement’s room needs through the derivation the room optimisation shares', async () => {
+      /*
+       * The room optimisation may only move a lesson into a room this run
+       * could have given it, and that holds only while both read group size,
+       * years and room type through one function. A copy inlined here would
+       * pass every other test in this file and drift the first time either
+       * side is fixed.
+       */
+      const needs = jest.spyOn(eligibility, 'roomNeedsOf');
+      try {
+        arrange();
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(needs).toHaveBeenCalledWith(
+          expect.anything(),
+          { groupIds: [GROUP_ID] },
+          expect.anything(),
+        );
+        expect(postedPayload().requirements[0].studentGroupSize).toBe(
+          needs.mock.results[0]!.value.studentGroupSize,
+        );
+      } finally {
+        needs.mockRestore();
+      }
+    });
 
     it('sends a meal the school placed as a pin, under the class\u2019s anonymous id', async () => {
       /*

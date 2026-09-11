@@ -142,7 +142,7 @@ export function useRooms() {
       sortByName(
         await selectAll<Room>(
           "Rooms",
-          "id, name, code, capacity, roomTypeId, minGradeLevel, maxGradeLevel, requiresApproval",
+          "id, name, code, capacity, roomTypeId, minGradeLevel, maxGradeLevel, requiresApproval, building, floor",
           "name",
         ),
         (room) => room.name,
@@ -1217,6 +1217,106 @@ export function useScheduleVersionActions() {
   });
 
   return { save, restore, remove };
+}
+
+// ---------------------------------------------------------------------------
+// Room optimisation (salsoptimering)
+// ---------------------------------------------------------------------------
+
+/** Whose walking the optimisation minimises. Both kinds are always reported. */
+export type RoomWalkers = "TEACHERS" | "GROUPS" | "BOTH";
+
+/**
+ * How much somebody walks, counted over each pair of consecutive lessons.
+ *
+ * A building change is never also counted as a floor change, and an unknown
+ * floor never counts — the engine owns the rule; the web only displays it.
+ */
+export interface Walk {
+  roomChanges: number;
+  floorChanges: number;
+  buildingChanges: number;
+}
+
+export interface RoomMove {
+  lessonId: string;
+  fromRoomId: string;
+  toRoomId: string;
+}
+
+export interface RoomProposal {
+  status: "OPTIMAL" | "FEASIBLE";
+  /** A digest of everything the proposal read; apply refuses it once stale. */
+  basis: string;
+  changes: RoomMove[];
+  teachers: { before: Walk; after: Walk };
+  groups: { before: Walk; after: Walk };
+  missedWishes: { before: number; after: number };
+  /** Every teacher or group whose walk changed — ids only, never names. */
+  walkers: Array<{ kind: "TEACHER" | "GROUP"; id: string; before: Walk; after: Walk }>;
+  /** Lessons already sharing a room with an overlapping lesson, left alone. */
+  frozenLessonIds: string[];
+  roomsTotal: number;
+  roomsWithoutFloor: number;
+}
+
+export interface RoomApplyResult {
+  updated: number;
+  /** The basis AFTER the change — what an undo has to present. */
+  basis: string;
+  versionId: string;
+  /**
+   * Published calendar lessons whose room followed along: future, still
+   * SCHEDULED and without attendance — the rule a hand-made room change
+   * follows. Past lessons and ones already taken or moved by hand keep theirs.
+   */
+  calendarUpdated: number;
+}
+
+export function useRoomOptimization() {
+  const queryClient = useQueryClient();
+
+  /*
+   * A mutation, not a query, although nothing is written. It is a solve of up
+   * to ten seconds that the admin asks for by pressing a button; as a query it
+   * would be cached under a key and re-run on window focus, starting the
+   * solver again behind a dialog that already shows its answer.
+   */
+  const propose = useMutation({
+    mutationFn: (body: { academicYearId: string; walkers: RoomWalkers }) =>
+      api.post<RoomProposal>("/api/v1/optimization/rooms/proposal", body),
+  });
+
+  /*
+   * Apply writes the lessons' rooms and a "Före salsoptimering" version in one
+   * transaction, and moves the room of the future calendar lessons made from
+   * them, so every one of those lists is out of date afterwards. Undo is this
+   * same call with the moves reversed, and moves the calendar back.
+   *
+   * The calendar keys are every query that shows a calendar lesson's room —
+   * the month view, a teacher's schedule, the day planner, the absence list and
+   * a single lesson. With a 30-second staleTime, one left out would show the
+   * old room to somebody who looked a moment before.
+   */
+  const apply = useMutation({
+    mutationFn: (body: { academicYearId: string; basis: string; changes: RoomMove[] }) =>
+      api.post<RoomApplyResult>("/api/v1/optimization/rooms/apply", body),
+    onSuccess: () => {
+      for (const key of [
+        "masterLessons",
+        "scheduleVersions",
+        "calendarLessons",
+        "teacherLessons",
+        "dayLessons",
+        "teacherAbsenceLessons",
+        "lesson",
+      ]) {
+        void queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
+  });
+
+  return { propose, apply };
 }
 
 // ---------------------------------------------------------------------------

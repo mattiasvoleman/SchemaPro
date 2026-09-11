@@ -675,6 +675,41 @@ describe('ScheduleVersionsService', () => {
     });
   });
 
+  describe('snapshotInTransaction', () => {
+    it('snapshots inside the caller’s transaction without opening one of its own', async () => {
+      /*
+       * The room optimisation's apply takes its safety copy this way, so that a
+       * refused apply rolls the copy back with it. A snapshot that opened its
+       * own transaction would survive the rollback and list, as "Före
+       * salsoptimering", a timetable nothing was ever done to.
+       */
+      tx.academicYear.findUnique.mockResolvedValue({ id: YEAR_ID, schoolId: SCHOOL_ID });
+      tx.masterLesson.findMany.mockResolvedValue([masterLessonRow()]);
+      tx.scheduleVersion.create.mockResolvedValue({
+        id: VERSION_ID,
+        academicYearId: YEAR_ID,
+        name: 'Före salsoptimering',
+        lessonCount: 1,
+        createdAt: CREATED_AT,
+      });
+
+      const summary = await service.snapshotInTransaction(
+        tx as never,
+        YEAR_ID,
+        'Före salsoptimering',
+        testUser(),
+      );
+
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.scheduleVersion.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ name: 'Före salsoptimering', lessonCount: 1 }),
+        }),
+      );
+      expect(summary.id).toBe(VERSION_ID);
+    });
+  });
+
   describe('remove', () => {
     it('deletes an existing version', async () => {
       tx.scheduleVersion.findUnique.mockResolvedValue({ id: VERSION_ID });

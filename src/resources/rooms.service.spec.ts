@@ -57,6 +57,10 @@ describe('RoomsService', () => {
           // No stage limit by default — every year may use the room.
           minGradeLevel: null,
           maxGradeLevel: null,
+          // Nowhere in particular: the room optimisation still counts its
+          // room changes, and charges no floor or building it was never told.
+          building: null,
+          floor: null,
         },
       });
     });
@@ -211,6 +215,69 @@ describe('RoomsService', () => {
       await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  describe('location', () => {
+    /*
+     * The room optimisation compares buildings by equality and charges a walk
+     * between two of them. "Hus B" and "Hus B " would be two buildings nobody
+     * can tell apart on screen, and a name of spaces is no name at all.
+     */
+    it('stores a building trimmed, and a floor', async () => {
+      tx.room.create.mockResolvedValue({ id: ROOM_ID });
+
+      await service.create(dto({ building: '  Hus B ', floor: 2 }), testUser());
+
+      expect(tx.room.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ building: 'Hus B', floor: 2 }),
+      });
+    });
+
+    it('stores a blank building as none', async () => {
+      tx.room.create.mockResolvedValue({ id: ROOM_ID });
+
+      await service.create(dto({ building: '   ' }), testUser());
+
+      expect(tx.room.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ building: null }),
+      });
+    });
+
+    it('keeps a ground floor, which is falsy but known', async () => {
+      tx.room.create.mockResolvedValue({ id: ROOM_ID });
+
+      await service.create(dto({ floor: 0 }), testUser());
+
+      const { data } = tx.room.create.mock.calls[0][0] as { data: { floor: number } };
+      expect(data.floor).toBe(0);
+    });
+
+    it('trims a building on update and clears it with a blank', async () => {
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { building: ' Annexet ', floor: -1 }, testUser());
+      await service.update(ROOM_ID, { building: '', floor: null }, testUser());
+
+      expect(tx.room.update).toHaveBeenNthCalledWith(1, {
+        where: { id: ROOM_ID },
+        data: { building: 'Annexet', floor: -1 },
+      });
+      expect(tx.room.update).toHaveBeenNthCalledWith(2, {
+        where: { id: ROOM_ID },
+        data: { building: null, floor: null },
+      });
+    });
+
+    it('leaves an untouched location alone on a partial update', async () => {
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { capacity: 28 }, testUser());
+
+      expect(tx.room.update).toHaveBeenCalledWith({
+        where: { id: ROOM_ID },
+        data: { capacity: 28 },
+      });
     });
   });
 

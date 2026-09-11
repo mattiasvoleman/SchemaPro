@@ -114,7 +114,7 @@ export class ScheduleVersionsService {
     user: AuthenticatedUser,
   ): Promise<ScheduleVersionSummary> {
     return this.prisma.withRls(user, (tx) =>
-      this.snapshot(tx, academicYearId, name, user),
+      this.snapshotInTransaction(tx, academicYearId, name, user),
     );
   }
 
@@ -168,7 +168,7 @@ export class ScheduleVersionsService {
       }
 
       // Safety net: snapshot the current timetable before replacing it.
-      const safety = await this.snapshot(
+      const safety = await this.snapshotInTransaction(
         tx,
         version.academicYearId,
         `Before restore of "${version.name}"`,
@@ -257,7 +257,22 @@ export class ScheduleVersionsService {
 
   // ---------------------------------------------------------------------
 
-  private async snapshot(
+  /**
+   * Snapshot the year inside a transaction the CALLER holds.
+   *
+   * Public for the writers that change the timetable wholesale and want the
+   * safety copy to share their fate: the room optimisation takes one before it
+   * moves anything, in its own transaction, so a refused apply leaves neither
+   * a moved lesson nor a version describing a change that never happened. A
+   * snapshot taken in a transaction of its own would survive the rollback and
+   * list, under a name promising a room optimisation, a timetable identical to
+   * the one in front of the school.
+   *
+   * The one copy of the snapshot rule — what a version holds, and how it is
+   * spelled — so a second writer cannot store a version that restore() reads
+   * differently.
+   */
+  async snapshotInTransaction(
     tx: PrismaClient,
     academicYearId: string,
     name: string,

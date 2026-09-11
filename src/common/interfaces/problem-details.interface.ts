@@ -21,4 +21,11 @@ export interface ProblemDetails {
   traceId: string;
   /** Optional field-level validation errors (safe, client-supplied field names only). */
   errors?: Record<string, string[]>;
+  /**
+   * A machine-readable name for the problem, when the thrower gave one — an
+   * RFC 7807 extension member. It is what a client branches on where `detail`
+   * is only for reading: a stale room proposal (ROOM_PROPOSAL_STALE) means
+   * "compute again", a clash means "show this". A token, never free text.
+   */
+  code?: string;
 }

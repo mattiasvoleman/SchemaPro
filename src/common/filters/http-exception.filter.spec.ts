@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   BadRequestException,
   ForbiddenException,
   HttpException,
@@ -72,6 +73,31 @@ describe('HttpExceptionFilter', () => {
       instance: '/api/v1/rooms?include=bookings',
       traceId: expect.stringMatching(UUID_V4),
     });
+  });
+
+  it('carries a thrower’s code, so a client can act on the problem without parsing it', () => {
+    // A stale room proposal means "compute again"; the page tells that apart
+    // from a clash by this field alone.
+    filter.catch(
+      new ConflictException({ message: 'Grundschemat har ändrats.', code: 'ROOM_PROPOSAL_STALE' }),
+      host,
+    );
+
+    expect(body()).toMatchObject({
+      status: 409,
+      detail: 'Grundschemat har ändrats.',
+      code: 'ROOM_PROPOSAL_STALE',
+    });
+  });
+
+  it('drops a code that is not a token, and every other key of the body', () => {
+    filter.catch(
+      new ConflictException({ message: 'Nope.', code: 'two words', internal: 'x' }),
+      host,
+    );
+
+    expect(body()).not.toHaveProperty('code');
+    expect(body()).not.toHaveProperty('internal');
   });
 
   it('uses a string exception body directly and falls back to "Error" for unknown statuses', () => {

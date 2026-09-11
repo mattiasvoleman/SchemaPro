@@ -64,6 +64,17 @@ export interface Room {
   minGradeLevel: number | null;
   maxGradeLevel: number | null;
   requiresApproval: boolean;
+  /**
+   * Where the room is, for the room optimisation: which building, and which
+   * floor of it. Both optional and school-authored — a school that fills in
+   * neither still gets its room changes counted, just not the stairs.
+   *
+   * The floor is only ever compared for equality, so it does not matter
+   * whether a school calls its ground floor 0 or 1 as long as every room
+   * agrees. Null means unknown, and an unknown floor never counts as a climb.
+   */
+  building: string | null;
+  floor: number | null;
 }
 
 export type RoomBookingStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";

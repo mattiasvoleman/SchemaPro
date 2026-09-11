@@ -23,6 +23,8 @@ export class RoomsService {
             capacity: dto.capacity ?? null,
             minGradeLevel: dto.minGradeLevel ?? null,
             maxGradeLevel: dto.maxGradeLevel ?? null,
+            building: normaliseBuilding(dto.building),
+            floor: dto.floor ?? null,
             ...(dto.roomTypeId !== undefined ? { roomTypeId: dto.roomTypeId } : {}),
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
@@ -51,6 +53,10 @@ export class RoomsService {
             ...(dto.maxGradeLevel !== undefined
               ? { maxGradeLevel: dto.maxGradeLevel }
               : {}),
+            ...(dto.building !== undefined
+              ? { building: normaliseBuilding(dto.building) }
+              : {}),
+            ...(dto.floor !== undefined ? { floor: dto.floor } : {}),
             ...(dto.roomTypeId !== undefined ? { roomTypeId: dto.roomTypeId } : {}),
             ...(dto.requiresApproval !== undefined
               ? { requiresApproval: dto.requiresApproval }
@@ -115,4 +121,17 @@ function assertOrderedGradeRange(
       'Lägsta årskurs kan inte vara högre än högsta årskurs.',
     );
   }
+}
+
+/**
+ * A building name as the school meant it: trimmed, and a blank as none.
+ *
+ * The room optimisation compares buildings by equality, so "Hus B" and
+ * "Hus B " would be two buildings a teacher walks between — a cost no screen
+ * could explain. And a name of only spaces is not a name; storing it would
+ * also break the database's own 1..60-after-trim check with a 500.
+ */
+function normaliseBuilding(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }

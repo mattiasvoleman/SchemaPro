@@ -48,6 +48,23 @@ export class CreateRoomDto {
   @Max(12)
   maxGradeLevel?: number | null;
 
+  /**
+   * The building the room is in, for the room optimisation's walking cost.
+   * Trimmed by the service, and a blank means "not given": a name made of
+   * spaces would be a building of its own that nobody can see is different.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  building?: string | null;
+
+  /** Which floor; null is unknown and never counted as a floor change. */
+  @IsOptional()
+  @IsInt()
+  @Min(-5)
+  @Max(50)
+  floor?: number | null;
+
   @IsOptional()
   @IsBoolean()
   requiresApproval?: boolean;
@@ -91,6 +108,23 @@ export class UpdateRoomDto {
   @Min(0)
   @Max(12)
   maxGradeLevel?: number | null;
+
+  /**
+   * The building the room is in, for the room optimisation's walking cost.
+   * Trimmed by the service, and a blank means "not given": a name made of
+   * spaces would be a building of its own that nobody can see is different.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  building?: string | null;
+
+  /** Which floor; null is unknown and never counted as a floor change. */
+  @IsOptional()
+  @IsInt()
+  @Min(-5)
+  @Max(50)
+  floor?: number | null;
 
   @IsOptional()
   @IsBoolean()

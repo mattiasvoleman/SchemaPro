@@ -48,8 +48,9 @@
       <li><span>5.1 Skolregler och optimeringsprofil</span><span class="dots"></span><span class="pg" data-pg="s51"></span></li>
       <li><span>5.2 Kör genereringen</span><span class="dots"></span><span class="pg" data-pg="s52"></span></li>
       <li><span>5.3 Granska och justera grundschemat</span><span class="dots"></span><span class="pg" data-pg="s53"></span></li>
-      <li><span>5.4 Versioner</span><span class="dots"></span><span class="pg" data-pg="s54"></span></li>
-      <li><span>5.5 Publicera till kalender</span><span class="dots"></span><span class="pg" data-pg="s55"></span></li>
+      <li><span>5.4 Salsoptimering</span><span class="dots"></span><span class="pg" data-pg="s54"></span></li>
+      <li><span>5.5 Versioner</span><span class="dots"></span><span class="pg" data-pg="s55"></span></li>
+      <li><span>5.6 Publicera till kalender</span><span class="dots"></span><span class="pg" data-pg="s56"></span></li>
     </ol>
     <li><span>6 · Fas 4 — Daglig drift</span><span class="dots"></span><span class="pg" data-pg="ch6"></span></li>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
@@ -267,6 +268,27 @@
     <em>Alla årskurser</em> är salen öppen för hela skolan, vilket är vad
     samtliga salar är från början.
   </p>
+  <p>
+    <strong>Salar kan få en plats.</strong> De två frivilliga fälten
+    <span class="ui">Byggnad</span> och <span class="ui">Våning</span> talar om
+    var salen ligger, och kolumnen <span class="ui">Plats</span> visar det du
+    fyllt i, till exempel <em>Hus A · plan 2</em>. Genereringen läser dem inte;
+    de används av <em>salsoptimeringen</em> (se 5.4) för att se när ett
+    salsbyte också betyder trappor eller ett annat hus. Våningen är ett heltal
+    från −5 till 50, och det spelar ingen roll om bottenvåningen heter 0 eller
+    1 — bara att alla salar räknas likadant, eftersom våningar bara jämförs med
+    varandra. En sal utan våning räknas aldrig som ett våningsbyte.
+  </p>
+  <div class="note">
+    <span class="label">Byggnad på alla salar eller på ingen</span>
+    <p>
+      Salar utan byggnad räknas som samma hus, så en skola i ett enda hus
+      behöver inte fylla i fältet alls. Men en sal utan byggnad bredvid salar
+      i <em>Hus A</em> räknas som ett annat hus, och varje byte mellan dem som
+      ett husbyte — det tyngsta som finns. Fyll därför i byggnaden på alla
+      salar, eller på ingen.
+    </p>
+  </div>
   <div class="note">
     <span class="label">Undervisningsgrupper räknas efter sina elever</span>
     <p>
@@ -1021,7 +1043,110 @@
     om, och låt motorn arbeta vidare med resten.
   </p>
 
-  <h3 id="s54"><span class="num">5.4</span>Versioner</h3>
+  <h3 id="s54"><span class="num">5.4</span>Salsoptimering</h3>
+  <p>
+    Genereringen väljer för varje lektion en <em>sort</em> av sal — ett
+    klassrum som rymmer klassen, en laborationssal — och delar sedan ut de
+    konkreta salarna i tidsordning, utan att veta var läraren just var. Därför
+    kan Elin ha matte i sal 1 och sedan i sal 10 en trappa upp, medan Alexander
+    har matte i sal 10 och sedan i sal 1: båda byter våning, fast de kunde ha
+    stannat kvar i var sin sal. Salsoptimeringen rättar till det i ett
+    grundschema som redan är satt.
+  </p>
+  <p>
+    Tryck <span class="ui">Optimera salar</span> i grundschemats verktygsrad.
+    Välj under <span class="ui">Vem ska slippa gå?</span> om det är
+    <em>Lärarna</em>, <em>Klasserna</em> eller <em>Båda</em> som ska gå så lite
+    som möjligt, och tryck <span class="ui">Beräkna förslag</span>. Det tar
+    oftast runt tio sekunder. Optimeringen räknar varje gång någon byter sal
+    mellan två lektioner i följd samma dag, och väger ett byte av hus tyngst,
+    sedan ett byte av våning, sedan ett byte av sal. Har ämnet en mjuk regel
+    för salar (se 4.2) räknas det också när lektionen hamnar utanför den.
+  </p>
+  <h4>Det optimeringen aldrig ändrar</h4>
+  <ul>
+    <li>
+      Tider, dagar, lärare, klasser, veckor och datum. Bara salen byts, och
+      bara på lektioner som redan har en — en lektion utan sal får ingen.
+    </li>
+    <li>
+      <strong>Låsta lektioner behåller sin sal.</strong> Lås det rum du vill
+      ha kvar innan du beräknar, precis som inför en omgenerering.
+    </li>
+    <li>
+      Parkerade lektioner är inte med alls.
+    </li>
+    <li>
+      En lektion flyttas bara till en sal som genereringen själv hade fått
+      lägga den i: rätt salstyp, tillräcklig kapacitet, rätt årskurser, de
+      begränsningar som gäller salen och ämnet (se 4.2) och ledig på den tiden. En sal som är markerad som otillgänglig
+      under <span class="path">Planering › Tillgänglighet</span> på den tiden
+      väljs inte.
+    </li>
+    <li>
+      Lektioner som redan delar sal med en annan lektion på samma tid lämnas
+      som de är. Det kan vara avsiktligt — två klasser i en delad idrottshall —
+      så optimeringen löser inte den krocken och gör den inte värre; förslaget
+      säger hur många det gäller.
+    </li>
+  </ul>
+  <p>
+    Varje lektion får alltid stanna i den sal den har. Blir det inte bättre än
+    i dag ändras därför ingenting, och förslaget blir aldrig sämre än schemat
+    du redan har.
+  </p>
+  <h4>Förslaget</h4>
+  <p>
+    Förslaget visar byten av sal, våning och hus före och efter — för lärarna
+    och för klasserna, oavsett vem du valde, så att du ser vad det ena valet
+    gör med det andra — och hur många salsönskemål som missas. Det säger hur
+    många lektioner som byter sal och vilka lärare och klasser som får störst
+    skillnad. Behöver inget ändras står det <em>Salarna ligger redan så bra det
+    går</em>. Saknar salarna våning påminner förslaget om det, med en länk till
+    <span class="path">Planering › Salar</span> — utan våningar räknas inga
+    våningsbyten, bara byten av sal och, där byggnaden är ifylld, av hus.
+  </p>
+  <p>
+    Tryck <span class="ui">Tillämpa</span> för att genomföra förslaget, eller
+    <span class="ui">Tillbaka</span> för att välja om. Innan salarna byts sparas
+    schemat som det var som versionen <em>Före salsoptimering</em>. Meddelandet
+    som bekräftar ändringen har en <span class="ui">Ångra</span>-knapp som
+    lägger tillbaka salarna. Meddelandet ligger kvar i femton sekunder; när det
+    är borta tar du dig tillbaka genom att återställa versionen <em>Före
+    salsoptimering</em> under <span class="ui">Versioner</span> (se 5.5).
+    Grundschemats egen ångra-historik töms när
+    salarna byts, precis som när en version återställs: ett ångrat drag från
+    tidigare hade annars lagt tillbaka en enstaka lektion i sin gamla sal och
+    tyst rivit upp en bit av förslaget.
+  </p>
+  <div class="note">
+    <span class="label">När schemat hunnit ändras</span>
+    <p>
+      Förslaget gäller schemat som det såg ut när det räknades fram. Har någon
+      ändrat en lektion, en sal eller ett salsönskemål sedan dess nekas
+      <span class="ui">Tillämpa</span> och dialogen går tillbaka till första
+      steget — beräkna ett nytt förslag. Detsamma gäller
+      <span class="ui">Ångra</span>: har schemat ändrats efter optimeringen
+      återställer du i stället versionen <em>Före salsoptimering</em> under
+      <span class="ui">Versioner</span>.
+    </p>
+  </div>
+  <div class="warn">
+    <span class="label">Publicerade lektioner följer med — utom det som redan hänt</span>
+    <p>
+      Kommande lektioner som redan publicerats i kalendern flyttar med till de
+      nya salarna, på samma sätt som när du byter sal på en enskild lektion i
+      grundschemat (se 5.6). Tre sorters lektioner ligger kvar där de är:
+      de där närvaro redan registrerats, de som ställts in, och de vars sal
+      någon redan ändrat för hand i kalendern — den ändringen gjordes av ett
+      skäl som optimeringen inte känner till. Lektioner som redan varit
+      behåller alltid sin sal. Meddelandet efter
+      <span class="ui">Tillämpa</span> säger hur många publicerade lektioner som
+      följde med, och <span class="ui">Ångra</span> flyttar tillbaka dem.
+    </p>
+  </div>
+
+  <h3 id="s55"><span class="num">5.5</span>Versioner</h3>
   <p>
     Innan du gör större ändringar: gå till <span class="ui">Versioner</span> och
     spara en version med ett beskrivande namn, till exempel <em>Före
@@ -1036,20 +1161,24 @@
     </p>
   </div>
 
-  <h3 id="s55"><span class="num">5.5</span>Publicera till kalender</h3>
+  <h3 id="s56"><span class="num">5.6</span>Publicera till kalender</h3>
   <p>
     När grundschemat är granskat och godkänt klickar du
     <span class="ui">Publicera till kalender</span> och anger en period.
     Veckomallen omvandlas då till daterade lektioner. Först efter publicering ser
     lärare och elever sitt schema, och först då kan närvaro registreras.
   </p>
-  <div class="warn">
-    <span class="label">Publicering ersätter befintliga lektioner</span>
+  <div class="note">
+    <span class="label">Publicering lägger bara till det som saknas</span>
     <p>
-      Schemalagda lektioner som redan finns i den valda perioden ersätts.
-      Publicera därför bara framåt i tiden när läsåret har startat — väljer du
-      en period som redan varit riskerar du att skriva över lektioner som
-      närvaro registrerats på.
+      Lektioner som redan finns i kalendern för den valda perioden lämnas
+      orörda: publiceringen skapar bara de datum som saknas och skriver aldrig
+      över en lektion som redan finns. Därför går det att publicera om samma
+      period — till exempel när en lektion lagts till i grundschemat — utan att
+      en lektion med registrerad närvaro rörs. Luncher och raster i perioden
+      skrivs däremot om efter grundschemat som det ser ut nu, eftersom de inte
+      bär någon närvaro. Vill du ersätta lektioner som redan publicerats
+      behöver de tas bort först.
     </p>
   </div>
   <p>

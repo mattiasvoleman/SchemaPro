@@ -13,6 +13,15 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    /**
+     * The gateway's machine-readable reason, when it sends one.
+     *
+     * The status alone cannot tell two 409s apart, and they ask for different
+     * things of the reader: ROOM_PROPOSAL_STALE means "the schedule moved,
+     * compute again", while a clash is a message to show. The message is
+     * English prose written for a log, so it is no key to branch on.
+     */
+    public readonly code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -52,13 +61,19 @@ async function request<T>(
 
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
+    let code: string | undefined;
     try {
-      const problem = (await response.json()) as { detail?: string; message?: string };
+      const problem = (await response.json()) as {
+        detail?: string;
+        message?: string;
+        code?: unknown;
+      };
       detail = problem.detail ?? problem.message ?? detail;
+      if (typeof problem.code === "string") code = problem.code;
     } catch {
       // Non-JSON error body; keep the generic message.
     }
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, detail, code);
   }
 
   if (response.status === 204) {

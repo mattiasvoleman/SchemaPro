@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TimetablePage from "./page";
@@ -29,6 +29,12 @@ const state = vi.hoisted(() => ({
 
 const noMutation = { mutateAsync: vi.fn().mockResolvedValue({ id: "x" }), isPending: false };
 
+/** The room optimisation's two calls, each a spy a wiring test can steer. */
+const roomOptimization = {
+  propose: { mutateAsync: vi.fn(), isPending: false },
+  apply: { mutateAsync: vi.fn(), isPending: false },
+};
+
 /** The three verbs of a meal placed by hand, each a spy a test can read. */
 const lunch = {
   create: { mutateAsync: vi.fn(), isPending: false },
@@ -55,6 +61,8 @@ vi.mock("@/lib/queries", () => ({
   useScheduleVersions: () => ({ data: [] }),
   useScheduleVersionDetail: () => ({ data: null }),
   useScheduleVersionActions: () => ({ save: noMutation, restore: noMutation }),
+  // Imported by the room optimisation dialog the page renders.
+  useRoomOptimization: () => roomOptimization,
   usePublishSchedule: () => noMutation,
   useCreateMasterLesson: () => noMutation,
   useUpdateMasterLesson: () => noMutation,
@@ -1083,3 +1091,100 @@ describe("placing a lunch by hand", () => {
   });
 });
 
+describe("the room optimisation", () => {
+  const PROPOSAL = {
+    status: "OPTIMAL",
+    basis: "b-1",
+    changes: [{ lessonId: "l-ma2", fromRoomId: "r-sal", toRoomId: "r-verkstad" }],
+    teachers: {
+      before: { roomChanges: 1, floorChanges: 0, buildingChanges: 0 },
+      after: { roomChanges: 0, floorChanges: 0, buildingChanges: 0 },
+    },
+    groups: {
+      before: { roomChanges: 0, floorChanges: 0, buildingChanges: 0 },
+      after: { roomChanges: 0, floorChanges: 0, buildingChanges: 0 },
+    },
+    missedWishes: { before: 0, after: 0 },
+    walkers: [],
+    frozenLessonIds: [],
+    roomsTotal: 2,
+    roomsWithoutFloor: 0,
+  };
+
+  beforeEach(() => {
+    roomOptimization.propose.mutateAsync.mockReset();
+    roomOptimization.apply.mutateAsync.mockReset();
+  });
+
+  it("sits beside the versions and opens its dialog", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    const button = screen.getByRole("button", { name: "timetable.optimizeRooms" });
+    expect(button.parentElement).toBe(
+      screen.getByRole("button", { name: "timetable.versions" }).parentElement,
+    );
+    await user.click(button);
+
+    expect(screen.getByRole("dialog")).toHaveTextContent("roomOptimization.title");
+  });
+
+  it("is not offered for a grundschema with no lessons", () => {
+    state.lessons = [];
+    render(<TimetablePage />);
+
+    expect(screen.getByRole("button", { name: "timetable.optimizeRooms" })).toBeDisabled();
+  });
+
+  it("forgets the page's own undo history once the rooms are rewritten", async () => {
+    // A drag made before the optimisation holds the lesson's room as it was.
+    // Undoing it afterwards would put one lesson back where the proposal just
+    // moved it from — so the history goes, as it does after a version restore.
+    roomOptimization.propose.mutateAsync.mockResolvedValueOnce(PROPOSAL);
+    roomOptimization.apply.mutateAsync.mockResolvedValueOnce({
+      updated: 1,
+      basis: "b-2",
+      versionId: "v-1",
+      calendarUpdated: 0,
+    });
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    dragToTuesday("Slöjd");
+    const undo = screen.getByTitle("timetable.undo (Ctrl+Z)");
+    await waitFor(() => expect(undo).toBeEnabled());
+
+    await user.click(screen.getByRole("button", { name: "timetable.optimizeRooms" }));
+    await user.click(screen.getByRole("button", { name: "roomOptimization.compute" }));
+    await user.click(await screen.findByRole("button", { name: "roomOptimization.apply" }));
+
+    expect(roomOptimization.apply.mutateAsync).toHaveBeenCalledWith({
+      academicYearId: "y-1",
+      basis: "b-1",
+      changes: PROPOSAL.changes,
+    });
+    await waitFor(() => expect(undo).toBeDisabled());
+  });
+
+  it("names the people it helped from the page's own teacher list", async () => {
+    roomOptimization.propose.mutateAsync.mockResolvedValueOnce({
+      ...PROPOSAL,
+      walkers: [
+        {
+          kind: "TEACHER",
+          id: "t-2",
+          before: PROPOSAL.teachers.before,
+          after: PROPOSAL.teachers.after,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    await user.click(screen.getByRole("button", { name: "timetable.optimizeRooms" }));
+    await user.click(screen.getByRole("button", { name: "roomOptimization.compute" }));
+
+    const list = await screen.findByRole("list", { name: "roomOptimization.mostImproved" });
+    expect(list).toHaveTextContent("Nils Berg");
+  });
+});

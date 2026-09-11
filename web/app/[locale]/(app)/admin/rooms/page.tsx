@@ -52,6 +52,8 @@ interface RoomForm {
   minGradeLevel: string;
   maxGradeLevel: string;
   requiresApproval: boolean;
+  building: string;
+  floor: string;
 }
 
 const NO_LIMIT = "none";
@@ -66,7 +68,30 @@ const EMPTY_FORM: RoomForm = {
   minGradeLevel: "",
   maxGradeLevel: "",
   requiresApproval: false,
+  building: "",
+  floor: "",
 };
+
+/** The range the database accepts, so the form refuses what the API would. */
+const MIN_FLOOR = -5;
+const MAX_FLOOR = 50;
+
+/**
+ * The floor a form describes: null when left empty, undefined when it is not
+ * a floor at all.
+ *
+ * Empty is a real answer — "we have not said" — and must reach the API as
+ * null rather than 0, because floor 0 is a floor and the optimisation would
+ * count a walk from it to every room on floor 1.
+ */
+function floorFromForm(form: RoomForm): number | null | undefined {
+  const value = form.floor.trim();
+  if (value === "") return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= MIN_FLOOR && parsed <= MAX_FLOOR
+    ? parsed
+    : undefined;
+}
 
 /**
  * The year range a form describes.
@@ -100,6 +125,19 @@ function gradeRangeFromForm(form: RoomForm): {
   };
 }
 
+/**
+ * "Hus A · plan 2", "plan 2", "Hus A" or "—".
+ *
+ * Floor 0 is tested against null, not for truthiness: a ground floor called 0
+ * is a place, and dropping it would show the room as unplaced.
+ */
+function placeLabel(room: Room, floorLabel: (floor: number) => string): string {
+  const parts = [room.building, room.floor !== null ? floorLabel(room.floor) : null].filter(
+    (part): part is string => part !== null && part !== "",
+  );
+  return parts.length > 0 ? parts.join(" · ") : "—";
+}
+
 export default function RoomsPage() {
   const t = useTranslations("rooms");
   const tCsvImport = useTranslations("csvImport");
@@ -116,6 +154,8 @@ export default function RoomsPage() {
     capacity?: number | null;
     roomTypeId?: string | null;
     requiresApproval?: boolean;
+    building?: string | null;
+    floor?: number | null;
   }>("/api/v1/rooms", [["rooms"]]);
 
   const [importOpen, setImportOpen] = useState(false);
@@ -144,11 +184,16 @@ export default function RoomsPage() {
       maxGradeLevel: room.maxGradeLevel !== null ? String(room.maxGradeLevel) : "",
       roomTypeId: room.roomTypeId ?? "",
       requiresApproval: room.requiresApproval,
+      building: room.building ?? "",
+      floor: room.floor !== null ? String(room.floor) : "",
     });
     setDialogOpen(true);
   };
 
+  const floor = floorFromForm(form);
+
   const submit = async () => {
+    if (floor === undefined) return;
     const capacity = form.capacity.trim() === "" ? null : Number(form.capacity);
     const body = {
       name: form.name.trim(),
@@ -157,6 +202,10 @@ export default function RoomsPage() {
       roomTypeId: form.roomTypeId === "" ? null : form.roomTypeId,
       ...gradeRangeFromForm(form),
       requiresApproval: form.requiresApproval,
+      // Sent on every save, emptied ones included: leaving the key out would
+      // keep the old building when a school clears the field.
+      building: form.building.trim() || null,
+      floor,
     };
     try {
       if (editing) {
@@ -239,6 +288,7 @@ export default function RoomsPage() {
                 <TableHead>{tCommon("type")}</TableHead>
                 <TableHead>{tCommon("capacity")}</TableHead>
                 <TableHead>{t("stageColumn")}</TableHead>
+                <TableHead>{t("placeColumn")}</TableHead>
                 <TableHead className="w-24 text-right">{tCommon("actions")}</TableHead>
               </TableRow>
             </TableHeader>
@@ -264,6 +314,9 @@ export default function RoomsPage() {
                     {gradeRangeLabel(room.minGradeLevel, room.maxGradeLevel, (key) =>
                       t(`stages.${key}`),
                     ) ?? "—"}
+                  </TableCell>
+                  <TableCell>
+                    {placeLabel(room, (value) => t("floorShort", { floor: value }))}
                   </TableCell>
                   <TableCell className="text-right">
                     <Button
@@ -396,6 +449,46 @@ export default function RoomsPage() {
               </div>
             ) : null}
 
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="room-building">
+                    {t("building")}{" "}
+                    <span className="text-muted-foreground">({tCommon("optional")})</span>
+                  </Label>
+                  <Input
+                    id="room-building"
+                    value={form.building}
+                    maxLength={60}
+                    placeholder={t("buildingPlaceholder")}
+                    onChange={(e) => setForm({ ...form, building: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="room-floor">
+                    {t("floor")}{" "}
+                    <span className="text-muted-foreground">({tCommon("optional")})</span>
+                  </Label>
+                  <Input
+                    id="room-floor"
+                    type="number"
+                    step={1}
+                    min={MIN_FLOOR}
+                    max={MAX_FLOOR}
+                    value={form.floor}
+                    placeholder={t("floorPlaceholder")}
+                    aria-invalid={floor === undefined}
+                    onChange={(e) => setForm({ ...form, floor: e.target.value })}
+                  />
+                </div>
+              </div>
+              {floor === undefined ? (
+                <p className="text-xs text-destructive">{t("floorInvalid")}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">{t("placeHint")}</p>
+              )}
+            </div>
+
             <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
               <div className="space-y-0.5">
                 <Label htmlFor="room-approval">{t("requiresApproval")}</Label>
@@ -418,6 +511,7 @@ export default function RoomsPage() {
               onClick={submit}
               disabled={
                 form.name.trim().length === 0 ||
+                floor === undefined ||
                 mutations.create.isPending ||
                 mutations.update.isPending
               }

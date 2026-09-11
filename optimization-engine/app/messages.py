@@ -411,6 +411,13 @@ MESSAGES: dict[str, str] = {
         "{limit}. The usual causes are rooms with many different capacities, constraints that "
         "each touch many lessons, and very high per-teacher lesson loads."
     ),
+    "ROOM_MODEL_TOO_LARGE": (
+        "There are too many rooms to re-deal in one go: about {variables} model variables "
+        "against a limit of {limit}. The model grows with how many lessons may move and how "
+        "many rooms each may use. Lock the lessons whose room is settled (a locked lesson "
+        "keeps both its time and its room), or give subjects room rules that narrow where "
+        "they may go, and try again."
+    ),
     "INPUT_LESSON_LENGTH_OFF_GRID": (
         "Requirement {requirement} asks for {minutes}-minute lessons, which do not fit the "
         "{slotMinutes}-minute scheduling grid. Use a whole multiple of {slotMinutes} minutes."

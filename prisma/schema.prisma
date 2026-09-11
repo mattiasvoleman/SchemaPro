@@ -274,6 +274,19 @@ model Room {
   /// years its members actually belong to.
   minGradeLevel    Int?
   maxGradeLevel    Int?
+  /// Where the room is, for the room optimisation: a teacher who walks from
+  /// one lesson to the next pays for changing room, more for changing floor
+  /// and most for changing building. Both optional, and a school that fills in
+  /// neither still has its room changes counted.
+  ///
+  /// A null building is a building of its own, not a wildcard: a school that
+  /// names only its annex means every unnamed room is in the main house, and
+  /// the annex is a walk away from all of them. A null floor is unknown and
+  /// is never counted as a floor change — guessing would charge a walk the
+  /// school never described. The database holds the floor to -5..50 and a
+  /// building name to 1..60 characters after trimming.
+  building         String?
+  floor            Int?
   /// "Special" rooms (labs, gyms, auditoria) whose self-service bookings need
   /// admin approval before they're confirmed. Ordinary rooms auto-approve.
   requiresApproval Boolean  @default(false)

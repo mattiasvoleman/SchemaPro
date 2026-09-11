@@ -1,0 +1,229 @@
+{
+  "_comment": "When two weekly templates can ever fall in the same week. The rule is weeksCanOverlap in src/calendar/lesson-recurrence.ts; the engine's room optimisation mirrors it as weeks_can_overlap in optimization-engine/app/solver/room_walks.py. Both sides are tested against these cases, because a room optimisation that reads a clash differently from the gateway would put two classes in one room that the grid then flags, or refuse a swap the grid allows.",
+  "cases": [
+    {
+      "name": "every week meets every week",
+      "a": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "b": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "meets": true
+    },
+    {
+      "name": "odd never meets even",
+      "a": {
+        "recurrence": "ODD_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "b": {
+        "recurrence": "EVEN_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "meets": false
+    },
+    {
+      "name": "even never meets odd",
+      "a": {
+        "recurrence": "EVEN_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "b": {
+        "recurrence": "ODD_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "meets": false
+    },
+    {
+      "name": "odd meets odd",
+      "a": {
+        "recurrence": "ODD_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "b": {
+        "recurrence": "ODD_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "meets": true
+    },
+    {
+      "name": "odd meets every week",
+      "a": {
+        "recurrence": "ODD_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "b": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "meets": true
+    },
+    {
+      "name": "every week meets even",
+      "a": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "b": {
+        "recurrence": "EVEN_WEEKS",
+        "startDate": null,
+        "endDate": null
+      },
+      "meets": true
+    },
+    {
+      "name": "an autumn period never meets a spring period",
+      "a": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2026-08-17",
+        "endDate": "2026-12-18"
+      },
+      "b": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2027-01-11",
+        "endDate": "2027-06-11"
+      },
+      "meets": false
+    },
+    {
+      "name": "the same the other way round",
+      "a": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2027-01-11",
+        "endDate": "2027-06-11"
+      },
+      "b": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2026-08-17",
+        "endDate": "2026-12-18"
+      },
+      "meets": false
+    },
+    {
+      "name": "periods sharing their last and first day meet",
+      "a": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": null,
+        "endDate": "2026-10-30"
+      },
+      "b": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2026-10-30",
+        "endDate": null
+      },
+      "meets": true
+    },
+    {
+      "name": "a period ending the day before the other starts never meets it",
+      "a": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": null,
+        "endDate": "2026-10-29"
+      },
+      "b": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2026-10-30",
+        "endDate": null
+      },
+      "meets": false
+    },
+    {
+      "name": "an open end meets a period starting late",
+      "a": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2026-08-17",
+        "endDate": null
+      },
+      "b": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2027-05-03",
+        "endDate": "2027-06-11"
+      },
+      "meets": true
+    },
+    {
+      "name": "an open start meets a period ending early",
+      "a": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": null,
+        "endDate": "2027-06-11"
+      },
+      "b": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2026-08-17",
+        "endDate": "2026-09-04"
+      },
+      "meets": true
+    },
+    {
+      "name": "opposed parity inside the same period never meets",
+      "a": {
+        "recurrence": "ODD_WEEKS",
+        "startDate": "2026-08-17",
+        "endDate": "2026-12-18"
+      },
+      "b": {
+        "recurrence": "EVEN_WEEKS",
+        "startDate": "2026-08-17",
+        "endDate": "2026-12-18"
+      },
+      "meets": false
+    },
+    {
+      "name": "the same parity in overlapping periods meets",
+      "a": {
+        "recurrence": "ODD_WEEKS",
+        "startDate": "2026-08-17",
+        "endDate": "2026-12-18"
+      },
+      "b": {
+        "recurrence": "ODD_WEEKS",
+        "startDate": "2026-11-02",
+        "endDate": "2027-02-26"
+      },
+      "meets": true
+    },
+    {
+      "name": "a parity in a period meets every week in an overlapping one",
+      "a": {
+        "recurrence": "EVEN_WEEKS",
+        "startDate": "2026-08-17",
+        "endDate": "2026-12-18"
+      },
+      "b": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2026-12-01",
+        "endDate": null
+      },
+      "meets": true
+    },
+    {
+      "name": "the rule is not week-exact: odd weeks inside a single even week still count as meeting",
+      "a": {
+        "recurrence": "ODD_WEEKS",
+        "startDate": "2026-08-31",
+        "endDate": "2026-09-06"
+      },
+      "b": {
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2026-08-31",
+        "endDate": "2026-09-06"
+      },
+      "meets": true
+    }
+  ]
+}

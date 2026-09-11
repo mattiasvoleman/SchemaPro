@@ -44,6 +44,16 @@ class Settings(BaseSettings):
     # the failure path, where a week with no timetable and no explanation is the
     # most expensive outcome the engine can produce.
     solver_probe_seconds: float = Field(default=20.0, alias="SOLVER_PROBE_SECONDS")
+    # The room optimisation's own budget, apart from the generator's, because
+    # the two answer different questions at different prices. A generation is a
+    # job a school starts and waits for; the room proposal sits behind a button
+    # on the grundschema page and someone is watching the spinner. And it can
+    # always stop early with nothing lost: the school's current rooms are a
+    # valid answer from the first instant, so a short budget only ever means a
+    # smaller improvement, never a refusal.
+    room_solver_max_time_seconds: float = Field(
+        default=10.0, alias="ROOM_SOLVER_MAX_TIME_SECONDS",
+    )
 
     schedule_day_start_minutes: int = Field(default=480, alias="SCHEDULE_DAY_START_MINUTES")
     schedule_day_end_minutes: int = Field(default=1080, alias="SCHEDULE_DAY_END_MINUTES")
@@ -115,7 +125,9 @@ class Settings(BaseSettings):
     def schedule_days(self) -> list[int]:
         return [int(day.strip()) for day in self.schedule_days_env.split(",") if day.strip()]
 
-    @field_validator("solver_timeout_seconds", "solver_max_time_seconds")
+    @field_validator(
+        "solver_timeout_seconds", "solver_max_time_seconds", "room_solver_max_time_seconds",
+    )
     @classmethod
     def validate_positive_timeout(cls, value: float) -> float:
         if value <= 0:

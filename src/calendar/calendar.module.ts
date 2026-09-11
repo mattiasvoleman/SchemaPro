@@ -21,5 +21,7 @@ import { ScheduleVersionsService } from './schedule-versions.service';
     MasterLessonsService,
     ScheduleVersionsService,
   ],
+  // The room optimisation snapshots the year inside its own apply transaction.
+  exports: [ScheduleVersionsService],
 })
 export class CalendarModule {}

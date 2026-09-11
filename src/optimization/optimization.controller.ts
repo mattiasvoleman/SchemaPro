@@ -18,7 +18,13 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { TriggerOptimizationDto } from './dto/trigger-optimization.dto';
+import { ApplyRoomChangesDto, RoomProposalDto } from './dto/room-optimization.dto';
 import { OptimizationProxyService } from './optimization-proxy.service';
+import {
+  RoomOptimizationService,
+  type RoomApplyResult,
+  type RoomProposal,
+} from './room-optimization.service';
 import {
   OptimizationJobsService,
   type OptimizationJobView,
@@ -44,6 +50,7 @@ export class OptimizationController {
   constructor(
     private readonly proxy: OptimizationProxyService,
     private readonly jobsService: OptimizationJobsService,
+    private readonly rooms: RoomOptimizationService,
   ) {}
 
   /**
@@ -99,5 +106,39 @@ export class OptimizationController {
       dto.rules ?? null,
     );
     return { status: result.status, lessonsGenerated: result.lessons.length };
+  }
+
+  /**
+   * A salsoptimering of the grundschema, as a proposal: the times stay where
+   * they are and only rooms move, so teachers (or classes) stop walking
+   * between floors and buildings for no reason. Writes nothing.
+   *
+   * Throttled like the other routes that wake the solver, a little looser:
+   * a school comparing "lärarna", "klasserna" and "båda" asks three times in
+   * a row, and each ask is capped at the engine's ten seconds.
+   */
+  @Post('rooms/proposal')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  proposeRooms(
+    @Body() dto: RoomProposalDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<RoomProposal> {
+    return this.rooms.propose(dto, user);
+  }
+
+  /**
+   * Applies a proposal — and, with its changes reversed, undoes one. Refused
+   * with 409 ROOM_PROPOSAL_STALE when the grundschema has changed since the
+   * basis was computed. No solver call, so the limit only guards the database.
+   */
+  @Post('rooms/apply')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  applyRooms(
+    @Body() dto: ApplyRoomChangesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<RoomApplyResult> {
+    return this.rooms.apply(dto, user);
   }
 }

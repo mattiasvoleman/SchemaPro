@@ -16,7 +16,11 @@ interface NormalizedError {
   title: string;
   detail: string;
   errors?: Record<string, string[]>;
+  code?: string;
 }
+
+/** What a problem `code` may look like: a name, not a sentence. */
+const SAFE_CODE = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 /**
  * Catches every unhandled error and renders an RFC-7807 `application/problem+json`
@@ -43,6 +47,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       instance: request.originalUrl ?? request.url,
       traceId,
       ...(normalized.errors ? { errors: normalized.errors } : {}),
+      ...(normalized.code ? { code: normalized.code } : {}),
     };
 
     this.logError(exception, normalized, traceId, request);
@@ -145,11 +150,22 @@ export class HttpExceptionFilter implements ExceptionFilter {
       };
     }
 
+    // A thrower's `code` survives, and nothing else of its body does. It is
+    // what a client can act on without parsing a sentence, and a body such as
+    // { message, code: 'ROOM_PROPOSAL_STALE' } used to arrive here and lose
+    // exactly that half. Only a short token: anything else is dropped rather
+    // than forwarded, so a thrower cannot put free text in it by accident.
+    const code =
+      typeof record.code === 'string' && SAFE_CODE.test(record.code)
+        ? record.code
+        : undefined;
+
     return {
       status,
       title,
       detail:
         typeof rawMessage === 'string' ? rawMessage : this.detailFor(status),
+      ...(code ? { code } : {}),
     };
   }
 

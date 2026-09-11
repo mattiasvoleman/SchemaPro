@@ -17,6 +17,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import type { RecurrenceWindow } from '../calendar/lesson-recurrence';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { gradeSpanOf, loadRosters, roomNeedsOf } from './room-eligibility';
 import type {
   AiEngineConflictAnalysis,
   AiEngineScheduleRequest,
@@ -90,7 +91,7 @@ const PRESERVED_FROM_REGENERATION = [
 ];
 
 /** The maps an engine refusal can name something through. */
-interface AnonMaps {
+export interface AnonMaps {
   requirementAnonMap: Map<string, string>;
   roomAnonMap: Map<string, string>;
   groupAnonMap: Map<string, string>;
@@ -104,6 +105,12 @@ interface AnonMaps {
   constraintAnonMap: Map<string, string>;
   /** Real group id -> the school's own name, the last step out of id space. */
   nameById: Map<string, string>;
+  /**
+   * Master lessons, for the room optimisation: its payload names placed
+   * lessons rather than requirements, and a refusal that names one should come
+   * back naming the row the school can find.
+   */
+  lessonAnonMap?: Map<string, string>;
 }
 
 @Injectable()
@@ -199,7 +206,7 @@ export class OptimizationProxyService {
     // to solve — skip the engine and just clean up unlocked leftovers.
     const response: AiEngineScheduleResponse =
       requirements.length > 0
-        ? await this.callAiEngine(payload, anonMaps)
+        ? await this.callAiEngine<AiEngineScheduleResponse>('/v1/schedule', payload, anonMaps)
         : { requestId, status: 'FEASIBLE', lessons: [], conflicts: null };
 
     // The sittings, with real group ids, computed once: they are both written
@@ -581,42 +588,12 @@ export class OptimizationProxyService {
         ...homeClassIds,
       ]),
     ];
-    const [homeMembers, teachingMembers] = await Promise.all([
-      tx.user.findMany({
-        where: {
-          role: 'STUDENT',
-          isActive: true,
-          studentGroupId: { in: scheduledGroupIds },
-        },
-        select: { id: true, studentGroupId: true },
-      }),
-      tx.studentGroupMember.findMany({
-        where: {
-          studentGroupId: { in: scheduledGroupIds },
-          student: { role: 'STUDENT', isActive: true },
-        },
-        select: { studentId: true, studentGroupId: true },
-      }),
-    ]);
-
-    const groupsByStudent = new Map<string, Set<string>>();
-    const membersByGroup = new Map<string, Set<string>>();
-    const link = (studentId: string, groupId: string | null) => {
-      if (!groupId) return;
-      let groups = groupsByStudent.get(studentId);
-      if (!groups) groupsByStudent.set(studentId, (groups = new Set()));
-      groups.add(groupId);
-      let members = membersByGroup.get(groupId);
-      if (!members) membersByGroup.set(groupId, (members = new Set()));
-      members.add(studentId);
-    };
-    for (const row of homeMembers) link(row.id, row.studentGroupId);
-    for (const row of teachingMembers) link(row.studentId, row.studentGroupId);
-
-    // Room-capacity headcount: distinct students per group across both kinds.
-    const sizeByGroup = new Map(
-      [...membersByGroup].map(([groupId, members]) => [groupId, members.size]),
-    );
+    // Who sits where, and so how big each group is and which years it holds.
+    // Read through room-eligibility.ts because the room optimisation reads it
+    // the same way: a lesson it moves may only land where this run could have
+    // put it, and that holds only while both count 7A with one piece of code.
+    const rosters = await loadRosters(tx, scheduledGroupIds, allGroups, participantIds);
+    const { groupsByStudent, membersByGroup, homeMembers, homeClassOf } = rosters;
 
     /*
      * Dining-hall headcount, which is deliberately NOT the same number.
@@ -642,55 +619,13 @@ export class OptimizationProxyService {
       );
     }
 
-    /*
-     * Year span per scheduled group, for rooms limited to a stage.
-     *
-     * Derived from the students' HOME classes rather than read off the group:
-     * a teaching group carries no gradeLevel of its own, and treating it as
-     * unrestricted would let a nionde-group into lågstadiets rooms. A group
-     * spanning several years takes the whole span, so a room must cover all of
-     * it — half a group in an allowed year is not an allowed placement.
-     */
-    // The participants too: their home classes are read below for atSchool,
-    // and a pupil named on a lesson alone may sit in no group at all.
-    const involvedStudentIds = [...new Set([...groupsByStudent.keys(), ...participantIds])];
-    const studentHomeClasses =
-      involvedStudentIds.length > 0
-        ? await tx.user.findMany({
-            where: { id: { in: involvedStudentIds } },
-            select: { id: true, studentGroupId: true },
-          })
-        : ([] as { id: string; studentGroupId: string | null }[]);
-    const gradeOfGroup = new Map(allGroups.map((g) => [g.id, g.gradeLevel]));
-    const homeClassOf = new Map(
-      studentHomeClasses.map((student) => [student.id, student.studentGroupId]),
-    );
-
+    // Year span per scheduled group, for rooms limited to a stage and for the
+    // frames, rasts and sittings that reach a stage. See gradeSpanOf for why it
+    // is read off the pupils' home classes rather than off the group.
     const gradeSpanByGroup = new Map<string, { min: number; max: number }>();
-    // Every scheduled group, not only those with members: a class created
-    // before its students are enrolled still carries its own year, and
-    // skipping it would let 7B into lågstadiets rooms until somebody adds the
-    // first student.
     for (const groupId of scheduledGroupIds) {
-      const members = membersByGroup.get(groupId) ?? new Set<string>();
-      const grades: number[] = [];
-      for (const studentId of members) {
-        const homeClass = homeClassOf.get(studentId);
-        const grade = homeClass ? gradeOfGroup.get(homeClass) : null;
-        if (typeof grade === 'number') grades.push(grade);
-      }
-      // No members with a year — fall back to the group's own, and leave it
-      // unset when there is none at all rather than inventing one.
-      if (grades.length === 0) {
-        const own = gradeOfGroup.get(groupId);
-        if (typeof own === 'number') grades.push(own);
-      }
-      if (grades.length > 0) {
-        gradeSpanByGroup.set(groupId, {
-          min: Math.min(...grades),
-          max: Math.max(...grades),
-        });
-      }
+      const span = gradeSpanOf(rosters, [groupId]);
+      if (span) gradeSpanByGroup.set(groupId, span);
     }
     // A group the timplan names but whose year cannot be derived is bound by
     // NO frame and NO rast — the engine reads "unknown" as "unrestricted", on
@@ -808,6 +743,7 @@ export class OptimizationProxyService {
       ).filter((lesson) => coversDemand(lesson, r)).length;
       const remaining = r.lessonsPerWeek - alreadyCovered;
       if (remaining <= 0) return [];
+      const needs = roomNeedsOf(rosters, { groupIds: [r.studentGroupId] }, r.subject);
       return [
         {
           id: anonId(requirementAnonMap, r.id),
@@ -816,11 +752,11 @@ export class OptimizationProxyService {
           teacherId: r.teacherId ? anonId(teacherAnonMap, r.teacherId) : null,
           lessonsPerWeek: remaining,
           minutesPerLesson: r.minutesPerLesson,
-          studentGroupSize: Math.max(1, sizeByGroup.get(r.studentGroupId) ?? 1),
-          minGradeLevel: gradeSpanByGroup.get(r.studentGroupId)?.min ?? null,
-          maxGradeLevel: gradeSpanByGroup.get(r.studentGroupId)?.max ?? null,
-          requiredRoomType: r.subject.requiredRoomTypeId
-            ? anonId(roomTypeAnonMap, r.subject.requiredRoomTypeId)
+          studentGroupSize: needs.studentGroupSize,
+          minGradeLevel: needs.minGradeLevel,
+          maxGradeLevel: needs.maxGradeLevel,
+          requiredRoomType: needs.requiredRoomTypeId
+            ? anonId(roomTypeAnonMap, needs.requiredRoomTypeId)
             : null,
           coTeacherId: r.coTeacherId ? anonId(teacherAnonMap, r.coTeacherId) : null,
         },
@@ -1305,6 +1241,7 @@ export class OptimizationProxyService {
       maps.groupAnonMap,
       maps.roomTypeAnonMap,
       maps.constraintAnonMap,
+      maps.lessonAnonMap ?? new Map<string, string>(),
     ]) {
       for (const [realId, anonId] of map) real.set(anonId, realId);
     }
@@ -1316,16 +1253,29 @@ export class OptimizationProxyService {
     );
   }
 
-  private async callAiEngine(
-    payload: AiEngineScheduleRequest,
+  /**
+   * POST an anonymised payload to one of the engine's routes.
+   *
+   * Public, and taking the path, because the room optimisation calls a second
+   * route with exactly the same needs: the service key, the timeout, and the
+   * three failures told apart below. A copy of this method would be a second
+   * place that forgets one of them — which is how "unreachable" and "answered
+   * with an error" were once the same sentence.
+   *
+   * `maps` turns ids in a refusal back into ones the school can look up; pass
+   * the maps the payload was built with.
+   */
+  async callAiEngine<TResponse>(
+    path: string,
+    payload: object,
     maps: AnonMaps,
-  ): Promise<AiEngineScheduleResponse> {
-    const url = `${this.aiConfig.baseUrl}/v1/schedule`;
+  ): Promise<TResponse> {
+    const url = `${this.aiConfig.baseUrl}${path}`;
 
     try {
       const response = await firstValueFrom(
         this.http
-          .post<AiEngineScheduleResponse>(url, payload, {
+          .post<TResponse>(url, payload, {
             headers: {
               'X-API-Key': this.aiConfig.apiKey,
               'Content-Type': 'application/json',

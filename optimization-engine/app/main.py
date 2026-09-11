@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.v1.optimize import router as optimize_router
 from app.api.v1.optimize import run_solver
+from app.api.v1.rooms import router as rooms_router
 from app.config import Settings, get_settings
 from app.dependencies import get_app_settings, verify_api_key
 from app.exceptions import (
@@ -287,6 +288,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     register_exception_handlers(application)
     application.include_router(optimize_router)
+    application.include_router(rooms_router)
     application.include_router(create_legacy_schedule_router())
 
     @application.get("/health", tags=["health"])

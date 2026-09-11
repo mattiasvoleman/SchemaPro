@@ -1,4 +1,6 @@
 import 'reflect-metadata';
+import { HttpStatus, RequestMethod } from '@nestjs/common';
+import { HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { ROLES_KEY } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
 import { testUser } from '../../test/utils/prisma-mock';
@@ -7,6 +9,7 @@ import type { AiEngineScheduleResponse } from './interfaces/ai-engine-payload.in
 import { OptimizationController } from './optimization.controller';
 import type { OptimizationJobsService } from './optimization-jobs.service';
 import type { OptimizationProxyService } from './optimization-proxy.service';
+import type { RoomOptimizationService } from './room-optimization.service';
 
 const YEAR_ID = '44444444-4444-4444-8444-444444444444';
 const JOB_ID = '66666666-6666-4666-8666-666666666666';
@@ -14,6 +17,7 @@ const JOB_ID = '66666666-6666-4666-8666-666666666666';
 describe('OptimizationController', () => {
   let proxy: { triggerScheduling: jest.Mock };
   let jobs: { start: jest.Mock; get: jest.Mock; list: jest.Mock };
+  let rooms: { propose: jest.Mock; apply: jest.Mock };
   let controller: OptimizationController;
 
   const dto = (
@@ -24,9 +28,11 @@ describe('OptimizationController', () => {
   beforeEach(() => {
     proxy = { triggerScheduling: jest.fn() };
     jobs = { start: jest.fn(), get: jest.fn(), list: jest.fn() };
+    rooms = { propose: jest.fn(), apply: jest.fn() };
     controller = new OptimizationController(
       proxy as unknown as OptimizationProxyService,
       jobs as unknown as OptimizationJobsService,
+      rooms as unknown as RoomOptimizationService,
     );
   });
 
@@ -173,6 +179,46 @@ describe('OptimizationController', () => {
       await expect(controller.trigger(dto(), testUser())).rejects.toThrow(
         'AI engine unavailable.',
       );
+    });
+  });
+
+  describe('rooms', () => {
+    const BASIS = 'a'.repeat(64);
+
+    it('hands a proposal request to the room service with the caller', async () => {
+      const proposal = { status: 'OPTIMAL', changes: [] };
+      rooms.propose.mockResolvedValue(proposal);
+      const user = testUser();
+      const body = { academicYearId: YEAR_ID, walkers: 'GROUPS' as const };
+
+      await expect(controller.proposeRooms(body, user)).resolves.toBe(proposal);
+      expect(rooms.propose).toHaveBeenCalledWith(body, user);
+    });
+
+    it('hands an apply to the room service with the caller', async () => {
+      const result = { updated: 1, basis: BASIS, versionId: JOB_ID };
+      rooms.apply.mockResolvedValue(result);
+      const user = testUser();
+      const body = {
+        academicYearId: YEAR_ID,
+        basis: BASIS,
+        changes: [{ lessonId: JOB_ID, fromRoomId: YEAR_ID, toRoomId: JOB_ID }],
+      };
+
+      await expect(controller.applyRooms(body, user)).resolves.toBe(result);
+      expect(rooms.apply).toHaveBeenCalledWith(body, user);
+    });
+
+    it.each([
+      ['proposeRooms', 'rooms/proposal'],
+      ['applyRooms', 'rooms/apply'],
+    ] as const)('serves %s as POST %s, answering 200', (handler, path) => {
+      // The web calls these exact paths; a proposal writes nothing and an
+      // apply creates no resource, so neither is a 201.
+      const method = OptimizationController.prototype[handler];
+      expect(Reflect.getMetadata(PATH_METADATA, method)).toBe(path);
+      expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(RequestMethod.POST);
+      expect(Reflect.getMetadata(HTTP_CODE_METADATA, method)).toBe(HttpStatus.OK);
     });
   });
 
