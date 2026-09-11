@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
 
@@ -28,13 +28,7 @@ export class CreateRastDto {
   @Max(12)
   maxGradeLevel!: number;
 
-  /**
-   * ISO weekday 1-7, or null for every teaching day.
-   *
-   * ValidateIf rather than IsOptional alone, so an explicit `null` reaches the
-   * service as the every-day rast instead of being rejected as not-an-integer.
-   */
-  @ValidateIf((dto: CreateRastDto) => dto.dayOfWeek !== null)
+  /** ISO weekday 1-7, or null for every teaching day. */
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -83,7 +77,6 @@ export class UpdateRastDto {
   @Max(12)
   maxGradeLevel?: number;
 
-  @ValidateIf((dto: UpdateRastDto) => dto.dayOfWeek !== null)
   @IsOptional()
   @IsInt()
   @Min(1)
