@@ -8141,6 +8141,45 @@ def test_the_naming_stays_true_when_the_clock_runs_out(monkeypatch: pytest.Monke
     assert named == {g["id"] for g in payload["groups"]}  # type: ignore[index]
 
 
+def test_the_lunch_stage_asks_for_its_own_search_on_every_machine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stage's proof is the LP relaxation's, and it says so in every solve.
+
+    Left to CP-SAT's defaults the portfolio is sized from the host's core
+    count, and the subsolver carrying the full linearization only appears on a
+    machine with cores to spare: measured on this week, 0.17 s at eight
+    workers and 7.6-18.8 s at two, against the 10 s cap. So the two-core
+    runners this suite runs on refused nothing — the stage timed out and the
+    week went on to the 60 s TIMEOUT the stage exists to prevent, which is how
+    both tests above failed in CI while passing on every developer's machine.
+
+    A wall-clock assertion cannot catch that on an eight-core laptop. This
+    reads what the stage asks CP-SAT for instead, which is the same on every
+    machine or the bug is back.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    asked: list[tuple[int, int]] = []
+    original = cp_model.CpSolver.Solve
+
+    def solve(self: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object) -> int:
+        asked.append((self.parameters.num_workers, self.parameters.linearization_level))
+        return original(self, model, *args, **kwargs)
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", solve)
+    solver = SchedulerSolver(_settings())
+    payload = _frames_that_pack_the_middle_years(_teaching_group_school(classes=20))
+
+    verdict, _ = solver._lunch_stage_one(OptimizeScheduleRequest.model_validate(payload))
+
+    assert verdict is not None
+    # The proof and every naming solve after it, none of them left to the host.
+    assert len(asked) > 1
+    assert set(asked) == {(1, 2)}
+
+
 def _one_class(*, group_span: tuple[int, int] | None, requirement_spans: list[tuple[int, int] | None],
                lessons_per_week: int, frame: tuple[int, int, str, str]) -> dict[str, object]:
     """One class, one teacher, its lessons on requirements that may carry
