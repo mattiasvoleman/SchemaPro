@@ -4550,6 +4550,69 @@ def test_a_class_that_is_not_in_school_that_day_is_not_owed_a_lunch(
     assert {lunch["dayOfWeek"] for lunch in body["lunches"]} == {2, 3, 4, 5}
 
 
+def test_the_validator_owes_no_lunch_to_a_class_the_school_marked_away() -> None:
+    """The same rule on the other side of the seam, in the independent checker.
+
+    `benchmarks/validate_schedule.py` re-derives every rule from the request
+    and shares no code with the model builders, which is the whole of why its
+    verdict is evidence — and why a rule it does not model is a false alarm
+    waiting for a payload to write one. No payload in the repo writes this row
+    today (`solve_2000_students.py` emits TEACHER rows only), so the guard
+    belongs here rather than in the benchmark.
+
+    The timetable is built by hand because no solve can produce it. Availability
+    holds a class's lessons out of the class's own reserved window, so an
+    excused day reaches the lunch check with an empty window and passes without
+    the exemption being consulted at all — correctness borrowed from a
+    different rule. Put lessons in that window, as an engine that dropped
+    availability would, or as a week from somewhere else might (`validate` is a
+    library), and the unexempted check reports a break the class was never owed
+    beside the fault that actually matters.
+    """
+    import sys
+    from pathlib import Path
+
+    from app.schemas.schedule import OptimizeScheduleRequest, ScheduledLesson
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    benchmarks = Path(__file__).resolve().parents[1] / "benchmarks"
+    if str(benchmarks) not in sys.path:
+        sys.path.insert(0, str(benchmarks))
+    from validate_schedule import validate
+
+    payload = _lunch_payload()
+    group_id = _group_of(payload)
+    # Monday 11:00-13:00 is the entire lunch window, and this class fills it.
+    lessons = [
+        ScheduledLesson.model_validate(
+            {
+                "requirementId": payload["requirements"][0]["id"],  # type: ignore[index]
+                "roomId": payload["rooms"][0]["id"],  # type: ignore[index]
+                "dayOfWeek": 1,
+                "startTime": start,
+                "endTime": end,
+            },
+        )
+        for start, end in (("11:00:00", "12:00:00"), ("12:00:00", "13:00:00"))
+    ]
+    grid = SchedulerSolver(_settings())._grid
+
+    def _problems(constraints: list[dict[str, object]]) -> list[str]:
+        payload["constraints"] = constraints
+        return validate(grid, OptimizeScheduleRequest.model_validate(payload), lessons)
+
+    unexcused = _problems([])
+    assert len(unexcused) == 1, unexcused
+    assert "no free 30-minute window" in unexcused[0]
+
+    excused = _problems([_closes(group_id, 1, "08:00:00", "17:45:00")])
+    # The reservation is still enforced against the lessons. The exemption
+    # silences the break the class was not owed, not the fault that put two
+    # lessons inside a window the school had closed.
+    assert len(excused) == 2, excused
+    assert all("overlaps UNAVAILABLE window" in problem for problem in excused), excused
+
+
 def test_a_reservation_leaving_only_scraps_is_refused_by_name(
     client: TestClient,
 ) -> None:
