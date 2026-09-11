@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { ComponentProps } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
@@ -53,13 +62,11 @@ import {
   useRoomPreferences,
   useRasts,
 } from "@/lib/queries";
-import { buildIcs, downloadIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
 import { FilterPicker } from "@/components/schedule/filter-picker";
-import { RoomOptimizationDialog } from "@/components/schedule/room-optimization-dialog";
-import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
+import { recurrenceBadge } from "@/lib/recurrence";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
 import { rastWindows } from "@/lib/rasts";
@@ -98,9 +105,7 @@ import {
 } from "@/components/schedule/timetable-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -118,6 +123,80 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+/*
+ * Fetched after the page is up rather than before it. The dialog only opens on
+ * a click, and every kilobyte of this route's own JavaScript is held to the
+ * admin tier's budget in scripts/bench/bundle-size.mjs.
+ *
+ * React's lazy, not next/dynamic. next/dynamic brings its own loader into the
+ * route — 1.4 KB gzipped, measured — which ate most of what moving the dialog
+ * out saved. React is already here.
+ *
+ * It is still rendered on every render, not only once opened. Loaded, it stays
+ * mounted while closed — which is what its `ask` guard relies on: a solve that
+ * outlives a close resolves into a component that is still there.
+ */
+const RoomOptimizationDialog = lazy(() =>
+  import("@/components/schedule/room-optimization-dialog").then(
+    ({ RoomOptimizationDialog }) => ({ default: RoomOptimizationDialog }),
+  ),
+);
+
+/*
+ * The three controls this page draws only inside a dialog.
+ *
+ * The date field is the reason the group is worth splitting: it is a whole
+ * calendar — a month grid, a week column and a keyboard — and the grid behind
+ * these dialogs never shows one. The switch brings @radix-ui/react-switch,
+ * which nothing else on this route uses.
+ *
+ * Each keeps the name its call sites already used, so what a dialog asks for
+ * is unchanged; only when the code arrives has moved.
+ */
+const DateFieldLazy = lazy(() =>
+  import("@/components/ui/date-field").then(({ DateField }) => ({
+    default: DateField,
+  })),
+);
+const RecurrenceFieldsLazy = lazy(() =>
+  import("@/components/schedule/recurrence-fields").then(
+    ({ RecurrenceFields }) => ({ default: RecurrenceFields }),
+  ),
+);
+const SwitchLazy = lazy(() =>
+  import("@/components/ui/switch").then(({ Switch }) => ({ default: Switch })),
+);
+
+/*
+ * A boundary each, not one around the dialog: a dialog whose every field waited
+ * for the slowest of them would be worse than the wait this replaces. The
+ * fallbacks hold the shape the control will take, so nothing jumps when it
+ * lands — and after the warm-up below, they are a frame at most.
+ */
+function DateField(props: ComponentProps<typeof DateFieldLazy>) {
+  return (
+    <Suspense fallback={<Skeleton className="h-9 w-full" />}>
+      <DateFieldLazy {...props} />
+    </Suspense>
+  );
+}
+
+function RecurrenceFields(props: ComponentProps<typeof RecurrenceFieldsLazy>) {
+  return (
+    <Suspense fallback={<Skeleton className="col-span-2 h-52" />}>
+      <RecurrenceFieldsLazy {...props} />
+    </Suspense>
+  );
+}
+
+function Switch(props: ComponentProps<typeof SwitchLazy>) {
+  return (
+    <Suspense fallback={<Skeleton className="h-5 w-9 rounded-full" />}>
+      <SwitchLazy {...props} />
+    </Suspense>
+  );
+}
 
 const NONE = "__none__";
 
@@ -220,6 +299,21 @@ export default function TimetablePage() {
   const deleteLesson = useDeleteMasterLesson();
   const history = useScheduleHistory();
   const { peers, setEditing: setRemoteEditing } = useTimetableRealtime();
+
+  /*
+   * The dialogs' own controls, fetched once the grid is up.
+   *
+   * What the budget protects is the code a browser must run BEFORE the week is
+   * on screen and draggable; these three are not that. Fetching them a moment
+   * after, rather than at the click, means the administrator who does open a
+   * dialog waits for nothing either — the network round trip happened while
+   * they were still reading the schedule.
+   */
+  useEffect(() => {
+    void import("@/components/schedule/recurrence-fields");
+    void import("@/components/ui/date-field");
+    void import("@/components/ui/switch");
+  }, []);
 
   /**
    * A drag that lands on more than one class, held until it is confirmed.
@@ -1560,8 +1654,11 @@ export default function TimetablePage() {
     return { added, removed };
   }, [comparing, lessons]);
 
-  const doExportIcs = () => {
+  const doExportIcs = async () => {
     if (!activeYear) return;
+    // Fetched on the click, the way lib/pdf fetches jspdf: the calendar writer
+    // is dead weight for the administrators who never export one.
+    const { buildIcs, downloadIcs } = await import("@/lib/ics");
     const ics = buildIcs(
       filtered.map((lesson) => {
         const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : null;
@@ -2774,15 +2871,19 @@ export default function TimetablePage() {
       </Dialog>
 
       {/* ---------------- Room optimisation dialog ---------------- */}
-      <RoomOptimizationDialog
-        open={roomsOpen}
-        onOpenChange={setRoomsOpen}
-        academicYearId={activeYear?.id ?? null}
-        rooms={rooms ?? []}
-        teachers={teachers}
-        groups={groups ?? []}
-        onApplied={afterRoomOptimization}
-      />
+      {/* Nothing to show while its chunk is on the way: closed, the dialog
+          draws nothing either. */}
+      <Suspense fallback={null}>
+        <RoomOptimizationDialog
+          open={roomsOpen}
+          onOpenChange={setRoomsOpen}
+          academicYearId={activeYear?.id ?? null}
+          rooms={rooms ?? []}
+          teachers={teachers}
+          groups={groups ?? []}
+          onApplied={afterRoomOptimization}
+        />
+      </Suspense>
 
       {/* ---------------- Publish dialog ---------------- */}
       <Dialog open={publishOpen} onOpenChange={setPublishOpen}>

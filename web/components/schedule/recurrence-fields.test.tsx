@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { RecurrenceFields, recurrenceBadge } from "./recurrence-fields";
+import { RecurrenceFields } from "./recurrence-fields";
 
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
@@ -9,55 +9,14 @@ vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
 }));
 
-const t = (key: string) => key;
-
 const value = {
   recurrence: "ALL_WEEKS" as const,
   startDate: "",
   endDate: "",
 };
 
-describe("recurrenceBadge", () => {
-  it("says nothing for an ordinary weekly lesson", () => {
-    // Most lessons run every week; a badge on every cell would be noise.
-    expect(
-      recurrenceBadge(
-        { recurrence: "ALL_WEEKS", startDate: null, endDate: null },
-        t,
-      ),
-    ).toBeNull();
-  });
-
-  it("marks odd and even weeks", () => {
-    expect(
-      recurrenceBadge({ recurrence: "ODD_WEEKS", startDate: null, endDate: null }, t),
-    ).toBe("badgeOdd");
-    expect(
-      recurrenceBadge({ recurrence: "EVEN_WEEKS", startDate: null, endDate: null }, t),
-    ).toBe("badgeEven");
-  });
-
-  it("marks a limited period even when the lesson runs every week", () => {
-    // On a weekly grid a half-term lesson is the same rectangle as a year-long
-    // one, so without this the grid claims more than is true.
-    expect(
-      recurrenceBadge(
-        { recurrence: "ALL_WEEKS", startDate: null, endDate: "2026-10-30" },
-        t,
-      ),
-    ).toBe("badgePeriod");
-  });
-
-  it("combines parity and period", () => {
-    expect(
-      recurrenceBadge(
-        { recurrence: "ODD_WEEKS", startDate: "2026-08-17", endDate: null },
-        t,
-      ),
-    ).toBe("badgeOdd · badgePeriod");
-  });
-});
-
+// recurrenceBadge moved to lib/recurrence.ts, and its tests with it: the grid
+// needs the label on first paint, these fields only once a dialog opens.
 describe("RecurrenceFields", () => {
   it("reports a parity change without disturbing the dates", async () => {
     const onChange = vi.fn();

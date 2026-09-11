@@ -561,6 +561,8 @@ describe("exporting one class's week", () => {
     render(<TimetablePage />);
     if (className) await filterTo(className);
     await user.click(screen.getByRole("button", { name: "timetable.exportIcs" }));
+    // The builder is fetched on the click, so the call lands a tick after it.
+    await waitFor(() => expect(buildIcs).toHaveBeenCalled());
     const [lessons] = vi.mocked(buildIcs).mock.calls[0];
     return lessons;
   }
@@ -770,6 +772,39 @@ describe("the edit dialog's width", () => {
     const dialog = openSlojd();
     const grid = dialog.querySelector(".grid-cols-2")!;
     expect(grid.className).toContain("[&>*]:min-w-0");
+  });
+});
+
+/*
+ * The controls the page fetches only once a dialog asks for them: the
+ * recurrence fields, the lock switch and the publish dates. Each waits behind
+ * its own boundary, which holds a skeleton meanwhile — so a loader that never
+ * resolved would leave a permanently half-drawn dialog, and every other
+ * assertion in this file would still pass, because none of them looks here.
+ */
+describe("the controls a dialog fetches when it opens", () => {
+  it("finishes drawing the edit dialog", async () => {
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+
+    expect(
+      await screen.findByRole("combobox", { name: "timetable.recurrenceLabel" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("switch")).toBeInTheDocument();
+  });
+
+  it("finishes drawing the publish dialog", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    await user.click(screen.getByRole("button", { name: "timetable.publish" }));
+
+    expect(await screen.findByLabelText("timetable.publishFrom")).toBeInTheDocument();
+    expect(await screen.findByLabelText("timetable.publishTo")).toBeInTheDocument();
   });
 });
 
@@ -1126,7 +1161,9 @@ describe("the room optimisation", () => {
     );
     await user.click(button);
 
-    expect(screen.getByRole("dialog")).toHaveTextContent("roomOptimization.title");
+    // findBy, not getBy: the page loads the dialog lazily, so it is there once
+    // its chunk has arrived rather than on the render the click caused.
+    expect(await screen.findByRole("dialog")).toHaveTextContent("roomOptimization.title");
   });
 
   it("is not offered for a grundschema with no lessons", () => {
@@ -1155,7 +1192,7 @@ describe("the room optimisation", () => {
     await waitFor(() => expect(undo).toBeEnabled());
 
     await user.click(screen.getByRole("button", { name: "timetable.optimizeRooms" }));
-    await user.click(screen.getByRole("button", { name: "roomOptimization.compute" }));
+    await user.click(await screen.findByRole("button", { name: "roomOptimization.compute" }));
     await user.click(await screen.findByRole("button", { name: "roomOptimization.apply" }));
 
     expect(roomOptimization.apply.mutateAsync).toHaveBeenCalledWith({
@@ -1182,7 +1219,7 @@ describe("the room optimisation", () => {
     render(<TimetablePage />);
 
     await user.click(screen.getByRole("button", { name: "timetable.optimizeRooms" }));
-    await user.click(screen.getByRole("button", { name: "roomOptimization.compute" }));
+    await user.click(await screen.findByRole("button", { name: "roomOptimization.compute" }));
 
     const list = await screen.findByRole("list", { name: "roomOptimization.mostImproved" });
     expect(list).toHaveTextContent("Nils Berg");

@@ -150,11 +150,9 @@ import {
 import type { LessonRecurrence, TeachingRequirement } from "@/lib/types";
 import { subjectColor } from "@/lib/utils";
 import { sortByName } from "@/lib/sorting";
+import { recurrenceBadge } from "@/lib/recurrence";
 import { PageHeader } from "@/components/layout/page-header";
-import {
-  RecurrenceFields,
-  recurrenceBadge,
-} from "@/components/schedule/recurrence-fields";
+import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
