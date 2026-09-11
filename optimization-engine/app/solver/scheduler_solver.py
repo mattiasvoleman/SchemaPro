@@ -977,7 +977,10 @@ class SchedulerSolver:
         here" — and a per-day lesson count bounded by what the clique's free
         time holds around the chosen start. Measured on this week: the rows
         prove it in 0.2 s; the full model's cumulative in their place takes
-        4 s, and beside them adds nothing, so it is not built here. The panel
+        4 s, and beside them adds nothing, so it is not built here. What
+        proves the rows is the LP relaxation at the root, which is why the
+        stage names its own worker rather than taking the machine's — see
+        _lunch_stage_solver. The panel
         that found the encoding saw the cumulative with element-bounded caps
         stay UNKNOWN at 15 s.
 
@@ -1023,8 +1026,7 @@ class SchedulerSolver:
             # and a direct caller must not be able to hand it one.
             return None, {}
         stage = self._build_lunch_stage(request, narrowings)
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = self.LUNCH_STAGE_CAP_SECONDS
+        solver = self._lunch_stage_solver(self.LUNCH_STAGE_CAP_SECONDS)
         started = time.monotonic()
         code = solver.Solve(stage.pinned(set()))
         logger.info(
@@ -1036,6 +1038,44 @@ class SchedulerSolver:
         if code != cp_model.INFEASIBLE:
             return None, {}
         return self._name_lunch_causes(request, stage), {}
+
+    @staticmethod
+    def _lunch_stage_solver(seconds: float) -> cp_model.CpSolver:
+        """One worker at linearization level 2, the same on every machine.
+
+        Reproduction G is refused at the root by the LP relaxation: the seat
+        rows, divided down to "at most four classes here", summed against the
+        per-day lesson counts. Presolve leaves those counts as enforced
+        linear constraints, and only linearization level 2 puts enforced
+        constraints into the LP. Left to CP-SAT's defaults the stage had that
+        LP by luck of the host: the portfolio is sized by the core count, its
+        level-2 worker (max_lp) is scheduled from four workers up, and below
+        that the proof is left to search. Measured on reproduction G at the
+        default level, capped at 10 s:
+
+            workers   1          2                  3                4-8
+                      UNKNOWN    UNKNOWN or 7.6 s   0.5 s (no_lp)    0.1 s (max_lp)
+
+        So a two-core host - a CI runner, or a small VPS - answered G with
+        the full model's sixty-second TIMEOUT, the report this stage exists
+        to end; and where a lucky seed did refuse it there, the naming ran
+        out of its cap and named all twenty classes instead of the eleven the
+        proof needs. Raising the level on a plain solver does not reach past
+        one worker: the portfolio's named subsolvers set their own, and at
+        two the only full-problem one is default_lp, at level 1.
+
+        One worker is deterministic, so the verdict and the naming by
+        deletion are the same on a laptop, in CI and in production; only the
+        wall time moves with the machine. Where the stage finds starts it
+        costs nothing measurable: four and twenty classes, with seats and
+        without, settle in the same 0.03-0.13 s as the eight-worker
+        portfolio, and G is refused and named in 2.3 s against its 2.5 s.
+        """
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = seconds
+        solver.parameters.num_workers = 1
+        solver.parameters.linearization_level = 2
+        return solver
 
     def _build_lunch_stage(
         self,
@@ -1190,8 +1230,7 @@ class SchedulerSolver:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return None
-            solver = cp_model.CpSolver()
-            solver.parameters.max_time_in_seconds = remaining
+            solver = self._lunch_stage_solver(remaining)
             code = solver.Solve(stage.pinned(relaxed | extra))
             if code == cp_model.INFEASIBLE:
                 return True
