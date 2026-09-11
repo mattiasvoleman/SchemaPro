@@ -979,7 +979,9 @@ class SchedulerSolver:
         prove it in 0.2 s; the full model's cumulative in their place takes
         4 s, and beside them adds nothing, so it is not built here. The panel
         that found the encoding saw the cumulative with element-bounded caps
-        stay UNKNOWN at 15 s.
+        stay UNKNOWN at 15 s. The 0.2 s is a portfolio's, not a model's: one
+        subsolver finds the proof, and CP-SAT starts it only from four
+        workers up — see LUNCH_STAGE_WORKERS.
 
         EVERY CONSTRAINT HERE RELAXES ONE THE FULL MODEL ENFORCES, which is
         what makes INFEASIBLE here INFEASIBLE for the week: the starts are the
@@ -1025,6 +1027,7 @@ class SchedulerSolver:
         stage = self._build_lunch_stage(request, narrowings)
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self.LUNCH_STAGE_CAP_SECONDS
+        solver.parameters.num_workers = self.LUNCH_STAGE_WORKERS
         started = time.monotonic()
         code = solver.Solve(stage.pinned(set()))
         logger.info(
@@ -1192,6 +1195,10 @@ class SchedulerSolver:
                 return None
             solver = cp_model.CpSolver()
             solver.parameters.max_time_in_seconds = remaining
+            # The stage's portfolio, not the host's: a naming solve that
+            # cannot re-prove the week keeps its sentences, and on a small
+            # host every one of them would.
+            solver.parameters.num_workers = self.LUNCH_STAGE_WORKERS
             code = solver.Solve(stage.pinned(relaxed | extra))
             if code == cp_model.INFEASIBLE:
                 return True
@@ -1392,6 +1399,24 @@ class SchedulerSolver:
     # it refuses it has paid for itself many times over; on a feasible week
     # this is the most it can cost, and its starts are hinted onward.
     LUNCH_STAGE_CAP_SECONDS = 10.0
+    # The lunch stage's workers, pinned rather than read off the host. CP-SAT
+    # runs one worker per core by default, and WHICH subsolvers it runs
+    # depends on how many: reproduction G is proved by max_lp_sym as it loads
+    # the model, and CP-SAT 9.15 starts max_lp_sym only from four workers up.
+    # Measured 2026-09-11 on that week: 4 or 8 workers INFEASIBLE in 0.1 s;
+    # 2 workers, where default_lp must search for what max_lp_sym sees while
+    # loading, 7.7-9.2 s over five payloads and once not at all — at the cap,
+    # and whatever it leaves is what the naming gets, which on that run kept
+    # all twenty classes instead of the eleven that matter. 1 worker decided
+    # nothing. CI's two-core runner fell the wrong way every run since the
+    # stage landed, refusing nothing and running on into a 60 s TIMEOUT,
+    # while an eight-core laptop passed — a verdict that depends on the
+    # machine is not a verdict about the week. On a smaller host the eight
+    # share its cores: 0.2 s for that week in a container held to two CPUs.
+    # Eight rather than the four that suffice today: margin if a later CP-SAT
+    # reorders its portfolio, and the stage's tests would then fail on every
+    # host alike.
+    LUNCH_STAGE_WORKERS = 8
 
     def solve(self, request: OptimizeScheduleRequest) -> OptimizeScheduleResponse:
         """Two-phase solve: prove a timetable exists, then improve it.

@@ -7762,12 +7762,19 @@ def _frames_that_pack_the_middle_years(payload: dict[str, object]) -> dict[str, 
     return payload
 
 
-def test_a_frame_that_packs_a_stage_day_is_refused_by_the_lunch_stage() -> None:
-    """Reproduction G, decided in under a second by the lunch stage. Neither
-    arithmetic verdict sees it — the hall feeds the school's student-minutes
-    and every class's hours fit — and the full model answered UNKNOWN at 60 s."""
-    import time
+def test_a_frame_that_packs_a_stage_day_is_refused_by_the_lunch_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduction G, decided by the lunch stage. Neither arithmetic verdict
+    sees it — the hall feeds the school's student-minutes and every class's
+    hours fit — and the full model answered UNKNOWN at 60 s.
 
+    "By the lunch stage" is checked by what ran, not by the clock. A bound of
+    20 s held on an eight-core laptop and failed on every CI run, and not for
+    want of speed: on CI's two cores CP-SAT ran two workers, the stage
+    decided nothing and the full model timed out. So the full model may not
+    be built at all, and every solve made runs the stage's pinned worker
+    count — which a host with cores to spare would never notice gone."""
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
@@ -7777,11 +7784,25 @@ def test_a_frame_that_packs_a_stage_day_is_refused_by_the_lunch_stage() -> None:
     assert solver._dining_hall_verdict(request) is None
     assert solver._clique_hours_verdict(request) is None
 
-    started = time.monotonic()
+    def the_full_model(self: SchedulerSolver, *args: object, **kwargs: object) -> None:
+        pytest.fail("the week reached the full model: the lunch stage decided nothing")
+
+    workers: list[int] = []
+    original = cp_model.CpSolver.Solve
+
+    def spy(self: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object) -> int:
+        workers.append(self.parameters.num_workers)
+        return original(self, model, *args, **kwargs)
+
+    monkeypatch.setattr(SchedulerSolver, "_build_model", the_full_model)
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", spy)
+
     response = solver.solve(request)
 
-    assert time.monotonic() - started < 20
     assert response.status == "INFEASIBLE"
+    # The stage's first solve and the naming after it, all on its workers.
+    assert len(workers) > 1
+    assert set(workers) == {SchedulerSolver.LUNCH_STAGE_WORKERS}
     assert response.conflicts is not None
     assert "115 seats cannot seat the 11 classes named (264 students)" in response.conflicts.summary
     details = response.conflicts.conflicts
@@ -8077,16 +8098,18 @@ def _the_register(idle_classes: int, pupils: int) -> dict[str, object]:
     return payload
 
 
-def test_a_register_the_hall_cannot_seat_in_waves_is_named_by_its_classes() -> None:
+def test_a_register_the_hall_cannot_seat_in_waves_is_named_by_its_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The school in the report: two classes with lessons and twenty without,
     every one of them sent to a hall of 115 seats. 22 x 24 x 30 student-minutes
     fit the window's 115 x 150, so the arithmetic verdict passes; but five
     classes of 24 are 120, so a wave seats four, five waves seat twenty, and
     twenty-two do not fit. No class has a packed day, so the first naming rule
     found nobody and the school read "0 class(es)". Named by deletion: any
-    twenty-one classes are enough, and the lessons are no cause at all."""
-    import time
-
+    twenty-one classes are enough, and the lessons are no cause at all.
+    Refused by the stage, which is checked by the full model never being
+    built rather than by a bound in seconds — see the test of reproduction G."""
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
@@ -8095,10 +8118,13 @@ def test_a_register_the_hall_cannot_seat_in_waves_is_named_by_its_classes() -> N
     request = OptimizeScheduleRequest.model_validate(payload)
     assert solver._dining_hall_verdict(request) is None
 
-    started = time.monotonic()
+    def the_full_model(self: SchedulerSolver, *args: object, **kwargs: object) -> None:
+        pytest.fail("the week reached the full model: the lunch stage decided nothing")
+
+    monkeypatch.setattr(SchedulerSolver, "_build_model", the_full_model)
+
     response = solver.solve(request)
 
-    assert time.monotonic() - started < 20
     assert response.status == "INFEASIBLE"
     assert response.conflicts is not None
     assert "115 seats cannot seat the 21 classes named (504 students)" in response.conflicts.summary
@@ -8114,18 +8140,19 @@ def test_the_naming_stays_true_when_the_clock_runs_out(monkeypatch: pytest.Monke
     """Every naming solve re-proves the week impossible with fewer sentences
     pinned, so whatever is still pinned when the time runs out is enough. Here
     it runs out at once: the verdict stands, every class stays named, and the
-    summary says the hall question was never answered."""
+    summary says the hall question was never answered.
+
+    The stage's own proof is stubbed too. Whether CP-SAT finds it is the
+    question of reproduction G's test; asked here as well, it made a test of
+    the naming pass or fail on the host's cores."""
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
     calls = {"n": 0}
-    original = cp_model.CpSolver.Solve
 
     def solve(self: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object) -> int:
         calls["n"] += 1
-        if calls["n"] == 1:
-            return original(self, model, *args, **kwargs)  # the stage's own proof
-        return cp_model.UNKNOWN
+        return cp_model.INFEASIBLE if calls["n"] == 1 else cp_model.UNKNOWN
 
     monkeypatch.setattr(cp_model.CpSolver, "Solve", solve)
     solver = SchedulerSolver(_settings())
