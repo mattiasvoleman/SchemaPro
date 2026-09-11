@@ -5621,6 +5621,25 @@ def _rule(names: dict[str, str], **over: object) -> dict[str, object]:
     }
 
 
+def _counter_wish(names: dict[str, str]) -> dict[str, object]:
+    """A weaker wish for the other room, reaching every year.
+
+    Without it a test of a wish's SCOPE asserts on a tie. A group the scoped
+    wish does not reach has nothing pulling it anywhere, so every room is
+    equally optimal for it; phase 1 is a satisfaction solve that leaves it
+    wherever its search happened to land, and phase 2 has no reason to move
+    it. Where that is depends on CP-SAT's thread timing — "some lesson ended
+    up in the other room" passed on its own and failed in a full-suite run.
+
+    With this wish the answer is unique, and it is the one the scope decides.
+    A group the scoped wish reaches pays 500 per lesson for leaving the wanted
+    room and only 100 for staying, so it stays; a group it does not reach
+    pays only this, so it leaves. A scope that leaked would keep the group in
+    the wanted room on every run, not on an unlucky one.
+    """
+    return _rule(names, roomIds=[names["other"]], weight=100)
+
+
 def _rooms_by_span(response, request) -> dict[tuple, set[str]]:  # noqa: ANN001
     span_of = {
         str(r.id): (r.min_grade_level, r.max_grade_level) for r in request.requirements
@@ -5654,22 +5673,27 @@ def test_a_wish_scoped_to_a_stage_leaves_the_other_alone(client: TestClient) -> 
 
     Weight 500 against a school with room to spare makes the wish decisive, so
     what the year-7-9 lessons do is evidence about the SCOPE rather than about
-    how hard the solver tried.
+    how hard the solver tried. The counter-wish is what makes it evidence at
+    all — see _counter_wish.
     """
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
     payload, names = _room_rule_payload()
-    payload["roomPreferences"] = [_rule(names, minGradeLevel=4, maxGradeLevel=4)]
+    payload["roomPreferences"] = [
+        _rule(names, minGradeLevel=4, maxGradeLevel=4),
+        _counter_wish(names),
+    ]
 
     request = OptimizeScheduleRequest.model_validate(payload)
     response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
 
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
     by_span = _rooms_by_span(response, request)
     assert by_span[(4, 4)] == {names["wanted"]}
-    # The other stage is free of it. With ten lessons and two rooms the spread
-    # and gap objectives have no reason to crowd them into the wanted one.
-    assert names["other"] in by_span[(7, 9)]
+    assert by_span[(7, 9)] == {names["other"]}, (
+        "a wish for åk 4 pulled åk 7-9 into its room"
+    )
 
 
 def test_a_wish_does_not_reach_a_group_only_half_inside_its_span(
@@ -5680,20 +5704,33 @@ def test_a_wish_does_not_reach_a_group_only_half_inside_its_span(
     A rule for åk 7-9 overlaps a teaching group spanning 6-7 at year 7 — a real
     shape, since spans come from members' home classes. Under overlap the rule
     would apply and send the group's year-6 pupils wherever it points.
+
+    The other group is a year-7 class, inside the span, and it is the control:
+    without a group the rule does reach, a wish that moved nothing at all
+    would pass. The two differ in one bound only, so containment is the one
+    thing that can separate them. The counter-wish makes the answer unique —
+    see _counter_wish.
     """
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
     payload, names = _room_rule_payload()
+    payload["requirements"][0]["minGradeLevel"] = 7  # type: ignore[index]
+    payload["requirements"][0]["maxGradeLevel"] = 7  # type: ignore[index]
     payload["requirements"][1]["minGradeLevel"] = 6  # type: ignore[index]
     payload["requirements"][1]["maxGradeLevel"] = 7  # type: ignore[index]
-    payload["roomPreferences"] = [_rule(names, minGradeLevel=7, maxGradeLevel=9)]
+    payload["roomPreferences"] = [
+        _rule(names, minGradeLevel=7, maxGradeLevel=9),
+        _counter_wish(names),
+    ]
 
     request = OptimizeScheduleRequest.model_validate(payload)
     response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
 
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
     by_span = _rooms_by_span(response, request)
-    assert names["other"] in by_span[(6, 7)], (
+    assert by_span[(7, 7)] == {names["wanted"]}
+    assert by_span[(6, 7)] == {names["other"]}, (
         "a 6-7 group was pulled into a rule written for years 7-9"
     )
 
@@ -5702,20 +5739,29 @@ def test_a_wish_says_nothing_about_a_group_with_unknown_years(
     client: TestClient,
 ) -> None:
     # There is nothing to contain, and guessing would sweep every unlabelled
-    # group into a rule meant for one stage.
+    # group into a rule meant for one stage. 0-12 is the widest span there is,
+    # so the year-4 class it does reach is the control, and the counter-wish
+    # makes the answer unique — see _counter_wish.
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
     payload, names = _room_rule_payload()
     payload["requirements"][1]["minGradeLevel"] = None  # type: ignore[index]
     payload["requirements"][1]["maxGradeLevel"] = None  # type: ignore[index]
-    payload["roomPreferences"] = [_rule(names, minGradeLevel=0, maxGradeLevel=12)]
+    payload["roomPreferences"] = [
+        _rule(names, minGradeLevel=0, maxGradeLevel=12),
+        _counter_wish(names),
+    ]
 
     request = OptimizeScheduleRequest.model_validate(payload)
     response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=15.0)).solve(request)
 
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
     by_span = _rooms_by_span(response, request)
-    assert names["other"] in by_span[(None, None)]
+    assert by_span[(4, 4)] == {names["wanted"]}
+    assert by_span[(None, None)] == {names["other"]}, (
+        "a wish for åk 0-12 reached a group whose years are unknown"
+    )
 
 
 def _terms_for(payload: dict[str, object], objective_only_wishes: bool) -> list:  # noqa: ANN401
