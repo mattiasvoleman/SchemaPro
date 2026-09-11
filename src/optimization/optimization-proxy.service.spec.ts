@@ -1160,6 +1160,47 @@ describe('OptimizationProxyService', () => {
       );
     });
 
+    it('sends a rast as its stage, its day and its clock times, and never its name', async () => {
+      /*
+       * The engine subtracts minutes and has nothing to say about what they
+       * are called, and a name is one more thing that could identify a school
+       * in a payload built to be anonymous. The row below carries one anyway —
+       * as it would the day somebody widens the select — so the mapping has to
+       * leave it behind on its own.
+       */
+      arrange();
+      tx.rast.findMany.mockResolvedValue([
+        {
+          name: 'Förmiddagsrast',
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          dayOfWeek: null,
+          startTime: new Date('1970-01-01T09:40:00.000Z'),
+          endTime: new Date('1970-01-01T10:00:00.000Z'),
+          requiresLessonBefore: true,
+        },
+      ]);
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().rasts).toEqual([
+        {
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          dayOfWeek: null,
+          startTime: '09:40:00',
+          endTime: '10:00:00',
+          requiresLessonBefore: true,
+        },
+      ]);
+      // Through the year's school, as the frames and the sittings are read, so
+      // a request naming another school's year cannot pull this school's rows.
+      const query = tx.rast.findMany.mock.calls[0][0];
+      expect(query.where).toEqual({ school: { academicYears: { some: { id: ACADEMIC_YEAR } } } });
+      expect(query.select).not.toHaveProperty('name');
+    });
+
     // -----------------------------------------------------------------------
     // Sittningarna, on their way back
     // -----------------------------------------------------------------------

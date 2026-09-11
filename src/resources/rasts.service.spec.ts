@@ -1,4 +1,5 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -264,6 +265,40 @@ describe('RastsService', () => {
         [{ data: { dayOfWeek: number | null } }],
       ];
       expect(call.data.dayOfWeek).toBeNull();
+    });
+  });
+
+  describe('remove', () => {
+    it('deletes through RLS, so another school cannot reach the row', async () => {
+      tx.rast.delete.mockResolvedValue(storedRast());
+
+      await service.remove(RAST_ID, testUser({ schoolId: SCHOOL_ID }));
+
+      expect(prisma.withRls).toHaveBeenCalled();
+      expect(tx.rast.delete).toHaveBeenCalledWith({ where: { id: RAST_ID } });
+    });
+
+    it('404s on a rast RLS hides, rather than a 500', async () => {
+      // Another school's row is invisible under RLS, so the delete matches
+      // nothing and Prisma answers P2025. To this caller that is exactly "not
+      // there" — and anything more specific would confirm the row exists.
+      tx.rast.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Simulated P2025', {
+          code: 'P2025',
+          clientVersion: Prisma.prismaVersion.client,
+        }),
+      );
+
+      await expect(
+        service.remove(RAST_ID, testUser({ schoolId: SCHOOL_ID })),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('refuses a caller with no school', async () => {
+      await expect(
+        service.remove(RAST_ID, testUser({ schoolId: null })),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(tx.rast.delete).not.toHaveBeenCalled();
     });
   });
 });
