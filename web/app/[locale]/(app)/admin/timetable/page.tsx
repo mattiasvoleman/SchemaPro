@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
@@ -53,12 +53,10 @@ import {
   useRoomPreferences,
   useRasts,
 } from "@/lib/queries";
-import { buildIcs, downloadIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
 import { FilterPicker } from "@/components/schedule/filter-picker";
-import { RoomOptimizationDialog } from "@/components/schedule/room-optimization-dialog";
 import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
@@ -118,6 +116,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+/*
+ * The room optimisation dialog, fetched the first time somebody opens it.
+ *
+ * It sits behind one button and nothing on first paint needs it, but bundled
+ * with the page every visit to the grundschema downloaded it — the same reason
+ * jspdf and socket.io are imported where they are used.
+ */
+const RoomOptimizationDialog = lazy(() =>
+  import("@/components/schedule/room-optimization-dialog").then((module) => ({
+    default: module.RoomOptimizationDialog,
+  })),
+);
 
 const NONE = "__none__";
 
@@ -289,6 +300,14 @@ export default function TimetablePage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versionName, setVersionName] = useState("");
   const [roomsOpen, setRoomsOpen] = useState(false);
+  /*
+   * Whether the room dialog has been opened at all, and so is mounted.
+   *
+   * Only then is its chunk fetched. Once mounted it stays so after closing,
+   * as it did before it was lazy: closing unmounts its content, not the
+   * dialog, which is what lets it discard a proposal that arrives late.
+   */
+  const [roomsMounted, setRoomsMounted] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
 
   /**
@@ -1560,8 +1579,11 @@ export default function TimetablePage() {
     return { added, removed };
   }, [comparing, lessons]);
 
-  const doExportIcs = () => {
+  const doExportIcs = async () => {
     if (!activeYear) return;
+    // Imported on the click, as lib/pdf imports jspdf: the builder is only
+    // ever needed by somebody who presses export.
+    const { buildIcs, downloadIcs } = await import("@/lib/ics");
     const ics = buildIcs(
       filtered.map((lesson) => {
         const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : null;
@@ -1709,7 +1731,10 @@ export default function TimetablePage() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => setRoomsOpen(true)}
+              onClick={() => {
+                setRoomsMounted(true);
+                setRoomsOpen(true);
+              }}
               disabled={!activeYear || !lessons || lessons.length === 0}
             >
               <Footprints />
@@ -2774,15 +2799,19 @@ export default function TimetablePage() {
       </Dialog>
 
       {/* ---------------- Room optimisation dialog ---------------- */}
-      <RoomOptimizationDialog
-        open={roomsOpen}
-        onOpenChange={setRoomsOpen}
-        academicYearId={activeYear?.id ?? null}
-        rooms={rooms ?? []}
-        teachers={teachers}
-        groups={groups ?? []}
-        onApplied={afterRoomOptimization}
-      />
+      {roomsMounted ? (
+        <Suspense fallback={null}>
+          <RoomOptimizationDialog
+            open={roomsOpen}
+            onOpenChange={setRoomsOpen}
+            academicYearId={activeYear?.id ?? null}
+            rooms={rooms ?? []}
+            teachers={teachers}
+            groups={groups ?? []}
+            onApplied={afterRoomOptimization}
+          />
+        </Suspense>
+      ) : null}
 
       {/* ---------------- Publish dialog ---------------- */}
       <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
