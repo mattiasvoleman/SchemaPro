@@ -25,6 +25,10 @@ const state = vi.hoisted(() => ({
   // undefined models the query in flight; [] is a year the solver has not
   // yet placed a meal for. The notice must tell the two apart.
   sittings: [] as unknown[] | undefined,
+  // The saved versions, and the snapshot the dialog fetches for the one being
+  // compared.
+  versions: [] as unknown[],
+  snapshot: null as unknown,
 }));
 
 const noMutation = { mutateAsync: vi.fn().mockResolvedValue({ id: "x" }), isPending: false };
@@ -58,9 +62,13 @@ vi.mock("@/lib/queries", () => ({
   useLunchSittingMutations: () => lunch,
   useRoomPreferences: () => ({ data: [] }),
   useRasts: () => ({ data: RASTS }),
-  useScheduleVersions: () => ({ data: [] }),
-  useScheduleVersionDetail: () => ({ data: null }),
-  useScheduleVersionActions: () => ({ save: noMutation, restore: noMutation }),
+  useScheduleVersions: () => ({ data: state.versions }),
+  useScheduleVersionDetail: (id: string | null) => ({ data: id ? state.snapshot : null }),
+  useScheduleVersionActions: () => ({
+    save: noMutation,
+    restore: noMutation,
+    remove: noMutation,
+  }),
   // Imported by the room optimisation dialog the page renders.
   useRoomOptimization: () => roomOptimization,
   usePublishSchedule: () => noMutation,
@@ -298,6 +306,8 @@ beforeEach(() => {
   state.memberships = MEMBERSHIPS;
   state.lunchSettings = null;
   state.sittings = [];
+  state.versions = [];
+  state.snapshot = null;
 });
 
 afterEach(() => {
@@ -871,6 +881,136 @@ describe("the tray", () => {
     expect(noMutation.mutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({ id: "l-slojd", dayOfWeek: 1, startTime: "08:00" }),
     );
+  });
+});
+
+describe("comparing a version with the timetable", () => {
+  /*
+   * A parked lesson occupies nothing; its day and time are only a memory of
+   * where it was. The diff keyed lessons on that memory and never read the
+   * flag, so a lesson on the tray in the snapshot and back at its remembered
+   * hour now came out identical — though restoring the snapshot lifts it off
+   * the grid again. And the list named the parked lesson by that hour.
+   */
+  type Lesson = (typeof LESSONS)[number];
+
+  const VERSION = {
+    id: "v-1",
+    academicYearId: "y-1",
+    name: "Före bytet",
+    lessonCount: LESSONS.length,
+    createdAt: "2026-09-10T08:00:00.000Z",
+  };
+
+  /** A lesson the way the gateway snapshots it: no id, the flag carried. */
+  const snapshotOf = (l: Lesson) => ({
+    subjectId: l.subjectId,
+    studentGroupId: l.studentGroupId,
+    teacherId: l.teacherId,
+    coTeacherId: l.coTeacherId,
+    roomId: l.roomId,
+    dayOfWeek: l.dayOfWeek,
+    startTime: l.startTime,
+    endTime: l.endTime,
+    isLocked: l.isLocked,
+    isParked: l.isParked,
+    extraGroupIds: l.extraGroupIds,
+    studentIds: l.studentIds,
+  });
+
+  /** Set aside, remembering the slot it had — or another one, if given. */
+  const onTray = (l: Lesson, remembers: Partial<Lesson> = {}): Lesson => ({
+    ...l,
+    ...remembers,
+    isParked: true,
+  });
+
+  const withSlojd = (change: (l: Lesson) => Lesson) =>
+    LESSONS.map((l) => (l.id === "l-slojd" ? change(l) : l));
+
+  function saved(lessons: object[]) {
+    state.versions = [VERSION];
+    state.snapshot = { ...VERSION, lessons };
+  }
+
+  async function compare() {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await user.click(screen.getByRole("button", { name: "timetable.versions" }));
+    await user.click(screen.getByRole("button", { name: "timetable.versionCompare" }));
+    return screen.getByText("timetable.diffTitle(Före bytet)").parentElement!;
+  }
+
+  const lines = (diff: HTMLElement) =>
+    [...diff.querySelectorAll("li")].map((li) => li.textContent);
+
+  it("sees a lesson that was on the tray then and is back at its hour now", async () => {
+    saved(withSlojd(onTray).map(snapshotOf));
+
+    const diff = await compare();
+
+    expect(diff.textContent).not.toContain("timetable.diffIdentical");
+    // Named by the tray, not by the hour it remembers — the hour the placed
+    // one now holds, which would make the pair read as one lesson twice.
+    expect(lines(diff)).toEqual([
+      "+ Slöjd · 5.1 · days.1 11:00–12:00",
+      "− Slöjd · 5.1 · timetable.diffOnTray",
+    ]);
+  });
+
+  it("sees a lesson that is on the tray now and was placed then", async () => {
+    saved(LESSONS.map(snapshotOf));
+    state.lessons = withSlojd(onTray);
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Slöjd · 5.1 · timetable.diffOnTray",
+      "− Slöjd · 5.1 · days.1 11:00–12:00",
+    ]);
+  });
+
+  it("does not count the hour a parked lesson remembers as a change", async () => {
+    // Parked from Monday then; since put back, moved to Wednesday and parked
+    // again. Neither hour is a placement, so the timetable is the same.
+    saved(withSlojd(onTray).map(snapshotOf));
+    state.lessons = withSlojd((l) =>
+      onTray(l, { dayOfWeek: 3, startTime: "14:00", endTime: "15:00" }),
+    );
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffIdentical");
+  });
+
+  it("counts two parked lessons of one class and teacher as two", async () => {
+    // Without the hour they share a key. Collected into a map, the second one
+    // vanished, and taking it off the tray would not show.
+    const live = LESSONS.map((l) => (l.id === "l-ma1" ? onTray(l) : l));
+    saved([...live, onTray(lesson("l-ma1-b", "s-ma", "g-ma1", "13:00"))].map(snapshotOf));
+    state.lessons = live;
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffRemoved(1)");
+    expect(diff.textContent).toContain("timetable.diffAdded(0)");
+    expect(lines(diff)).toEqual(["− Matematik · 4ma1 · timetable.diffOnTray"]);
+  });
+
+  it("reads a snapshot stored before the flag was carried as having nothing parked", async () => {
+    // The key is absent, not false. Restore reads it as false as well, so the
+    // diff must: read as true, every old snapshot would differ in every lesson.
+    saved(
+      LESSONS.map(snapshotOf).map((s) => {
+        const keyless: Partial<typeof s> = { ...s };
+        delete keyless.isParked;
+        return keyless;
+      }),
+    );
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffIdentical");
   });
 });
 
