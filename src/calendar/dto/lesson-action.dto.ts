@@ -30,7 +30,17 @@ export class AssignSubstituteDto {
  * `roomId` is null). Used by the day planner and the teacher-absence workflow.
  */
 export class ChangeRoomDto {
-  // `null` clears the room; a uuid moves the lesson to that room.
+  /**
+   * `null` clears the room; a uuid moves the lesson to that room.
+   *
+   * The one ValidateIf left that carries its own weight, and it is not the
+   * pair-with-IsOptional shape: `roomId` is required. IsOptional would wave
+   * through an omitted field too, and the service reads every roomId that is
+   * not null as a room to look up — so a body that forgot the field would
+   * reach that lookup with no id instead of being refused here with the field
+   * named. ValidateIf alone lets null past and still demands the caller say
+   * something.
+   */
   @ValidateIf((dto: ChangeRoomDto) => dto.roomId !== null)
   @IsUUID('4')
   roomId!: string | null;

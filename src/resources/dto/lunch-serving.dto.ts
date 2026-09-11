@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, Matches, Max, Min, ValidateIf } from 'class-validator';
+import { IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
 
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
 
@@ -21,13 +21,7 @@ export class CreateLunchServingDto {
   @Max(12)
   maxGradeLevel!: number;
 
-  /**
-   * ISO weekday 1-7, or null for every teaching day.
-   *
-   * ValidateIf rather than IsOptional alone, so an explicit `null` reaches the
-   * service as the every-day sitting instead of being rejected as not-an-integer.
-   */
-  @ValidateIf((dto: CreateLunchServingDto) => dto.dayOfWeek !== null)
+  /** ISO weekday 1-7, or null for every teaching day. */
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -41,7 +35,6 @@ export class CreateLunchServingDto {
   endTime!: string;
 
   /** Chairs for this sitting; omitted or null means the hall's own limit. */
-  @ValidateIf((dto: CreateLunchServingDto) => dto.seats !== null)
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -67,7 +60,6 @@ export class UpdateLunchServingDto {
   @Max(12)
   maxGradeLevel?: number;
 
-  @ValidateIf((dto: UpdateLunchServingDto) => dto.dayOfWeek !== null)
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -82,7 +74,6 @@ export class UpdateLunchServingDto {
   @Matches(TIME, { message: 'endTime must be HH:MM.' })
   endTime?: string;
 
-  @ValidateIf((dto: UpdateLunchServingDto) => dto.seats !== null)
   @IsOptional()
   @IsInt()
   @Min(1)

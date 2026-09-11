@@ -5,7 +5,6 @@ import {
   IsString,
   IsUUID,
   MaxLength,
-  ValidateIf,
 } from 'class-validator';
 
 export class CreateSubjectDto {
@@ -24,7 +23,6 @@ export class CreateSubjectDto {
   color?: string | null;
 
   /** When set, the optimizer only places this subject in rooms of this type. */
-  @ValidateIf((dto) => dto.requiredRoomTypeId !== null)
   @IsOptional()
   @IsUUID('4')
   requiredRoomTypeId?: string | null;
@@ -46,7 +44,6 @@ export class UpdateSubjectDto {
   @IsHexColor()
   color?: string | null;
 
-  @ValidateIf((dto) => dto.requiredRoomTypeId !== null)
   @IsOptional()
   @IsUUID('4')
   requiredRoomTypeId?: string | null;

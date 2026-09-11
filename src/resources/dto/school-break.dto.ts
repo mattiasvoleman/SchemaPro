@@ -9,7 +9,6 @@ import {
   MaxLength,
   Min,
   MinLength,
-  ValidateIf,
 } from 'class-validator';
 import { IsCalendarDate } from './is-calendar-date';
 
@@ -64,14 +63,12 @@ export class CreateSchoolBreakDto {
    * deliberately the same shape: a year is a property of a group's members, so
    * there is no row to point at and the pair has to carry itself.
    */
-  @ValidateIf((dto: CreateSchoolBreakDto) => dto.minGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(12)
   minGradeLevel?: number | null;
 
-  @ValidateIf((dto: CreateSchoolBreakDto) => dto.maxGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -106,14 +103,12 @@ export class UpdateSchoolBreakDto {
   @IsCalendarDate()
   endDate?: string;
 
-  @ValidateIf((dto: UpdateSchoolBreakDto) => dto.minGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(12)
   minGradeLevel?: number | null;
 
-  @ValidateIf((dto: UpdateSchoolBreakDto) => dto.maxGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
