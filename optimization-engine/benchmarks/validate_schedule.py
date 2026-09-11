@@ -21,7 +21,9 @@ Checks, all derived from the request:
     room eligibility  capacity >= group size, and required type matches
     availability      no lesson inside a recurring UNAVAILABLE window
     lunch             a free contiguous window inside the lunch window, per
-                      eating group per day
+                      eating group per day — except where a recurring rule
+                      holds that whole window free for the class, which is the
+                      school saying the class is not in the building
     max per day       lessons per group per day within the configured cap
 
 Use as a library::
@@ -55,6 +57,73 @@ def _occupied(grid, day_of_week, start_time, duration_slots):
     start_slot = grid.parse_hhmmss(start_time)
     abs_start = day_idx * grid.slots_per_day + start_slot
     return day_idx, start_slot, list(range(abs_start, abs_start + duration_slots))
+
+
+def _lunch_exempt_days(grid, constraints, window_start, window_end) -> set[tuple]:
+    """(group, day) pairs the school has excused from lunch, from the request.
+
+    A recurring UNAVAILABLE rule on a STUDENT_GROUP that holds the ENTIRE lunch
+    window free is not a school asking for an impossible break. It is a school
+    saying the class is not in the building: "7A undervisas inte på tisdagar"
+    has no other way to be written, and the same row keeps that day's lessons
+    away too. The engine reads it that way — no sitting is built for such a
+    (group, day) and no chair is booked in the hall — so demanding a free
+    window here would answer a correct timetable with a violation nobody can
+    act on.
+
+    A rule that eats only PART of the window is the opposite case: the class is
+    in school, busy, and the break must still fit around it. So the test is
+    coverage of the whole window and nothing less.
+
+    The times are folded onto the grid rather than parsed strictly, unlike the
+    availability loop in validate(). That loop may be strict because a row it
+    cannot read is a row it declines to check; this one must not decline,
+    because a row it fails to read becomes a violation it invents. Schools
+    write "away all day" as 00:00-23:59 — this product's own full-day closure,
+    see isFullDay in calendar.service.ts — and strict parsing rejects both ends
+    of exactly the rule this exists for. A window that misses the school day
+    altogether still constrains nothing and is dropped.
+
+    A row with no weekday names every teaching day, and dated rows are skipped:
+    the timetable is one generic week with nowhere to put a single date.
+
+    NOT REACHABLE THROUGH THIS ENGINE'S OWN OUTPUT TODAY, and modelled anyway.
+    A group's lessons are held out of the group's own reserved window by the
+    availability rule, so an exempt day reaches the lunch check with an empty
+    window and passes by luck — the luck of a different rule holding. Borrowed
+    correctness is what this file exists to refuse: were the engine to drop
+    that rule, the lunch check would report the excused class's missing break
+    beside the real fault and bury it. And validate() is a library, which may
+    be handed a week this engine never produced.
+    """
+    exempt: set[tuple] = set()
+
+    for constraint in constraints:
+        if constraint.kind != "UNAVAILABLE" or constraint.date is not None:
+            continue
+        if constraint.resource_kind != "STUDENT_GROUP" or constraint.resource_id is None:
+            continue
+        try:
+            c_lo = grid.clamp_to_grid(constraint.start_time)
+            c_hi = grid.clamp_to_grid(constraint.end_time)
+        except ValueError:
+            continue
+        if c_lo is None or c_hi is None or c_hi <= c_lo:
+            continue
+        if c_lo > window_start or c_hi < window_end:
+            continue
+        days = (
+            (constraint.day_of_week,)
+            if constraint.day_of_week is not None
+            else grid.schedule_days
+        )
+        for day in days:
+            try:
+                exempt.add((constraint.resource_id, grid.day_index(day)))
+            except ValueError:
+                continue
+
+    return exempt
 
 
 def validate(grid, request, lessons) -> list[str]:
@@ -210,11 +279,6 @@ def validate(grid, request, lessons) -> list[str]:
         # these two readings are the same set — this distinction changes no
         # verdict here, and is written down so the first payload that does
         # send `groups` is not failed for obeying the rule.
-        #
-        # Still unmodelled, and stated rather than left to be discovered: a
-        # STUDENT_GROUP UNAVAILABLE row covering the whole lunch window is a
-        # school saying the class is not in that day, and the engine then owes
-        # it no meal. No payload here writes one.
         group_ids = (
             {group.id for group in request.groups}
             if request.groups
@@ -225,8 +289,14 @@ def validate(grid, request, lessons) -> list[str]:
             lo = grid.parse_hhmmss(rules.lunch_start_time)
             hi = grid.parse_hhmmss(rules.lunch_end_time)
             need = grid.minutes_to_slots(rules.lunch_minutes)
+            exempt_days = _lunch_exempt_days(grid, request.constraints, lo, hi)
             for group_id in group_ids:
                 for day_idx in range(len(grid.schedule_days)):
+                    # The school held this whole window free for this class,
+                    # which is how it says the class is not here. Nothing is
+                    # owed on a day nobody eats — see _lunch_exempt_days.
+                    if (group_id, day_idx) in exempt_days:
+                        continue
                     spans = per_group_day.get((group_id, day_idx), [])
                     if not any(
                         all(cand + need <= s or cand >= e for s, e in spans)
