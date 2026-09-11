@@ -221,16 +221,16 @@ function lesson(
     subjectId,
     studentGroupId,
     teacherId: overrides.teacherId ?? "t-1",
-    coTeacherId: null,
+    coTeacherId: null as string | null,
     roomId: overrides.roomId ?? null,
     dayOfWeek: 1,
     startTime,
     endTime: `${String(Number(startTime.slice(0, 2)) + 1).padStart(2, "0")}:00`,
     isLocked: false,
     isParked: false,
-    recurrence: "WEEKLY",
-    startDate: null,
-    endDate: null,
+    recurrence: "ALL_WEEKS",
+    startDate: null as string | null,
+    endDate: null as string | null,
     extraGroupIds: overrides.extraGroupIds ?? [],
     studentIds: overrides.studentIds ?? [],
   };
@@ -914,6 +914,9 @@ describe("comparing a version with the timetable", () => {
     endTime: l.endTime,
     isLocked: l.isLocked,
     isParked: l.isParked,
+    recurrence: l.recurrence,
+    startDate: l.startDate,
+    endDate: l.endDate,
     extraGroupIds: l.extraGroupIds,
     studentIds: l.studentIds,
   });
@@ -953,8 +956,8 @@ describe("comparing a version with the timetable", () => {
     // Named by the tray, not by the hour it remembers — the hour the placed
     // one now holds, which would make the pair read as one lesson twice.
     expect(lines(diff)).toEqual([
-      "+ Slöjd · 5.1 · days.1 11:00–12:00",
-      "− Slöjd · 5.1 · timetable.diffOnTray",
+      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
+      "− Slöjd · 5.1 · timetable.diffOnTray · K. Ek",
     ]);
   });
 
@@ -965,8 +968,8 @@ describe("comparing a version with the timetable", () => {
     const diff = await compare();
 
     expect(lines(diff)).toEqual([
-      "+ Slöjd · 5.1 · timetable.diffOnTray",
-      "− Slöjd · 5.1 · days.1 11:00–12:00",
+      "+ Slöjd · 5.1 · timetable.diffOnTray · K. Ek",
+      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
     ]);
   });
 
@@ -994,7 +997,7 @@ describe("comparing a version with the timetable", () => {
 
     expect(diff.textContent).toContain("timetable.diffRemoved(1)");
     expect(diff.textContent).toContain("timetable.diffAdded(0)");
-    expect(lines(diff)).toEqual(["− Matematik · 4ma1 · timetable.diffOnTray"]);
+    expect(lines(diff)).toEqual(["− Matematik · 4ma1 · timetable.diffOnTray · K. Ek"]);
   });
 
   it("reads a snapshot stored before the flag was carried as having nothing parked", async () => {
@@ -1007,6 +1010,163 @@ describe("comparing a version with the timetable", () => {
         return keyless;
       }),
     );
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffIdentical");
+  });
+
+  /*
+   * Restore writes the weeks, the date window, the co-teacher, the invited
+   * classes and the pupils back, and the key read none of them: a lesson moved
+   * to odd weeks, or cut to half a term, made the dialog call the timetable
+   * identical to a version that restoring would change. And the line showed
+   * neither the teacher nor the room already in the key, so a teacher swap
+   * printed as a + and a − that read the same.
+   */
+
+  /** The fixture with one lesson changed. */
+  const withChanged = (changes: Record<string, Partial<Lesson>>) =>
+    LESSONS.map((l) => ({ ...l, ...changes[l.id] }));
+
+  it("sees a lesson that runs odd weeks only now, and says so", async () => {
+    saved(LESSONS.map(snapshotOf));
+    state.lessons = withChanged({ "l-slojd": { recurrence: "ODD_WEEKS" } });
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.badgeOdd",
+      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
+    ]);
+  });
+
+  it("sees a lesson's date window change, and prints the window", async () => {
+    // "period" alone would print both Slöjd lines alike.
+    saved(
+      withChanged({
+        "l-ma1": { endDate: "2027-06-01" },
+        "l-slojd": { startDate: "2026-08-17" },
+      }).map(snapshotOf),
+    );
+    state.lessons = withChanged({
+      "l-slojd": { startDate: "2026-08-17", endDate: "2026-10-30" },
+    });
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Matematik · 4ma1 · days.1 08:00–09:00 · K. Ek",
+      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.badgePeriod · 2026-08-17–2026-10-30",
+      "− Matematik · 4ma1 · days.1 08:00–09:00 · K. Ek · timetable.badgePeriod · timetable.diffUntil(2027-06-01)",
+      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.badgePeriod · timetable.diffFrom(2026-08-17)",
+    ]);
+  });
+
+  it("reads a snapshot without the weeks, the window or the co-teacher as restore does", async () => {
+    // Every week, the whole year, nobody beside the teacher: what restore
+    // writes for a missing key. Read any other way, every snapshot stored
+    // before the gateway carried them differs in every lesson.
+    saved(
+      LESSONS.map(snapshotOf).map((s) => {
+        const keyless: Partial<typeof s> = { ...s };
+        delete keyless.recurrence;
+        delete keyless.startDate;
+        delete keyless.endDate;
+        delete keyless.coTeacherId;
+        return keyless;
+      }),
+    );
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffIdentical");
+  });
+
+  it("reads a date spelled as a timestamp as the day restore reads from it", async () => {
+    const live = withChanged({ "l-slojd": { endDate: "2026-10-30" } });
+    saved(
+      live
+        .map(snapshotOf)
+        .map((s) => (s.endDate ? { ...s, endDate: `${s.endDate}T00:00:00.000Z` } : s)),
+    );
+    state.lessons = live;
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffIdentical");
+  });
+
+  it("names the teacher and the room, so a swap does not read as one lesson twice", async () => {
+    saved(LESSONS.map(snapshotOf));
+    state.lessons = withChanged({
+      "l-ma1": { teacherId: "t-2" },
+      "l-ma2": { roomId: "r-verkstad" },
+    });
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Matematik · 4ma1 · days.1 08:00–09:00 · N. Berg",
+      "+ Matematik · 4ma2 · days.1 09:00–10:00 · N. Berg · timetable.diffRoom(Verkstaden)",
+      "− Matematik · 4ma1 · days.1 08:00–09:00 · K. Ek",
+      "− Matematik · 4ma2 · days.1 09:00–10:00 · N. Berg · timetable.diffRoom(A1)",
+    ]);
+  });
+
+  it("sees a co-teacher added and a class invited in, and names them", async () => {
+    saved(LESSONS.map(snapshotOf));
+    state.lessons = withChanged({
+      "l-idrott": { extraGroupIds: ["g-41", "g-51"] },
+      "l-slojd": { coTeacherId: "t-2" },
+    });
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Idrott · 4.2 + 4.1 + 5.1 · days.1 10:00–11:00 · K. Ek",
+      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.diffCoTeacher(N. Berg)",
+      "− Idrott · 4.2 + 4.1 · days.1 10:00–11:00 · K. Ek",
+      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
+    ]);
+  });
+
+  it("names the pupils where one was swapped for another", async () => {
+    // Counted, the pair would read "⊕1" on both sides.
+    saved(withChanged({ "l-musik": { studentIds: ["p-bo"] } }).map(snapshotOf));
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Musik · 5.1 · days.1 12:00–13:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕ Alva Elev",
+      "− Musik · 5.1 · days.1 12:00–13:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕ Bo Elev",
+    ]);
+  });
+
+  it("only counts the pupils where something else tells the lines apart", async () => {
+    saved(LESSONS.map(snapshotOf));
+    state.lessons = withChanged({ "l-musik": { startTime: "13:00", endTime: "14:00" } });
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Musik · 5.1 · days.1 13:00–14:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕1",
+      "− Musik · 5.1 · days.1 12:00–13:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕1",
+    ]);
+  });
+
+  it("does not read the order of the classes or the pupils as a change", async () => {
+    // Both are sets to restore; the order is whatever the rows came back in.
+    saved(
+      withChanged({
+        "l-idrott": { extraGroupIds: ["g-51", "g-41"] },
+        "l-musik": { studentIds: ["p-bo", "p-alva"] },
+      }).map(snapshotOf),
+    );
+    state.lessons = withChanged({
+      "l-idrott": { extraGroupIds: ["g-41", "g-51"] },
+      "l-musik": { studentIds: ["p-alva", "p-bo"] },
+    });
 
     const diff = await compare();
 
