@@ -21,7 +21,7 @@
     "expo-network": "~6.0.1",
     "expo-router": "^56.2.11",
     "expo-secure-store": "~13.0.1",
-    "expo-sqlite": "~14.0.3",
+    "expo-sqlite": "~56.0.6",
     "expo-status-bar": "~1.12.1",
     "react": "18.2.0",
     "react-native": "^0.86.0",

@@ -399,3 +399,27 @@ jobs:
       # compares a value to itself.
       - name: Unit tests
         run: npm run test:cov -- --ci
+
+      # Nothing in this pipeline had ever bundled the app, and so nothing
+      # noticed when mobile/package.json stopped describing it. expo-router
+      # imports react-native-safe-area-context, expo-linking and
+      # react-native-screens at runtime; two were absent from the manifest
+      # altogether and the third was held a whole major back by an `overrides`
+      # line. Neither gate above can see that. `tsc` resolves .d.ts through
+      # node_modules as it happens to be installed on the machine, and the unit
+      # tests never mount a screen — both stayed green while `expo export` could
+      # not resolve the first import in ExpoRoot.js. A real Metro bundle is the
+      # only step here that resolves what the app actually imports.
+      #
+      # android alone is enough: it is module resolution this catches, and the
+      # JS graph is the same for both platforms. The export is discarded —
+      # `dist/` is gitignored — so this buys the resolution check and nothing
+      # else.
+      #
+      # This step requires every config plugin in app.json to be loadable.
+      # expo-sqlite had to reach its SDK 56 version before that was true: 14.0.6
+      # shipped no app.plugin.js, so @expo/config-plugins fell back to the
+      # package main, which pulls in expo-modules-core's raw src/index.ts and
+      # dies in any Node that will not execute TypeScript from node_modules.
+      - name: Bundle (Metro)
+        run: npx expo export --platform android
