@@ -16,6 +16,7 @@
     "decode-uri-component": "file:vendor/decode-uri-component",
     "expo": "^56.0.12",
     "expo-crypto": "~13.0.2",
+    "expo-linking": "~56.0.17",
     "expo-local-authentication": "~14.0.0",
     "expo-network": "~6.0.1",
     "expo-router": "^56.2.11",
@@ -24,6 +25,8 @@
     "expo-status-bar": "~1.12.1",
     "react": "18.2.0",
     "react-native": "^0.86.0",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "4.25.2",
     "react-native-url-polyfill": "^3.0.0",
     "socket.io-client": "^4.7.5"
   },
@@ -38,7 +41,6 @@
   },
   "overrides": {
     "decode-uri-component": "$decode-uri-component",
-    "react-native-screens": "~3.35.0",
     "xcode": {
       "uuid": "^14.0.1"
     }
