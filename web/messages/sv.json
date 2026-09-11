@@ -615,6 +615,7 @@
     "diffIdentical": "Det nuvarande schemat är identiskt med denna version.",
     "diffAdded": "{count} tillagda sedan versionen",
     "diffRemoved": "{count} borttagna sedan versionen",
+    "diffOnTray": "parkerad",
     "keyboardHint": "Tips: fokusera en lektion och flytta med piltangenterna; Enter öppnar redigeraren.",
     "exportPdf": "Exportera som PDF",
     "online": "Online:",

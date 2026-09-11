@@ -126,6 +126,16 @@ function toHHMM(time: string): string {
   return time.slice(0, 5);
 }
 
+/**
+ * Whether a lesson is on the tray. A snapshot stored before the gateway
+ * carried the flag has no key, read as false: restore gives an absent key the
+ * same reading, so a diff against such a snapshot still says what restoring it
+ * would do.
+ */
+function isOnTray(lesson: { isParked?: boolean }): boolean {
+  return lesson.isParked ?? false;
+}
+
 function minutesToHHMM(minutes: number): string {
   const h = String(Math.floor(minutes / 60)).padStart(2, "0");
   const m = String(minutes % 60).padStart(2, "0");
@@ -1530,34 +1540,55 @@ export default function TimetablePage() {
       dayOfWeek: number;
       startTime: string;
       endTime: string;
+      isParked?: boolean;
     }) =>
       `${subjectById.get(l.subjectId)?.name ?? "?"} · ${
         groupById.get(l.studentGroupId)?.name ?? "?"
-      } · ${tDays(String(l.dayOfWeek))} ${toHHMM(l.startTime)}–${toHHMM(l.endTime)}`,
-    [subjectById, groupById, tDays],
+      } · ${
+        // Where a parked lesson was is not where it is: the tray is.
+        isOnTray(l)
+          ? t("diffOnTray")
+          : `${tDays(String(l.dayOfWeek))} ${toHHMM(l.startTime)}–${toHHMM(l.endTime)}`
+      }`,
+    [subjectById, groupById, t, tDays],
   );
 
   const versionDiff = useMemo(() => {
     if (!comparing || !lessons) return null;
+    // A slot is part of a lesson's identity only on the grid. On the tray it
+    // is a memory, so two versions whose parked lessons remember different
+    // hours hold the same timetable — while a lesson parked in one and placed
+    // at its remembered hour in the other is a change, the one a restore makes.
     const key = (l: VersionLesson | MasterLesson) =>
       [
         l.subjectId,
         l.studentGroupId,
         l.teacherId ?? "",
         l.roomId ?? "",
-        l.dayOfWeek,
-        toHHMM(l.startTime),
-        toHHMM(l.endTime),
+        ...(isOnTray(l)
+          ? ["tray"]
+          : [l.dayOfWeek, toHHMM(l.startTime), toHHMM(l.endTime)]),
       ].join("|");
-    const snapshotKeys = new Map(comparing.lessons.map((l) => [key(l), l]));
-    const currentKeys = new Map(lessons.map((l) => [key(l), l]));
-    const added = [...currentKeys.entries()]
-      .filter(([k]) => !snapshotKeys.has(k))
-      .map(([, l]) => l);
-    const removed = [...snapshotKeys.entries()]
-      .filter(([k]) => !currentKeys.has(k))
-      .map(([, l]) => l);
-    return { added, removed };
+    // Counted rather than put in a map: without the slot, two lessons of one
+    // class and teacher on the tray share a key, and a map keeps only one of
+    // them — parking a second would read as no change at all.
+    const unmatched = (
+      side: (VersionLesson | MasterLesson)[],
+      other: (VersionLesson | MasterLesson)[],
+    ) => {
+      const left = new Map<string, number>();
+      for (const l of other) left.set(key(l), (left.get(key(l)) ?? 0) + 1);
+      return side.filter((l) => {
+        const k = key(l);
+        const n = left.get(k) ?? 0;
+        if (n > 0) left.set(k, n - 1);
+        return n === 0;
+      });
+    };
+    return {
+      added: unmatched(lessons, comparing.lessons),
+      removed: unmatched(comparing.lessons, lessons),
+    };
   }, [comparing, lessons]);
 
   const doExportIcs = () => {
