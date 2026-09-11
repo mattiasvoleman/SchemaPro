@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, Matches, Max, Min, ValidateIf } from 'class-validator';
+import { IsInt, IsOptional, Matches, Max, Min } from 'class-validator';
 
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
 
@@ -21,13 +21,7 @@ export class CreateFrameTimeDto {
   @Max(12)
   maxGradeLevel!: number;
 
-  /**
-   * ISO weekday 1-7, or null for every teaching day.
-   *
-   * ValidateIf rather than IsOptional alone, so an explicit `null` reaches the
-   * service as the every-day frame instead of being rejected as not-an-integer.
-   */
-  @ValidateIf((dto: CreateFrameTimeDto) => dto.dayOfWeek !== null)
+  /** ISO weekday 1-7, or null for every teaching day. */
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -73,7 +67,6 @@ export class UpdateFrameTimeDto {
   @Max(12)
   maxGradeLevel?: number;
 
-  @ValidateIf((dto: UpdateFrameTimeDto) => dto.dayOfWeek !== null)
   @IsOptional()
   @IsInt()
   @Min(1)

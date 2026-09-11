@@ -6,7 +6,6 @@ import {
   IsUUID,
   Max,
   Min,
-  ValidateIf,
 } from 'class-validator';
 import { IsCalendarDate } from './is-calendar-date';
 
@@ -20,13 +19,11 @@ export class CreateTeachingRequirementDto {
   @IsUUID('4')
   studentGroupId!: string;
 
-  @ValidateIf((dto: CreateTeachingRequirementDto) => dto.teacherId !== null)
   @IsOptional()
   @IsUUID('4')
   teacherId?: string | null;
 
   /** Optional second teacher scheduled together with the lead (co-teaching). */
-  @ValidateIf((dto: CreateTeachingRequirementDto) => dto.coTeacherId !== null)
   @IsOptional()
   @IsUUID('4')
   coTeacherId?: string | null;
@@ -65,25 +62,21 @@ export class CreateTeachingRequirementDto {
    * 2026-02-30 through, and everything downstream rolled it to 2026-03-02
    * without a word (see is-calendar-date.ts).
    */
-  @ValidateIf((dto: CreateTeachingRequirementDto) => dto.startDate !== null)
   @IsOptional()
   @IsCalendarDate()
   startDate?: string | null;
 
   /** Last date the subject is read; null or omitted runs it to the year's end. */
-  @ValidateIf((dto: CreateTeachingRequirementDto) => dto.endDate !== null)
   @IsOptional()
   @IsCalendarDate()
   endDate?: string | null;
 }
 
 export class UpdateTeachingRequirementDto {
-  @ValidateIf((dto: UpdateTeachingRequirementDto) => dto.teacherId !== null)
   @IsOptional()
   @IsUUID('4')
   teacherId?: string | null;
 
-  @ValidateIf((dto: UpdateTeachingRequirementDto) => dto.coTeacherId !== null)
   @IsOptional()
   @IsUUID('4')
   coTeacherId?: string | null;
@@ -110,12 +103,10 @@ export class UpdateTeachingRequirementDto {
    * always made, and the service keeps it — a PATCH that only moves `endDate`
    * must not quietly wipe the start of the period.
    */
-  @ValidateIf((dto: UpdateTeachingRequirementDto) => dto.startDate !== null)
   @IsOptional()
   @IsCalendarDate()
   startDate?: string | null;
 
-  @ValidateIf((dto: UpdateTeachingRequirementDto) => dto.endDate !== null)
   @IsOptional()
   @IsCalendarDate()
   endDate?: string | null;

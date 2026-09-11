@@ -11,7 +11,6 @@ import {
   IsString,
   IsUUID,
   MaxLength,
-  ValidateIf,
 } from 'class-validator';
 
 export class CreateUserDto {
@@ -32,13 +31,11 @@ export class CreateUserDto {
   @MaxLength(254)
   email!: string;
 
-  @ValidateIf((dto: CreateUserDto) => dto.phone !== null)
   @IsOptional()
   @IsString()
   @MaxLength(40)
   phone?: string | null;
 
-  @ValidateIf((dto: CreateUserDto) => dto.studentGroupId !== null)
   @IsOptional()
   @IsUUID('4')
   studentGroupId?: string | null;
@@ -80,13 +77,11 @@ export class UpdateUserDto {
   @MaxLength(120)
   lastName?: string;
 
-  @ValidateIf((dto: UpdateUserDto) => dto.phone !== null)
   @IsOptional()
   @IsString()
   @MaxLength(40)
   phone?: string | null;
 
-  @ValidateIf((dto: UpdateUserDto) => dto.studentGroupId !== null)
   @IsOptional()
   @IsUUID('4')
   studentGroupId?: string | null;
