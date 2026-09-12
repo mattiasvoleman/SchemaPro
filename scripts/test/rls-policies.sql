@@ -249,4 +249,122 @@ END
 $$;
 COMMIT;
 
+-- ---------------------------------------------------------------------------
+-- 6. RoomPreferences: soft room rules, readable by staff only.
+--
+-- Both tables shipped with a SELECT policy named `_staff_select` that carried
+-- the tenant predicate and nothing else, so every principal of the school
+-- passed it — students and guardians included. Nothing here caught it: the
+-- seed created no rows, and this file made no assertion about either table, so
+-- the leak was invisible in exactly the way a policy gap always is. Both
+-- halves are fixed; these assertions keep the gap from reopening.
+--
+-- What the policy protects is the planning layer, not the timetable. Which
+-- subject a school wants in which room, and how hard it is willing to fight
+-- for it, is staff business the way TeachingRequirements is — unlike Rooms,
+-- which every member reads to render their own schedule.
+--
+-- Requires `:student_auth_id` alongside `:admin_auth_id`: the negative case is
+-- the whole point, and only a real STUDENT of the school can prove it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint; other bigint; preference uuid;
+BEGIN
+  -- The grant exists at all: without it these SELECTs raise "permission denied".
+  SELECT count(*) INTO n FROM "RoomPreferences";
+  IF n = 0 THEN
+    RAISE EXCEPTION
+      'room-preferences: admin of school A sees no preferences (missing seed rows, missing grant, or a policy that denies everything)';
+  END IF;
+
+  SELECT count(*) INTO n FROM "RoomPreferenceRooms";
+  IF n = 0 THEN
+    RAISE EXCEPTION
+      'room-preference-rooms: admin of school A sees no rows (missing seed rows, missing grant, or a policy that denies everything)';
+  END IF;
+
+  -- No WHERE clause on the tenant: the policy, not the query, must scope these.
+  SELECT count(*) INTO other FROM "RoomPreferences"
+   WHERE "schoolId" <> app.current_school_id();
+  IF other <> 0 THEN
+    RAISE EXCEPTION
+      'room-preferences: % row(s) from another school visible — tenant isolation is not enforced', other;
+  END IF;
+
+  SELECT count(*) INTO other FROM "RoomPreferenceRooms"
+   WHERE "schoolId" <> app.current_school_id();
+  IF other <> 0 THEN
+    RAISE EXCEPTION
+      'room-preference-rooms: % row(s) from another school visible — tenant isolation is not enforced', other;
+  END IF;
+
+  -- An admin may write its own school's rules, parent row and child rows both.
+  INSERT INTO "RoomPreferences" ("schoolId", "subjectId", "weight", "updatedAt")
+  SELECT app.current_school_id(), s."id", 5, now()
+    FROM "Subjects" s
+   WHERE s."schoolId" = app.current_school_id()
+   LIMIT 1
+  RETURNING "id" INTO preference;
+
+  IF preference IS NULL THEN
+    RAISE EXCEPTION
+      'room-preferences: the insert produced no row — school A has no subject to point a preference at';
+  END IF;
+
+  INSERT INTO "RoomPreferenceRooms" ("schoolId", "preferenceId", "roomId")
+  SELECT app.current_school_id(), preference, r."id"
+    FROM "Rooms" r
+   WHERE r."schoolId" = app.current_school_id()
+   LIMIT 1;
+
+  DELETE FROM "RoomPreferenceRooms" WHERE "preferenceId" = preference;
+  DELETE FROM "RoomPreferences" WHERE "id" = preference;
+END
+$$;
+ROLLBACK;
+
+-- The negative case: a STUDENT of the same school, which the tenant predicate
+-- alone would have let straight through. This is the assertion the original
+-- policies failed.
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'student_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  -- Without this guard the block passes vacuously: an authId that resolves to
+  -- no user has no role, sees nothing, and looks exactly like success.
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION
+      'room-preferences: expected to be acting as a STUDENT, got % — the fixtures did not supply one',
+      coalesce(app.current_user_role()::text, 'no user at all');
+  END IF;
+
+  SELECT count(*) INTO n FROM "RoomPreferences";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'room-preferences: a STUDENT of the school reads % row(s); the staff policy has lost its role check', n;
+  END IF;
+
+  SELECT count(*) INTO n FROM "RoomPreferenceRooms";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'room-preference-rooms: a STUDENT of the school reads % row(s); the staff policy has lost its role check', n;
+  END IF;
+END
+$$;
+COMMIT;
+
 SELECT 'rls-policies: all assertions passed' AS result;

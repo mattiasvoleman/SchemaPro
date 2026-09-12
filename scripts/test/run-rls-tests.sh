@@ -60,10 +60,27 @@ if [ -z "$admin_auth_id" ]; then
   exit 1
 fi
 
+# Same for a student: the staff-only policies are proved by the principal they
+# must exclude, and a lookup that quietly found nobody would turn that
+# assertion into a pass.
+student_auth_id="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT \"authId\" FROM \"Users\" WHERE \"schoolId\" = '${school_a}' \
+       AND role = 'STUDENT' AND \"authId\" IS NOT NULL LIMIT 1" \
+  | tr -d '[:space:]'
+)"
+
+if [ -z "$student_auth_id" ]; then
+  echo "FAIL: no STUDENT with an authId in the primary school." >&2
+  exit 1
+fi
+
 echo "==> Running policy assertions as ${APP_ROLE} (the role the API uses)"
 compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   psql -U "$APP_ROLE" -h localhost -d "$DB_NAME" \
-  -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -v "admin_auth_id=${admin_auth_id}" -tA -f /dev/stdin \
+  -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -v "admin_auth_id=${admin_auth_id}" \
+  -v "student_auth_id=${student_auth_id}" -tA -f /dev/stdin \
   < scripts/test/rls-policies.sql
 
 echo "==> RLS policy tests passed"

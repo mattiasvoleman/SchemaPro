@@ -290,6 +290,27 @@ async function main(): Promise<void> {
     ],
   });
 
+  // One soft room wish, so the preference screens start from something real.
+  // "NO helst i labbet eller B1" — the wish the optimizer pays to break, as
+  // opposed to Subject.requiredRoomTypeId, which makes the week unschedulable
+  // when the lab is busy. Weight 8 is on the engine's own scale, level with a
+  // disruption: a wish worth honouring, not one that outranks every other goal.
+  const preferredRooms = await prisma.room.findMany({
+    where: { schoolId, code: { in: ['LAB', 'B1'] } },
+  });
+  await prisma.roomPreference.create({
+    data: {
+      schoolId,
+      subjectId: subjectByCode.get('NO')!.id,
+      // Named rooms, so roomTypeId stays null: a preference points at one
+      // target or the other, never both and never neither.
+      weight: 8,
+      rooms: {
+        create: preferredRooms.map((room) => ({ schoolId, roomId: room.id })),
+      },
+    },
+  });
+
   console.log(
     [
       'Demo school seeded:',
@@ -301,6 +322,7 @@ async function main(): Promise<void> {
       `  teachers:     ${teachers.length}`,
       `  students:     ${studentCount}`,
       `  requirements: ${requirementCount}`,
+      `  room wishes:  1 (NO, ${preferredRooms.length} rum)`,
       '',
       'Next: link a Supabase Auth user to the admin row, then generate a schedule.',
     ].join('\n'),
