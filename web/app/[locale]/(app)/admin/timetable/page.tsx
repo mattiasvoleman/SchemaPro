@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
@@ -53,13 +54,47 @@ import {
   useRoomPreferences,
   useRasts,
 } from "@/lib/queries";
-import { buildIcs, downloadIcs } from "@/lib/ics";
-import { exportTimetablePdf } from "@/lib/pdf";
+/*
+ * The two exports are imported where they are pressed, not here. Neither is
+ * needed to SHOW the week — the school asks for a file — and between them they
+ * are 264 lines this route pays for on load. lib/pdf.ts already reasons this
+ * way about jspdf inside its own export function; this moves the wrapper the
+ * same distance.
+ */
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
 import { FilterPicker } from "@/components/schedule/filter-picker";
-import { RoomOptimizationDialog } from "@/components/schedule/room-optimization-dialog";
-import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
+/*
+ * Fetched when the school asks to optimise rooms, not when the page loads.
+ *
+ * This page carries the most JavaScript in the app, and the dialog is the one
+ * part of it a school opens rarely: a grundschema is set once a term, and the
+ * rooms are redistributed after that. Its code took the route's own initial JS
+ * from 190.1KB to 191.9KB gzipped, past the 190KB admin budget — the same
+ * reasoning lib/pdf.ts already applies to jspdf, which it imports inside the
+ * export function rather than at the top of the module.
+ */
+const RoomOptimizationDialog = dynamic(
+  () =>
+    import("@/components/schedule/room-optimization-dialog").then(
+      (module) => module.RoomOptimizationDialog,
+    ),
+  { ssr: false },
+);
+import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
+/*
+ * Fetched with the dialog that shows them. The grid needs the badge above on
+ * every card, but the fields themselves are only ever edited inside Justera or
+ * Lägg till — and they carry components/ui/date-field.tsx, 546 lines of date
+ * picker, which the page otherwise paid for to draw a week.
+ */
+const RecurrenceFields = dynamic(
+  () =>
+    import("@/components/schedule/recurrence-fields").then(
+      (module) => module.RecurrenceFields,
+    ),
+  { ssr: false },
+);
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
 import { rastWindows } from "@/lib/rasts";
@@ -98,7 +133,11 @@ import {
 } from "@/components/schedule/timetable-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DateField } from "@/components/ui/date-field";
+// The page's own two date fields are the publishing dates, inside that dialog.
+const DateField = dynamic(
+  () => import("@/components/ui/date-field").then((module) => module.DateField),
+  { ssr: false },
+);
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -320,6 +359,9 @@ export default function TimetablePage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versionName, setVersionName] = useState("");
   const [roomsOpen, setRoomsOpen] = useState(false);
+  // Whether the room dialog has been asked for at all this visit, which is what
+  // decides that its code is fetched — see where it is rendered.
+  const [roomsUsed, setRoomsUsed] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
 
   /**
@@ -1674,8 +1716,9 @@ export default function TimetablePage() {
     return { added: lines(added, removed), removed: lines(removed, added) };
   }, [comparing, lessons]);
 
-  const doExportIcs = () => {
+  const doExportIcs = async () => {
     if (!activeYear) return;
+    const { buildIcs, downloadIcs } = await import("@/lib/ics");
     const ics = buildIcs(
       filtered.map((lesson) => {
         const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : null;
@@ -1727,6 +1770,7 @@ export default function TimetablePage() {
   };
 
   const doExportPdf = async () => {
+    const { exportTimetablePdf } = await import("@/lib/pdf");
     await exportTimetablePdf({
       title: t("title"),
       subtitle: activeYear?.name,
@@ -1823,7 +1867,10 @@ export default function TimetablePage() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => setRoomsOpen(true)}
+              onClick={() => {
+                setRoomsUsed(true);
+                setRoomsOpen(true);
+              }}
               disabled={!activeYear || !lessons || lessons.length === 0}
             >
               <Footprints />
@@ -2888,15 +2935,24 @@ export default function TimetablePage() {
       </Dialog>
 
       {/* ---------------- Room optimisation dialog ---------------- */}
-      <RoomOptimizationDialog
-        open={roomsOpen}
-        onOpenChange={setRoomsOpen}
-        academicYearId={activeYear?.id ?? null}
-        rooms={rooms ?? []}
-        teachers={teachers}
-        groups={groups ?? []}
-        onApplied={afterRoomOptimization}
-      />
+      {/*
+        Mounted from the first press onward and never unmounted again, which is
+        what makes the import above cost nothing until then. Not `roomsOpen`:
+        the dialog abandons an ask in flight when it is closed and relies on
+        outliving that close to ignore the answer when it lands (see its `ask`
+        ref) — unmounting it would drop the guard the dialog documents.
+      */}
+      {roomsUsed && (
+        <RoomOptimizationDialog
+          open={roomsOpen}
+          onOpenChange={setRoomsOpen}
+          academicYearId={activeYear?.id ?? null}
+          rooms={rooms ?? []}
+          teachers={teachers}
+          groups={groups ?? []}
+          onApplied={afterRoomOptimization}
+        />
+      )}
 
       {/* ---------------- Publish dialog ---------------- */}
       <Dialog open={publishOpen} onOpenChange={setPublishOpen}>

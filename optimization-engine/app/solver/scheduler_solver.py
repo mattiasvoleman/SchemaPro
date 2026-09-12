@@ -1023,8 +1023,7 @@ class SchedulerSolver:
             # and a direct caller must not be able to hand it one.
             return None, {}
         stage = self._build_lunch_stage(request, narrowings)
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = self.LUNCH_STAGE_CAP_SECONDS
+        solver = self._lunch_stage_solver(self.LUNCH_STAGE_CAP_SECONDS)
         started = time.monotonic()
         code = solver.Solve(stage.pinned(set()))
         logger.info(
@@ -1036,6 +1035,34 @@ class SchedulerSolver:
         if code != cp_model.INFEASIBLE:
             return None, {}
         return self._name_lunch_causes(request, stage), {}
+
+    def _lunch_stage_solver(self, seconds: float) -> cp_model.CpSolver:
+        """A solver for the stage whose search does not depend on the machine.
+
+        THE PROOF IS THE LP RELAXATION, and asking for it by name is the whole
+        point of this method. Left to itself CP-SAT sizes its portfolio from
+        the host's core count, and the subsolver that carries the full
+        linearization — max_lp_sym, which finishes this model while it is still
+        loading — is only in the portfolio on a machine with cores to spare.
+        Measured on Reproduction G, ortools 9.15: 0.17 s at eight workers,
+        0.20 s at four, and 7.6-18.8 s at two or one, against a 10 s cap. So a
+        two-core host did not refuse the week at all — it spent the cap, said
+        UNKNOWN, and handed the school the 60 s TIMEOUT this stage exists to
+        prevent. That is what CI's two-core runner had been reporting since the
+        stage was written; a small VPS with SOLVER_CPUS=2 would read the same.
+
+        One worker, not eight: asked for the linearization directly the proof
+        takes 0.09 s single-threaded, which is faster than any portfolio found
+        it, and a single worker makes CP-SAT deterministic — the same week now
+        yields the same named causes on every machine, which matters more here
+        than anywhere else in the solver, because these names are read by a
+        school and quoted back to us in support.
+        """
+        solver = cp_model.CpSolver()
+        solver.parameters.max_time_in_seconds = seconds
+        solver.parameters.num_workers = 1
+        solver.parameters.linearization_level = 2
+        return solver
 
     def _build_lunch_stage(
         self,
@@ -1190,8 +1217,7 @@ class SchedulerSolver:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return None
-            solver = cp_model.CpSolver()
-            solver.parameters.max_time_in_seconds = remaining
+            solver = self._lunch_stage_solver(remaining)
             code = solver.Solve(stage.pinned(relaxed | extra))
             if code == cp_model.INFEASIBLE:
                 return True

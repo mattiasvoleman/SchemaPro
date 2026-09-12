@@ -571,6 +571,9 @@ describe("exporting one class's week", () => {
     render(<TimetablePage />);
     if (className) await filterTo(className);
     await user.click(screen.getByRole("button", { name: "timetable.exportIcs" }));
+    // Awaited: the builder is fetched when the button is pressed, so the call
+    // lands a tick after the click rather than during it.
+    await waitFor(() => expect(buildIcs).toHaveBeenCalled());
     const [lessons] = vi.mocked(buildIcs).mock.calls[0];
     return lessons;
   }
@@ -623,6 +626,7 @@ describe("exporting one class's week", () => {
     render(<TimetablePage />);
     await filterTo("4.1");
     await user.click(screen.getByRole("button", { name: "timetable.exportPdf" }));
+    await waitFor(() => expect(exportTimetablePdf).toHaveBeenCalled());
     const [{ lessons }] = vi.mocked(exportTimetablePdf).mock.calls[0];
     expect(lessons.map((l) => l.group)).toEqual([
       "4ma1 2/4",
@@ -1426,7 +1430,9 @@ describe("the room optimisation", () => {
     );
     await user.click(button);
 
-    expect(screen.getByRole("dialog")).toHaveTextContent("roomOptimization.title");
+    // Awaited, not read straight away: the dialog's code is fetched when this
+    // button is pressed rather than with the page, so it arrives a tick later.
+    expect(await screen.findByRole("dialog")).toHaveTextContent("roomOptimization.title");
   });
 
   it("is not offered for a grundschema with no lessons", () => {
@@ -1455,7 +1461,7 @@ describe("the room optimisation", () => {
     await waitFor(() => expect(undo).toBeEnabled());
 
     await user.click(screen.getByRole("button", { name: "timetable.optimizeRooms" }));
-    await user.click(screen.getByRole("button", { name: "roomOptimization.compute" }));
+    await user.click(await screen.findByRole("button", { name: "roomOptimization.compute" }));
     await user.click(await screen.findByRole("button", { name: "roomOptimization.apply" }));
 
     expect(roomOptimization.apply.mutateAsync).toHaveBeenCalledWith({
@@ -1482,7 +1488,7 @@ describe("the room optimisation", () => {
     render(<TimetablePage />);
 
     await user.click(screen.getByRole("button", { name: "timetable.optimizeRooms" }));
-    await user.click(screen.getByRole("button", { name: "roomOptimization.compute" }));
+    await user.click(await screen.findByRole("button", { name: "roomOptimization.compute" }));
 
     const list = await screen.findByRole("list", { name: "roomOptimization.mostImproved" });
     expect(list).toHaveTextContent("Nils Berg");
