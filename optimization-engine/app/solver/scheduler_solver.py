@@ -414,7 +414,9 @@ class SchedulerSolver:
         ):
             return None
         window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
-        lunch_group_ids = _lunch_group_ids(request.groups)
+        lunch_group_ids = _lunch_group_ids(
+            request.groups, _group_ids_with_lessons(request.requirements),
+        )
         _, exempt_days = self._lunch_starts_blocked_by_constraints(
             request.constraints,
             set(lunch_group_ids),
@@ -619,7 +621,9 @@ class SchedulerSolver:
         lunch_on = rules is not None and _lunch_window_is_set(rules)
         if lunch_on:
             window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
-            lunch_group_ids = _lunch_group_ids(request.groups)
+            lunch_group_ids = _lunch_group_ids(
+                request.groups, _group_ids_with_lessons(request.requirements),
+            )
             _, exempt_days = self._lunch_starts_blocked_by_constraints(
                 request.constraints, set(lunch_group_ids),
                 window_start, window_end - lunch_slots, window_end, lunch_slots,
@@ -871,7 +875,9 @@ class SchedulerSolver:
         if rules is None or not _lunch_window_is_set(rules) or not request.groups:
             return None
         window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
-        lunch_group_ids = _lunch_group_ids(request.groups)
+        lunch_group_ids = _lunch_group_ids(
+            request.groups, _group_ids_with_lessons(request.requirements),
+        )
         blocked_starts = self._lunch_starts_blocked_by_fixed_lessons(
             request.fixed_lessons,
             set(lunch_group_ids),
@@ -1834,7 +1840,7 @@ class SchedulerSolver:
         # engine only through `groups` and still eats.
         lunch_groups = len(
             _lunch_group_ids(
-                request.groups,
+                request.groups, _group_ids_with_lessons(request.requirements),
             ),
         )
         # One literal per group-day whose lunch a locked lesson narrows, at its
@@ -2185,7 +2191,7 @@ class SchedulerSolver:
         # every requirement carries lessons_per_week >= 1, so each one's group
         # is in `by_group` there exactly as it is in this list here.
         lunch_group_ids = _lunch_group_ids(
-            request.groups,
+            request.groups, _group_ids_with_lessons(request.requirements),
         )
         blocked_starts = self._lunch_starts_blocked_by_fixed_lessons(
             request.fixed_lessons,
@@ -3252,7 +3258,19 @@ class SchedulerSolver:
         lessons = sum(r.lessons_per_week for r in request.requirements)
         corridor = max((f.changeover_minutes for f in request.frame_times), default=0)
         seats = request.rules.dining_seats if request.rules is not None else None
-        eating = len(request.groups)
+        # THE NUMBER THE MODEL FED, not the length of `groups`. They differ
+        # exactly where this line matters most: a payload that names nobody is
+        # still owed a meal per group with lessons, and reading the list's
+        # length reported "0 groups eating" over a model carrying eighty lunch
+        # intervals — naming as absent the very thing that shaped the week.
+        # Zero without a lunch window, where the field says nothing either way.
+        eating = (
+            len(_lunch_group_ids(
+                request.groups, _group_ids_with_lessons(request.requirements),
+            ))
+            if request.rules is not None and _lunch_window_is_set(request.rules)
+            else 0
+        )
         return (
             f"TIMEOUT ({why}) [requestId={request.request_id}]: {lessons} lessons, "
             f"{len(request.requirements)} requirements, {eating} groups eating, "
@@ -4723,12 +4741,14 @@ class SchedulerSolver:
                 )
 
             # Everyone who gets a break, and what each of them needs in chairs.
-            # Both read the payload's `groups` rather than the decisions, which
-            # is the whole of the fix for a class whose week is hand-placed:
-            # such a class has no requirement left and so no decisions, and
-            # while these came off the requirements it was invisible at lunch
-            # while being plainly visible everywhere else.
-            lunch_group_ids = _lunch_group_ids(groups)
+            # Both prefer the payload's `groups` to the decisions, which is the
+            # whole of the fix for a class whose week is hand-placed: such a
+            # class has no requirement left and so no decisions, and while
+            # these came off the requirements it was invisible at lunch while
+            # being plainly visible everywhere else. `by_group` is passed as
+            # the reading for a payload that sends no `groups` AT ALL — not as
+            # something unioned in on top of one that does.
+            lunch_group_ids = _lunch_group_ids(groups, by_group)
             headcount_by_group = _lunch_headcounts(groups)
             # A meal has no requirement, so the stage it belongs to comes off
             # the group itself. A group with no derivable years matches no
@@ -5355,19 +5375,52 @@ def _lunch_window_is_set(rules: ScheduleRules) -> bool:
     )
 
 
-def _lunch_group_ids(groups: list[AnonymousGroup]) -> list[UUID]:
+def _group_ids_with_lessons(
+    requirements: list[AnonymousRequirement],
+) -> Iterable[UUID]:
+    """Every group the timplan gives a lesson to, in the payload's own order.
+
+    One reader, so the five callers of `_lunch_group_ids` that hold a request
+    cannot drift from each other about what "has lessons" means. The builder
+    holds decisions rather than requirements and passes its own `by_group`,
+    which is the same list: decisions are created requirement by requirement,
+    and every requirement carries lessons_per_week >= 1.
+    """
+    return (requirement.student_group_id for requirement in requirements)
+
+
+def _lunch_group_ids(
+    groups: list[AnonymousGroup],
+    with_lessons: Iterable[UUID],
+) -> list[UUID]:
     """Every group the solver owes a lunch break, in a stable order.
 
-    EXACTLY THE PAYLOAD'S `groups`, and nothing derived from the lessons. The
-    gateway decides who eats: it sends the HOME CLASSES, with their headcounts
-    and their years, and a teaching group is not among them because its pupils
-    already eat with their class. This used to union in every group that had a
-    requirement — a shim for the release in which the engine shipped before the
-    gateway that fills `groups` — and the shim had a cost once `groups` was
-    real: a mandatory thirty-minute reservation on every teaching group's day
-    for a meal nobody takes there, and an INFEASIBLE with a lunch cause on the
-    day it did not fit. A class's meal is still kept clear of its teaching
-    groups' lessons, through the shared-pupil pairs.
+    THE PAYLOAD'S `groups` WHEN IT HAS ANY, and the groups with lessons when
+    it has none. The gateway decides who eats: it sends the HOME CLASSES, with
+    their headcounts and their years, and a teaching group is not among them
+    because its pupils already eat with their class. Reading anything else
+    alongside a `groups` that is really there has a cost: a mandatory
+    thirty-minute reservation on every teaching group's day for a meal nobody
+    takes there, and an INFEASIBLE with a lunch cause on the day it did not
+    fit. A class's meal is still kept clear of its teaching groups' lessons,
+    through the shared-pupil pairs.
+
+    AN ABSENT `groups` IS NOT AN EMPTY DINING ROOM. The field is optional so
+    the engine can ship before the gateway that fills it, and the schema says
+    what the engine owes until then: the free-window guarantee still reaches
+    every group with requirements, and the hall simply hears about nobody.
+    Read as "the payload's groups, full stop", an absent list withdrew the
+    guarantee from the whole school in silence — every class taught edge to
+    edge through 11:00-13:00, no lunch in the response, and an OPTIMAL over
+    the top of it. That is what the benchmark validator caught: for its school
+    the model built not one lunch interval, and the school had asked for
+    lunch. A school that names nobody still gets its break; the hall is what
+    goes unmodelled, and it does, because every headcount is then 0.
+
+    `with_lessons` is required, not defaulted, for the reason
+    _add_rules_constraints requires `groups`: a caller that forgets it would
+    silently build the model with no lunch in it at all, which is precisely
+    the bug this parameter exists to close.
 
     Ordered rather than a set because both builds of the model iterate this
     and `solve` refuses to hint one from the other unless they agree
@@ -5375,7 +5428,7 @@ def _lunch_group_ids(groups: list[AnonymousGroup]) -> list[UUID]:
     """
     ordered: list[UUID] = []
     seen: set[UUID] = set()
-    for group_id in (group.id for group in groups):
+    for group_id in (group.id for group in groups) if groups else with_lessons:
         if group_id not in seen:
             seen.add(group_id)
             ordered.append(group_id)
