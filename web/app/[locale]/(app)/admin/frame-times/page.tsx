@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -39,9 +40,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-/** Förskoleklass through gymnasiets third year — the Swedish span. */
-const GRADES = Array.from({ length: 13 }, (_, grade) => grade);
-
 /** Monday-Friday. A ramtid for a Saturday school is expressible but not
  *  offered here: the row accepts 1-7 and the week below would grow two mostly
  *  empty columns for a case no Swedish grundskola has. */
@@ -51,8 +49,8 @@ const WEEKDAYS = [1, 2, 3, 4, 5] as const;
 const EVERY_DAY = "all";
 
 interface FrameForm {
-  minGradeLevel: string;
-  maxGradeLevel: string;
+  minGradeLevel: number;
+  maxGradeLevel: number;
   dayOfWeek: string;
   startTime: string;
   endTime: string;
@@ -60,8 +58,8 @@ interface FrameForm {
 }
 
 const EMPTY_FORM: FrameForm = {
-  minGradeLevel: "4",
-  maxGradeLevel: "6",
+  minGradeLevel: 4,
+  maxGradeLevel: 6,
   dayOfWeek: EVERY_DAY,
   startTime: "08:00",
   endTime: "15:00",
@@ -123,8 +121,8 @@ export default function FrameTimesPage() {
   const openEdit = (frame: FrameTime) => {
     setEditing(frame);
     setForm({
-      minGradeLevel: String(frame.minGradeLevel),
-      maxGradeLevel: String(frame.maxGradeLevel),
+      minGradeLevel: frame.minGradeLevel,
+      maxGradeLevel: frame.maxGradeLevel,
       dayOfWeek: frame.dayOfWeek === null ? EVERY_DAY : String(frame.dayOfWeek),
       startTime: formatTime(frame.startTime),
       endTime: formatTime(frame.endTime),
@@ -138,8 +136,8 @@ export default function FrameTimesPage() {
     setEditing(null);
     setForm({
       ...EMPTY_FORM,
-      minGradeLevel: "0",
-      maxGradeLevel: "12",
+      minGradeLevel: 0,
+      maxGradeLevel: 12,
       dayOfWeek: EVERY_DAY,
       startTime: "08:00",
       endTime: "18:00",
@@ -149,8 +147,8 @@ export default function FrameTimesPage() {
 
   const submit = async () => {
     const body = {
-      minGradeLevel: Number(form.minGradeLevel),
-      maxGradeLevel: Number(form.maxGradeLevel),
+      minGradeLevel: form.minGradeLevel,
+      maxGradeLevel: form.maxGradeLevel,
       dayOfWeek: form.dayOfWeek === EVERY_DAY ? null : Number(form.dayOfWeek),
       startTime: form.startTime,
       endTime: form.endTime,
@@ -196,8 +194,8 @@ export default function FrameTimesPage() {
   const duplicateOf = (frames ?? []).find(
     (frame) =>
       frame.id !== editing?.id &&
-      frame.minGradeLevel === Number(form.minGradeLevel) &&
-      frame.maxGradeLevel === Number(form.maxGradeLevel) &&
+      frame.minGradeLevel === form.minGradeLevel &&
+      frame.maxGradeLevel === form.maxGradeLevel &&
       (frame.dayOfWeek === null ? EVERY_DAY : String(frame.dayOfWeek)) === form.dayOfWeek,
   );
 
@@ -358,59 +356,17 @@ export default function FrameTimesPage() {
             <DialogTitle>{editing ? t("edit") : t("add")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t("gradeSpan")}</Label>
-              <div className="flex items-center gap-2">
-                <Select
-                  value={form.minGradeLevel}
-                  onValueChange={(value) =>
-                    setForm({
-                      ...form,
-                      minGradeLevel: value,
-                      // Keep the pair ordered as the admin types rather than
-                      // rejecting it afterwards: a span that reads backwards
-                      // was never what anybody meant.
-                      maxGradeLevel:
-                        Number(value) > Number(form.maxGradeLevel) ? value : form.maxGradeLevel,
-                    })
-                  }
-                >
-                  <SelectTrigger aria-label={t("gradeSpan")}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GRADES.map((grade) => (
-                      <SelectItem key={grade} value={String(grade)}>
-                        {tGrades("grade", { grade })}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <span aria-hidden="true">–</span>
-                <Select
-                  value={form.maxGradeLevel}
-                  onValueChange={(value) =>
-                    setForm({
-                      ...form,
-                      maxGradeLevel: value,
-                      minGradeLevel:
-                        Number(value) < Number(form.minGradeLevel) ? value : form.minGradeLevel,
-                    })
-                  }
-                >
-                  <SelectTrigger aria-label={`${t("gradeSpan")} – ${tCommon("to")}`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GRADES.map((grade) => (
-                      <SelectItem key={grade} value={String(grade)}>
-                        {tGrades("grade", { grade })}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            {/* No "every year" here: a ramtid without a stage is a window the
+                solver cannot place anybody in, and the API refuses one. */}
+            <GradeSpanField
+              label={t("gradeSpan")}
+              toLabel={`${t("gradeSpan")} – ${tCommon("to")}`}
+              min={form.minGradeLevel}
+              max={form.maxGradeLevel}
+              onChange={({ min, max }) =>
+                setForm({ ...form, minGradeLevel: min, maxGradeLevel: max })
+              }
+            />
 
             <div className="space-y-2">
               <Label>{t("day")}</Label>
