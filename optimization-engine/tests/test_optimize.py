@@ -562,8 +562,9 @@ def test_a_payload_that_names_nobody_still_feeds_every_class() -> None:
     built NOT ONE lunch interval — the whole school taught edge to edge
     through the lunch window, no meal in the response, and an OPTIMAL over the
     top of it. Only benchmarks/validate_schedule.py still sent such a payload,
-    and it is what caught this; every test in this file names its class, so
-    the suite could not see it. This one does not name one, on purpose.
+    and it is what caught this; every other test in this file that sets a
+    lunch window names its class, so the suite could not see it. This one
+    does not name one, on purpose.
 
     Both directions, because a free window that is merely lucky proves
     nothing. The tight week must be refused: ten hours a day holds exactly ten
@@ -673,6 +674,128 @@ def test_a_payload_that_names_who_eats_is_taken_at_its_word() -> None:
         "only the class the payload named eats; the teaching group's pupils "
         "eat with their own class"
     )
+
+
+def test_a_timeout_counts_the_groups_the_model_fed() -> None:
+    """The diagnosis line counts the meals the model carries, not the list.
+
+    The two differ exactly where a TIMEOUT needs explaining: a payload that
+    names nobody still owes a meal to every group with lessons, and counting
+    `groups` wrote "0 groups eating" over a week those meals had shaped. A
+    named list is counted as named, and without a lunch window nobody eats.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _sample_payload()
+    first = payload["requirements"][0]  # type: ignore[index]
+    second = {
+        **first,  # type: ignore[dict-item]
+        "id": str(uuid4()),
+        "subjectId": str(uuid4()),
+        "studentGroupId": str(uuid4()),
+    }
+    payload["requirements"] = [first, second]
+    solver = SchedulerSolver(_settings())
+
+    def _line() -> str:
+        return solver._timeout_diagnosis(
+            OptimizeScheduleRequest.model_validate(payload), "test",
+        )
+
+    assert ", 0 groups eating," in _line()
+
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "13:00:00",
+        "lunchMinutes": 30,
+    }
+    assert ", 2 groups eating," in _line()
+
+    payload["groups"] = [
+        {"id": first["studentGroupId"], "lunchHeadcount": 24},  # type: ignore[index]
+    ]
+    assert ", 1 groups eating," in _line()
+
+
+def test_the_validator_asks_lunch_of_the_groups_the_engine_feeds() -> None:
+    """benchmarks/validate_schedule.py reads who eats by the engine's rule.
+
+    The checker re-derives every rule from the request, and a rule it derives
+    differently is a verdict about a different school. Both halves of
+    `_lunch_group_ids`, then. A named list is taken at its word: a teaching
+    group whose lessons fill the lunch window owes no break, because its pupils
+    eat with their class. An absent list owes one to every group with lessons,
+    that teaching group included — the reading under which the nightly gate
+    caught a model that carried no lunch at all.
+
+    The week is written by hand rather than solved for, because no solve puts
+    two lessons across a lunch window it was told to keep; only a hand-written
+    week makes the checker answer for itself.
+    """
+    import sys
+    from pathlib import Path
+
+    from app.schemas.schedule import OptimizeScheduleRequest, ScheduledLesson
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    benchmarks = Path(__file__).resolve().parents[1] / "benchmarks"
+    if str(benchmarks) not in sys.path:
+        sys.path.insert(0, str(benchmarks))
+    from validate_schedule import validate
+
+    payload = _sample_payload()
+    home_class = payload["requirements"][0]  # type: ignore[index]
+    teaching_group = {
+        **home_class,  # type: ignore[dict-item]
+        "id": str(uuid4()),
+        "subjectId": str(uuid4()),
+        "studentGroupId": str(uuid4()),
+        "teacherId": str(uuid4()),
+    }
+    payload["requirements"] = [home_class, teaching_group]
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "13:00:00",
+        "lunchMinutes": 30,
+    }
+    room_id = payload["rooms"][0]["id"]  # type: ignore[index]
+
+    def _lesson(
+        requirement: dict[str, object], day: int, start: str, end: str,
+    ) -> ScheduledLesson:
+        return ScheduledLesson.model_validate({
+            "requirementId": requirement["id"],
+            "roomId": room_id,
+            "dayOfWeek": day,
+            "startTime": start,
+            "endTime": end,
+        })
+
+    lessons = [
+        # The teaching group fills Monday's whole lunch window...
+        _lesson(teaching_group, 1, "11:00:00", "12:00:00"),
+        _lesson(teaching_group, 1, "12:00:00", "13:00:00"),
+        # ...and the class is taught on Tuesday morning, clear of every meal.
+        _lesson(home_class, 2, "08:00:00", "09:00:00"),
+        _lesson(home_class, 2, "09:00:00", "10:00:00"),
+    ]
+    grid = SchedulerSolver(_settings())._grid
+
+    def _problems() -> list[str]:
+        return validate(grid, OptimizeScheduleRequest.model_validate(payload), lessons)
+
+    # No "groups" key: the teaching group has lessons, so it is owed Monday's.
+    unnamed = _problems()
+    assert len(unnamed) == 1, unnamed
+    assert unnamed[0].startswith(
+        f"group {teaching_group['studentGroupId']}, day index 0: no free",
+    ), unnamed
+
+    payload["groups"] = [
+        {"id": home_class["studentGroupId"], "lunchHeadcount": 24},  # type: ignore[index]
+    ]
+    assert _problems() == [], "the named class eats; its teaching group does not"
 
 
 # ---------------------------------------------------------------------------

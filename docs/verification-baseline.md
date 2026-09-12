@@ -556,9 +556,11 @@ This is exactly the failure mode the validator exists for — CP-SAT reported
 FEASIBLE for the model it was given, and the model had no lunch in it. No
 engine test could see it: every test in `test_optimize.py` that sets a lunch
 window names its class, one of them after a stretch of flakiness that was the
-same bug in miniature. The fix is one line — the payload's `groups` when it has any, the
-groups with lessons when it has none — plus two tests that send no `groups` on
-purpose.
+same bug in miniature. The fix is one line — the payload's `groups` when it
+has any, the groups with lessons when it has none. The tests beside it hold
+both halves of that rule in three places — the solver, the timeout diagnosis
+and the validator — each once with no `groups` sent on purpose and once with
+a named list taken at its word.
 
 ### Corrections to earlier entries in this document
 
