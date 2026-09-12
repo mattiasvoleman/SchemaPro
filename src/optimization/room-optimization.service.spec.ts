@@ -947,6 +947,51 @@ describe('RoomOptimizationService', () => {
       expect(result.versionId).toBe(VERSION);
     });
 
+    it('keeps a parked lesson parked in the version it saves first', async () => {
+      /*
+       * "Före salsoptimering" can be restored from the version dialog like any
+       * other version. The apply never sends a parked lesson and never moves
+       * one, but it is part of the year: saved without its flag, restoring the
+       * version would put it back at the slot it only remembers, over whatever
+       * took that slot once it was set aside. The shared snapshot rule is what
+       * carries the flag here; a snapshot of the optimisation's own would not.
+       */
+      rows.push(
+        lesson(EXTRA, {
+          teacherId: OTHER_TEACHER,
+          studentGroupId: GROUP_7C,
+          roomId: ROOM_ANNEX,
+          startTime: clockAt(9),
+          endTime: clockAt(10),
+          isParked: true,
+        }),
+      );
+      const basis = await basisNow();
+
+      await service.apply(
+        {
+          academicYearId: YEAR,
+          basis,
+          changes: [{ lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX }],
+        },
+        user,
+      );
+
+      const { lessons } = tx.scheduleVersion.create.mock.calls[0]![0].data;
+      expect(
+        lessons.map((saved: { teacherId: string | null; isParked?: boolean }) => [
+          saved.teacherId,
+          saved.isParked,
+        ]),
+      ).toEqual([
+        [ELIN, false],
+        [ELIN, false],
+        [ALEXANDER, false],
+        [ALEXANDER, false],
+        [OTHER_TEACHER, true],
+      ]);
+    });
+
     it('refuses a move whose lesson has left the room the proposal found it in', async () => {
       // The page's moves are for another timetable than this one.
       const basis = await basisNow();

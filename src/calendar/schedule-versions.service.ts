@@ -57,6 +57,30 @@ export interface VersionLesson {
    * pre-change snapshot is restored over it.
    */
   isGenerated?: boolean;
+  /**
+   * Set aside on the tray: occupies nothing, and its day and time are only a
+   * memory of where it was. Carried because a restore that dropped it put
+   * every parked lesson back at that remembered slot — which by then may
+   * belong to another lesson, since freeing it is what parking is for — and
+   * a restore runs no clash check to stop it.
+   *
+   * Absent is read as false. For a snapshot stored before the tray existed
+   * (3ddc70d) that is not a guess but the truth: no lesson could be parked
+   * yet. Snapshots stored since, and before this field was carried, lost the
+   * flag on whichever lessons were on the tray when they were taken, and
+   * nothing can say which those were — the blob is the only copy. For them
+   * false is still the side to be wrong on: an un-parked lesson lands on the
+   * grid, where a clash it makes is shown and it can be lifted back. Read
+   * absent as true and an old snapshot restores the whole year onto the tray
+   * — nothing to publish, nothing fixed for the solver, an empty SS12000
+   * feed — to recover the few lessons that were set aside at the time.
+   *
+   * Rejected: re-parking, on restore, an absent-key lesson whose remembered
+   * slot clashes with the rest of the snapshot. That guesses the flag from a
+   * symptom, in a path with no clash check of its own to borrow, and the
+   * administrator — not the restore — knows whether the lesson was set aside.
+   */
+  isParked?: boolean;
   /** Absent or null means "from the start of the academic year". */
   startDate?: string | null;
   /** Absent or null means "until the year ends". */
@@ -199,6 +223,8 @@ export class ScheduleVersionsService {
             isLocked: lesson.isLocked,
             // See VersionLesson.isGenerated for why an absent key is false.
             isGenerated: lesson.isGenerated ?? false,
+            // See VersionLesson.isParked for why an absent key is false.
+            isParked: lesson.isParked ?? false,
             recurrence: lesson.recurrence ?? 'ALL_WEEKS',
             startDate: parseDateOrNull(lesson.startDate),
             endDate: parseDateOrNull(lesson.endDate),
@@ -299,6 +325,7 @@ export class ScheduleVersionsService {
         endTime: true,
         isLocked: true,
         isGenerated: true,
+        isParked: true,
         recurrence: true,
         startDate: true,
         endDate: true,
@@ -318,6 +345,7 @@ export class ScheduleVersionsService {
       endTime: toHHMM(lesson.endTime),
       isLocked: lesson.isLocked,
       isGenerated: lesson.isGenerated,
+      isParked: lesson.isParked,
       recurrence: lesson.recurrence,
       startDate: toDateStringOrNull(lesson.startDate),
       endDate: toDateStringOrNull(lesson.endDate),

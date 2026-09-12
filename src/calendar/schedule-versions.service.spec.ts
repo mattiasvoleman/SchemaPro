@@ -49,6 +49,7 @@ type MasterLessonRow = {
   endTime: Date;
   isLocked: boolean;
   isGenerated: boolean;
+  isParked: boolean;
   recurrence: LessonRecurrence;
   startDate: Date | null;
   endDate: Date | null;
@@ -69,6 +70,7 @@ const masterLessonRow = (
   endTime: utcTime(9, 30),
   isLocked: true,
   isGenerated: false,
+  isParked: false,
   recurrence: 'ALL_WEEKS',
   startDate: null,
   endDate: null,
@@ -186,6 +188,7 @@ describe('ScheduleVersionsService', () => {
                 endTime: '09:30',
                 isLocked: true,
                 isGenerated: false,
+                isParked: false,
                 recurrence: 'ALL_WEEKS',
                 startDate: null,
                 endDate: null,
@@ -249,6 +252,33 @@ describe('ScheduleVersionsService', () => {
       );
       const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
       expect(lessons.map((lesson: VersionLesson) => lesson.isGenerated)).toEqual([
+        true,
+        false,
+      ]);
+    });
+
+    it('snapshots the tray along with the grid', async () => {
+      arrangeYear();
+      // One lesson lifted out of its slot and one moved into it — the swap the
+      // tray exists for. Both rows name the same day and time; only the flag
+      // says that one of them is a placement and the other a memory.
+      tx.masterLesson.findMany.mockResolvedValue([
+        masterLessonRow({ isParked: true }),
+        masterLessonRow({ isParked: false }),
+      ]);
+
+      await service.create(YEAR_ID, 'Draft v1', testUser());
+
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          // The tray is part of the timetable: a snapshot that skipped parked
+          // lessons would restore without them, which is a deletion.
+          where: { academicYearId: YEAR_ID },
+          select: expect.objectContaining({ isParked: true }),
+        }),
+      );
+      const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
+      expect(lessons.map((lesson: VersionLesson) => lesson.isParked)).toEqual([
         true,
         false,
       ]);
@@ -332,6 +362,7 @@ describe('ScheduleVersionsService', () => {
       // The optimizer's own work, locked afterwards by an admin who liked
       // where it landed. Ownership and lock are independent flags.
       isGenerated: true,
+      isParked: false,
       recurrence: 'ODD_WEEKS',
       startDate: '2026-08-31',
       endDate: '2026-12-18',
@@ -448,6 +479,7 @@ describe('ScheduleVersionsService', () => {
           endTime: utcTime(9, 0),
           isLocked: true,
           isGenerated: true,
+          isParked: false,
           recurrence: 'ODD_WEEKS',
           startDate: utcDate('2026-08-31'),
           endDate: utcDate('2026-12-18'),
@@ -532,12 +564,54 @@ describe('ScheduleVersionsService', () => {
       });
     });
 
+    it('puts a parked lesson back on the tray, not into the slot it remembers', async () => {
+      // A was lifted out of Monday 08:15 so that B could move in, and both are
+      // in the snapshot at that slot. Restore A as placed and it lands on top
+      // of B — teacher, room and class all booked twice — and nothing here
+      // checks for a clash. B restored as parked would lose its place instead.
+      arrangeRestore([
+        { ...fullLesson(), isParked: true },
+        { ...fullLesson(), isParked: false },
+      ]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      expect(tx.masterLesson.create).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          data: expect.objectContaining({ isParked: true }),
+        }),
+      );
+      expect(tx.masterLesson.create).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          data: expect.objectContaining({ isParked: false }),
+        }),
+      );
+    });
+
+    it('reads a snapshot stored before parking was carried as placed', async () => {
+      arrangeRestore([minimalLesson()]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      // No key in the blob. For a snapshot older than the tray that is exact:
+      // nothing could be parked yet. For one taken since, whichever lessons
+      // were on the tray are lost, and placed is the side a mistake shows on —
+      // a clash on the grid, not a whole year restored onto the tray. Written
+      // explicitly rather than left to the column default.
+      expect(tx.masterLesson.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ isParked: false }),
+      });
+    });
+
     it('survives a round trip: what snapshot() writes, restore() reads back', async () => {
       const row = masterLessonRow({
         recurrence: 'EVEN_WEEKS',
         startDate: utcDate('2027-01-11'),
         endDate: utcDate('2027-06-11'),
         isGenerated: true,
+        isParked: true,
       });
       // Snapshot the row, then feed that exact blob back into a restore. The
       // two halves have to agree on the wire format or the window is lost.
@@ -561,6 +635,9 @@ describe('ScheduleVersionsService', () => {
           // A generated lesson that came home as a handmade one would be the
           // regeneration's problem, one restore later.
           isGenerated: row.isGenerated,
+          // And a parked one that came home placed would sit in a slot it
+          // gave up, over whatever took it.
+          isParked: row.isParked,
         }),
       });
     });
@@ -605,6 +682,25 @@ describe('ScheduleVersionsService', () => {
       expect(lessons.map((lesson: VersionLesson) => lesson.isGenerated)).toEqual([
         false,
         true,
+      ]);
+    });
+
+    it('carries the tray into the automatic safety snapshot', async () => {
+      arrangeRestore([minimalLesson()]);
+      // Undoing a restore is restoring this snapshot. If it forgot the tray,
+      // the undo would put every lesson that was set aside when the restore ran
+      // back into a slot that may since have been given to another lesson.
+      tx.masterLesson.findMany.mockResolvedValue([
+        masterLessonRow({ isParked: true }),
+        masterLessonRow({ isParked: false }),
+      ]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
+      expect(lessons.map((lesson: VersionLesson) => lesson.isParked)).toEqual([
+        true,
+        false,
       ]);
     });
 

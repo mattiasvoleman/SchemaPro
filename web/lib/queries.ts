@@ -1159,6 +1159,12 @@ export interface VersionLesson {
   startTime: string;
   endTime: string;
   isLocked: boolean;
+  /**
+   * On the tray when the snapshot was taken. Absent in snapshots stored before
+   * the gateway carried it, and read there as false — see VersionLesson in
+   * src/calendar/schedule-versions.service.ts.
+   */
+  isParked?: boolean;
   extraGroupIds?: string[];
   studentIds?: string[];
 }
