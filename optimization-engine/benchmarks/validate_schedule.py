@@ -21,9 +21,10 @@ Checks, all derived from the request:
     room eligibility  capacity >= group size, and required type matches
     availability      no lesson inside a recurring UNAVAILABLE window
     lunch             a free contiguous window inside the lunch window, per
-                      group per day — except where a recurring rule holds that
-                      whole window free for the class, which is the school
-                      saying the class is not in the building
+                      day, for each group the request says eats — except where
+                      a recurring rule holds that whole window free for the
+                      class, which is the school saying the class is not in
+                      the building
     max per day       lessons per group per day within the configured cap
 
 Use as a library::
@@ -268,14 +269,26 @@ def validate(grid, request, lessons) -> list[str]:
 
     rules = request.rules
     if rules is not None:
-        group_ids = {r.student_group_id for r in request.requirements}
+        # WHO IS OWED A BREAK: the groups the request says are in the building,
+        # and not everyone holding a requirement. The engine reserves a meal for
+        # exactly the payload's `groups` — home classes, sent with a headcount —
+        # because a teaching group's pupils already eat with their class, and
+        # the shim that once unioned in every group with a requirement is gone.
+        # Read off the requirements instead, it demanded a window for groups
+        # the model was never asked to leave one for.
+        #
+        # Silence when the payload lists nobody is the correct answer and not a
+        # hole: it is the sentence the model itself reads, that nobody has told
+        # us who eats. Reading it any other way is how this check came to report
+        # 69 violations against a 400-student timetable that was not wrong.
+        eating_group_ids = {group.id for group in getattr(request, "groups", []) or []}
 
         if rules.lunch_start_time and rules.lunch_end_time and rules.lunch_minutes:
             lo = grid.parse_hhmmss(rules.lunch_start_time)
             hi = grid.parse_hhmmss(rules.lunch_end_time)
             need = grid.minutes_to_slots(rules.lunch_minutes)
             exempt_days = _lunch_exempt_days(grid, request.constraints, lo, hi)
-            for group_id in group_ids:
+            for group_id in eating_group_ids:
                 for day_idx in range(len(grid.schedule_days)):
                     # The school held this whole window free for this class,
                     # which is how it says the class is not here. Nothing is

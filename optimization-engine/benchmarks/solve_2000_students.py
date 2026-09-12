@@ -126,6 +126,22 @@ def build_request(shape: SchoolShape) -> OptimizeScheduleRequest:
                 requirement["requiredRoomType"] = "GYMNASIUM"
             requirements.append(requirement)
 
+    # Who is in the building, which is what makes the lunch rule below reach
+    # the model at all. `_lunch_group_ids` is EXACTLY this list — the shim that
+    # used to union in every group holding a requirement is gone — so a payload
+    # that asks for a lunch window and then sends no groups has told the solver
+    # that nobody eats, and no meal is reserved anywhere in the week. The gate
+    # saw the difference and could not say so: 69 "no free 30-minute window"
+    # violations against a timetable the solver was never asked to leave room
+    # in. One entry per class, since this school has no teaching groups.
+    groups = [
+        {
+            "id": _uid(f"group-{class_index}"),
+            "lunchHeadcount": shape.students_per_class,
+        }
+        for class_index in range(shape.classes)
+    ]
+
     # Teachers are unavailable for one afternoon a week (meetings, planning).
     constrained_teachers = int(shape.teachers * shape.constraint_density)
     constraints = [
@@ -146,6 +162,7 @@ def build_request(shape: SchoolShape) -> OptimizeScheduleRequest:
             "requestId": _uid("request"),
             "academicYearId": _uid("year"),
             "requirements": requirements,
+            "groups": groups,
             "rooms": rooms,
             "constraints": constraints,
             "rules": {
