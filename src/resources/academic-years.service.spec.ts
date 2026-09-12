@@ -297,8 +297,8 @@ describe('AcademicYearsService', () => {
       await service.update(YEAR_ID, { name: 'Läsår 26/27' }, testUser());
 
       // A rename cannot strand a period, and the containment check costs two
-      // queries inside a serializable transaction — not a toll to charge every
-      // edit of the year's name or its active flag.
+      // more queries inside the update's transaction — not a toll to charge
+      // every edit of the year's name or its active flag.
       expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
       expect(tx.teachingRequirement.count).not.toHaveBeenCalled();
     });

@@ -7,7 +7,7 @@
  *
  * Drives autocannon against a *running* API and asserts the per-scenario P99.
  * Reads and writes are measured separately because they have different budgets
- * and different cost profiles (writes open a serializable transaction).
+ * and different cost profiles.
  *
  *   node scripts/bench/api-latency.mjs --url http://localhost:4000 \
  *     --token "$JWT" --duration 20
