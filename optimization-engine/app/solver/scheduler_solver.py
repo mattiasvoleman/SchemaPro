@@ -866,6 +866,12 @@ class SchedulerSolver:
         sentence. None when the school asked for no lunch, the same test the
         builder makes.
 
+        None as well when the payload names nobody, and there the builder no
+        longer agrees: it owes such a school a meal per group with lessons
+        (see _lunch_group_ids). The stage then decides nothing for that week
+        and the full model carries its meals alone — slower to refuse a week
+        with no room for them, and no less bound by them.
+
         Empty compositions are allowed to come out: _validate_request refuses
         a sitting or a lock that alone leaves no start, and only their
         intersection can still be empty. The caller decides what to make of
@@ -5380,11 +5386,12 @@ def _group_ids_with_lessons(
 ) -> Iterable[UUID]:
     """Every group the timplan gives a lesson to, in the payload's own order.
 
-    One reader, so the five callers of `_lunch_group_ids` that hold a request
-    cannot drift from each other about what "has lessons" means. The builder
-    holds decisions rather than requirements and passes its own `by_group`,
-    which is the same list: decisions are created requirement by requirement,
-    and every requirement carries lessons_per_week >= 1.
+    One reader, so the callers of `_lunch_group_ids` that hold a request — the
+    timeout diagnosis among them — cannot drift from each other about what
+    "has lessons" means. The builder holds decisions rather than requirements
+    and passes its own `by_group`, which is the same list: decisions are
+    created requirement by requirement, and every requirement carries
+    lessons_per_week >= 1.
     """
     return (requirement.student_group_id for requirement in requirements)
 
