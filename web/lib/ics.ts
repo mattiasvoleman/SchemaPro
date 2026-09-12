@@ -108,6 +108,35 @@ function escapeText(value: string): string {
     .replace(/\r?\n/g, "\\n");
 }
 
+const encoder = new TextEncoder();
+
+/**
+ * RFC 5545 §3.1 line folding: a physical line may not exceed 75 octets
+ * (excluding CRLF); the rest continues on following lines behind a single
+ * space, which counts toward that line's 75. The limit is octets, not
+ * characters, so a Swedish summary reaches it sooner than its length says —
+ * and the split falls between code points, since cutting a multi-byte UTF-8
+ * sequence in two corrupts the text for every client that unfolds it.
+ */
+function fold(line: string): string {
+  if (encoder.encode(line).length <= 75) return line;
+  const physical: string[] = [];
+  let current = "";
+  let octets = 0;
+  for (const char of line) {
+    const size = encoder.encode(char).length;
+    if (octets + size > 75) {
+      physical.push(current);
+      current = " ";
+      octets = 1;
+    }
+    current += char;
+    octets += size;
+  }
+  physical.push(current);
+  return physical.join("\r\n");
+}
+
 export function buildIcs(
   lessons: IcsLesson[],
   options: { calendarName: string; yearStart: string; yearEnd: string },
@@ -173,7 +202,9 @@ export function buildIcs(
   }
 
   lines.push("END:VCALENDAR");
-  return lines.join("\r\n");
+  // Folded here, once, rather than where each line is built: the limit
+  // belongs to every content line, and a property added later cannot forget.
+  return lines.map(fold).join("\r\n");
 }
 
 export function downloadIcs(filename: string, content: string): void {

@@ -240,16 +240,75 @@ describe("buildIcs", () => {
     ]);
   });
 
-  // SUSPECTED BUG (pinned, not fixed): RFC 5545 §3.1 requires content lines
-  // longer than 75 octets to be folded (CRLF + space continuation). buildIcs
-  // never folds, so a long summary is emitted as one over-long line, which
-  // strict parsers may reject.
-  it("currently does NOT fold content lines longer than 75 octets", () => {
+  it("folds content lines longer than 75 octets (RFC 5545 §3.1)", () => {
     const longSummary = "Advanced Placement Mathematics ".repeat(5).trim(); // 154 chars
-    const lines = buildIcs([lesson({ summary: longSummary })], YEAR).split("\r\n");
-    const summaryLine = lines.find((line) => line.startsWith("SUMMARY:"));
-    expect(summaryLine).toBe(`SUMMARY:${longSummary}`);
-    expect(summaryLine!.length).toBeGreaterThan(75);
+    const ics = buildIcs([lesson({ summary: longSummary })], YEAR);
+
+    const physical = ics.split("\r\n");
+    for (const line of physical) {
+      expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75);
+    }
+
+    // The SUMMARY line was actually folded: a space-led continuation follows.
+    const summaryIndex = physical.findIndex((line) => line.startsWith("SUMMARY:"));
+    expect(physical[summaryIndex + 1]).toMatch(/^ /);
+
+    // Unfolding (dropping CRLF + space) restores the logical line intact.
+    const unfolded = ics.replace(/\r\n /g, "").split("\r\n");
+    expect(unfolded).toContain(`SUMMARY:${longSummary}`);
+  });
+
+  it("leaves a line of exactly 75 octets whole and folds one of 76", () => {
+    // "SUMMARY:" is 8 octets, so 67 characters of ASCII land on the limit.
+    const at = buildIcs([lesson({ summary: "a".repeat(67) })], YEAR).split("\r\n");
+    expect(at).toContain(`SUMMARY:${"a".repeat(67)}`);
+
+    const over = buildIcs([lesson({ summary: "a".repeat(68) })], YEAR).split("\r\n");
+    const index = over.findIndex((line) => line.startsWith("SUMMARY:"));
+    expect(over[index]).toBe(`SUMMARY:${"a".repeat(67)}`);
+    expect(over[index + 1]).toBe(" a");
+  });
+
+  it("folds on octet boundaries without splitting multi-byte characters", () => {
+    const summary = "Ä".repeat(60); // 60 chars = 120 UTF-8 octets
+    const ics = buildIcs([lesson({ summary })], YEAR);
+
+    for (const line of ics.split("\r\n")) {
+      expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75);
+    }
+    // A split inside a code point would corrupt the text and fail this.
+    expect(ics.replace(/\r\n /g, "")).toContain(`SUMMARY:${summary}`);
+  });
+
+  it("folds every property it writes, not only SUMMARY", () => {
+    // The limit belongs to the content line, so every line buildIcs emits
+    // goes through the same fold: the calendar name, the UID a long lesson id
+    // builds, the room and the note — and the split-run VEVENTs a seam adds.
+    const long = "Naturorienterande ämnen, grupp ".repeat(3).trim();
+    const id = `lesson-${"x".repeat(80)}`;
+    const ics = buildIcs(
+      [
+        lesson({
+          id,
+          recurrence: "ODD_WEEKS",
+          location: long,
+          description: long,
+        }),
+      ],
+      { ...YEAR, calendarName: long },
+    );
+
+    for (const line of ics.split("\r\n")) {
+      expect(new TextEncoder().encode(line).length).toBeLessThanOrEqual(75);
+    }
+    const unfolded = ics.replace(/\r\n /g, "").split("\r\n");
+    const escaped = long.replace(/,/g, "\\,");
+    expect(unfolded).toContain(`X-WR-CALNAME:${escaped}`);
+    expect(unfolded).toContain(`UID:${id}@schemapro`);
+    expect(unfolded).toContain(`UID:${id}-2@schemapro`);
+    expect(unfolded).toContain(`LOCATION:${escaped}`);
+    expect(unfolded).toContain(`DESCRIPTION:${escaped}`);
+    expect(unfolded).toContain("RRULE:FREQ=WEEKLY;INTERVAL=2;UNTIL=20261228T235959");
   });
 });
 
