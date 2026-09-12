@@ -263,12 +263,10 @@ export function validatePlacement(
     }
     const candidateGroups = groupsOf(candidate);
     const otherGroups = groupsOf(other);
-    if (candidateGroups.some((groupId) => otherGroups.includes(groupId))) {
-      hits.push({ kind: "GROUP", otherLessonId: other.id ?? undefined });
-    } else if (groupsShareStudents(candidateGroups, otherGroups, groupConflicts)) {
+    const groupClash =
+      candidateGroups.some((groupId) => otherGroups.includes(groupId)) ||
       // Distinct groups, shared students: 7A vs Ma71. Same hard clash.
-      hits.push({ kind: "GROUP", otherLessonId: other.id ?? undefined });
-    }
+      groupsShareStudents(candidateGroups, otherGroups, groupConflicts);
 
     // Individual participants: busy when their own class attends the other
     // lesson, when they attend it individually, or symmetric.
@@ -284,7 +282,12 @@ export function validatePlacement(
         const home = studentGroupOf?.get(studentId);
         return Boolean(home && candidateGroups.includes(home));
       });
-    if (studentBusy) {
+
+    // One clash with this lesson is one hit, whichever check found it. The
+    // checks overlap by design — a class and one of its own students in both
+    // lessons trips all of them — and a caller counting raw hits would
+    // otherwise read one clash as two.
+    if (groupClash || studentBusy) {
       hits.push({ kind: "GROUP", otherLessonId: other.id ?? undefined });
     }
   }
