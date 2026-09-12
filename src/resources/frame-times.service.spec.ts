@@ -22,6 +22,9 @@ const FRAME_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 /** A `@db.Time` value as Prisma hands it back: a Date anchored at 1970-01-01. */
 const wallClock = (time: string): Date => new Date(`1970-01-01T${time}:00.000Z`);
 
+/** Reconstructs the SQL text of a tagged-template $queryRaw call. */
+const rawSql = (call: unknown[]): string => (call[0] as readonly string[]).join('?');
+
 const storedFrame = (overrides: Record<string, unknown> = {}) => ({
   id: FRAME_ID,
   schoolId: SCHOOL_ID,
@@ -40,6 +43,75 @@ const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
     code,
     clientVersion: Prisma.prismaVersion.client,
   });
+
+/**
+ * What the table answers update()'s locking read with: the rows whose id is the
+ * one value bound into the statement, each carrying the columns the SELECT names
+ * and no others. A statement that is not `SELECT ... FROM "<table>" WHERE "id" =
+ * $1::uuid FOR UPDATE`, or that names a column the table lacks, throws instead
+ * of being answered, so a read that drops its lock, its key or a column fails
+ * the test rather than passing on a row it never asked for.
+ */
+function lockingRead(
+  table: string,
+  rows: Record<string, unknown>[],
+  call: unknown[],
+): Record<string, unknown>[] {
+  const sql = rawSql(call).replace(/\s+/g, ' ').trim();
+  const read = /^SELECT (.+) FROM "(\w+)" WHERE "id" = \?::uuid FOR UPDATE$/.exec(sql);
+  const values = call.slice(1);
+  if (read === null || read[2] !== table || values.length !== 1) {
+    throw new Error(`Not a locking read of one "${table}" row: ${sql}`);
+  }
+  const columns = read[1].split(',').map((column) => {
+    const name = /^"(\w+)"$/.exec(column.trim())?.[1];
+    if (name === undefined || !(name in storedFrame())) {
+      throw new Error(`"${table}" has no column ${column.trim()}`);
+    }
+    return name;
+  });
+  return rows
+    .filter((row) => row.id === values[0])
+    .map((row) => Object.fromEntries(columns.map((column) => [column, row[column]])));
+}
+
+/**
+ * Names the transaction each call of a mock ran in. createPrismaMock hands every
+ * helper's callback the one shared `tx`, so a read in withRls and a read in
+ * withVerifiedSubject's batch reach the same `$queryRaw` and look alike to a
+ * spec. Here each call to a helper is a transaction of its own, `<helper>#<n>`,
+ * open from the moment the helper is called until its promise settles. The
+ * function returned wraps a mock so that each of its calls notes the innermost
+ * transaction open at that moment, undefined outside them all, and answers as
+ * the mock already did.
+ */
+function transactionsOf(prisma: PrismaMock): (mock: jest.Mock) => (string | undefined)[] {
+  const open: string[] = [];
+  let opened = 0;
+  for (const [helper, method] of Object.entries(prisma) as [string, jest.Mock][]) {
+    const run = method.getMockImplementation();
+    if (run === undefined) continue;
+    method.mockImplementation(async (...args: unknown[]) => {
+      opened += 1;
+      const transaction = `${helper}#${opened}`;
+      open.push(transaction);
+      try {
+        return await run(...args);
+      } finally {
+        open.splice(open.lastIndexOf(transaction), 1);
+      }
+    });
+  }
+  return (mock) => {
+    const ranIn: (string | undefined)[] = [];
+    const answer = mock.getMockImplementation();
+    mock.mockImplementation((...args: unknown[]) => {
+      ranIn.push(open[open.length - 1]);
+      return answer?.(...args);
+    });
+    return ranIn;
+  };
+}
 
 /**
  * Rows in the order a `findMany` `orderBy` asks for, sorted the way PostgreSQL
@@ -93,22 +165,28 @@ describe('FrameTimesService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
   let service: FrameTimesService;
+  /** The rows the locking read in update() can find: none until a test stores one. */
+  let frames: Record<string, unknown>[];
+  /** The locking read of the stored bounds in update(). */
+  let queryRaw: jest.Mock;
 
   beforeEach(() => {
     tx = createTxMock();
+    frames = [];
+    // The auto-vivifying mock would hand back a model proxy for `$queryRaw`,
+    // and a proxy is not callable. It answers as the table would, from the rows
+    // a test stored: a row nobody stored is a row the lock does not find.
+    queryRaw = jest.fn((...call: unknown[]) =>
+      Promise.resolve(lockingRead('FrameTimes', frames, call)),
+    );
+    Object.assign(tx, { $queryRaw: queryRaw });
     prisma = createPrismaMock(tx);
     service = new FrameTimesService(prisma as unknown as PrismaService);
   });
 
   /** The stored frame, found by its own id and by nothing else — as the table would. */
   const givenFrame = (overrides: Record<string, unknown> = {}) => {
-    const row = storedFrame(overrides);
-    tx.frameTime.findUnique.mockImplementation(({ where }: { where?: { id?: string } }) => {
-      if (where?.id === undefined) {
-        throw new Error('Prisma: findUnique needs a unique field in `where`.');
-      }
-      return Promise.resolve(where.id === row.id ? row : null);
-    });
+    frames.push(storedFrame(overrides));
   };
 
   // -------------------------------------------------------------------------
@@ -406,6 +484,43 @@ describe('FrameTimesService', () => {
       expect(tx.frameTime.update.mock.calls[0][0].data).toEqual({ dayOfWeek: null });
     });
 
+    /*
+     * A read in one transaction and a write in another let a concurrent PATCH
+     * commit in between, and so would a plain read in the same one: withRls
+     * runs READ COMMITTED, where a read takes no lock. Against the stored
+     * 08:00-15:00, a start moved to 14:00 and an end moved to 14:00:30 would
+     * both pass on the untouched row, and the table's CHECK admits the
+     * thirty-second frame they build together. The merge is only as good as
+     * the row it saw, so that row is held until the write commits.
+     */
+    it('reads the row it merges against under a lock, in the transaction that writes it', async () => {
+      givenFrame();
+      tx.frameTime.update.mockResolvedValue(storedFrame({ endTime: wallClock('13:00') }));
+      const ranIn = transactionsOf(prisma);
+      const readIn = ranIn(queryRaw);
+      const writtenIn = ranIn(tx.frameTime.update);
+
+      await service.update(FRAME_ID, { endTime: '13:00' }, user());
+
+      // A lock lasts as long as the transaction that took it, so the read and
+      // the write have to share one, and it has to be withRls's, the one
+      // interactive transaction under the caller's claims. queryWithRls and
+      // withVerifiedSubject commit their batch before the row comes back, and
+      // any other helper, or a second withRls, is a transaction the write is
+      // not in. Asking where each call ran catches all of those; asking whether
+      // queryWithRls stayed idle caught one.
+      expect(readIn).toEqual([expect.stringMatching(/^withRls#\d+$/)]);
+      expect(writtenIn).toEqual(readIn);
+      const [call] = queryRaw.mock.calls;
+      expect(rawSql(call)).toMatch(
+        /SELECT "startTime", "endTime", "minGradeLevel", "maxGradeLevel"\s+FROM "FrameTimes"\s+WHERE "id" = \?::uuid\s+FOR UPDATE/,
+      );
+      expect(call.slice(1)).toEqual([FRAME_ID]);
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.frameTime.update.mock.invocationCallOrder[0],
+      );
+    });
+
     it.each<[string, UpdateFrameTimeDto, Record<string, unknown>]>([
       ['the lower year', { minGradeLevel: 5 }, { minGradeLevel: 5 }],
       ['the upper year', { maxGradeLevel: 5 }, { maxGradeLevel: 5 }],
@@ -434,7 +549,7 @@ describe('FrameTimesService', () => {
       });
     });
 
-    it('maps a write that finds the row gone (P2025) to 404', async () => {
+    it('maps a P2025 from the write to 404, though the lock leaves it no row to lose', async () => {
       givenFrame();
       tx.frameTime.update.mockRejectedValue(prismaError('P2025'));
 
@@ -444,8 +559,6 @@ describe('FrameTimesService', () => {
     });
 
     it('reports an unknown frame as missing rather than as a write failure', async () => {
-      tx.frameTime.findUnique.mockResolvedValue(null);
-
       await expect(service.update(FRAME_ID, { endTime: '13:00' }, user())).rejects.toThrow(
         new NotFoundException(`Frame time ${FRAME_ID} not found.`),
       );
@@ -453,14 +566,12 @@ describe('FrameTimesService', () => {
     });
 
     /*
-     * A frame in another school is invisible under RLS, so findUnique returns
-     * null and the caller is told the row does not exist. That is the right
-     * answer and the right wording: confirming it exists elsewhere would leak
-     * that another school has one.
+     * A frame in another school is invisible under RLS, so the locking read
+     * comes back empty and the caller is told the row does not exist. That is
+     * the right answer and the right wording: confirming it exists elsewhere
+     * would leak that another school has one.
      */
     it('cannot reach a frame in another school', async () => {
-      tx.frameTime.findUnique.mockResolvedValue(null);
-
       await expect(service.update(FRAME_ID, { endTime: '13:00' }, user())).rejects.toBeInstanceOf(
         NotFoundException,
       );

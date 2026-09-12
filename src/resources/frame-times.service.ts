@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type { FrameTime } from '@prisma/client';
+import type { FrameTime, PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -83,6 +83,11 @@ export class FrameTimesService {
    * the database CHECK then answers with a constraint-violation the admin
    * cannot act on. Same trap as the timplan's length-only PATCH, which skipped
    * its guard because the guard sat inside the date branch.
+   *
+   * THE ROW IS READ UNDER A LOCK, IN THE TRANSACTION THAT WRITES IT. The merge
+   * is only as good as the row it was made against, and a read in one
+   * transaction followed by a write in another lets a concurrent PATCH commit
+   * in between. See `lockBounds`.
    */
   async update(
     id: string,
@@ -90,19 +95,18 @@ export class FrameTimesService {
     user: AuthenticatedUser,
   ): Promise<FrameTimeResponse> {
     requireSchoolId(user);
-    const current = await this.prisma.withRls(user, (tx) =>
-      tx.frameTime.findUnique({ where: { id } }),
-    );
-    if (!current) {
-      throw new NotFoundException(`Frame time ${id} not found.`);
-    }
-
-    assertWindow(dto.startTime ?? toWallClock(current.startTime), dto.endTime ?? toWallClock(current.endTime));
-    assertSpan(dto.minGradeLevel ?? current.minGradeLevel, dto.maxGradeLevel ?? current.maxGradeLevel);
 
     try {
-      const row = await this.prisma.withRls(user, (tx) =>
-        tx.frameTime.update({
+      const row = await this.prisma.withRls(user, async (tx) => {
+        const current = await lockBounds(tx, id);
+        if (!current) {
+          throw new NotFoundException(`Frame time ${id} not found.`);
+        }
+
+        assertWindow(dto.startTime ?? toWallClock(current.startTime), dto.endTime ?? toWallClock(current.endTime));
+        assertSpan(dto.minGradeLevel ?? current.minGradeLevel, dto.maxGradeLevel ?? current.maxGradeLevel);
+
+        return tx.frameTime.update({
           where: { id },
           data: {
             ...(dto.minGradeLevel !== undefined ? { minGradeLevel: dto.minGradeLevel } : {}),
@@ -114,8 +118,8 @@ export class FrameTimesService {
               ? { changeoverMinutes: dto.changeoverMinutes }
               : {}),
           },
-        }),
-      );
+        });
+      });
       return toResponse(row);
     } catch (error) {
       rethrowPrismaError(error);
@@ -171,4 +175,44 @@ function assertSpan(minGradeLevel: number, maxGradeLevel: number): void {
   if (minGradeLevel > maxGradeLevel) {
     throw new BadRequestException('minGradeLevel must not be above maxGradeLevel.');
   }
+}
+
+/** What update() merges a PATCH against: the window and the span. */
+type StoredBounds = Pick<FrameTime, 'startTime' | 'endTime' | 'minGradeLevel' | 'maxGradeLevel'>;
+
+/**
+ * The bounds update() merges against, read under a row lock in the transaction
+ * that writes them.
+ *
+ * A read in the same transaction does not hold the row still by itself:
+ * `withRls` runs at READ COMMITTED, where a plain read takes no lock. Two
+ * PATCHes against 08:00-09:30, one moving the start to 09:00 and one moving the
+ * end to 08:30, would both read the untouched row, both pass, and the second
+ * write would land on top of the first. FOR UPDATE makes the second reader wait
+ * for that commit and merge against what it wrote, so it gets the 400 it would
+ * have got a moment later.
+ *
+ * THE TABLE'S CHECKS DO NOT MAKE THIS REDUNDANT. They keep 09:00-08:30 out, but
+ * as a constraint violation nothing maps, which the admin reads as a 500. And
+ * the window CHECK is weaker than assertWindow: `"endTime" > "startTime"` on a
+ * TIME(0) column admits a window seconds long. A start moved to 09:00 racing an
+ * end moved to 09:00:30 passes both guards against the old row and the CHECK on
+ * the new one, and a thirty-second frame is stored. The span is read here too
+ * because assertSpan merges against the same row and races the same way, though
+ * only into its CHECK, which says what the guard says.
+ *
+ * Raw SQL because Prisma has no locking read. A raw `time` column comes back as
+ * the same 1970-01-01 Date the model API returns, so `toWallClock` reads it
+ * unchanged. Under RLS the lock also needs the UPDATE policy to admit the row —
+ * the permission the write needs anyway — so a row the caller may not change
+ * reads as missing, which is the 404 a frame in another school already got.
+ */
+async function lockBounds(tx: PrismaClient, id: string): Promise<StoredBounds | undefined> {
+  const [row] = await tx.$queryRaw<StoredBounds[]>`
+    SELECT "startTime", "endTime", "minGradeLevel", "maxGradeLevel"
+    FROM "FrameTimes"
+    WHERE "id" = ${id}::uuid
+    FOR UPDATE
+  `;
+  return row;
 }
