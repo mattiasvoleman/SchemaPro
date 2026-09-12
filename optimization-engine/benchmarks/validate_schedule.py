@@ -21,9 +21,11 @@ Checks, all derived from the request:
     room eligibility  capacity >= group size, and required type matches
     availability      no lesson inside a recurring UNAVAILABLE window
     lunch             a free contiguous window inside the lunch window, per
-                      eating group per day — except where a recurring rule
-                      holds that whole window free for the class, which is the
-                      school saying the class is not in the building
+                      day, for each group the request says eats — the groups it
+                      names, or every group with requirements when it names
+                      none — except where a recurring rule holds that whole
+                      window free for the class, which is the school saying
+                      the class is not in the building
     max per day       lessons per group per day within the configured cap
 
 Use as a library::
@@ -269,17 +271,17 @@ def validate(grid, request, lessons) -> list[str]:
     rules = request.rules
     if rules is not None:
         # WHO IS OWED A MEAL, re-derived from the request as every other check
-        # here is. `groups` is the gateway naming the home classes that eat;
-        # a teaching group is not among them because its pupils eat with their
-        # own class, so demanding a window for one would fail a timetable that
-        # is correct. An ABSENT list is the other case, and the schema says so
-        # beside the field: until the gateway that fills it is deployed, the
-        # guarantee reaches every group with requirements and the hall hears
-        # about nobody. The benchmark school below sends no groups, so for it
-        # these two readings are the same set — this distinction changes no
-        # verdict here, and is written down so the first payload that does
-        # send `groups` is not failed for obeying the rule.
-        group_ids = (
+        # here is, and by the rule the schema writes beside `groups`. A named
+        # list is the gateway naming the home classes that eat: a teaching
+        # group is not among them because its pupils already eat with their
+        # class, so demanding a window for one would fail a timetable that is
+        # correct. An ABSENT list is the other case, and it is not an empty
+        # dining room. The field is optional so the engine can ship before the
+        # gateway that fills it, and until then the guarantee reaches every
+        # group with requirements while the hall hears about nobody. Silence
+        # there would pass exactly the week that turned this gate red: a model
+        # that carried no lunch at all, taught edge to edge through the window.
+        eating_group_ids = (
             {group.id for group in request.groups}
             if request.groups
             else {r.student_group_id for r in request.requirements}
@@ -290,7 +292,7 @@ def validate(grid, request, lessons) -> list[str]:
             hi = grid.parse_hhmmss(rules.lunch_end_time)
             need = grid.minutes_to_slots(rules.lunch_minutes)
             exempt_days = _lunch_exempt_days(grid, request.constraints, lo, hi)
-            for group_id in group_ids:
+            for group_id in eating_group_ids:
                 for day_idx in range(len(grid.schedule_days)):
                     # The school held this whole window free for this class,
                     # which is how it says the class is not here. Nothing is
