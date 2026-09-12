@@ -187,10 +187,14 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (this.pendingPresence.has(schoolId)) return;
     const timer = setTimeout(() => {
       this.pendingPresence.delete(schoolId);
-      // Nothing awaits a timer, so a rejection here would be unhandled — and
-      // Node ends the process on one by default. A roster that failed to
-      // refresh is not worth that: the next heartbeat or disconnect sends a
-      // fresh one, and the entry is already cleared so it can.
+      // Nothing awaits a timer, so a rejection here would be unhandled, and
+      // Node ends the process on one by default. Today nothing rejects:
+      // broadcastPresence awaits only fetchSockets() and a synchronous emit,
+      // and CorsIoAdapter extends the in-memory IoAdapter, whose fetchSockets
+      // does not fail. An adapter that can — a Redis adapter — would turn one
+      // hiccup into that exit, and a roster that failed to refresh is not
+      // worth it: the next heartbeat or disconnect sends a fresh one, and the
+      // entry is already cleared so it can.
       this.broadcastPresence(schoolId).catch(() => {
         this.logger.warn(`Presence broadcast failed [school=${schoolId}]`);
       });

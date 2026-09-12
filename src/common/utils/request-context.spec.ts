@@ -37,14 +37,15 @@ describe('requireUserId', () => {
     expect(requireUserId(withUserId('user-1'))).toBe('user-1');
   });
 
-  it('rejects a principal whose token carries no user id', () => {
+  it('rejects a principal without a user id', () => {
     expect(() => requireUserId(withUserId(undefined))).toThrow(
       new ForbiddenException('No user identity is associated with this account.'),
     );
   });
 
   it('rejects an empty-string user id rather than returning it', () => {
-    // An empty id would reach a uuid column and fail there as a 500.
+    // An empty id is no identity: returned, it would reach a uuid column and
+    // fail there instead of here.
     expect(() => requireUserId(withUserId(''))).toThrow(ForbiddenException);
   });
 });

@@ -343,10 +343,13 @@ describe('FamilyService', () => {
     });
 
     it('403s an admin principal without userId before touching the database', async () => {
-      // AuthenticatedUser.userId is optional ("when present in the token"),
-      // but reportedById is a required column. Such a token passes every
-      // role check, so it has to be turned away up front — at the insert it
-      // is a Prisma runtime error and a 500.
+      // AuthenticatedUser.userId is optional in the type, but reportedById is
+      // a required column. No such principal reaches this route today:
+      // JwtStrategy reads userId from the Users row for every tenant role, and
+      // SYSTEM_ADMIN, the one principal without a row, is not in its @Roles.
+      // The service checks anyway, so the invariant does not rest on that list
+      // staying as it is, and it fails before the transaction, not at the
+      // insert.
       arrangeStudent();
 
       await expect(
@@ -509,8 +512,8 @@ describe('FamilyService', () => {
     });
 
     it('403s an admin principal without userId before touching the database', async () => {
-      // requestedById is a required column, the same trap as reportedById on
-      // an absence report.
+      // requestedById is a required column: the same local guard as for
+      // reportedById on an absence report, behind the same @Roles.
       arrangeStudent();
 
       await expect(
@@ -693,8 +696,11 @@ describe('FamilyService', () => {
 
     it('403s an approval by a principal without a userId', async () => {
       // Approval files absence reports in the decider's name, and their
-      // reporter column is required — so the same token that may reject may
-      // not approve. The throw rolls the transaction back, status included.
+      // reporter column is required — so a principal without a userId may
+      // reject but not approve. The route is SCHOOL_ADMIN-only, and that
+      // role's userId always comes from the Users row, so this holds the
+      // invariant at the write rather than stopping a caller that exists. The
+      // throw rolls the transaction back, status included.
       arrangePending();
 
       await expect(

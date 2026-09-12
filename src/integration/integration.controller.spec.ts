@@ -108,9 +108,11 @@ describe('IntegrationKeysController', () => {
     });
 
     it('403s a principal with no school before touching the database', async () => {
-      // The tenant column is required, and RLS would refuse the row anyway: a
-      // school-less token has to fail as RoomBookingsService.create does, not
-      // as a Prisma runtime 500.
+      // The tenant column is required. The controller is SCHOOL_ADMIN-only and
+      // JwtStrategy reads schoolId from the Users row, where it is not
+      // nullable, so no HTTP caller arrives without one. The check keeps the
+      // controller from depending on that, and fails as
+      // RoomBookingsService.create does rather than at the insert.
       await expect(
         controller.create({ name: 'Sync' }, testUser({ schoolId: undefined })),
       ).rejects.toThrow(
