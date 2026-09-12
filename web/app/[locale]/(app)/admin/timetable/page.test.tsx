@@ -787,6 +787,43 @@ describe("the edit dialog's width", () => {
   });
 });
 
+/*
+ * The two controls the page fetches only when a dialog opens: the recurrence
+ * fields in the edit dialog and the publish dates. Both are next/dynamic with
+ * no loading fallback, so a loader that never settled would leave its dialog
+ * drawn without them — and nothing else in this file looks there. Make either
+ * import a promise that never resolves and exactly its test below fails, with
+ * every other test in this file still green.
+ *
+ * The switch is imported normally. Waiting for it only confirms the rest of the
+ * edit dialog's body was drawn around the fields.
+ */
+describe("the controls a dialog fetches when it opens", () => {
+  it("finishes drawing the edit dialog", async () => {
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+
+    expect(
+      await screen.findByRole("combobox", { name: "timetable.recurrenceLabel" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("switch")).toBeInTheDocument();
+  });
+
+  it("finishes drawing the publish dialog", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    await user.click(screen.getByRole("button", { name: "timetable.publish" }));
+
+    expect(await screen.findByLabelText("timetable.publishFrom")).toBeInTheDocument();
+    expect(await screen.findByLabelText("timetable.publishTo")).toBeInTheDocument();
+  });
+});
+
 describe("the tray", () => {
   const parkedSlojd = () =>
     LESSONS.map((l) => (l.id === "l-slojd" ? { ...l, isParked: true } : l));
