@@ -185,14 +185,15 @@ def _lunch_exempt_days(grid, constraints, window_start, window_end) -> set[tuple
     in school, busy, and the break must still fit around it. So the test is
     coverage of the whole window and nothing less.
 
-    The times are folded onto the grid rather than parsed strictly, unlike the
-    availability loop in validate(). That loop may be strict because a row it
-    cannot read is a row it declines to check; this one must not decline,
-    because a row it fails to read becomes a violation it invents. Schools
-    write "away all day" as 00:00-23:59 — this product's own full-day closure,
-    see isFullDay in calendar.service.ts — and strict parsing rejects both ends
-    of exactly the rule this exists for. A window that misses the school day
-    altogether still constrains nothing and is dropped.
+    The times are read by _recurring_windows, folded onto the grid, exactly as
+    the availability loop in validate() reads them: one reading, so the window
+    this excuses is the window that loop enforces. Strict parsing would fail
+    here in the loud direction rather than the silent one — a row this cannot
+    read becomes a missing break it reports. Schools write "away all day" as
+    00:00-23:59 — this product's own full-day closure, see isFullDay in
+    calendar.service.ts — and strict parsing rejects both ends of exactly the
+    rule this exists for. A window that misses the school day altogether still
+    constrains nothing and is dropped.
 
     A row with no weekday names every teaching day, and dated rows are skipped:
     the timetable is one generic week with nowhere to put a single date.
