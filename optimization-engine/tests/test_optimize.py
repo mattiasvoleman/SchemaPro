@@ -4796,24 +4796,22 @@ def test_a_class_that_is_not_in_school_that_day_is_not_owed_a_lunch(
     assert {lunch["dayOfWeek"] for lunch in body["lunches"]} == {2, 3, 4, 5}
 
 
-def test_the_validator_owes_no_lunch_to_a_class_the_school_marked_away() -> None:
-    """The same rule on the other side of the seam, in the independent checker.
+def _validator_problems(payload: dict[str, object]) -> list[str]:
+    """The independent checker's verdict on a week that fills the lunch window.
 
     `benchmarks/validate_schedule.py` re-derives every rule from the request
     and shares no code with the model builders, which is the whole of why its
     verdict is evidence — and why a rule it does not model is a false alarm
-    waiting for a payload to write one. No payload in the repo writes this row
-    today (`solve_2000_students.py` emits TEACHER rows only), so the guard
-    belongs here rather than in the benchmark.
+    waiting for a payload to write one.
 
-    The timetable is built by hand because no solve can produce it. Availability
-    holds a class's lessons out of the class's own reserved window, so an
-    excused day reaches the lunch check with an empty window and passes without
-    the exemption being consulted at all — correctness borrowed from a
-    different rule. Put lessons in that window, as an engine that dropped
-    availability would, or as a week from somewhere else might (`validate` is a
-    library), and the unexempted check reports a break the class was never owed
-    beside the fault that actually matters.
+    The timetable is built by hand rather than solved for, because no solve
+    produces it. The engine keeps a class's lessons out of the class's own
+    reserved window, and reserves nothing at all for a group it was never told
+    about, so both false alarms below reach the lunch check with an empty
+    window and pass on correctness borrowed from another rule. Put two lessons
+    in that window — as an engine that dropped availability would, or as a week
+    from somewhere else might, since `validate` is a library — and the check
+    has to answer for itself.
     """
     import sys
     from pathlib import Path
@@ -4826,8 +4824,6 @@ def test_the_validator_owes_no_lunch_to_a_class_the_school_marked_away() -> None
         sys.path.insert(0, str(benchmarks))
     from validate_schedule import validate
 
-    payload = _lunch_payload()
-    group_id = _group_of(payload)
     # Monday 11:00-13:00 is the entire lunch window, and this class fills it.
     lessons = [
         ScheduledLesson.model_validate(
@@ -4842,21 +4838,50 @@ def test_the_validator_owes_no_lunch_to_a_class_the_school_marked_away() -> None
         for start, end in (("11:00:00", "12:00:00"), ("12:00:00", "13:00:00"))
     ]
     grid = SchedulerSolver(_settings())._grid
+    return validate(grid, OptimizeScheduleRequest.model_validate(payload), lessons)
 
-    def _problems(constraints: list[dict[str, object]]) -> list[str]:
-        payload["constraints"] = constraints
-        return validate(grid, OptimizeScheduleRequest.model_validate(payload), lessons)
 
-    unexcused = _problems([])
+def test_the_validator_owes_no_lunch_to_a_class_the_school_marked_away() -> None:
+    """The praktik rule again, on the other side of the seam.
+
+    A recurring rule covering the whole lunch window is the school saying the
+    class is not in the building, and the engine answers by building no
+    sitting and booking no chair. No payload in the repo writes such a row
+    today (`solve_2000_students.py` emits TEACHER rows only), so the guard
+    belongs here rather than in the benchmark.
+    """
+    payload = _lunch_payload()
+    unexcused = _validator_problems(payload)
     assert len(unexcused) == 1, unexcused
     assert "no free 30-minute window" in unexcused[0]
 
-    excused = _problems([_closes(group_id, 1, "08:00:00", "17:45:00")])
+    payload["constraints"] = [_closes(_group_of(payload), 1, "08:00:00", "17:45:00")]
+    excused = _validator_problems(payload)
     # The reservation is still enforced against the lessons. The exemption
     # silences the break the class was not owed, not the fault that put two
     # lessons inside a window the school had closed.
     assert len(excused) == 2, excused
     assert all("overlaps UNAVAILABLE window" in problem for problem in excused), excused
+
+
+def test_the_validator_owes_no_lunch_to_a_group_the_request_never_seats() -> None:
+    """Who eats is the payload's `groups`, not everyone holding a requirement.
+
+    A teaching group's pupils eat with their home class, so the engine reserves
+    a meal for exactly the groups it was sent and the shim that once unioned in
+    every group with a requirement is gone. Demanded off the requirements
+    instead, this check asks for a window the model was never asked to leave —
+    and it did: against the 400-student benchmark, which sent a lunch window
+    and no groups at all, it reported 69 violations for a timetable that was
+    right, and the gate could not say which of the two was wrong.
+
+    A payload naming nobody is a payload saying nobody eats. Silence is the
+    verdict the model would give, so it is the verdict here.
+    """
+    payload = _lunch_payload()
+    payload["groups"] = []
+
+    assert _validator_problems(payload) == []
 
 
 def test_a_reservation_leaving_only_scraps_is_refused_by_name(
