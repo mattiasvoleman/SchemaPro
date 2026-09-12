@@ -30,9 +30,9 @@ interface ConnectionRole {
  * but injecting individual claims is cheaper and avoids any JSON parsing
  * inside every policy evaluation.)
  *
- * `withRls()` opens a serializable-isolated transaction, sets those session
- * variables with `SET LOCAL` (scoped to the transaction, not the connection),
- * runs the caller-supplied queries, then commits. This guarantees:
+ * `withRls()` opens a transaction, sets those session variables with
+ * `SET LOCAL` (scoped to the transaction, not the connection), runs the
+ * caller-supplied queries, then commits. This guarantees:
  *   1. Every single application query goes through RLS, because the connection
  *      role is `app_authenticated` (a non-owner) — set via `DATABASE_URL`.
  *      `onModuleInit` verifies this against the catalog on every boot rather
@@ -42,6 +42,33 @@ interface ConnectionRole {
  *      same pooled connection is reused (SET LOCAL is transaction-scoped).
  *   3. No PII or JWT claims are written to application logs; only the
  *      anonymous traceId / request path are logged by the exception filter.
+ *
+ * ## Isolation: READ COMMITTED, and on purpose
+ *
+ * None of the helpers below passes an isolation level to `$transaction`, so
+ * they run at the server's default, which PostgreSQL ships as READ COMMITTED:
+ * `SHOW transaction_isolation` inside a transaction opened the way `withRls`
+ * opens one reads "read committed" on the local stack. This comment called the
+ * transaction serializable from the first commit; nothing ever made it so.
+ *
+ * It is not made so now either. At SERIALIZABLE, PostgreSQL aborts whichever
+ * transaction a concurrent commit has made stale with SQLSTATE 40001, which
+ * Prisma surfaces as P2034. Nothing here retries, and neither
+ * `rethrowPrismaError` nor the exception filter knows the code, so a concurrent
+ * edit READ COMMITTED lets through — two PATCHes to different fields of one
+ * row, say — would come back as a 500 for whichever request lost. The code
+ * that does guard a race is written for READ COMMITTED too: room optimisation's
+ * apply takes an advisory lock and then reads, and the availability-constraint,
+ * frame-time, lunch-serving and rast PATCHes read the row they merge against
+ * `FOR UPDATE`. Both rely on the waiting transaction seeing what the other one
+ * committed. Under SERIALIZABLE its snapshot predates that commit, and the wait
+ * ends in a serialization failure instead. Other PATCHes that merge against
+ * their stored row read it without a lock.
+ *
+ * What that asks of a caller: a read inside `withRls` holds nothing still. A
+ * rule checked on a read and trusted by a later write needs the row locked
+ * (`SELECT ... FOR UPDATE`), an advisory lock taken before the read, or a
+ * constraint that states the rule where the write lands.
  */
 @Injectable()
 export class PrismaService
@@ -131,6 +158,9 @@ export class PrismaService
    *
    * Every service that accesses data on behalf of a specific user MUST use
    * this method rather than calling `this.<model>.*` directly.
+   *
+   * The transaction runs at READ COMMITTED, so a read in `fn` holds nothing
+   * still for a later write — see "Isolation" on the class.
    *
    * @param user   The authenticated principal from `request.user`.
    * @param fn     Async callback receiving the transaction client.

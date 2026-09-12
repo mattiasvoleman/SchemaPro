@@ -287,9 +287,9 @@ jobs:
       - run: npm ci
       - run: npm run prisma:generate
 
-      # Latency against a mocked Prisma layer is meaningless — the serializable
-      # transaction and RLS policy evaluation are the cost being measured, so
-      # the benchmark needs the real stack.
+      # Latency against a mocked Prisma layer is meaningless — the RLS
+      # transaction and policy evaluation are the cost being measured, so the
+      # benchmark needs the real stack.
       - name: Start stack
         run: docker compose up --build -d --wait
 
