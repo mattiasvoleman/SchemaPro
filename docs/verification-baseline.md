@@ -525,6 +525,41 @@ This is not theoretical: `validate_schedule.py` caught the solver choosing
 start slot 38 on a real 250-student run. Restricting the domain to within-day
 windows fixes it at no measurable cost.
 
+### A payload that names nobody was owed no lunch
+
+The second thing this gate has caught, and the reason it stood red from
+`be8e184` (2026-09-03) until this entry. It had already been red for three
+nights before that, for a different reason — a TIMEOUT with no lessons at
+all — and that cleared in the same nightly window as this arrived, so the
+nightly of 2026-09-04 went straight from one failure to the other. `be8e184`
+narrowed `_lunch_group_ids` to read the payload's `groups` and nothing else —
+right, and for a good reason: once the gateway fills that list it names the
+home classes, and unioning the lesson-carrying groups in on top reserved
+thirty minutes on every teaching group's day for a meal nobody takes there.
+
+What went with it was the case where the list is *absent*. `groups` is
+optional so the engine can ship ahead of the gateway that fills it, and the
+schema states what is owed meanwhile, beside the field: the free-window
+guarantee still reaches every group with requirements. Read as "the payload's
+groups, full stop", such a payload built **not one lunch interval** — 0 where
+80 were due for the benchmark's 16 classes over 5 days — and the solver
+returned a timetable taught edge to edge through 11:00–13:00, with an empty
+`lunches` list and a confident FEASIBLE over the top of it. Between 55 and 64
+group-days with nowhere to eat on each night's runner (53 and 69 on two local
+runs), on a school that had asked for lunch.
+
+Not only the benchmark: the gateway derives `groups` from the läsår's groups
+of `kind: 'CLASS'`, so a school that has entered only teaching groups sends an
+empty list with a full timplan and reached the same silence.
+
+This is exactly the failure mode the validator exists for — CP-SAT reported
+FEASIBLE for the model it was given, and the model had no lunch in it. No
+engine test could see it: every test in `test_optimize.py` that sets a lunch
+window names its class, one of them after a stretch of flakiness that was the
+same bug in miniature. The fix is one line — the payload's `groups` when it has any, the
+groups with lessons when it has none — plus two tests that send no `groups` on
+purpose.
+
 ### Corrections to earlier entries in this document
 
 - An earlier revision said the complexity guard was "pessimistic … not the
