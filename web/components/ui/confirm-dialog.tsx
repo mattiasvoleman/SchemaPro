@@ -36,7 +36,19 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent
+        className="max-w-md"
+        // While the mutation is in flight the disabled footer buttons promise
+        // the dialog cannot be left; Escape, outside clicks and the X have to
+        // honour that too, or the promise only holds for the two buttons.
+        closeDisabled={loading}
+        onEscapeKeyDown={(event) => {
+          if (loading) event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          if (loading) event.preventDefault();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description ? <DialogDescription>{description}</DialogDescription> : null}

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConfirmDialog } from "./confirm-dialog";
+
+type User = ReturnType<typeof userEvent.setup>;
 
 // Key-echo translator: t("cancel") renders as "cancel", which is what the
 // button queries below assert against.
@@ -97,21 +99,60 @@ describe("ConfirmDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
   });
 
-  it("still dismisses via Escape and the X button while loading", async () => {
-    // SUSPECTED BUG (pinned, not fixed): loading disables the footer buttons,
-    // which reads as "you cannot leave while the mutation is in flight" — but
-    // Escape and the DialogContent X button are not gated on `loading`, so the
-    // dialog can still be dismissed mid-mutation. If dismissal is meant to be
-    // blocked, DialogContent needs onEscapeKeyDown/onInteractOutside guards
-    // and the X needs disabling.
+  // Every way out of the dialog other than its footer, one test each. One
+  // test walking all three stops at the first route that fails, and a route
+  // that never reached the dialog at all would pass "blocked" unnoticed — so
+  // each route is blocked while loading AND shown to dismiss once it is not.
+  const dismissals: Array<[string, (user: User) => Promise<void>]> = [
+    ["Escape", (user) => user.keyboard("{Escape}")],
+    ["the X", (user) => user.click(screen.getByRole("button", { name: "Close" }))],
+    [
+      "an outside press",
+      async () => {
+        // Outside is the overlay, which covers the page in a browser. user-event
+        // cannot press it (the modal puts pointer-events: none on body), so the
+        // gesture is dispatched by hand, and three things make it one Radix
+        // hears. A macrotask first: the dismissable layer attaches its
+        // pointerdown listener in a setTimeout after mounting. Then pointerdown
+        // AND click: Dialog defers an outside left press until the click, and
+        // counts it only if the click lands on the overlay. Miss any of them
+        // and the press reaches nothing — and "blocked" passes with no guard.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const overlay = screen.getByRole("dialog").previousElementSibling;
+        expect(overlay).toHaveAttribute("data-state", "open");
+        fireEvent.pointerDown(overlay!);
+        fireEvent.click(overlay!);
+      },
+    ],
+  ];
+
+  it.each(dismissals)("blocks %s while loading", async (_route, dismiss) => {
+    // The disabled footer buttons promise the dialog cannot be left mid-
+    // mutation; every other route out has to keep that promise too.
     const user = userEvent.setup();
     const { onOpenChange } = renderDialog({ loading: true });
 
-    await user.keyboard("{Escape}");
-    expect(onOpenChange).toHaveBeenCalledWith(false);
+    await dismiss(user);
 
-    onOpenChange.mockClear();
-    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it.each(dismissals)("still dismisses via %s once loading finishes", async (_route, dismiss) => {
+    const user = userEvent.setup();
+    const { onOpenChange } = renderDialog({ loading: false });
+
+    await dismiss(user);
+
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("greys out the X only while loading", () => {
+    const { view } = renderDialog({ loading: true });
+    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+
+    view.unmount();
+    renderDialog({ loading: false });
+    expect(screen.getByRole("button", { name: "Close" })).not.toBeDisabled();
   });
 });
