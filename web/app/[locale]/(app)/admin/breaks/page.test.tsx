@@ -492,6 +492,25 @@ describe("Vad formuläret skickar", () => {
     expect(sent.maxGradeLevel).toBe(4);
   });
 
+  it("keeps the year hint at this page's contrast, not the field's muted default", async () => {
+    /*
+     * Not something the form sends, but it lives beside the span it explains.
+     * The span is components/ui/grade-span-field now, whose hint is
+     * text-muted-foreground: AA, and short of the 7:1 this page holds all of its
+     * small print to. The page hands its own class back through hintClassName,
+     * and nothing would notice if that stopped reaching the paragraph.
+     */
+    render(<BreaksPage />);
+    const user = await openCreate();
+
+    await user.click(screen.getByRole("combobox", { name: "scope" }));
+    await user.click(screen.getByRole("option", { name: "scopeGrades" }));
+
+    const hint = screen.getByText("gradeHint");
+    expect(hint.className).toContain("text-foreground");
+    expect(hint.className).not.toContain("text-muted-foreground");
+  });
+
   it("edits in place, without offering to move the lov to another läsår", async () => {
     // `academicYearId` is absent from the update DTO on purpose: moving a lov
     // to another year is not an edit, it is a different lov, and allowing it

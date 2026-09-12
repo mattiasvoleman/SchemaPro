@@ -220,12 +220,14 @@ describe("saving a frame", () => {
 
   it("drags the upper bound along when the lower one passes it", async () => {
     /*
-     * A stage that reads backwards was never what anybody meant, and the DTO
-     * refuses it after the fact. Correcting the pair as it is typed is the
-     * difference between a form that helps and one that scolds — and since the
-     * two selects moved onto components/ui/grade-span-field, the rule lives
-     * somewhere this page does not own. Which is exactly why it is asserted
-     * here: a change over there must not quietly widen a ramtid.
+     * A stage that reads backwards was never what anybody meant, and nothing
+     * short of the database refuses it: the DTO checks each bound on its own,
+     * and FrameTimes_grade_span_is_ordered answers with a 500 the school cannot
+     * act on. Correcting the pair as it is typed is the difference between a
+     * form that helps and one that scolds — and since the two selects moved
+     * onto components/ui/grade-span-field, the rule lives somewhere this page
+     * does not own. Which is exactly why it is asserted here: a change over
+     * there must not quietly widen a ramtid.
      */
     const user = userEvent.setup();
     render(<FrameTimesPage />);
@@ -244,7 +246,7 @@ describe("saving a frame", () => {
   it("drags the lower bound along when the upper one falls below it", async () => {
     // The other direction. Raising the lower bound pushes the upper one along;
     // lowering the upper bound has to pull the lower one back, or an inverted
-    // span reaches an API that answers with a validation error naming a field.
+    // span walks past the DTO and is stopped by a database CHECK as a 500.
     const user = userEvent.setup();
     render(<FrameTimesPage />);
 
