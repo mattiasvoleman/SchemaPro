@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
@@ -53,13 +53,10 @@ import {
   useRoomPreferences,
   useRasts,
 } from "@/lib/queries";
-import { buildIcs, downloadIcs } from "@/lib/ics";
-import { exportTimetablePdf } from "@/lib/pdf";
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
 import { FilterPicker } from "@/components/schedule/filter-picker";
-import { RoomOptimizationDialog } from "@/components/schedule/room-optimization-dialog";
-import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
+import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
 import { rastWindows } from "@/lib/rasts";
@@ -98,7 +95,6 @@ import {
 } from "@/components/schedule/timetable-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -118,6 +114,54 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+/*
+ * Three of this page's components are fetched when they are asked for, not
+ * when the week is drawn. The two exports below do the same at their handlers.
+ *
+ * This route carries more JavaScript than any other in the app, and it is the
+ * one an admin opens to LOOK AT the week. None of the three below is needed
+ * for that: the room dialog is pressed once a term, and the recurrence fields
+ * and the two publishing date pickers are only ever reached inside a dialog —
+ * yet components/ui/date-field.tsx behind them is 546 lines the page paid for
+ * to draw a grid. lib/pdf.ts already reasons this way about jspdf inside its
+ * own export function; these carry the reasoning up to the components.
+ *
+ * React's own lazy(), not next/dynamic: next/dynamic brings its loader runtime
+ * (BailoutToCSR, PreloadChunks, loadable) into the route, measured at 1.4KB
+ * gzipped here — most of what these splits save. React is in every route
+ * already, so lazy() costs nothing on top.
+ */
+const RoomOptimizationDialog = lazy(() =>
+  import("@/components/schedule/room-optimization-dialog").then((module) => ({
+    default: module.RoomOptimizationDialog,
+  })),
+);
+const RecurrenceFields = lazy(() =>
+  import("@/components/schedule/recurrence-fields").then((module) => ({
+    default: module.RecurrenceFields,
+  })),
+);
+const DateField = lazy(() =>
+  import("@/components/ui/date-field").then((module) => ({
+    default: module.DateField,
+  })),
+);
+
+/**
+ * Holds the recurrence box's place while its code arrives.
+ *
+ * Same frame and same height as the real fields, so the dialog around it does
+ * not resize under the reader between the open and the first paint.
+ */
+function RecurrenceFieldsFallback() {
+  return (
+    <div className="col-span-2 space-y-3 rounded-md border p-3">
+      <Skeleton className="h-14" />
+      <Skeleton className="h-14" />
+    </div>
+  );
+}
 
 const NONE = "__none__";
 
@@ -289,6 +333,10 @@ export default function TimetablePage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versionName, setVersionName] = useState("");
   const [roomsOpen, setRoomsOpen] = useState(false);
+  // Whether the room dialog has been asked for at all this visit, which is
+  // what fetches its code — see where it is rendered for why it is not
+  // `roomsOpen`.
+  const [roomsUsed, setRoomsUsed] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
 
   /**
@@ -1560,8 +1608,11 @@ export default function TimetablePage() {
     return { added, removed };
   }, [comparing, lessons]);
 
-  const doExportIcs = () => {
+  const doExportIcs = async () => {
     if (!activeYear) return;
+    // Fetched by the press, like the PDF below: 264 lines between them that
+    // build a file, and none of it is needed to SHOW the week.
+    const { buildIcs, downloadIcs } = await import("@/lib/ics");
     const ics = buildIcs(
       filtered.map((lesson) => {
         const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : null;
@@ -1613,6 +1664,7 @@ export default function TimetablePage() {
   };
 
   const doExportPdf = async () => {
+    const { exportTimetablePdf } = await import("@/lib/pdf");
     await exportTimetablePdf({
       title: t("title"),
       subtitle: activeYear?.name,
@@ -1709,7 +1761,10 @@ export default function TimetablePage() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => setRoomsOpen(true)}
+              onClick={() => {
+                setRoomsUsed(true);
+                setRoomsOpen(true);
+              }}
               disabled={!activeYear || !lessons || lessons.length === 0}
             >
               <Footprints />
@@ -2174,19 +2229,21 @@ export default function TimetablePage() {
                 </SelectContent>
               </Select>
             </div>
-            <RecurrenceFields
-              idPrefix="edit"
-              value={{
-                recurrence: editRecurrence,
-                startDate: editStartDate,
-                endDate: editEndDate,
-              }}
-              onChange={(next) => {
-                setEditRecurrence(next.recurrence);
-                setEditStartDate(next.startDate);
-                setEditEndDate(next.endDate);
-              }}
-            />
+            <Suspense fallback={<RecurrenceFieldsFallback />}>
+              <RecurrenceFields
+                idPrefix="edit"
+                value={{
+                  recurrence: editRecurrence,
+                  startDate: editStartDate,
+                  endDate: editEndDate,
+                }}
+                onChange={(next) => {
+                  setEditRecurrence(next.recurrence);
+                  setEditStartDate(next.startDate);
+                  setEditEndDate(next.endDate);
+                }}
+              />
+            </Suspense>
             <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
               <div className="flex items-center gap-2">
                 <Lock className="h-4 w-4 text-muted-foreground" />
@@ -2566,15 +2623,17 @@ export default function TimetablePage() {
                   </SelectContent>
                 </Select>
               </div>
-              <RecurrenceFields
-                idPrefix="create"
-                value={{
-                  recurrence: creating.recurrence,
-                  startDate: creating.startDate,
-                  endDate: creating.endDate,
-                }}
-                onChange={(next) => setCreating({ ...creating, ...next })}
-              />
+              <Suspense fallback={<RecurrenceFieldsFallback />}>
+                <RecurrenceFields
+                  idPrefix="create"
+                  value={{
+                    recurrence: creating.recurrence,
+                    startDate: creating.startDate,
+                    endDate: creating.endDate,
+                  }}
+                  onChange={(next) => setCreating({ ...creating, ...next })}
+                />
+              </Suspense>
               <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
                 <div className="flex items-center gap-2">
                   <Lock className="h-4 w-4 text-muted-foreground" />
@@ -2774,15 +2833,27 @@ export default function TimetablePage() {
       </Dialog>
 
       {/* ---------------- Room optimisation dialog ---------------- */}
-      <RoomOptimizationDialog
-        open={roomsOpen}
-        onOpenChange={setRoomsOpen}
-        academicYearId={activeYear?.id ?? null}
-        rooms={rooms ?? []}
-        teachers={teachers}
-        groups={groups ?? []}
-        onApplied={afterRoomOptimization}
-      />
+      {/*
+        Mounted from the first press onward and never unmounted again, which is
+        what lets the import above cost nothing until then. Not `roomsOpen`:
+        the dialog abandons an ask in flight when it is closed and relies on
+        outliving that close to ignore the answer when it lands (its `ask`
+        ref) — unmounting it on close would drop the guard the dialog
+        documents.
+      */}
+      {roomsUsed && (
+        <Suspense fallback={null}>
+          <RoomOptimizationDialog
+            open={roomsOpen}
+            onOpenChange={setRoomsOpen}
+            academicYearId={activeYear?.id ?? null}
+            rooms={rooms ?? []}
+            teachers={teachers}
+            groups={groups ?? []}
+            onApplied={afterRoomOptimization}
+          />
+        </Suspense>
+      )}
 
       {/* ---------------- Publish dialog ---------------- */}
       <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
@@ -2805,26 +2876,37 @@ export default function TimetablePage() {
               </div>
             </div>
           )}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="publish-from">{t("publishFrom")}</Label>
-              <DateField
-                label={t("publishFrom")}
-                id="publish-from"
-                value={fromDate}
-                onChange={(value) => setFromDate(value)}
-              />
+          {/* One boundary for both: they are the same picker twice, and two
+              fallbacks resolving separately would shift the row. */}
+          <Suspense
+            fallback={
+              <div className="grid grid-cols-2 gap-4">
+                <Skeleton className="h-9" />
+                <Skeleton className="h-9" />
+              </div>
+            }
+          >
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="publish-from">{t("publishFrom")}</Label>
+                <DateField
+                  label={t("publishFrom")}
+                  id="publish-from"
+                  value={fromDate}
+                  onChange={(value) => setFromDate(value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="publish-to">{t("publishTo")}</Label>
+                <DateField
+                  label={t("publishTo")}
+                  id="publish-to"
+                  value={toDate}
+                  onChange={(value) => setToDate(value)}
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="publish-to">{t("publishTo")}</Label>
-              <DateField
-                label={t("publishTo")}
-                id="publish-to"
-                value={toDate}
-                onChange={(value) => setToDate(value)}
-              />
-            </div>
-          </div>
+          </Suspense>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPublishOpen(false)}>
               {tCommon("cancel")}
