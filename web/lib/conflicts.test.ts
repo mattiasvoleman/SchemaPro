@@ -367,10 +367,10 @@ describe("validatePlacement student participants", () => {
     expect(validatePlacement(candidate, [other], [], map)).toEqual([]);
   });
 
-  it("can report GROUP twice for one lesson when both the class and a student clash", () => {
-    // The class-overlap check and the participant check each push their own
-    // GROUP hit for the same other lesson. Consumers dedupe via
-    // conflictKinds(), so the duplication is benign — pinned here on purpose.
+  it("reports GROUP once when both the class and a student clash with the same lesson", () => {
+    // The class-overlap check and the participant check both fire here; one
+    // clash with one lesson must still be a single hit so consumers can count
+    // raw hits without over-counting.
     const candidate = makePlacement({ studentGroupId: "gA", studentIds: ["s1"] });
     const other = makePlacement({
       id: "other",
@@ -378,7 +378,6 @@ describe("validatePlacement student participants", () => {
       studentIds: ["s1"],
     });
     expect(validatePlacement(candidate, [other], [])).toEqual([
-      { kind: "GROUP", otherLessonId: "other" },
       { kind: "GROUP", otherLessonId: "other" },
     ]);
   });
@@ -1633,6 +1632,24 @@ describe("teaching-group conflicts (groups sharing students)", () => {
     );
     const hits = validatePlacement(ma71, [class7a], [], new Map(), relation);
     expect(hits.map((hit) => hit.kind)).toContain("GROUP");
+  });
+
+  it("reports GROUP once when shared students and an individual participant both clash", () => {
+    // The shared-students branch and the participant check are separate
+    // routes to the same clash: s-2 attends both lessons individually while
+    // s-1 ties the two groups together. One lesson, one hit.
+    const relation = buildGroupConflictMap(
+      new Map([["s-1", "g-7a"]]),
+      [{ studentId: "s-1", studentGroupId: "g-ma71" }],
+    );
+    const hits = validatePlacement(
+      { ...ma71, studentIds: ["s-2"] },
+      [{ ...class7a, studentIds: ["s-2"] }],
+      [],
+      new Map(),
+      relation,
+    );
+    expect(hits).toEqual([{ kind: "GROUP", otherLessonId: "l-7a" }]);
   });
 
   it("does NOT flag the same overlap without shared students", () => {
