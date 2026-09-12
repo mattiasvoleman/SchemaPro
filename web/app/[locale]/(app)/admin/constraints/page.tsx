@@ -26,6 +26,7 @@ import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -58,17 +59,15 @@ const RESOURCES: ConstraintResource[] = [
   "STUDENT_GROUP",
   "GRADE_LEVEL",
 ];
-/** Förskoleklass through gymnasiets third year — the Swedish span. */
-const GRADES = Array.from({ length: 13 }, (_, grade) => grade);
 const TYPES: ConstraintType[] = ["UNAVAILABLE", "PREFERRED_FREE", "PREFERRED_BUSY"];
 const DAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 
 interface ConstraintForm {
   resourceType: ConstraintResource;
   resourceId: string;
-  /** Year bounds for a GRADE_LEVEL rule, as the selects hold them. */
-  minGradeLevel: string;
-  maxGradeLevel: string;
+  /** Year bounds for a GRADE_LEVEL rule; ignored for every other kind. */
+  minGradeLevel: number;
+  maxGradeLevel: number;
   mode: "recurring" | "date";
   dayOfWeek: string;
   date: string;
@@ -81,8 +80,8 @@ interface ConstraintForm {
 const EMPTY_FORM: ConstraintForm = {
   resourceType: "TEACHER",
   resourceId: "",
-  minGradeLevel: "4",
-  maxGradeLevel: "6",
+  minGradeLevel: 4,
+  maxGradeLevel: 6,
   mode: "recurring",
   dayOfWeek: "1",
   date: "",
@@ -97,7 +96,6 @@ export default function ConstraintsPage() {
   const tCommon = useTranslations("common");
   const tTypes = useTranslations("constraintTypes");
   const tDays = useTranslations("days");
-  const tGrades = useTranslations("grades");
   const { data: constraints, isLoading } = useConstraints();
   const { data: people } = usePeople();
   const { data: rooms } = useRooms();
@@ -193,8 +191,8 @@ export default function ConstraintsPage() {
       resourceType: constraint.resourceType,
       resourceId:
         constraint.userId ?? constraint.roomId ?? constraint.studentGroupId ?? "",
-      minGradeLevel: String(constraint.minGradeLevel ?? 4),
-      maxGradeLevel: String(constraint.maxGradeLevel ?? 6),
+      minGradeLevel: constraint.minGradeLevel ?? 4,
+      maxGradeLevel: constraint.maxGradeLevel ?? 6,
       mode: constraint.date ? "date" : "recurring",
       dayOfWeek: String(constraint.dayOfWeek ?? 1),
       date: constraint.date ?? "",
@@ -214,10 +212,8 @@ export default function ConstraintsPage() {
       studentGroupId: form.resourceType === "STUDENT_GROUP" ? form.resourceId : null,
       // Sent only for the kind that uses them: the API refuses a year bound on
       // a rule aimed at a teacher, and rightly so.
-      minGradeLevel:
-        form.resourceType === "GRADE_LEVEL" ? Number(form.minGradeLevel) : null,
-      maxGradeLevel:
-        form.resourceType === "GRADE_LEVEL" ? Number(form.maxGradeLevel) : null,
+      minGradeLevel: form.resourceType === "GRADE_LEVEL" ? form.minGradeLevel : null,
+      maxGradeLevel: form.resourceType === "GRADE_LEVEL" ? form.maxGradeLevel : null,
       dayOfWeek: form.mode === "recurring" ? Number(form.dayOfWeek) : null,
       date: form.mode === "date" ? form.date : null,
       startTime: form.startTime,
@@ -387,64 +383,20 @@ export default function ConstraintsPage() {
                 </Select>
               </div>
               {form.resourceType === "GRADE_LEVEL" ? (
-                <div className="space-y-2">
-                  <Label>{t("gradeSpan")}</Label>
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={form.minGradeLevel}
-                      onValueChange={(value) =>
-                        setForm({
-                          ...form,
-                          minGradeLevel: value,
-                          // Keep the pair ordered as the admin types rather than
-                          // rejecting it afterwards: a range that reads
-                          // backwards was never what anybody meant.
-                          maxGradeLevel:
-                            Number(value) > Number(form.maxGradeLevel)
-                              ? value
-                              : form.maxGradeLevel,
-                        })
-                      }
-                    >
-                      <SelectTrigger aria-label={t("gradeFromLabel")}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {GRADES.map((grade) => (
-                          <SelectItem key={grade} value={String(grade)}>
-                            {tGrades("grade", { grade })}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <span className="text-sm text-muted-foreground">–</span>
-                    <Select
-                      value={form.maxGradeLevel}
-                      onValueChange={(value) =>
-                        setForm({
-                          ...form,
-                          maxGradeLevel: value,
-                          minGradeLevel:
-                            Number(value) < Number(form.minGradeLevel)
-                              ? value
-                              : form.minGradeLevel,
-                        })
-                      }
-                    >
-                      <SelectTrigger aria-label={t("gradeToLabel")}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {GRADES.map((grade) => (
-                          <SelectItem key={grade} value={String(grade)}>
-                            {tGrades("grade", { grade })}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{t("gradeHint")}</p>
-                </div>
+                /* No "every year": the service refuses a GRADE_LEVEL rule with
+                   no bound at all, and one that means the whole school is a
+                   rule aimed at something else. */
+                <GradeSpanField
+                  label={t("gradeSpan")}
+                  fromLabel={t("gradeFromLabel")}
+                  toLabel={t("gradeToLabel")}
+                  min={form.minGradeLevel}
+                  max={form.maxGradeLevel}
+                  onChange={({ min, max }) =>
+                    setForm({ ...form, minGradeLevel: min, maxGradeLevel: max })
+                  }
+                  hint={t("gradeHint")}
+                />
               ) : (
                 <div className="space-y-2">
                   <Label>{tCommon("name")}</Label>
