@@ -20,6 +20,13 @@ const ROOM_ID = '55555555-5555-4555-8555-555555555555';
 const GROUP_ID = '66666666-6666-4666-8666-666666666666';
 const CONSTRAINT_ID = '77777777-7777-4777-8777-777777777777';
 
+/** A `@db.Time` value as Prisma hands it back: a Date anchored at 1970-01-01. */
+const wallClock = (time: string): Date => new Date(`1970-01-01T${time}:00.000Z`);
+
+/** Reconstructs the SQL text of a tagged-template $queryRaw call. */
+const rawSql = (call: unknown[]): string =>
+  (call[0] as readonly string[]).join('?');
+
 const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
     code,
@@ -30,9 +37,16 @@ describe('AvailabilityConstraintsService', () => {
   let service: AvailabilityConstraintsService;
   let tx: TxMock;
   let prisma: PrismaMock;
+  /** The locking read of the stored window in update(). */
+  let queryRaw: jest.Mock;
 
   beforeEach(() => {
     tx = createTxMock();
+    // The auto-vivifying mock would hand back a model proxy for `$queryRaw`,
+    // and a proxy is not callable. Empty by default: a row nobody stored is a
+    // row the lookup does not find.
+    queryRaw = jest.fn().mockResolvedValue([]);
+    Object.assign(tx, { $queryRaw: queryRaw });
     prisma = createPrismaMock(tx);
     service = new AvailabilityConstraintsService(
       prisma as unknown as PrismaService,
@@ -50,6 +64,13 @@ describe('AvailabilityConstraintsService', () => {
     endTime: '09:30',
     ...overrides,
   });
+
+  /** The row already in the table, as update() reads it back: 08:00-09:30. */
+  const storeWindow = (startTime = '08:00', endTime = '09:30'): void => {
+    queryRaw.mockResolvedValue([
+      { startTime: wallClock(startTime), endTime: wallClock(endTime) },
+    ]);
+  };
 
   describe('create', () => {
     it('creates a weekly teacher constraint under the caller’s RLS context', async () => {
@@ -253,26 +274,32 @@ describe('AvailabilityConstraintsService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    // SUSPECTED BUG (pinned): the range check compares the raw strings, so the
-    // DTO-legal mixed formats "09:00" vs "09:00:00" slip past ("09:00" is a
-    // shorter string, hence "smaller") even though both parse to the same
-    // instant — a zero-length constraint is stored.
-    it('currently accepts a zero-length range written in mixed HH:MM / HH:MM:SS formats', async () => {
-      tx.availabilityConstraint.create.mockResolvedValue({ id: CONSTRAINT_ID });
+    // Was pinned as a suspected bug, and it was one: the check compared the raw
+    // strings, so the DTO-legal mixed formats "09:00" and "09:00:00" slipped
+    // past — "09:00" is the shorter string, hence the "smaller" one — even
+    // though both parse to the same instant, and a zero-length block was
+    // stored. Comparing minutes since midnight is what closes it.
+    it('rejects a zero-length range written in mixed HH:MM / HH:MM:SS formats', async () => {
+      await expect(
+        service.create(
+          weeklyDto({ startTime: '09:00', endTime: '09:00:00' }),
+          testUser(),
+        ),
+      ).rejects.toThrow('startTime must be before endTime.');
 
-      await service.create(
-        weeklyDto({ startTime: '09:00', endTime: '09:00:00' }),
-        testUser(),
-      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
 
-      expect(tx.availabilityConstraint.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            startTime: new Date('1970-01-01T09:00:00.000Z'),
-            endTime: new Date('1970-01-01T09:00:00.000Z'),
-          }),
-        }),
-      );
+    it('rejects a window only seconds long', async () => {
+      // "09:00:30" is lexically after "09:00", so a string compare calls this
+      // window ordered. On the grid it is thirty seconds long, which is no
+      // window at all.
+      await expect(
+        service.create(
+          weeklyDto({ startTime: '09:00', endTime: '09:00:30' }),
+          testUser(),
+        ),
+      ).rejects.toThrow('startTime must be before endTime.');
     });
 
     it('rejects a principal with no school before touching the database', async () => {
@@ -345,6 +372,7 @@ describe('AvailabilityConstraintsService', () => {
     });
 
     it('parses a new startTime and clears the date with null', async () => {
+      storeWindow();
       tx.availabilityConstraint.update.mockResolvedValue({ id: CONSTRAINT_ID });
       const dto: UpdateAvailabilityConstraintDto = {
         date: null,
@@ -375,15 +403,162 @@ describe('AvailabilityConstraintsService', () => {
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
-    // Pins current behaviour: with only one bound in the DTO no range check is
-    // possible at this layer, so the write goes through even if it inverts the
-    // stored range.
-    it('does not range-check a lone startTime', async () => {
+    it('rejects a zero-length range in mixed formats when both times are provided', async () => {
+      await expect(
+        service.update(
+          CONSTRAINT_ID,
+          { startTime: '09:00', endTime: '09:00:00' },
+          testUser(),
+        ),
+      ).rejects.toThrow('startTime must be before endTime.');
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('decides a PATCH carrying both ends from the payload, without reading the row', async () => {
+      // 16:00-17:00 sits wholly after the stored 08:00-09:30, so either end
+      // measured against the row on its own would fail while the pair is fine.
+      // The payload replaces the whole window; the row has nothing to add.
+      storeWindow();
       tx.availabilityConstraint.update.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await service.update(
+        CONSTRAINT_ID,
+        { startTime: '16:00', endTime: '17:00' },
+        testUser(),
+      );
+
+      expect(queryRaw).not.toHaveBeenCalled();
+      expect(tx.availabilityConstraint.update).toHaveBeenCalledWith({
+        where: { id: CONSTRAINT_ID },
+        data: { startTime: wallClock('16:00'), endTime: wallClock('17:00') },
+      });
+    });
+
+    /*
+     * Was pinned as current behaviour, on the grounds that with one bound in the
+     * DTO no range check is possible at this layer. It is possible against the
+     * row, and nothing else catches the inversion: the table has no CHECK on
+     * the window, and an inverted pair overlaps no lesson of the day, so the
+     * rule saves, lists and blocks nothing.
+     */
+    it('refuses a start moved past the end it never mentions', async () => {
+      storeWindow();
 
       await expect(
         service.update(CONSTRAINT_ID, { startTime: '23:00' }, testUser()),
+      ).rejects.toThrow('startTime must be before endTime.');
+
+      expect(tx.availabilityConstraint.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses an end moved before the start it never mentions', async () => {
+      storeWindow();
+
+      await expect(
+        service.update(CONSTRAINT_ID, { endTime: '07:00' }, testUser()),
+      ).rejects.toThrow('startTime must be before endTime.');
+
+      expect(tx.availabilityConstraint.update).not.toHaveBeenCalled();
+    });
+
+    it('compares the merge in minutes, not as strings', async () => {
+      // The stored start reads back as "09:00" and the DTO's regex admits
+      // "09:00:30", which is lexically AFTER it — so a string compare calls
+      // this window ordered and stores a thirty-second block.
+      storeWindow('09:00', '10:00');
+
+      await expect(
+        service.update(CONSTRAINT_ID, { endTime: '09:00:30' }, testUser()),
+      ).rejects.toThrow('startTime must be before endTime.');
+
+      expect(tx.availabilityConstraint.update).not.toHaveBeenCalled();
+    });
+
+    it('reads the stored bound in UTC, so no server zone can shift it', async () => {
+      // 23:00 stored is the hour a local read would roll into the next day; a
+      // start of 22:00 is before it and must be accepted.
+      storeWindow('00:30', '23:00');
+      tx.availabilityConstraint.update.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await service.update(CONSTRAINT_ID, { startTime: '22:00' }, testUser());
+
+      expect(tx.availabilityConstraint.update).toHaveBeenCalled();
+    });
+
+    it('accepts a one-sided move that still leaves the window whole', async () => {
+      storeWindow();
+      tx.availabilityConstraint.update.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await expect(
+        service.update(CONSTRAINT_ID, { endTime: '11:00' }, testUser()),
       ).resolves.toEqual({ id: CONSTRAINT_ID });
+
+      expect(tx.availabilityConstraint.update).toHaveBeenCalledWith({
+        where: { id: CONSTRAINT_ID },
+        data: { endTime: wallClock('11:00') },
+      });
+    });
+
+    it('reads the row it checks under a lock, in the transaction that writes it', async () => {
+      // A second transaction for the write would let a concurrent PATCH moving
+      // the other end commit in between, and so would a plain read in the same
+      // one: withRls runs at READ COMMITTED, where a read takes no lock. The
+      // guard is only as good as the row it saw, so the row is held until the
+      // write commits.
+      storeWindow();
+      tx.availabilityConstraint.update.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await service.update(CONSTRAINT_ID, { endTime: '11:00' }, testUser());
+
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+      const [call] = queryRaw.mock.calls;
+      expect(rawSql(call)).toMatch(
+        /FROM "AvailabilityConstraints"\s+WHERE "id" = \?::uuid\s+FOR UPDATE/,
+      );
+      expect(call.slice(1)).toEqual([CONSTRAINT_ID]);
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.availabilityConstraint.update.mock.invocationCallOrder[0],
+      );
+    });
+
+    // A constraint in another school is invisible under RLS, so the locking
+    // read comes back empty for it exactly as for an id that never existed —
+    // and "does not exist" is the right answer to both: confirming the row is
+    // there would tell this school something about another one.
+    it('404s a one-sided PATCH against an unknown or cross-tenant id', async () => {
+      await expect(
+        service.update(CONSTRAINT_ID, { endTime: '11:00' }, testUser()),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      expect(tx.availabilityConstraint.update).not.toHaveBeenCalled();
+    });
+
+    it('takes no lock when the payload leaves the window alone', async () => {
+      // The ordinary edit is a new reason. It cannot invert anything, and a row
+      // lock on it would only queue it behind an unrelated edit of the times.
+      tx.availabilityConstraint.update.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await service.update(CONSTRAINT_ID, { reason: 'Sjuk' }, testUser());
+
+      expect(queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('answers an explicit null bound with a 400, not a crash', async () => {
+      // @IsOptional() lets null through the wire schema. The column is NOT NULL
+      // and parseTimeString has always refused null with a 400; the window
+      // check must not be what turns it into a TypeError and a 500.
+      storeWindow();
+
+      await expect(
+        service.update(
+          CONSTRAINT_ID,
+          { startTime: '09:00', endTime: null as unknown as string },
+          testUser(),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(tx.availabilityConstraint.update).not.toHaveBeenCalled();
     });
 
     it('maps P2025 (unknown or cross-tenant id) to 404', async () => {
