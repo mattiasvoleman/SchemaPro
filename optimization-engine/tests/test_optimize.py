@@ -4618,6 +4618,91 @@ def test_the_validator_owes_no_lunch_to_a_class_the_school_marked_away() -> None
     assert all("overlaps UNAVAILABLE window" in problem for problem in excused), excused
 
 
+def test_the_validator_reads_the_rows_it_used_to_skip() -> None:
+    """A rule the checker cannot read is a rule nobody is checking.
+
+    The availability loop parsed constraint times with `parse_hhmmss`, which is
+    strict on purpose — it is right for the times an administrator types into a
+    lesson. Availability windows are not those times: a school writes them in
+    whole days, and this product's own full-day closure is 00:00-23:59. Every
+    one of them raised, the loop moved on, and the rule went unchecked. In a
+    checker that failure is invisible by construction: a skipped rule and a
+    kept one both come out as silence, and silence is read as a pass.
+
+    Three rows the loop dropped, each of which the engine enforces. The lessons
+    sit at 11:00-13:00 on Monday, so a row that reaches them has something to
+    say and a row that is skipped says nothing.
+    """
+    payload = _lunch_payload()
+    group_id = _group_of(payload)
+    payload["groups"] = []  # lunch is not what is under test here
+
+    # Away all day, in the notation the product itself writes.
+    payload["constraints"] = [_closes(group_id, 1, "00:00:00", "23:59:00")]
+    all_day = _validator_problems(payload)
+    assert len(all_day) == 2, all_day
+    assert all("00:00:00-23:59:00" in problem for problem in all_day), all_day
+
+    # No weekday at all: the row names every teaching day, Monday among them.
+    every_day = dict(_closes(group_id, 1, "10:00:00", "14:00:00"), dayOfWeek=None)
+    assert len(_validator_problems({**payload, "constraints": [every_day]})) == 2
+
+    # A year reservation names no resource, and fell out of the ownership
+    # lookup with an empty tuple — matched against nothing, ever.
+    payload["requirements"][0]["minGradeLevel"] = 6  # type: ignore[index]
+    payload["requirements"][0]["maxGradeLevel"] = 7  # type: ignore[index]
+    stage = {
+        **_closes(group_id, 1, "10:00:00", "14:00:00"),
+        "resourceKind": "GRADE_LEVEL",
+        "resourceId": None,
+        "minGradeLevel": 4,
+        "maxGradeLevel": 6,  # overlaps 6-7 on year 6 alone, which is enough
+    }
+    reserved = _validator_problems({**payload, "constraints": [stage]})
+    assert len(reserved) == 2, reserved
+    # Named by its span: "GRADE_LEVEL None" tells a school nothing.
+    assert all("GRADE_LEVEL years 4-6" in problem for problem in reserved), reserved
+
+
+def test_the_validator_leaves_alone_the_rows_that_reach_nothing() -> None:
+    """The other half: reading more rows must not mean inventing violations.
+
+    Each row below is one the engine builds nothing from, so a complaint about
+    any of them would be this file's own invention rather than the model's
+    fault — the failure that matters most in a checker whose whole value is
+    that its verdict can be trusted without reading it.
+    """
+    payload = _lunch_payload()
+    group_id = _group_of(payload)
+    payload["groups"] = []
+    payload["requirements"][0]["minGradeLevel"] = 6  # type: ignore[index]
+    payload["requirements"][0]["maxGradeLevel"] = 7  # type: ignore[index]
+
+    rows = {
+        # Wholly outside the school day: folded, it closes nothing.
+        "evening": _closes(group_id, 1, "19:00:00", "20:00:00"),
+        # A single date, which a generic week has nowhere to put.
+        "dated": {**_closes(group_id, 1, "10:00:00", "14:00:00"), "date": "2027-03-01"},
+        # A wish, not a rule.
+        "wish": {
+            **_closes(group_id, 1, "10:00:00", "14:00:00"),
+            "kind": "PREFERRED_FREE",
+        },
+        # A weekday outside the configured week.
+        "saturday": _closes(group_id, 6, "10:00:00", "14:00:00"),
+        # Years 1-3 do not reach a group spanning 6-7.
+        "other stage": {
+            **_closes(group_id, 1, "10:00:00", "14:00:00"),
+            "resourceKind": "GRADE_LEVEL",
+            "resourceId": None,
+            "minGradeLevel": 1,
+            "maxGradeLevel": 3,
+        },
+    }
+    for name, row in rows.items():
+        assert _validator_problems({**payload, "constraints": [row]}) == [], name
+
+
 def test_the_validator_owes_no_lunch_to_a_group_the_request_never_seats() -> None:
     """Who eats is the payload's `groups`, not everyone holding a requirement.
 
