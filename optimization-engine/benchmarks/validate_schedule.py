@@ -21,7 +21,7 @@ Checks, all derived from the request:
     room eligibility  capacity >= group size, and required type matches
     availability      no lesson inside a recurring UNAVAILABLE window
     lunch             a free contiguous window inside the lunch window, per
-                      group per day
+                      eating group per day
     max per day       lessons per group per day within the configured cap
 
 Use as a library::
@@ -199,7 +199,27 @@ def validate(grid, request, lessons) -> list[str]:
 
     rules = request.rules
     if rules is not None:
-        group_ids = {r.student_group_id for r in request.requirements}
+        # WHO IS OWED A MEAL, re-derived from the request as every other check
+        # here is. `groups` is the gateway naming the home classes that eat;
+        # a teaching group is not among them because its pupils eat with their
+        # own class, so demanding a window for one would fail a timetable that
+        # is correct. An ABSENT list is the other case, and the schema says so
+        # beside the field: until the gateway that fills it is deployed, the
+        # guarantee reaches every group with requirements and the hall hears
+        # about nobody. The benchmark school below sends no groups, so for it
+        # these two readings are the same set — this distinction changes no
+        # verdict here, and is written down so the first payload that does
+        # send `groups` is not failed for obeying the rule.
+        #
+        # Still unmodelled, and stated rather than left to be discovered: a
+        # STUDENT_GROUP UNAVAILABLE row covering the whole lunch window is a
+        # school saying the class is not in that day, and the engine then owes
+        # it no meal. No payload here writes one.
+        group_ids = (
+            {group.id for group in request.groups}
+            if request.groups
+            else {r.student_group_id for r in request.requirements}
+        )
 
         if rules.lunch_start_time and rules.lunch_end_time and rules.lunch_minutes:
             lo = grid.parse_hhmmss(rules.lunch_start_time)
