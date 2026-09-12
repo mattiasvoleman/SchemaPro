@@ -19,7 +19,10 @@ Checks, all derived from the request:
     group overlap     one student group, one place at a time
     room overlap      one room, one lesson at a time
     room eligibility  capacity >= group size, and required type matches
-    availability      no lesson inside a recurring UNAVAILABLE window
+    availability      no lesson inside a recurring UNAVAILABLE window — every
+                      kind of row, including the year reservations that name no
+                      resource, and every window, including the whole-day ones
+                      written 00:00-23:59
     lunch             a free contiguous window inside the lunch window, per
                       day, for each group the request says eats — the groups it
                       names, or every group with requirements when it names
@@ -59,6 +62,111 @@ def _occupied(grid, day_of_week, start_time, duration_slots):
     start_slot = grid.parse_hhmmss(start_time)
     abs_start = day_idx * grid.slots_per_day + start_slot
     return day_idx, start_slot, list(range(abs_start, abs_start + duration_slots))
+
+
+def _recurring_windows(grid, constraint) -> list[tuple[int, int, int]]:
+    """A recurring rule as (day index, first slot, last slot + 1) windows.
+
+    ONE READING OF A ROW for this whole file. Two would eventually disagree
+    about which half hour a school reserved, and the lunch exemption below
+    turns on the same times the availability check enforces.
+
+    THE TIMES ARE FOLDED ONTO THE GRID, not parsed strictly, and that is the
+    difference between checking a rule and skipping it. `parse_hhmmss` is right
+    for the times an administrator types into a lesson: strict, because the
+    typist can be told to correct them. These are availability windows, and a
+    school writes those in whole days — this product's own full-day closure is
+    00:00-23:59, see `isFullDay` in calendar.service.ts, and the seed ships a
+    teacher rule of 12:00-23:59. Neither lands inside an 08:00-18:00 grid, so
+    strict parsing raised, the loop moved on, and the rule went unchecked. In a
+    checker that is the worst possible failure: a skipped rule and an enforced
+    one both come out as silence, and silence here is read as a pass.
+
+    Folding is what the times mean anyway — "unavailable until 23:59" says the
+    rest of the school day — and it is how the engine reads them, so agreeing
+    is not borrowing: a window this file could not read is one the engine
+    rejects outright, which means no timetable exists to check.
+
+    A row naming no weekday names EVERY teaching day. A window that misses the
+    school day altogether closes nothing and yields nothing. Dated rows are the
+    caller's to skip: the timetable is one generic week.
+    """
+    try:
+        low = grid.clamp_to_grid(constraint.start_time)
+        high = grid.clamp_to_grid(constraint.end_time)
+    except ValueError:
+        return []
+    if low is None or high is None or high <= low:
+        return []
+
+    days = (
+        (constraint.day_of_week,)
+        if constraint.day_of_week is not None
+        else grid.schedule_days
+    )
+    windows: list[tuple[int, int, int]] = []
+    for day in days:
+        try:
+            windows.append((grid.day_index(day), low, high))
+        except ValueError:
+            # A weekday outside the configured week reserves nothing in it.
+            continue
+    return windows
+
+
+def _grade_span(constraint) -> str:
+    """How a year reservation names itself, having no resource id to print.
+
+    A violation that ends in "GRADE_LEVEL None" tells a school nothing about
+    which of its reservations it broke.
+    """
+    low = constraint.min_grade_level
+    high = constraint.max_grade_level
+    if low is None and high is None:
+        return "all years"
+    if low is None:
+        return f"up to year {high}"
+    if high is None:
+        return f"from year {low}"
+    return f"year {low}" if low == high else f"years {low}-{high}"
+
+
+def _reached_by(constraint, requirement, lesson) -> bool:
+    """Whether a reservation reaches this lesson, by the rule that wrote it.
+
+    GRADE_LEVEL is the one that names no resource, and the one this file used
+    to drop on the floor: it fell out of the ownership lookup below with an
+    empty tuple and was never checked against anything. One such row holds a
+    whole stage free — "åk 4-6 är lediga 11:30" — rather than fanning sixty
+    group rows out of a payload capped at five thousand.
+
+    OVERLAP, not containment. A group spanning years 6-7 has year-6 pupils in
+    it, so a reservation for years 4-6 reaches it: holding a few year-7 pupils
+    free costs the timetable a little room, while letting the lesson stand puts
+    year-6 pupils in a classroom during time the school reserved for them. A
+    group whose own years are unknown is reached by nothing, because "overlaps"
+    has no answer without them, and a missing bound on the row is open at that
+    end — "up to year 3" and "from year 7" are both how a school says stage.
+    """
+    if constraint.resource_kind == "GRADE_LEVEL":
+        if requirement.min_grade_level is None or requirement.max_grade_level is None:
+            return False
+        below = (
+            constraint.min_grade_level is not None
+            and requirement.max_grade_level < constraint.min_grade_level
+        )
+        above = (
+            constraint.max_grade_level is not None
+            and requirement.min_grade_level > constraint.max_grade_level
+        )
+        return not (below or above)
+
+    owner = {
+        "TEACHER": (requirement.teacher_id, requirement.co_teacher_id),
+        "STUDENT_GROUP": (requirement.student_group_id,),
+        "ROOM": (lesson.room_id,),
+    }.get(constraint.resource_kind, ())
+    return constraint.resource_id is not None and constraint.resource_id in owner
 
 
 def _lunch_exempt_days(grid, constraints, window_start, window_end) -> set[tuple]:
@@ -105,25 +213,9 @@ def _lunch_exempt_days(grid, constraints, window_start, window_end) -> set[tuple
             continue
         if constraint.resource_kind != "STUDENT_GROUP" or constraint.resource_id is None:
             continue
-        try:
-            c_lo = grid.clamp_to_grid(constraint.start_time)
-            c_hi = grid.clamp_to_grid(constraint.end_time)
-        except ValueError:
-            continue
-        if c_lo is None or c_hi is None or c_hi <= c_lo:
-            continue
-        if c_lo > window_start or c_hi < window_end:
-            continue
-        days = (
-            (constraint.day_of_week,)
-            if constraint.day_of_week is not None
-            else grid.schedule_days
-        )
-        for day in days:
-            try:
-                exempt.add((constraint.resource_id, grid.day_index(day)))
-            except ValueError:
-                continue
+        for day_index, c_lo, c_hi in _recurring_windows(grid, constraint):
+            if c_lo <= window_start and c_hi >= window_end:
+                exempt.add((constraint.resource_id, day_index))
 
     return exempt
 
@@ -237,22 +329,14 @@ def validate(grid, request, lessons) -> list[str]:
     for constraint in request.constraints:
         if constraint.kind != "UNAVAILABLE" or constraint.date is not None:
             continue
-        try:
-            c_day = grid.day_index(constraint.day_of_week)
-            c_lo = grid.parse_hhmmss(constraint.start_time)
-            c_hi = grid.parse_hhmmss(constraint.end_time)
-        except ValueError:
+        windows = _recurring_windows(grid, constraint)
+        if not windows:
             continue
         for lesson in lessons:
             requirement = req_by_id.get(lesson.requirement_id)
             if requirement is None:
                 continue
-            owner = {
-                "TEACHER": (requirement.teacher_id, requirement.co_teacher_id),
-                "STUDENT_GROUP": (requirement.student_group_id,),
-                "ROOM": (lesson.room_id,),
-            }.get(constraint.resource_kind, ())
-            if constraint.resource_id not in owner:
+            if not _reached_by(constraint, requirement, lesson):
                 continue
             try:
                 duration = grid.minutes_to_slots(requirement.minutes_per_lesson)
@@ -260,13 +344,17 @@ def validate(grid, request, lessons) -> list[str]:
                     grid, lesson.day_of_week, lesson.start_time, duration)
             except ValueError:
                 continue
-            if day_idx != c_day:
-                continue
-            if start_slot < c_hi and c_lo < start_slot + duration:
-                problems.append(
-                    f"lesson {lesson.requirement_id} overlaps UNAVAILABLE window "
-                    f"{constraint.start_time}-{constraint.end_time} for "
-                    f"{constraint.resource_kind} {constraint.resource_id}")
+            for c_day, c_lo, c_hi in windows:
+                if day_idx != c_day:
+                    continue
+                if start_slot < c_hi and c_lo < start_slot + duration:
+                    # The row's own times, not the folded slots: a school
+                    # looking for "00:00-23:59" will not find "08:00-18:00".
+                    problems.append(
+                        f"lesson {lesson.requirement_id} overlaps UNAVAILABLE window "
+                        f"{constraint.start_time}-{constraint.end_time} for "
+                        f"{constraint.resource_kind} "
+                        f"{constraint.resource_id or _grade_span(constraint)}")
 
     rules = request.rules
     if rules is not None:
