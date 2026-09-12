@@ -187,7 +187,13 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (this.pendingPresence.has(schoolId)) return;
     const timer = setTimeout(() => {
       this.pendingPresence.delete(schoolId);
-      void this.broadcastPresence(schoolId);
+      // Nothing awaits a timer, so a rejection here would be unhandled — and
+      // Node ends the process on one by default. A roster that failed to
+      // refresh is not worth that: the next heartbeat or disconnect sends a
+      // fresh one, and the entry is already cleared so it can.
+      this.broadcastPresence(schoolId).catch(() => {
+        this.logger.warn(`Presence broadcast failed [school=${schoolId}]`);
+      });
     }, PRESENCE_COALESCE_MS);
     // Nothing should be held open by a roster refresh at shutdown.
     timer.unref?.();

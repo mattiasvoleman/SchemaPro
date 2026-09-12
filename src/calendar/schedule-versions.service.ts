@@ -204,10 +204,20 @@ export class ScheduleVersionsService {
         throw new BadRequestException('Version snapshot is malformed.');
       }
 
+      // Every time is parsed before the wipe. A throw would roll the
+      // transaction back either way; what parsing first buys is a 400 naming
+      // the bad value while nothing has been deleted yet, instead of a Prisma
+      // 500 from an Invalid Date somewhere in the middle of the inserts.
+      const rows = lessons.map((lesson) => ({
+        ...lesson,
+        startTime: parseHHMM(lesson.startTime),
+        endTime: parseHHMM(lesson.endTime),
+      }));
+
       await tx.masterLesson.deleteMany({
         where: { academicYearId: version.academicYearId },
       });
-      for (const lesson of lessons) {
+      for (const lesson of rows) {
         await tx.masterLesson.create({
           data: {
             schoolId: version.schoolId,
@@ -218,8 +228,8 @@ export class ScheduleVersionsService {
             coTeacherId: lesson.coTeacherId ?? null,
             roomId: lesson.roomId,
             dayOfWeek: lesson.dayOfWeek,
-            startTime: parseHHMM(lesson.startTime),
-            endTime: parseHHMM(lesson.endTime),
+            startTime: lesson.startTime,
+            endTime: lesson.endTime,
             isLocked: lesson.isLocked,
             // See VersionLesson.isGenerated for why an absent key is false.
             isGenerated: lesson.isGenerated ?? false,
@@ -387,10 +397,24 @@ function toHHMM(time: Date): string {
   return `${h}:${m}`;
 }
 
+/**
+ * `HH:MM` back to the epoch-day Date a `@db.Time` column takes — strictly.
+ *
+ * Only snapshot() writes these strings, always through toHHMM, so anything
+ * else means the blob was damaged, and a restore runs no clash check that
+ * could catch a lesson landing somewhere it was never put. The split(':') this
+ * replaces read "24:00" and "" as midnight without a word. Not
+ * parseTimeString: that one takes request input, seconds and "99:99" included.
+ */
 function parseHHMM(value: string): Date {
-  const [h, m] = value.split(':').map(Number);
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value);
+  if (!match) {
+    throw new BadRequestException(
+      `Version snapshot contains an invalid time: "${value}".`,
+    );
+  }
   const d = new Date(0);
-  d.setUTCHours(h ?? 0, m ?? 0, 0, 0);
+  d.setUTCHours(Number(match[1]), Number(match[2]), 0, 0);
   return d;
 }
 

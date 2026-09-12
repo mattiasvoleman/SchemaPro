@@ -118,6 +118,18 @@ describe('RoomBookingsService', () => {
       ).resolves.toEqual({ id: BOOKING_ID, status: 'APPROVED' });
     });
 
+    it('rejects a principal with no user identity before touching the database', async () => {
+      // bookedById is a required column: a token without a userId would
+      // otherwise reach the insert and fail there as a Prisma 500.
+      await expect(
+        service.create(dto() as any, testUser({ userId: undefined })),
+      ).rejects.toThrow(
+        new ForbiddenException('No user identity is associated with this account.'),
+      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.roomBooking.create).not.toHaveBeenCalled();
+    });
+
     it('rejects a principal with no school', async () => {
       await expect(
         service.create(dto() as any, testUser({ schoolId: undefined })),

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ForbiddenException } from '@nestjs/common';
 import {
   createPrismaMock,
   createTxMock,
@@ -104,6 +105,19 @@ describe('IntegrationKeysController', () => {
           }),
         }),
       );
+    });
+
+    it('403s a principal with no school before touching the database', async () => {
+      // The tenant column is required, and RLS would refuse the row anyway: a
+      // school-less token has to fail as RoomBookingsService.create does, not
+      // as a Prisma runtime 500.
+      await expect(
+        controller.create({ name: 'Sync' }, testUser({ schoolId: undefined })),
+      ).rejects.toThrow(
+        new ForbiddenException('No school is associated with this account.'),
+      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.integrationApiKey.create).not.toHaveBeenCalled();
     });
 
     it('stores createdById as null when the token carries no userId', async () => {
