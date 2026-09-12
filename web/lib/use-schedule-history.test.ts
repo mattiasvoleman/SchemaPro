@@ -299,6 +299,62 @@ describe("useHistoryKeyboard", () => {
     await waitFor(() => expect(onDone).toHaveBeenCalledWith("undo", null));
   });
 
+  it("routes a failed undo to onError instead of leaving a rejection unhandled", async () => {
+    const user = userEvent.setup();
+    const failure = new Error("gateway conflict");
+    const history: Pick<ScheduleHistory, "undo" | "redo"> = {
+      undo: vi.fn(() => Promise.reject(failure)),
+      redo: vi.fn(async () => null),
+    };
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    renderHook(() => useHistoryKeyboard(history, onDone, onError));
+
+    await user.keyboard("{Control>}z{/Control}");
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith("undo", failure));
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("routes a failed redo to onError", async () => {
+    const user = userEvent.setup();
+    const failure = new Error("gateway conflict");
+    const history: Pick<ScheduleHistory, "undo" | "redo"> = {
+      undo: vi.fn(async () => null),
+      redo: vi.fn(() => Promise.reject(failure)),
+    };
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    renderHook(() => useHistoryKeyboard(history, onDone, onError));
+
+    await user.keyboard("{Control>}y{/Control}");
+
+    await waitFor(() => expect(onError).toHaveBeenCalledWith("redo", failure));
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it("swallows a failure when no onError handler is supplied", async () => {
+    const user = userEvent.setup();
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    const history: Pick<ScheduleHistory, "undo" | "redo"> = {
+      undo: vi.fn(() => Promise.reject(new Error("gateway conflict"))),
+      redo: vi.fn(async () => null),
+    };
+    const onDone = vi.fn();
+    renderHook(() => useHistoryKeyboard(history, onDone));
+
+    try {
+      await user.keyboard("{Control>}z{/Control}");
+      // Give the microtask queue and the rejection detector a turn.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(onDone).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
+  });
+
   it("does nothing without a modifier key", async () => {
     const user = userEvent.setup();
     const history = makeHistory();
