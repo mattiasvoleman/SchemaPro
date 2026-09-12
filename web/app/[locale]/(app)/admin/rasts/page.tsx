@@ -63,8 +63,8 @@ const EVERY_DAY = "all";
 
 interface RastForm {
   name: string;
-  minGradeLevel: number | null;
-  maxGradeLevel: number | null;
+  minGradeLevel: number;
+  maxGradeLevel: number;
   dayOfWeek: string;
   startTime: string;
   endTime: string;
@@ -151,8 +151,8 @@ export default function RastsPage() {
   const submit = async () => {
     const body = {
       name: form.name.trim(),
-      minGradeLevel: form.minGradeLevel ?? 0,
-      maxGradeLevel: form.maxGradeLevel ?? 12,
+      minGradeLevel: form.minGradeLevel,
+      maxGradeLevel: form.maxGradeLevel,
       dayOfWeek: form.dayOfWeek === EVERY_DAY ? null : Number(form.dayOfWeek),
       startTime: form.startTime,
       endTime: form.endTime,
@@ -355,6 +355,8 @@ export default function RastsPage() {
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
             </div>
+            {/* No "every year": the DTO requires both bounds, so the form has
+                no null to hold and nothing to fall back to at the submit. */}
             <GradeSpanField
               label={t("gradeSpan")}
               min={form.minGradeLevel}
