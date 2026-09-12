@@ -4,11 +4,12 @@
 --
 -- RoomPreferences and RoomPreferenceRooms each got a SELECT policy named
 -- `_staff_select` in 20260821110000 that carried the tenant predicate and
--- nothing else. The init migration grants SELECT on every table to
--- "authenticated", and web and mobile talk to Supabase with the user's own
--- token, so every pupil and every guardian of a school could read its room
--- rules straight through PostgREST. Guardians have no policy of their own on
--- either table; this one was their way in.
+-- nothing else. Their SELECT grant to "authenticated" comes from the default
+-- privileges 20260806000000 set, not from init, whose ON ALL TABLES reached
+-- only the tables that existed then. Web and mobile talk to Supabase with the
+-- user's own token, so every pupil and every guardian of a school could read
+-- its room rules straight through PostgREST. Guardians have no policy of their
+-- own on either table; this one was their way in.
 --
 -- The name said staff and the predicate said everyone. Every other
 -- `_staff_select` policy in the schema — twenty of them, read off pg_policies
