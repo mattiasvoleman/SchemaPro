@@ -425,6 +425,32 @@ describe('ScheduleVersionsService', () => {
       expect(tx.masterLesson.create).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['a non-clock string', '8:15am'],
+      ['an hour past the day', '24:00'],
+      ['a missing key', undefined],
+    ])(
+      'rejects a snapshot with %s as a time before deleting anything',
+      async (_label, startTime) => {
+        // The old split(':') parser met these only after the wipe, and none
+        // of them as a 400: a missing key threw a TypeError, '8:15am' became
+        // an Invalid Date the insert rejected, and '24:00' rolled over into a
+        // silent 00:00 that restored the lesson at midnight.
+        arrangeRestore([
+          minimalLesson(),
+          { ...fullLesson(), startTime: startTime as string },
+        ]);
+
+        await expect(service.restore(VERSION_ID, testUser())).rejects.toThrow(
+          new BadRequestException(
+            `Version snapshot contains an invalid time: "${startTime}".`,
+          ),
+        );
+        expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+        expect(tx.masterLesson.create).not.toHaveBeenCalled();
+      },
+    );
+
     it('replaces the year’s lessons with the snapshot, remapping every field', async () => {
       arrangeRestore();
 

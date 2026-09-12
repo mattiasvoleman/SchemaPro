@@ -20,6 +20,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { requireSchoolId } from '../common/utils/request-context';
 import { IntegrationKeyGuard, type IntegrationRequest } from './integration-key.guard';
 import { Ss12000Service } from './ss12000.service';
 
@@ -54,13 +55,14 @@ export class IntegrationKeysController {
     @Body() body: { name?: string },
     @CurrentUser() user: AuthenticatedUser,
   ) {
+    const schoolId = requireSchoolId(user);
     const name = (body.name ?? '').trim() || 'Integration';
     const key = `sp_${randomBytes(24).toString('hex')}`;
     const keyHash = createHash('sha256').update(key).digest('hex');
     const created = await this.prisma.withRls(user, (tx) =>
       tx.integrationApiKey.create({
         data: {
-          schoolId: user.schoolId as string,
+          schoolId,
           name: name.slice(0, 120),
           keyHash,
           createdById: user.userId ?? null,

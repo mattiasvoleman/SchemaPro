@@ -397,6 +397,28 @@ describe('RealtimeGateway', () => {
       expect(server.in).not.toHaveBeenCalled();
       expect(emit).not.toHaveBeenCalled();
     });
+
+    it('logs a failed roster broadcast instead of leaving the rejection unhandled', async () => {
+      // Nothing awaits the coalesced broadcast: it runs from a timer. A
+      // rejection escaping it is an unhandled promise rejection, which Node
+      // treats as fatal by default — one adapter hiccup on a disconnect would
+      // take the API down with it.
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      const client = makeSocket();
+      client.data['profile'] = profileOf();
+      fetchSockets.mockRejectedValue(new Error('adapter down'));
+
+      gateway.handleDisconnect(client as unknown as Socket);
+      await flushImmediates();
+      await flushPresence();
+
+      expect(warn).toHaveBeenCalledWith(
+        `Presence broadcast failed [school=${SCHOOL_ID}]`,
+      );
+      expect(emit).not.toHaveBeenCalled();
+    });
   });
 
   describe('emitMasterTimetableUpdated', () => {

@@ -11,7 +11,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { requireSchoolId } from '../common/utils/request-context';
+import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import type {
   CreateRoomBookingDto,
   DecideRoomBookingDto,
@@ -65,6 +65,7 @@ export class RoomBookingsService {
     user: AuthenticatedUser,
   ): Promise<RoomBookingResult> {
     const schoolId = requireSchoolId(user);
+    const bookedById = requireUserId(user);
     const startsAt = new Date(dto.startsAt);
     const endsAt = new Date(dto.endsAt);
     if (endsAt <= startsAt) {
@@ -94,7 +95,7 @@ export class RoomBookingsService {
           data: {
             schoolId,
             roomId: dto.roomId,
-            bookedById: user.userId as string,
+            bookedById,
             title: dto.title,
             startsAt,
             endsAt,

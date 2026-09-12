@@ -342,26 +342,23 @@ describe('FamilyService', () => {
       expect(tx.absenceReport.create).not.toHaveBeenCalled();
     });
 
-    it('pins current behaviour: an admin principal without userId writes reportedById undefined', async () => {
-      // SUSPECTED BUG: AuthenticatedUser.userId is optional ("when present in
-      // the token"), and unlike decideLeaveRequest's `decidedById:
-      // user.userId ?? null` this path casts `user.userId as string`. A
-      // SCHOOL_ADMIN token without a userId passes every service check and
-      // reaches the insert with reportedById undefined — Prisma would reject
-      // the required column at runtime, surfacing a 500 instead of a clean
-      // 4xx. Pinned, not fixed.
+    it('403s an admin principal without userId before touching the database', async () => {
+      // AuthenticatedUser.userId is optional ("when present in the token"),
+      // but reportedById is a required column. Such a token passes every
+      // role check, so it has to be turned away up front — at the insert it
+      // is a Prisma runtime error and a 500.
       arrangeStudent();
 
-      await service.createAbsenceReport(
-        reportDto() as any,
-        testUser({ userId: undefined }),
+      await expect(
+        service.createAbsenceReport(
+          reportDto() as any,
+          testUser({ userId: undefined }),
+        ),
+      ).rejects.toThrow(
+        new ForbiddenException('No user identity is associated with this account.'),
       );
-
-      expect(tx.absenceReport.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ reportedById: undefined }),
-        }),
-      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.absenceReport.create).not.toHaveBeenCalled();
     });
   });
 
@@ -508,6 +505,20 @@ describe('FamilyService', () => {
       await expect(
         service.createLeaveRequest(leaveDto() as any, guardianUser()),
       ).rejects.toThrow(ForbiddenException);
+      expect(tx.leaveRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('403s an admin principal without userId before touching the database', async () => {
+      // requestedById is a required column, the same trap as reportedById on
+      // an absence report.
+      arrangeStudent();
+
+      await expect(
+        service.createLeaveRequest(leaveDto() as any, testUser({ userId: undefined })),
+      ).rejects.toThrow(
+        new ForbiddenException('No user identity is associated with this account.'),
+      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
       expect(tx.leaveRequest.create).not.toHaveBeenCalled();
     });
   });
@@ -664,9 +675,7 @@ describe('FamilyService', () => {
     });
 
     it('stores decidedById null for a principal without a userId', async () => {
-      // Companion to the createAbsenceReport pin: THIS path handles a missing
-      // userId (`?? null`), while the approval branch's absence rows would
-      // not (`user.userId as string`). Rejection is safe; approval is not.
+      // decidedById is nullable, so a rejection needs no identity to record.
       arrangePending();
 
       await service.decideLeaveRequest(
@@ -680,6 +689,25 @@ describe('FamilyService', () => {
           data: expect.objectContaining({ decidedById: null }),
         }),
       );
+    });
+
+    it('403s an approval by a principal without a userId', async () => {
+      // Approval files absence reports in the decider's name, and their
+      // reporter column is required — so the same token that may reject may
+      // not approve. The throw rolls the transaction back, status included.
+      arrangePending();
+
+      await expect(
+        service.decideLeaveRequest(
+          REQUEST_ID,
+          { status: 'APPROVED' },
+          testUser({ userId: undefined }),
+        ),
+      ).rejects.toThrow(
+        new ForbiddenException('No user identity is associated with this account.'),
+      );
+      expect(tx.absenceReport.create).not.toHaveBeenCalled();
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
     });
 
     it('404s on an unknown request', async () => {
