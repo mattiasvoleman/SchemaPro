@@ -4969,6 +4969,41 @@ def test_the_validator_owes_no_lunch_to_a_group_the_request_never_seats() -> Non
     assert _validator_problems(payload) == []
 
 
+def test_the_benchmark_school_tells_the_solver_who_eats() -> None:
+    """The gate's own payload names its classes, or its lunch check asks no one.
+
+    The half of the fix above that no validator test reaches. The check owes a
+    break only to the groups a request lists, so a benchmark that sends a lunch
+    window and no `groups` does not turn the nightly gate red: it turns the
+    lunch check silent, and the gate passes a week the solver was never asked
+    to leave a meal in — the same week that failed it on main, now unremarked.
+    Pinning the payload is what keeps the 400-student verdict a verdict about
+    lunch at all.
+
+    One entry per class, carrying its headcount, because this school has no
+    teaching groups: the classes that eat are exactly the ones holding lessons.
+    """
+    import sys
+    from pathlib import Path
+
+    benchmarks = Path(__file__).resolve().parents[1] / "benchmarks"
+    if str(benchmarks) not in sys.path:
+        sys.path.insert(0, str(benchmarks))
+    from solve_2000_students import SchoolShape, build_request
+
+    # The shape the quality gate solves: validate_schedule.py --students 400.
+    shape = SchoolShape(students=400, constraint_density=1.0)
+    request = build_request(shape)
+
+    assert request.rules is not None and request.rules.lunch_minutes
+    eating = {group.id for group in request.groups}
+    assert len(eating) == shape.classes
+    assert eating == {r.student_group_id for r in request.requirements}
+    assert {group.lunch_headcount for group in request.groups} == {
+        shape.students_per_class,
+    }
+
+
 def test_a_reservation_leaving_only_scraps_is_refused_by_name(
     client: TestClient,
 ) -> None:
