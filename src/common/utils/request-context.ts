@@ -13,11 +13,17 @@ export function requireSchoolId(user: AuthenticatedUser): string {
 }
 
 /**
- * Returns the caller's internal user id or fails with 403. `userId` is only
- * there "when present in the token", and a write that records the acting user
- * in a required column — a reporter, a requester, a booker — cannot be made
- * without one. Asked here, that is an answer; left to the insert, it is a
- * Prisma runtime error and a 500.
+ * Returns the caller's internal user id or fails with 403. A write that records
+ * the acting user in a required column — a reporter, a requester, a booker —
+ * cannot be made without one.
+ *
+ * No HTTP caller reaches such a write without one today. JwtStrategy resolves
+ * userId from the Users row for every tenant role; only SYSTEM_ADMIN, who has
+ * no row, carries whatever the token says, and every route that writes these
+ * columns leaves SYSTEM_ADMIN out of its @Roles. This is defence in depth: the
+ * invariant sits next to the write instead of depending on every route's role
+ * list staying as it is, and a broken one becomes a refusal that names what is
+ * missing rather than a Prisma error at the insert.
  */
 export function requireUserId(user: AuthenticatedUser): string {
   if (!user.userId) {

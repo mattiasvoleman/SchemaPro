@@ -500,8 +500,9 @@ describe('MasterLessonsService', () => {
 
     // MasterLessonGroups has @@unique([masterLessonId, studentGroupId]), so a
     // payload naming the same group twice has to be deduped before the nested
-    // create — otherwise the constraint answers with a P2002 that surfaces as
-    // a 500. The DTO's @IsUUID each-check lets duplicates through.
+    // create — otherwise the constraint answers with a P2002, which the global
+    // filter turns into a 409 for a payload that conflicts with nothing. The
+    // DTO's @IsUUID each-check lets duplicates through.
     it('dedupes duplicate extraGroupIds before the nested create', async () => {
       arrangeCreate();
 
@@ -1125,7 +1126,8 @@ describe('MasterLessonsService', () => {
 
     it('replaces the extra groups, deduplicated', async () => {
       // Same unique constraint as on create: a duplicate would fail the
-      // nested create after deleteMany, as a 500.
+      // nested create with the same 409, and only after deleteMany had run in
+      // the same transaction.
       arrangeUpdate(
         {},
         { extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }] },

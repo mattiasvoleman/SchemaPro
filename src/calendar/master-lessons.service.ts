@@ -131,7 +131,9 @@ export class MasterLessonsService {
         roomId: dto.roomId ?? null,
         // Deduped before both the conflict scan and the nested create read it.
         // MasterLessonGroups is unique per (lesson, group), so a group named
-        // twice fails that insert with a P2002 — a 500 for a harmless payload.
+        // twice fails that insert with a P2002, which HttpExceptionFilter
+        // answers with a 409 "same unique identifier already exists" — a
+        // harmless payload refused with a conflict that does not exist.
         extraGroupIds: [...new Set(dto.extraGroupIds ?? [])].filter(
           (groupId) => groupId !== dto.studentGroupId,
         ),
@@ -251,8 +253,10 @@ export class MasterLessonsService {
         coTeacherId:
           dto.coTeacherId !== undefined ? dto.coTeacherId : lesson.coTeacherId,
         roomId: dto.roomId !== undefined ? dto.roomId : lesson.roomId,
-        // Deduped for the same unique constraint as on create; here the
-        // P2002 would land after deleteMany has already cleared the rows.
+        // Deduped for the same unique constraint as on create. Here the 409
+        // came only after deleteMany had cleared the rows inside the same
+        // transaction: rolled back, so nothing was lost, but the refusal
+        // arrived after the work it refused had already begun.
         extraGroupIds: [
           ...new Set(
             dto.extraGroupIds !== undefined

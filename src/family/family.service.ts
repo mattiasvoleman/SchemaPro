@@ -221,8 +221,10 @@ export class FamilyService {
       let absenceDays = 0;
       if (dto.status === 'APPROVED') {
         // The reports below are filed in the decider's name, and their
-        // reporter column is required: a token without a userId may reject a
-        // request but not approve one. The throw rolls the status update back.
+        // reporter column is required: a principal without a userId may reject
+        // a request but not approve one. None reaches this SCHOOL_ADMIN route
+        // today (see requireUserId); the check keeps the invariant at the
+        // write. The throw rolls the status update back.
         const reportedById = requireUserId(user);
         const cursor = new Date(request.startDate);
         while (cursor <= request.endDate) {

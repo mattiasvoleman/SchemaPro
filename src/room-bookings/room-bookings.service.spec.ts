@@ -119,8 +119,10 @@ describe('RoomBookingsService', () => {
     });
 
     it('rejects a principal with no user identity before touching the database', async () => {
-      // bookedById is a required column: a token without a userId would
-      // otherwise reach the insert and fail there as a Prisma 500.
+      // bookedById is a required column. The route admits TEACHER and
+      // SCHOOL_ADMIN, whose userId always comes from the Users row, so no HTTP
+      // caller arrives without one; the service still refuses up front rather
+      // than leave the invariant to the route's @Roles.
       await expect(
         service.create(dto() as any, testUser({ userId: undefined })),
       ).rejects.toThrow(

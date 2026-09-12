@@ -205,9 +205,11 @@ export class ScheduleVersionsService {
       }
 
       // Every time is parsed before the wipe. A throw would roll the
-      // transaction back either way; what parsing first buys is a 400 naming
-      // the bad value while nothing has been deleted yet, instead of a Prisma
-      // 500 from an Invalid Date somewhere in the middle of the inserts.
+      // transaction back either way; what parsing first buys is that a damaged
+      // snapshot is refused while nothing has been deleted yet, instead of
+      // somewhere in the middle of the inserts — where the old parser's
+      // Invalid Date met Prisma's own validation and came back as the filter's
+      // anonymous 400, and a missing key as a TypeError and a 500.
       const rows = lessons.map((lesson) => ({
         ...lesson,
         startTime: parseHHMM(lesson.startTime),

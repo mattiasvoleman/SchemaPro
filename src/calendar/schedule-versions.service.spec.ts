@@ -464,9 +464,11 @@ describe('ScheduleVersionsService', () => {
       'rejects a snapshot with %s as a time before deleting anything',
       async (_label, startTime) => {
         // The old split(':') parser met these only after the wipe, and none
-        // of them as a 400: a missing key threw a TypeError, '8:15am' became
-        // an Invalid Date the insert rejected, and '24:00' rolled over into a
-        // silent 00:00 that restored the lesson at midnight.
+        // of them with a 400 that named the value: a missing key threw a
+        // TypeError (a 500), '8:15am' became an Invalid Date that Prisma's
+        // validation rejected mid-insert (the filter's anonymous 400), and
+        // '24:00' rolled over into a silent 00:00 that restored the lesson at
+        // midnight.
         arrangeRestore([
           minimalLesson(),
           { ...fullLesson(), startTime: startTime as string },

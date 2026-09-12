@@ -399,10 +399,12 @@ describe('RealtimeGateway', () => {
     });
 
     it('logs a failed roster broadcast instead of leaving the rejection unhandled', async () => {
-      // Nothing awaits the coalesced broadcast: it runs from a timer. A
-      // rejection escaping it is an unhandled promise rejection, which Node
-      // treats as fatal by default — one adapter hiccup on a disconnect would
-      // take the API down with it.
+      // Nothing awaits the coalesced broadcast: it runs from a timer, and an
+      // escaping rejection is unhandled, which Node treats as fatal by
+      // default. The in-memory adapter main uses never rejects fetchSockets,
+      // so the mock stands in for one that can — a Redis adapter losing its
+      // connection — where a hiccup on a disconnect must cost one roster, not
+      // the process.
       const warn = jest
         .spyOn(Logger.prototype, 'warn')
         .mockImplementation(() => undefined);
