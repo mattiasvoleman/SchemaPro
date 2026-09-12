@@ -13,6 +13,7 @@
   "dependencies": {
     "@shopify/flash-list": "1.6.4",
     "@supabase/supabase-js": "^2.110.1",
+    "decode-uri-component": "file:vendor/decode-uri-component",
     "expo": "^56.0.12",
     "expo-crypto": "~13.0.2",
     "expo-local-authentication": "~14.0.0",
@@ -36,6 +37,7 @@
     "typescript": "^5.3.0"
   },
   "overrides": {
+    "decode-uri-component": "$decode-uri-component",
     "react-native-screens": "~3.35.0",
     "xcode": {
       "uuid": "^14.0.1"
