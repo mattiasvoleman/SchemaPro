@@ -70,8 +70,9 @@ type GradeSpanFieldProps = OptionalSpanProps | RequiredSpanProps;
  *
  * Extracted because this exact control, with its own copy of GRADES, had been
  * written four times — on frame-times, constraints, lunch-servings and breaks —
- * and a fifth copy for room rules would have been the one that drifted. The
- * four existing ones are untouched here; moving them is its own change.
+ * and a fifth copy for room rules would have been the one that drifted. All
+ * four render this one now, as do room rules and rasts, so a change to the
+ * ordering below reaches every page that states a span.
  */
 export function GradeSpanField(props: GradeSpanFieldProps) {
   const { label, fromLabel, toLabel, hint, hintClassName, min, max } = props;
