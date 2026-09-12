@@ -931,6 +931,10 @@ function TimetableGridInner({
                 ))}
 
                 {dayLessons.map((lesson) => {
+                  // Callbacks always get the caller's own object: `lane` and
+                  // `laneCount` are layout state of this render, and the
+                  // editable pointer path already hands out the original.
+                  const source = lessonById.get(lesson.id) ?? lesson;
                   const top = (lesson.startMinutes - startHour * 60) * pxPerMinute;
                   const height = Math.max(
                     28,
@@ -973,15 +977,15 @@ function TimetableGridInner({
                         // In editable mode clicks are resolved on pointerup
                         // (drag vs click); otherwise plain click-to-open.
                         !editable && onLessonClick
-                          ? () => onLessonClick(lesson)
+                          ? () => onLessonClick(source)
                           : undefined
                       }
                       onPointerDown={
-                        editable ? (event) => startDrag(event, lesson) : undefined
+                        editable ? (event) => startDrag(event, source) : undefined
                       }
                       onKeyDown={
                         editable
-                          ? (event) => handleLessonKey(event, lesson)
+                          ? (event) => handleLessonKey(event, source)
                           : undefined
                       }
                       /*

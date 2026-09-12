@@ -488,21 +488,24 @@ describe("TimetableGrid lesson appearance", () => {
 });
 
 describe("TimetableGrid clicks in read-only mode", () => {
-  it("opens a lesson on click", async () => {
+  it("opens a lesson on click, passing the caller's own lesson object", async () => {
     const user = userEvent.setup();
     const onLessonClick = vi.fn();
-    render(<TimetableGrid lessons={[makeLesson()]} onLessonClick={onLessonClick} />);
+    const lesson = makeLesson();
+    render(<TimetableGrid lessons={[lesson]} onLessonClick={onLessonClick} />);
 
     await user.click(screen.getByRole("button", { name: /Math/ }));
 
     expect(onLessonClick).toHaveBeenCalledTimes(1);
-    // Pins current behaviour: the read-only path passes the internally
-    // positioned copy, so the callback also receives lane/laneCount. The
-    // editable pointer path passes the original lesson object instead - a
-    // minor API inconsistency, reported upstream rather than fixed here.
-    expect(onLessonClick).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "math-mon", lane: 0, laneCount: 1 }),
-    );
+    // Not the internally positioned copy: lane/laneCount are layout state and
+    // stay inside the grid, matching what the editable pointer path passes.
+    // toHaveBeenCalledWith compares structurally, so identity is asserted on
+    // its own — a copy without the lane fields would still pass the first.
+    expect(onLessonClick).toHaveBeenCalledWith(lesson);
+    const received = onLessonClick.mock.calls[0]![0] as Record<string, unknown>;
+    expect(received).toBe(lesson);
+    expect(received).not.toHaveProperty("lane");
+    expect(received).not.toHaveProperty("laneCount");
   });
 
   it("uses a pointer cursor only when a click would do something", () => {
@@ -878,9 +881,10 @@ describe("TimetableGrid keyboard editing", () => {
   it("opens the editor on Enter and toggles selection on Shift+Space", () => {
     const onLessonClick = vi.fn();
     const onToggleSelect = vi.fn();
+    const lesson = makeLesson();
     render(
       <TimetableGrid
-        lessons={[makeLesson()]}
+        lessons={[lesson]}
         editable
         onLessonClick={onLessonClick}
         onToggleSelect={onToggleSelect}
@@ -889,7 +893,8 @@ describe("TimetableGrid keyboard editing", () => {
     const button = screen.getByRole("button", { name: /Math/ });
 
     fireEvent.keyDown(button, { key: "Enter" });
-    expect(onLessonClick).toHaveBeenCalledWith(expect.objectContaining({ id: "math-mon" }));
+    // Same object identity as the pointer path — no positioned copy.
+    expect(onLessonClick.mock.calls[0]![0]).toBe(lesson);
 
     fireEvent.keyDown(button, { key: " ", shiftKey: true });
     expect(onToggleSelect).toHaveBeenCalledWith("math-mon");
