@@ -98,6 +98,44 @@ WHERE g."authId" = '00000000-0000-4000-8000-000000000004'
     WHERE gs."guardianId" = g.id AND gs."studentId" = c.id
   );
 
+-- A room rule in the SECOND school, with its one room, so the tenant half of
+-- section 7d counts rows that exist over there rather than a table that
+-- happens to be empty. A LOCK rather than a wish because 7d counts locks: a
+-- policy that lost its tenant predicate then moves the teacher's count as well
+-- as the admin's. The fixture school has no subject or room of its own, so it
+-- gets one of each.
+INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt")
+SELECT s.id, 'RLS Fixture Subject', 'RLSFIX', now()
+FROM "Schools" s
+WHERE s.slug = 'rls-fixture-school'
+ON CONFLICT ("schoolId", code) DO NOTHING;
+
+INSERT INTO "Rooms" ("schoolId", name, code, capacity, "updatedAt")
+SELECT s.id, 'RLS Fixture Room', 'RLSFIX', 20, now()
+FROM "Schools" s
+WHERE s.slug = 'rls-fixture-school'
+ON CONFLICT ("schoolId", name) DO NOTHING;
+
+-- RoomPreferences has no unique key (equal locks union, so duplicates are
+-- harmless to the solver), hence NOT EXISTS rather than ON CONFLICT.
+INSERT INTO "RoomPreferences" ("schoolId", "subjectId", kind, weight, "updatedAt")
+SELECT sub."schoolId", sub.id, 'LOCK', 5, now()
+FROM "Subjects" sub
+JOIN "Schools" s ON s.id = sub."schoolId"
+WHERE s.slug = 'rls-fixture-school'
+  AND sub.code = 'RLSFIX'
+  AND NOT EXISTS (
+    SELECT 1 FROM "RoomPreferences" p WHERE p."subjectId" = sub.id
+  );
+
+INSERT INTO "RoomPreferenceRooms" ("schoolId", "preferenceId", "roomId")
+SELECT p."schoolId", p.id, r.id
+FROM "RoomPreferences" p
+JOIN "Schools" s ON s.id = p."schoolId"
+JOIN "Rooms" r ON r."schoolId" = p."schoolId" AND r.code = 'RLSFIX'
+WHERE s.slug = 'rls-fixture-school'
+ON CONFLICT ("preferenceId", "roomId") DO NOTHING;
+
 -- An active key for the FIRST school, so the key-lookup assertions have
 -- something to find, and a revoked one so revocation can be asserted.
 INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", "createdAt")

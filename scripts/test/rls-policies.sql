@@ -573,6 +573,15 @@ ROLLBACK;
 -- The child table is asserted with it. RoomPreferenceRooms carries its own
 -- schoolId and its own pair of policies, and a rule whose ROOMS a teacher can
 -- rewrite is a rule a teacher can rewrite.
+--
+-- The read was asserted only from the side that must SEE it. Both
+-- `_staff_select` policies carried the tenant predicate and no role, so every
+-- pupil and guardian of the school read the rules as well, through Supabase,
+-- where the table grant to "authenticated" is the only other gate. A pupil and
+-- a guardian are therefore asserted against the very lock the teacher just
+-- read, in the same transaction — without that row their zero proves nothing.
+-- The fixtures plant a lock in the second school for the same reason, so the
+-- tenant half is not asserted against an empty table either.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -591,6 +600,24 @@ BEGIN
    WHERE "schoolId" = app.current_school_id() LIMIT 1;
   IF subject_id IS NULL OR room_id IS NULL THEN
     RAISE EXCEPTION 'room-rules: the seed has no subject or no room to rule about';
+  END IF;
+
+  -- Asked before this school has a rule of its own in the transaction, so a
+  -- lost tenant predicate is named as one. Asked after the insert below it
+  -- surfaces as the lock count reading 2, which is true and says nothing about
+  -- why. What it would find is the lock the fixtures plant in the second
+  -- school; the policies, not a WHERE clause, must keep that out.
+  SELECT count(*) INTO n FROM "RoomPreferences"
+   WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'room-rules: % rule(s) from another school visible — tenant isolation is not enforced', n;
+  END IF;
+  SELECT count(*) INTO n FROM "RoomPreferenceRooms"
+   WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'room-rules: % rule room(s) from another school visible — tenant isolation is not enforced', n;
   END IF;
 
   INSERT INTO "RoomPreferences"
@@ -671,6 +698,78 @@ BEGIN
   SELECT count(*) INTO n FROM "RoomPreferences" WHERE kind = 'LOCK';
   IF n <> 1 THEN
     RAISE EXCEPTION 'room-rules: a teacher deleted a lock (% row(s) left)', n;
+  END IF;
+END
+$$;
+
+-- A pupil of the same school, whom the tenant predicate alone let straight
+-- through. Looked up while the teacher is still in force: a teacher reads the
+-- school's users and a pupil reads only their own row, so this is the one
+-- order in which the lookup is legal (the same reason 7e gives).
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  -- Without this guard the block passes vacuously: an authId that resolves to
+  -- no user has no role, reads nothing, and looks exactly like success.
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION
+      'room-rules: expected to be acting as a STUDENT of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+
+  -- The assertion the tenant-only staff read failed. The teacher above has
+  -- just proved the lock and its room are in this transaction to be seen.
+  SELECT count(*) INTO n FROM "RoomPreferences";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'room-rules: a pupil reads % rule(s) of their school; the staff read has lost its role check', n;
+  END IF;
+  SELECT count(*) INTO n FROM "RoomPreferenceRooms";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'room-rules: a pupil reads % rule room(s) of their school; the staff read has lost its role check', n;
+  END IF;
+END
+$$;
+
+-- And a guardian, who has no policy of their own on either table and reached
+-- both through the same staff read. The literal authId, because the pupil in
+-- force cannot look up anyone else's row.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION
+      'room-rules: expected to be acting as a GUARDIAN of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+
+  SELECT count(*) INTO n FROM "RoomPreferences";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'room-rules: a guardian reads % rule(s) of the school; the staff read has lost its role check', n;
+  END IF;
+  SELECT count(*) INTO n FROM "RoomPreferenceRooms";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'room-rules: a guardian reads % rule room(s) of the school; the staff read has lost its role check', n;
   END IF;
 END
 $$;
