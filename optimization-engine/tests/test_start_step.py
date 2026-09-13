@@ -8,7 +8,11 @@ five minutes just as well. So the tests come in three kinds.
 
   THE DERIVATION, one case per constant the model compares a start with. A
   source that stopped feeding the gcd would keep every solve green and lose
-  weeks in silence; here it turns a row red.
+  weeks, or optima, in silence; here it turns a row red. Most constants are
+  one-sided — a bound only from above, or only from below — and dropping one
+  loses no week, only an optimum, which no verdict below can see. So each end
+  of a window, and each reading of a time off the grid, has a row whose other
+  values are all multiples, and that row is the only thing that notices.
 
   THE VERDICT, over many small random weeks: the same FEASIBLE or INFEASIBLE
   with the step forced to 1 and with the step the week derives.
@@ -154,6 +158,8 @@ SOURCES: list[tuple[str, Callable[[dict], None], int]] = [
      lambda p: _append(p, "fixedLessons", _locked(p, "08:05", "09:05")), 5),
     ("a lock ending 11:40",
      lambda p: _append(p, "fixedLessons", _locked(p, "11:00", "11:40")), 10),
+    ("a lock starting 09:25, ending on the half hour",
+     lambda p: _append(p, "fixedLessons", _locked(p, "09:25", "10:00")), 5),
     ("a lock off the grid, 08:32-09:30, rounded outward to 08:30",
      lambda p: _append(p, "fixedLessons", _locked(p, "08:32", "09:30")), 30),
     ("a teacher away from 11:05",
@@ -172,8 +178,19 @@ SOURCES: list[tuple[str, Callable[[dict], None], int]] = [
      lambda p: _append(p, "frameTimes", _frame("08:15", "18:00")), 15),
     ("a frame closing 15:10",
      lambda p: _append(p, "frameTimes", _frame("08:00", "15:10")), 10),
+    # An off-grid time is two readings, and a row notices a reading gone only
+    # when the other one is already a multiple of six. So each reading gets a
+    # row of its own: 08:07 is slots 1 and 2, 08:32 is 6 and 7, 11:28 is 41 and
+    # 42, 11:02 is 36 and 37. The model reads a frame inward only; the outward
+    # readings are _start_step's caution, and a row makes dropping one a choice.
     ("a frame opening off the grid at 08:07, read both ways",
      lambda p: _append(p, "frameTimes", _frame("08:07", "18:00")), 5),
+    ("a frame opening off the grid at 08:32, rounded inward to 08:35",
+     lambda p: _append(p, "frameTimes", _frame("08:32", "18:00")), 5),
+    ("a frame closing off the grid at 11:28, rounded inward to 11:25",
+     lambda p: _append(p, "frameTimes", _frame("08:00", "11:28")), 5),
+    ("a frame closing off the grid at 11:02, read both ways",
+     lambda p: _append(p, "frameTimes", _frame("08:00", "11:02")), 5),
     ("a changeover of ten minutes",
      lambda p: _append(p, "frameTimes", _frame("08:00", "18:00", changeover=10)), 10),
     ("a changeover of seven minutes, rounded up to ten",
@@ -182,10 +199,14 @@ SOURCES: list[tuple[str, Callable[[dict], None], int]] = [
      lambda p: _append(p, "rasts", _window("09:40", "10:00")), 10),
     ("a rast off the grid, 09:42-10:30, rounded outward to 09:40",
      lambda p: _append(p, "rasts", _window("09:42", "10:30")), 10),
+    ("a rast ending off the grid, 09:00-09:22, rounded outward to 09:25",
+     lambda p: _append(p, "rasts", _window("09:00", "09:22")), 5),
     ("a sitting 11:45-12:30",
      lambda p: _append(p, "lunchServings", _window("11:45", "12:30")), 15),
     ("a sitting off the grid, 11:02-12:30, rounded inward to 11:05",
      lambda p: _append(p, "lunchServings", _window("11:02", "12:30")), 5),
+    ("a sitting ending off the grid, 11:00-12:28, rounded inward to 12:25",
+     lambda p: _append(p, "lunchServings", _window("11:00", "12:28")), 5),
     ("a lunch window from 11:15",
      lambda p: _set_rule(p, lunchStartTime="11:15:00"), 15),
     ("a lunch window to 12:50",
