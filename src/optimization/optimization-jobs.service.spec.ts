@@ -1,4 +1,4 @@
-import { HttpException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, HttpException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 const { DbNull } = Prisma;
@@ -68,9 +68,10 @@ describe('OptimizationJobsService', () => {
 
   describe('start', () => {
     it('404s when the token carries no school context, before any query', async () => {
-      await expect(
-        service.start(YEAR_ID, testUser({ schoolId: undefined })),
-      ).rejects.toThrow(NotFoundException);
+      const attempt = service.start(YEAR_ID, testUser({ schoolId: undefined }));
+
+      await expect(attempt).rejects.toThrow(NotFoundException);
+      await expect(attempt).rejects.toThrow('School context missing from token.');
       expect(prisma.withRls).not.toHaveBeenCalled();
       expect(proxy.triggerScheduling).not.toHaveBeenCalled();
     });
@@ -341,6 +342,55 @@ describe('OptimizationJobsService', () => {
         .mockRejectedValue(new Error('db down')); // FAILED write also fails
 
       await expect(runPrivate()).resolves.toBeUndefined();
+    });
+
+    it('stores the exception’s own sentence, and no code, when a refusal’s message is a list', async () => {
+      // A validation failure answers with a list of messages. That list is not
+      // a sentence the screen can show, and it carries no code to translate:
+      // the row keeps the exception's own message and says it has no code,
+      // rather than an array in `error` or an `errorCode` left undefined.
+      proxy.triggerScheduling.mockRejectedValue(
+        new BadRequestException(['minutesPerLesson must fit the grid', 'lessonsPerWeek must be positive']),
+      );
+
+      await runPrivate();
+
+      expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
+        where: { id: JOB_ID },
+        data: {
+          status: 'FAILED',
+          error: 'Bad Request Exception',
+          errorCode: null,
+          errorParams: DbNull,
+          finishedAt: expect.any(Date),
+        },
+      });
+    });
+
+    it.each([
+      ['null', null],
+      ['undefined', undefined],
+    ])('still marks the job FAILED when a refusal carries a %s body', async (_label, body) => {
+      /*
+       * Reading the refusal happens inside run()'s catch. Were it to throw
+       * there, the FAILED write below it would never run and the row would sit
+       * at RUNNING for ever — the stranded job the class comment warns about,
+       * reached through the one path meant to prevent it.
+       */
+      proxy.triggerScheduling.mockRejectedValue(new HttpException(body as never, 503));
+
+      await expect(runPrivate()).resolves.toBeUndefined();
+
+      expect(tx.optimizationJob.update).toHaveBeenLastCalledWith({
+        where: { id: JOB_ID },
+        data: {
+          status: 'FAILED',
+          error: 'Http Exception',
+          errorCode: null,
+          errorParams: DbNull,
+          finishedAt: expect.any(Date),
+        },
+      });
     });
 
     it('marks the job FAILED when persisting the success result fails', async () => {

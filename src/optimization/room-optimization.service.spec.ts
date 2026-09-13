@@ -7,7 +7,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { LessonRecurrence, PrismaClient } from '@prisma/client';
-import { of } from 'rxjs';
+import { AxiosError } from 'axios';
+import { of, throwError } from 'rxjs';
 import {
   createPrismaMock,
   createTxMock,
@@ -37,6 +38,9 @@ const YEAR = '44444444-4444-4444-8444-444444444444';
 const SCHOOL = '33333333-3333-4333-8333-333333333333';
 const VERSION = '55555555-5555-4555-8555-555555555555';
 const SUBJECT = '66666666-6666-4666-8666-666666666666';
+/** A year of another school, whose rows must never reach this school's proposal. */
+const OTHER_YEAR = '44444444-4444-4444-8444-4444444444ff';
+const OTHER_SCHOOL = '33333333-3333-4333-8333-3333333333ff';
 
 // Rooms: two on different floors of the main house, one in the annex.
 const ROOM_1 = 'a0000000-0000-4000-8000-000000000001';
@@ -62,6 +66,8 @@ const clockAt = (h: number, m = 0) => new Date(Date.UTC(1970, 0, 1, h, m));
 
 type LessonFixture = {
   id: string;
+  /** This school's year unless a test says otherwise; never selected. */
+  academicYearId?: string;
   subjectId: string;
   studentGroupId: string;
   teacherId: string | null;
@@ -116,6 +122,8 @@ const elinAndAlexander = (): LessonFixture[] => [
 
 type RoomFixture = {
   id: string;
+  /** This school unless a test says otherwise; never selected. */
+  schoolId?: string;
   capacity: number | null;
   roomTypeId: string | null;
   minGradeLevel: number | null;
@@ -169,6 +177,134 @@ const walkOf = (roomChanges: number, floorChanges = 0, buildingChanges = 0): Wal
 });
 const still = () => ({ before: walkOf(0), after: walkOf(0) });
 
+/** A room rule, as RoomPreferences holds it. */
+type WishFixture = {
+  id: string;
+  subjectId: string;
+  kind: 'WISH' | 'LOCK';
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+  roomTypeId: string | null;
+  weight: number;
+  rooms: { roomId: string }[];
+};
+const wish = (id: string, overrides: Partial<WishFixture> = {}): WishFixture => ({
+  id,
+  subjectId: SUBJECT,
+  kind: 'WISH',
+  minGradeLevel: null,
+  maxGradeLevel: null,
+  roomTypeId: null,
+  weight: 5,
+  rooms: [{ roomId: ROOM_1 }],
+  ...overrides,
+});
+
+/** A reservation, as AvailabilityConstraints holds it: by default room 10 closed on Wednesdays. */
+type ClosureFixture = {
+  id: string;
+  schoolId: string;
+  resourceType: string;
+  type: string;
+  roomId: string | null;
+  dayOfWeek: number | null;
+  date: Date | null;
+  startTime: Date;
+  endTime: Date;
+};
+const closure = (id: string, overrides: Partial<ClosureFixture> = {}): ClosureFixture => ({
+  id,
+  schoolId: SCHOOL,
+  resourceType: 'ROOM',
+  type: 'UNAVAILABLE',
+  roomId: ROOM_10,
+  dayOfWeek: 3,
+  date: null,
+  startTime: clockAt(12),
+  endTime: clockAt(13),
+  ...overrides,
+});
+
+type GroupFixture = { id: string; gradeLevel: number | null; academicYearId?: string };
+type Person = { id: string; role: 'STUDENT' | 'TEACHER'; isActive: boolean; studentGroupId: string | null };
+const student = (id: string, studentGroupId: string): Person => ({
+  id,
+  role: 'STUDENT',
+  isActive: true,
+  studentGroupId,
+});
+
+type Row = Record<string, unknown>;
+type Selection = Record<string, unknown> | undefined;
+type Query = { where?: Row; select?: Selection };
+
+/*
+ * The tables answer as Prisma does. A select returns the fields it names and
+ * nothing else, a relation only through its own select, scalars only when no
+ * select is given — and a select naming nothing is refused, as the engine
+ * refuses it (EmptySelection). A field the service stops selecting is a field
+ * its code no longer gets.
+ */
+const isRelation = (value: unknown): boolean =>
+  Array.isArray(value) ||
+  (value !== null && typeof value === 'object' && !(value instanceof Date));
+const assertSelects = (select: Selection): void => {
+  if (select === undefined) return;
+  const asked = Object.entries(select).filter(([, how]) => how);
+  if (asked.length === 0) throw new Error('EmptySelection: a select must ask for a field');
+  for (const [, how] of asked) {
+    if (typeof how === 'object') assertSelects((how as { select?: Selection }).select);
+  }
+};
+const selected = (row: Row, select: Selection): Row => {
+  if (select === undefined) {
+    return Object.fromEntries(Object.entries(row).filter(([, value]) => !isRelation(value)));
+  }
+  const out: Row = {};
+  for (const [field, how] of Object.entries(select)) {
+    if (!how || !(field in row)) continue;
+    const value = row[field];
+    const nested = typeof how === 'object' ? (how as { select?: Selection }).select : undefined;
+    const pick = (item: unknown) => (item === null ? null : selected(item as Row, nested));
+    out[field] = !isRelation(value) ? value : Array.isArray(value) ? value.map(pick) : pick(value);
+  }
+  return out;
+};
+
+/** The school a year belongs to, for the year -> school hop the reads take. */
+const schoolOfYear = (yearId: string): string => (yearId === YEAR ? SCHOOL : OTHER_SCHOOL);
+
+/**
+ * A where clause as Prisma applies it, for the filters these reads use. An
+ * empty filter object is no condition, as in Prisma; a filter this does not
+ * know is refused, so a new condition cannot pass here by being ignored.
+ */
+const matches = (row: Row, where: Row = {}): boolean =>
+  Object.entries(where).every(([key, filter]) => {
+    const value = filter as Record<string, any>;
+    switch (key) {
+      case 'academicYearId':
+        return (row['academicYearId'] ?? YEAR) === filter;
+      case 'school': {
+        const yearId: string | undefined = value?.academicYears?.some?.id;
+        return yearId === undefined || (row['schoolId'] ?? SCHOOL) === schoolOfYear(yearId);
+      }
+      case 'roomId':
+        return !('not' in value) || row['roomId'] !== value['not'];
+      case 'studentGroupId':
+      case 'id':
+        return value['in'] === undefined || (value['in'] as unknown[]).includes(row[key]);
+      case 'resourceType':
+      case 'type':
+      case 'date':
+      case 'role':
+      case 'isActive':
+        return row[key] === filter;
+      default:
+        throw new Error(`unexpected filter ${key}`);
+    }
+  });
+
 describe('RoomOptimizationService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
@@ -182,6 +318,13 @@ describe('RoomOptimizationService', () => {
   /** The CalendarLessons table: written by updateMany. */
   let calendar: CalendarFixture[];
   let executeRaw: jest.Mock;
+  /** RoomPreferences, AvailabilityConstraints, StudentGroups: empty unless a test fills them. */
+  let preferences: WishFixture[];
+  let closures: ClosureFixture[];
+  let groups: GroupFixture[];
+  /** Users and StudentGroupMembers, for the rosters a lesson's room needs come from. */
+  let people: Person[];
+  let memberships: { studentId: string; studentGroupId: string }[];
   let sent: OptimizeRoomsRequest | undefined;
   const user = testUser();
 
@@ -220,6 +363,11 @@ describe('RoomOptimizationService', () => {
     rows = elinAndAlexander();
     rooms = standardRooms();
     calendar = [];
+    preferences = [];
+    closures = [];
+    groups = [];
+    people = [];
+    memberships = [];
     sent = undefined;
 
     // The proxy vivifies models, not raw statements: the year's lock needs a
@@ -227,9 +375,38 @@ describe('RoomOptimizationService', () => {
     executeRaw = jest.fn().mockResolvedValue(0);
     Object.assign(tx, { $executeRaw: executeRaw });
 
-    tx.academicYear.findUnique.mockResolvedValue({ id: YEAR, schoolId: SCHOOL });
-    tx.masterLesson.findMany.mockImplementation(async () => rows.map((row) => ({ ...row })));
-    tx.room.findMany.mockImplementation(async () => rooms.map((room) => ({ ...room })));
+    tx.academicYear.findUnique.mockImplementation(async ({ where, select }: Query = {}) => {
+      // Prisma refuses a findUnique that names no unique field.
+      if (typeof where?.['id'] !== 'string') throw new Error('findUnique needs a unique where');
+      assertSelects(select);
+      return where['id'] === YEAR ? selected({ id: YEAR, schoolId: SCHOOL }, select) : null;
+    });
+    const table =
+      (read: () => Row[]) =>
+      async ({ where, select }: Query = {}) => {
+        assertSelects(select);
+        return read()
+          .filter((row) => matches(row, where))
+          .map((row) => selected(row, select));
+      };
+    tx.masterLesson.findMany.mockImplementation(table(() => rows));
+    tx.room.findMany.mockImplementation(table(() => rooms));
+    tx.roomPreference.findMany.mockImplementation(table(() => preferences));
+    tx.availabilityConstraint.findMany.mockImplementation(table(() => closures));
+    tx.studentGroup.findMany.mockImplementation(table(() => groups));
+    tx.user.findMany.mockImplementation(table(() => people));
+    // A membership counts when its pupil passes the `student` filter.
+    tx.studentGroupMember.findMany.mockImplementation(async ({ where = {}, select }: Query = {}) => {
+      assertSelects(select);
+      const { student: ofStudent, ...own } = where;
+      return memberships
+        .filter((row) => matches(row, own))
+        .filter((row) => {
+          const person = people.find((candidate) => candidate.id === row.studentId);
+          return person !== undefined && matches(person, ofStudent as Row | undefined);
+        })
+        .map((row) => selected(row, select));
+    });
     // A faithful little table: every filter the service passes is honoured,
     // so a dropped filter moves lessons it should not.
     tx.masterLesson.updateMany.mockImplementation(
@@ -456,42 +633,49 @@ describe('RoomOptimizationService', () => {
       expect(sent!.lessons).toHaveLength(4);
     });
 
-    it('sends minutes as HH:MM:SS and the lesson’s weeks', async () => {
+    it('sends minutes as HH:MM:SS, the lesson’s weeks and both its teachers', async () => {
       rows[0] = lesson(ELIN_FIRST, {
         startTime: clockAt(8, 5),
         endTime: clockAt(8, 50),
         recurrence: 'ODD_WEEKS',
         startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+        coTeacherId: ALEXANDER,
       });
       engine();
 
       await propose();
 
       expect(sentLesson(ELIN_FIRST)).toMatchObject({
+        dayOfWeek: 1,
         startTime: '08:05:00',
         endTime: '08:50:00',
         recurrence: 'ODD_WEEKS',
         startDate: '2026-08-17',
-        endDate: null,
+        endDate: '2027-06-11',
       });
+      // Alexander beside Elin is the Alexander who teaches 7B: one walker, one token.
+      expect(sentLesson(ELIN_FIRST).coTeacherId).toBe(sentLesson(ALEX_FIRST).teacherId);
     });
 
     it('sizes a lesson by every pupil in it, once, and spans their years', async () => {
       /*
-       * 7A holds S1 and S2; the teaching group Ma holds S2 again and S3 from
-       * 8A; one pupil is named on the lesson alone. Four chairs, years 7-8 —
-       * the room must hold all of them and suit every year among them.
+       * 7A holds S1, S2 and S3; the teaching group Ma holds S2 again and S3;
+       * one pupil from 8A is named on the lesson alone. Four chairs, years 7-8
+       * — and year 8 only through the pupil named, whose home class is read
+       * for that reason. The room must hold all of them and suit every year
+       * among them.
        */
       const MA = 'c0000000-0000-4000-8000-00000000000a';
       const GROUP_8A = 'c0000000-0000-4000-8000-0000000008aa';
       const LAB_TYPE = 'f0000000-0000-4000-8000-000000000001';
       const [s1, s2, s3, named] = [1, 2, 3, 4].map(
         (n) => `e0000000-0000-4000-8000-00000000000${n}`,
-      );
+      ) as [string, string, string, string];
       rows = [
         lesson(ELIN_FIRST, {
           extraGroups: [{ studentGroupId: MA }],
-          participants: [{ studentId: named! }],
+          participants: [{ studentId: named }],
           subject: { requiredRoomTypeId: LAB_TYPE },
         }),
       ];
@@ -499,33 +683,26 @@ describe('RoomOptimizationService', () => {
         id: EXTRA,
         capacity: 24,
         roomTypeId: LAB_TYPE,
-        minGradeLevel: null,
-        maxGradeLevel: null,
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
         building: null,
         floor: null,
       });
-      tx.studentGroup.findMany.mockResolvedValue([
+      groups = [
         { id: GROUP_7A, gradeLevel: 7 },
         { id: MA, gradeLevel: null },
         { id: GROUP_8A, gradeLevel: 8 },
-      ]);
-      tx.user.findMany.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
-        where['role'] === 'STUDENT'
-          ? [
-              { id: s1, studentGroupId: GROUP_7A },
-              { id: s2, studentGroupId: GROUP_7A },
-            ]
-          : [
-              { id: s1, studentGroupId: GROUP_7A },
-              { id: s2, studentGroupId: GROUP_7A },
-              { id: s3, studentGroupId: GROUP_8A },
-              { id: named, studentGroupId: GROUP_8A },
-            ],
-      );
-      tx.studentGroupMember.findMany.mockResolvedValue([
+      ];
+      people = [
+        student(s1, GROUP_7A),
+        student(s2, GROUP_7A),
+        student(s3, GROUP_7A),
+        student(named, GROUP_8A),
+      ];
+      memberships = [
         { studentId: s2, studentGroupId: MA },
         { studentId: s3, studentGroupId: MA },
-      ]);
+      ];
       engine();
 
       await propose();
@@ -540,6 +717,8 @@ describe('RoomOptimizationService', () => {
       // The same token the lab room carries, and not the school's id for it.
       expect(sentOne.requiredRoomType).toBe(sent!.rooms[3]!.type);
       expect(sentOne.requiredRoomType).not.toBe(LAB_TYPE);
+      // And the lab's own limits, as the school set them.
+      expect(sent!.rooms[3]).toMatchObject({ capacity: 24, minGradeLevel: 7, maxGradeLevel: 9 });
     });
 
     it('derives each lesson’s room needs through the generator’s own derivation', async () => {
@@ -563,15 +742,7 @@ describe('RoomOptimizationService', () => {
     });
 
     it('sends only a room closed on a weekday, under the room’s token', async () => {
-      tx.availabilityConstraint.findMany.mockResolvedValue([
-        {
-          id: 'f1000000-0000-4000-8000-000000000001',
-          roomId: ROOM_10,
-          dayOfWeek: 3,
-          startTime: clockAt(12),
-          endTime: clockAt(13),
-        },
-      ]);
+      closures = [closure('f1000000-0000-4000-8000-000000000001')];
       engine();
 
       await propose();
@@ -580,6 +751,7 @@ describe('RoomOptimizationService', () => {
         resourceType: 'ROOM',
         type: 'UNAVAILABLE',
         date: null,
+        roomId: { not: null },
       });
       expect(sent!.constraints).toEqual([
         {
@@ -596,18 +768,7 @@ describe('RoomOptimizationService', () => {
     });
 
     it('sends a room wish under the same subject and room tokens as the lessons', async () => {
-      tx.roomPreference.findMany.mockResolvedValue([
-        {
-          id: 'f2000000-0000-4000-8000-000000000001',
-          subjectId: SUBJECT,
-          kind: 'WISH',
-          minGradeLevel: null,
-          maxGradeLevel: null,
-          roomTypeId: null,
-          weight: 5,
-          rooms: [{ roomId: ROOM_1 }],
-        },
-      ]);
+      preferences = [wish('f2000000-0000-4000-8000-000000000001')];
       engine();
 
       await propose();
@@ -618,6 +779,144 @@ describe('RoomOptimizationService', () => {
         kind: 'WISH',
         weight: 5,
       });
+    });
+  });
+
+  describe('propose — what is read', () => {
+    const LAB_TYPE = 'f0000000-0000-4000-8000-000000000001';
+    const GONE_ROOM = 'a0000000-0000-4000-8000-0000000000dd';
+
+    it('reads nothing of another school’s year', async () => {
+      /*
+       * The lessons by the year, the rooms through the year's own school: a
+       * proposal asked for this year must not be drawn up over another
+       * school's rooms, or move a lesson of another year.
+       */
+      rows.push(
+        lesson(EXTRA, {
+          academicYearId: OTHER_YEAR,
+          roomId: ROOM_ANNEX,
+          startTime: clockAt(13),
+          endTime: clockAt(14),
+        }),
+      );
+      rooms.push({
+        id: 'a0000000-0000-4000-8000-0000000000aa',
+        schoolId: OTHER_SCHOOL,
+        capacity: 30,
+        roomTypeId: null,
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        building: null,
+        floor: null,
+      });
+      engine();
+
+      const proposal = await propose();
+
+      expect(sent!.lessons).toHaveLength(4);
+      expect(sent!.rooms).toHaveLength(3);
+      expect(proposal.roomsTotal).toBe(3);
+      // The years the groups carry are read for this year alone too.
+      expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { academicYearId: YEAR } }),
+      );
+    });
+
+    it('sends a lesson’s other class under the token that class’s own lessons carry', async () => {
+      // The engine follows a class from room to room by its token, so 7C on
+      // Elin's lesson and 7C on its own lesson have to be one walker.
+      rows[0]!.extraGroups = [{ studentGroupId: GROUP_7C }];
+      rows.push(
+        lesson(EXTRA, {
+          teacherId: OTHER_TEACHER,
+          studentGroupId: GROUP_7C,
+          roomId: ROOM_ANNEX,
+          startTime: clockAt(10),
+          endTime: clockAt(11),
+        }),
+      );
+      engine();
+
+      await propose();
+
+      expect(sentLesson(ELIN_FIRST).extraGroupIds).toEqual([sentLesson(EXTRA).studentGroupId]);
+    });
+
+    it('sends a room rule with the rooms that still exist, under the payload’s own tokens', async () => {
+      // A rule naming a room since removed names nothing the engine could put
+      // a lesson in. It goes without that room, not with an id the engine
+      // cannot resolve.
+      rooms[1]!.roomTypeId = LAB_TYPE;
+      preferences = [
+        wish('f2000000-0000-4000-8000-000000000001', {
+          kind: 'LOCK',
+          minGradeLevel: 7,
+          maxGradeLevel: 9,
+          roomTypeId: LAB_TYPE,
+          rooms: [{ roomId: ROOM_1 }, { roomId: GONE_ROOM }],
+        }),
+      ];
+      engine();
+
+      await propose();
+
+      expect(sent!.rooms[1]!.type).toEqual(expect.any(String));
+      expect(sent!.roomPreferences).toStrictEqual([
+        {
+          id: expect.any(String),
+          subjectId: sentLesson(ELIN_FIRST).subjectId,
+          kind: 'LOCK',
+          minGradeLevel: 7,
+          maxGradeLevel: 9,
+          roomType: sent!.rooms[1]!.type,
+          roomIds: [anonRoom(sent!, ROOM_1)],
+          weight: 5,
+        },
+      ]);
+    });
+
+    it('leaves out a closure of a room the payload does not carry', async () => {
+      // Sent, it would be a reservation naming no resource the engine was given.
+      closures = [closure('f1000000-0000-4000-8000-000000000001', { roomId: GONE_ROOM })];
+      engine();
+
+      await propose();
+
+      expect(sent!.constraints).toEqual([]);
+    });
+
+    it('turns the ids in an engine refusal back into rows the school can find', async () => {
+      /*
+       * The room route refuses a payload by naming what is wrong in the ids it
+       * was sent. Read back through the maps this request minted — lessons,
+       * room rules in the requirement slot, closures — the sentence names real
+       * rows instead of uuids that exist in no table.
+       */
+      const RULE = 'f2000000-0000-4000-8000-000000000001';
+      const CLOSED = 'f1000000-0000-4000-8000-000000000001';
+      preferences = [wish(RULE)];
+      closures = [closure(CLOSED)];
+      http.post.mockImplementation((_url: string, payload: OptimizeRoomsRequest) => {
+        const refused = new AxiosError('refused');
+        refused.response = {
+          status: 422,
+          data: {
+            message:
+              `Lesson ${anonLesson(payload, ELIN_FIRST)} breaks rule ` +
+              `${payload.roomPreferences[0]!.id} and closure ${payload.constraints[0]!.id}.`,
+          },
+        } as never;
+        return throwError(() => refused);
+      });
+
+      const error = await propose().catch((thrown: unknown) => thrown);
+
+      expect(error).toBeInstanceOf(HttpException);
+      expect((error as HttpException).getStatus()).toBe(422);
+      expect((error as HttpException).message).toBe(
+        `Lesson ${ELIN_FIRST} breaks rule ${RULE} and closure ${CLOSED}.`,
+      );
     });
   });
 
@@ -735,6 +1034,9 @@ describe('RoomOptimizationService', () => {
 
       expect(error).toBeInstanceOf(HttpException);
       expect((error as HttpException).getStatus()).toBe(HttpStatus.BAD_GATEWAY);
+      expect((error as HttpException).message).toBe(
+        'The AI engine returned a room proposal that does not match the request.',
+      );
     });
 
     it('refuses an answer that moves a roomless lesson', async () => {
@@ -768,6 +1070,8 @@ describe('RoomOptimizationService', () => {
         teachers: still(),
         groups: still(),
         missedWishes: { before: 0, after: 0 },
+        walkers: [],
+        frozenLessonIds: [],
         roomsTotal: 0,
       });
     });
@@ -783,17 +1087,45 @@ describe('RoomOptimizationService', () => {
       tx.academicYear.findUnique.mockResolvedValue(null);
 
       await expect(propose()).rejects.toThrow(NotFoundException);
+      await expect(propose()).rejects.toThrow('Academic year not found.');
       expect(http.post).not.toHaveBeenCalled();
     });
   });
 
   describe('basis', () => {
+    beforeEach(() => {
+      preferences = [
+        wish('f2000000-0000-4000-8000-000000000001', {
+          rooms: [{ roomId: ROOM_1 }, { roomId: ROOM_10 }],
+        }),
+        wish('f2000000-0000-4000-8000-000000000002'),
+      ];
+      closures = [
+        closure('f1000000-0000-4000-8000-000000000001'),
+        closure('f1000000-0000-4000-8000-000000000002', { roomId: ROOM_1 }),
+      ];
+    });
+
     it('is the same whatever order the rows come back in', async () => {
+      rows[0]!.extraGroups = [{ studentGroupId: GROUP_7B }, { studentGroupId: GROUP_7C }];
       const first = await basisNow();
+      // Every list, and every list inside a row: the database promises no order for either.
       rows.reverse();
       rooms.reverse();
+      preferences.reverse();
+      closures.reverse();
+      for (const row of rows) row.extraGroups.reverse();
+      for (const rule of preferences) rule.rooms.reverse();
 
       expect(await basisNow()).toBe(first);
+    });
+
+    it('changes when a lesson’s other class is swapped for another', async () => {
+      rows[0]!.extraGroups = [{ studentGroupId: GROUP_7B }];
+      const before = await basisNow();
+      rows[0]!.extraGroups = [{ studentGroupId: GROUP_7C }];
+
+      expect(await basisNow()).not.toBe(before);
     });
 
     it.each([
@@ -804,6 +1136,9 @@ describe('RoomOptimizationService', () => {
       ['a lesson’s parking', () => { rows[0]!.isParked = true; }],
       ['a lesson’s teacher', () => { rows[0]!.teacherId = OTHER_TEACHER; }],
       ['a lesson’s weeks', () => { rows[0]!.recurrence = 'EVEN_WEEKS'; }],
+      ['a room wish’s weight', () => { preferences[0]!.weight = 9; }],
+      ['the rooms a wish names', () => { preferences[0]!.rooms = [{ roomId: ROOM_1 }, { roomId: ROOM_ANNEX }]; }],
+      ['a room closure’s hours', () => { closures[0]!.endTime = clockAt(14); }],
     ])('changes when %s changes', async (_label, change) => {
       const before = await basisNow();
       change();
@@ -861,8 +1196,12 @@ describe('RoomOptimizationService', () => {
         .catch((thrown: unknown) => thrown);
 
       expect(error).toBeInstanceOf(ConflictException);
-      expect((error as ConflictException).getResponse()).toMatchObject({
-        code: ROOM_PROPOSAL_STALE,
+      // The literal, not the constant: the page compares against this string
+      // (web/components/schedule/room-optimization-dialog.tsx) to recompute
+      // rather than show an error, and the sentence is what it shows otherwise.
+      expect((error as ConflictException).getResponse()).toEqual({
+        code: 'ROOM_PROPOSAL_STALE',
+        message: 'Grundschemat har ändrats sedan förslaget beräknades. Beräkna ett nytt förslag.',
       });
       expect(tx.scheduleVersion.create).not.toHaveBeenCalled();
       expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
@@ -874,13 +1213,13 @@ describe('RoomOptimizationService', () => {
         rows[1]!.subject = { requiredRoomTypeId: 'f0000000-0000-4000-8000-000000000001' };
       }],
       ['a class gains pupils', () => {
-        tx.studentGroupMember.findMany.mockResolvedValue([
-          { studentId: 'e0000000-0000-4000-8000-000000000001', studentGroupId: GROUP_7A },
-          { studentId: 'e0000000-0000-4000-8000-000000000002', studentGroupId: GROUP_7A },
-        ]);
+        people = [
+          student('e0000000-0000-4000-8000-000000000001', GROUP_7A),
+          student('e0000000-0000-4000-8000-000000000002', GROUP_7A),
+        ];
       }],
       ['a class moves up a year', () => {
-        tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_7A, gradeLevel: 8 }]);
+        groups = [{ id: GROUP_7A, gradeLevel: 8 }];
       }],
       ['a lesson names pupils of its own', () => {
         rows[1]!.participants = [
@@ -1044,11 +1383,67 @@ describe('RoomOptimizationService', () => {
 
       // Out of the transaction's callback, so the real transaction rolls back.
       await expect(attempt).rejects.toBeInstanceOf(ConflictException);
-      await expect(attempt).rejects.toMatchObject({ response: { code: ROOM_CLASH } });
+      await expect(attempt).rejects.toMatchObject({
+        response: {
+          code: ROOM_CLASH,
+          message: 'Salsbytet skulle krocka med en annan lektion i samma sal. Inget ändrades.',
+        },
+      });
       expect(tx.scheduleVersion.create).not.toHaveBeenCalled();
       expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
       expect(tx.calendarLesson.updateMany).not.toHaveBeenCalled();
       expect(rows).toEqual(elinAndAlexander());
+    });
+
+    it('refuses the same clash with the two lessons the other way round', async () => {
+      // Alexander's 08:00 into room 1, where Elin's 08:00 is. Which of the two
+      // the read happened to return first cannot decide whether it is a clash.
+      const basis = await basisNow();
+
+      await expect(
+        service.apply(
+          {
+            academicYearId: YEAR,
+            basis,
+            changes: [{ lessonId: ALEX_FIRST, fromRoomId: ROOM_10, toRoomId: ROOM_1 }],
+          },
+          user,
+        ),
+      ).rejects.toMatchObject({ response: { code: ROOM_CLASH } });
+      expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('sees a clash between lessons that start and end off the hour', async () => {
+      // 08:50–09:10 in the annex, and 09:05–09:30 moved in beside it: five
+      // minutes of overlap, there only when minutes are counted as minutes.
+      rows.push(
+        lesson(EXTRA, {
+          teacherId: OTHER_TEACHER,
+          studentGroupId: GROUP_7C,
+          roomId: ROOM_ANNEX,
+          startTime: clockAt(8, 50),
+          endTime: clockAt(9, 10),
+        }),
+        lesson(EXTRA_TWO, {
+          teacherId: ALEXANDER,
+          studentGroupId: GROUP_7C,
+          roomId: ROOM_10,
+          startTime: clockAt(9, 5),
+          endTime: clockAt(9, 30),
+        }),
+      );
+      const basis = await basisNow();
+
+      await expect(
+        service.apply(
+          {
+            academicYearId: YEAR,
+            basis,
+            changes: [{ lessonId: EXTRA_TWO, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX }],
+          },
+          user,
+        ),
+      ).rejects.toMatchObject({ response: { code: ROOM_CLASH } });
     });
 
     it('lets lessons on opposite weeks share a room', async () => {
@@ -1178,37 +1573,39 @@ describe('RoomOptimizationService', () => {
     });
 
     it.each([
-      ['a locked lesson', () => { rows[1]!.isLocked = true; }, { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX }],
-      ['a parked lesson', () => { rows[1]!.isParked = true; }, { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX }],
-      ['a lesson not in the year', () => undefined, { lessonId: EXTRA, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX }],
-      ['a room that does not exist', () => undefined, { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: EXTRA }],
-      ['the room it is already in', () => undefined, { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_10 }],
-    ])('refuses to move %s', async (_label, arrange, change) => {
+      ['a locked lesson', () => { rows[1]!.isLocked = true; }, { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX }, `Lesson ${ELIN_SECOND} is locked and keeps its room.`],
+      ['a parked lesson', () => { rows[1]!.isParked = true; }, { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX }, `Lesson ${ELIN_SECOND} is parked and keeps its room.`],
+      ['a lesson not in the year', () => undefined, { lessonId: EXTRA, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX }, `Lesson ${EXTRA} is not in this academic year.`],
+      ['a room that does not exist', () => undefined, { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: EXTRA }, `Room ${EXTRA} does not exist.`],
+      ['the room it is already in', () => undefined, { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_10 }, `Lesson ${ELIN_SECOND} is moved to the room it is in.`],
+    ])('refuses to move %s, and names the lesson and the reason', async (_label, arrange, change, message) => {
       arrange();
       const basis = await basisNow();
 
-      await expect(
-        service.apply({ academicYearId: YEAR, basis, changes: [change] }, user),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      const attempt = service.apply({ academicYearId: YEAR, basis, changes: [change] }, user);
+
+      await expect(attempt).rejects.toBeInstanceOf(BadRequestException);
+      await expect(attempt).rejects.toThrow(message);
       expect(tx.masterLesson.updateMany).not.toHaveBeenCalled();
     });
 
     it('refuses to move one lesson twice in one apply', async () => {
       const basis = await basisNow();
 
-      await expect(
-        service.apply(
-          {
-            academicYearId: YEAR,
-            basis,
-            changes: [
-              { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX },
-              { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_1 },
-            ],
-          },
-          user,
-        ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      const attempt = service.apply(
+        {
+          academicYearId: YEAR,
+          basis,
+          changes: [
+            { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX },
+            { lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_1 },
+          ],
+        },
+        user,
+      );
+
+      await expect(attempt).rejects.toBeInstanceOf(BadRequestException);
+      await expect(attempt).rejects.toThrow(`Lesson ${ELIN_SECOND} is moved more than once.`);
     });
 
     it('records every move in the audit trail and tells the other admins', async () => {
@@ -1337,6 +1734,38 @@ describe('RoomOptimizationService', () => {
         expect(calendar.map((row) => row.roomId)).toEqual([ROOM_10, ROOM_ANNEX, ROOM_1]);
         expect(undone.calendarUpdated).toBe(2);
       });
+    });
+
+    it('is not made stale by pupils joining a class whose only lesson is parked', async () => {
+      /*
+       * A parked lesson is never sent, so what it would ask of a room is no
+       * part of what the proposal read. 7C gaining pupils changes nothing the
+       * engine saw, and must not refuse the apply as though it had.
+       */
+      rows.push(
+        lesson(EXTRA, {
+          teacherId: OTHER_TEACHER,
+          studentGroupId: GROUP_7C,
+          roomId: ROOM_ANNEX,
+          isParked: true,
+        }),
+      );
+      const basis = await basisNow();
+      people = [
+        student('e0000000-0000-4000-8000-000000000001', GROUP_7C),
+        student('e0000000-0000-4000-8000-000000000002', GROUP_7C),
+      ];
+
+      await service.apply(
+        {
+          academicYearId: YEAR,
+          basis,
+          changes: [{ lessonId: ELIN_SECOND, fromRoomId: ROOM_10, toRoomId: ROOM_ANNEX }],
+        },
+        user,
+      );
+
+      expect(rows.find((row) => row.id === ELIN_SECOND)!.roomId).toBe(ROOM_ANNEX);
     });
 
     it('refuses the undo once anything else has changed', async () => {

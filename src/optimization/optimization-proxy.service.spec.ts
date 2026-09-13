@@ -1,4 +1,4 @@
-import { HttpException, ServiceUnavailableException } from '@nestjs/common';
+import { HttpException, Logger, ServiceUnavailableException } from '@nestjs/common';
 import type { HttpService } from '@nestjs/axios';
 import type { ConfigService } from '@nestjs/config';
 import { AxiosError } from 'axios';
@@ -26,14 +26,95 @@ const ACADEMIC_YEAR = '44444444-4444-4444-8444-444444444444';
 const REAL_REQ = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const ANON_REQ = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 
+/** The school the test principal belongs to, and a year of one it does not. */
+const THIS_SCHOOL = testUser().schoolId as string;
+const OTHER_SCHOOL = '33333333-3333-4333-8333-3333333333ff';
+const OTHER_YEAR = '44444444-4444-4444-8444-4444444444ff';
+
 const makeConfigService = () =>
   ({
-    getOrThrow: jest.fn().mockReturnValue({
-      baseUrl: 'http://solver.test',
-      apiKey: 'k'.repeat(32),
-      timeoutMs: 50,
+    // Keyed as the real one is: a namespace nobody registered is an error,
+    // not the engine's settings under another name.
+    getOrThrow: jest.fn((key: string) => {
+      if (key !== 'aiEngine') throw new TypeError(`Configuration key "${key}" does not exist`);
+      return { baseUrl: 'http://solver.test', apiKey: 'k'.repeat(32), timeoutMs: 50 };
     }),
   }) as unknown as ConfigService;
+
+type Row = Record<string, unknown>;
+type Selection = Record<string, unknown> | undefined;
+type Query = { where?: Row; select?: Selection };
+
+/*
+ * Tables that answer as Prisma does. A select returns the fields it names and
+ * nothing else, a relation only through its own select, scalars only when no
+ * select is given — and a select naming nothing is refused, as the engine
+ * refuses it (EmptySelection). A field the service stops selecting is then a
+ * field its code no longer gets, rather than one the fixture hands it anyway.
+ */
+const isRelation = (value: unknown): boolean =>
+  Array.isArray(value) ||
+  (value !== null && typeof value === 'object' && !(value instanceof Date));
+const assertSelects = (select: Selection): void => {
+  if (select === undefined) return;
+  const asked = Object.entries(select).filter(([, how]) => how);
+  if (asked.length === 0) throw new Error('EmptySelection: a select must ask for a field');
+  for (const [, how] of asked) {
+    if (typeof how === 'object') assertSelects((how as { select?: Selection }).select);
+  }
+};
+const selected = (row: Row, select: Selection): Row => {
+  if (select === undefined) {
+    return Object.fromEntries(Object.entries(row).filter(([, value]) => !isRelation(value)));
+  }
+  const out: Row = {};
+  for (const [field, how] of Object.entries(select)) {
+    if (!how || !(field in row)) continue;
+    const value = row[field];
+    const nested = typeof how === 'object' ? (how as { select?: Selection }).select : undefined;
+    const pick = (item: unknown) => (item === null ? null : selected(item as Row, nested));
+    out[field] = !isRelation(value) ? value : Array.isArray(value) ? value.map(pick) : pick(value);
+  }
+  return out;
+};
+/** `{ in: [...] }`, or no condition when the filter names no list. */
+const within = (value: unknown, filter: unknown): boolean => {
+  const list = (filter as { in?: unknown[] } | undefined)?.in;
+  return list === undefined || list.includes(value);
+};
+/**
+ * A where clause as Prisma applies it, for the filters these reads use: the
+ * year, the year -> school hop, and plain flags. A row is this year's and this
+ * school's unless it says otherwise. A filter this does not know is refused
+ * rather than ignored, and an empty filter object is no condition.
+ */
+const matchesWhere = (row: Row, where: Row = {}): boolean =>
+  Object.entries(where).every(([key, filter]) => {
+    switch (key) {
+      case 'academicYearId':
+        return (row['academicYearId'] ?? ACADEMIC_YEAR) === filter;
+      case 'school': {
+        const yearId = (filter as { academicYears?: { some?: { id?: string } } } | undefined)
+          ?.academicYears?.some?.id;
+        const schoolOfYear = yearId === ACADEMIC_YEAR ? THIS_SCHOOL : OTHER_SCHOOL;
+        return yearId === undefined || (row['schoolId'] ?? THIS_SCHOOL) === schoolOfYear;
+      }
+      case 'isGenerated':
+      case 'kind':
+        return row[key] === filter;
+      default:
+        throw new Error(`unexpected filter ${key}`);
+    }
+  });
+/** A table read: the rows its where lets through, as its select shapes them. */
+const table =
+  (rows: unknown[]) =>
+  async ({ where, select }: Query = {}) => {
+    assertSelects(select);
+    return (rows as Row[])
+      .filter((row) => matchesWhere(row, where))
+      .map((row) => selected(row, select));
+  };
 
 describe('OptimizationProxyService', () => {
   let service: OptimizationProxyService;
@@ -107,15 +188,17 @@ describe('OptimizationProxyService', () => {
 
   /** One requirement asking for `lessonsPerWeek`, wired anon → real. */
   const oneRequirement = (lessonsPerWeek: number) => {
-    tx.teachingRequirement.findMany.mockResolvedValue([
-      {
-        id: REAL_REQ,
-        subjectId: 'subject-1',
-        studentGroupId: 'group-1',
-        teacherId: null,
-        coTeacherId: null,
-      },
-    ]);
+    tx.teachingRequirement.findMany.mockImplementation(
+      table([
+        {
+          id: REAL_REQ,
+          subjectId: 'subject-1',
+          studentGroupId: 'group-1',
+          teacherId: null,
+          coTeacherId: null,
+        },
+      ]),
+    );
     return {
       requirements: [{ id: ANON_REQ, lessonsPerWeek }],
       requirementAnonMap: new Map([[REAL_REQ, ANON_REQ]]),
@@ -230,6 +313,23 @@ describe('OptimizationProxyService', () => {
       expectNothingTouched();
     });
 
+    it('refuses a solution that covers the demand and places a lesson for a requirement never sent besides', async () => {
+      // Every lesson that was asked for is there, and one more. The count of
+      // what matched is right; the lesson that matched nothing is what makes
+      // it an answer to some other request.
+      await expect(
+        persist(
+          {
+            status: 'OPTIMAL',
+            lessons: [placement(), placement('ffffffff-ffff-4fff-8fff-ffffffffffff')],
+          },
+          oneRequirement(1),
+        ),
+      ).rejects.toMatchObject({ status: 502 });
+
+      expectNothingTouched();
+    });
+
     it('refuses when a requirement was deleted while the solver ran', async () => {
       const asked = oneRequirement(1);
       // The anon id still resolves, but the row it names is gone from the
@@ -275,10 +375,14 @@ describe('OptimizationProxyService', () => {
       tx.masterLesson.count.mockResolvedValue(0);
       tx.lunchSitting.deleteMany.mockResolvedValue({ count: 0 });
       tx.calendarLunch.deleteMany.mockResolvedValue({ count: 0 });
-      // Which of the year's groups are classes. A sitting is written for a
-      // class and for nothing else, so an unstubbed lookup here means no
-      // sittings at all rather than a merge — see the teaching-group test.
-      tx.studentGroup.findMany.mockResolvedValue([{ id: 'g-7a' }]);
+      // The year's groups, a class and a teaching group. A sitting is written
+      // for a class and for nothing else — see the teaching-group test.
+      tx.studentGroup.findMany.mockImplementation(
+        table([
+          { id: 'g-7a', kind: 'CLASS' },
+          { id: 'g-ma71', kind: 'TEACHING_GROUP' },
+        ]),
+      );
     });
 
     const sitting = (groupId = 'g-7a', dayOfWeek = 1) => ({
@@ -287,6 +391,20 @@ describe('OptimizationProxyService', () => {
       startTime: '11:30:00',
       endTime: '12:00:00',
     });
+
+    /** 7A's Monday meal, placed by the school at `startTime`. */
+    const placedByHand = (startTime: string) =>
+      tx.lunchSitting.findMany.mockImplementation(
+        table([
+          {
+            id: 'hand-1',
+            studentGroupId: 'g-7a',
+            dayOfWeek: 1,
+            startTime: new Date(`1970-01-01T${startTime}.000Z`),
+            isGenerated: false,
+          },
+        ]),
+      );
 
     it("replaces the solver's sittings and only the solver's", async () => {
       /*
@@ -331,14 +449,27 @@ describe('OptimizationProxyService', () => {
        * a solve the school watched succeed. The hand row keeps its start and
        * takes the length and headcount from the answer instead.
        */
-      tx.lunchSitting.findMany.mockResolvedValue([
-        {
-          id: 'hand-1',
-          studentGroupId: 'g-7a',
-          dayOfWeek: 1,
-          startTime: new Date('1970-01-01T11:30:00.000Z'),
-        },
-      ]);
+      tx.lunchSitting.findMany.mockImplementation(
+        table([
+          {
+            id: 'hand-1',
+            studentGroupId: 'g-7a',
+            dayOfWeek: 1,
+            startTime: new Date('1970-01-01T11:30:00.000Z'),
+            isGenerated: false,
+          },
+          // Last year's meal for a group of the same id space: that year's
+          // decision, and not this run's to keep or to drop.
+          {
+            id: 'hand-last-year',
+            academicYearId: OTHER_YEAR,
+            studentGroupId: 'g-7a',
+            dayOfWeek: 3,
+            startTime: new Date('1970-01-01T11:30:00.000Z'),
+            isGenerated: false,
+          },
+        ]),
+      );
 
       await persist(
         { status: 'OPTIMAL', lessons: [placement()] },
@@ -354,6 +485,11 @@ describe('OptimizationProxyService', () => {
       expect(tx.lunchSitting.update).toHaveBeenCalledWith({
         where: { id: 'hand-1' },
         data: { endTime: new Date('1970-01-01T12:00:00.000Z'), headcount: 26 },
+      });
+      // And no hand-placed row goes: the one the engine answered for stays,
+      // and the other year's was never this run's to judge.
+      expect(tx.lunchSitting.deleteMany).not.toHaveBeenCalledWith({
+        where: { id: { in: expect.anything() } },
       });
     });
 
@@ -399,14 +535,7 @@ describe('OptimizationProxyService', () => {
        * the lessons were placed straight across the hand-placed row. Kept, it
        * would sit on the grid and reach the pupil's calendar on top of one.
        */
-      tx.lunchSitting.findMany.mockResolvedValue([
-        {
-          id: 'hand-1',
-          studentGroupId: 'g-7a',
-          dayOfWeek: 1,
-          startTime: new Date('1970-01-01T13:00:00.000Z'),
-        },
-      ]);
+      placedByHand('13:00:00');
 
       await persist(
         { status: 'OPTIMAL', lessons: [placement()] },
@@ -430,14 +559,7 @@ describe('OptimizationProxyService', () => {
       const logger = (service as unknown as { logger: { error: (message: string) => void } })
         .logger;
       const error = jest.spyOn(logger, 'error').mockImplementation(() => undefined);
-      tx.lunchSitting.findMany.mockResolvedValue([
-        {
-          id: 'hand-1',
-          studentGroupId: 'g-7a',
-          dayOfWeek: 1,
-          startTime: new Date('1970-01-01T13:00:00.000Z'),
-        },
-      ]);
+      placedByHand('13:00:00');
 
       await persist(
         { status: 'OPTIMAL', lessons: [placement()] },
@@ -453,14 +575,7 @@ describe('OptimizationProxyService', () => {
       const logger = (service as unknown as { logger: { error: (message: string) => void } })
         .logger;
       const error = jest.spyOn(logger, 'error').mockImplementation(() => undefined);
-      tx.lunchSitting.findMany.mockResolvedValue([
-        {
-          id: 'hand-1',
-          studentGroupId: 'g-7a',
-          dayOfWeek: 1,
-          startTime: new Date('1970-01-01T11:30:00.000Z'),
-        },
-      ]);
+      placedByHand('11:30:00');
 
       await persist(
         { status: 'OPTIMAL', lessons: [placement()] },
@@ -919,6 +1034,69 @@ describe('OptimizationProxyService', () => {
       http.post.mockReturnValue(throwError(() => new Error('socket closed')));
 
       await expect(call()).rejects.toThrow(ServiceUnavailableException);
+      // Not "could not be reached": that sentence is a claim about the
+      // connection, and nothing here says the connection was the problem.
+      await expect(call()).rejects.toThrow('AI engine unavailable.');
+    });
+
+    it('answers 503 when the request fails before it is even sent', async () => {
+      http.post.mockImplementation(() => {
+        throw new TypeError('the payload could not be serialised');
+      });
+
+      await expect(call()).rejects.toThrow(ServiceUnavailableException);
+      await expect(call()).rejects.toThrow('AI engine unavailable.');
+    });
+
+    it('carries the refusal’s own name and values beside its sentence, their ids turned back', async () => {
+      /*
+       * The screen says in Swedish what the engine said in English, and needs
+       * the refusal's code and values for it. A value naming a group is the
+       * engine's anonymous id until it is turned back, and then the school's
+       * own name for the group.
+       */
+      const anonGroup = 'aaaaaaaa-8888-4888-8888-aaaaaaaaaaaa';
+      const realGroup = 'bbbbbbbb-9999-4999-8999-bbbbbbbbbbbb';
+      const refused = new AxiosError('boom');
+      refused.response = {
+        status: 400,
+        data: {
+          message: `Locked lessons leave student group ${anonGroup} no lunch break.`,
+          details: {
+            code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK',
+            params: { group: anonGroup, minutes: 30 },
+          },
+        },
+      } as never;
+      http.post.mockReturnValue(throwError(() => refused));
+
+      const error = await call({}, {
+        ...maps(),
+        groupAnonMap: new Map([[realGroup, anonGroup]]),
+        nameById: new Map([[realGroup, '4A']]),
+      }).catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getStatus()).toBe(400);
+      expect((error as HttpException).getResponse()).toEqual({
+        message: `Locked lessons leave student group ${realGroup} no lunch break.`,
+        code: 'LUNCH_LOCKED_LESSONS_LEAVE_NO_BREAK',
+        params: { group: '4A', minutes: 30 },
+      });
+    });
+
+    it('carries no code when the refusal’s details name none', async () => {
+      // Without a name there is nothing to translate, and a code of undefined
+      // would read to the screen as a sentence it has no words for.
+      const refused = new AxiosError('boom');
+      refused.response = {
+        status: 400,
+        data: { message: 'No lunch break fits.', details: { params: { minutes: 30 } } },
+      } as never;
+      http.post.mockReturnValue(throwError(() => refused));
+
+      const error = await call().catch((thrown: unknown) => thrown);
+
+      expect((error as HttpException).getResponse()).toEqual({ message: 'No lunch break fits.' });
     });
 
     it('never leaks the API key in the thrown error', async () => {
@@ -1024,45 +1202,85 @@ describe('OptimizationProxyService', () => {
       roomPreferences?: unknown[];
       /** The school's saved lunch rules, or null when nobody has defined them. */
       lunchSettings?: unknown;
+      /** Ramtider, lunch servings and raster, as stored. */
+      frames?: unknown[];
+      servings?: unknown[];
+      rasts?: unknown[];
+      /** Meals the school placed by hand. */
+      handSittings?: unknown[];
     };
 
     const arrange = (overrides: Arrangement = {}) => {
-      tx.teachingRequirement.findMany.mockResolvedValue(
-        overrides.requirements ?? [requirement()],
+      // Every read below answers as Prisma would — see `table` — so a field
+      // the service stops selecting is a field the payload loses.
+      tx.teachingRequirement.findMany.mockImplementation(
+        table(overrides.requirements ?? [requirement()]),
       );
       // Group sizes and the group-conflict relation both derive from the two
-      // membership queries: home-class students and teaching-group rows.
-      tx.user.findMany.mockResolvedValue(
-        overrides.homeMembers ??
-          Array.from({ length: 24 }, (_, i) => ({
-            id: `00000000-0000-4000-8000-9000000000${String(i).padStart(2, '0')}`,
-            studentGroupId: GROUP_ID,
-          })),
+      // membership queries: home-class students and teaching-group rows. They
+      // answer for the groups and pupils each query names; who counts as an
+      // active pupil is room-eligibility.spec.ts's to prove.
+      const homeMembers = (overrides.homeMembers ??
+        Array.from({ length: 24 }, (_, i) => ({
+          id: `00000000-0000-4000-8000-9000000000${String(i).padStart(2, '0')}`,
+          studentGroupId: GROUP_ID,
+        }))) as Row[];
+      const teachingMembers = (overrides.teachingMembers ?? []) as Row[];
+      tx.user.findMany.mockImplementation(async ({ where = {}, select }: Query = {}) => {
+        assertSelects(select);
+        return homeMembers
+          .filter(
+            (row) =>
+              within(row['studentGroupId'], where['studentGroupId']) &&
+              within(row['id'], where['id']),
+          )
+          .map((row) => selected(row, select));
+      });
+      tx.studentGroupMember.findMany.mockImplementation(
+        async ({ where = {}, select }: Query = {}) => {
+          assertSelects(select);
+          return teachingMembers
+            .filter((row) => within(row['studentGroupId'], where['studentGroupId']))
+            .map((row) => selected(row, select));
+        },
       );
-      tx.studentGroupMember.findMany.mockResolvedValue(
-        overrides.teachingMembers ?? [],
-      );
-      const locked = overrides.lockedLessons ?? [];
-      const unlocked = overrides.unlockedLessons ?? [];
+      const locked = (overrides.lockedLessons ?? []) as Row[];
+      const unlocked = (overrides.unlockedLessons ?? []) as Row[];
       // fetchAndAnonymize queries masterLesson twice: the locked/manual set
       // (where.OR) and the previous unlocked placements (where.isLocked=false).
-      tx.masterLesson.findMany.mockImplementation(({ where }: any) =>
-        Promise.resolve(where?.isLocked === false ? unlocked : locked),
+      tx.masterLesson.findMany.mockImplementation(async ({ where, select }: Query = {}) => {
+        assertSelects(select);
+        return (where?.['isLocked'] === false ? unlocked : locked).map((row) =>
+          selected(row, select),
+        );
+      });
+      tx.room.findMany.mockImplementation(
+        table(overrides.rooms ?? [{ id: ROOM_ID, capacity: 30, type: 'CLASSROOM' }]),
       );
-      tx.room.findMany.mockResolvedValue(
-        overrides.rooms ?? [{ id: ROOM_ID, capacity: 30, type: 'CLASSROOM' }],
-      );
-      tx.availabilityConstraint.findMany.mockResolvedValue(
-        overrides.constraints ?? [],
-      );
+      tx.availabilityConstraint.findMany.mockImplementation(table(overrides.constraints ?? []));
       // Year spans for rooms limited to a stage are derived from these.
       // The default is the one class the default requirement belongs to, so a
       // payload built with no overrides still names somebody who eats.
-      tx.studentGroup.findMany.mockResolvedValue(
-        overrides.groups ?? [{ id: GROUP_ID, gradeLevel: null, kind: 'CLASS' }],
+      tx.studentGroup.findMany.mockImplementation(
+        table(overrides.groups ?? [{ id: GROUP_ID, gradeLevel: null, kind: 'CLASS' }]),
       );
-      tx.roomPreference.findMany.mockResolvedValue(overrides.roomPreferences ?? []);
-      tx.lunchSetting.findUnique.mockResolvedValue(overrides.lunchSettings ?? null);
+      tx.roomPreference.findMany.mockImplementation(table(overrides.roomPreferences ?? []));
+      tx.frameTime.findMany.mockImplementation(table(overrides.frames ?? []));
+      tx.lunchServing.findMany.mockImplementation(table(overrides.servings ?? []));
+      tx.rast.findMany.mockImplementation(table(overrides.rasts ?? []));
+      tx.lunchSitting.findMany.mockImplementation(table(overrides.handSittings ?? []));
+      // One row per school, found by the school: a findUnique without that
+      // key is one Prisma refuses.
+      tx.lunchSetting.findUnique.mockImplementation(async ({ where, select }: Query = {}) => {
+        if (typeof where?.['schoolId'] !== 'string') {
+          throw new Error('findUnique needs a unique where');
+        }
+        assertSelects(select);
+        const settings = (overrides.lunchSettings ?? null) as Row | null;
+        return settings !== null && where['schoolId'] === THIS_SCHOOL
+          ? selected(settings, select)
+          : null;
+      });
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 2 });
       tx.calendarLesson.deleteMany.mockResolvedValue({ count: 4 });
       tx.masterLesson.count.mockResolvedValue(1);
@@ -1102,6 +1320,25 @@ describe('OptimizationProxyService', () => {
     const postedPayload = (): AiEngineScheduleRequest =>
       http.post.mock.calls[0][1] as AiEngineScheduleRequest;
 
+    /** What the service tells whoever reads its log, silenced and recorded. */
+    const warnings = () =>
+      jest
+        .spyOn((service as unknown as { logger: Logger }).logger, 'warn')
+        .mockImplementation(() => undefined);
+
+    /** An engine that finds no timetable, and says why in `conflicts`. */
+    const answerWithConflicts = (conflicts: (payload: any) => object) =>
+      http.post.mockImplementation((_url: string, payload: any) =>
+        of({
+          data: {
+            requestId: payload.requestId,
+            status: 'INFEASIBLE',
+            lessons: [],
+            conflicts: conflicts(payload),
+          },
+        }),
+      );
+
     it('reads a requirement’s room needs through the derivation the room optimisation shares', async () => {
       /*
        * The room optimisation may only move a lesson into a room this run
@@ -1138,14 +1375,24 @@ describe('OptimizationProxyService', () => {
        * variable to pin, and a pin under the real one would be a real id
        * reaching the engine.
        */
-      arrange();
-      tx.lunchSitting.findMany.mockResolvedValue([
-        {
-          studentGroupId: GROUP_ID,
-          dayOfWeek: 2,
-          startTime: new Date('1970-01-01T13:00:00.000Z'),
-        },
-      ]);
+      arrange({
+        handSittings: [
+          {
+            studentGroupId: GROUP_ID,
+            dayOfWeek: 2,
+            startTime: new Date('1970-01-01T13:00:00.000Z'),
+            isGenerated: false,
+          },
+          // A meal for a class this week's payload does not carry: there is no
+          // lunch variable to pin it to, so it is not sent at all.
+          {
+            studentGroupId: '99999999-9999-4999-8999-999999999999',
+            dayOfWeek: 3,
+            startTime: new Date('1970-01-01T12:00:00.000Z'),
+            isGenerated: false,
+          },
+        ],
+      });
       echoEngine();
 
       await service.triggerScheduling(ACADEMIC_YEAR, testUser());
@@ -1201,8 +1448,12 @@ describe('OptimizationProxyService', () => {
        */
       arrange();
       echoWithLunches();
+      const warn = warnings();
 
       const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      // The engine was asked, so nothing stands in for its sittings.
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('sittings stand'));
 
       expect(result.lunches).toEqual([
         {
@@ -1505,6 +1756,13 @@ describe('OptimizationProxyService', () => {
 
     it('forwards locked lessons as fixed placements with HH:MM:SS times', async () => {
       arrange({
+        requirements: [
+          requirement(),
+          requirement({
+            id: '88888888-8888-4888-8888-888888888888',
+            studentGroupId: EXTRA_GROUP_ID,
+          }),
+        ],
         lockedLessons: [
           lockedLesson({ extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }] }),
         ],
@@ -1512,14 +1770,17 @@ describe('OptimizationProxyService', () => {
       echoEngine();
 
       await service.triggerScheduling(ACADEMIC_YEAR, testUser());
-      const [fixed] = postedPayload().fixedLessons;
+      const payload = postedPayload();
+      const [fixed] = payload.fixedLessons;
 
       expect(fixed).toMatchObject({
         dayOfWeek: 2,
         startTime: '08:00:00',
         endTime: '09:00:00',
       });
-      expect(fixed.extraGroupIds).toHaveLength(1);
+      // The second class under the token its own requirement carries, so the
+      // engine keeps that class out of another lesson at the same hour.
+      expect(fixed.extraGroupIds).toEqual([payload.requirements[1].studentGroupId]);
       expect(fixed.extraGroupIds).not.toContain(EXTRA_GROUP_ID); // anonymized
     });
 
@@ -1586,7 +1847,10 @@ describe('OptimizationProxyService', () => {
         'http://solver.test/v1/schedule',
         expect.anything(),
         expect.objectContaining({
-          headers: expect.objectContaining({ 'X-API-Key': 'k'.repeat(32) }),
+          headers: expect.objectContaining({
+            'X-API-Key': 'k'.repeat(32),
+            'Content-Type': 'application/json',
+          }),
         }),
       );
     });
@@ -1895,6 +2159,77 @@ describe('OptimizationProxyService', () => {
         expect(postedPayload().roomPreferences[0].roomIds).toEqual([]);
       });
 
+      const GONE_ROOM = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+      const rule = (kind: 'WISH' | 'LOCK', roomIds: string[]) => ({
+        id: 'pref-1',
+        subjectId: SUBJECT_ID,
+        kind,
+        minGradeLevel: null,
+        maxGradeLevel: null,
+        roomTypeId: null,
+        weight: 50,
+        rooms: roomIds.map((roomId) => ({ roomId })),
+      });
+
+      it('speaks of the subject and the kind of room in the timplan’s own tokens', async () => {
+        // A wish is about a subject and a kind of room, and the engine can only
+        // apply it to the lessons that carry those same tokens.
+        arrange({
+          roomPreferences: [{ ...rule('WISH', [ROOM_ID]), roomTypeId: 'room-type-lab' }],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const payload = postedPayload();
+        expect(payload.roomPreferences[0].subjectId).toBe(payload.requirements[0].subjectId);
+        expect(payload.roomPreferences[0].roomType).toBe(payload.requirements[0].requiredRoomType);
+      });
+
+      it('names a room rule by its own id when the engine refuses over it', async () => {
+        arrange({ roomPreferences: [{ ...rule('LOCK', [ROOM_ID]), id: 'pref-lock-7a' }] });
+        http.post.mockImplementation((_url: string, payload: any) => {
+          const refused = new AxiosError('refused');
+          refused.response = {
+            status: 400,
+            data: {
+              message: `A room lock ${payload.roomPreferences[0].id} leaves requirement ${payload.requirements[0].id} nowhere to go.`,
+            },
+          } as never;
+          return throwError(() => refused);
+        });
+
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toThrow(
+          `A room lock pref-lock-7a leaves requirement ${REQ_ID} nowhere to go.`,
+        );
+      });
+
+      it('warns when a lock names a room the payload no longer carries', async () => {
+        // Dropped from a wish, a vanished room only weakens a preference. Dropped
+        // from a lock it narrows a rule the school reads as wider, so it is said.
+        arrange({ roomPreferences: [rule('LOCK', [ROOM_ID, GONE_ROOM])] });
+        echoEngine();
+        const warn = warnings();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Room lock pref-1 names 1 room(s)'));
+        expect(postedPayload().roomPreferences[0].roomIds).toEqual([postedPayload().rooms[0].id]);
+      });
+
+      it.each([
+        ['a wish that has lost a room', rule('WISH', [ROOM_ID, GONE_ROOM])],
+        ['a lock whose rooms are all still there', rule('LOCK', [ROOM_ID])],
+      ])('says nothing about %s', async (_label, preference) => {
+        arrange({ roomPreferences: [preference] });
+        echoEngine();
+        const warn = warnings();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('Room lock'));
+      });
+
       it('sends an empty list when the school has stated no wishes', async () => {
         arrange();
         echoEngine();
@@ -2009,17 +2344,27 @@ describe('OptimizationProxyService', () => {
       it('passes each room own limits through untouched', async () => {
         arrange({
           rooms: [
-            { id: ROOM_ID, capacity: 30, type: 'CLASSROOM', minGradeLevel: 4, maxGradeLevel: 6 },
+            {
+              id: ROOM_ID,
+              capacity: 28,
+              roomTypeId: 'room-type-lab',
+              minGradeLevel: 4,
+              maxGradeLevel: 6,
+            },
           ],
         });
         echoEngine();
 
         await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const payload = postedPayload();
 
-        expect(postedPayload().rooms[0]).toMatchObject({
+        expect(payload.rooms[0]).toMatchObject({
+          capacity: 28,
           minGradeLevel: 4,
           maxGradeLevel: 6,
         });
+        // Its type under the token a requirement needing that type carries.
+        expect(payload.rooms[0].type).toBe(payload.requirements[0].requiredRoomType);
       });
     });
 
@@ -2061,6 +2406,7 @@ describe('OptimizationProxyService', () => {
       const [constraint] = postedPayload().constraints;
 
       expect(constraint).toMatchObject({
+        dayOfWeek: 1,
         date: '2026-12-24',
         startTime: '08:00:00',
         endTime: '09:00:00',
@@ -2489,10 +2835,17 @@ describe('OptimizationProxyService', () => {
         lockedLessons: [lockedLesson()],
       });
 
+      const warn = warnings();
+
       const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
       expect(http.post).not.toHaveBeenCalled();
       expect(result.lunches).toEqual([]);
+      // Nothing on the generate page says the sittings are last run's; the
+      // log does, and names the year it is about.
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(new RegExp(`sittings stand.*${ACADEMIC_YEAR}`)),
+      );
       expect(tx.lunchSitting.deleteMany).not.toHaveBeenCalled();
       expect(tx.lunchSitting.createMany).not.toHaveBeenCalled();
       expect(tx.calendarLunch.deleteMany).not.toHaveBeenCalled();
@@ -2544,6 +2897,480 @@ describe('OptimizationProxyService', () => {
         maxGradeLevel: 6,
       });
       expect(constraint.resourceId).toBeUndefined();
+    });
+
+    it('sends a reservation on a class under the class’s own token', async () => {
+      arrange({
+        constraints: [constraintRow({ resourceType: 'STUDENT_GROUP', studentGroupId: GROUP_ID })],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+      const payload = postedPayload();
+
+      expect(payload.constraints[0]).toMatchObject({
+        resourceKind: 'STUDENT_GROUP',
+        resourceId: payload.requirements[0].studentGroupId,
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // What is read, and from where
+    // -----------------------------------------------------------------------
+
+    const frame = (overrides: Record<string, unknown> = {}) => ({
+      minGradeLevel: 4,
+      maxGradeLevel: 6,
+      dayOfWeek: 1,
+      startTime: eightAm,
+      endTime: new Date('1970-01-01T15:30:00.000Z'),
+      changeoverMinutes: 5,
+      ...overrides,
+    });
+    const serving = (overrides: Record<string, unknown> = {}) => ({
+      minGradeLevel: 1,
+      maxGradeLevel: 3,
+      dayOfWeek: null,
+      startTime: new Date('1970-01-01T10:45:00.000Z'),
+      endTime: new Date('1970-01-01T11:30:00.000Z'),
+      seats: 60,
+      ...overrides,
+    });
+    const rast = (overrides: Record<string, unknown> = {}) => ({
+      name: 'Förmiddagsrast',
+      minGradeLevel: null,
+      maxGradeLevel: null,
+      dayOfWeek: 2,
+      startTime: new Date('1970-01-01T09:40:00.000Z'),
+      endTime: new Date('1970-01-01T10:00:00.000Z'),
+      requiresLessonBefore: true,
+      ...overrides,
+    });
+
+    it('sends frames, servings and breaks with their years and clocks, and a break without its name', async () => {
+      arrange({ frames: [frame()], servings: [serving()], rasts: [rast()] });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+      const payload = postedPayload();
+
+      expect(payload.frameTimes).toEqual([
+        {
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          dayOfWeek: 1,
+          startTime: '08:00:00',
+          endTime: '15:30:00',
+          changeoverMinutes: 5,
+        },
+      ]);
+      expect(payload.lunchServings).toEqual([
+        {
+          minGradeLevel: 1,
+          maxGradeLevel: 3,
+          dayOfWeek: null,
+          startTime: '10:45:00',
+          endTime: '11:30:00',
+          seats: 60,
+        },
+      ]);
+      // What the school calls a break is its own word; the engine only
+      // subtracts the minutes.
+      expect(payload.rasts).toEqual([
+        {
+          minGradeLevel: null,
+          maxGradeLevel: null,
+          dayOfWeek: 2,
+          startTime: '09:40:00',
+          endTime: '10:00:00',
+          requiresLessonBefore: true,
+        },
+      ]);
+    });
+
+    it('reads nothing of another year or another school', async () => {
+      /*
+       * The timplan by the year; rooms, reservations, frames, servings and
+       * breaks through the year's own school. RLS confines these reads in
+       * production and no mock can exercise it (see prisma-mock.ts), so what
+       * is left to prove here is the filter: a dropped one shows up as another
+       * school's row in this school's payload.
+       */
+      const elsewhere = { schoolId: OTHER_SCHOOL };
+      arrange({
+        requirements: [
+          requirement(),
+          requirement({
+            id: '88888888-8888-4888-8888-8888888888ff',
+            academicYearId: OTHER_YEAR,
+            subjectId: 'subject-of-another-year',
+          }),
+        ],
+        rooms: [
+          { id: ROOM_ID, capacity: 30 },
+          { id: 'room-of-another-school', capacity: 30, ...elsewhere },
+        ],
+        constraints: [
+          constraintRow({ userId: TEACHER_ID }),
+          constraintRow({ id: 'constraint-of-another-school', userId: TEACHER_ID, ...elsewhere }),
+        ],
+        frames: [frame(), frame(elsewhere)],
+        servings: [serving(), serving(elsewhere)],
+        rasts: [rast(), rast(elsewhere)],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+      const payload = postedPayload();
+
+      expect(payload.requirements).toHaveLength(1);
+      expect(payload.rooms).toHaveLength(1);
+      expect(payload.constraints).toHaveLength(1);
+      expect(payload.frameTimes).toHaveLength(1);
+      expect(payload.lunchServings).toHaveLength(1);
+      expect(payload.rasts).toHaveLength(1);
+      // Two reads leave nothing in the payload to show a dropped filter by. The
+      // groups: another year's class has no lesson in this one, so it is owed no
+      // lunch and sent nowhere. And the timplan read again before anything is
+      // written. There the where clause itself is what names the year.
+      expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { academicYearId: ACADEMIC_YEAR } }),
+      );
+      for (const [query] of tx.teachingRequirement.findMany.mock.calls) {
+        expect(query.where).toEqual({ academicYearId: ACADEMIC_YEAR });
+      }
+    });
+
+    it('keeps a co-teacher on the requirement, on the placement and on the lessons written', async () => {
+      const CO_TEACHER = '77777777-aaaa-4aaa-8aaa-777777777777';
+      arrange({
+        requirements: [requirement({ coTeacherId: CO_TEACHER })],
+        lockedLessons: [lockedLesson({ coTeacherId: CO_TEACHER })],
+      });
+      echoEngine('OPTIMAL');
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+      const payload = postedPayload();
+
+      // One person, one token: the engine keeps a co-teacher out of two rooms at once.
+      expect(payload.requirements[0].coTeacherId).toEqual(expect.any(String));
+      expect(payload.fixedLessons[0].coTeacherId).toBe(payload.requirements[0].coTeacherId);
+      expect(tx.masterLesson.create.mock.calls[0]![0].data.coTeacherId).toBe(CO_TEACHER);
+    });
+
+    describe('groups whose year cannot be derived', () => {
+      const S = 'aaaa0001-9999-4999-8999-999999999999';
+      const T = 'aaaa0002-9999-4999-8999-999999999999';
+      const Y = 'aaaa0003-9999-4999-8999-999999999999';
+      const requirementsOn = (...groupIds: string[]) =>
+        groupIds.map((studentGroupId, i) =>
+          requirement({
+            id: `88888888-8888-4888-8888-88888888880${i}`,
+            subjectId: `subject-${i}`,
+            studentGroupId,
+          }),
+        );
+
+      it('says how many groups the frames and breaks will not bind, each group once', async () => {
+        // S has two requirements and T one, and neither has a pupil or a year
+        // of its own; Y carries year 6. Two groups — not three requirements,
+        // and not Y.
+        arrange({
+          requirements: requirementsOn(S, S, T, Y),
+          homeMembers: [],
+          groups: [
+            { id: S, gradeLevel: null, kind: 'TEACHING_GROUP' },
+            { id: T, gradeLevel: null, kind: 'TEACHING_GROUP' },
+            { id: Y, gradeLevel: 6, kind: 'TEACHING_GROUP' },
+          ],
+        });
+        echoEngine();
+        const warn = warnings();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringMatching(/^2 group\(s\) with requirements have no derivable year/),
+        );
+      });
+
+      it('says nothing when every group has a year', async () => {
+        arrange({
+          requirements: requirementsOn(Y, Y),
+          homeMembers: [],
+          groups: [{ id: Y, gradeLevel: 6, kind: 'TEACHING_GROUP' }],
+        });
+        echoEngine();
+        const warn = warnings();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('no derivable year'));
+      });
+    });
+
+    it('names in resourceNames only what the school has a name for', async () => {
+      // A teacher is deliberately never named (see nameById), so a detail about
+      // a class and a teacher names the class, and keeps no empty place for the
+      // teacher.
+      arrange({ groups: [{ id: GROUP_ID, gradeLevel: 4, kind: 'CLASS', name: '4A' }] });
+      answerWithConflicts((payload) => ({
+        summary: 'blocked',
+        summaryCode: 'CONFLICT_CORE_SUMMARY',
+        summaryParams: {},
+        conflicts: [
+          {
+            category: 'AVAILABILITY',
+            code: 'AVAIL_CONSTRAINT_BLOCKS_LESSONS',
+            params: {},
+            message: 'blocked',
+            requirementIds: [],
+            roomIds: [],
+            constraintIds: [],
+            resourceIds: [payload.groups[0].id, payload.requirements[0].teacherId],
+          },
+        ],
+      }));
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.conflicts?.conflicts[0]!.resourceNames).toStrictEqual(['4A']);
+    });
+
+    it('leaves a class the school gave no name as its id, rather than naming it nothing', async () => {
+      arrange({ groups: [{ id: GROUP_ID, gradeLevel: 4, kind: 'CLASS', name: '' }] });
+      answerWithConflicts((payload) => ({
+        summary: `Student group ${payload.groups[0].id} needs more hours.`,
+        summaryCode: 'DEMAND_CLIQUE_HOURS_SHORT',
+        summaryParams: {},
+        conflicts: [
+          {
+            category: 'DINING_CAPACITY',
+            code: 'LUNCH_CLASSES_FILL_THE_HALL_DAILY',
+            params: {},
+            message: 'The classes named here fill the hall.',
+            requirementIds: [],
+            roomIds: [],
+            constraintIds: [],
+            resourceIds: [payload.groups[0].id],
+          },
+        ],
+      }));
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.conflicts?.summary).toBe(`Student group ${GROUP_ID} needs more hours.`);
+      expect(result.conflicts?.conflicts[0]!.resourceNames).toEqual([]);
+    });
+
+    it('names a timplan row whose subject needs no particular kind of room', async () => {
+      arrange({
+        requirements: [
+          requirement({
+            subject: { requiredRoomTypeId: null, name: 'Svenska', requiredRoomType: null },
+          }),
+        ],
+        groups: [{ id: GROUP_ID, gradeLevel: 4, kind: 'CLASS', name: '4A' }],
+      });
+      answerWithConflicts((payload) => ({
+        summary: `No slot fits requirement ${payload.requirements[0].id}.`,
+        summaryCode: 'DEMAND_CLIQUE_HOURS_SHORT',
+        summaryParams: {},
+        conflicts: [],
+      }));
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.conflicts?.summary).toBe('No slot fits requirement Svenska för 4A.');
+    });
+
+    it('names a kind of room that only a room carries', async () => {
+      // No requirement needs the gym, so its name reaches the map through the
+      // room alone.
+      arrange({
+        rooms: [
+          {
+            id: ROOM_ID,
+            capacity: 30,
+            roomTypeId: 'room-type-gym',
+            name: 'Hallen',
+            roomType: { name: 'Idrottshall' },
+          },
+        ],
+      });
+      answerWithConflicts((payload) => ({
+        summary: 'unused',
+        summaryCode: 'ROOM_TYPE_UNUSED',
+        summaryParams: { roomType: payload.rooms[0].type },
+        conflicts: [],
+      }));
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.conflicts?.summaryParams).toEqual({ roomType: 'Idrottshall' });
+    });
+
+    it('hands back no sittings, and writes none, when the engine placed none', async () => {
+      // Lunch switched off: the engine answers with an empty list — an answer,
+      // unlike no list at all — and there is nothing to hand back or to store.
+      arrange();
+      http.post.mockImplementation((_url: string, payload: any) =>
+        of({
+          data: {
+            requestId: payload.requestId,
+            status: 'OPTIMAL',
+            lessons: payload.requirements.flatMap((r: any) =>
+              Array.from({ length: r.lessonsPerWeek }, () => ({
+                requirementId: r.id,
+                roomId: payload.rooms[0]?.id ?? null,
+                dayOfWeek: 1,
+                startTime: '08:00:00',
+                endTime: '09:15:00',
+              })),
+            ),
+            lunches: [],
+            conflicts: null,
+          },
+        }),
+      );
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(result.lunches).toEqual([]);
+      expect(tx.lunchSitting.createMany).not.toHaveBeenCalled();
+      expect(tx.lunchSitting.deleteMany).toHaveBeenCalledWith({
+        where: { academicYearId: ACADEMIC_YEAR, isGenerated: true },
+      });
+    });
+
+    it.each([
+      [
+        'as the group of a locked lesson',
+        (group: string) => lockedLesson({ studentGroupId: group, subjectId: 'another-subject' }),
+        (fixed: AiEngineScheduleRequest['fixedLessons'][number]) => fixed.studentGroupId,
+      ],
+      [
+        'as the second class of a locked lesson',
+        (group: string) =>
+          lockedLesson({ subjectId: 'another-subject', extraGroups: [{ studentGroupId: group }] }),
+        (fixed: AiEngineScheduleRequest['fixedLessons'][number]) => fixed.extraGroupIds[0]!,
+      ],
+    ])('keeps a class apart from a teaching group it shares a pupil with only %s', async (_label, locked, tokenOf) => {
+      // The pupil cannot be in two places: the class's requirement and the
+      // teaching group's hand-placed lesson must not overlap, whichever way the
+      // teaching group reaches the week.
+      const TEACHING_GROUP = '99999999-9999-4999-8999-999999999999';
+      const pupil = 'aaaaaaa1-0000-4000-8000-000000000001';
+      arrange({
+        lockedLessons: [locked(TEACHING_GROUP)],
+        homeMembers: [{ id: pupil, studentGroupId: GROUP_ID }],
+        teachingMembers: [{ studentId: pupil, studentGroupId: TEACHING_GROUP }],
+        groups: [
+          { id: GROUP_ID, gradeLevel: 7, kind: 'CLASS' },
+          { id: TEACHING_GROUP, gradeLevel: null, kind: 'TEACHING_GROUP' },
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+      const payload = postedPayload();
+
+      expect(payload.groupConflicts).toHaveLength(1);
+      expect(new Set(payload.groupConflicts[0])).toEqual(
+        new Set([payload.requirements[0].studentGroupId, tokenOf(payload.fixedLessons[0]!)]),
+      );
+    });
+
+    it('reports each pair of groups once, however the memberships happen to be read', async () => {
+      // Two pupils in the class and both teaching groups, read into them in
+      // opposite orders. Three groups make three pairs, each of them once.
+      const TG1 = '11111111-9999-4999-8999-999999999999';
+      const TG2 = '22222222-9999-4999-8999-999999999999';
+      const [p1, p2] = ['aaaaaaa1-0000-4000-8000-000000000001', 'aaaaaaa2-0000-4000-8000-000000000002'];
+      arrange({
+        requirements: [
+          requirement(),
+          requirement({ id: '88888888-8888-4888-8888-888888888881', studentGroupId: TG1 }),
+          requirement({ id: '88888888-8888-4888-8888-888888888882', studentGroupId: TG2 }),
+        ],
+        homeMembers: [
+          { id: p1, studentGroupId: GROUP_ID },
+          { id: p2, studentGroupId: GROUP_ID },
+        ],
+        teachingMembers: [
+          { studentId: p1, studentGroupId: TG1 },
+          { studentId: p2, studentGroupId: TG2 },
+          { studentId: p1, studentGroupId: TG2 },
+          { studentId: p2, studentGroupId: TG1 },
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+      const payload = postedPayload();
+
+      const unordered = (pair: string[]) => [...pair].sort().join('|');
+      const [a, b, c] = payload.requirements.map((r) => r.studentGroupId) as [string, string, string];
+      expect(payload.groupConflicts.map(unordered).sort()).toEqual(
+        [[a, b], [a, c], [b, c]].map(unordered).sort(),
+      );
+    });
+
+    it('does not let a locked lesson that starts later than the requirement cancel any of it', async () => {
+      // Spring only, against a requirement read from the autumn: the autumn
+      // weeks have no lesson in them, whatever the end dates say.
+      const end = new Date('2026-06-11T00:00:00.000Z');
+      arrange({
+        requirements: [requirement({ startDate: new Date('2025-08-18T00:00:00.000Z'), endDate: end })],
+        lockedLessons: [lockedLesson({ startDate: new Date('2026-01-07T00:00:00.000Z'), endDate: end })],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().requirements[0].lessonsPerWeek).toBe(3);
+    });
+
+    it('counts every locked lesson towards the demand it answers', async () => {
+      // Two a week asked for, two placed by hand: nothing is left to solve.
+      arrange({
+        requirements: [requirement({ lessonsPerWeek: 2 })],
+        lockedLessons: [lockedLesson(), lockedLesson({ id: 'locked-2', dayOfWeek: 3 })],
+      });
+
+      const result = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(http.post).not.toHaveBeenCalled();
+      expect(result.status).toBe('FEASIBLE');
+    });
+
+    it('sends a class to the hall when it attends a locked lesson as its second class', async () => {
+      // Its pupils are in the building for that lesson, so the class eats.
+      const CLASS_B = '55555555-5555-4555-8555-555555555555';
+      arrange({
+        requirements: [requirement()],
+        lockedLessons: [
+          lockedLesson({ subjectId: 'another-subject', extraGroups: [{ studentGroupId: CLASS_B }] }),
+        ],
+        homeMembers: [
+          { id: 'aaaaaaa1-0000-4000-8000-000000000001', studentGroupId: GROUP_ID },
+          { id: 'aaaaaaa2-0000-4000-8000-000000000002', studentGroupId: CLASS_B },
+          { id: 'aaaaaaa3-0000-4000-8000-000000000003', studentGroupId: CLASS_B },
+        ],
+        groups: [
+          { id: GROUP_ID, gradeLevel: 4, kind: 'CLASS' },
+          { id: CLASS_B, gradeLevel: 5, kind: 'CLASS' },
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(
+        postedPayload()
+          .groups.map((g: any) => g.lunchHeadcount)
+          .sort(),
+      ).toEqual([1, 2]);
     });
   });
 
