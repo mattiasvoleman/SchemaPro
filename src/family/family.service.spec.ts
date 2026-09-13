@@ -15,6 +15,27 @@ import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { FamilyService } from './family.service';
 
+/**
+ * A row as Prisma returns it: only the fields the query selected. The shared
+ * mock resolves whatever a spec stubs, whole, so a field the service stopped
+ * selecting would still reach its output here and be undefined in production.
+ */
+const asSelected = (row: unknown, select?: Record<string, unknown>): unknown => {
+  if (!select || row === null || typeof row !== 'object') return row;
+  if (Array.isArray(row)) return row.map((item) => asSelected(item, select));
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, wanted]) => Boolean(wanted))
+      .map(([field, wanted]) => [
+        field,
+        asSelected(
+          (row as Record<string, unknown>)[field],
+          (wanted as { select?: Record<string, unknown> }).select,
+        ),
+      ]),
+  );
+};
+
 const NOW = new Date('2026-08-07T08:00:00.000Z');
 const GUARDIAN_ID = '44444444-4444-4444-8444-444444444444';
 const STUDENT_ID = '55555555-5555-4555-8555-555555555555';
@@ -49,6 +70,20 @@ describe('FamilyService', () => {
   const guardianUser = () =>
     testUser({ role: Role.GUARDIAN, userId: GUARDIAN_ID, schoolId: SCHOOL_ID });
 
+  /**
+   * The student as the school lookup finds them: by id, with only the columns
+   * the query selected. Any other id is a row RLS does not show.
+   */
+  const arrangeStudentRow = () =>
+    tx.user.findUnique.mockImplementation(
+      ({ where, select }: { where?: { id?: string }; select?: Record<string, unknown> }) =>
+        Promise.resolve(
+          where?.id === STUDENT_ID
+            ? asSelected({ id: STUDENT_ID, role: 'STUDENT', schoolId: SCHOOL_ID }, select)
+            : null,
+        ),
+    );
+
   // -----------------------------------------------------------------------
   // createLink
   // -----------------------------------------------------------------------
@@ -60,8 +95,17 @@ describe('FamilyService', () => {
 
     /** Both users are looked up in one Promise.all — dispatch on the id. */
     const arrangeUsers = (guardian: unknown, student: unknown) => {
-      tx.user.findUnique.mockImplementation(({ where }: any) =>
-        Promise.resolve(where.id === GUARDIAN_ID ? guardian : student),
+      tx.user.findUnique.mockImplementation(({ where, select }: any) =>
+        Promise.resolve(
+          asSelected(
+            where?.id === GUARDIAN_ID
+              ? guardian
+              : where?.id === STUDENT_ID
+                ? student
+                : null,
+            select,
+          ),
+        ),
       );
     };
 
@@ -162,6 +206,9 @@ describe('FamilyService', () => {
       });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(tx.guardianStudent.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: LINK_ID } }),
+      );
       expect(tx.guardianStudent.delete).toHaveBeenCalledWith({
         where: { id: LINK_ID },
       });
@@ -171,7 +218,7 @@ describe('FamilyService', () => {
       tx.guardianStudent.findUnique.mockResolvedValue(null);
 
       await expect(service.removeLink(LINK_ID, testUser())).rejects.toThrow(
-        NotFoundException,
+        new NotFoundException('Guardian link not found.'),
       );
       expect(tx.guardianStudent.delete).not.toHaveBeenCalled();
     });
@@ -190,7 +237,7 @@ describe('FamilyService', () => {
     });
 
     const arrangeStudent = () => {
-      tx.user.findUnique.mockResolvedValue({ schoolId: SCHOOL_ID });
+      arrangeStudentRow();
       tx.absenceReport.create.mockResolvedValue({
         id: REPORT_ID,
         studentId: STUDENT_ID,
@@ -371,13 +418,19 @@ describe('FamilyService', () => {
 
   describe('removeAbsenceReport', () => {
     const arrangeReport = (overrides: Record<string, unknown> = {}) => {
-      tx.absenceReport.findUnique.mockResolvedValue({
+      const row = {
         id: REPORT_ID,
+        studentId: STUDENT_ID,
         reportedById: GUARDIAN_ID,
         // NOW is 2026-08-07T08:00Z, so this is "today" at UTC midnight.
         date: new Date('2026-08-07T00:00:00.000Z'),
+        type: 'SICK',
         ...overrides,
-      });
+      };
+      // Found by its id only; any other id is a report RLS does not show.
+      tx.absenceReport.findUnique.mockImplementation(({ where, select }: any) =>
+        Promise.resolve(where?.id === REPORT_ID ? asSelected(row, select) : null),
+      );
       tx.absenceReport.delete.mockResolvedValue({ id: REPORT_ID });
     };
 
@@ -428,7 +481,7 @@ describe('FamilyService', () => {
 
       await expect(
         service.removeAbsenceReport(REPORT_ID, testUser()),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(new NotFoundException('Absence report not found.'));
     });
   });
 
@@ -446,7 +499,7 @@ describe('FamilyService', () => {
     });
 
     const arrangeStudent = () => {
-      tx.user.findUnique.mockResolvedValue({ schoolId: SCHOOL_ID });
+      arrangeStudentRow();
       tx.leaveRequest.create.mockResolvedValue({
         id: REQUEST_ID,
         studentId: STUDENT_ID,
@@ -532,7 +585,7 @@ describe('FamilyService', () => {
 
   describe('decideLeaveRequest', () => {
     const arrangePending = (overrides: Record<string, unknown> = {}) => {
-      tx.leaveRequest.findUnique.mockResolvedValue({
+      const row = {
         id: REQUEST_ID,
         schoolId: SCHOOL_ID,
         studentId: STUDENT_ID,
@@ -540,11 +593,16 @@ describe('FamilyService', () => {
         startDate: new Date('2026-08-10T00:00:00.000Z'),
         endDate: new Date('2026-08-12T00:00:00.000Z'),
         status: 'PENDING',
-        student: { firstName: 'Elsa', lastName: 'Berg' },
+        reason: 'Family trip',
+        student: { firstName: 'Elsa', lastName: 'Berg', email: 'elsa@school.se' },
         ...overrides,
-      });
-      tx.leaveRequest.update.mockImplementation(({ data }: any) =>
-        Promise.resolve({ id: REQUEST_ID, status: data.status }),
+      };
+      // Found by its id only; any other id is a request RLS does not show.
+      tx.leaveRequest.findUnique.mockImplementation(({ where, select }: any) =>
+        Promise.resolve(where?.id === REQUEST_ID ? asSelected(row, select) : null),
+      );
+      tx.leaveRequest.update.mockImplementation(({ data, select }: any) =>
+        Promise.resolve(asSelected({ ...row, ...data }, select)),
       );
       tx.absenceReport.create.mockResolvedValue({ id: REPORT_ID });
     };
@@ -650,9 +708,10 @@ describe('FamilyService', () => {
         },
         email: {
           subject: 'Leave request approved / Ledighetsansökan beviljad',
-          body: expect.stringContaining(
-            'Leave request for Elsa Berg (2026-08-10 – 2026-08-12) was approved.',
-          ),
+          body:
+            'Leave request for Elsa Berg (2026-08-10 – 2026-08-12) was approved.\n' +
+            'Note: Ok\n\n' +
+            'Ledighetsansökan för Elsa Berg (2026-08-10 – 2026-08-12) beviljades.',
         },
       });
     });
@@ -671,7 +730,10 @@ describe('FamilyService', () => {
         expect.objectContaining({
           email: expect.objectContaining({
             subject: 'Leave request rejected / Ledighetsansökan avslagen',
-            body: expect.stringContaining('avslogs'),
+            // No note was given, so there is no note line either.
+            body:
+              'Leave request for Elsa Berg (2026-08-10 – 2026-08-12) was rejected.\n\n' +
+              'Ledighetsansökan för Elsa Berg (2026-08-10 – 2026-08-12) avslogs.',
           }),
         }),
       );
@@ -721,7 +783,7 @@ describe('FamilyService', () => {
 
       await expect(
         service.decideLeaveRequest(REQUEST_ID, { status: 'APPROVED' }, testUser()),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(new NotFoundException('Leave request not found.'));
     });
 
     it.each(['APPROVED', 'REJECTED', 'CANCELLED'])(

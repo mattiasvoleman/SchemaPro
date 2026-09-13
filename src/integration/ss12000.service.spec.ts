@@ -8,6 +8,28 @@ import {
 import type { PrismaService } from '../database/prisma.service';
 import { Ss12000Service } from './ss12000.service';
 
+/**
+ * A row as Prisma returns it: only the fields the query selected. The shared
+ * mock resolves whatever a spec stubs, whole, so a field the service stopped
+ * selecting would still reach its output here and be undefined in production,
+ * which is to say in the payload a kommun reads.
+ */
+const asSelected = (row: unknown, select?: Record<string, unknown>): unknown => {
+  if (!select || row === null || typeof row !== 'object') return row;
+  if (Array.isArray(row)) return row.map((item) => asSelected(item, select));
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, wanted]) => Boolean(wanted))
+      .map(([field, wanted]) => [
+        field,
+        asSelected(
+          (row as Record<string, unknown>)[field],
+          (wanted as { select?: Record<string, unknown> }).select,
+        ),
+      ]),
+  );
+};
+
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 
 describe('Ss12000Service', () => {
@@ -21,10 +43,16 @@ describe('Ss12000Service', () => {
     service = new Ss12000Service(prisma as unknown as PrismaService);
   });
 
-  /** Every list endpoint returns `[count, rows]` from a Promise.all. */
+  /**
+   * Every list endpoint returns `[count, rows]` from a Promise.all. The rows
+   * come back as the query selected them.
+   */
   const arrangeList = (model: string, count: number, rows: unknown[]) => {
     tx[model]!['count']!.mockResolvedValue(count);
-    tx[model]!['findMany']!.mockResolvedValue(rows);
+    tx[model]!['findMany']!.mockImplementation(
+      ({ select }: { select?: Record<string, unknown> }) =>
+        Promise.resolve(asSelected(rows, select)),
+    );
   };
 
   describe('tenancy', () => {
@@ -61,11 +89,22 @@ describe('Ss12000Service', () => {
 
   describe('organisation', () => {
     it('maps a school to the SS12000 organisation shape', async () => {
-      tx.school.findUnique.mockResolvedValue({
-        id: SCHOOL_ID,
-        name: 'Demo Skola',
-        timezone: 'Europe/Stockholm',
-      });
+      // The key's own school, found by its id; any other id finds nothing.
+      tx.school.findUnique.mockImplementation(({ where, select }: any) =>
+        Promise.resolve(
+          where?.id === SCHOOL_ID
+            ? asSelected(
+                {
+                  id: SCHOOL_ID,
+                  name: 'Demo Skola',
+                  timezone: 'Europe/Stockholm',
+                  createdAt: new Date('2026-01-01T00:00:00.000Z'),
+                },
+                select,
+              )
+            : null,
+        ),
+      );
 
       await expect(service.organisation(SCHOOL_ID)).resolves.toEqual({
         id: SCHOOL_ID,
@@ -221,6 +260,41 @@ describe('Ss12000Service', () => {
       const result = await service.persons(SCHOOL_ID);
       expect(result.data[0]).toMatchObject({ enabled: false });
     });
+
+    it('maps a person to the SS12000 person shape', async () => {
+      arrangeList('user', 1, [
+        user({
+          id: 'u9',
+          studentGroupId: 'g1',
+          studentLinks: [{ guardianId: 'parent-1' }],
+        }),
+      ]);
+
+      const result = await service.persons(SCHOOL_ID);
+      expect(result.data).toEqual([
+        {
+          id: 'u9',
+          givenName: 'Karin',
+          familyName: 'Andersson',
+          eduPersonPrincipalNames: ['karin@example.test'],
+          enabled: true,
+          personRole: 'Elev',
+          enrolments: [{ groupId: 'g1' }],
+          responsibleFor: [],
+          responsibles: [{ personId: 'parent-1' }],
+        },
+      ]);
+    });
+
+    it('pages persons sorted by family name', async () => {
+      arrangeList('user', 0, []);
+
+      await service.persons(SCHOOL_ID);
+
+      expect(tx.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ orderBy: { lastName: 'asc' } }),
+      );
+    });
   });
 
   describe('groups', () => {
@@ -242,7 +316,24 @@ describe('Ss12000Service', () => {
         groupType: 'Klass',
         schoolYear: 7,
         schoolYearId: 'ay1',
+        groupMemberships: [{ person: { id: 'm1' } }, { person: { id: 'm2' } }],
       });
+    });
+
+    it('counts and lists the key’s school only, sorted by name', async () => {
+      arrangeList('studentGroup', 0, []);
+
+      await service.groups(SCHOOL_ID);
+
+      expect(tx.studentGroup.count).toHaveBeenCalledWith({
+        where: { schoolId: SCHOOL_ID },
+      });
+      expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { schoolId: SCHOOL_ID },
+          orderBy: { name: 'asc' },
+        }),
+      );
     });
 
     it('counts only active members', async () => {
@@ -294,6 +385,18 @@ describe('Ss12000Service', () => {
       expect(tx.masterLesson.count).toHaveBeenCalledWith({
         where: { schoolId: SCHOOL_ID, academicYear: { isActive: true }, isParked: false },
       });
+    });
+
+    it('lists the week in timetable order, day by day and lesson by lesson', async () => {
+      arrangeList('masterLesson', 0, []);
+
+      await service.activities(SCHOOL_ID);
+
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: [{ dayOfWeek: 'asc' }, { startTime: 'asc' }],
+        }),
+      );
     });
 
     it('maps a master lesson to the SS12000 activity shape', async () => {
@@ -353,7 +456,9 @@ describe('Ss12000Service', () => {
     ])('requires both from (%s) and to (%s)', async (from, to) => {
       await expect(
         service.calendarEvents(SCHOOL_ID, from, to),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('from and to (YYYY-MM-DD) are required.'),
+      );
     });
 
     it('accepts a complete range', async () => {
@@ -374,6 +479,18 @@ describe('Ss12000Service', () => {
           },
         },
       });
+      expect(tx.calendarLesson.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            schoolId: SCHOOL_ID,
+            date: {
+              gte: new Date('2026-08-01T00:00:00.000Z'),
+              lte: new Date('2026-08-31T00:00:00.000Z'),
+            },
+          },
+          orderBy: { startsAt: 'asc' },
+        }),
+      );
     });
 
     const calendarLesson = (overrides: Record<string, unknown> = {}) => ({
@@ -452,7 +569,12 @@ describe('Ss12000Service', () => {
     };
 
     beforeEach(() => {
-      tx.academicYear.findFirst.mockResolvedValue({ id: YEAR_ID });
+      tx.academicYear.findFirst.mockImplementation(
+        ({ select }: { select?: Record<string, unknown> }) =>
+          Promise.resolve(
+            asSelected({ id: YEAR_ID, name: '2026/27', isActive: true }, select),
+          ),
+      );
       tx.user.update.mockResolvedValue({});
       tx.guardianStudent.upsert.mockResolvedValue({});
     });
@@ -571,6 +693,8 @@ describe('Ss12000Service', () => {
         data: { lastName: 'Nygren' },
       });
       expect(result.updated).toBe(1);
+      // The roster named no guardians, so none was looked for or reported.
+      expect(result).toMatchObject({ guardianLinks: 0, needsProvisioning: [] });
     });
 
     it('reuses an existing class for a student, matched within the tenant', async () => {
@@ -603,6 +727,9 @@ describe('Ss12000Service', () => {
         { email: 'karin@example.test', groupDisplayName: '7B' },
       ]);
 
+      expect(tx.academicYear.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { schoolId: SCHOOL_ID, isActive: true } }),
+      );
       expect(tx.studentGroup.create).toHaveBeenCalledWith({
         data: { schoolId: SCHOOL_ID, academicYearId: YEAR_ID, name: '7B' },
         select: { id: true },
@@ -686,7 +813,7 @@ describe('Ss12000Service', () => {
       const result = await service.importPersons(SCHOOL_ID, [
         {
           email: 'karin@example.test',
-          responsibleEmails: ['Okand@Example.test'],
+          responsibleEmails: [' Okand@Example.test '],
         },
       ]);
 
