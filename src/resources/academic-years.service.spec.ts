@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
@@ -16,6 +21,7 @@ import type {
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const YEAR_ID = '99999999-9999-4999-8999-999999999999';
+const OTHER_YEAR_ID = '98989898-9898-4898-8898-989898989898';
 
 /** The row as it stands before an update moves it. */
 const YEAR = {
@@ -23,11 +29,76 @@ const YEAR = {
   endDate: new Date('2027-06-11T00:00:00.000Z'),
 };
 
+const date = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
+
 const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
     code,
     clientVersion: Prisma.prismaVersion.client,
   });
+
+/**
+ * What Prisma hands back for a `select`: the fields asked for and nothing else,
+ * and a refusal for a selection with no truthy field in it ("needs at least one
+ * truthy value"). A stub that returns the whole row whatever the query asked
+ * for lets a read that forgets a field feed `undefined` to the guard behind it,
+ * and the guard then passes.
+ */
+function selected(
+  row: Record<string, unknown>,
+  select?: Record<string, unknown>,
+): Record<string, unknown> {
+  if (select === undefined) return row;
+  const fields = Object.keys(select).filter((field) => select[field]);
+  if (fields.length === 0) {
+    throw new Error('Prisma: a `select` needs at least one truthy value.');
+  }
+  return Object.fromEntries(fields.map((field) => [field, row[field]]));
+}
+
+// ---------------------------------------------------------------------------
+// The year's lov as a table the stranded-break count actually runs against.
+//
+// Asserting the `where` literally would prove the service builds the filter
+// someone typed, so the breaks are counted BY the filter it produced and the
+// tests name which of them must be counted. The interpreter knows exactly the
+// keys this service emits and throws on anything else, the same way
+// school-breaks.service.spec.ts reads its delete filter.
+// ---------------------------------------------------------------------------
+
+interface FixtureBreak {
+  name: string;
+  academicYearId: string;
+  startDate: string;
+  endDate: string;
+}
+
+function breakMatches(where: Record<string, unknown>, row: FixtureBreak): boolean {
+  return Object.entries(where).every(([key, condition]) => {
+    switch (key) {
+      case 'academicYearId':
+        return row.academicYearId === condition;
+      case 'OR':
+        // Prisma reads an empty OR as "no alternative holds": it matches nothing.
+        return (condition as Record<string, unknown>[]).some((branch) =>
+          breakMatches(branch, row),
+        );
+      case 'startDate':
+      case 'endDate': {
+        const value = date(row[key]);
+        return Object.entries(condition as Record<string, Date>).every(
+          ([operator, bound]) => {
+            if (operator === 'lt') return value < bound;
+            if (operator === 'gt') return value > bound;
+            throw new Error(`The count grew an operator tests do not know: ${operator}`);
+          },
+        );
+      }
+      default:
+        throw new Error(`The count grew a condition tests do not know: ${key}`);
+    }
+  });
+}
 
 describe('AcademicYearsService', () => {
   let service: AcademicYearsService;
@@ -129,6 +200,47 @@ describe('AcademicYearsService', () => {
   });
 
   describe('update', () => {
+    /** The year row, read back the way Prisma answers the query sent for it. */
+    const givenYear = (year: { startDate: Date; endDate: Date } = YEAR) => {
+      tx.academicYear.findUnique.mockImplementation(
+        ({
+          where,
+          select,
+        }: {
+          where?: { id?: string };
+          select?: Record<string, unknown>;
+        }) => {
+          if (where?.id === undefined) {
+            throw new Error('Prisma: findUnique needs a unique field in `where`.');
+          }
+          const row = {
+            id: YEAR_ID,
+            schoolId: SCHOOL_ID,
+            name: '2026/2027',
+            isActive: true,
+            ...year,
+          };
+          return Promise.resolve(where.id === YEAR_ID ? selected(row, select) : null);
+        },
+      );
+    };
+
+    const givenBreaks = (breaks: FixtureBreak[]) => {
+      tx.schoolBreak.count.mockImplementation(
+        (args: { where?: Record<string, unknown> } = {}) =>
+          Promise.resolve(
+            breaks.filter((row) => breakMatches(args.where ?? {}, row)).length,
+          ),
+      );
+    };
+
+    /** The whole refusal, so a sentence that grows or loses a part fails too. */
+    const stranding = (what: string, from: string, to: string) =>
+      new BadRequestException(
+        `${what} would fall outside the new academic year (${from} to ${to}). ` +
+          'Move or clear them first.',
+      );
+
     it('excludes the year itself when stealing the active flag', async () => {
       tx.academicYear.updateMany.mockResolvedValue({ count: 1 });
       tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
@@ -159,7 +271,7 @@ describe('AcademicYearsService', () => {
     });
 
     it('sends only the provided fields, dates parsed', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.teachingRequirement.count.mockResolvedValue(0);
       tx.schoolBreak.count.mockResolvedValue(0);
       tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
@@ -192,7 +304,7 @@ describe('AcademicYearsService', () => {
     });
 
     it('refuses to move the year out from under existing periods, and says how many', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.teachingRequirement.count.mockResolvedValue(3);
       tx.schoolBreak.count.mockResolvedValue(0);
 
@@ -201,10 +313,21 @@ describe('AcademicYearsService', () => {
       await expect(
         service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
       ).rejects.toThrow(
-        '3 teaching requirements would fall outside the new academic year ' +
-          '(2026-09-14 to 2027-06-11). Move or clear them first.',
+        stranding('3 teaching requirements', '2026-09-14', '2027-06-11'),
       );
       expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('says "requirement" for a single one', async () => {
+      givenYear();
+      tx.teachingRequirement.count.mockResolvedValue(1);
+      tx.schoolBreak.count.mockResolvedValue(0);
+
+      await expect(
+        service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
+      ).rejects.toThrow(
+        stranding('1 teaching requirement', '2026-09-14', '2027-06-11'),
+      );
     });
 
     it('refuses just as firmly when only a lov would be stranded', async () => {
@@ -215,39 +338,67 @@ describe('AcademicYearsService', () => {
        * can never be edited back, because every write path measures the range
        * against the year it no longer fits inside.
        */
-      tx.academicYear.findUnique.mockResolvedValue({
-        startDate: new Date('2026-08-17T00:00:00.000Z'),
-        endDate: new Date('2027-06-11T00:00:00.000Z'),
-      });
+      givenYear();
       tx.teachingRequirement.count.mockResolvedValue(0);
       tx.schoolBreak.count.mockResolvedValue(1);
 
+      // Only the lov is named: "0 teaching requirements and 1 break" would send
+      // the admin to a page with nothing on it to fix.
       await expect(
         service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
-      ).rejects.toThrow(
-        '1 break would fall outside the new academic year ' +
-          '(2026-09-14 to 2027-06-11). Move or clear them first.',
-      );
+      ).rejects.toThrow(stranding('1 break', '2026-09-14', '2027-06-11'));
+      expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('counts the lov the new bounds leave outside, and only this year’s', async () => {
+      givenYear();
+      tx.teachingRequirement.count.mockResolvedValue(0);
+      givenBreaks([
+        // Stranded: the start moves past both of its days.
+        {
+          name: 'Uppstartsdagar',
+          academicYearId: YEAR_ID,
+          startDate: '2026-08-17',
+          endDate: '2026-08-18',
+        },
+        // Still inside the narrowed year, and not the admin's problem.
+        {
+          name: 'Höstlov',
+          academicYearId: YEAR_ID,
+          startDate: '2026-10-26',
+          endDate: '2026-10-30',
+        },
+        // Another year's lov is outside these bounds too, and belongs to it.
+        {
+          name: 'Sportlov',
+          academicYearId: OTHER_YEAR_ID,
+          startDate: '2026-02-22',
+          endDate: '2026-02-26',
+        },
+      ]);
+
+      await expect(
+        service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
+      ).rejects.toThrow(stranding('1 break', '2026-09-14', '2027-06-11'));
       expect(tx.academicYear.update).not.toHaveBeenCalled();
     });
 
     it('names both when a year move would strand periods and lov together', async () => {
       // Two counts rather than one total: "4 rader" tells nobody where to look,
       // and the two live on different pages.
-      tx.academicYear.findUnique.mockResolvedValue({
-        startDate: new Date('2026-08-17T00:00:00.000Z'),
-        endDate: new Date('2027-06-11T00:00:00.000Z'),
-      });
+      givenYear();
       tx.teachingRequirement.count.mockResolvedValue(3);
       tx.schoolBreak.count.mockResolvedValue(2);
 
       await expect(
         service.update(YEAR_ID, { startDate: '2026-09-14' }, testUser()),
-      ).rejects.toThrow('3 teaching requirements and 2 breaks would fall outside');
+      ).rejects.toThrow(
+        stranding('3 teaching requirements and 2 breaks', '2026-09-14', '2027-06-11'),
+      );
     });
 
     it('measures the periods against the bounds as they will end up', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.teachingRequirement.count.mockResolvedValue(0);
       tx.schoolBreak.count.mockResolvedValue(0);
       tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
@@ -267,11 +418,14 @@ describe('AcademicYearsService', () => {
           ],
         },
       });
-      expect(tx.academicYear.update).toHaveBeenCalled();
+      expect(tx.academicYear.update).toHaveBeenCalledWith({
+        where: { id: YEAR_ID },
+        data: { endDate: new Date('2027-06-18T00:00:00.000Z') },
+      });
     });
 
     it('lets a widened year through — nothing that fit can fall outside a superset', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.teachingRequirement.count.mockResolvedValue(0);
       tx.schoolBreak.count.mockResolvedValue(0);
       tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
@@ -286,13 +440,25 @@ describe('AcademicYearsService', () => {
     });
 
     it('says a one-sided move inverted the year rather than blaming the periods', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
 
       await expect(
         service.update(YEAR_ID, { startDate: '2027-08-01' }, testUser()),
       ).rejects.toThrow('startDate must be before endDate.');
       // The count would have answered "every period is outside", which is true
       // and says nothing about the mistake that was actually made.
+      expect(tx.teachingRequirement.count).not.toHaveBeenCalled();
+      expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a one-sided move that leaves the year no days at all', async () => {
+      // create() refuses startDate === endDate; a move one field at a time must
+      // not be the way round it.
+      givenYear();
+
+      await expect(
+        service.update(YEAR_ID, { startDate: '2027-06-11' }, testUser()),
+      ).rejects.toThrow(new BadRequestException('startDate must be before endDate.'));
       expect(tx.teachingRequirement.count).not.toHaveBeenCalled();
       expect(tx.academicYear.update).not.toHaveBeenCalled();
     });

@@ -14,7 +14,10 @@ import {
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import { TeachingRequirementsService } from './teaching-requirements.service';
-import type { CreateTeachingRequirementDto } from './dto/teaching-requirement.dto';
+import type {
+  CreateTeachingRequirementDto,
+  UpdateTeachingRequirementDto,
+} from './dto/teaching-requirement.dto';
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const YEAR_ID = '99999999-9999-4999-8999-999999999999';
@@ -35,6 +38,40 @@ const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
     code,
     clientVersion: Prisma.prismaVersion.client,
   });
+
+type Selection = Record<string, unknown>;
+
+/**
+ * What Prisma hands back for a `select`: the fields asked for and nothing else,
+ * a relation through its own nested `select` (or whole, when it is named
+ * without one), and a refusal for a selection with no truthy field in it
+ * ("needs at least one truthy value"). A stub that returns the whole row
+ * whatever the query asked for lets a read that forgets a field feed
+ * `undefined` to the check behind it, and the check then passes.
+ */
+function selected(
+  row: Record<string, unknown>,
+  select?: Selection,
+): Record<string, unknown> {
+  if (select === undefined) return row;
+  const fields = Object.entries(select).filter(([, value]) => value);
+  if (fields.length === 0) {
+    throw new Error('Prisma: a `select` needs at least one truthy value.');
+  }
+  return Object.fromEntries(
+    fields.map(([field, value]) => {
+      const nested = (value as { select?: Selection }).select;
+      const related = row[field];
+      if (!nested) return [field, related];
+      return [
+        field,
+        Array.isArray(related)
+          ? related.map((entry: Record<string, unknown>) => selected(entry, nested))
+          : selected(related as Record<string, unknown>, nested),
+      ];
+    }),
+  );
+}
 
 describe('TeachingRequirementsService', () => {
   let service: TeachingRequirementsService;
@@ -183,10 +220,26 @@ describe('TeachingRequirementsService', () => {
     it('refuses a period that reaches past the end of the läsår', async () => {
       tx.academicYear.findUnique.mockResolvedValue(YEAR);
 
+      // The answer names the field and the year's own bounds: the admin has to
+      // know which of two date pickers to move, and how far.
       await expect(
         service.create(dto({ endDate: '2027-08-01' }), testUser()),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException(
+          'endDate must fall inside the academic year (2026-08-17 to 2027-06-11).',
+        ),
+      );
       expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts a period that starts on the first day of the läsår', async () => {
+      // Both bounds are inclusive: the day the year starts is inside it.
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await expect(
+        service.create(dto({ startDate: '2026-08-17' }), testUser()),
+      ).resolves.toBeDefined();
     });
 
     it('refuses an end before its start instead of letting the CHECK 500', async () => {
@@ -197,8 +250,24 @@ describe('TeachingRequirementsService', () => {
           dto({ startDate: '2027-01-11', endDate: '2026-12-01' }),
           testUser(),
         ),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('endDate must not be before startDate.'),
+      );
       expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts a period of a single day', async () => {
+      // A study visit or a test day: a start and an end on the same date is a
+      // period, not an inverted one.
+      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await expect(
+        service.create(
+          dto({ startDate: '2027-01-11', endDate: '2027-01-11' }),
+          testUser(),
+        ),
+      ).resolves.toBeDefined();
     });
 
     it('says nothing about a year RLS hides, and lets the FK refuse it', async () => {
@@ -263,6 +332,17 @@ describe('TeachingRequirementsService', () => {
       ).rejects.toThrow(/35.*40|40.*35/);
     });
 
+    it('says which length it refused, in the words the timplan form shows', async () => {
+      await expect(
+        service.create(dto({ minutesPerLesson: 37 }), testUser()),
+      ).rejects.toThrow(
+        new BadRequestException(
+          '37 minuter går inte att lägga på schemat, som räknar i hela ' +
+            '5-minutersintervall. Närmast är 35 eller 40 minuter.',
+        ),
+      );
+    });
+
     it('checks an update that changes only the length', async () => {
       // The guard first sat inside the period's condition, so the ordinary
       // edit — change the length, touch nothing else — skipped it entirely.
@@ -274,6 +354,36 @@ describe('TeachingRequirementsService', () => {
   });
 
   describe('update', () => {
+    /**
+     * The stored period and its year, read back the way Prisma answers the
+     * query that was sent: found only by the row's own id, cut to the fields
+     * the select names, the year through its own nested select. A stub that
+     * returns the row whatever was asked would let a read that dropped
+     * `endDate` measure the merge against `undefined` — and pass it.
+     */
+    const givenRequirement = (period: {
+      startDate: Date | null;
+      endDate: Date | null;
+    }) => {
+      const row = {
+        id: REQUIREMENT_ID,
+        schoolId: SCHOOL_ID,
+        academicYearId: YEAR_ID,
+        ...period,
+        academicYear: { id: YEAR_ID, schoolId: SCHOOL_ID, ...YEAR },
+      };
+      tx.teachingRequirement.findUnique.mockImplementation(
+        ({ where, select }: { where?: { id?: string }; select?: Selection }) => {
+          if (where?.id === undefined) {
+            throw new Error('Prisma: findUnique needs a unique field in `where`.');
+          }
+          return Promise.resolve(
+            where.id === REQUIREMENT_ID ? selected(row, select) : null,
+          );
+        },
+      );
+    };
+
     it('unassigns the teacher with an explicit null and nothing else', async () => {
       const row = {
         id: REQUIREMENT_ID,
@@ -312,11 +422,26 @@ describe('TeachingRequirementsService', () => {
       expect(tx.teachingRequirement.findUnique).not.toHaveBeenCalled();
     });
 
+    it.each<[string, UpdateTeachingRequirementDto]>([
+      ['the co-teacher', { coTeacherId: CO_TEACHER_ID }],
+      ['the recurrence', { recurrence: 'EVEN_WEEKS' }],
+    ])('a PATCH naming only %s writes it', async (_field, patch) => {
+      // A dropped field is an edit that answers 200 and changes nothing: the
+      // odd/even split the admin just chose, still "every week" underneath.
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.update(REQUIREMENT_ID, patch, testUser());
+
+      expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+        where: { id: REQUIREMENT_ID },
+        data: patch,
+      });
+    });
+
     it('clears a period with explicit nulls and nothing else', async () => {
-      tx.teachingRequirement.findUnique.mockResolvedValue({
+      givenRequirement({
         startDate: new Date('2027-01-11T00:00:00.000Z'),
         endDate: new Date('2027-06-11T00:00:00.000Z'),
-        academicYear: YEAR,
       });
       tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
 
@@ -333,10 +458,9 @@ describe('TeachingRequirementsService', () => {
     });
 
     it('measures a one-sided move against the date already on the row', async () => {
-      tx.teachingRequirement.findUnique.mockResolvedValue({
+      givenRequirement({
         startDate: new Date('2027-01-11T00:00:00.000Z'),
         endDate: null,
-        academicYear: YEAR,
       });
 
       // Nothing in this PATCH is wrong on its own; it is wrong against the
@@ -348,15 +472,40 @@ describe('TeachingRequirementsService', () => {
     });
 
     it('refuses a period moved outside the row’s own läsår', async () => {
-      tx.teachingRequirement.findUnique.mockResolvedValue({
-        startDate: null,
-        endDate: null,
-        academicYear: YEAR,
-      });
+      givenRequirement({ startDate: null, endDate: null });
 
       await expect(
         service.update(REQUIREMENT_ID, { startDate: '2026-06-01' }, testUser()),
       ).rejects.toThrow(BadRequestException);
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses an end moved past the row’s own läsår', async () => {
+      givenRequirement({ startDate: null, endDate: null });
+
+      await expect(
+        service.update(REQUIREMENT_ID, { endDate: '2027-08-01' }, testUser()),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'endDate must fall inside the academic year (2026-08-17 to 2027-06-11).',
+        ),
+      );
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+
+    it('measures a start moved past the end already on the row', async () => {
+      // The mirror of the one-sided move above: this PATCH names only the
+      // start, and it is wrong against the end the row already holds.
+      givenRequirement({
+        startDate: new Date('2027-01-11T00:00:00.000Z'),
+        endDate: new Date('2027-03-01T00:00:00.000Z'),
+      });
+
+      await expect(
+        service.update(REQUIREMENT_ID, { startDate: '2027-04-01' }, testUser()),
+      ).rejects.toThrow(
+        new BadRequestException('endDate must not be before startDate.'),
+      );
       expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
     });
 

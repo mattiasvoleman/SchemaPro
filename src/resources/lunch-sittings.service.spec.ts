@@ -32,18 +32,66 @@ const storedSitting = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** What Prisma throws for a unique read that names no unique field. */
+const noUniqueField = (): Error =>
+  new Error('Prisma: findUnique needs a unique field in `where`.');
+
 describe('LunchSittingsService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
   let service: LunchSittingsService;
   const user = testUser({ schoolId: SCHOOL_ID });
 
+  /*
+   * The reads are answered from the query the service actually sent, not
+   * handed a row whatever it asked: the lunch settings only for the school
+   * named, the class only for the id, year and kind named, the sitting only for
+   * its own id. A read that loses its `where` finds nothing or fails, as it
+   * would against the table, and a `select` with nothing truthy in it is
+   * refused, as Prisma refuses one.
+   */
+  const givenSitting = (overrides: Record<string, unknown> = {}) => {
+    const row = storedSitting(overrides);
+    tx.lunchSitting.findUnique.mockImplementation(
+      ({ where }: { where?: { id?: string } }) => {
+        if (where?.id === undefined) throw noUniqueField();
+        return Promise.resolve(where.id === row.id ? row : null);
+      },
+    );
+  };
+
   beforeEach(() => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     service = new LunchSittingsService(prisma as unknown as PrismaService);
-    tx.lunchSetting.findUnique.mockResolvedValue({ lunchEnabled: true, lunchMinutes: 30 });
-    tx.studentGroup.findFirst.mockResolvedValue({ id: CLASS_ID });
+    tx.lunchSetting.findUnique.mockImplementation(
+      ({ where }: { where?: { schoolId?: string } }) => {
+        if (where?.schoolId === undefined) throw noUniqueField();
+        return Promise.resolve(
+          where.schoolId === SCHOOL_ID
+            ? { schoolId: SCHOOL_ID, lunchEnabled: true, lunchMinutes: 30 }
+            : null,
+        );
+      },
+    );
+    tx.studentGroup.findFirst.mockImplementation(
+      ({
+        where,
+        select,
+      }: {
+        where: { id?: string; academicYearId?: string; kind?: string };
+        select?: Record<string, boolean>;
+      }) => {
+        if (select && !Object.values(select).some(Boolean)) {
+          throw new Error('Prisma: a `select` needs at least one truthy value.');
+        }
+        const isTheClass =
+          where.id === CLASS_ID &&
+          where.academicYearId === YEAR_ID &&
+          where.kind === 'CLASS';
+        return Promise.resolve(isTheClass ? { id: CLASS_ID } : null);
+      },
+    );
     tx.user.count.mockResolvedValue(24);
   });
 
@@ -74,6 +122,34 @@ describe('LunchSittingsService', () => {
 
       const { create } = tx.lunchSitting.upsert.mock.calls[0][0];
       expect(create.endTime).toEqual(wallClock('13:30'));
+    });
+
+    it('answers with the meal as the grid draws it', async () => {
+      tx.lunchSitting.upsert.mockResolvedValue(storedSitting());
+
+      await expect(place()).resolves.toEqual({
+        id: SITTING_ID,
+        studentGroupId: CLASS_ID,
+        dayOfWeek: 2,
+        startTime: '13:00',
+        endTime: '13:30',
+        headcount: 24,
+        isGenerated: false,
+      });
+    });
+
+    it('writes the end of an early sitting with its leading zero', async () => {
+      // "9:30" is not a clock parseTimeString accepts, so an end written
+      // without the zero would turn every sitting that ends before ten into a
+      // 400 about a time the admin never typed.
+      tx.lunchSitting.upsert.mockResolvedValue(
+        storedSitting({ startTime: wallClock('09:00'), endTime: wallClock('09:30') }),
+      );
+
+      await expect(place('09:00')).resolves.toMatchObject({ endTime: '09:30' });
+      expect(tx.lunchSitting.upsert.mock.calls[0][0].create.endTime).toEqual(
+        wallClock('09:30'),
+      );
     });
 
     it('replaces whatever the class already had that day', async () => {
@@ -114,7 +190,11 @@ describe('LunchSittingsService', () => {
       // across it.
       tx.lunchSetting.findUnique.mockResolvedValue(settings);
 
-      await expect(place()).rejects.toBeInstanceOf(BadRequestException);
+      await expect(place()).rejects.toThrow(
+        new BadRequestException(
+          'Lunch is not switched on for this school, so there is no meal to place.',
+        ),
+      );
       expect(tx.lunchSitting.upsert).not.toHaveBeenCalled();
     });
 
@@ -122,32 +202,64 @@ describe('LunchSittingsService', () => {
       // A teaching group's pupils eat with their home class.
       tx.studentGroup.findFirst.mockResolvedValue(null);
 
-      await expect(place()).rejects.toBeInstanceOf(BadRequestException);
+      await expect(place()).rejects.toThrow(
+        new BadRequestException(
+          'A meal can only be placed for a class of this academic year.',
+        ),
+      );
       expect(tx.studentGroup.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: CLASS_ID, academicYearId: YEAR_ID, kind: 'CLASS' } }),
       );
     });
 
     it('refuses a meal that would run past midnight', async () => {
-      await expect(place('23:45')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(place('23:45')).rejects.toThrow(
+        new BadRequestException('The meal would run past midnight.'),
+      );
+    });
+
+    it('refuses a meal that would end on the stroke of midnight', async () => {
+      // "24:00" parses to the NEXT day's 00:00, so the end would be stored
+      // half an hour before the start.
+      await expect(place('23:30')).rejects.toThrow(
+        new BadRequestException('The meal would run past midnight.'),
+      );
+      expect(tx.lunchSitting.upsert).not.toHaveBeenCalled();
     });
   });
 
   describe('moving a meal', () => {
     it('makes the solver’s meal the school’s where it was dropped', async () => {
-      tx.lunchSitting.findUnique.mockResolvedValue(storedSitting({ isGenerated: true }));
-      tx.lunchSitting.update.mockResolvedValue(storedSitting());
+      givenSitting({ isGenerated: true });
+      tx.lunchSitting.update.mockResolvedValue(
+        storedSitting({ startTime: wallClock('12:30'), endTime: wallClock('13:00') }),
+      );
 
-      await service.move(SITTING_ID, { startTime: '12:30' }, user);
+      await expect(
+        service.move(SITTING_ID, { startTime: '12:30' }, user),
+      ).resolves.toEqual({
+        id: SITTING_ID,
+        studentGroupId: CLASS_ID,
+        dayOfWeek: 2,
+        startTime: '12:30',
+        endTime: '13:00',
+        headcount: 24,
+        isGenerated: false,
+      });
 
-      const { data } = tx.lunchSitting.update.mock.calls[0][0];
-      expect(data.isGenerated).toBe(false);
-      expect(data.startTime).toEqual(wallClock('12:30'));
-      expect(data.endTime).toEqual(wallClock('13:00'));
+      expect(tx.lunchSitting.update).toHaveBeenCalledWith({
+        where: { id: SITTING_ID },
+        data: {
+          dayOfWeek: 2,
+          startTime: wallClock('12:30'),
+          endTime: wallClock('13:00'),
+          isGenerated: false,
+        },
+      });
     });
 
     it('clears the meal already on a new day, and only on a new day', async () => {
-      tx.lunchSitting.findUnique.mockResolvedValue(storedSitting());
+      givenSitting();
       tx.lunchSitting.update.mockResolvedValue(storedSitting());
 
       await service.move(SITTING_ID, { startTime: '12:30' }, user);
@@ -159,18 +271,19 @@ describe('LunchSittingsService', () => {
       });
     });
 
-    it('is a 404 for a meal that does not exist', async () => {
+    it('is a 404 naming the meal that does not exist', async () => {
       tx.lunchSitting.findUnique.mockResolvedValue(null);
 
-      await expect(service.move(SITTING_ID, { startTime: '12:30' }, user)).rejects.toBeInstanceOf(
-        NotFoundException,
+      await expect(service.move(SITTING_ID, { startTime: '12:30' }, user)).rejects.toThrow(
+        new NotFoundException(`Lunch sitting ${SITTING_ID} not found.`),
       );
+      expect(tx.lunchSitting.update).not.toHaveBeenCalled();
     });
   });
 
   describe('removing a meal', () => {
     it('removes one the school placed', async () => {
-      tx.lunchSitting.findUnique.mockResolvedValue(storedSitting());
+      givenSitting();
 
       await service.remove(SITTING_ID, user);
 
@@ -181,9 +294,22 @@ describe('LunchSittingsService', () => {
       // The next run replaces its own. Deleting it here would leave the day
       // with no meal until then — a band that vanishes for a reason the screen
       // cannot show.
-      tx.lunchSitting.findUnique.mockResolvedValue(storedSitting({ isGenerated: true }));
+      givenSitting({ isGenerated: true });
 
-      await expect(service.remove(SITTING_ID, user)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.remove(SITTING_ID, user)).rejects.toThrow(
+        new BadRequestException(
+          'Only a meal placed by hand can be removed; the solver replaces its own on the next run.',
+        ),
+      );
+      expect(tx.lunchSitting.delete).not.toHaveBeenCalled();
+    });
+
+    it('is a 404 for a meal that is already gone, not a crash', async () => {
+      tx.lunchSitting.findUnique.mockResolvedValue(null);
+
+      await expect(service.remove(SITTING_ID, user)).rejects.toThrow(
+        new NotFoundException(`Lunch sitting ${SITTING_ID} not found.`),
+      );
       expect(tx.lunchSitting.delete).not.toHaveBeenCalled();
     });
   });

@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -8,6 +14,7 @@ import {
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import { LunchServingsService } from './lunch-servings.service';
+import type { UpdateLunchServingDto } from './dto/lunch-serving.dto';
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const SERVING_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
@@ -29,6 +36,60 @@ const storedServing = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
+  new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
+    code,
+    clientVersion: Prisma.prismaVersion.client,
+  });
+
+/**
+ * Rows in the order a `findMany` `orderBy` asks for, sorted the way PostgreSQL
+ * sorts them: entries applied left to right, each naming one field with
+ * `'asc' | 'desc'` or `{ sort, nulls }`, NULLs last when ascending unless told
+ * otherwise. Anything it cannot read throws rather than being ignored, so a
+ * sort that loses a key reorders the rows and a sort nobody could run fails.
+ */
+function ordered<T extends Record<string, unknown>>(rows: T[], orderBy: unknown): T[] {
+  const entries = (
+    orderBy === undefined ? [] : Array.isArray(orderBy) ? orderBy : [orderBy]
+  ) as Record<string, unknown>[];
+  const keys = entries.map((entry) => {
+    const pairs = Object.entries(entry);
+    if (pairs.length !== 1) {
+      throw new Error(`An orderBy entry names exactly one field: ${JSON.stringify(entry)}`);
+    }
+    const [field, how] = pairs[0];
+    const { sort, nulls } =
+      typeof how === 'string'
+        ? { sort: how, nulls: undefined }
+        : (how as { sort?: unknown; nulls?: unknown });
+    if (sort !== 'asc' && sort !== 'desc') {
+      throw new Error(`orderBy.${field}: sort is asc or desc, not ${JSON.stringify(sort)}`);
+    }
+    if (nulls !== undefined && nulls !== 'first' && nulls !== 'last') {
+      throw new Error(`orderBy.${field}: nulls is first or last, not ${JSON.stringify(nulls)}`);
+    }
+    return {
+      field,
+      direction: sort === 'asc' ? 1 : -1,
+      nullsFirst: nulls === undefined ? sort === 'desc' : nulls === 'first',
+    };
+  });
+  const comparable = (value: unknown) =>
+    (value instanceof Date ? value.getTime() : value) as number | null;
+  return [...rows].sort((a, b) => {
+    for (const { field, direction, nullsFirst } of keys) {
+      const x = comparable(a[field]);
+      const y = comparable(b[field]);
+      if (x === y) continue;
+      if (x === null) return nullsFirst ? -1 : 1;
+      if (y === null) return nullsFirst ? 1 : -1;
+      return x < y ? -direction : direction;
+    }
+    return 0;
+  });
+}
+
 describe('LunchServingsService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
@@ -39,6 +100,17 @@ describe('LunchServingsService', () => {
     prisma = createPrismaMock(tx);
     service = new LunchServingsService(prisma as unknown as PrismaService);
   });
+
+  /** The stored sitting, found by its own id and by nothing else — as the table would. */
+  const givenServing = (overrides: Record<string, unknown> = {}) => {
+    const row = storedServing(overrides);
+    tx.lunchServing.findUnique.mockImplementation(({ where }: { where?: { id?: string } }) => {
+      if (where?.id === undefined) {
+        throw new Error('Prisma: findUnique needs a unique field in `where`.');
+      }
+      return Promise.resolve(where.id === row.id ? row : null);
+    });
+  };
 
   // -------------------------------------------------------------------------
   // The clock, which is the whole reason this service has a response type
@@ -81,6 +153,29 @@ describe('LunchServingsService', () => {
 
       expect(serving.dayOfWeek).toBeNull();
       expect('dayOfWeek' in serving).toBe(true);
+    });
+
+    it('lists the flow the way it runs on a Monday: youngest first, every-day rows before weekdays, up the clock', async () => {
+      // The rows arrive scrambled and are sorted by the service's own orderBy;
+      // each of its keys has a pair of rows only it can put in order.
+      const rows = [
+        storedServing({ id: 'åk4-6', minGradeLevel: 4, maxGradeLevel: 6, dayOfWeek: null, startTime: wallClock('10:00'), endTime: wallClock('10:30') }),
+        storedServing({ id: 'åk0-3-11.30', minGradeLevel: 0, maxGradeLevel: 3, dayOfWeek: null, startTime: wallClock('11:30'), endTime: wallClock('12:00') }),
+        storedServing({ id: 'åk0-3-måndag', minGradeLevel: 0, maxGradeLevel: 3, dayOfWeek: 1, startTime: wallClock('10:30'), endTime: wallClock('11:00') }),
+        storedServing({ id: 'åk0-3-11.00', minGradeLevel: 0, maxGradeLevel: 3, dayOfWeek: null, startTime: wallClock('11:00'), endTime: wallClock('11:30') }),
+      ];
+      tx.lunchServing.findMany.mockImplementation((args: { orderBy?: unknown } = {}) =>
+        Promise.resolve(ordered(rows, args.orderBy)),
+      );
+
+      const servings = await service.list(testUser({ schoolId: SCHOOL_ID }));
+
+      expect(servings.map((serving) => serving.id)).toEqual([
+        'åk0-3-11.00',
+        'åk0-3-11.30',
+        'åk0-3-måndag',
+        'åk4-6',
+      ]);
     });
   });
 
@@ -129,7 +224,7 @@ describe('LunchServingsService', () => {
           { minGradeLevel: 4, maxGradeLevel: 6, startTime: '12:00', endTime: '11:00' },
           user(),
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(new BadRequestException('startTime must be before endTime.'));
       expect(tx.lunchServing.create).not.toHaveBeenCalled();
     });
 
@@ -176,8 +271,21 @@ describe('LunchServingsService', () => {
           { minGradeLevel: 9, maxGradeLevel: 4, startTime: '11:00', endTime: '12:00' },
           user(),
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('minGradeLevel must not be above maxGradeLevel.'),
+      );
       expect(tx.lunchServing.create).not.toHaveBeenCalled();
+    });
+
+    it('answers a write the database refuses as a duplicate (P2002) with 409', async () => {
+      tx.lunchServing.create.mockRejectedValue(prismaError('P2002'));
+
+      await expect(
+        service.create(
+          { minGradeLevel: 4, maxGradeLevel: 6, startTime: '11:00', endTime: '12:00' },
+          user(),
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it('accepts a single year, which is the common case', async () => {
@@ -217,7 +325,7 @@ describe('LunchServingsService', () => {
      * its guard sat inside the branch that only ran when dates were sent.
      */
     it('refuses an end moved before the start it never mentions', async () => {
-      tx.lunchServing.findUnique.mockResolvedValue(storedServing());
+      givenServing();
 
       await expect(service.update(SERVING_ID, { endTime: '07:00' }, user())).rejects.toBeInstanceOf(
         BadRequestException,
@@ -226,7 +334,7 @@ describe('LunchServingsService', () => {
     });
 
     it('refuses a start moved past the end it never mentions', async () => {
-      tx.lunchServing.findUnique.mockResolvedValue(storedServing());
+      givenServing();
 
       await expect(service.update(SERVING_ID, { startTime: '12:30' }, user())).rejects.toBeInstanceOf(
         BadRequestException,
@@ -234,7 +342,7 @@ describe('LunchServingsService', () => {
     });
 
     it('refuses a min year pushed past the stored max', async () => {
-      tx.lunchServing.findUnique.mockResolvedValue(storedServing());
+      givenServing();
 
       await expect(service.update(SERVING_ID, { minGradeLevel: 9 }, user())).rejects.toBeInstanceOf(
         BadRequestException,
@@ -243,7 +351,7 @@ describe('LunchServingsService', () => {
     });
 
     it('refuses a max year pulled below the stored min', async () => {
-      tx.lunchServing.findUnique.mockResolvedValue(storedServing());
+      givenServing();
 
       await expect(service.update(SERVING_ID, { maxGradeLevel: 1 }, user())).rejects.toBeInstanceOf(
         BadRequestException,
@@ -251,7 +359,7 @@ describe('LunchServingsService', () => {
     });
 
     it('accepts a one-sided move that still leaves the row whole', async () => {
-      tx.lunchServing.findUnique.mockResolvedValue(storedServing());
+      givenServing();
       tx.lunchServing.update.mockResolvedValue(storedServing({ endTime: wallClock('11:45') }));
 
       await expect(service.update(SERVING_ID, { endTime: '11:45' }, user())).resolves.toMatchObject({
@@ -263,7 +371,7 @@ describe('LunchServingsService', () => {
     it('accepts both ends moved together past where either alone would fail', async () => {
       // 12:30-13:00 is entirely after the stored 11:00-12:00, so each end taken
       // on its own is invalid against the stored row while the pair is fine.
-      tx.lunchServing.findUnique.mockResolvedValue(storedServing());
+      givenServing();
       tx.lunchServing.update.mockResolvedValue(
         storedServing({ startTime: wallClock('12:30'), endTime: wallClock('13:00') }),
       );
@@ -274,7 +382,7 @@ describe('LunchServingsService', () => {
     });
 
     it('sends only the fields the payload named', async () => {
-      tx.lunchServing.findUnique.mockResolvedValue(storedServing());
+      givenServing();
       tx.lunchServing.update.mockResolvedValue(storedServing({ dayOfWeek: null }));
 
       await service.update(SERVING_ID, { dayOfWeek: null }, user());
@@ -282,11 +390,35 @@ describe('LunchServingsService', () => {
       expect(tx.lunchServing.update.mock.calls[0][0].data).toEqual({ dayOfWeek: null });
     });
 
-    it('reports an unknown sitting as missing rather than as a write failure', async () => {
-      tx.lunchServing.findUnique.mockResolvedValue(null);
+    it.each<[string, UpdateLunchServingDto, Record<string, unknown>]>([
+      ['the lower year', { minGradeLevel: 5 }, { minGradeLevel: 5 }],
+      ['the upper year', { maxGradeLevel: 5 }, { maxGradeLevel: 5 }],
+      ['the start', { startTime: '11:15' }, { startTime: wallClock('11:15') }],
+    ])('writes %s to the row it read, when that is all the PATCH names', async (_field, patch, data) => {
+      // A field dropped on the way to the write is an edit that answers 200 and
+      // leaves the kitchen's flow as it was.
+      givenServing();
+      tx.lunchServing.update.mockResolvedValue(storedServing());
+
+      await service.update(SERVING_ID, patch, user());
+
+      expect(tx.lunchServing.update).toHaveBeenCalledWith({ where: { id: SERVING_ID }, data });
+    });
+
+    it('maps a write that finds the row gone (P2025) to 404', async () => {
+      givenServing();
+      tx.lunchServing.update.mockRejectedValue(prismaError('P2025'));
 
       await expect(service.update(SERVING_ID, { endTime: '11:45' }, user())).rejects.toBeInstanceOf(
         NotFoundException,
+      );
+    });
+
+    it('reports an unknown sitting as missing rather than as a write failure', async () => {
+      tx.lunchServing.findUnique.mockResolvedValue(null);
+
+      await expect(service.update(SERVING_ID, { endTime: '11:45' }, user())).rejects.toThrow(
+        new NotFoundException(`Lunch serving ${SERVING_ID} not found.`),
       );
       expect(tx.lunchServing.update).not.toHaveBeenCalled();
     });
@@ -341,7 +473,7 @@ describe('LunchServingsService', () => {
     it('can clear a seat count back to the hall\'s limit', async () => {
       // `null` and "not sent" are different: one hands the sitting back to the
       // hall's own diningSeats, the other leaves the stored number alone.
-      tx.lunchServing.findUnique.mockResolvedValue(storedServing({ seats: 90 }));
+      givenServing({ seats: 90 });
       tx.lunchServing.update.mockResolvedValue(storedServing({ seats: null }));
 
       await service.update(SERVING_ID, { seats: null }, user());
@@ -350,7 +482,7 @@ describe('LunchServingsService', () => {
     });
 
     it('leaves the stored seat count alone when the payload omits it', async () => {
-      tx.lunchServing.findUnique.mockResolvedValue(storedServing({ seats: 90 }));
+      givenServing({ seats: 90 });
       tx.lunchServing.update.mockResolvedValue(storedServing({ seats: 90 }));
 
       await service.update(SERVING_ID, { endTime: '11:45' }, user());
@@ -374,6 +506,14 @@ describe('LunchServingsService', () => {
         service.remove(SERVING_ID, testUser({ schoolId: null })),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(tx.lunchServing.delete).not.toHaveBeenCalled();
+    });
+
+    it('maps an unknown or cross-tenant id (P2025) to 404', async () => {
+      tx.lunchServing.delete.mockRejectedValue(prismaError('P2025'));
+
+      await expect(
+        service.remove(SERVING_ID, testUser({ schoolId: SCHOOL_ID })),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });

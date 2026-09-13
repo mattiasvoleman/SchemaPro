@@ -142,7 +142,9 @@ describe('AvailabilityConstraintsService', () => {
           }),
           testUser(),
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('A GRADE_LEVEL constraint must state at least one year bound.'),
+      );
 
       expect(tx.availabilityConstraint.create).not.toHaveBeenCalled();
     });
@@ -160,7 +162,9 @@ describe('AvailabilityConstraintsService', () => {
           }),
           testUser(),
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('minGradeLevel must not be greater than maxGradeLevel.'),
+      );
     });
 
     it('refuses a year-range lock that also names a group', async () => {
@@ -174,7 +178,73 @@ describe('AvailabilityConstraintsService', () => {
           }),
           testUser(),
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException(
+          'A GRADE_LEVEL constraint must not reference a teacher, room or group.',
+        ),
+      );
+    });
+
+    it.each([
+      ['a teacher', { userId: TEACHER_ID }],
+      ['a room', { roomId: ROOM_ID }],
+    ])('refuses a year-range lock that also names %s', async (_what, reference) => {
+      // Two targets in one rule: the solver can honour only one, and nothing
+      // on the rule says which.
+      await expect(
+        service.create(
+          weeklyDto({
+            resourceType: ConstraintResource.GRADE_LEVEL,
+            userId: undefined,
+            minGradeLevel: 4,
+            ...reference,
+          }),
+          testUser(),
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'A GRADE_LEVEL constraint must not reference a teacher, room or group.',
+        ),
+      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['upwards from åk 7', { minGradeLevel: 7, maxGradeLevel: null }],
+      ['downwards to åk 3', { minGradeLevel: null, maxGradeLevel: 3 }],
+    ])('accepts a year-range lock open %s', async (_label, bounds) => {
+      // "At least one year bound" is the rule. A form that clears the other
+      // field sends null for it, and a null bound is open, not zero.
+      tx.availabilityConstraint.create.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await service.create(
+        weeklyDto({
+          resourceType: ConstraintResource.GRADE_LEVEL,
+          userId: undefined,
+          ...(bounds as Partial<CreateAvailabilityConstraintDto>),
+        }),
+        testUser(),
+      );
+
+      expect(tx.availabilityConstraint.create).toHaveBeenCalledWith({
+        data: expect.objectContaining(bounds),
+      });
+    });
+
+    it('accepts a single year as a span of one', async () => {
+      tx.availabilityConstraint.create.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await expect(
+        service.create(
+          weeklyDto({
+            resourceType: ConstraintResource.GRADE_LEVEL,
+            userId: undefined,
+            minGradeLevel: 5,
+            maxGradeLevel: 5,
+          }),
+          testUser(),
+        ),
+      ).resolves.toEqual({ id: CONSTRAINT_ID });
     });
 
     it('stores a one-off room constraint for a specific date', async () => {
@@ -371,6 +441,30 @@ describe('AvailabilityConstraintsService', () => {
       expect(tx.availabilityConstraint.update).toHaveBeenCalled();
     });
 
+    it.each<[string, UpdateAvailabilityConstraintDto]>([
+      ['a resource type with its room', { resourceType: ConstraintResource.ROOM, roomId: ROOM_ID }],
+      ['the teacher', { userId: TEACHER_ID }],
+      ['the room', { roomId: ROOM_ID }],
+      [
+        'a group with its resource type',
+        { resourceType: ConstraintResource.STUDENT_GROUP, studentGroupId: GROUP_ID },
+      ],
+      ['the lower year', { minGradeLevel: 4 }],
+      ['the upper year', { maxGradeLevel: 6 }],
+      ['the kind of rule', { type: ConstraintType.PREFERRED_FREE }],
+    ])('writes %s when that is what the PATCH names', async (_field, patch) => {
+      // A field dropped on the way to the write answers 200 and leaves the rule
+      // blocking what it blocked before.
+      tx.availabilityConstraint.update.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await service.update(CONSTRAINT_ID, patch, testUser());
+
+      expect(tx.availabilityConstraint.update).toHaveBeenCalledWith({
+        where: { id: CONSTRAINT_ID },
+        data: patch,
+      });
+    });
+
     it('parses a new startTime and clears the date with null', async () => {
       storeWindow();
       tx.availabilityConstraint.update.mockResolvedValue({ id: CONSTRAINT_ID });
@@ -526,10 +620,10 @@ describe('AvailabilityConstraintsService', () => {
     // read comes back empty for it exactly as for an id that never existed —
     // and "does not exist" is the right answer to both: confirming the row is
     // there would tell this school something about another one.
-    it('404s a one-sided PATCH against an unknown or cross-tenant id', async () => {
+    it('404s a one-sided PATCH against an unknown or cross-tenant id, in the words the write would use', async () => {
       await expect(
         service.update(CONSTRAINT_ID, { endTime: '11:00' }, testUser()),
-      ).rejects.toBeInstanceOf(NotFoundException);
+      ).rejects.toThrow(new NotFoundException('The requested record does not exist.'));
 
       expect(tx.availabilityConstraint.update).not.toHaveBeenCalled();
     });

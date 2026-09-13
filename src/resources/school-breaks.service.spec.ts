@@ -14,7 +14,10 @@ import {
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import { SchoolBreaksService } from './school-breaks.service';
-import type { CreateSchoolBreakDto } from './dto/school-break.dto';
+import type {
+  CreateSchoolBreakDto,
+  UpdateSchoolBreakDto,
+} from './dto/school-break.dto';
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const YEAR_ID = '99999999-9999-4999-8999-999999999999';
@@ -39,6 +42,51 @@ const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
     code,
     clientVersion: Prisma.prismaVersion.client,
   });
+
+type Selection = Record<string, unknown>;
+
+/**
+ * What Prisma hands back for a `select`: the fields asked for and nothing else,
+ * a relation through its own nested `select` (or whole, when it is named
+ * without one), and a refusal for a selection with no truthy field in it
+ * ("needs at least one truthy value"). A stub that returns the whole row
+ * whatever the query asked for lets a read that forgets a field feed
+ * `undefined` to the check behind it — and every check in this service passes
+ * on `undefined`.
+ */
+function selected(
+  row: Record<string, unknown>,
+  select?: Selection,
+): Record<string, unknown> {
+  if (select === undefined) return row;
+  const fields = Object.entries(select).filter(([, value]) => value);
+  if (fields.length === 0) {
+    throw new Error('Prisma: a `select` needs at least one truthy value.');
+  }
+  return Object.fromEntries(
+    fields.map(([field, value]) => {
+      const nested = (value as { select?: Selection }).select;
+      const related = row[field];
+      if (!nested) return [field, related];
+      return [
+        field,
+        Array.isArray(related)
+          ? related.map((entry: Record<string, unknown>) => selected(entry, nested))
+          : selected(related as Record<string, unknown>, nested),
+      ];
+    }),
+  );
+}
+
+/** A `findUnique` that finds `row` by its id, and nothing by anything else. */
+const byId =
+  (id: string, row: Record<string, unknown>) =>
+  ({ where, select }: { where?: { id?: string }; select?: Selection }) => {
+    if (where?.id === undefined) {
+      throw new Error('Prisma: findUnique needs a unique field in `where`.');
+    }
+    return Promise.resolve(where.id === id ? selected(row, select) : null);
+  };
 
 /** A stored break, as `create`/`update` hand it back from the database. */
 const storedBreak = (overrides: Record<string, unknown> = {}) => ({
@@ -113,8 +161,13 @@ function matches(
         break;
       case 'studentGroup': {
         const { gte, lte } = (
-          condition as { is: { gradeLevel: { gte: number; lte: number } } }
+          condition as { is: { gradeLevel: { gte: unknown; lte: unknown } } }
         ).is.gradeLevel;
+        // Prisma refuses a null bound on an Int filter, so a half-stated span
+        // that reaches the delete as one is a failed request, not a filter.
+        if (typeof gte !== 'number' || typeof lte !== 'number') {
+          throw new Error(`A grade filter needs two numeric bounds, got ${gte} and ${lte}`);
+        }
         // NULL is not a number and matches neither bound — the behaviour the
         // service relies on for teaching groups, restated here rather than
         // inherited, so the fixture cannot pass by accident.
@@ -147,8 +200,17 @@ describe('SchoolBreaksService', () => {
     // be the school's day and not the server's — an hour after midnight in
     // Stockholm the UTC day is still yesterday, and this number decides which
     // lessons may be deleted.
-    tx.school.findUnique.mockResolvedValue({ timezone: SCHOOL_TIMEZONE });
+    tx.school.findUnique.mockImplementation(
+      byId(SCHOOL_ID, { id: SCHOOL_ID, name: 'Ekbackeskolan', timezone: SCHOOL_TIMEZONE }),
+    );
   });
+
+  /** The läsår, found by its id and cut to what the query selects. */
+  const givenYear = (): void => {
+    tx.academicYear.findUnique.mockImplementation(
+      byId(YEAR_ID, { id: YEAR_ID, schoolId: SCHOOL_ID, name: '2026/2027', ...YEAR }),
+    );
+  };
 
   afterEach(() => {
     jest.useRealTimers();
@@ -177,7 +239,7 @@ describe('SchoolBreaksService', () => {
 
   describe('create', () => {
     it('stores an inclusive, school-wide range', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.schoolBreak.create.mockResolvedValue(storedBreak());
       const user = testUser();
 
@@ -205,7 +267,7 @@ describe('SchoolBreaksService', () => {
        * week. The row above only ever asserted the school-wide shape, which is
        * exactly what the bug produces.
        */
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.schoolBreak.create.mockResolvedValue(
         storedBreak({ kind: 'STAFF_DAY', minGradeLevel: 7, maxGradeLevel: 9 }),
       );
@@ -226,7 +288,7 @@ describe('SchoolBreaksService', () => {
     it('keeps a zero lower bound, which is a real year and not an absent one', async () => {
       // Förskoleklass is grade 0, and `0 || null` is null. A span written that
       // way silently widens "åk 0-3" into a school-wide lov.
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.schoolBreak.create.mockResolvedValue(
         storedBreak({ minGradeLevel: 0, maxGradeLevel: 3 }),
       );
@@ -239,7 +301,7 @@ describe('SchoolBreaksService', () => {
     });
 
     it('answers with the range as dates, not as invented midnight instants', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.schoolBreak.create.mockResolvedValue(storedBreak());
 
       await expect(service.create(dto(), testUser())).resolves.toMatchObject({
@@ -249,20 +311,26 @@ describe('SchoolBreaksService', () => {
     });
 
     it('refuses a range that reaches past the end of the läsår', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
 
       await expect(
         service.create(
           dto({ startDate: '2027-06-08', endDate: '2027-06-20' }),
           testUser(),
         ),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        // Names the field and the year's own bounds: the admin has to know
+        // which date picker to move, and how far.
+        new BadRequestException(
+          'endDate must fall inside the academic year (2026-08-17 to 2027-06-11).',
+        ),
+      );
       expect(tx.schoolBreak.create).not.toHaveBeenCalled();
       expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
     });
 
     it('refuses a range that starts before the läsår does', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
 
       // The whole point of the containment check: this lov belongs to LAST
       // year, and saving it would delete a week of that year's lessons.
@@ -276,7 +344,7 @@ describe('SchoolBreaksService', () => {
     });
 
     it('accepts a range that ends exactly on the last day of the läsår', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.schoolBreak.create.mockResolvedValue(storedBreak());
 
       // Both bounds are inclusive; the last day of the year is inside it.
@@ -288,22 +356,39 @@ describe('SchoolBreaksService', () => {
       ).resolves.toBeDefined();
     });
 
+    it('accepts a range that starts exactly on the first day of the läsår', async () => {
+      // The other inclusive edge: uppstartsdagar on the year's very first day.
+      givenYear();
+      tx.schoolBreak.create.mockResolvedValue(
+        storedBreak({ startDate: date('2026-08-17'), endDate: date('2026-08-18') }),
+      );
+
+      await expect(
+        service.create(
+          dto({ startDate: '2026-08-17', endDate: '2026-08-18' }),
+          testUser(),
+        ),
+      ).resolves.toBeDefined();
+    });
+
     it('refuses an end before its start instead of letting the CHECK 500', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
 
       await expect(
         service.create(
           dto({ startDate: '2027-02-26', endDate: '2027-02-22' }),
           testUser(),
         ),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(new BadRequestException('endDate must not be before startDate.'));
       expect(tx.schoolBreak.create).not.toHaveBeenCalled();
     });
 
     it('refuses half a year span', async () => {
       await expect(
         service.create(dto({ minGradeLevel: 9 }), testUser()),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('State both minGradeLevel and maxGradeLevel, or neither.'),
+      );
       // Refused before the transaction opens: nothing about the year is even
       // asked, so a malformed span cannot cost a round trip.
       expect(prisma.withRls).not.toHaveBeenCalled();
@@ -315,7 +400,9 @@ describe('SchoolBreaksService', () => {
           dto({ minGradeLevel: 9, maxGradeLevel: 4 }),
           testUser(),
         ),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('minGradeLevel must not be greater than maxGradeLevel.'),
+      );
     });
 
     it('says nothing about a year RLS hides, and lets the FK refuse it', async () => {
@@ -339,7 +426,7 @@ describe('SchoolBreaksService', () => {
 
   describe('the lessons a break throws away', () => {
     beforeEach(() => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
     });
 
     it('removes the future scheduled lessons inside the range and nothing else', async () => {
@@ -547,20 +634,49 @@ describe('SchoolBreaksService', () => {
       expect(result.removedCalendarLessons).toBe(3);
       expect(survivors).toEqual([]);
     });
+
+    it.each([
+      ['a lower year and no upper one', { minGradeLevel: 7, maxGradeLevel: null }],
+      ['an upper year and no lower one', { minGradeLevel: null, maxGradeLevel: 7 }],
+    ])('purges a row stating only %s as the whole school, never as half a range', async (_half, span) => {
+      /*
+       * The table's CHECK and assertGradeSpanIsWhole keep this row from being
+       * written today. The purge tests the pair anyway so that a row some
+       * future path writes cannot become a filter with one bound — which Prisma
+       * refuses, failing the save — or one that quietly spares the years on the
+       * open side. Read from the row the update hands back, because that is the
+       * row the purge reads.
+       */
+      tx.schoolBreak.findUnique.mockImplementation(
+        byId(BREAK_ID, { ...storedBreak(), academicYear: { id: YEAR_ID, ...YEAR } }),
+      );
+      tx.schoolBreak.update.mockResolvedValue(storedBreak(span));
+      givenCalendar([
+        lesson({ id: 'åk8', gradeLevel: 8 }),
+        lesson({ id: 'åk3', gradeLevel: 3 }),
+      ]);
+
+      const result = await service.update(BREAK_ID, { name: 'Studiedag' }, testUser());
+
+      expect(result.removedCalendarLessons).toBe(2);
+      expect(survivors).toEqual([]);
+    });
   });
 
   describe('update', () => {
-    const existing = (overrides: Record<string, unknown> = {}) => ({
-      startDate: date('2027-02-22'),
-      endDate: date('2027-02-26'),
-      minGradeLevel: null,
-      maxGradeLevel: null,
-      academicYear: YEAR,
-      ...overrides,
-    });
+    /** The row as stored, with its year, read back through the query sent for it. */
+    const givenExisting = (overrides: Record<string, unknown> = {}) => {
+      tx.schoolBreak.findUnique.mockImplementation(
+        byId(BREAK_ID, {
+          ...storedBreak(),
+          academicYear: { id: YEAR_ID, schoolId: SCHOOL_ID, ...YEAR },
+          ...overrides,
+        }),
+      );
+    };
 
     it('sends only the fields the PATCH carried', async () => {
-      tx.schoolBreak.findUnique.mockResolvedValue(existing());
+      givenExisting();
       tx.schoolBreak.update.mockResolvedValue(storedBreak({ name: 'Vinterlov' }));
 
       await service.update(BREAK_ID, { name: 'Vinterlov' }, testUser());
@@ -572,7 +688,7 @@ describe('SchoolBreaksService', () => {
     });
 
     it('measures a one-sided move against the date already on the row', async () => {
-      tx.schoolBreak.findUnique.mockResolvedValue(existing());
+      givenExisting();
 
       // Nothing in this PATCH is wrong on its own; it is wrong against the
       // start it inherits, which is why the row is read first.
@@ -584,7 +700,7 @@ describe('SchoolBreaksService', () => {
     });
 
     it('refuses a move that walks the range out of its läsår', async () => {
-      tx.schoolBreak.findUnique.mockResolvedValue(existing());
+      givenExisting();
 
       await expect(
         service.update(BREAK_ID, { startDate: '2026-07-01' }, testUser()),
@@ -593,9 +709,7 @@ describe('SchoolBreaksService', () => {
     });
 
     it('refuses a PATCH that clears only one half of the year span', async () => {
-      tx.schoolBreak.findUnique.mockResolvedValue(
-        existing({ minGradeLevel: 4, maxGradeLevel: 6 }),
-      );
+      givenExisting({ minGradeLevel: 4, maxGradeLevel: 6 });
 
       await expect(
         service.update(BREAK_ID, { maxGradeLevel: null }, testUser()),
@@ -603,8 +717,101 @@ describe('SchoolBreaksService', () => {
       expect(tx.schoolBreak.update).not.toHaveBeenCalled();
     });
 
+    it('refuses a start moved past the end already on the row', async () => {
+      // The mirror of the one-sided move above: only the start is sent, and it
+      // is wrong against the end it inherits.
+      givenExisting();
+
+      await expect(
+        service.update(BREAK_ID, { startDate: '2027-03-01' }, testUser()),
+      ).rejects.toThrow(new BadRequestException('endDate must not be before startDate.'));
+      expect(tx.schoolBreak.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a move that walks the end out of its läsår', async () => {
+      givenExisting();
+
+      await expect(
+        service.update(BREAK_ID, { endDate: '2027-07-01' }, testUser()),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'endDate must fall inside the academic year (2026-08-17 to 2027-06-11).',
+        ),
+      );
+      expect(tx.schoolBreak.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a PATCH that pushes the lower year past the stored upper one', async () => {
+      givenExisting({ minGradeLevel: 4, maxGradeLevel: 6 });
+
+      await expect(
+        service.update(BREAK_ID, { minGradeLevel: 9 }, testUser()),
+      ).rejects.toThrow(
+        new BadRequestException('minGradeLevel must not be greater than maxGradeLevel.'),
+      );
+      expect(tx.schoolBreak.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['the lower year', { minGradeLevel: 5 }],
+      ['the upper year', { maxGradeLevel: 5 }],
+    ])('moves %s inside the stored span, keeping the other', async (_bound, patch) => {
+      // The bound not sent comes from the row. Read it as absent instead and
+      // åk 5-6 turns into half a span, refused, for an edit that was fine.
+      givenExisting({ minGradeLevel: 4, maxGradeLevel: 6 });
+      tx.schoolBreak.update.mockResolvedValue(
+        storedBreak({ minGradeLevel: 4, maxGradeLevel: 6, ...patch }),
+      );
+
+      await service.update(BREAK_ID, patch, testUser());
+
+      expect(tx.schoolBreak.update).toHaveBeenCalledWith({
+        where: { id: BREAK_ID },
+        data: patch,
+      });
+    });
+
+    it('can widen a span back to the whole school', async () => {
+      givenExisting({ minGradeLevel: 4, maxGradeLevel: 6 });
+      tx.schoolBreak.update.mockResolvedValue(storedBreak());
+
+      await service.update(
+        BREAK_ID,
+        { minGradeLevel: null, maxGradeLevel: null },
+        testUser(),
+      );
+
+      expect(tx.schoolBreak.update).toHaveBeenCalledWith({
+        where: { id: BREAK_ID },
+        data: { minGradeLevel: null, maxGradeLevel: null },
+      });
+    });
+
+    it.each<[string, UpdateSchoolBreakDto, Record<string, unknown>]>([
+      ['the kind', { kind: 'STAFF_DAY' }, { kind: 'STAFF_DAY' }],
+      ['the start', { startDate: '2027-02-23' }, { startDate: date('2027-02-23') }],
+      ['the end', { endDate: '2027-02-25' }, { endDate: date('2027-02-25') }],
+      [
+        'a year span',
+        { minGradeLevel: 7, maxGradeLevel: 9 },
+        { minGradeLevel: 7, maxGradeLevel: 9 },
+      ],
+    ])('writes %s when that is what the PATCH names', async (_field, patch, data) => {
+      // A field dropped on the way to the write answers 200 and changes
+      // nothing — except that the purge then runs against the old range.
+      givenExisting();
+      tx.schoolBreak.update.mockResolvedValue(storedBreak());
+
+      await service.update(BREAK_ID, patch, testUser());
+
+      expect(tx.schoolBreak.update).toHaveBeenCalledWith({
+        where: { id: BREAK_ID },
+        data,
+      });
+    });
+
     it('deletes the lessons of the range the row now holds, not the one it held', async () => {
-      tx.schoolBreak.findUnique.mockResolvedValue(existing());
+      givenExisting();
       tx.schoolBreak.update.mockResolvedValue(
         storedBreak({
           startDate: date('2027-03-01'),
@@ -628,7 +835,7 @@ describe('SchoolBreaksService', () => {
     });
 
     it('carries the count back on a move so the UI can say it', async () => {
-      tx.schoolBreak.findUnique.mockResolvedValue(existing());
+      givenExisting();
       tx.schoolBreak.update.mockResolvedValue(storedBreak());
       givenCalendar([
         lesson({ id: 'a', date: '2027-02-23' }),
@@ -648,7 +855,7 @@ describe('SchoolBreaksService', () => {
     });
 
     it('reconciles the range even when only the name changed', async () => {
-      tx.schoolBreak.findUnique.mockResolvedValue(existing());
+      givenExisting();
       tx.schoolBreak.update.mockResolvedValue(storedBreak({ name: 'Vinterlov' }));
       givenCalendar([lesson({ id: 'crept-in', date: '2027-02-23' })]);
 
