@@ -1,7 +1,13 @@
 import { JwtSecretRequestType } from '@nestjs/jwt';
+import { generateKeyPairSync, type KeyObject } from 'node:crypto';
 import type { JwtConfig } from '../config/configuration';
 import { buildJwtModuleOptions } from './auth.module';
 import { ACCEPTED_ALGORITHMS } from './signing-key.provider';
+
+// A real PEM: the provider parses what the JWKS serves into a KeyObject.
+const mockJwksPem = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  .publicKey.export({ format: 'pem', type: 'spki' })
+  .toString();
 
 jest.mock('jwks-rsa', () => ({
   // No network: the fake client answers immediately with a public key, so the
@@ -13,7 +19,7 @@ jest.mock('jwks-rsa', () => ({
         _token: string,
         done: (error: unknown, key?: string) => void,
       ) =>
-        done(null, 'jwks-public-key'),
+        done(null, mockJwksPem),
   ),
 }));
 
@@ -49,7 +55,9 @@ describe('buildJwtModuleOptions', () => {
     // A promise, not the literal secret: verification goes through the
     // asymmetric lookup so a rotated Supabase key is picked up.
     expect(resolved).toBeInstanceOf(Promise);
-    await expect(resolved).resolves.toBe('jwks-public-key');
+    const key = (await resolved) as KeyObject;
+    expect(key.type).toBe('public');
+    expect(key.export({ format: 'pem', type: 'spki' })).toBe(mockJwksPem);
   });
 
   it('signs with the shared secret — the JWKS key is public and cannot sign', () => {
