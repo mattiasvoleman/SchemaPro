@@ -1,5 +1,5 @@
 import { JwtService } from '@nestjs/jwt';
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, type KeyObject } from 'node:crypto';
 import { passportJwtSecret } from 'jwks-rsa';
 import type { JwtConfig } from '../config/configuration';
 import {
@@ -74,6 +74,9 @@ const verify = (provider: SigningKeyProvider, token: string) =>
     verifyOptions: { algorithms: [...ACCEPTED_ALGORITHMS] },
   }).verifyAsync(token);
 
+const pemOf = (key: KeyObject) =>
+  key.export({ format: 'pem', type: 'spki' }).toString();
+
 describe('createSigningKeyProvider', () => {
   const mockedJwks = passportJwtSecret as jest.MockedFunction<
     typeof passportJwtSecret
@@ -102,7 +105,9 @@ describe('createSigningKeyProvider', () => {
       keyid: KID,
     });
 
-    await expect(provider(token)).resolves.toBe(EC_PUBLIC);
+    const key = await provider(token);
+    expect(key.type).toBe('public');
+    expect(pemOf(key)).toBe(EC_PUBLIC);
     await expect(verify(provider, token)).resolves.toMatchObject({ sub: SUB });
   });
 
@@ -121,8 +126,26 @@ describe('createSigningKeyProvider', () => {
     const provider = createSigningKeyProvider(config());
     const token = await sign({ secret: SECRET });
 
-    await expect(provider(token)).resolves.toBe(SECRET);
+    const key = await provider(token);
+    expect(key.type).toBe('secret');
+    expect(key.export().toString()).toBe(SECRET);
     await expect(verify(provider, token)).resolves.toMatchObject({ sub: SUB });
+  });
+
+  it('parses each key once and hands every request the same KeyObject', async () => {
+    // jsonwebtoken re-derives a KeyObject from a string or PEM on every verify,
+    // and for a string secret it first fails a public-key parse. Handing it the
+    // same parsed key each time is the whole point of the provider owning them.
+    const provider = createSigningKeyProvider(config());
+    const supabase = await sign({
+      algorithm: 'ES256',
+      privateKey: EC_PRIVATE,
+      keyid: KID,
+    });
+    const service = await sign({ secret: SECRET });
+
+    expect(await provider(supabase)).toBe(await provider(supabase));
+    expect(await provider(service)).toBe(await provider(service));
   });
 
   it('never hands the public JWKS key to HMAC verification', async () => {
@@ -131,7 +154,9 @@ describe('createSigningKeyProvider', () => {
     // because it is public, and signs HS256 with it.
     const forged = await sign({ secret: EC_PUBLIC, keyid: KID });
 
-    await expect(provider(forged)).resolves.toBe(SECRET);
+    const key = await provider(forged);
+    expect(key.type).toBe('secret');
+    expect(key.export().toString()).toBe(SECRET);
     await expect(verify(provider, forged)).rejects.toThrow();
   });
 
@@ -145,6 +170,18 @@ describe('createSigningKeyProvider', () => {
     });
 
     await expect(verify(provider, token)).rejects.toThrow(/invalid algorithm/i);
+  });
+
+  it('rejects when the JWKS serves a key that does not parse', async () => {
+    mockedJwks.mockReturnValue(fakeJwks({ [KID]: 'not a public key' }));
+    const provider = createSigningKeyProvider(config());
+    const token = await sign({
+      algorithm: 'ES256',
+      privateKey: EC_PRIVATE,
+      keyid: KID,
+    });
+
+    await expect(provider(token)).rejects.toThrow();
   });
 
   it('surfaces a JWKS transport failure instead of falling back to the secret', async () => {

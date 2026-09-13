@@ -1,4 +1,5 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
+import type { KeyObject } from 'node:crypto';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy, StrategyOptions } from 'passport-jwt';
@@ -31,9 +32,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       secretOrKeyProvider: (_request, rawToken: string, done) => {
+        // passport-jwt hands the key unchanged to jsonwebtoken.verify, which
+        // takes a KeyObject; @types/passport-jwt still types it string | Buffer.
+        const pass = done as (error: unknown, key?: KeyObject) => void;
         signingKey(rawToken).then(
-          (key) => done(null, key),
-          (error: unknown) => done(error),
+          (key) => pass(null, key),
+          (error: unknown) => pass(error),
         );
       },
       // Pin the accepted signature algorithms. Supabase issues ES256 (verified
