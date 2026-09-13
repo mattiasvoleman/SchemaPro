@@ -1,13 +1,9 @@
-"use client";
-
-import { useState } from "react";
-import { useTranslations } from "next-intl";
-import { Loader2 } from "lucide-react";
-import { createClient } from "@/utils/supabase/client";
-import { Link, useRouter } from "@/i18n/navigation";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { getLocale, getTranslations } from "next-intl/server";
+import { localePath } from "@/i18n/paths";
+import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { labelClassName } from "@/components/ui/label-style";
 import {
   Card,
   CardContent,
@@ -15,36 +11,31 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { LoginForm } from "./login-form";
 
-export default function LoginPage() {
-  const t = useTranslations("auth");
-  const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setError(null);
-    setLoading(true);
-
-    const supabase = createClient();
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (signInError) {
-      setError(t("invalidCredentials"));
-      setLoading(false);
-      return;
-    }
-
-    // The root page resolves the profile and redirects by role.
-    router.replace("/");
-    router.refresh();
-  };
+/**
+ * Server-rendered; only <LoginForm> hydrates.
+ *
+ * The whole page used to be a client component. That put next-intl's client
+ * runtime, tailwind-merge and the Supabase client into the first load, and
+ * needed the root layout to send every message in the app along with it. Now
+ * the text is resolved here and handed to the form as strings, and the
+ * Supabase client is fetched once somebody starts filling the form in.
+ *
+ * Three imports are avoided on purpose, because each one puts a client
+ * boundary into the page whether or not anything from it is rendered:
+ *  - @/i18n/navigation, whose <Link> needs a client-side intl provider these
+ *    routes do not mount. Paths come from localePath, links from next/link.
+ *  - <Label> from components/ui, which is radix plus tailwind-merge. The
+ *    labels are plain <label>s carrying the same class.
+ *  - @/utils/supabase/client; see utils/supabase/load-client.ts.
+ * The other unauthenticated pages follow the same rules.
+ */
+export default async function LoginPage() {
+  const locale = await getLocale();
+  const t = await getTranslations("auth");
+  const tCommon = await getTranslations("common");
 
   return (
     <Card>
@@ -53,23 +44,29 @@ export default function LoginPage() {
         <CardDescription>{t("signInSubtitle")}</CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <LoginForm
+          home={localePath(locale, "/")}
+          submitClassName={cn(buttonVariants({ className: "w-full" }))}
+          labels={{
+            signIn: t("signIn"),
+            signingIn: t("signingIn"),
+            invalidCredentials: t("invalidCredentials"),
+            failed: tCommon("error"),
+          }}
+        >
           <div className="space-y-2">
-            <Label htmlFor="email">{t("email")}</Label>
-            <Input
-              id="email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
+            <label htmlFor="email" className={labelClassName}>
+              {t("email")}
+            </label>
+            <Input id="email" name="email" type="email" autoComplete="email" required />
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label htmlFor="password">{t("password")}</Label>
+              <label htmlFor="password" className={labelClassName}>
+                {t("password")}
+              </label>
               <Link
-                href="/forgot-password"
+                href={localePath(locale, "/forgot-password")}
                 className="text-xs text-primary underline-offset-4 hover:underline"
               >
                 {t("forgotPassword")}
@@ -77,25 +74,13 @@ export default function LoginPage() {
             </div>
             <Input
               id="password"
+              name="password"
               type="password"
               autoComplete="current-password"
               required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
             />
           </div>
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? (
-              <>
-                <Loader2 className="animate-spin" />
-                {t("signingIn")}
-              </>
-            ) : (
-              t("signIn")
-            )}
-          </Button>
-        </form>
+        </LoginForm>
       </CardContent>
     </Card>
   );

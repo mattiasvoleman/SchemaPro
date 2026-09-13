@@ -1,3 +1,4 @@
+import { NextIntlClientProvider } from "next-intl";
 import { redirect } from "@/i18n/navigation";
 import { getSession } from "@/lib/auth";
 import { AppShell } from "@/components/layout/app-shell";
@@ -27,20 +28,24 @@ export default async function AppLayout({
 
   const { profile, school } = session;
 
-  // AppProviders (react-query + sonner) is mounted here rather than in the root
-  // layout so the unauthenticated routes do not download it.
+  // AppProviders (react-query + sonner) and NextIntlClientProvider are mounted
+  // here rather than in the root layout so the unauthenticated routes do not
+  // download them. The intl provider in particular carries every message in
+  // the app; see [locale]/layout.tsx.
   return (
-    <AppProviders>
-      <ProfileProvider profile={profile} school={school}>
-        <AppShell
-          role={profile.role}
-          userName={`${profile.firstName} ${profile.lastName}`}
-          email={profile.email}
-          schoolName={school?.name ?? ""}
-        >
-          {children}
-        </AppShell>
-      </ProfileProvider>
-    </AppProviders>
+    <NextIntlClientProvider>
+      <AppProviders>
+        <ProfileProvider profile={profile} school={school}>
+          <AppShell
+            role={profile.role}
+            userName={`${profile.firstName} ${profile.lastName}`}
+            email={profile.email}
+            schoolName={school?.name ?? ""}
+          >
+            {children}
+          </AppShell>
+        </ProfileProvider>
+      </AppProviders>
+    </NextIntlClientProvider>
   );
 }

@@ -1,23 +1,16 @@
-"use client";
-
-import { useTranslations } from "next-intl";
+import { getLocale, getTranslations } from "next-intl/server";
 import { ShieldAlert } from "lucide-react";
-import { createClient } from "@/utils/supabase/client";
-import { useRouter } from "@/i18n/navigation";
-import { Button } from "@/components/ui/button";
+import { localePath } from "@/i18n/paths";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
+import { SignOutButton } from "./sign-out-button";
 
-export default function NoProfilePage() {
-  const t = useTranslations("auth");
-  const tCommon = useTranslations("common");
-  const router = useRouter();
-
-  const signOut = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.replace("/login");
-    router.refresh();
-  };
+/** Server-rendered; only <SignOutButton> hydrates. See login/page.tsx. */
+export default async function NoProfilePage() {
+  const locale = await getLocale();
+  const t = await getTranslations("auth");
+  const tCommon = await getTranslations("common");
 
   return (
     <Card>
@@ -26,9 +19,11 @@ export default function NoProfilePage() {
           <ShieldAlert className="h-6 w-6 text-warning" />
         </div>
         <p className="text-sm text-muted-foreground">{t("noProfile")}</p>
-        <Button variant="outline" onClick={signOut}>
-          {tCommon("signOut")}
-        </Button>
+        <SignOutButton
+          loginPath={localePath(locale, "/login")}
+          className={cn(buttonVariants({ variant: "outline" }))}
+          label={tCommon("signOut")}
+        />
       </CardContent>
     </Card>
   );
