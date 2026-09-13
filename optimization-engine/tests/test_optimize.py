@@ -561,10 +561,10 @@ def test_a_payload_that_names_nobody_still_feeds_every_class() -> None:
     nobody. Read instead as "exactly the payload's groups", an absent list
     built NOT ONE lunch interval — the whole school taught edge to edge
     through the lunch window, no meal in the response, and an OPTIMAL over the
-    top of it. Only benchmarks/validate_schedule.py still sent such a payload,
-    and it is what caught this; every other test in this file that sets a
-    lunch window names its class, so the suite could not see it. This one
-    does not name one, on purpose.
+    top of it. benchmarks/validate_schedule.py sent such a payload until its
+    school began naming its classes, and it is what caught this; every test
+    in this file that solved with a lunch window named its class, so the
+    suite could not see it. This one does not name one, on purpose.
 
     Both directions, because a free window that is merely lucky proves
     nothing. The tight week must be refused: ten hours a day holds exactly ten
@@ -4806,9 +4806,9 @@ def _validator_problems(payload: dict[str, object]) -> list[str]:
 
     The timetable is built by hand rather than solved for, because no solve
     produces it. The engine keeps a class's lessons out of the class's own
-    reserved window, and reserves nothing at all for a group it was never told
-    about, so both false alarms below reach the lunch check with an empty
-    window and pass on correctness borrowed from another rule. Put two lessons
+    reserved window, and the lessons of every group it feeds out of that
+    group's meal, so each case below reaches the lunch check with an empty
+    window and passes on correctness borrowed from another rule. Put two lessons
     in that window — as an engine that dropped availability would, or as a week
     from somewhere else might, since `validate` is a library — and the check
     has to answer for itself.
@@ -4881,7 +4881,10 @@ def test_the_validator_reads_the_rows_it_used_to_skip() -> None:
     """
     payload = _lunch_payload()
     group_id = _group_of(payload)
-    payload["groups"] = []  # lunch is not what is under test here
+    # Lunch is not what is under test here, so the school asks for none. An
+    # empty `groups` would not do it: a payload that names nobody still owes
+    # a meal to every group with requirements, this one included.
+    payload["rules"] = None
 
     # Away all day, in the notation the product itself writes.
     payload["constraints"] = [_closes(group_id, 1, "00:00:00", "23:59:00")]
@@ -4920,7 +4923,7 @@ def test_the_validator_leaves_alone_the_rows_that_reach_nothing() -> None:
     """
     payload = _lunch_payload()
     group_id = _group_of(payload)
-    payload["groups"] = []
+    payload["rules"] = None  # no lunch owed, as above: the rows are under test
     payload["requirements"][0]["minGradeLevel"] = 6  # type: ignore[index]
     payload["requirements"][0]["maxGradeLevel"] = 7  # type: ignore[index]
 
@@ -4949,39 +4952,73 @@ def test_the_validator_leaves_alone_the_rows_that_reach_nothing() -> None:
         assert _validator_problems({**payload, "constraints": [row]}) == [], name
 
 
-def test_the_validator_owes_no_lunch_to_a_group_the_request_never_seats() -> None:
-    """Who eats is the payload's `groups`, not everyone holding a requirement.
+def test_the_validator_owes_lunch_only_to_the_groups_a_named_list_seats() -> None:
+    """A request that names who eats is taken at its word.
 
-    A teaching group's pupils eat with their home class, so the engine reserves
-    a meal for exactly the groups it was sent and the shim that once unioned in
-    every group with a requirement is gone. Demanded off the requirements
-    instead, this check asks for a window the model was never asked to leave —
-    and it did: against the 400-student benchmark, which sent a lunch window
-    and no groups at all, it reported 69 violations for a timetable that was
-    right, and the gate could not say which of the two was wrong.
+    The gateway sends the home classes, and a teaching group is not among them
+    because its pupils already eat with their class. The engine reserves a
+    meal for exactly that list, so a check that demanded one of every group
+    holding a requirement would fail a timetable that is right. Here the class
+    whose lessons fill Monday's window is left out of a list naming another
+    class: nothing is owed to it, and the class that is named has a free week.
 
-    A payload naming nobody is a payload saying nobody eats. Silence is the
-    verdict the model would give, so it is the verdict here.
+    Named, the same class is owed Monday's meal — so the silence first is the
+    list being read, and not the check having stopped asking.
     """
     payload = _lunch_payload()
-    payload["groups"] = []
+    group_id = _group_of(payload)
 
+    payload["groups"] = [{"id": str(uuid4()), "lunchHeadcount": 24}]
     assert _validator_problems(payload) == []
+
+    payload["groups"] = [{"id": group_id, "lunchHeadcount": 24}]
+    named = _validator_problems(payload)
+    assert len(named) == 1, named
+    assert named[0].startswith(
+        f"group {group_id}, day index 0: no free 30-minute window",
+    ), named
+
+
+def test_the_validator_owes_every_class_a_lunch_when_the_request_names_nobody() -> None:
+    """A request that names nobody has not said that nobody eats.
+
+    `groups` is optional so the engine can ship before the gateway that fills
+    it, and the schema writes beside the field what is owed meanwhile: the
+    free-window guarantee still reaches every group with requirements. The
+    engine reads it that way (see _lunch_group_ids), so the check does too. A
+    check that fell silent here would pass exactly the week that turned the
+    nightly gate red: a model built without a single lunch interval, taught
+    edge to edge through the window, and reported FEASIBLE.
+
+    An empty list and a missing key are the same request, and both are asked.
+    """
+    payload = _lunch_payload()
+    expected = f"group {_group_of(payload)}, day index 0: no free 30-minute window"
+
+    payload["groups"] = []
+    empty = _validator_problems(payload)
+    assert len(empty) == 1 and empty[0].startswith(expected), empty
+
+    del payload["groups"]
+    absent = _validator_problems(payload)
+    assert len(absent) == 1 and absent[0].startswith(expected), absent
 
 
 def test_the_benchmark_school_tells_the_solver_who_eats() -> None:
-    """The gate's own payload names its classes, or its lunch check asks no one.
+    """The gate's own payload names its classes, the way the gateway does.
 
-    The half of the fix above that no validator test reaches. The check owes a
-    break only to the groups a request lists, so a benchmark that sends a lunch
-    window and no `groups` does not turn the nightly gate red: it turns the
-    lunch check silent, and the gate passes a week the solver was never asked
-    to leave a meal in — the same week that failed it on main, now unremarked.
-    Pinning the payload is what keeps the 400-student verdict a verdict about
-    lunch at all.
+    The half of the fix that no validator test reaches. A school that has
+    entered its classes sends `groups` — the gateway names every home class at
+    school, with its headcount — and the engine takes a named list at its
+    word. A benchmark that sent none would still be checked for lunch, through
+    the fallback the schema writes beside the field, but the nightly gate
+    would then measure only that fallback and never the named list those
+    schools send. Pinning the payload keeps the 400-student verdict about the
+    reading production takes; the fallback is held by the engine's own tests.
 
     One entry per class, carrying its headcount, because this school has no
-    teaching groups: the classes that eat are exactly the ones holding lessons.
+    teaching groups: the classes that eat are exactly the ones holding lessons,
+    so for this school the two readings are the same set.
     """
     import sys
     from pathlib import Path
