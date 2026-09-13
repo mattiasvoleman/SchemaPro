@@ -55,7 +55,14 @@ services:
       PORT: 4000
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:19006}
       # Least-privilege connection — RLS enforced on every query.
-      DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@db:5432/schemapro?schema=public
+      #
+      # connection_limit is the API's own pool, and it is set rather than left
+      # to Prisma, whose default is physical cores × 2 + 1: three or five on the
+      # 2-CPU runner the latency gate uses. Every request holds a pooled
+      # connection through its interactive transactions, so a pool smaller than
+      # the concurrency the stack is driven with is a queue in front of every
+      # query. 25 is that concurrency — scripts/bench/api-latency.mjs's own.
+      DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@db:5432/schemapro?schema=public&connection_limit=${DATABASE_POOL_SIZE:-25}
       DIRECT_URL: postgresql://app_authenticated:app_authenticated_local@db:5432/schemapro?schema=public
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (your Supabase JWT secret) in the environment}
       JWT_ISSUER: ${JWT_ISSUER:?Set JWT_ISSUER (<SUPABASE_URL>/auth/v1) — the API reads its JWKS from it}
