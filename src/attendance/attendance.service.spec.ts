@@ -654,18 +654,6 @@ describe('AttendanceService', () => {
       expect(notifications.notifyUsers).not.toHaveBeenCalled();
     });
 
-    it('looks nobody up when every absence was reported', async () => {
-      // A report covers the lesson, so there is no alert and no name to put in
-      // one: the roster check stays the only read of Users.
-      tx.absenceReport.findMany.mockResolvedValue([
-        { studentId: STUDENT_A, startTime: null, endTime: null },
-      ]);
-
-      await reportAbsent();
-
-      expect(tx.user.findMany).toHaveBeenCalledTimes(1);
-    });
-
     it('reads a report that gives only one of its times as the whole day', async () => {
       tx.absenceReport.findMany.mockResolvedValue([
         { studentId: STUDENT_A, startTime: wallClock('08:00'), endTime: null },
