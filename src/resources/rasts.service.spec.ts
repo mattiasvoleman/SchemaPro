@@ -1,4 +1,10 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -40,6 +46,12 @@ const createDto = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 }) as Parameters<RastsService['create']>[0];
 
+const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
+  new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
+    code,
+    clientVersion: Prisma.prismaVersion.client,
+  });
+
 describe('RastsService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
@@ -50,6 +62,17 @@ describe('RastsService', () => {
     prisma = createPrismaMock(tx);
     service = new RastsService(prisma as unknown as PrismaService);
   });
+
+  /** The stored rast, found by its own id and by nothing else — as the table would. */
+  const givenRast = (overrides: Record<string, unknown> = {}) => {
+    const row = storedRast(overrides);
+    tx.rast.findUnique.mockImplementation(({ where }: { where?: { id?: string } }) => {
+      if (where?.id === undefined) {
+        throw new Error('Prisma: findUnique needs a unique field in `where`.');
+      }
+      return Promise.resolve(where.id === row.id ? row : null);
+    });
+  };
 
   describe('the times it returns', () => {
     it('hands back HH:MM, not a 1970 timestamp', async () => {
@@ -86,7 +109,7 @@ describe('RastsService', () => {
     it('refuses a rast that ends before it starts', async () => {
       await expect(
         service.create(createDto({ startTime: '10:00', endTime: '09:40' }), testUser()),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(new BadRequestException('startTime must be before endTime.'));
       expect(tx.rast.create).not.toHaveBeenCalled();
     });
 
@@ -120,7 +143,9 @@ describe('RastsService', () => {
     it('refuses a span written backwards', async () => {
       await expect(
         service.create(createDto({ minGradeLevel: 6, maxGradeLevel: 4 }), testUser()),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('minGradeLevel must not be above maxGradeLevel.'),
+      );
     });
 
     it('accepts a single year written as a span of one', async () => {
@@ -140,7 +165,7 @@ describe('RastsService', () => {
       // A PATCH naming one end of the window says nothing about the other.
       // Validating the payload alone lets the database answer with a constraint
       // violation the admin cannot act on.
-      tx.rast.findUnique.mockResolvedValue(storedRast());
+      givenRast();
 
       await expect(
         service.update(RAST_ID, { endTime: '09:20' }, testUser({ schoolId: SCHOOL_ID })),
@@ -149,7 +174,7 @@ describe('RastsService', () => {
     });
 
     it('writes only the fields the payload names', async () => {
-      tx.rast.findUnique.mockResolvedValue(storedRast());
+      givenRast();
       tx.rast.update.mockResolvedValue(storedRast({ name: 'Eftermiddagsrast' }));
 
       await service.update(
@@ -169,7 +194,66 @@ describe('RastsService', () => {
 
       await expect(
         service.update(RAST_ID, { name: 'X' }, testUser({ schoolId: SCHOOL_ID })),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(new NotFoundException(`Rast ${RAST_ID} not found.`));
+    });
+
+    it('refuses a lower year pushed past the stored upper one', async () => {
+      // The upper year is never sent; the merge takes it from the row.
+      givenRast();
+
+      await expect(
+        service.update(RAST_ID, { minGradeLevel: 9 }, testUser({ schoolId: SCHOOL_ID })),
+      ).rejects.toThrow(
+        new BadRequestException('minGradeLevel must not be above maxGradeLevel.'),
+      );
+      expect(tx.rast.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses an upper year pulled below the stored lower one', async () => {
+      givenRast();
+
+      await expect(
+        service.update(RAST_ID, { maxGradeLevel: 1 }, testUser({ schoolId: SCHOOL_ID })),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.rast.update).not.toHaveBeenCalled();
+    });
+
+    it('trims a new name as create does', async () => {
+      givenRast();
+      tx.rast.update.mockResolvedValue(storedRast({ name: 'Lunchrast' }));
+
+      await service.update(RAST_ID, { name: '  Lunchrast ' }, testUser({ schoolId: SCHOOL_ID }));
+
+      expect(tx.rast.update).toHaveBeenCalledWith({
+        where: { id: RAST_ID },
+        data: { name: 'Lunchrast' },
+      });
+    });
+
+    it.each<[string, Parameters<RastsService['update']>[1], Record<string, unknown>]>([
+      ['the lower year', { minGradeLevel: 5 }, { minGradeLevel: 5 }],
+      ['the upper year', { maxGradeLevel: 5 }, { maxGradeLevel: 5 }],
+      ['the weekday', { dayOfWeek: 3 }, { dayOfWeek: 3 }],
+      ['the start', { startTime: '09:30' }, { startTime: wallClock('09:30') }],
+      ['the end', { endTime: '10:10' }, { endTime: wallClock('10:10') }],
+    ])('writes %s when that is all the PATCH names', async (_field, patch, data) => {
+      // A field dropped on the way to the write is an edit that answers 200 and
+      // leaves the rast where the engine already had it.
+      givenRast();
+      tx.rast.update.mockResolvedValue(storedRast());
+
+      await service.update(RAST_ID, patch, testUser({ schoolId: SCHOOL_ID }));
+
+      expect(tx.rast.update).toHaveBeenCalledWith({ where: { id: RAST_ID }, data });
+    });
+
+    it('maps a write that finds the row gone (P2025) to 404', async () => {
+      givenRast();
+      tx.rast.update.mockRejectedValue(prismaError('P2025'));
+
+      await expect(
+        service.update(RAST_ID, { name: 'X' }, testUser({ schoolId: SCHOOL_ID })),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 
@@ -223,7 +307,7 @@ describe('RastsService', () => {
       // read an omitted field as false and turn the rule OFF every time the
       // school renamed a rast. The service tests `!== undefined` for exactly
       // this, and a boolean is the one type where the mistake is invisible.
-      tx.rast.findUnique.mockResolvedValue(storedRast({ requiresLessonBefore: true }));
+      givenRast({ requiresLessonBefore: true });
       tx.rast.update.mockResolvedValue(storedRast({ requiresLessonBefore: true }));
 
       await service.update(RAST_ID, { name: 'X' }, testUser({ schoolId: SCHOOL_ID }));
@@ -235,7 +319,7 @@ describe('RastsService', () => {
     });
 
     it('can be switched off by a PATCH that names it false', async () => {
-      tx.rast.findUnique.mockResolvedValue(storedRast({ requiresLessonBefore: true }));
+      givenRast({ requiresLessonBefore: true });
       tx.rast.update.mockResolvedValue(storedRast({ requiresLessonBefore: false }));
 
       await service.update(
@@ -264,6 +348,56 @@ describe('RastsService', () => {
         [{ data: { dayOfWeek: number | null } }],
       ];
       expect(call.data.dayOfWeek).toBeNull();
+    });
+
+    it('stores the weekday a rast was given', async () => {
+      // The other half: a Tuesday-only rast written as every day would take a
+      // break out of four days that never had one.
+      tx.rast.create.mockResolvedValue(storedRast({ dayOfWeek: 2 }));
+
+      await service.create(createDto({ dayOfWeek: 2 }), testUser({ schoolId: SCHOOL_ID }));
+
+      const [[call]] = tx.rast.create.mock.calls as [
+        [{ data: { dayOfWeek: number | null } }],
+      ];
+      expect(call.data.dayOfWeek).toBe(2);
+    });
+  });
+
+  describe('what the database refuses', () => {
+    it('answers a write refused as a duplicate (P2002) with 409', async () => {
+      tx.rast.create.mockRejectedValue(prismaError('P2002'));
+
+      await expect(
+        service.create(createDto(), testUser({ schoolId: SCHOOL_ID })),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('remove', () => {
+    it('deletes by id through RLS, so another school cannot reach the row', async () => {
+      tx.rast.delete.mockResolvedValue(storedRast());
+      const user = testUser({ schoolId: SCHOOL_ID });
+
+      await expect(service.remove(RAST_ID, user)).resolves.toBeUndefined();
+
+      expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(tx.rast.delete).toHaveBeenCalledWith({ where: { id: RAST_ID } });
+    });
+
+    it('refuses a caller with no school', async () => {
+      await expect(
+        service.remove(RAST_ID, testUser({ schoolId: null })),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(tx.rast.delete).not.toHaveBeenCalled();
+    });
+
+    it('maps an unknown or cross-tenant id (P2025) to 404', async () => {
+      tx.rast.delete.mockRejectedValue(prismaError('P2025'));
+
+      await expect(
+        service.remove(RAST_ID, testUser({ schoolId: SCHOOL_ID })),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });

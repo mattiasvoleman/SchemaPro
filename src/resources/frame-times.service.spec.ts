@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -8,6 +14,7 @@ import {
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import { FrameTimesService } from './frame-times.service';
+import type { UpdateFrameTimeDto } from './dto/frame-time.dto';
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const FRAME_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
@@ -28,6 +35,60 @@ const storedFrame = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
+  new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
+    code,
+    clientVersion: Prisma.prismaVersion.client,
+  });
+
+/**
+ * Rows in the order a `findMany` `orderBy` asks for, sorted the way PostgreSQL
+ * sorts them: entries applied left to right, each naming one field with
+ * `'asc' | 'desc'` or `{ sort, nulls }`, NULLs last when ascending unless told
+ * otherwise. Anything it cannot read throws rather than being ignored, so a
+ * sort that loses a key reorders the rows and a sort nobody could run fails.
+ */
+function ordered<T extends Record<string, unknown>>(rows: T[], orderBy: unknown): T[] {
+  const entries = (
+    orderBy === undefined ? [] : Array.isArray(orderBy) ? orderBy : [orderBy]
+  ) as Record<string, unknown>[];
+  const keys = entries.map((entry) => {
+    const pairs = Object.entries(entry);
+    if (pairs.length !== 1) {
+      throw new Error(`An orderBy entry names exactly one field: ${JSON.stringify(entry)}`);
+    }
+    const [field, how] = pairs[0];
+    const { sort, nulls } =
+      typeof how === 'string'
+        ? { sort: how, nulls: undefined }
+        : (how as { sort?: unknown; nulls?: unknown });
+    if (sort !== 'asc' && sort !== 'desc') {
+      throw new Error(`orderBy.${field}: sort is asc or desc, not ${JSON.stringify(sort)}`);
+    }
+    if (nulls !== undefined && nulls !== 'first' && nulls !== 'last') {
+      throw new Error(`orderBy.${field}: nulls is first or last, not ${JSON.stringify(nulls)}`);
+    }
+    return {
+      field,
+      direction: sort === 'asc' ? 1 : -1,
+      nullsFirst: nulls === undefined ? sort === 'desc' : nulls === 'first',
+    };
+  });
+  const comparable = (value: unknown) =>
+    (value instanceof Date ? value.getTime() : value) as number | null;
+  return [...rows].sort((a, b) => {
+    for (const { field, direction, nullsFirst } of keys) {
+      const x = comparable(a[field]);
+      const y = comparable(b[field]);
+      if (x === y) continue;
+      if (x === null) return nullsFirst ? -1 : 1;
+      if (y === null) return nullsFirst ? 1 : -1;
+      return x < y ? -direction : direction;
+    }
+    return 0;
+  });
+}
+
 describe('FrameTimesService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
@@ -38,6 +99,17 @@ describe('FrameTimesService', () => {
     prisma = createPrismaMock(tx);
     service = new FrameTimesService(prisma as unknown as PrismaService);
   });
+
+  /** The stored frame, found by its own id and by nothing else — as the table would. */
+  const givenFrame = (overrides: Record<string, unknown> = {}) => {
+    const row = storedFrame(overrides);
+    tx.frameTime.findUnique.mockImplementation(({ where }: { where?: { id?: string } }) => {
+      if (where?.id === undefined) {
+        throw new Error('Prisma: findUnique needs a unique field in `where`.');
+      }
+      return Promise.resolve(where.id === row.id ? row : null);
+    });
+  };
 
   // -------------------------------------------------------------------------
   // The clock, which is the whole reason this service has a response type
@@ -80,6 +152,31 @@ describe('FrameTimesService', () => {
 
       expect(frame.dayOfWeek).toBeNull();
       expect('dayOfWeek' in frame).toBe(true);
+    });
+
+    it('lists stage by stage, each every-day frame before the weekdays that narrow it', async () => {
+      // The order the form reads in, and the form does not re-sort: a Monday
+      // row printed above the every-day frame it narrows reads as the rule, not
+      // the exception. The rows arrive scrambled and are sorted by the
+      // service's own orderBy, and each of its keys has a pair only it can order.
+      const rows = [
+        storedFrame({ id: 'åk4-6', minGradeLevel: 4, maxGradeLevel: 6, dayOfWeek: null }),
+        storedFrame({ id: 'åk0-3-måndag', minGradeLevel: 0, maxGradeLevel: 3, dayOfWeek: 1 }),
+        storedFrame({ id: 'åk0-9', minGradeLevel: 0, maxGradeLevel: 9, dayOfWeek: null }),
+        storedFrame({ id: 'åk0-3', minGradeLevel: 0, maxGradeLevel: 3, dayOfWeek: null }),
+      ];
+      tx.frameTime.findMany.mockImplementation((args: { orderBy?: unknown } = {}) =>
+        Promise.resolve(ordered(rows, args.orderBy)),
+      );
+
+      const frames = await service.list(testUser({ schoolId: SCHOOL_ID }));
+
+      expect(frames.map((frame) => frame.id)).toEqual([
+        'åk0-3',
+        'åk0-3-måndag',
+        'åk0-9',
+        'åk4-6',
+      ]);
     });
   });
 
@@ -130,8 +227,21 @@ describe('FrameTimesService', () => {
           { minGradeLevel: 4, maxGradeLevel: 6, startTime: '15:00', endTime: '08:00' },
           user(),
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(new BadRequestException('startTime must be before endTime.'));
       expect(tx.frameTime.create).not.toHaveBeenCalled();
+    });
+
+    it('reads a start that is not on the hour', async () => {
+      // 08:30 is 510 minutes. Weigh the hour wrong and it compares as later
+      // than 15:00, and the most ordinary morning start is refused.
+      tx.frameTime.create.mockResolvedValue(storedFrame({ startTime: wallClock('08:30') }));
+
+      await expect(
+        service.create(
+          { minGradeLevel: 4, maxGradeLevel: 6, startTime: '08:30', endTime: '15:00' },
+          user(),
+        ),
+      ).resolves.toMatchObject({ startTime: '08:30' });
     });
 
     it('refuses a window of no length', async () => {
@@ -177,8 +287,21 @@ describe('FrameTimesService', () => {
           { minGradeLevel: 9, maxGradeLevel: 4, startTime: '08:00', endTime: '15:00' },
           user(),
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('minGradeLevel must not be above maxGradeLevel.'),
+      );
       expect(tx.frameTime.create).not.toHaveBeenCalled();
+    });
+
+    it('answers a write the database refuses as a duplicate (P2002) with 409', async () => {
+      tx.frameTime.create.mockRejectedValue(prismaError('P2002'));
+
+      await expect(
+        service.create(
+          { minGradeLevel: 4, maxGradeLevel: 6, startTime: '08:00', endTime: '15:00' },
+          user(),
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
 
     it('accepts a single year, which is the common case', async () => {
@@ -218,7 +341,7 @@ describe('FrameTimesService', () => {
      * its guard sat inside the branch that only ran when dates were sent.
      */
     it('refuses an end moved before the start it never mentions', async () => {
-      tx.frameTime.findUnique.mockResolvedValue(storedFrame());
+      givenFrame();
 
       await expect(service.update(FRAME_ID, { endTime: '07:00' }, user())).rejects.toBeInstanceOf(
         BadRequestException,
@@ -227,7 +350,7 @@ describe('FrameTimesService', () => {
     });
 
     it('refuses a start moved past the end it never mentions', async () => {
-      tx.frameTime.findUnique.mockResolvedValue(storedFrame());
+      givenFrame();
 
       await expect(service.update(FRAME_ID, { startTime: '16:00' }, user())).rejects.toBeInstanceOf(
         BadRequestException,
@@ -235,7 +358,7 @@ describe('FrameTimesService', () => {
     });
 
     it('refuses a min year pushed past the stored max', async () => {
-      tx.frameTime.findUnique.mockResolvedValue(storedFrame());
+      givenFrame();
 
       await expect(service.update(FRAME_ID, { minGradeLevel: 9 }, user())).rejects.toBeInstanceOf(
         BadRequestException,
@@ -244,7 +367,7 @@ describe('FrameTimesService', () => {
     });
 
     it('refuses a max year pulled below the stored min', async () => {
-      tx.frameTime.findUnique.mockResolvedValue(storedFrame());
+      givenFrame();
 
       await expect(service.update(FRAME_ID, { maxGradeLevel: 1 }, user())).rejects.toBeInstanceOf(
         BadRequestException,
@@ -252,7 +375,7 @@ describe('FrameTimesService', () => {
     });
 
     it('accepts a one-sided move that still leaves the row whole', async () => {
-      tx.frameTime.findUnique.mockResolvedValue(storedFrame());
+      givenFrame();
       tx.frameTime.update.mockResolvedValue(storedFrame({ endTime: wallClock('13:00') }));
 
       await expect(service.update(FRAME_ID, { endTime: '13:00' }, user())).resolves.toMatchObject({
@@ -264,7 +387,7 @@ describe('FrameTimesService', () => {
     it('accepts both ends moved together past where either alone would fail', async () => {
       // 16:00-17:00 is entirely after the stored 08:00-15:00, so each end taken
       // on its own is invalid against the stored row and the pair is fine.
-      tx.frameTime.findUnique.mockResolvedValue(storedFrame());
+      givenFrame();
       tx.frameTime.update.mockResolvedValue(
         storedFrame({ startTime: wallClock('16:00'), endTime: wallClock('17:00') }),
       );
@@ -275,7 +398,7 @@ describe('FrameTimesService', () => {
     });
 
     it('sends only the fields the payload named', async () => {
-      tx.frameTime.findUnique.mockResolvedValue(storedFrame());
+      givenFrame();
       tx.frameTime.update.mockResolvedValue(storedFrame({ dayOfWeek: null }));
 
       await service.update(FRAME_ID, { dayOfWeek: null }, user());
@@ -283,11 +406,48 @@ describe('FrameTimesService', () => {
       expect(tx.frameTime.update.mock.calls[0][0].data).toEqual({ dayOfWeek: null });
     });
 
-    it('reports an unknown frame as missing rather than as a write failure', async () => {
-      tx.frameTime.findUnique.mockResolvedValue(null);
+    it.each<[string, UpdateFrameTimeDto, Record<string, unknown>]>([
+      ['the lower year', { minGradeLevel: 5 }, { minGradeLevel: 5 }],
+      ['the upper year', { maxGradeLevel: 5 }, { maxGradeLevel: 5 }],
+      ['the start', { startTime: '09:00' }, { startTime: wallClock('09:00') }],
+      ['the changeover', { changeoverMinutes: 10 }, { changeoverMinutes: 10 }],
+    ])('writes %s to the row it read, when that is all the PATCH names', async (_field, patch, data) => {
+      // A field dropped on the way to the write is an edit that answers 200 and
+      // changes nothing, which the school finds out on the next generation.
+      givenFrame();
+      tx.frameTime.update.mockResolvedValue(storedFrame());
+
+      await service.update(FRAME_ID, patch, user());
+
+      expect(tx.frameTime.update).toHaveBeenCalledWith({ where: { id: FRAME_ID }, data });
+    });
+
+    it('compares the minutes of the hour, not only the hour', async () => {
+      // 08:00-08:45 is short and real. Read only the leading digits, or take
+      // the minutes away instead of adding them, and it compares as empty or
+      // inverted.
+      givenFrame();
+      tx.frameTime.update.mockResolvedValue(storedFrame({ endTime: wallClock('08:45') }));
+
+      await expect(service.update(FRAME_ID, { endTime: '08:45' }, user())).resolves.toMatchObject({
+        endTime: '08:45',
+      });
+    });
+
+    it('maps a write that finds the row gone (P2025) to 404', async () => {
+      givenFrame();
+      tx.frameTime.update.mockRejectedValue(prismaError('P2025'));
 
       await expect(service.update(FRAME_ID, { endTime: '13:00' }, user())).rejects.toBeInstanceOf(
         NotFoundException,
+      );
+    });
+
+    it('reports an unknown frame as missing rather than as a write failure', async () => {
+      tx.frameTime.findUnique.mockResolvedValue(null);
+
+      await expect(service.update(FRAME_ID, { endTime: '13:00' }, user())).rejects.toThrow(
+        new NotFoundException(`Frame time ${FRAME_ID} not found.`),
       );
       expect(tx.frameTime.update).not.toHaveBeenCalled();
     });
@@ -322,6 +482,14 @@ describe('FrameTimesService', () => {
         service.remove(FRAME_ID, testUser({ schoolId: null })),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(tx.frameTime.delete).not.toHaveBeenCalled();
+    });
+
+    it('maps an unknown or cross-tenant id (P2025) to 404', async () => {
+      tx.frameTime.delete.mockRejectedValue(prismaError('P2025'));
+
+      await expect(
+        service.remove(FRAME_ID, testUser({ schoolId: SCHOOL_ID })),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });

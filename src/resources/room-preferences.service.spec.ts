@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -17,6 +22,53 @@ const ROOM_B = '22222222-2222-4222-8222-222222222222';
 
 const schoolless = () => ({ ...testUser(), schoolId: undefined });
 
+const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
+  new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
+    code,
+    clientVersion: Prisma.prismaVersion.client,
+  });
+
+type Selection = Record<string, unknown>;
+
+type FixtureRoom = {
+  id: string;
+  name: string;
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
+};
+
+/**
+ * What Prisma hands back for a `select`: the fields asked for and nothing else,
+ * a relation through its own nested `select` (or whole, when it is named
+ * without one), and a refusal for a selection with no truthy field in it
+ * ("needs at least one truthy value"). A stub that returns the whole row
+ * whatever the query asked for lets a read that forgets a field feed
+ * `undefined` to the check behind it, and the check then passes.
+ */
+function selected(
+  row: Record<string, unknown>,
+  select?: Selection,
+): Record<string, unknown> {
+  if (select === undefined) return row;
+  const fields = Object.entries(select).filter(([, value]) => value);
+  if (fields.length === 0) {
+    throw new Error('Prisma: a `select` needs at least one truthy value.');
+  }
+  return Object.fromEntries(
+    fields.map(([field, value]) => {
+      const nested = (value as { select?: Selection }).select;
+      const related = row[field];
+      if (!nested) return [field, related];
+      return [
+        field,
+        Array.isArray(related)
+          ? related.map((entry: Record<string, unknown>) => selected(entry, nested))
+          : selected(related as Record<string, unknown>, nested),
+      ];
+    }),
+  );
+}
+
 describe('RoomPreferencesService', () => {
   let service: RoomPreferencesService;
   let tx: TxMock;
@@ -30,14 +82,77 @@ describe('RoomPreferencesService', () => {
     tx.roomPreference.update.mockResolvedValue({ id: PREF_ID });
     // update() reads the stored row before it validates the merge; without it
     // every PATCH would be a 404.
-    tx.roomPreference.findUnique.mockResolvedValue({
-      id: PREF_ID,
-      kind: 'WISH',
-      minGradeLevel: null,
-      maxGradeLevel: null,
-      rooms: [{ roomId: ROOM_A }],
-    });
+    givenRule({ kind: 'WISH', minGradeLevel: null, maxGradeLevel: null, roomIds: [ROOM_A] });
   });
+
+  /**
+   * The stored rule, read back the way Prisma answers the query that was sent:
+   * found only by its own id, its columns always, its rooms only when the
+   * include names them and through the include's own select. A stub that hands
+   * back the room list whatever was asked would let a merge that lost it arm a
+   * lock against rooms nobody checked.
+   */
+  const givenRule = (rule: {
+    kind: 'WISH' | 'LOCK';
+    minGradeLevel: number | null;
+    maxGradeLevel: number | null;
+    roomIds: string[];
+  }) => {
+    const { roomIds, ...columns } = rule;
+    const schoolId = testUser().schoolId;
+    const scalars = {
+      id: PREF_ID,
+      schoolId,
+      subjectId: SUBJECT_ID,
+      roomTypeId: null,
+      weight: 100,
+      ...columns,
+    };
+    const rooms = roomIds.map((roomId) => ({ roomPreferenceId: PREF_ID, schoolId, roomId }));
+    tx.roomPreference.findUnique.mockImplementation(
+      ({
+        where,
+        include,
+      }: {
+        where?: { id?: string };
+        include?: { rooms?: boolean | { select?: Selection } };
+      }) => {
+        if (where?.id === undefined) {
+          throw new Error('Prisma: findUnique needs a unique field in `where`.');
+        }
+        if (where.id !== PREF_ID) return Promise.resolve(null);
+        const relation = include?.rooms;
+        if (!relation) return Promise.resolve(scalars);
+        const select = typeof relation === 'object' ? relation.select : undefined;
+        return Promise.resolve({
+          ...scalars,
+          rooms: rooms.map((entry) => selected(entry, select)),
+        });
+      },
+    );
+  };
+
+  /**
+   * The school's rooms as a table the lock check reads through its own query:
+   * narrowed to the ids it names, cut to the fields it selects. Rooms the rule
+   * does not name are in here too, so a query that loses its filter measures
+   * the lock against rooms it never named.
+   */
+  const givenRooms = (rooms: FixtureRoom[]) => {
+    tx.room.findMany.mockImplementation(
+      ({
+        where,
+        select,
+      }: { where?: { id?: { in?: string[] } }; select?: Selection } = {}) => {
+        const ids = where?.id?.in;
+        return Promise.resolve(
+          rooms
+            .filter((room) => ids === undefined || ids.includes(room.id))
+            .map((room) => selected(room, select)),
+        );
+      },
+    );
+  };
 
   describe('create', () => {
     it('stores a wish for named rooms, stamping the tenant from the principal', async () => {
@@ -97,7 +212,11 @@ describe('RoomPreferencesService', () => {
           { subjectId: SUBJECT_ID, roomTypeId: TYPE_ID, roomIds: [ROOM_A] },
           testUser(),
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Ange antingen en salstyp eller en eller flera salar — inte båda och inte ingetdera.',
+        ),
+      );
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
@@ -216,7 +335,11 @@ describe('RoomPreferencesService', () => {
           { subjectId: SUBJECT_ID, roomIds: [ROOM_A], minGradeLevel: 4 },
           testUser(),
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Ange båda årskurserna eller ingen av dem — ett halvt spann går inte att tolka.',
+        ),
+      );
       expect(tx.roomPreference.create).not.toHaveBeenCalled();
     });
 
@@ -231,7 +354,9 @@ describe('RoomPreferencesService', () => {
           },
           testUser(),
         ),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('Den lägsta årskursen får inte vara högre än den högsta.'),
+      );
     });
 
     it('refuses a lock whose every room is fenced away from its years', async () => {
@@ -242,8 +367,8 @@ describe('RoomPreferencesService', () => {
        * same fact as an empty eligible set and can say no more than "no room
        * satisfies capacity/type/years".
        */
-      tx.room.findMany.mockResolvedValue([
-        { name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+      givenRooms([
+        { id: ROOM_A, name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
       ]);
 
       await expect(
@@ -273,9 +398,7 @@ describe('RoomPreferencesService', () => {
        * A disjoint span (åk 4 vs a 7-9 room) cannot tell the two apart: both
        * refuse it.
        */
-      tx.room.findMany.mockResolvedValue([
-        { name: 'Hytt 1', minGradeLevel: 7, maxGradeLevel: 9 },
-      ]);
+      givenRooms([{ id: ROOM_A, name: 'Hytt 1', minGradeLevel: 7, maxGradeLevel: 9 }]);
 
       await expect(
         service.create(
@@ -293,9 +416,9 @@ describe('RoomPreferencesService', () => {
 
     it('accepts a lock when one of its rooms fits, even if another does not', async () => {
       // The rooms are alternatives, not a set that must all work.
-      tx.room.findMany.mockResolvedValue([
-        { name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
-        { name: 'Bryggan 3', minGradeLevel: null, maxGradeLevel: null },
+      givenRooms([
+        { id: ROOM_A, name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+        { id: ROOM_B, name: 'Bryggan 3', minGradeLevel: null, maxGradeLevel: null },
       ]);
 
       await expect(
@@ -318,8 +441,8 @@ describe('RoomPreferencesService', () => {
        * one would stop a school writing an aspiration before the room it needs
        * has been re-fenced — and only a lock can make a week impossible.
        */
-      tx.room.findMany.mockResolvedValue([
-        { name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+      givenRooms([
+        { id: ROOM_A, name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
       ]);
 
       await expect(
@@ -341,15 +464,9 @@ describe('RoomPreferencesService', () => {
        * enforcing. Reading them off the DTO alone would arm a lock against a
        * room list nobody re-checked.
        */
-      tx.roomPreference.findUnique.mockResolvedValue({
-        id: PREF_ID,
-        kind: 'WISH',
-        minGradeLevel: 4,
-        maxGradeLevel: 4,
-        rooms: [{ roomId: ROOM_A }],
-      });
-      tx.room.findMany.mockResolvedValue([
-        { name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+      givenRule({ kind: 'WISH', minGradeLevel: 4, maxGradeLevel: 4, roomIds: [ROOM_A] });
+      givenRooms([
+        { id: ROOM_A, name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
       ]);
 
       await expect(
@@ -361,13 +478,7 @@ describe('RoomPreferencesService', () => {
     it('checks the merge when a PATCH moves one year bound', async () => {
       // The other bound is never sent, so validating the DTO alone passes and
       // the database answers with a constraint name instead.
-      tx.roomPreference.findUnique.mockResolvedValue({
-        id: PREF_ID,
-        kind: 'WISH',
-        minGradeLevel: 4,
-        maxGradeLevel: 6,
-        rooms: [{ roomId: ROOM_A }],
-      });
+      givenRule({ kind: 'WISH', minGradeLevel: 4, maxGradeLevel: 6, roomIds: [ROOM_A] });
 
       await expect(
         service.update(PREF_ID, { minGradeLevel: 9 }, testUser()),
@@ -376,13 +487,7 @@ describe('RoomPreferencesService', () => {
     });
 
     it('can clear a span back to every year', async () => {
-      tx.roomPreference.findUnique.mockResolvedValue({
-        id: PREF_ID,
-        kind: 'WISH',
-        minGradeLevel: 4,
-        maxGradeLevel: 6,
-        rooms: [{ roomId: ROOM_A }],
-      });
+      givenRule({ kind: 'WISH', minGradeLevel: 4, maxGradeLevel: 6, roomIds: [ROOM_A] });
 
       await service.update(
         PREF_ID,
@@ -399,6 +504,113 @@ describe('RoomPreferencesService', () => {
 
       await expect(service.update(PREF_ID, { kind: 'LOCK' }, testUser())).rejects.toThrow(
         /not found/,
+      );
+    });
+
+    const lock = (roomIds: string[], minGradeLevel: number, maxGradeLevel: number) =>
+      service.create(
+        { subjectId: SUBJECT_ID, roomIds, kind: 'LOCK', minGradeLevel, maxGradeLevel },
+        testUser(),
+      );
+
+    it('measures a lock against the rooms it names, not every room in the school', async () => {
+      // Bryggan 3 would hold åk 4, but the lock does not name it: the rule is
+      // still a contradiction, and saying so is the check's whole job.
+      givenRooms([
+        { id: ROOM_A, name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+        { id: ROOM_B, name: 'Bryggan 3', minGradeLevel: null, maxGradeLevel: null },
+      ]);
+
+      await expect(lock([ROOM_A], 4, 4)).rejects.toThrow('Optimisten 4');
+      expect(tx.roomPreference.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts a lock whose span sits inside the room’s fence', async () => {
+      givenRooms([
+        { id: ROOM_A, name: 'Mellanstadiesalen', minGradeLevel: 3, maxGradeLevel: 6 },
+      ]);
+
+      await expect(lock([ROOM_A], 4, 5)).resolves.toBeDefined();
+    });
+
+    it('counts both edges of the fence as inside it', async () => {
+      // Åk 4-6 in a room fenced to 4-6 is the ordinary case, not a borderline one.
+      givenRooms([
+        { id: ROOM_A, name: 'Mellanstadiesalen', minGradeLevel: 4, maxGradeLevel: 6 },
+      ]);
+
+      await expect(lock([ROOM_A], 4, 6)).resolves.toBeDefined();
+    });
+
+    it('refuses a lock that reaches above the room’s fence', async () => {
+      // The upper half of containment: åk 4-8 in a room for 0-5 fits at the
+      // bottom and would send åk 6-8 into a lågstadie room at the top.
+      givenRooms([
+        { id: ROOM_A, name: 'Lågstadiesalen', minGradeLevel: 0, maxGradeLevel: 5 },
+      ]);
+
+      await expect(lock([ROOM_A], 4, 8)).rejects.toThrow('Lågstadiesalen');
+    });
+
+    it('never refuses a lock with no span, which reaches every year', async () => {
+      givenRooms([
+        { id: ROOM_A, name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+      ]);
+
+      await expect(
+        service.create(
+          { subjectId: SUBJECT_ID, roomIds: [ROOM_A], kind: 'LOCK' },
+          testUser(),
+        ),
+      ).resolves.toBeDefined();
+    });
+
+    it('names every refused room in one sentence the admin can act on', async () => {
+      givenRooms([
+        { id: ROOM_A, name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+        { id: ROOM_B, name: 'Hytt 1', minGradeLevel: 7, maxGradeLevel: 9 },
+      ]);
+
+      await expect(lock([ROOM_A, ROOM_B], 4, 4)).rejects.toThrow(
+        new BadRequestException(
+          'Låset går inte att hålla: Optimisten 4, Hytt 1 är reserverade för andra ' +
+            'årskurser än 4–4. Ändra salens årskurser eller välj en annan sal.',
+        ),
+      );
+    });
+
+    it('arms a lock with a PATCH that only flips the kind, when the stored rooms allow it', async () => {
+      givenRule({ kind: 'WISH', minGradeLevel: 4, maxGradeLevel: 4, roomIds: [ROOM_A] });
+      givenRooms([
+        { id: ROOM_A, name: 'Bryggan 3', minGradeLevel: null, maxGradeLevel: null },
+      ]);
+
+      await service.update(PREF_ID, { kind: 'LOCK' }, testUser());
+
+      expect(tx.roomPreference.update).toHaveBeenCalledWith({
+        where: { id: PREF_ID },
+        data: { kind: 'LOCK' },
+        include: { rooms: { select: { roomId: true } } },
+      });
+    });
+  });
+
+  describe('remove', () => {
+    it('deletes by id under the caller and answers with the id', async () => {
+      tx.roomPreference.delete.mockResolvedValue({ id: PREF_ID });
+      const user = testUser();
+
+      await expect(service.remove(PREF_ID, user)).resolves.toEqual({ id: PREF_ID });
+
+      expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(tx.roomPreference.delete).toHaveBeenCalledWith({ where: { id: PREF_ID } });
+    });
+
+    it('maps P2025 (unknown or cross-tenant id) to 404', async () => {
+      tx.roomPreference.delete.mockRejectedValue(prismaError('P2025'));
+
+      await expect(service.remove(PREF_ID, testUser())).rejects.toBeInstanceOf(
+        NotFoundException,
       );
     });
   });

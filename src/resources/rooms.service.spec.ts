@@ -14,12 +14,67 @@ import type { CreateRoomDto } from './dto/room.dto';
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const ROOM_ID = '55555555-5555-4555-8555-555555555555';
 const ROOM_TYPE_ID = '88888888-8888-4888-8888-888888888888';
+const OTHER_ROOM_ID = '56565656-5656-4565-8565-565656565656';
 
 const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
     code,
     clientVersion: Prisma.prismaVersion.client,
   });
+
+type Selection = Record<string, unknown>;
+
+/**
+ * What Prisma hands back for a `select`: the fields asked for and nothing else,
+ * a relation through its own nested `select` (or whole, when it is named
+ * without one), and a refusal for a selection with no truthy field in it
+ * ("needs at least one truthy value").
+ */
+function selected(
+  row: Record<string, unknown>,
+  select?: Selection,
+): Record<string, unknown> {
+  if (select === undefined) return row;
+  const fields = Object.entries(select).filter(([, value]) => value);
+  if (fields.length === 0) {
+    throw new Error('Prisma: a `select` needs at least one truthy value.');
+  }
+  return Object.fromEntries(
+    fields.map(([field, value]) => {
+      const nested = (value as { select?: Selection }).select;
+      const related = row[field];
+      if (!nested) return [field, related];
+      return [
+        field,
+        Array.isArray(related)
+          ? related.map((entry: Record<string, unknown>) => selected(entry, nested))
+          : selected(related as Record<string, unknown>, nested),
+      ];
+    }),
+  );
+}
+
+type FixtureRule = { kind: 'WISH' | 'LOCK'; subject: string; roomIds: string[] };
+
+/** The room-rule filter remove() sends, read the way Prisma reads it. */
+function ruleMatches(where: Record<string, unknown>, rule: FixtureRule): boolean {
+  return Object.entries(where).every(([key, condition]) => {
+    if (key === 'kind') return rule.kind === condition;
+    if (key === 'rooms') {
+      const { some, ...rest } = condition as { some?: { roomId?: string } };
+      if (Object.keys(rest).length > 0) {
+        throw new Error(`Unhandled rooms condition: ${Object.keys(rest).join(', ')}`);
+      }
+      // `rooms: {}` is no condition; `some: {}` is "names at least one room";
+      // `some: { roomId }` is "names this one".
+      if (some === undefined) return true;
+      return rule.roomIds.some(
+        (roomId) => some.roomId === undefined || roomId === some.roomId,
+      );
+    }
+    throw new Error(`The lock query grew a condition tests do not know: ${key}`);
+  });
+}
 
 describe('RoomsService', () => {
   let service: RoomsService;
@@ -138,6 +193,19 @@ describe('RoomsService', () => {
       });
     });
 
+    it('writes a new room type when that is what the PATCH names', async () => {
+      // The type is what a subject's required type is matched against. A PATCH
+      // that drops it leaves kemi placed in a room that is no longer a lab.
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { roomTypeId: ROOM_TYPE_ID }, testUser());
+
+      expect(tx.room.update).toHaveBeenCalledWith({
+        where: { id: ROOM_ID },
+        data: { roomTypeId: ROOM_TYPE_ID },
+      });
+    });
+
     it('maps P2025 (unknown or cross-tenant id) to 404', async () => {
       tx.room.update.mockRejectedValue(prismaError('P2025'));
 
@@ -148,6 +216,37 @@ describe('RoomsService', () => {
   });
 
   describe('remove', () => {
+    /*
+     * The school's room rules as a table the guard reads through its own
+     * query: narrowed by kind and by the room they name, cut to the fields it
+     * selects. The rules handed in include ones that must NOT come back — a
+     * wish, a lock on another room — so a query that loses a condition refuses
+     * a delete it should allow.
+     */
+    const givenRules = (rules: FixtureRule[]) => {
+      tx.roomPreference.findMany.mockImplementation(
+        ({
+          where = {},
+          select,
+        }: { where?: Record<string, unknown>; select?: Selection } = {}) =>
+          Promise.resolve(
+            rules
+              .filter((rule) => ruleMatches(where, rule))
+              .map((rule, index) =>
+                selected(
+                  {
+                    id: `rule-${index}`,
+                    kind: rule.kind,
+                    subject: { id: `subject-${index}`, name: rule.subject },
+                    rooms: rule.roomIds.map((roomId) => ({ roomId })),
+                  },
+                  select,
+                ),
+              ),
+          ),
+      );
+    };
+
     it('deletes by id under the caller’s RLS context', async () => {
       tx.room.delete.mockResolvedValue({ id: ROOM_ID });
       const user = testUser();
@@ -166,12 +265,42 @@ describe('RoomsService', () => {
        * reason, and there is nowhere to put a warning: this returns 204 and the
        * room list simply re-renders.
        */
-      tx.roomPreference.findMany.mockResolvedValue([
-        { subject: { name: 'Matematik' }, rooms: [{ roomId: ROOM_ID }] },
+      givenRules([{ kind: 'LOCK', subject: 'Matematik', roomIds: [ROOM_ID] }]);
+
+      await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(
+        new BadRequestException(
+          'Salen är den enda som är låst för Matematik. Ta bort eller ändra låsningen först.',
+        ),
+      );
+      expect(tx.room.delete).not.toHaveBeenCalled();
+    });
+
+    it('names every subject a lock would strand, once each', async () => {
+      givenRules([
+        { kind: 'LOCK', subject: 'Matematik', roomIds: [ROOM_ID] },
+        { kind: 'LOCK', subject: 'Fysik', roomIds: [ROOM_ID] },
+        // A second Matematik lock, for another stage: still one subject to fix.
+        { kind: 'LOCK', subject: 'Matematik', roomIds: [ROOM_ID] },
       ]);
 
-      await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow('Matematik');
-      expect(tx.room.delete).not.toHaveBeenCalled();
+      await expect(service.remove(ROOM_ID, testUser())).rejects.toThrow(
+        new BadRequestException(
+          'Salen är den enda som är låst för Matematik, Fysik. Ta bort eller ändra låsningen först.',
+        ),
+      );
+    });
+
+    it('deletes a room no lock names, whatever else in the school is locked', async () => {
+      givenRules([
+        // A lock on another room, and a wish this delete would empty: neither
+        // is a reason to refuse it.
+        { kind: 'LOCK', subject: 'Kemi', roomIds: [OTHER_ROOM_ID] },
+        { kind: 'WISH', subject: 'Bild', roomIds: [ROOM_ID] },
+      ]);
+      tx.room.delete.mockResolvedValue({ id: ROOM_ID });
+
+      await expect(service.remove(ROOM_ID, testUser())).resolves.toBeUndefined();
+      expect(tx.room.delete).toHaveBeenCalledWith({ where: { id: ROOM_ID } });
     });
 
     it('asks only about locks, never about wishes', async () => {
@@ -197,11 +326,8 @@ describe('RoomsService', () => {
 
     it('allows the delete when the lock still has another room', async () => {
       // Two rooms named, one going away: the rule keeps meaning something.
-      tx.roomPreference.findMany.mockResolvedValue([
-        {
-          subject: { name: 'Matematik' },
-          rooms: [{ roomId: ROOM_ID }, { roomId: 'other' }],
-        },
+      givenRules([
+        { kind: 'LOCK', subject: 'Matematik', roomIds: [ROOM_ID, OTHER_ROOM_ID] },
       ]);
       tx.room.delete.mockResolvedValue({ id: ROOM_ID });
 
@@ -313,7 +439,9 @@ describe('RoomsService', () => {
     it('refuses an inverted range instead of storing an unusable room', async () => {
       await expect(
         service.create({ name: 'B12', minGradeLevel: 7, maxGradeLevel: 4 }, testUser()),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('Lägsta årskurs kan inte vara högre än högsta årskurs.'),
+      );
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
@@ -322,6 +450,20 @@ describe('RoomsService', () => {
         service.update(ROOM_ID, { minGradeLevel: 9, maxGradeLevel: 1 }, testUser()),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('lets a PATCH lift the upper limit while it sets the lower one', async () => {
+      // "From åk 7 and up" is a number and a null. Only two numbers can be out
+      // of order — and 7 > null is true in JavaScript, which is the comparison
+      // this guard must not make.
+      tx.room.update.mockResolvedValue({ id: ROOM_ID });
+
+      await service.update(ROOM_ID, { minGradeLevel: 7, maxGradeLevel: null }, testUser());
+
+      expect(tx.room.update).toHaveBeenCalledWith({
+        where: { id: ROOM_ID },
+        data: { minGradeLevel: 7, maxGradeLevel: null },
+      });
     });
 
     it('clears a limit with an explicit null', async () => {

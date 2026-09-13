@@ -9,7 +9,10 @@ import {
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
 import { StudentGroupsService } from './student-groups.service';
-import type { CreateStudentGroupDto } from './dto/student-group.dto';
+import type {
+  CreateStudentGroupDto,
+  UpdateStudentGroupDto,
+} from './dto/student-group.dto';
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const YEAR_ID = '99999999-9999-4999-8999-999999999999';
@@ -20,6 +23,89 @@ const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
     code,
     clientVersion: Prisma.prismaVersion.client,
   });
+
+type Selection = Record<string, unknown>;
+
+/**
+ * What Prisma hands back for a `select`: the fields asked for and nothing else,
+ * a relation through its own nested `select` (or whole, when it is named
+ * without one), and a refusal for a selection with no truthy field in it
+ * ("needs at least one truthy value"). A stub that returns the whole row
+ * whatever the query asked for proves only that the service trusts its stub.
+ */
+function selected(
+  row: Record<string, unknown>,
+  select?: Selection,
+): Record<string, unknown> {
+  if (select === undefined) return row;
+  const fields = Object.entries(select).filter(([, value]) => value);
+  if (fields.length === 0) {
+    throw new Error('Prisma: a `select` needs at least one truthy value.');
+  }
+  return Object.fromEntries(
+    fields.map(([field, value]) => {
+      const nested = (value as { select?: Selection }).select;
+      const related = row[field];
+      if (!nested) return [field, related];
+      return [
+        field,
+        Array.isArray(related)
+          ? related.map((entry: Record<string, unknown>) => selected(entry, nested))
+          : selected(related as Record<string, unknown>, nested),
+      ];
+    }),
+  );
+}
+
+/** The user filter setMembers sends, read the way Prisma reads it. */
+function personMatches(
+  where: Record<string, unknown>,
+  person: Record<string, unknown>,
+): boolean {
+  return Object.entries(where).every(([key, condition]) => {
+    if (key === 'id') {
+      // `id: {}` is no condition at all; `id: { in }` is membership.
+      const { in: ids, ...rest } = condition as { in?: string[] };
+      if (Object.keys(rest).length > 0) {
+        throw new Error(`Unhandled id condition: ${Object.keys(rest).join(', ')}`);
+      }
+      return ids === undefined || ids.includes(person['id'] as string);
+    }
+    if (key === 'role' || key === 'isActive') return person[key] === condition;
+    throw new Error(`The student filter grew a condition tests do not know: ${key}`);
+  });
+}
+
+/**
+ * Rows in the order a single-path `orderBy` asks for (`{ student: { lastName:
+ * 'asc' } }`), following the path into the relation. Anything else throws
+ * rather than being ignored, so a sort that loses its field fails loudly.
+ */
+function sortedBy<T>(rows: T[], orderBy: unknown): T[] {
+  if (orderBy === undefined) return rows;
+  const path: string[] = [];
+  let node: unknown = orderBy;
+  while (typeof node === 'object' && node !== null) {
+    const entries = Object.entries(node);
+    if (entries.length !== 1) {
+      throw new Error(`An orderBy names one field per level: ${JSON.stringify(orderBy)}`);
+    }
+    path.push(entries[0][0]);
+    node = entries[0][1];
+  }
+  if (node !== 'asc' && node !== 'desc') {
+    throw new Error(`An orderBy direction is asc or desc, not ${JSON.stringify(node)}`);
+  }
+  const direction = node === 'asc' ? 1 : -1;
+  const valueOf = (row: T) =>
+    path.reduce<unknown>(
+      (value, key) => (value as Record<string, unknown>)[key],
+      row,
+    ) as string;
+  return [...rows].sort((a, b) =>
+    valueOf(a) === valueOf(b) ? 0 : valueOf(a) < valueOf(b) ? -direction : direction,
+  );
+}
 
 describe('StudentGroupsService', () => {
   let service: StudentGroupsService;
@@ -118,6 +204,22 @@ describe('StudentGroupsService', () => {
       });
     });
 
+    it.each<[string, UpdateStudentGroupDto]>([
+      ['the academic year', { academicYearId: YEAR_ID }],
+      ['the kind', { kind: 'TEACHING_GROUP' }],
+    ])('writes %s when that is what the PATCH names', async (_field, patch) => {
+      // The kind decides whether the group is its members' home class; a PATCH
+      // that drops it leaves a språkval eating lunch as a class.
+      tx.studentGroup.update.mockResolvedValue({ id: GROUP_ID });
+
+      await service.update(GROUP_ID, patch, testUser());
+
+      expect(tx.studentGroup.update).toHaveBeenCalledWith({
+        where: { id: GROUP_ID },
+        data: patch,
+      });
+    });
+
     it('maps P2025 (unknown or cross-tenant id) to 404', async () => {
       tx.studentGroup.update.mockRejectedValue(prismaError('P2025'));
 
@@ -165,9 +267,47 @@ describe('StudentGroupsService — teaching-group members', () => {
   });
 
   describe('setMembers', () => {
+    const FORMER_STUDENT = 'aaaaaaa3-0000-4000-8000-000000000003';
+    const TEACHER = 'bbbbbbb1-0000-4000-8000-000000000001';
+
+    /*
+     * The school's people as a table the membership check reads through its
+     * own query: filtered by the ids, role and activity it names, cut to the
+     * fields it selects. A stub that hands back "the valid ones" whatever was
+     * asked proves only that the service trusts its stub — drop `role` from the
+     * filter and a teacher joins the group while every test stays green.
+     */
+    const PEOPLE = [
+      { id: STUDENT_A, role: 'STUDENT', isActive: true, firstName: 'Alva' },
+      { id: STUDENT_B, role: 'STUDENT', isActive: true, firstName: 'Bo' },
+      { id: FORMER_STUDENT, role: 'STUDENT', isActive: false, firstName: 'Cleo' },
+      { id: TEACHER, role: 'TEACHER', isActive: true, firstName: 'Dan' },
+    ];
+
     const arrange = () => {
-      tx.studentGroup.findUnique.mockResolvedValue({ id: GROUP_ID });
-      tx.user.findMany.mockResolvedValue([{ id: STUDENT_A }, { id: STUDENT_B }]);
+      tx.studentGroup.findUnique.mockImplementation(
+        ({ where, select }: { where?: { id?: string }; select?: Selection }) => {
+          if (where?.id === undefined) {
+            throw new Error('Prisma: findUnique needs a unique field in `where`.');
+          }
+          return Promise.resolve(
+            where.id === GROUP_ID
+              ? selected({ id: GROUP_ID, name: 'Spanska 7' }, select)
+              : null,
+          );
+        },
+      );
+      tx.user.findMany.mockImplementation(
+        ({
+          where = {},
+          select,
+        }: { where?: Record<string, unknown>; select?: Selection } = {}) =>
+          Promise.resolve(
+            PEOPLE.filter((person) => personMatches(where, person)).map((person) =>
+              selected(person, select),
+            ),
+          ),
+      );
       tx.studentGroupMember.deleteMany.mockResolvedValue({ count: 0 });
       tx.studentGroupMember.createMany.mockResolvedValue({ count: 2 });
     };
@@ -201,7 +341,6 @@ describe('StudentGroupsService — teaching-group members', () => {
 
     it('deduplicates repeated ids before writing', async () => {
       arrange();
-      tx.user.findMany.mockResolvedValue([{ id: STUDENT_A }]);
 
       const result = await service.setMembers(
         GROUP_ID,
@@ -233,52 +372,71 @@ describe('StudentGroupsService — teaching-group members', () => {
 
       await expect(
         service.setMembers(GROUP_ID, { studentIds: [STUDENT_A] }, testUser()),
-      ).rejects.toBeInstanceOf(NotFoundException);
+      ).rejects.toThrow(new NotFoundException('Student group not found.'));
       expect(tx.studentGroupMember.deleteMany).not.toHaveBeenCalled();
     });
 
     it('rejects ids that are not active students, naming the offenders, and writes nothing', async () => {
       arrange();
-      // Only STUDENT_A passes the active-student filter.
-      tx.user.findMany.mockResolvedValue([{ id: STUDENT_A }]);
 
+      // A pupil who has left and a teacher: both real people in this school,
+      // and neither can be taught in a teaching group.
       await expect(
         service.setMembers(
           GROUP_ID,
-          { studentIds: [STUDENT_A, STUDENT_B] },
+          { studentIds: [STUDENT_A, TEACHER, FORMER_STUDENT] },
           testUser(),
         ),
-      ).rejects.toMatchObject({
-        constructor: BadRequestException,
-        message: expect.stringContaining(STUDENT_B),
-      });
+      ).rejects.toThrow(
+        new BadRequestException(
+          `Not active students in this school: ${TEACHER}, ${FORMER_STUDENT}`,
+        ),
+      );
       expect(tx.studentGroupMember.deleteMany).not.toHaveBeenCalled();
       expect(tx.studentGroupMember.createMany).not.toHaveBeenCalled();
     });
   });
 
   describe('listMembers', () => {
-    it('returns members with their home group, via the caller RLS session', async () => {
-      tx.studentGroupMember.findMany.mockResolvedValue([
+    it('returns members by last name, each with their home group, via the caller RLS session', async () => {
+      const HOME_7A = '77777777-7777-4777-8777-777777777777';
+      const HOME_7B = '78787878-7878-4878-8878-787878787878';
+      // Membership rows as the table holds them, each student a whole user row,
+      // read through the service's own filter, nested select and sort. They
+      // arrive out of order, so the order that comes back is the query's.
+      const rows = [
         {
-          student: {
-            id: STUDENT_A,
-            firstName: 'Alva',
-            lastName: 'Berg',
-            studentGroupId: '77777777-7777-4777-8777-777777777777',
-          },
+          studentGroupId: GROUP_ID,
+          student: { id: STUDENT_B, firstName: 'Bo', lastName: 'Lind', studentGroupId: HOME_7B, isActive: true },
         },
-      ]);
+        {
+          studentGroupId: '79797979-7979-4979-8979-797979797979',
+          student: { id: 'not-a-member', firstName: 'Ej', lastName: 'Medlem', studentGroupId: HOME_7A, isActive: true },
+        },
+        {
+          studentGroupId: GROUP_ID,
+          student: { id: STUDENT_A, firstName: 'Alva', lastName: 'Berg', studentGroupId: HOME_7A, isActive: true },
+        },
+      ];
+      tx.studentGroupMember.findMany.mockImplementation(
+        ({
+          where,
+          select,
+          orderBy,
+        }: { where: { studentGroupId: string }; select?: Selection; orderBy?: unknown }) =>
+          Promise.resolve(
+            sortedBy(
+              rows.filter((row) => row.studentGroupId === where.studentGroupId),
+              orderBy,
+            ).map((row) => selected(row, select)),
+          ),
+      );
 
       const members = await service.listMembers(GROUP_ID, testUser());
 
       expect(members).toEqual([
-        {
-          id: STUDENT_A,
-          firstName: 'Alva',
-          lastName: 'Berg',
-          homeGroupId: '77777777-7777-4777-8777-777777777777',
-        },
+        { id: STUDENT_A, firstName: 'Alva', lastName: 'Berg', homeGroupId: HOME_7A },
+        { id: STUDENT_B, firstName: 'Bo', lastName: 'Lind', homeGroupId: HOME_7B },
       ]);
       expect(tx.studentGroupMember.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ where: { studentGroupId: GROUP_ID } }),

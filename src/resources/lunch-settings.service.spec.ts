@@ -1,4 +1,9 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import {
   createPrismaMock,
   createTxMock,
@@ -193,6 +198,60 @@ describe('LunchSettingsService', () => {
           testUser(),
         ),
       ).rejects.toThrow(/15 minuter.*30 minuter/);
+    });
+
+    it.each([
+      ['starts the moment the school day does', { lunchStartTime: '08:00', lunchEndTime: '09:00' }],
+      ['ends the moment the school day does', { lunchStartTime: '17:00', lunchEndTime: '18:00' }],
+    ])('accepts a window that %s', async (_label, overrides) => {
+      // Both edges of the day are inside it. A window the engine can place
+      // refused here is a lunch the school cannot save at all.
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      await service.upsert(dto(overrides), testUser());
+
+      expect(tx.lunchSetting.upsert).toHaveBeenCalled();
+    });
+
+    describe('says what to fix, in the words the lunch form shows', () => {
+      // The service's own comment: these messages are Swedish because an admin
+      // reads them in the form. An empty or half-built sentence there is the
+      // "the AI engine returned an error" this validation exists to replace.
+      it.each([
+        [
+          { lunchStartTime: '07:45' },
+          'Starttiden måste ligga mellan 08:00 och 18:00.',
+        ],
+        [
+          { lunchEndTime: '18:15' },
+          'Sluttiden måste ligga mellan 08:00 och 18:00.',
+        ],
+        [
+          { lunchStartTime: '11:07' },
+          'Starttiden måste vara ett jämnt intervall om 5 minuter, till exempel 11:00 eller 11:05.',
+        ],
+        [
+          { lunchMinutes: 37 },
+          'Lunchens längd måste vara ett helt antal 5-minutersintervall.',
+        ],
+      ])('%j', async (overrides, message) => {
+        await expect(
+          service.upsert(dto(overrides as Partial<UpsertLunchSettingsDto>), testUser()),
+        ).rejects.toThrow(new BadRequestException(message));
+      });
+    });
+
+    it('answers a refusal from the database with its HTTP meaning, not a raw Prisma error', async () => {
+      tx.lunchSetting.upsert.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Simulated P2003', {
+          code: 'P2003',
+          clientVersion: Prisma.prismaVersion.client,
+        }),
+      );
+
+      await expect(service.upsert(dto(), testUser())).rejects.toBeInstanceOf(
+        ConflictException,
+      );
     });
   });
 });
