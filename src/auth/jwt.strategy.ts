@@ -78,8 +78,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // `payload.sub` is verified at this point (signature, issuer, audience and
     // expiry are all checked before validate() runs), so injecting it grants
     // exactly the caller's own row via the users_self_select policy.
-    const profile = await this.prisma.withVerifiedSubject(payload.sub, (tx) =>
-      tx.user.findUnique({
+    const profile = await this.prisma.withVerifiedSubject(payload.sub, (db) =>
+      db.user.findUnique({
         where: { authId: payload.sub },
         select: { id: true, schoolId: true, role: true, isActive: true },
       }),

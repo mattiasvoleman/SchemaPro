@@ -118,8 +118,8 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     // Identity lookup by the verified subject claim, mirroring
     // JwtStrategy.validate. See withVerifiedSubject: this is scoped to the
     // subject rather than attempting (and failing) to bypass RLS.
-    const profile = await this.prisma.withVerifiedSubject(payload.sub, (tx) =>
-      tx.user.findUnique({
+    const profile = await this.prisma.withVerifiedSubject(payload.sub, (db) =>
+      db.user.findUnique({
         where: { authId: payload.sub },
         select: {
           id: true,
