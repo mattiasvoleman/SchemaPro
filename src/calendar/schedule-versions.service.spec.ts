@@ -199,7 +199,8 @@ describe('ScheduleVersionsService', () => {
         },
       ]);
 
-      expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(prisma.queryWithRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(prisma.withRls).not.toHaveBeenCalled();
       expect(tx.scheduleVersion.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { academicYearId: YEAR_ID },

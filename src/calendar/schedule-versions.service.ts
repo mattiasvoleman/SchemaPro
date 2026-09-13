@@ -113,8 +113,8 @@ export class ScheduleVersionsService {
     academicYearId: string,
     user: AuthenticatedUser,
   ): Promise<ScheduleVersionSummary[]> {
-    return this.prisma.withRls(user, async (tx) => {
-      const versions = await tx.scheduleVersion.findMany({
+    const versions = await this.prisma.queryWithRls(user, (db) =>
+      db.scheduleVersion.findMany({
         where: { academicYearId },
         orderBy: { createdAt: 'desc' },
         select: {
@@ -124,12 +124,12 @@ export class ScheduleVersionsService {
           lessonCount: true,
           createdAt: true,
         },
-      });
-      return versions.map((version) => ({
-        ...version,
-        createdAt: version.createdAt.toISOString(),
-      }));
-    });
+      }),
+    );
+    return versions.map((version) => ({
+      ...version,
+      createdAt: version.createdAt.toISOString(),
+    }));
   }
 
   async create(

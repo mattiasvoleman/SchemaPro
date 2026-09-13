@@ -153,6 +153,40 @@ describe('PrismaService', () => {
     });
   });
 
+  describe('queryWithRls', () => {
+    let clientExecuteRaw: jest.Mock;
+
+    beforeEach(() => {
+      clientExecuteRaw = jest.fn().mockReturnValue('claims-statement');
+      transaction.mockImplementation(() => Promise.resolve([0, ['a job']]));
+      Object.assign(service, { $executeRaw: clientExecuteRaw });
+    });
+
+    it('sends the caller’s claims and the statement as one batch, claims first', async () => {
+      const query = jest.fn(() => 'list-statement' as never);
+
+      await expect(
+        service.queryWithRls(testUser({ authId: AUTH_ID }), query),
+      ).resolves.toEqual(['a job']);
+
+      expect(query).toHaveBeenCalledWith(service);
+      expect(transaction).toHaveBeenCalledWith([
+        'claims-statement',
+        'list-statement',
+      ]);
+
+      const [claims, sub, role] = rawValues(
+        clientExecuteRaw.mock.calls[0] as unknown[],
+      );
+      expect(sub).toBe(AUTH_ID);
+      expect(role).toBe('authenticated');
+      expect(JSON.parse(claims as string)).toEqual({
+        sub: AUTH_ID,
+        role: 'authenticated',
+      });
+    });
+  });
+
   describe('withServiceKeyLookup', () => {
     it('enables only the narrow key-lookup switch, no tenant or subject', async () => {
       const fn = jest.fn().mockResolvedValue('school');
