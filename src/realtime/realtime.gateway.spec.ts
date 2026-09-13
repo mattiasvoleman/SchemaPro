@@ -397,6 +397,30 @@ describe('RealtimeGateway', () => {
       expect(server.in).not.toHaveBeenCalled();
       expect(emit).not.toHaveBeenCalled();
     });
+
+    it('logs a failed roster broadcast instead of leaving the rejection unhandled', async () => {
+      // Nothing awaits the coalesced broadcast: it runs from a timer, and an
+      // escaping rejection is unhandled, which Node treats as fatal by
+      // default. The in-memory adapter main uses never rejects fetchSockets,
+      // so the mock stands in for one that can — a Redis adapter losing its
+      // connection — where a hiccup on a disconnect must cost one roster, not
+      // the process.
+      const warn = jest
+        .spyOn(Logger.prototype, 'warn')
+        .mockImplementation(() => undefined);
+      const client = makeSocket();
+      client.data['profile'] = profileOf();
+      fetchSockets.mockRejectedValue(new Error('adapter down'));
+
+      gateway.handleDisconnect(client as unknown as Socket);
+      await flushImmediates();
+      await flushPresence();
+
+      expect(warn).toHaveBeenCalledWith(
+        `Presence broadcast failed [school=${SCHOOL_ID}]`,
+      );
+      expect(emit).not.toHaveBeenCalled();
+    });
   });
 
   describe('emitMasterTimetableUpdated', () => {

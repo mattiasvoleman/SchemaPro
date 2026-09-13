@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ForbiddenException } from '@nestjs/common';
 import {
   createPrismaMock,
   createTxMock,
@@ -104,6 +105,21 @@ describe('IntegrationKeysController', () => {
           }),
         }),
       );
+    });
+
+    it('403s a principal with no school before touching the database', async () => {
+      // The tenant column is required. The controller is SCHOOL_ADMIN-only and
+      // JwtStrategy reads schoolId from the Users row, where it is not
+      // nullable, so no HTTP caller arrives without one. The check keeps the
+      // controller from depending on that, and fails as
+      // RoomBookingsService.create does rather than at the insert.
+      await expect(
+        controller.create({ name: 'Sync' }, testUser({ schoolId: undefined })),
+      ).rejects.toThrow(
+        new ForbiddenException('No school is associated with this account.'),
+      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.integrationApiKey.create).not.toHaveBeenCalled();
     });
 
     it('stores createdById as null when the token carries no userId', async () => {

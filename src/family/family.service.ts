@@ -10,6 +10,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { requireUserId } from '../common/utils/request-context';
 import { parseTimeString } from '../common/utils/time';
 import type {
   CreateAbsenceReportDto,
@@ -98,6 +99,7 @@ export class FamilyService {
   // ---------------------------------------------------------------------
 
   async createAbsenceReport(dto: CreateAbsenceReportDto, user: AuthenticatedUser) {
+    const reportedById = requireUserId(user);
     if ((dto.startTime === undefined) !== (dto.endTime === undefined)) {
       throw new BadRequestException(
         'startTime and endTime must be provided together (omit both for full day).',
@@ -111,7 +113,7 @@ export class FamilyService {
         data: {
           schoolId,
           studentId: dto.studentId,
-          reportedById: user.userId as string,
+          reportedById,
           date: new Date(`${dto.date}T00:00:00.000Z`),
           startTime: dto.startTime ? parseTimeString(dto.startTime) : null,
           endTime: dto.endTime ? parseTimeString(dto.endTime) : null,
@@ -153,6 +155,7 @@ export class FamilyService {
   // ---------------------------------------------------------------------
 
   async createLeaveRequest(dto: CreateLeaveRequestDto, user: AuthenticatedUser) {
+    const requestedById = requireUserId(user);
     if (dto.endDate < dto.startDate) {
       throw new BadRequestException('endDate must not be before startDate.');
     }
@@ -164,7 +167,7 @@ export class FamilyService {
         data: {
           schoolId,
           studentId: dto.studentId,
-          requestedById: user.userId as string,
+          requestedById,
           startDate: new Date(`${dto.startDate}T00:00:00.000Z`),
           endDate: new Date(`${dto.endDate}T00:00:00.000Z`),
           reason: dto.reason,
@@ -217,13 +220,19 @@ export class FamilyService {
 
       let absenceDays = 0;
       if (dto.status === 'APPROVED') {
+        // The reports below are filed in the decider's name, and their
+        // reporter column is required: a principal without a userId may reject
+        // a request but not approve one. None reaches this SCHOOL_ADMIN route
+        // today (see requireUserId); the check keeps the invariant at the
+        // write. The throw rolls the status update back.
+        const reportedById = requireUserId(user);
         const cursor = new Date(request.startDate);
         while (cursor <= request.endDate) {
           await tx.absenceReport.create({
             data: {
               schoolId: request.schoolId,
               studentId: request.studentId,
-              reportedById: user.userId as string,
+              reportedById,
               date: new Date(cursor),
               type: 'OTHER',
               note: 'Approved leave',

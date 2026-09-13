@@ -89,6 +89,24 @@ if [ -z "$student_b" ]; then
   exit 1
 fi
 
+# The second school's room lock. Section 7d asserts that no rule from another
+# school is visible, and with nothing planted over there that passes while
+# proving nothing — so the runner refuses to start instead. Counted as the
+# owner, since the app role cannot see the other tenant at all.
+foreign_rule_rooms="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT count(*) FROM \"RoomPreferenceRooms\" rr \
+       JOIN \"RoomPreferences\" p ON p.id = rr.\"preferenceId\" \
+      WHERE rr.\"schoolId\" <> '${school_a}' AND p.kind = 'LOCK'" \
+  | tr -d '[:space:]'
+)"
+
+if [ "${foreign_rule_rooms:-0}" = "0" ]; then
+  echo "FAIL: no room lock in the second school; fixtures did not run." >&2
+  exit 1
+fi
+
 if [ -z "$admin_auth_id" ]; then
   echo "FAIL: no SCHOOL_ADMIN with an authId in the primary school." >&2
   exit 1

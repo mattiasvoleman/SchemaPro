@@ -552,6 +552,252 @@ def test_lunch_break_rule_is_enforced(client: TestClient) -> None:
             )
 
 
+def test_a_payload_that_names_nobody_still_feeds_every_class() -> None:
+    """`groups` absent is "we have not been told who eats", not "nobody eats".
+
+    The field is optional so the engine can ship ahead of the gateway that
+    fills it, and the schema states what is owed meanwhile: the free-window
+    guarantee reaches every group with requirements, and the hall hears about
+    nobody. Read instead as "exactly the payload's groups", an absent list
+    built NOT ONE lunch interval — the whole school taught edge to edge
+    through the lunch window, no meal in the response, and an OPTIMAL over the
+    top of it. benchmarks/validate_schedule.py sent such a payload until its
+    school began naming its classes, and it is what caught this; every test
+    in this file that solved with a lunch window named its class, so the
+    suite could not see it. This one does not name one, on purpose.
+
+    Both directions, because a free window that is merely lucky proves
+    nothing. The tight week must be refused: ten hours a day holds exactly ten
+    60-minute lessons, so 50 of them saturate the week to the minute and a
+    30-minute break on top cannot fit. The roomy week must carry the meals.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    def _payload(total: int) -> dict[str, object]:
+        payload = _sample_payload()
+        first = payload["requirements"][0]  # type: ignore[index]
+        # lessonsPerWeek is schema-capped at 40, so a saturating week is split
+        # across two requirements sharing the group and the teacher; they
+        # still cannot overlap each other.
+        second = {
+            **first,  # type: ignore[dict-item]
+            "id": str(uuid4()),
+            "subjectId": str(uuid4()),
+        }
+        first["lessonsPerWeek"] = total // 2  # type: ignore[index]
+        second["lessonsPerWeek"] = total - total // 2
+        payload["requirements"] = [first, second]
+        payload["rules"] = {
+            "lunchStartTime": "11:00:00",
+            "lunchEndTime": "13:00:00",
+            "lunchMinutes": 30,
+        }
+        # NO "groups" KEY. That is the whole of this test.
+        return payload
+
+    solver = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0))
+
+    packed = solver.solve(OptimizeScheduleRequest.model_validate(_payload(50)))
+    assert packed.status == "INFEASIBLE", (
+        "50 lessons plus a daily lunch break cannot fit a 5-day, 10-hour week; "
+        "anything else means the class that named nobody was owed no meal"
+    )
+
+    roomy_request = OptimizeScheduleRequest.model_validate(_payload(40))
+    roomy = solver.solve(roomy_request)
+    assert roomy.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(roomy.lessons) == 40
+
+    group_id = roomy_request.requirements[0].student_group_id
+    lunches = [lunch for lunch in roomy.lunches if lunch.student_group_id == group_id]
+    assert len(lunches) == 5, f"one meal per school day, got {lunches}"
+
+    grid = solver._grid
+    duration = grid.minutes_to_slots(60)
+    need = grid.minutes_to_slots(30)
+    by_day: dict[int, list[tuple[int, int]]] = {}
+    for lesson in roomy.lessons:
+        start_slot = grid.parse_hhmmss(lesson.start_time)
+        by_day.setdefault(lesson.day_of_week, []).append(
+            (start_slot, start_slot + duration),
+        )
+    for lunch in lunches:
+        start = grid.parse_hhmmss(lunch.start_time)
+        assert grid.parse_hhmmss("11:00:00") <= start
+        assert start + need <= grid.parse_hhmmss("13:00:00")
+        for lesson_start, lesson_end in by_day.get(lunch.day_of_week, []):
+            assert lesson_end <= start or lesson_start >= start + need, (
+                f"a lesson runs through the meal on day {lunch.day_of_week}"
+            )
+
+
+def test_a_payload_that_names_who_eats_is_taken_at_its_word() -> None:
+    """The fallback is for an ABSENT list, never a shorter one.
+
+    The other half of the same rule, and the half that costs something to get
+    wrong. Once the gateway sends `groups`, it sends the home classes and not
+    the teaching groups cut out of them, because a Ma71 pupil eats with 7A.
+    Unioning the lesson-carrying groups in on top of a real list is what this
+    engine used to do: a mandatory thirty-minute reservation on every teaching
+    group's day for a meal nobody takes there, and an INFEASIBLE naming lunch
+    on the day it did not fit. So a named list is the answer, whole — even
+    when another group in the same payload plainly has lessons.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _sample_payload()
+    home_class = payload["requirements"][0]  # type: ignore[index]
+    teaching_group = {
+        **home_class,  # type: ignore[dict-item]
+        "id": str(uuid4()),
+        "subjectId": str(uuid4()),
+        "studentGroupId": str(uuid4()),
+    }
+    payload["requirements"] = [home_class, teaching_group]
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "13:00:00",
+        "lunchMinutes": 30,
+    }
+    payload["groups"] = [
+        {"id": home_class["studentGroupId"], "lunchHeadcount": 24},  # type: ignore[index]
+    ]
+
+    request = OptimizeScheduleRequest.model_validate(payload)
+    response = SchedulerSolver(_settings(SOLVER_MAX_TIME_SECONDS=10.0)).solve(request)
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+
+    fed = {lunch.student_group_id for lunch in response.lunches}
+    assert fed == {request.requirements[0].student_group_id}, (
+        "only the class the payload named eats; the teaching group's pupils "
+        "eat with their own class"
+    )
+
+
+def test_a_timeout_counts_the_groups_the_model_fed() -> None:
+    """The diagnosis line counts the meals the model carries, not the list.
+
+    The two differ exactly where a TIMEOUT needs explaining: a payload that
+    names nobody still owes a meal to every group with lessons, and counting
+    `groups` wrote "0 groups eating" over a week those meals had shaped. A
+    named list is counted as named, and without a lunch window nobody eats.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    payload = _sample_payload()
+    first = payload["requirements"][0]  # type: ignore[index]
+    second = {
+        **first,  # type: ignore[dict-item]
+        "id": str(uuid4()),
+        "subjectId": str(uuid4()),
+        "studentGroupId": str(uuid4()),
+    }
+    payload["requirements"] = [first, second]
+    solver = SchedulerSolver(_settings())
+
+    def _line() -> str:
+        return solver._timeout_diagnosis(
+            OptimizeScheduleRequest.model_validate(payload), "test",
+        )
+
+    assert ", 0 groups eating," in _line()
+
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "13:00:00",
+        "lunchMinutes": 30,
+    }
+    assert ", 2 groups eating," in _line()
+
+    payload["groups"] = [
+        {"id": first["studentGroupId"], "lunchHeadcount": 24},  # type: ignore[index]
+    ]
+    assert ", 1 groups eating," in _line()
+
+
+def test_the_validator_asks_lunch_of_the_groups_the_engine_feeds() -> None:
+    """benchmarks/validate_schedule.py reads who eats by the engine's rule.
+
+    The checker re-derives every rule from the request, and a rule it derives
+    differently is a verdict about a different school. Both halves of
+    `_lunch_group_ids`, then. A named list is taken at its word: a teaching
+    group whose lessons fill the lunch window owes no break, because its pupils
+    eat with their class. An absent list owes one to every group with lessons,
+    that teaching group included — the reading under which the nightly gate
+    caught a model that carried no lunch at all.
+
+    The week is written by hand rather than solved for, because no solve puts
+    two lessons across a lunch window it was told to keep; only a hand-written
+    week makes the checker answer for itself.
+    """
+    import sys
+    from pathlib import Path
+
+    from app.schemas.schedule import OptimizeScheduleRequest, ScheduledLesson
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    benchmarks = Path(__file__).resolve().parents[1] / "benchmarks"
+    if str(benchmarks) not in sys.path:
+        sys.path.insert(0, str(benchmarks))
+    from validate_schedule import validate
+
+    payload = _sample_payload()
+    home_class = payload["requirements"][0]  # type: ignore[index]
+    teaching_group = {
+        **home_class,  # type: ignore[dict-item]
+        "id": str(uuid4()),
+        "subjectId": str(uuid4()),
+        "studentGroupId": str(uuid4()),
+        "teacherId": str(uuid4()),
+    }
+    payload["requirements"] = [home_class, teaching_group]
+    payload["rules"] = {
+        "lunchStartTime": "11:00:00",
+        "lunchEndTime": "13:00:00",
+        "lunchMinutes": 30,
+    }
+    room_id = payload["rooms"][0]["id"]  # type: ignore[index]
+
+    def _lesson(
+        requirement: dict[str, object], day: int, start: str, end: str,
+    ) -> ScheduledLesson:
+        return ScheduledLesson.model_validate({
+            "requirementId": requirement["id"],
+            "roomId": room_id,
+            "dayOfWeek": day,
+            "startTime": start,
+            "endTime": end,
+        })
+
+    lessons = [
+        # The teaching group fills Monday's whole lunch window...
+        _lesson(teaching_group, 1, "11:00:00", "12:00:00"),
+        _lesson(teaching_group, 1, "12:00:00", "13:00:00"),
+        # ...and the class is taught on Tuesday morning, clear of every meal.
+        _lesson(home_class, 2, "08:00:00", "09:00:00"),
+        _lesson(home_class, 2, "09:00:00", "10:00:00"),
+    ]
+    grid = SchedulerSolver(_settings())._grid
+
+    def _problems() -> list[str]:
+        return validate(grid, OptimizeScheduleRequest.model_validate(payload), lessons)
+
+    # No "groups" key: the teaching group has lessons, so it is owed Monday's.
+    unnamed = _problems()
+    assert len(unnamed) == 1, unnamed
+    assert unnamed[0].startswith(
+        f"group {teaching_group['studentGroupId']}, day index 0: no free",
+    ), unnamed
+
+    payload["groups"] = [
+        {"id": home_class["studentGroupId"], "lunchHeadcount": 24},  # type: ignore[index]
+    ]
+    assert _problems() == [], "the named class eats; its teaching group does not"
+
+
 # ---------------------------------------------------------------------------
 # Solver status semantics
 #
@@ -4550,6 +4796,251 @@ def test_a_class_that_is_not_in_school_that_day_is_not_owed_a_lunch(
     assert {lunch["dayOfWeek"] for lunch in body["lunches"]} == {2, 3, 4, 5}
 
 
+def _validator_problems(payload: dict[str, object]) -> list[str]:
+    """The independent checker's verdict on a week that fills the lunch window.
+
+    `benchmarks/validate_schedule.py` re-derives every rule from the request
+    and shares no code with the model builders, which is the whole of why its
+    verdict is evidence — and why a rule it does not model is a false alarm
+    waiting for a payload to write one.
+
+    The timetable is built by hand rather than solved for, because no solve
+    produces it. The engine keeps a class's lessons out of the class's own
+    reserved window, and the lessons of every group it feeds out of that
+    group's meal, so each case below reaches the lunch check with an empty
+    window and passes on correctness borrowed from another rule. Put two lessons
+    in that window — as an engine that dropped availability would, or as a week
+    from somewhere else might, since `validate` is a library — and the check
+    has to answer for itself.
+    """
+    import sys
+    from pathlib import Path
+
+    from app.schemas.schedule import OptimizeScheduleRequest, ScheduledLesson
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    benchmarks = Path(__file__).resolve().parents[1] / "benchmarks"
+    if str(benchmarks) not in sys.path:
+        sys.path.insert(0, str(benchmarks))
+    from validate_schedule import validate
+
+    # Monday 11:00-13:00 is the entire lunch window, and this class fills it.
+    lessons = [
+        ScheduledLesson.model_validate(
+            {
+                "requirementId": payload["requirements"][0]["id"],  # type: ignore[index]
+                "roomId": payload["rooms"][0]["id"],  # type: ignore[index]
+                "dayOfWeek": 1,
+                "startTime": start,
+                "endTime": end,
+            },
+        )
+        for start, end in (("11:00:00", "12:00:00"), ("12:00:00", "13:00:00"))
+    ]
+    grid = SchedulerSolver(_settings())._grid
+    return validate(grid, OptimizeScheduleRequest.model_validate(payload), lessons)
+
+
+def test_the_validator_owes_no_lunch_to_a_class_the_school_marked_away() -> None:
+    """The praktik rule again, on the other side of the seam.
+
+    A recurring rule covering the whole lunch window is the school saying the
+    class is not in the building, and the engine answers by building no
+    sitting and booking no chair. No payload in the repo writes such a row
+    today (`solve_2000_students.py` emits TEACHER rows only), so the guard
+    belongs here rather than in the benchmark.
+    """
+    payload = _lunch_payload()
+    unexcused = _validator_problems(payload)
+    assert len(unexcused) == 1, unexcused
+    assert "no free 30-minute window" in unexcused[0]
+
+    payload["constraints"] = [_closes(_group_of(payload), 1, "08:00:00", "17:45:00")]
+    excused = _validator_problems(payload)
+    # The reservation is still enforced against the lessons. The exemption
+    # silences the break the class was not owed, not the fault that put two
+    # lessons inside a window the school had closed.
+    assert len(excused) == 2, excused
+    assert all("overlaps UNAVAILABLE window" in problem for problem in excused), excused
+
+
+def test_the_validator_reads_the_rows_it_used_to_skip() -> None:
+    """A rule the checker cannot read is a rule nobody is checking.
+
+    The availability loop parsed constraint times with `parse_hhmmss`, which is
+    strict on purpose — it is right for the times an administrator types into a
+    lesson. Availability windows are not those times: a school writes them in
+    whole days, and this product's own full-day closure is 00:00-23:59. Every
+    one of them raised, the loop moved on, and the rule went unchecked. In a
+    checker that failure is invisible by construction: a skipped rule and a
+    kept one both come out as silence, and silence is read as a pass.
+
+    Three rows the loop dropped, each of which the engine enforces. The lessons
+    sit at 11:00-13:00 on Monday, so a row that reaches them has something to
+    say and a row that is skipped says nothing.
+    """
+    payload = _lunch_payload()
+    group_id = _group_of(payload)
+    # Lunch is not what is under test here, so the school asks for none. An
+    # empty `groups` would not do it: a payload that names nobody still owes
+    # a meal to every group with requirements, this one included.
+    payload["rules"] = None
+
+    # Away all day, in the notation the product itself writes.
+    payload["constraints"] = [_closes(group_id, 1, "00:00:00", "23:59:00")]
+    all_day = _validator_problems(payload)
+    assert len(all_day) == 2, all_day
+    assert all("00:00:00-23:59:00" in problem for problem in all_day), all_day
+
+    # No weekday at all: the row names every teaching day, Monday among them.
+    every_day = dict(_closes(group_id, 1, "10:00:00", "14:00:00"), dayOfWeek=None)
+    assert len(_validator_problems({**payload, "constraints": [every_day]})) == 2
+
+    # A year reservation names no resource, and fell out of the ownership
+    # lookup with an empty tuple — matched against nothing, ever.
+    payload["requirements"][0]["minGradeLevel"] = 6  # type: ignore[index]
+    payload["requirements"][0]["maxGradeLevel"] = 7  # type: ignore[index]
+    stage = {
+        **_closes(group_id, 1, "10:00:00", "14:00:00"),
+        "resourceKind": "GRADE_LEVEL",
+        "resourceId": None,
+        "minGradeLevel": 4,
+        "maxGradeLevel": 6,  # overlaps 6-7 on year 6 alone, which is enough
+    }
+    reserved = _validator_problems({**payload, "constraints": [stage]})
+    assert len(reserved) == 2, reserved
+    # Named by its span: "GRADE_LEVEL None" tells a school nothing.
+    assert all("GRADE_LEVEL years 4-6" in problem for problem in reserved), reserved
+
+
+def test_the_validator_leaves_alone_the_rows_that_reach_nothing() -> None:
+    """The other half: reading more rows must not mean inventing violations.
+
+    Each row below is one the engine builds nothing from, so a complaint about
+    any of them would be this file's own invention rather than the model's
+    fault — the failure that matters most in a checker whose whole value is
+    that its verdict can be trusted without reading it.
+    """
+    payload = _lunch_payload()
+    group_id = _group_of(payload)
+    payload["rules"] = None  # no lunch owed, as above: the rows are under test
+    payload["requirements"][0]["minGradeLevel"] = 6  # type: ignore[index]
+    payload["requirements"][0]["maxGradeLevel"] = 7  # type: ignore[index]
+
+    rows = {
+        # Wholly outside the school day: folded, it closes nothing.
+        "evening": _closes(group_id, 1, "19:00:00", "20:00:00"),
+        # A single date, which a generic week has nowhere to put.
+        "dated": {**_closes(group_id, 1, "10:00:00", "14:00:00"), "date": "2027-03-01"},
+        # A wish, not a rule.
+        "wish": {
+            **_closes(group_id, 1, "10:00:00", "14:00:00"),
+            "kind": "PREFERRED_FREE",
+        },
+        # A weekday outside the configured week.
+        "saturday": _closes(group_id, 6, "10:00:00", "14:00:00"),
+        # Years 1-3 do not reach a group spanning 6-7.
+        "other stage": {
+            **_closes(group_id, 1, "10:00:00", "14:00:00"),
+            "resourceKind": "GRADE_LEVEL",
+            "resourceId": None,
+            "minGradeLevel": 1,
+            "maxGradeLevel": 3,
+        },
+    }
+    for name, row in rows.items():
+        assert _validator_problems({**payload, "constraints": [row]}) == [], name
+
+
+def test_the_validator_owes_lunch_only_to_the_groups_a_named_list_seats() -> None:
+    """A request that names who eats is taken at its word.
+
+    The gateway sends the home classes, and a teaching group is not among them
+    because its pupils already eat with their class. The engine reserves a
+    meal for exactly that list, so a check that demanded one of every group
+    holding a requirement would fail a timetable that is right. Here the class
+    whose lessons fill Monday's window is left out of a list naming another
+    class: nothing is owed to it, and the class that is named has a free week.
+
+    Named, the same class is owed Monday's meal — so the silence first is the
+    list being read, and not the check having stopped asking.
+    """
+    payload = _lunch_payload()
+    group_id = _group_of(payload)
+
+    payload["groups"] = [{"id": str(uuid4()), "lunchHeadcount": 24}]
+    assert _validator_problems(payload) == []
+
+    payload["groups"] = [{"id": group_id, "lunchHeadcount": 24}]
+    named = _validator_problems(payload)
+    assert len(named) == 1, named
+    assert named[0].startswith(
+        f"group {group_id}, day index 0: no free 30-minute window",
+    ), named
+
+
+def test_the_validator_owes_every_class_a_lunch_when_the_request_names_nobody() -> None:
+    """A request that names nobody has not said that nobody eats.
+
+    `groups` is optional so the engine can ship before the gateway that fills
+    it, and the schema writes beside the field what is owed meanwhile: the
+    free-window guarantee still reaches every group with requirements. The
+    engine reads it that way (see _lunch_group_ids), so the check does too. A
+    check that fell silent here would pass exactly the week that turned the
+    nightly gate red: a model built without a single lunch interval, taught
+    edge to edge through the window, and reported FEASIBLE.
+
+    An empty list and a missing key are the same request, and both are asked.
+    """
+    payload = _lunch_payload()
+    expected = f"group {_group_of(payload)}, day index 0: no free 30-minute window"
+
+    payload["groups"] = []
+    empty = _validator_problems(payload)
+    assert len(empty) == 1 and empty[0].startswith(expected), empty
+
+    del payload["groups"]
+    absent = _validator_problems(payload)
+    assert len(absent) == 1 and absent[0].startswith(expected), absent
+
+
+def test_the_benchmark_school_tells_the_solver_who_eats() -> None:
+    """The gate's own payload names its classes, the way the gateway does.
+
+    The half of the fix that no validator test reaches. A school that has
+    entered its classes sends `groups` — the gateway names every home class at
+    school, with its headcount — and the engine takes a named list at its
+    word. A benchmark that sent none would still be checked for lunch, through
+    the fallback the schema writes beside the field, but the nightly gate
+    would then measure only that fallback and never the named list those
+    schools send. Pinning the payload keeps the 400-student verdict about the
+    reading production takes; the fallback is held by the engine's own tests.
+
+    One entry per class, carrying its headcount, because this school has no
+    teaching groups: the classes that eat are exactly the ones holding lessons,
+    so for this school the two readings are the same set.
+    """
+    import sys
+    from pathlib import Path
+
+    benchmarks = Path(__file__).resolve().parents[1] / "benchmarks"
+    if str(benchmarks) not in sys.path:
+        sys.path.insert(0, str(benchmarks))
+    from solve_2000_students import SchoolShape, build_request
+
+    # The shape the quality gate solves: validate_schedule.py --students 400.
+    shape = SchoolShape(students=400, constraint_density=1.0)
+    request = build_request(shape)
+
+    assert request.rules is not None and request.rules.lunch_minutes
+    eating = {group.id for group in request.groups}
+    assert len(eating) == shape.classes
+    assert eating == {r.student_group_id for r in request.requirements}
+    assert {group.lunch_headcount for group in request.groups} == {
+        shape.students_per_class,
+    }
+
+
 def test_a_reservation_leaving_only_scraps_is_refused_by_name(
     client: TestClient,
 ) -> None:
@@ -7813,12 +8304,34 @@ def _frames_that_pack_the_middle_years(payload: dict[str, object]) -> dict[str, 
     return payload
 
 
-def test_a_frame_that_packs_a_stage_day_is_refused_by_the_lunch_stage() -> None:
-    """Reproduction G, decided in under a second by the lunch stage. Neither
-    arithmetic verdict sees it — the hall feeds the school's student-minutes
-    and every class's hours fit — and the full model answered UNKNOWN at 60 s."""
-    import time
+def _the_full_model_is_never_built(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail the moment solve() reaches the full model.
 
+    These weeks are the lunch stage's to decide; the full model answers
+    UNKNOWN at sixty seconds and the school reads TIMEOUT. Which of the two
+    answered was told apart by a wall-clock bound of twenty seconds, and a
+    clock cannot tell a slow machine from the wrong path: on a two-core
+    runner the stage proved nothing, the full model ran, and the bound failed
+    at 71 s — reporting the machine, when what had gone wrong was that the
+    school got no verdict at all. Building the full model IS the wrong path,
+    it is a fact about the run rather than about the hardware, and no call
+    site builds it before the stage, so this spots it exactly.
+    """
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        pytest.fail("the full model was built: the lunch stage did not decide the week")
+
+    monkeypatch.setattr(SchedulerSolver, "_build_model", refuse)
+
+
+def test_a_frame_that_packs_a_stage_day_is_refused_by_the_lunch_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduction G, decided by the lunch stage alone. Neither arithmetic
+    verdict sees it — the hall feeds the school's student-minutes and every
+    class's hours fit — and the full model answered UNKNOWN at 60 s, so it is
+    never built here."""
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
@@ -7827,11 +8340,10 @@ def test_a_frame_that_packs_a_stage_day_is_refused_by_the_lunch_stage() -> None:
     request = OptimizeScheduleRequest.model_validate(payload)
     assert solver._dining_hall_verdict(request) is None
     assert solver._clique_hours_verdict(request) is None
+    _the_full_model_is_never_built(monkeypatch)
 
-    started = time.monotonic()
     response = solver.solve(request)
 
-    assert time.monotonic() - started < 20
     assert response.status == "INFEASIBLE"
     assert response.conflicts is not None
     assert "115 seats cannot seat the 11 classes named (264 students)" in response.conflicts.summary
@@ -8128,16 +8640,18 @@ def _the_register(idle_classes: int, pupils: int) -> dict[str, object]:
     return payload
 
 
-def test_a_register_the_hall_cannot_seat_in_waves_is_named_by_its_classes() -> None:
+def test_a_register_the_hall_cannot_seat_in_waves_is_named_by_its_classes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The school in the report: two classes with lessons and twenty without,
     every one of them sent to a hall of 115 seats. 22 x 24 x 30 student-minutes
     fit the window's 115 x 150, so the arithmetic verdict passes; but five
     classes of 24 are 120, so a wave seats four, five waves seat twenty, and
     twenty-two do not fit. No class has a packed day, so the first naming rule
     found nobody and the school read "0 class(es)". Named by deletion: any
-    twenty-one classes are enough, and the lessons are no cause at all."""
-    import time
-
+    twenty-one classes are enough, and the lessons are no cause at all. The
+    stage is what decides it, which is checked by the full model never being
+    built rather than by a bound in seconds — see reproduction G's test."""
     from app.schemas.schedule import OptimizeScheduleRequest
     from app.solver.scheduler_solver import SchedulerSolver
 
@@ -8145,11 +8659,10 @@ def test_a_register_the_hall_cannot_seat_in_waves_is_named_by_its_classes() -> N
     payload = _the_register(idle_classes=20, pupils=24)
     request = OptimizeScheduleRequest.model_validate(payload)
     assert solver._dining_hall_verdict(request) is None
+    _the_full_model_is_never_built(monkeypatch)
 
-    started = time.monotonic()
     response = solver.solve(request)
 
-    assert time.monotonic() - started < 20
     assert response.status == "INFEASIBLE"
     assert response.conflicts is not None
     assert "115 seats cannot seat the 21 classes named (504 students)" in response.conflicts.summary
@@ -8190,6 +8703,45 @@ def test_the_naming_stays_true_when_the_clock_runs_out(monkeypatch: pytest.Monke
     assert "for the 20 classes named" in verdict.summary
     named = {str(g) for d in verdict.conflicts for g in d.resource_ids}
     assert named == {g["id"] for g in payload["groups"]}  # type: ignore[index]
+
+
+def test_the_lunch_stage_asks_for_its_own_search_on_every_machine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stage's proof is the LP relaxation's, and it says so in every solve.
+
+    Left to CP-SAT's defaults the portfolio is sized from the host's core
+    count, and the subsolver carrying the full linearization only appears on a
+    machine with cores to spare: measured on this week, 0.17 s at eight
+    workers and 7.6-18.8 s at two, against the 10 s cap. So the two-core
+    runners this suite runs on refused nothing — the stage timed out and the
+    week went on to the 60 s TIMEOUT the stage exists to prevent, which is how
+    both tests above failed in CI while passing on every developer's machine.
+
+    A wall-clock assertion cannot catch that on an eight-core laptop. This
+    reads what the stage asks CP-SAT for instead, which is the same on every
+    machine or the bug is back.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    asked: list[tuple[int, int]] = []
+    original = cp_model.CpSolver.Solve
+
+    def solve(self: cp_model.CpSolver, model: cp_model.CpModel, *args: object, **kwargs: object) -> int:
+        asked.append((self.parameters.num_workers, self.parameters.linearization_level))
+        return original(self, model, *args, **kwargs)
+
+    monkeypatch.setattr(cp_model.CpSolver, "Solve", solve)
+    solver = SchedulerSolver(_settings())
+    payload = _frames_that_pack_the_middle_years(_teaching_group_school(classes=20))
+
+    verdict, _ = solver._lunch_stage_one(OptimizeScheduleRequest.model_validate(payload))
+
+    assert verdict is not None
+    # The proof and every naming solve after it, none of them left to the host.
+    assert len(asked) > 1
+    assert set(asked) == {(1, 2)}
 
 
 def _one_class(*, group_span: tuple[int, int] | None, requirement_spans: list[tuple[int, int] | None],

@@ -129,7 +129,12 @@ export class MasterLessonsService {
         // and would have found undefined on every create.
         coTeacherId: dto.coTeacherId ?? null,
         roomId: dto.roomId ?? null,
-        extraGroupIds: (dto.extraGroupIds ?? []).filter(
+        // Deduped before both the conflict scan and the nested create read it.
+        // MasterLessonGroups is unique per (lesson, group), so a group named
+        // twice fails that insert with a P2002, which HttpExceptionFilter
+        // answers with a 409 "same unique identifier already exists" — a
+        // harmless payload refused with a conflict that does not exist.
+        extraGroupIds: [...new Set(dto.extraGroupIds ?? [])].filter(
           (groupId) => groupId !== dto.studentGroupId,
         ),
         studentIds: dto.studentIds ?? [],
@@ -248,10 +253,17 @@ export class MasterLessonsService {
         coTeacherId:
           dto.coTeacherId !== undefined ? dto.coTeacherId : lesson.coTeacherId,
         roomId: dto.roomId !== undefined ? dto.roomId : lesson.roomId,
-        extraGroupIds: (dto.extraGroupIds !== undefined
-          ? dto.extraGroupIds
-          : lesson.extraGroups.map((entry) => entry.studentGroupId)
-        ).filter((groupId) => groupId !== lesson.studentGroupId),
+        // Deduped for the same unique constraint as on create. Here the 409
+        // came only after deleteMany had cleared the rows inside the same
+        // transaction: rolled back, so nothing was lost, but the refusal
+        // arrived after the work it refused had already begun.
+        extraGroupIds: [
+          ...new Set(
+            dto.extraGroupIds !== undefined
+              ? dto.extraGroupIds
+              : lesson.extraGroups.map((entry) => entry.studentGroupId),
+          ),
+        ].filter((groupId) => groupId !== lesson.studentGroupId),
         studentIds:
           dto.studentIds !== undefined
             ? dto.studentIds
@@ -390,9 +402,14 @@ export class MasterLessonsService {
       // lessons actually moved — or disappeared, which the class needs to
       // hear about just as much.
       if (propagatedLessons > 0 || removedCalendarLessons > 0) {
+        // The notice describes the lesson as it is after this update, so it
+        // goes to the classes attending it after this update. Read off the
+        // stored row, a class the same patch attached never heard about the
+        // lessons it now has, and a class it detached was told about a slot
+        // that is no longer theirs.
         const recipients = await this.notifications.recipientsForGroups(tx, [
           lesson.studentGroupId,
-          ...lesson.extraGroups.map((entry) => entry.studentGroupId),
+          ...after.extraGroupIds,
         ]);
         const subject = await tx.subject.findUnique({
           where: { id: lesson.subjectId },

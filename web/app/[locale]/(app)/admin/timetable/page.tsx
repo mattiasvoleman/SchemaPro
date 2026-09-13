@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
@@ -53,13 +54,47 @@ import {
   useRoomPreferences,
   useRasts,
 } from "@/lib/queries";
-import { buildIcs, downloadIcs } from "@/lib/ics";
-import { exportTimetablePdf } from "@/lib/pdf";
+/*
+ * The two exports are imported where they are pressed, not here. Neither is
+ * needed to SHOW the week — the school asks for a file — and between them they
+ * are 264 lines this route pays for on load. lib/pdf.ts already reasons this
+ * way about jspdf inside its own export function; this moves the wrapper the
+ * same distance.
+ */
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
 import { FilterPicker } from "@/components/schedule/filter-picker";
-import { RoomOptimizationDialog } from "@/components/schedule/room-optimization-dialog";
-import { RecurrenceFields, recurrenceBadge } from "@/components/schedule/recurrence-fields";
+/*
+ * Fetched when the school asks to optimise rooms, not when the page loads.
+ *
+ * This page carries the most JavaScript in the app, and the dialog is the one
+ * part of it a school opens rarely: a grundschema is set once a term, and the
+ * rooms are redistributed after that. Its code took the route's own initial JS
+ * from 190.1KB to 191.9KB gzipped, past the 190KB admin budget — the same
+ * reasoning lib/pdf.ts already applies to jspdf, which it imports inside the
+ * export function rather than at the top of the module.
+ */
+const RoomOptimizationDialog = dynamic(
+  () =>
+    import("@/components/schedule/room-optimization-dialog").then(
+      (module) => module.RoomOptimizationDialog,
+    ),
+  { ssr: false },
+);
+import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
+/*
+ * Fetched with the dialog that shows them. The grid needs the badge above on
+ * every card, but the fields themselves are only ever edited inside Justera or
+ * Lägg till — and they carry components/ui/date-field.tsx, 546 lines of date
+ * picker, which the page otherwise paid for to draw a week.
+ */
+const RecurrenceFields = dynamic(
+  () =>
+    import("@/components/schedule/recurrence-fields").then(
+      (module) => module.RecurrenceFields,
+    ),
+  { ssr: false },
+);
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
 import { rastWindows } from "@/lib/rasts";
@@ -98,7 +133,11 @@ import {
 } from "@/components/schedule/timetable-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DateField } from "@/components/ui/date-field";
+// The page's own two date fields are the publishing dates, inside that dialog.
+const DateField = dynamic(
+  () => import("@/components/ui/date-field").then((module) => module.DateField),
+  { ssr: false },
+);
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -124,6 +163,37 @@ const NONE = "__none__";
 /** Normalizes DB time values ("HH:MM:SS") to input-friendly "HH:MM". */
 function toHHMM(time: string): string {
   return time.slice(0, 5);
+}
+
+/**
+ * Whether a lesson is on the tray. A snapshot stored before the gateway
+ * carried the flag has no key, read as false: restore gives an absent key the
+ * same reading, so a diff against such a snapshot still says what restoring it
+ * would do.
+ */
+function isOnTray(lesson: { isParked?: boolean }): boolean {
+  return lesson.isParked ?? false;
+}
+
+/** A lesson on either side of the version diff. */
+type DiffLesson = VersionLesson | MasterLesson;
+
+/**
+ * Which weeks a lesson runs. A snapshot stored before the gateway carried it
+ * has no key, and restore writes ALL_WEEKS for that — so the diff reads it so.
+ */
+function weeksOf(lesson: { recurrence?: LessonRecurrence }): LessonRecurrence {
+  return lesson.recurrence ?? "ALL_WEEKS";
+}
+
+/**
+ * One end of a lesson's date window, read the way restore reads it: the first
+ * ten characters, and null for an absent or empty value. Both sides send
+ * YYYY-MM-DD, but restore takes a full timestamp too, and the diff must not
+ * call a snapshot different for how it spelled a date restore reads the same.
+ */
+function dayOf(value: string | null | undefined): string | null {
+  return value ? value.slice(0, 10) : null;
 }
 
 function minutesToHHMM(minutes: number): string {
@@ -289,6 +359,9 @@ export default function TimetablePage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versionName, setVersionName] = useState("");
   const [roomsOpen, setRoomsOpen] = useState(false);
+  // Whether the room dialog has been asked for at all this visit, which is what
+  // decides that its code is fetched — see where it is rendered.
+  const [roomsUsed, setRoomsUsed] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
 
   /**
@@ -432,6 +505,11 @@ export default function TimetablePage() {
   const teacherById = useMemo(
     () => new Map(teachers.map((teacher) => [teacher.id, teacher])),
     [teachers],
+  );
+  /** Everyone, pupils who have left included: a saved version still names them. */
+  const personById = useMemo(
+    () => new Map((people ?? []).map((person) => [person.id, person])),
+    [people],
   );
   const lessonById = useMemo(
     () => new Map((lessons ?? []).map((lesson) => [lesson.id, lesson])),
@@ -701,7 +779,7 @@ export default function TimetablePage() {
    * calendar got "Idrott — 4.2" with nothing saying 4.1 was in the hall too.
    */
   const groupLabel = useCallback(
-    (lesson: MasterLesson) =>
+    (lesson: Pick<MasterLesson, "studentGroupId" | "extraGroupIds">) =>
       [
         groupById.get(lesson.studentGroupId)?.name,
         ...lesson.extraGroupIds.map((id) => groupById.get(id)?.name),
@@ -1523,45 +1601,124 @@ export default function TimetablePage() {
   // Export & diff
   // -------------------------------------------------------------------
 
+  /**
+   * One line of the version diff. Every part of the diff's key shows here:
+   * a part the key holds and the line leaves out turns a teacher swap into a
+   * + and a − that read the same, a difference reported and then hidden.
+   *
+   * The pupils are counted unless `namePupils`. A list of them is too long for
+   * every line, so they are named only where they are what differs.
+   */
   const lessonLabel = useCallback(
-    (l: {
-      subjectId: string;
-      studentGroupId: string;
-      dayOfWeek: number;
-      startTime: string;
-      endTime: string;
-    }) =>
-      `${subjectById.get(l.subjectId)?.name ?? "?"} · ${
-        groupById.get(l.studentGroupId)?.name ?? "?"
-      } · ${tDays(String(l.dayOfWeek))} ${toHHMM(l.startTime)}–${toHHMM(l.endTime)}`,
-    [subjectById, groupById, tDays],
+    (l: DiffLesson, namePupils: boolean) => {
+      const nameOf = (id: string) => {
+        const teacher = teacherById.get(id);
+        return teacher ? `${teacher.firstName[0]}. ${teacher.lastName}` : "?";
+      };
+      const startDate = dayOf(l.startDate);
+      const endDate = dayOf(l.endDate);
+      const period =
+        startDate && endDate
+          ? `${startDate}–${endDate}`
+          : startDate
+            ? t("diffFrom", { date: startDate })
+            : endDate
+              ? t("diffUntil", { date: endDate })
+              : null;
+      const pupils = l.studentIds ?? [];
+      const pupilNames = () =>
+        pupils
+          .map((id) => {
+            const pupil = personById.get(id);
+            return pupil ? `${pupil.firstName} ${pupil.lastName}` : "?";
+          })
+          .sort()
+          .join(", ");
+      return [
+        subjectById.get(l.subjectId)?.name ?? "?",
+        groupLabel({
+          studentGroupId: l.studentGroupId,
+          extraGroupIds: l.extraGroupIds ?? [],
+        }) || "?",
+        // Where a parked lesson was is not where it is: the tray is.
+        isOnTray(l)
+          ? t("diffOnTray")
+          : `${tDays(String(l.dayOfWeek))} ${toHHMM(l.startTime)}–${toHHMM(l.endTime)}`,
+        l.teacherId ? nameOf(l.teacherId) : null,
+        l.coTeacherId ? t("diffCoTeacher", { name: nameOf(l.coTeacherId) }) : null,
+        l.roomId ? t("diffRoom", { name: roomById.get(l.roomId)?.name ?? "?" }) : null,
+        recurrenceBadge({ recurrence: weeksOf(l), startDate, endDate }, t),
+        period,
+        pupils.length === 0
+          ? null
+          : namePupils
+            ? `⊕ ${pupilNames()}`
+            : `⊕${pupils.length}`,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    },
+    [subjectById, groupLabel, teacherById, roomById, personById, t, tDays],
   );
 
   const versionDiff = useMemo(() => {
     if (!comparing || !lessons) return null;
-    const key = (l: VersionLesson | MasterLesson) =>
+    // A slot is part of a lesson's identity only on the grid. On the tray it
+    // is a memory, so two versions whose parked lessons remember different
+    // hours hold the same timetable — while a lesson parked in one and placed
+    // at its remembered hour in the other is a change, the one a restore makes.
+    //
+    // Everything else a restore writes that says who is in the room, and in
+    // which weeks, is in the key too, each read the way restore reads a key
+    // the snapshot lacks. Without them a lesson moved to odd weeks, or cut to
+    // half a term, came out identical to a snapshot that restoring would
+    // change. The classes and pupils are sets, so they are compared sorted.
+    // `pupils` false leaves the pupils out, to find pairs differing in nothing
+    // else.
+    const key = (l: DiffLesson, pupils = true) =>
       [
         l.subjectId,
         l.studentGroupId,
         l.teacherId ?? "",
+        l.coTeacherId ?? "",
         l.roomId ?? "",
-        l.dayOfWeek,
-        toHHMM(l.startTime),
-        toHHMM(l.endTime),
+        ...(isOnTray(l)
+          ? ["tray"]
+          : [l.dayOfWeek, toHHMM(l.startTime), toHHMM(l.endTime)]),
+        weeksOf(l),
+        dayOf(l.startDate) ?? "",
+        dayOf(l.endDate) ?? "",
+        [...(l.extraGroupIds ?? [])].sort().join(","),
+        pupils ? [...(l.studentIds ?? [])].sort().join(",") : "",
       ].join("|");
-    const snapshotKeys = new Map(comparing.lessons.map((l) => [key(l), l]));
-    const currentKeys = new Map(lessons.map((l) => [key(l), l]));
-    const added = [...currentKeys.entries()]
-      .filter(([k]) => !snapshotKeys.has(k))
-      .map(([, l]) => l);
-    const removed = [...snapshotKeys.entries()]
-      .filter(([k]) => !currentKeys.has(k))
-      .map(([, l]) => l);
-    return { added, removed };
+    // Counted rather than put in a map: without the slot, two lessons of one
+    // class and teacher on the tray share a key, and a map keeps only one of
+    // them — parking a second would read as no change at all.
+    const unmatched = (side: DiffLesson[], other: DiffLesson[]) => {
+      const left = new Map<string, number>();
+      for (const l of other) left.set(key(l), (left.get(key(l)) ?? 0) + 1);
+      return side.filter((l) => {
+        const k = key(l);
+        const n = left.get(k) ?? 0;
+        if (n > 0) left.set(k, n - 1);
+        return n === 0;
+      });
+    };
+    const added = unmatched(lessons, comparing.lessons);
+    const removed = unmatched(comparing.lessons, lessons);
+    // An added and a removed line never share a whole key, so two that agree
+    // on everything but the pupils differ in the pupils alone. Counted, such a
+    // pair would print alike; those lines name them.
+    const lines = (side: DiffLesson[], other: DiffLesson[]) => {
+      const rest = new Set(other.map((l) => key(l, false)));
+      return side.map((lesson) => ({ lesson, namePupils: rest.has(key(lesson, false)) }));
+    };
+    return { added: lines(added, removed), removed: lines(removed, added) };
   }, [comparing, lessons]);
 
-  const doExportIcs = () => {
+  const doExportIcs = async () => {
     if (!activeYear) return;
+    const { buildIcs, downloadIcs } = await import("@/lib/ics");
     const ics = buildIcs(
       filtered.map((lesson) => {
         const teacher = lesson.teacherId ? teacherById.get(lesson.teacherId) : null;
@@ -1613,6 +1770,7 @@ export default function TimetablePage() {
   };
 
   const doExportPdf = async () => {
+    const { exportTimetablePdf } = await import("@/lib/pdf");
     await exportTimetablePdf({
       title: t("title"),
       subtitle: activeYear?.name,
@@ -1709,7 +1867,10 @@ export default function TimetablePage() {
             </Button>
             <Button
               variant="outline"
-              onClick={() => setRoomsOpen(true)}
+              onClick={() => {
+                setRoomsUsed(true);
+                setRoomsOpen(true);
+              }}
               disabled={!activeYear || !lessons || lessons.length === 0}
             >
               <Footprints />
@@ -2749,8 +2910,8 @@ export default function TimetablePage() {
                       {t("diffAdded", { count: versionDiff.added.length })}
                     </div>
                     <ul className="space-y-1 text-xs text-muted-foreground">
-                      {versionDiff.added.slice(0, 8).map((lesson, index) => (
-                        <li key={index}>+ {lessonLabel(lesson)}</li>
+                      {versionDiff.added.slice(0, 8).map(({ lesson, namePupils }, index) => (
+                        <li key={index}>+ {lessonLabel(lesson, namePupils)}</li>
                       ))}
                       {versionDiff.added.length > 8 ? <li>…</li> : null}
                     </ul>
@@ -2760,8 +2921,8 @@ export default function TimetablePage() {
                       {t("diffRemoved", { count: versionDiff.removed.length })}
                     </div>
                     <ul className="space-y-1 text-xs text-muted-foreground">
-                      {versionDiff.removed.slice(0, 8).map((lesson, index) => (
-                        <li key={index}>− {lessonLabel(lesson)}</li>
+                      {versionDiff.removed.slice(0, 8).map(({ lesson, namePupils }, index) => (
+                        <li key={index}>− {lessonLabel(lesson, namePupils)}</li>
                       ))}
                       {versionDiff.removed.length > 8 ? <li>…</li> : null}
                     </ul>
@@ -2774,15 +2935,24 @@ export default function TimetablePage() {
       </Dialog>
 
       {/* ---------------- Room optimisation dialog ---------------- */}
-      <RoomOptimizationDialog
-        open={roomsOpen}
-        onOpenChange={setRoomsOpen}
-        academicYearId={activeYear?.id ?? null}
-        rooms={rooms ?? []}
-        teachers={teachers}
-        groups={groups ?? []}
-        onApplied={afterRoomOptimization}
-      />
+      {/*
+        Mounted from the first press onward and never unmounted again, which is
+        what makes the import above cost nothing until then. Not `roomsOpen`:
+        the dialog abandons an ask in flight when it is closed and relies on
+        outliving that close to ignore the answer when it lands (see its `ask`
+        ref) — unmounting it would drop the guard the dialog documents.
+      */}
+      {roomsUsed && (
+        <RoomOptimizationDialog
+          open={roomsOpen}
+          onOpenChange={setRoomsOpen}
+          academicYearId={activeYear?.id ?? null}
+          rooms={rooms ?? []}
+          teachers={teachers}
+          groups={groups ?? []}
+          onApplied={afterRoomOptimization}
+        />
+      )}
 
       {/* ---------------- Publish dialog ---------------- */}
       <Dialog open={publishOpen} onOpenChange={setPublishOpen}>

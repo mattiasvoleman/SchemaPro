@@ -25,6 +25,10 @@ const state = vi.hoisted(() => ({
   // undefined models the query in flight; [] is a year the solver has not
   // yet placed a meal for. The notice must tell the two apart.
   sittings: [] as unknown[] | undefined,
+  // The saved versions, and the snapshot the dialog fetches for the one being
+  // compared.
+  versions: [] as unknown[],
+  snapshot: null as unknown,
 }));
 
 const noMutation = { mutateAsync: vi.fn().mockResolvedValue({ id: "x" }), isPending: false };
@@ -58,9 +62,13 @@ vi.mock("@/lib/queries", () => ({
   useLunchSittingMutations: () => lunch,
   useRoomPreferences: () => ({ data: [] }),
   useRasts: () => ({ data: RASTS }),
-  useScheduleVersions: () => ({ data: [] }),
-  useScheduleVersionDetail: () => ({ data: null }),
-  useScheduleVersionActions: () => ({ save: noMutation, restore: noMutation }),
+  useScheduleVersions: () => ({ data: state.versions }),
+  useScheduleVersionDetail: (id: string | null) => ({ data: id ? state.snapshot : null }),
+  useScheduleVersionActions: () => ({
+    save: noMutation,
+    restore: noMutation,
+    remove: noMutation,
+  }),
   // Imported by the room optimisation dialog the page renders.
   useRoomOptimization: () => roomOptimization,
   usePublishSchedule: () => noMutation,
@@ -213,16 +221,16 @@ function lesson(
     subjectId,
     studentGroupId,
     teacherId: overrides.teacherId ?? "t-1",
-    coTeacherId: null,
+    coTeacherId: null as string | null,
     roomId: overrides.roomId ?? null,
     dayOfWeek: 1,
     startTime,
     endTime: `${String(Number(startTime.slice(0, 2)) + 1).padStart(2, "0")}:00`,
     isLocked: false,
     isParked: false,
-    recurrence: "WEEKLY",
-    startDate: null,
-    endDate: null,
+    recurrence: "ALL_WEEKS",
+    startDate: null as string | null,
+    endDate: null as string | null,
     extraGroupIds: overrides.extraGroupIds ?? [],
     studentIds: overrides.studentIds ?? [],
   };
@@ -298,6 +306,8 @@ beforeEach(() => {
   state.memberships = MEMBERSHIPS;
   state.lunchSettings = null;
   state.sittings = [];
+  state.versions = [];
+  state.snapshot = null;
 });
 
 afterEach(() => {
@@ -561,6 +571,9 @@ describe("exporting one class's week", () => {
     render(<TimetablePage />);
     if (className) await filterTo(className);
     await user.click(screen.getByRole("button", { name: "timetable.exportIcs" }));
+    // Awaited: the builder is fetched when the button is pressed, so the call
+    // lands a tick after the click rather than during it.
+    await waitFor(() => expect(buildIcs).toHaveBeenCalled());
     const [lessons] = vi.mocked(buildIcs).mock.calls[0];
     return lessons;
   }
@@ -613,6 +626,7 @@ describe("exporting one class's week", () => {
     render(<TimetablePage />);
     await filterTo("4.1");
     await user.click(screen.getByRole("button", { name: "timetable.exportPdf" }));
+    await waitFor(() => expect(exportTimetablePdf).toHaveBeenCalled());
     const [{ lessons }] = vi.mocked(exportTimetablePdf).mock.calls[0];
     expect(lessons.map((l) => l.group)).toEqual([
       "4ma1 2/4",
@@ -874,6 +888,296 @@ describe("the tray", () => {
   });
 });
 
+describe("comparing a version with the timetable", () => {
+  /*
+   * A parked lesson occupies nothing; its day and time are only a memory of
+   * where it was. The diff keyed lessons on that memory and never read the
+   * flag, so a lesson on the tray in the snapshot and back at its remembered
+   * hour now came out identical — though restoring the snapshot lifts it off
+   * the grid again. And the list named the parked lesson by that hour.
+   */
+  type Lesson = (typeof LESSONS)[number];
+
+  const VERSION = {
+    id: "v-1",
+    academicYearId: "y-1",
+    name: "Före bytet",
+    lessonCount: LESSONS.length,
+    createdAt: "2026-09-10T08:00:00.000Z",
+  };
+
+  /** A lesson the way the gateway snapshots it: no id, the flag carried. */
+  const snapshotOf = (l: Lesson) => ({
+    subjectId: l.subjectId,
+    studentGroupId: l.studentGroupId,
+    teacherId: l.teacherId,
+    coTeacherId: l.coTeacherId,
+    roomId: l.roomId,
+    dayOfWeek: l.dayOfWeek,
+    startTime: l.startTime,
+    endTime: l.endTime,
+    isLocked: l.isLocked,
+    isParked: l.isParked,
+    recurrence: l.recurrence,
+    startDate: l.startDate,
+    endDate: l.endDate,
+    extraGroupIds: l.extraGroupIds,
+    studentIds: l.studentIds,
+  });
+
+  /** Set aside, remembering the slot it had — or another one, if given. */
+  const onTray = (l: Lesson, remembers: Partial<Lesson> = {}): Lesson => ({
+    ...l,
+    ...remembers,
+    isParked: true,
+  });
+
+  const withSlojd = (change: (l: Lesson) => Lesson) =>
+    LESSONS.map((l) => (l.id === "l-slojd" ? change(l) : l));
+
+  function saved(lessons: object[]) {
+    state.versions = [VERSION];
+    state.snapshot = { ...VERSION, lessons };
+  }
+
+  async function compare() {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await user.click(screen.getByRole("button", { name: "timetable.versions" }));
+    await user.click(screen.getByRole("button", { name: "timetable.versionCompare" }));
+    return screen.getByText("timetable.diffTitle(Före bytet)").parentElement!;
+  }
+
+  const lines = (diff: HTMLElement) =>
+    [...diff.querySelectorAll("li")].map((li) => li.textContent);
+
+  it("sees a lesson that was on the tray then and is back at its hour now", async () => {
+    saved(withSlojd(onTray).map(snapshotOf));
+
+    const diff = await compare();
+
+    expect(diff.textContent).not.toContain("timetable.diffIdentical");
+    // Named by the tray, not by the hour it remembers — the hour the placed
+    // one now holds, which would make the pair read as one lesson twice.
+    expect(lines(diff)).toEqual([
+      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
+      "− Slöjd · 5.1 · timetable.diffOnTray · K. Ek",
+    ]);
+  });
+
+  it("sees a lesson that is on the tray now and was placed then", async () => {
+    saved(LESSONS.map(snapshotOf));
+    state.lessons = withSlojd(onTray);
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Slöjd · 5.1 · timetable.diffOnTray · K. Ek",
+      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
+    ]);
+  });
+
+  it("does not count the hour a parked lesson remembers as a change", async () => {
+    // Parked from Monday then; since put back, moved to Wednesday and parked
+    // again. Neither hour is a placement, so the timetable is the same.
+    saved(withSlojd(onTray).map(snapshotOf));
+    state.lessons = withSlojd((l) =>
+      onTray(l, { dayOfWeek: 3, startTime: "14:00", endTime: "15:00" }),
+    );
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffIdentical");
+  });
+
+  it("counts two parked lessons of one class and teacher as two", async () => {
+    // Without the hour they share a key. Collected into a map, the second one
+    // vanished, and taking it off the tray would not show.
+    const live = LESSONS.map((l) => (l.id === "l-ma1" ? onTray(l) : l));
+    saved([...live, onTray(lesson("l-ma1-b", "s-ma", "g-ma1", "13:00"))].map(snapshotOf));
+    state.lessons = live;
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffRemoved(1)");
+    expect(diff.textContent).toContain("timetable.diffAdded(0)");
+    expect(lines(diff)).toEqual(["− Matematik · 4ma1 · timetable.diffOnTray · K. Ek"]);
+  });
+
+  it("reads a snapshot stored before the flag was carried as having nothing parked", async () => {
+    // The key is absent, not false. Restore reads it as false as well, so the
+    // diff must: read as true, every old snapshot would differ in every lesson.
+    saved(
+      LESSONS.map(snapshotOf).map((s) => {
+        const keyless: Partial<typeof s> = { ...s };
+        delete keyless.isParked;
+        return keyless;
+      }),
+    );
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffIdentical");
+  });
+
+  /*
+   * Restore writes the weeks, the date window, the co-teacher, the invited
+   * classes and the pupils back, and the key read none of them: a lesson moved
+   * to odd weeks, or cut to half a term, made the dialog call the timetable
+   * identical to a version that restoring would change. And the line showed
+   * neither the teacher nor the room already in the key, so a teacher swap
+   * printed as a + and a − that read the same.
+   */
+
+  /** The fixture with one lesson changed. */
+  const withChanged = (changes: Record<string, Partial<Lesson>>) =>
+    LESSONS.map((l) => ({ ...l, ...changes[l.id] }));
+
+  it("sees a lesson that runs odd weeks only now, and says so", async () => {
+    saved(LESSONS.map(snapshotOf));
+    state.lessons = withChanged({ "l-slojd": { recurrence: "ODD_WEEKS" } });
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.badgeOdd",
+      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
+    ]);
+  });
+
+  it("sees a lesson's date window change, and prints the window", async () => {
+    // "period" alone would print both Slöjd lines alike.
+    saved(
+      withChanged({
+        "l-ma1": { endDate: "2027-06-01" },
+        "l-slojd": { startDate: "2026-08-17" },
+      }).map(snapshotOf),
+    );
+    state.lessons = withChanged({
+      "l-slojd": { startDate: "2026-08-17", endDate: "2026-10-30" },
+    });
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Matematik · 4ma1 · days.1 08:00–09:00 · K. Ek",
+      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.badgePeriod · 2026-08-17–2026-10-30",
+      "− Matematik · 4ma1 · days.1 08:00–09:00 · K. Ek · timetable.badgePeriod · timetable.diffUntil(2027-06-01)",
+      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.badgePeriod · timetable.diffFrom(2026-08-17)",
+    ]);
+  });
+
+  it("reads a snapshot without the weeks, the window or the co-teacher as restore does", async () => {
+    // Every week, the whole year, nobody beside the teacher: what restore
+    // writes for a missing key. Read any other way, every snapshot stored
+    // before the gateway carried them differs in every lesson.
+    saved(
+      LESSONS.map(snapshotOf).map((s) => {
+        const keyless: Partial<typeof s> = { ...s };
+        delete keyless.recurrence;
+        delete keyless.startDate;
+        delete keyless.endDate;
+        delete keyless.coTeacherId;
+        return keyless;
+      }),
+    );
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffIdentical");
+  });
+
+  it("reads a date spelled as a timestamp as the day restore reads from it", async () => {
+    const live = withChanged({ "l-slojd": { endDate: "2026-10-30" } });
+    saved(
+      live
+        .map(snapshotOf)
+        .map((s) => (s.endDate ? { ...s, endDate: `${s.endDate}T00:00:00.000Z` } : s)),
+    );
+    state.lessons = live;
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffIdentical");
+  });
+
+  it("names the teacher and the room, so a swap does not read as one lesson twice", async () => {
+    saved(LESSONS.map(snapshotOf));
+    state.lessons = withChanged({
+      "l-ma1": { teacherId: "t-2" },
+      "l-ma2": { roomId: "r-verkstad" },
+    });
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Matematik · 4ma1 · days.1 08:00–09:00 · N. Berg",
+      "+ Matematik · 4ma2 · days.1 09:00–10:00 · N. Berg · timetable.diffRoom(Verkstaden)",
+      "− Matematik · 4ma1 · days.1 08:00–09:00 · K. Ek",
+      "− Matematik · 4ma2 · days.1 09:00–10:00 · N. Berg · timetable.diffRoom(A1)",
+    ]);
+  });
+
+  it("sees a co-teacher added and a class invited in, and names them", async () => {
+    saved(LESSONS.map(snapshotOf));
+    state.lessons = withChanged({
+      "l-idrott": { extraGroupIds: ["g-41", "g-51"] },
+      "l-slojd": { coTeacherId: "t-2" },
+    });
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Idrott · 4.2 + 4.1 + 5.1 · days.1 10:00–11:00 · K. Ek",
+      "+ Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek · timetable.diffCoTeacher(N. Berg)",
+      "− Idrott · 4.2 + 4.1 · days.1 10:00–11:00 · K. Ek",
+      "− Slöjd · 5.1 · days.1 11:00–12:00 · K. Ek",
+    ]);
+  });
+
+  it("names the pupils where one was swapped for another", async () => {
+    // Counted, the pair would read "⊕1" on both sides.
+    saved(withChanged({ "l-musik": { studentIds: ["p-bo"] } }).map(snapshotOf));
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Musik · 5.1 · days.1 12:00–13:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕ Alva Elev",
+      "− Musik · 5.1 · days.1 12:00–13:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕ Bo Elev",
+    ]);
+  });
+
+  it("only counts the pupils where something else tells the lines apart", async () => {
+    saved(LESSONS.map(snapshotOf));
+    state.lessons = withChanged({ "l-musik": { startTime: "13:00", endTime: "14:00" } });
+
+    const diff = await compare();
+
+    expect(lines(diff)).toEqual([
+      "+ Musik · 5.1 · days.1 13:00–14:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕1",
+      "− Musik · 5.1 · days.1 12:00–13:00 · K. Ek · timetable.diffRoom(Verkstaden) · ⊕1",
+    ]);
+  });
+
+  it("does not read the order of the classes or the pupils as a change", async () => {
+    // Both are sets to restore; the order is whatever the rows came back in.
+    saved(
+      withChanged({
+        "l-idrott": { extraGroupIds: ["g-51", "g-41"] },
+        "l-musik": { studentIds: ["p-bo", "p-alva"] },
+      }).map(snapshotOf),
+    );
+    state.lessons = withChanged({
+      "l-idrott": { extraGroupIds: ["g-41", "g-51"] },
+      "l-musik": { studentIds: ["p-alva", "p-bo"] },
+    });
+
+    const diff = await compare();
+
+    expect(diff.textContent).toContain("timetable.diffIdentical");
+  });
+});
+
 describe("why there is no lunch band", () => {
   const enabled = () => {
     state.lunchSettings = {
@@ -1126,7 +1430,9 @@ describe("the room optimisation", () => {
     );
     await user.click(button);
 
-    expect(screen.getByRole("dialog")).toHaveTextContent("roomOptimization.title");
+    // Awaited, not read straight away: the dialog's code is fetched when this
+    // button is pressed rather than with the page, so it arrives a tick later.
+    expect(await screen.findByRole("dialog")).toHaveTextContent("roomOptimization.title");
   });
 
   it("is not offered for a grundschema with no lessons", () => {
@@ -1155,7 +1461,7 @@ describe("the room optimisation", () => {
     await waitFor(() => expect(undo).toBeEnabled());
 
     await user.click(screen.getByRole("button", { name: "timetable.optimizeRooms" }));
-    await user.click(screen.getByRole("button", { name: "roomOptimization.compute" }));
+    await user.click(await screen.findByRole("button", { name: "roomOptimization.compute" }));
     await user.click(await screen.findByRole("button", { name: "roomOptimization.apply" }));
 
     expect(roomOptimization.apply.mutateAsync).toHaveBeenCalledWith({
@@ -1182,7 +1488,7 @@ describe("the room optimisation", () => {
     render(<TimetablePage />);
 
     await user.click(screen.getByRole("button", { name: "timetable.optimizeRooms" }));
-    await user.click(screen.getByRole("button", { name: "roomOptimization.compute" }));
+    await user.click(await screen.findByRole("button", { name: "roomOptimization.compute" }));
 
     const list = await screen.findByRole("list", { name: "roomOptimization.mostImproved" });
     expect(list).toHaveTextContent("Nils Berg");

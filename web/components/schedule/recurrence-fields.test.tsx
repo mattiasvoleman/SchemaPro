@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { RecurrenceFields, recurrenceBadge } from "./recurrence-fields";
+import { RecurrenceFields } from "./recurrence-fields";
+import { recurrenceBadge } from "./recurrence-badge";
 
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.

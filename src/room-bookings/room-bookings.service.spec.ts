@@ -118,6 +118,20 @@ describe('RoomBookingsService', () => {
       ).resolves.toEqual({ id: BOOKING_ID, status: 'APPROVED' });
     });
 
+    it('rejects a principal with no user identity before touching the database', async () => {
+      // bookedById is a required column. The route admits TEACHER and
+      // SCHOOL_ADMIN, whose userId always comes from the Users row, so no HTTP
+      // caller arrives without one; the service still refuses up front rather
+      // than leave the invariant to the route's @Roles.
+      await expect(
+        service.create(dto() as any, testUser({ userId: undefined })),
+      ).rejects.toThrow(
+        new ForbiddenException('No user identity is associated with this account.'),
+      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(tx.roomBooking.create).not.toHaveBeenCalled();
+    });
+
     it('rejects a principal with no school', async () => {
       await expect(
         service.create(dto() as any, testUser({ schoolId: undefined })),

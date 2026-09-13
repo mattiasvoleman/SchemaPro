@@ -498,13 +498,12 @@ describe('MasterLessonsService', () => {
       );
     });
 
-    // SUSPECTED BUG: unlike studentIds (deduped via `new Set` one line below),
-    // extraGroupIds are passed through as-is. MasterLessonGroups has
-    // @@unique([masterLessonId, studentGroupId]), so a payload with the same
-    // group twice makes the nested create violate the constraint — a Prisma
-    // P2002 surfacing as a 500 instead of a clean 400/409. Pinning current
-    // behaviour; do not "fix" this test without fixing the service.
-    it('currently forwards duplicate extraGroupIds to the nested create (suspected bug)', async () => {
+    // MasterLessonGroups has @@unique([masterLessonId, studentGroupId]), so a
+    // payload naming the same group twice has to be deduped before the nested
+    // create — otherwise the constraint answers with a P2002, which the global
+    // filter turns into a 409 for a payload that conflicts with nothing. The
+    // DTO's @IsUUID each-check lets duplicates through.
+    it('dedupes duplicate extraGroupIds before the nested create', async () => {
       arrangeCreate();
 
       await service.create(
@@ -516,10 +515,7 @@ describe('MasterLessonsService', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             extraGroups: {
-              create: [
-                { schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID },
-                { schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID },
-              ],
+              create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
             },
           }),
         }),
@@ -1128,6 +1124,34 @@ describe('MasterLessonsService', () => {
       });
     });
 
+    it('replaces the extra groups, deduplicated', async () => {
+      // Same unique constraint as on create: a duplicate would fail the
+      // nested create with the same 409, and only after deleteMany had run in
+      // the same transaction.
+      arrangeUpdate(
+        {},
+        { extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }] },
+      );
+
+      await service.update(
+        LESSON_ID,
+        { extraGroupIds: [EXTRA_GROUP_ID, EXTRA_GROUP_ID] },
+        testUser(),
+      );
+
+      expect(tx.masterLesson.update).toHaveBeenCalledWith({
+        where: { id: LESSON_ID },
+        data: {
+          dayOfWeek: 1,
+          extraGroups: {
+            deleteMany: {},
+            create: [{ schoolId: SCHOOL_ID, studentGroupId: EXTRA_GROUP_ID }],
+          },
+        },
+        select: expect.any(Object),
+      });
+    });
+
     it('replaces the participants, deduplicated', async () => {
       arrangeUpdate({}, { participants: [{ studentId: STUDENT_ID }] });
 
@@ -1414,11 +1438,12 @@ describe('MasterLessonsService', () => {
       });
     });
 
-    // SUSPECTED BUG (lower confidence): recipients are computed from the
-    // PRE-update extraGroups snapshot, so a class added by this very update
-    // never hears about the moved lessons it now attends. Pinning current
-    // behaviour.
-    it('currently notifies the pre-update group list, not the new one (suspected bug)', async () => {
+    // The notice announces the slot the lesson lands in, so it goes to the
+    // classes that attend it afterwards. Read off the pre-update lesson, a
+    // class added by this very update never heard about the moved lessons it
+    // now attends — while the class it replaced was told about a slot that is
+    // no longer its own.
+    it('notifies the post-update group list, including a group added by the update', async () => {
       arrangeUpdate(
         { extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }] },
         {
@@ -1439,7 +1464,7 @@ describe('MasterLessonsService', () => {
 
       expect(notifications.recipientsForGroups).toHaveBeenCalledWith(tx, [
         GROUP_ID,
-        EXTRA_GROUP_ID, // the replaced group — not OTHER_EXTRA_GROUP_ID
+        OTHER_EXTRA_GROUP_ID, // the attached group — not the one it replaced
       ]);
     });
 

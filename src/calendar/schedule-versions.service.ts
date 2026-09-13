@@ -57,6 +57,30 @@ export interface VersionLesson {
    * pre-change snapshot is restored over it.
    */
   isGenerated?: boolean;
+  /**
+   * Set aside on the tray: occupies nothing, and its day and time are only a
+   * memory of where it was. Carried because a restore that dropped it put
+   * every parked lesson back at that remembered slot — which by then may
+   * belong to another lesson, since freeing it is what parking is for — and
+   * a restore runs no clash check to stop it.
+   *
+   * Absent is read as false. For a snapshot stored before the tray existed
+   * (3ddc70d) that is not a guess but the truth: no lesson could be parked
+   * yet. Snapshots stored since, and before this field was carried, lost the
+   * flag on whichever lessons were on the tray when they were taken, and
+   * nothing can say which those were — the blob is the only copy. For them
+   * false is still the side to be wrong on: an un-parked lesson lands on the
+   * grid, where a clash it makes is shown and it can be lifted back. Read
+   * absent as true and an old snapshot restores the whole year onto the tray
+   * — nothing to publish, nothing fixed for the solver, an empty SS12000
+   * feed — to recover the few lessons that were set aside at the time.
+   *
+   * Rejected: re-parking, on restore, an absent-key lesson whose remembered
+   * slot clashes with the rest of the snapshot. That guesses the flag from a
+   * symptom, in a path with no clash check of its own to borrow, and the
+   * administrator — not the restore — knows whether the lesson was set aside.
+   */
+  isParked?: boolean;
   /** Absent or null means "from the start of the academic year". */
   startDate?: string | null;
   /** Absent or null means "until the year ends". */
@@ -180,10 +204,22 @@ export class ScheduleVersionsService {
         throw new BadRequestException('Version snapshot is malformed.');
       }
 
+      // Every time is parsed before the wipe. A throw would roll the
+      // transaction back either way; what parsing first buys is that a damaged
+      // snapshot is refused while nothing has been deleted yet, instead of
+      // somewhere in the middle of the inserts — where the old parser's
+      // Invalid Date met Prisma's own validation and came back as the filter's
+      // anonymous 400, and a missing key as a TypeError and a 500.
+      const rows = lessons.map((lesson) => ({
+        ...lesson,
+        startTime: parseHHMM(lesson.startTime),
+        endTime: parseHHMM(lesson.endTime),
+      }));
+
       await tx.masterLesson.deleteMany({
         where: { academicYearId: version.academicYearId },
       });
-      for (const lesson of lessons) {
+      for (const lesson of rows) {
         await tx.masterLesson.create({
           data: {
             schoolId: version.schoolId,
@@ -194,11 +230,13 @@ export class ScheduleVersionsService {
             coTeacherId: lesson.coTeacherId ?? null,
             roomId: lesson.roomId,
             dayOfWeek: lesson.dayOfWeek,
-            startTime: parseHHMM(lesson.startTime),
-            endTime: parseHHMM(lesson.endTime),
+            startTime: lesson.startTime,
+            endTime: lesson.endTime,
             isLocked: lesson.isLocked,
             // See VersionLesson.isGenerated for why an absent key is false.
             isGenerated: lesson.isGenerated ?? false,
+            // See VersionLesson.isParked for why an absent key is false.
+            isParked: lesson.isParked ?? false,
             recurrence: lesson.recurrence ?? 'ALL_WEEKS',
             startDate: parseDateOrNull(lesson.startDate),
             endDate: parseDateOrNull(lesson.endDate),
@@ -299,6 +337,7 @@ export class ScheduleVersionsService {
         endTime: true,
         isLocked: true,
         isGenerated: true,
+        isParked: true,
         recurrence: true,
         startDate: true,
         endDate: true,
@@ -318,6 +357,7 @@ export class ScheduleVersionsService {
       endTime: toHHMM(lesson.endTime),
       isLocked: lesson.isLocked,
       isGenerated: lesson.isGenerated,
+      isParked: lesson.isParked,
       recurrence: lesson.recurrence,
       startDate: toDateStringOrNull(lesson.startDate),
       endDate: toDateStringOrNull(lesson.endDate),
@@ -359,10 +399,24 @@ function toHHMM(time: Date): string {
   return `${h}:${m}`;
 }
 
+/**
+ * `HH:MM` back to the epoch-day Date a `@db.Time` column takes — strictly.
+ *
+ * Only snapshot() writes these strings, always through toHHMM, so anything
+ * else means the blob was damaged, and a restore runs no clash check that
+ * could catch a lesson landing somewhere it was never put. The split(':') this
+ * replaces read "24:00" and "" as midnight without a word. Not
+ * parseTimeString: that one takes request input, seconds and "99:99" included.
+ */
 function parseHHMM(value: string): Date {
-  const [h, m] = value.split(':').map(Number);
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value);
+  if (!match) {
+    throw new BadRequestException(
+      `Version snapshot contains an invalid time: "${value}".`,
+    );
+  }
   const d = new Date(0);
-  d.setUTCHours(h ?? 0, m ?? 0, 0, 0);
+  d.setUTCHours(Number(match[1]), Number(match[2]), 0, 0);
   return d;
 }
 

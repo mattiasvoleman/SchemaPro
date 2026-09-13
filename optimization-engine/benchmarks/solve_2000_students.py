@@ -126,6 +126,23 @@ def build_request(shape: SchoolShape) -> OptimizeScheduleRequest:
                 requirement["requiredRoomType"] = "GYMNASIUM"
             requirements.append(requirement)
 
+    # Who is in the building: one home class per class, with its headcount,
+    # which is the shape the gateway sends for a school that has entered its
+    # classes. `_lunch_group_ids` takes a named list at its word, and only a
+    # payload that names nobody falls back to every group with requirements,
+    # as the schema says beside `groups`. For this school the two readings are
+    # the same set — it has no teaching groups, so the classes that eat are
+    # exactly the ones holding lessons — and naming them makes the nightly
+    # gate exercise the reading production takes rather than the fallback,
+    # which the engine's own tests hold.
+    groups = [
+        {
+            "id": _uid(f"group-{class_index}"),
+            "lunchHeadcount": shape.students_per_class,
+        }
+        for class_index in range(shape.classes)
+    ]
+
     # Teachers are unavailable for one afternoon a week (meetings, planning).
     constrained_teachers = int(shape.teachers * shape.constraint_density)
     constraints = [
@@ -146,6 +163,7 @@ def build_request(shape: SchoolShape) -> OptimizeScheduleRequest:
             "requestId": _uid("request"),
             "academicYearId": _uid("year"),
             "requirements": requirements,
+            "groups": groups,
             "rooms": rooms,
             "constraints": constraints,
             "rules": {
