@@ -199,6 +199,7 @@ jobs:
         with:
           name: lighthouse-results
           path: web/.lighthouseci/
+          include-hidden-files: true
           retention-days: 30
 
   solver-benchmark:
