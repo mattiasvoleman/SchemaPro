@@ -5418,6 +5418,16 @@ def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
     the grid; each locked lesson's outward window within its day; each
     hand-placed meal; each previous lesson the disruption term can read.
 
+    A FRAME IS READ OUTWARD TOO, AND NEED NOT BE. frames.day_windows is the
+    only reader of a frame's times, and it rounds inward: the open up, the
+    close down. The open rounded down and the close rounded up are compared
+    with nothing, and the argument below does without them. They stay as
+    caution: a frame on the grid reads the same both ways and costs nothing,
+    one off it costs the coarser step it could have had (08:07 gives five
+    minutes where ten would do), and a later reader rounding a frame outward
+    is already covered. Dropping them is a choice, and a row in
+    tests/test_start_step.py says so.
+
     NO WEEK IS LOST. Let every one of those constants be a multiple of g, and
     take any timetable the model accepts without the step. Round every start
     DOWN to a multiple of g. Every rule still holds:
