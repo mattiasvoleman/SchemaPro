@@ -109,12 +109,40 @@ describe('PrismaService', () => {
   });
 
   describe('withVerifiedSubject', () => {
-    it('injects the verified subject as the sub claim', async () => {
-      await expect(
-        service.withVerifiedSubject(AUTH_ID, () => Promise.resolve('profile')),
-      ).resolves.toBe('profile');
+    // A batch transaction takes its statements unexecuted, so the fakes are
+    // markers the $transaction stub receives in order, and the stub answers
+    // with one result per statement.
+    let clientExecuteRaw: jest.Mock;
 
-      const call = executeRaw.mock.calls[0] as unknown[];
+    beforeEach(() => {
+      clientExecuteRaw = jest.fn().mockReturnValue('claims-statement');
+      transaction.mockImplementation(() => Promise.resolve([0, 'profile']));
+      Object.assign(service, { $executeRaw: clientExecuteRaw });
+    });
+
+    const lookup = () => 'lookup-statement' as never;
+
+    it('sends the claims and the lookup as one batch, claims first', async () => {
+      const query = jest.fn(lookup);
+
+      await expect(service.withVerifiedSubject(AUTH_ID, query)).resolves.toBe(
+        'profile',
+      );
+
+      expect(query).toHaveBeenCalledWith(service);
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(transaction).toHaveBeenCalledWith([
+        'claims-statement',
+        'lookup-statement',
+      ]);
+    });
+
+    it('injects the verified subject as the sub claim', async () => {
+      await service.withVerifiedSubject(AUTH_ID, lookup);
+
+      expect(clientExecuteRaw).toHaveBeenCalledTimes(1);
+      const call = clientExecuteRaw.mock.calls[0] as unknown[];
+      expect(rawSql(call)).toContain(`set_config('request.jwt.claim.sub'`);
       const [claims, sub, role] = rawValues(call);
       expect(sub).toBe(AUTH_ID);
       expect(role).toBe('authenticated');

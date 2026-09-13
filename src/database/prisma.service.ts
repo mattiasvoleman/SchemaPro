@@ -5,6 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import type { PrismaPromise } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 
 /** The connecting role's RLS-relevant privileges, read from `pg_roles`. */
@@ -139,28 +140,40 @@ export class PrismaService
     fn: (tx: PrismaClient) => Promise<T>,
     options?: { timeoutMs?: number },
   ): Promise<T> {
-    // Both claim styles are set so every auth.uid()/auth.role() variant works:
-    // Supabase's helpers read `request.jwt.claims` (JSON) while older builds
-    // and the plain-PostgreSQL fallback read the individual claim settings.
-    // set_config(..., true) is transaction-local — the values are never
-    // visible across requests even when a pooled connection is reused.
-    const claims = JSON.stringify({ sub: user.authId, role: 'authenticated' });
-
     return this.$transaction(
       async (tx) => {
-        await tx.$executeRaw`
-          SELECT
-            set_config('request.jwt.claims', ${claims}, true),
-            set_config('request.jwt.claim.sub', ${user.authId}, true),
-            set_config('request.jwt.claim.role', ${'authenticated'}, true)
-        `;
-
+        await this.claimsFor(tx, user.authId);
         return fn(tx as unknown as PrismaClient);
       },
       {
         timeout: options?.timeoutMs ?? 15_000,
       },
     );
+  }
+
+  /**
+   * The statement that puts a subject's claims on the current transaction.
+   *
+   * Both claim styles are set so every auth.uid()/auth.role() variant works:
+   * Supabase's helpers read `request.jwt.claims` (JSON) while older builds and
+   * the plain-PostgreSQL fallback read the individual claim settings.
+   * set_config(..., true) is transaction-local — the values are never visible
+   * across requests even when a pooled connection is reused.
+   *
+   * Returned unexecuted, so it can open an interactive transaction's callback
+   * or lead a batch.
+   */
+  private claimsFor(
+    client: Pick<PrismaClient, '$executeRaw'>,
+    authId: string,
+  ): PrismaPromise<number> {
+    const claims = JSON.stringify({ sub: authId, role: 'authenticated' });
+    return client.$executeRaw`
+      SELECT
+        set_config('request.jwt.claims', ${claims}, true),
+        set_config('request.jwt.claim.sub', ${authId}, true),
+        set_config('request.jwt.claim.role', ${'authenticated'}, true)
+    `;
   }
 
   /**
@@ -175,12 +188,34 @@ export class PrismaService
    *
    * This exists because `withSystemTransaction` cannot be used here — see the
    * warning on that method.
+   *
+   * ## A batch transaction, not an interactive one
+   *
+   * This runs on every authenticated request, and it is exactly two
+   * statements: the claims, then one lookup. An interactive transaction — the
+   * callback form `withRls` uses — makes each statement its own request from
+   * Node to the query engine, plus one to open the transaction and one to
+   * commit it, with an open-transaction entry and a timeout timer in the engine
+   * and a proxied transaction client built in JS for the duration. A batch
+   * hands the engine both statements at once, and the engine runs BEGIN, the
+   * claims, the lookup and COMMIT on one connection, in that order.
+   *
+   * Postgres receives the same statements in the same transaction: the claims
+   * still end at COMMIT, and the lookup still reads the database on every
+   * request, so a deactivated account is still refused on the next one. That
+   * is also why `query` returns a PrismaPromise instead of being awaited in a
+   * callback — the lookup has to reach the engine unexecuted, behind the
+   * claims.
    */
   async withVerifiedSubject<T>(
     authId: string,
-    fn: (tx: PrismaClient) => Promise<T>,
+    query: (client: PrismaClient) => PrismaPromise<T>,
   ): Promise<T> {
-    return this.withRls({ authId } as AuthenticatedUser, fn);
+    const [, result] = await this.$transaction([
+      this.claimsFor(this, authId),
+      query(this),
+    ]);
+    return result;
   }
 
   /**
