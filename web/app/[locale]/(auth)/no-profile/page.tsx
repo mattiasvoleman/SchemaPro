@@ -23,6 +23,7 @@ export default async function NoProfilePage() {
           loginPath={localePath(locale, "/login")}
           className={cn(buttonVariants({ variant: "outline" }))}
           label={tCommon("signOut")}
+          failed={tCommon("error")}
         />
       </CardContent>
     </Card>
