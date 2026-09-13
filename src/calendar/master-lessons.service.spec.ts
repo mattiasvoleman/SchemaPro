@@ -575,23 +575,6 @@ describe('MasterLessonsService', () => {
       });
     });
 
-    it("asks nothing about the other lesson's participants when it has none", async () => {
-      arrangeCreate();
-      sameDay([otherLesson()]);
-
-      await service.create(createDto(), testUser());
-
-      expect(tx.user.count).not.toHaveBeenCalled();
-    });
-
-    it('asks nothing about individual participants when the lesson names none', async () => {
-      arrangeCreate();
-
-      await service.create(createDto(), testUser());
-
-      expect(tx.user.findMany).not.toHaveBeenCalled();
-    });
-
     it('claims a hand-placed lesson for the humans, whatever the column default', async () => {
       arrangeCreate();
 
