@@ -23,6 +23,7 @@ import { IntegrationModule } from './integration/integration.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { RolesGuard } from './auth/roles.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { WindowedThrottlerStorage } from './common/windowed-throttler-storage';
 import { OptimizationModule } from './optimization/optimization.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { ResourcesModule } from './resources/resources.module';
@@ -97,6 +98,10 @@ import type { ThrottleConfig } from './config/configuration';
           throttlers: [
             { ttl: throttle.ttlSeconds * 1000, limit: throttle.limit },
           ],
+          // Not the library's in-memory store, which schedules a timer per
+          // request and turns every burst's expiry into seconds of event-loop
+          // work — see WindowedThrottlerStorage.
+          storage: new WindowedThrottlerStorage(),
         };
       },
     }),

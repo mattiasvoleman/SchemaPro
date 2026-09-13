@@ -28,6 +28,7 @@ import type { Request } from 'express';
 import { AppConfigModule } from '../../src/config/config.module';
 import { DatabaseModule } from '../../src/database/database.module';
 import { HttpExceptionFilter } from '../../src/common/filters/http-exception.filter';
+import { WindowedThrottlerStorage } from '../../src/common/windowed-throttler-storage';
 import { RolesGuard } from '../../src/auth/roles.guard';
 import { IS_PUBLIC_KEY } from '../../src/auth/decorators/public.decorator';
 import { NotificationsModule } from '../../src/notifications/notifications.module';
@@ -179,6 +180,8 @@ class TestAppModule {}
           limit: Number(process.env['THROTTLE_LIMIT'] ?? 1000),
         },
       ],
+      // The store AppModule uses, so a 429 asserted here is production's.
+      storage: new WindowedThrottlerStorage(),
     }),
   ],
   providers: [
