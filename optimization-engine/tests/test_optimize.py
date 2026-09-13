@@ -1072,6 +1072,7 @@ def test_lessons_never_run_past_the_end_of_their_day() -> None:
     model = cp_model.CpModel()
     decisions = solver._create_lesson_decisions(
         model, request.requirements, len(request.rooms), request.frame_times, request.rasts,
+        step=1,
     )
     slots_per_day = solver._grid.slots_per_day
     for decision in decisions:
@@ -2964,7 +2965,7 @@ def test_room_classes_merge_only_truly_interchangeable_rooms() -> None:
         request.requirements,
         len(request.rooms),
         request.frame_times,
-        request.rasts,
+        request.rasts, step=1,
     )
 
     classes = build_room_classes(
@@ -5784,7 +5785,7 @@ def _terms_for(payload: dict[str, object], objective_only_wishes: bool) -> list:
     solver = SchedulerSolver(_settings())
     model = cp_model.CpModel()
     decisions = solver._create_lesson_decisions(
-        model, request.requirements, len(request.rooms), [], [],
+        model, request.requirements, len(request.rooms), [], [], step=1,
     )
     plan = solver._add_room_allocation(
         model, decisions, request.rooms, [], [], request.room_preferences,
@@ -6271,6 +6272,7 @@ def test_the_rast_is_cut_out_of_the_start_domain() -> None:
 
     decisions = solver._create_lesson_decisions(
         model, request.requirements, len(request.rooms), request.frame_times, request.rasts,
+        step=1,
     )
 
     grid = solver._grid
@@ -7666,6 +7668,7 @@ def test_a_zero_corridor_leaves_the_model_exactly_as_it_was() -> None:
 
     decisions = solver._create_lesson_decisions(
         model, request.requirements, len(request.rooms), request.frame_times, request.rasts,
+        step=1,
     )
 
     assert decisions
@@ -7703,6 +7706,7 @@ def test_a_padded_lesson_may_not_run_past_the_end_of_its_day() -> None:
 
     decisions = solver._create_lesson_decisions(
         model, request.requirements, len(request.rooms), request.frame_times, request.rasts,
+        step=1,
     )
 
     grid = solver._grid
@@ -8506,9 +8510,16 @@ def test_a_lunch_stage_that_cannot_decide_costs_the_week_nothing(
 def test_the_lunch_stage_reads_the_lunch_starts_the_model_allows() -> None:
     """One domain per class and day, composed from the same four facts the
     model states as four constraints: the window, the stage's sitting, the
-    locked lesson beside it and the reservation on top of it."""
+    locked lesson beside it and the reservation on top of it.
+
+    On the week's own step. Every time in this payload is on the half hour —
+    lessons of 60, a meal of 30, the window, the sitting, the lock and the
+    reservation — so the lunch variable takes only the half hours, and each
+    run of starts below reads as its half hours, one value each. The runs'
+    ends are the ones the contiguous domain had: a step drops the starts
+    between multiples and never a bound (see _start_step)."""
     from app.schemas.schedule import OptimizeScheduleRequest
-    from app.solver.scheduler_solver import SchedulerSolver, _domain_intervals
+    from app.solver.scheduler_solver import SchedulerSolver, _domain_intervals, _start_step
 
     payload = _teaching_group_school(classes=1)
     cls = payload["groups"][0]["id"]  # type: ignore[index]
@@ -8529,16 +8540,20 @@ def test_the_lunch_stage_reads_the_lunch_starts_the_model_allows() -> None:
         "kind": "UNAVAILABLE",
     }]
     solver = SchedulerSolver(_settings())
+    request = OptimizeScheduleRequest.model_validate(payload)
 
-    domains = solver._lunch_start_domains(OptimizeScheduleRequest.model_validate(payload))
+    domains = solver._lunch_start_domains(request)
 
+    assert _start_step(request, solver._grid) == 6  # thirty minutes
     assert domains is not None
     day = 120  # slots per day on a five-minute grid, 08:00-18:00
     key = UUID(cls)
     # Slots from 08:00: 11:00 = 36, 11:30 = 42, 12:00 = 48.
-    assert _domain_intervals(domains[(key, 0)]) == [(42, 48)]
-    assert _domain_intervals(domains[(key, 1)]) == [(day + 36, day + 42)]
-    assert _domain_intervals(domains[(key, 2)]) == [(2 * day + 36, 2 * day + 48)]
+    assert _domain_intervals(domains[(key, 0)]) == [(42, 42), (48, 48)]
+    assert _domain_intervals(domains[(key, 1)]) == [(day + 36, day + 36), (day + 42, day + 42)]
+    assert _domain_intervals(domains[(key, 2)]) == [
+        (2 * day + 36, 2 * day + 36), (2 * day + 42, 2 * day + 42), (2 * day + 48, 2 * day + 48),
+    ]
     assert len(domains) == 5
 
 
