@@ -10,6 +10,7 @@ export interface PrismaMock {
   onModuleInit: jest.Mock;
   onModuleDestroy: jest.Mock;
   withRls: jest.Mock;
+  queryWithRls: jest.Mock;
   withVerifiedSubject: jest.Mock;
   withServiceKeyLookup: jest.Mock;
   withServicePrincipal: jest.Mock;
@@ -67,6 +68,12 @@ export function createPrismaMock(tx: TxMock): PrismaMock {
     onModuleInit: jest.fn(),
     onModuleDestroy: jest.fn(),
     withRls: jest.fn(
+      <T>(_user: AuthenticatedUser, fn: (client: PrismaClient) => Promise<T>) =>
+        run(fn),
+    ),
+    // The batch helpers take a statement rather than a callback body, but the
+    // statement is built from the client they are handed, so `tx` stands in.
+    queryWithRls: jest.fn(
       <T>(_user: AuthenticatedUser, fn: (client: PrismaClient) => Promise<T>) =>
         run(fn),
     ),

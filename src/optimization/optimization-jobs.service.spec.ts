@@ -521,7 +521,8 @@ describe('OptimizationJobsService', () => {
 
       await service.get(JOB_ID, user);
 
-      expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(prisma.queryWithRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(prisma.withRls).not.toHaveBeenCalled();
       expect(tx.optimizationJob.findUnique).toHaveBeenCalledWith({
         where: { id: JOB_ID },
         select: expect.objectContaining({
@@ -611,7 +612,8 @@ describe('OptimizationJobsService', () => {
         },
       ]);
 
-      expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(prisma.queryWithRls).toHaveBeenCalledWith(user, expect.any(Function));
+      expect(prisma.withRls).not.toHaveBeenCalled();
       expect(tx.optimizationJob.findMany).toHaveBeenCalledWith({
         where: { academicYearId: YEAR_ID },
         orderBy: { createdAt: 'desc' },

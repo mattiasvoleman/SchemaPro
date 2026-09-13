@@ -186,8 +186,8 @@ export class OptimizationJobsService {
   }
 
   async get(jobId: string, user: AuthenticatedUser): Promise<OptimizationJobView> {
-    const job = await this.prisma.withRls(user, (tx) =>
-      tx.optimizationJob.findUnique({ where: { id: jobId }, select: JOB_SELECT }),
+    const job = await this.prisma.queryWithRls(user, (db) =>
+      db.optimizationJob.findUnique({ where: { id: jobId }, select: JOB_SELECT }),
     );
     if (!job) {
       throw new NotFoundException('Optimization job not found.');
@@ -200,8 +200,8 @@ export class OptimizationJobsService {
     academicYearId: string,
     user: AuthenticatedUser,
   ): Promise<OptimizationJobView[]> {
-    const jobs = await this.prisma.withRls(user, (tx) =>
-      tx.optimizationJob.findMany({
+    const jobs = await this.prisma.queryWithRls(user, (db) =>
+      db.optimizationJob.findMany({
         where: { academicYearId },
         orderBy: { createdAt: 'desc' },
         take: 20,

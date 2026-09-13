@@ -211,6 +211,36 @@ export class PrismaService
     authId: string,
     query: (client: PrismaClient) => PrismaPromise<T>,
   ): Promise<T> {
+    return this.batchUnderClaims(authId, query);
+  }
+
+  /**
+   * One statement on behalf of `user`, under their claims: the batch form of
+   * `withRls` for a handler whose whole database work is a single query — a
+   * list, a lookup by id.
+   *
+   * `withRls(user, (tx) => tx.job.findMany(...))` and
+   * `queryWithRls(user, (db) => db.job.findMany(...))` put the same statements
+   * in the same transaction: BEGIN, the claims, the query, COMMIT. The second
+   * skips the interactive transaction's extra requests to the query engine —
+   * see withVerifiedSubject. It also has no transaction timeout of its own,
+   * which a single statement does not need.
+   *
+   * Anything that reads and then decides, writes, or awaits between statements
+   * still belongs in `withRls`: a batch is fixed before the first statement runs.
+   */
+  async queryWithRls<T>(
+    user: AuthenticatedUser,
+    query: (client: PrismaClient) => PrismaPromise<T>,
+  ): Promise<T> {
+    return this.batchUnderClaims(user.authId, query);
+  }
+
+  /** BEGIN, the claims, `query`, COMMIT — handed to the engine as one batch. */
+  private async batchUnderClaims<T>(
+    authId: string,
+    query: (client: PrismaClient) => PrismaPromise<T>,
+  ): Promise<T> {
     const [, result] = await this.$transaction([
       this.claimsFor(this, authId),
       query(this),
