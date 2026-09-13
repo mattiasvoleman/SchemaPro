@@ -45,6 +45,99 @@ const USER_ID = '22222222-2222-4222-8222-222222222222';
 
 /** "HH:MM" → the Date shape Prisma returns for a `@db.Time` column. */
 const t = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00.000Z`);
+/** A `@db.Date` value: midnight UTC. */
+const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+const NEW_ROOM_ID = '00000000-aaaa-4aaa-8aaa-000000000009';
+
+/*
+ * The database as Prisma answers it.
+ *
+ * A stub that resolves a whole row hands the service every column whether its
+ * query asked for it or not, so a `select` that forgot a column the service
+ * goes on to read passes here and fails in production as `undefined`. These
+ * answer the way Prisma 5 does: only the selected columns come back, a select
+ * with nothing truthy in it is refused before anything is read, a relation
+ * named as `{}` comes back whole, and a findUnique without its key is refused.
+ * A `where` is applied to the columns a fixture row spells out; a column the
+ * row leaves out does not constrain it, so fixtures name only what a test is
+ * about.
+ */
+type Row = Record<string, any>;
+type Query = { where?: Row; select?: Row };
+
+function refuseEmptySelect(select: Row | undefined): void {
+  if (select === undefined) return;
+  const chosen = Object.values(select).filter(Boolean);
+  if (chosen.length === 0) {
+    throw new Error('Prisma refuses a `select` with no truthy value.');
+  }
+  for (const spec of chosen) {
+    if (typeof spec === 'object') refuseEmptySelect((spec as Query).select);
+  }
+}
+
+function project(row: Row, select: Row | undefined): Row {
+  if (select === undefined) return row;
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, spec]) => Boolean(spec))
+      .map(([column, spec]) => {
+        const value = row[column];
+        const nested = typeof spec === 'object' ? (spec as Query).select : undefined;
+        if (nested === undefined || value === null || value === undefined) {
+          return [column, value];
+        }
+        return [
+          column,
+          Array.isArray(value)
+            ? value.map((item: Row) => project(item, nested))
+            : project(value, nested),
+        ];
+      }),
+  );
+}
+
+const same = (a: unknown, b: unknown): boolean =>
+  a instanceof Date && b instanceof Date ? a.getTime() === b.getTime() : a === b;
+
+function matches(row: Row, where: Row = {}): boolean {
+  return Object.entries(where).every(([column, condition]) => {
+    const value = row[column];
+    if (value === undefined) return true;
+    if (condition !== null && typeof condition === 'object' && !(condition instanceof Date)) {
+      return Object.entries(condition as Row).every(([operator, operand]) => {
+        if (operator === 'in') {
+          return (operand as unknown[]).some((candidate) => same(value, candidate));
+        }
+        if (operator === 'not') return !same(value, operand);
+        return matches(value, { [operator]: operand });
+      });
+    }
+    return same(value, condition);
+  });
+}
+
+/** findMany over a table: the rows the `where` admits, as selected. */
+const answerRows =
+  (rows: Row[]) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    return Promise.resolve(
+      rows.filter((row) => matches(row, query.where)).map((row) => project(row, query.select)),
+    );
+  };
+
+/** findUnique over a table. */
+const answerUnique =
+  (rows: Row[]) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    if (!query.where || Object.keys(query.where).length === 0) {
+      throw new Error('Prisma refuses a findUnique without its unique key.');
+    }
+    const row = rows.find((candidate) => matches(candidate, query.where));
+    return Promise.resolve(row ? project(row, query.select) : null);
+  };
 
 describe('MasterLessonsService', () => {
   let service: MasterLessonsService;
@@ -69,7 +162,7 @@ describe('MasterLessonsService', () => {
     );
 
     // Quiet defaults; individual tests override what they assert on.
-    tx.masterLesson.findMany.mockResolvedValue([]);
+    sameDay([]);
     tx.availabilityConstraint.findMany.mockResolvedValue([]);
     tx.user.findMany.mockResolvedValue([]);
     tx.user.count.mockResolvedValue(0);
@@ -118,6 +211,26 @@ describe('MasterLessonsService', () => {
     ...overrides,
   });
 
+  /** The year's lessons on the candidate's weekday, as the clash scan reads them. */
+  const sameDay = (rows: Row[]) =>
+    tx.masterLesson.findMany.mockImplementation(answerRows(rows));
+
+  /**
+   * Who sits where: each pupil's home class, and the teaching groups that hold
+   * them. One table answers every roster read — the participants' home classes,
+   * both halves of rosterOf, and the reverse count — the way the database does.
+   */
+  const arrangePupils = (
+    pupils: Array<{ id: string; studentGroupId: string | null }>,
+    members: Array<{ studentId: string; studentGroupId: string }> = [],
+  ) => {
+    tx.user.findMany.mockImplementation(answerRows(pupils));
+    tx.studentGroupMember.findMany.mockImplementation(answerRows(members));
+    tx.user.count.mockImplementation((query: Query) =>
+      Promise.resolve(pupils.filter((pupil) => matches(pupil, query.where)).length),
+    );
+  };
+
   // -------------------------------------------------------------------
   // create
   // -------------------------------------------------------------------
@@ -138,10 +251,9 @@ describe('MasterLessonsService', () => {
     });
 
     const arrangeCreate = () => {
-      tx.academicYear.findUnique.mockResolvedValue({
-        id: YEAR_ID,
-        schoolId: SCHOOL_ID,
-      });
+      tx.academicYear.findUnique.mockImplementation(
+        answerUnique([{ id: YEAR_ID, schoolId: SCHOOL_ID }]),
+      );
       tx.masterLesson.create.mockResolvedValue(
         lessonRecord({
           extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }],
@@ -261,7 +373,7 @@ describe('MasterLessonsService', () => {
       // the room — the teacher who is also in it went unexamined.
       arrangeCreate();
       // Already teaching 10:30-11:30, which the 10:00-11:00 candidate overlaps.
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ teacherId: CO_TEACHER_ID }),
       ]);
 
@@ -296,7 +408,7 @@ describe('MasterLessonsService', () => {
 
     it('refuses a lesson whose pupils already sit in another group at that hour', async () => {
       arrangeCreate();
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ studentGroupId: TEACHING_GROUP_ID }),
       ]);
       // Alva's home class is the candidate's group, and she is enrolled in the
@@ -320,7 +432,7 @@ describe('MasterLessonsService', () => {
       // Now the CANDIDATE is the teaching group and the other lesson is the
       // home class. Reading one side of the roster only would answer "no shared
       // pupils" here, since the interesting pair is always one of each.
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ studentGroupId: GROUP_ID }),
       ]);
       arrangeRoster({
@@ -340,7 +452,7 @@ describe('MasterLessonsService', () => {
 
     it('allows two groups that merely sit at the same hour', async () => {
       arrangeCreate();
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ studentGroupId: TEACHING_GROUP_ID }),
       ]);
       // Different pupils. Two halves of a year taught in parallel is the point
@@ -361,7 +473,7 @@ describe('MasterLessonsService', () => {
       // The commonest clash of all: 4.1 booked twice. Its pupils are shared
       // with itself by definition, so an unconditional pupil check would append
       // a second sentence saying the same thing in other words.
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ studentGroupId: GROUP_ID }),
       ]);
       arrangeRoster({
@@ -380,7 +492,7 @@ describe('MasterLessonsService', () => {
       // Same day, an hour later. The common save lands on a day that is busy
       // but not at this hour, and paying for a roster there would be a tax on
       // every write.
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ startTime: t('13:00'), endTime: t('14:00') }),
       ]);
 
@@ -392,6 +504,94 @@ describe('MasterLessonsService', () => {
     // its default and the default moved, every lesson an admin placed by hand
     // would be deleted on the next optimizer run — so the write is asserted
     // here rather than trusted to the schema.
+    // The roster below is read the way the database reads it — by the groups
+    // in play — so a group left out of the question has no pupils to share.
+
+    it('finds pupils shared with a group the other lesson only brings along', async () => {
+      // 4ma1 attends the other lesson as an extra group rather than as its own.
+      // It is in the room all the same, and Alva with it.
+      arrangeCreate();
+      sameDay([otherLesson({ extraGroups: [{ studentGroupId: TEACHING_GROUP_ID }] })]);
+      arrangePupils(
+        [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+        [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
+      );
+
+      await expect(service.create(createDto(), testUser())).rejects.toThrow(
+        new ConflictException('Students of this group already have Math in this slot.'),
+      );
+    });
+
+    it('finds the shared pupil wherever she sits in the class list', async () => {
+      arrangeCreate();
+      sameDay([otherLesson({ studentGroupId: TEACHING_GROUP_ID })]);
+      // Alva is listed first, and a classmate who takes no part in 4ma1 after.
+      arrangePupils(
+        [
+          { id: STUDENT_ID, studentGroupId: GROUP_ID },
+          { id: OTHER_STUDENT_ID, studentGroupId: GROUP_ID },
+        ],
+        [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
+      );
+
+      await expect(service.create(createDto(), testUser())).rejects.toThrow(
+        new ConflictException('Students of this group already have Math in this slot.'),
+      );
+    });
+
+    it('does not hold a participant busy for a class that is elsewhere at that hour', async () => {
+      // The pupil's home class has no lesson in this slot, so the pupil is
+      // free, whatever the other lesson is.
+      arrangeCreate();
+      sameDay([otherLesson()]);
+      arrangePupils([{ id: STUDENT_ID, studentGroupId: OTHER_EXTRA_GROUP_ID }]);
+
+      await expect(
+        service.create(createDto({ studentIds: [STUDENT_ID] }), testUser()),
+      ).resolves.toMatchObject({ id: LESSON_ID });
+    });
+
+    it('says a participant is busy once, not again as a classmate of the other lesson', async () => {
+      // Alva belongs to this class and takes part in the other lesson by name.
+      // One pupil, one clash, one sentence.
+      arrangeCreate();
+      sameDay([otherLesson({ participants: [{ studentId: STUDENT_ID }] })]);
+      arrangePupils([{ id: STUDENT_ID, studentGroupId: GROUP_ID }]);
+
+      await expect(
+        service.create(createDto({ studentIds: [STUDENT_ID] }), testUser()),
+      ).rejects.toThrow(
+        new ConflictException('A participating student already has Math in this slot.'),
+      );
+    });
+
+    it('lets the other lesson keep participants from another class', async () => {
+      arrangeCreate();
+      sameDay([otherLesson({ participants: [{ studentId: OTHER_STUDENT_ID }] })]);
+      arrangePupils([{ id: OTHER_STUDENT_ID, studentGroupId: OTHER_EXTRA_GROUP_ID }]);
+
+      await expect(service.create(createDto(), testUser())).resolves.toMatchObject({
+        id: LESSON_ID,
+      });
+    });
+
+    it("asks nothing about the other lesson's participants when it has none", async () => {
+      arrangeCreate();
+      sameDay([otherLesson()]);
+
+      await service.create(createDto(), testUser());
+
+      expect(tx.user.count).not.toHaveBeenCalled();
+    });
+
+    it('asks nothing about individual participants when the lesson names none', async () => {
+      arrangeCreate();
+
+      await service.create(createDto(), testUser());
+
+      expect(tx.user.findMany).not.toHaveBeenCalled();
+    });
+
     it('claims a hand-placed lesson for the humans, whatever the column default', async () => {
       arrangeCreate();
 
@@ -433,7 +633,7 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.create(createDto(), testUser()),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(new NotFoundException('Academic year not found.'));
       expect(tx.masterLesson.create).not.toHaveBeenCalled();
     });
 
@@ -570,7 +770,7 @@ describe('MasterLessonsService', () => {
 
     it('409s when the teacher already teaches in the slot and creates nothing', async () => {
       arrangeCreate();
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ teacherId: TEACHER_ID }),
       ]);
 
@@ -585,7 +785,7 @@ describe('MasterLessonsService', () => {
 
     it('folds distinct conflicts into one 409 message', async () => {
       arrangeCreate();
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ teacherId: TEACHER_ID, roomId: ROOM_ID }),
       ]);
 
@@ -600,7 +800,7 @@ describe('MasterLessonsService', () => {
 
     it('reports identical conflicts only once', async () => {
       arrangeCreate();
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ teacherId: TEACHER_ID }),
         otherLesson({
           id: '00000000-bbbb-4bbb-8bbb-000000000001',
@@ -617,7 +817,7 @@ describe('MasterLessonsService', () => {
 
     it('409s when the primary group already has a lesson in the slot', async () => {
       arrangeCreate();
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ studentGroupId: GROUP_ID }),
       ]);
 
@@ -630,7 +830,7 @@ describe('MasterLessonsService', () => {
 
     it('409s when a candidate extra group clashes with the other lesson', async () => {
       arrangeCreate();
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ studentGroupId: EXTRA_GROUP_ID }),
       ]);
 
@@ -658,7 +858,7 @@ describe('MasterLessonsService', () => {
 
     it("409s when the primary group is among the other lesson's extra groups", async () => {
       arrangeCreate();
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ extraGroups: [{ studentGroupId: GROUP_ID }] }),
       ]);
 
@@ -672,7 +872,7 @@ describe('MasterLessonsService', () => {
     it('treats back-to-back lessons as non-overlapping', async () => {
       arrangeCreate();
       // Same teacher, same room, same group — but 09:00–10:00 abuts 10:00.
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({
           teacherId: TEACHER_ID,
           roomId: ROOM_ID,
@@ -722,7 +922,7 @@ describe('MasterLessonsService', () => {
       tx.user.findMany.mockResolvedValue([
         { id: STUDENT_ID, studentGroupId: homeGroup },
       ]);
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ studentGroupId: homeGroup }),
       ]);
 
@@ -743,7 +943,7 @@ describe('MasterLessonsService', () => {
       tx.user.findMany.mockResolvedValue([
         { id: STUDENT_ID, studentGroupId: null },
       ]);
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ participants: [{ studentId: STUDENT_ID }] }),
       ]);
 
@@ -757,7 +957,7 @@ describe('MasterLessonsService', () => {
     it("409s when the other lesson's individual participants belong to this class", async () => {
       arrangeCreate();
       const foreignStudent = '00000000-dddd-4ddd-8ddd-000000000001';
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ participants: [{ studentId: foreignStudent }] }),
       ]);
       tx.user.count.mockResolvedValue(1);
@@ -780,11 +980,101 @@ describe('MasterLessonsService', () => {
       tx.user.findMany.mockResolvedValue([
         { id: STUDENT_ID, studentGroupId: null },
       ]);
-      tx.masterLesson.findMany.mockResolvedValue([otherLesson()]);
+      sameDay([otherLesson()]);
 
       await expect(
         service.create(createDto({ studentIds: [STUDENT_ID] }), testUser()),
       ).resolves.toMatchObject({ id: LESSON_ID });
+    });
+
+    it('writes no participants for a lesson that names none', async () => {
+      arrangeCreate();
+
+      await service.create(createDto(), testUser());
+
+      expect(tx.masterLesson.create.mock.calls[0][0].data.participants).toEqual({
+        create: [],
+      });
+    });
+
+    it('refuses a teacher who co-teaches the other lesson', async () => {
+      arrangeCreate();
+      sameDay([otherLesson({ coTeacherId: TEACHER_ID })]);
+
+      await expect(service.create(createDto(), testUser())).rejects.toThrow(
+        new ConflictException('Teacher already teaches Math in this slot.'),
+      );
+    });
+
+    it('lets an odd-week lesson share its slot with an even-week one', async () => {
+      // Slöjd on odd weeks and hemkunskap on even weeks: the same hour and the
+      // same teacher, never the same week.
+      arrangeCreate();
+      sameDay([otherLesson({ teacherId: TEACHER_ID, recurrence: 'EVEN_WEEKS' })]);
+
+      await expect(
+        service.create(createDto({ recurrence: 'ODD_WEEKS' }), testUser()),
+      ).resolves.toMatchObject({ id: LESSON_ID });
+    });
+
+    it.each([
+      ['spring', { startDate: '2027-01-11' }, { endDate: day('2026-12-18') }],
+      ['autumn', { endDate: '2026-12-18' }, { startDate: day('2027-01-11') }],
+    ])(
+      'lets a %s-term lesson share its slot with one in the other term',
+      async (_label, window, otherWindow) => {
+        arrangeCreate();
+        sameDay([otherLesson({ teacherId: TEACHER_ID, ...otherWindow })]);
+
+        await expect(
+          service.create(createDto(window), testUser()),
+        ).resolves.toMatchObject({ id: LESSON_ID });
+      },
+    );
+
+    it('lets the other lesson start as this one ends', async () => {
+      // The mirror of back-to-back above: 10:00–11:00 against 11:00–12:00.
+      arrangeCreate();
+      sameDay([
+        otherLesson({
+          teacherId: TEACHER_ID,
+          roomId: ROOM_ID,
+          studentGroupId: GROUP_ID,
+          startTime: t('11:00'),
+          endTime: t('12:00'),
+        }),
+      ]);
+
+      await expect(service.create(createDto(), testUser())).resolves.toMatchObject({
+        id: LESSON_ID,
+      });
+    });
+
+    it('reads the minutes of a slot, not only its hour', async () => {
+      // 10:45–11:30 against 10:00–10:30: a quarter of an hour apart, and the
+      // same hour on the clock.
+      arrangeCreate();
+      sameDay([
+        otherLesson({ teacherId: TEACHER_ID, startTime: t('10:00'), endTime: t('10:30') }),
+      ]);
+
+      await expect(
+        service.create(createDto({ startTime: '10:45', endTime: '11:30' }), testUser()),
+      ).resolves.toMatchObject({ id: LESSON_ID });
+    });
+
+    it.each([
+      ['starts when the lesson ends', '11:00', '12:00'],
+      ['lies later the same day', '12:00', '13:00'],
+    ])('ignores an UNAVAILABLE constraint that %s', async (_label, start, end) => {
+      arrangeCreate();
+      tx.availabilityConstraint.findMany.mockResolvedValue([
+        { resourceType: 'TEACHER', startTime: t(start), endTime: t(end) },
+      ]);
+
+      await expect(service.create(createDto(), testUser())).resolves.toMatchObject({
+        id: LESSON_ID,
+      });
     });
 
     it('writes a CREATE entry to the audit trail', async () => {
@@ -848,8 +1138,8 @@ describe('MasterLessonsService', () => {
       lessonOverrides: Record<string, unknown> = {},
       updatedOverrides: Record<string, unknown> = {},
     ) => {
-      tx.masterLesson.findUnique.mockResolvedValue(
-        storedLesson(lessonOverrides),
+      tx.masterLesson.findUnique.mockImplementation(
+        answerUnique([storedLesson(lessonOverrides)]),
       );
       tx.masterLesson.update.mockResolvedValue(lessonRecord(updatedOverrides));
     };
@@ -859,7 +1149,7 @@ describe('MasterLessonsService', () => {
 
       await expect(
         service.update(LESSON_ID, { dayOfWeek: 2 }, testUser()),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(new NotFoundException('Master lesson not found.'));
       expect(tx.masterLesson.update).not.toHaveBeenCalled();
     });
 
@@ -969,7 +1259,7 @@ describe('MasterLessonsService', () => {
       await expect(
         // Existing end is 11:00; the new start of 12:00 inverts the range.
         service.update(LESSON_ID, { startTime: '12:00' }, testUser()),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(new BadRequestException('startTime must be before endTime.'));
       expect(tx.masterLesson.update).not.toHaveBeenCalled();
     });
 
@@ -983,7 +1273,7 @@ describe('MasterLessonsService', () => {
       // A conflict scan here would refuse the very move that makes a swap
       // possible, so none is run — not "run and ignored", none.
       arrangeUpdate();
-      tx.masterLesson.findMany.mockResolvedValue([otherLesson({ teacherId: TEACHER_ID })]);
+      sameDay([otherLesson({ teacherId: TEACHER_ID })]);
 
       await service.update(LESSON_ID, { isParked: true }, testUser());
 
@@ -997,7 +1287,7 @@ describe('MasterLessonsService', () => {
       // Un-parking names a day and a time, and that slot may since have been
       // taken — by the lesson it was lifted out to make room for.
       arrangeUpdate({ isParked: true });
-      tx.masterLesson.findMany.mockResolvedValue([otherLesson({ teacherId: TEACHER_ID })]);
+      sameDay([otherLesson({ teacherId: TEACHER_ID })]);
 
       await expect(
         service.update(LESSON_ID, { isParked: false, dayOfWeek: 1 }, testUser()),
@@ -1007,7 +1297,7 @@ describe('MasterLessonsService', () => {
 
     it("409s when the stored co-teacher clashes, without updating", async () => {
       arrangeUpdate({ coTeacherId: CO_TEACHER_ID });
-      tx.masterLesson.findMany.mockResolvedValue([
+      sameDay([
         otherLesson({ teacherId: CO_TEACHER_ID }),
       ]);
 
@@ -1355,6 +1645,11 @@ describe('MasterLessonsService', () => {
         testUser(),
       );
 
+      expect(tx.masterLesson.update).toHaveBeenCalledWith({
+        where: { id: LESSON_ID },
+        data: { dayOfWeek: 1, teacherId: NEW_TEACHER_ID },
+        select: expect.any(Object),
+      });
       expect(tx.calendarLessonTeacher.deleteMany).toHaveBeenCalledWith({
         where: { calendarLessonId: CAL_LESSON_ID, role: 'LEAD' },
       });
@@ -1499,6 +1794,135 @@ describe('MasterLessonsService', () => {
       expect(notifications.recipientsForGroups).not.toHaveBeenCalled();
     });
 
+    it('moves both ends of the slot when both are patched', async () => {
+      arrangeUpdate({}, { startTime: t('12:00'), endTime: t('13:00') });
+
+      await expect(
+        service.update(LESSON_ID, { startTime: '12:00', endTime: '13:00' }, testUser()),
+      ).resolves.toMatchObject({ startTime: '12:00', endTime: '13:00' });
+
+      expect(tx.masterLesson.update).toHaveBeenCalledWith({
+        where: { id: LESSON_ID },
+        data: { dayOfWeek: 1, startTime: t('12:00'), endTime: t('13:00') },
+        select: expect.any(Object),
+      });
+    });
+
+    it('rejects a patch that leaves the lesson no time at all', async () => {
+      arrangeUpdate();
+
+      await expect(
+        // Existing end is 11:00; a start of 11:00 leaves nothing between them.
+        service.update(LESSON_ID, { startTime: '11:00' }, testUser()),
+      ).rejects.toThrow(new BadRequestException('startTime must be before endTime.'));
+      expect(tx.masterLesson.update).not.toHaveBeenCalled();
+    });
+
+    it('folds every clash a patch makes into one 409 message', async () => {
+      arrangeUpdate();
+      sameDay([otherLesson({ teacherId: TEACHER_ID, roomId: ROOM_ID })]);
+
+      await expect(service.update(LESSON_ID, { dayOfWeek: 1 }, testUser())).rejects.toThrow(
+        new ConflictException(
+          'Teacher already teaches Math in this slot. ' +
+            'Room is already booked for Math in this slot.',
+        ),
+      );
+    });
+
+    /*
+     * The clash scan checks the lesson as it will be, which is the patch laid
+     * over the stored row: what the patch names, and what it leaves alone. Each
+     * pair below differs in which of the two a busy resource sits in.
+     */
+    it.each([
+      ['the teacher', { teacherId: NEW_TEACHER_ID }, NEW_TEACHER_ID],
+      ['the co-teacher', { coTeacherId: CO_TEACHER_ID }, CO_TEACHER_ID],
+    ])('checks %s a patch assigns, not the one it replaces', async (_label, patch, busy) => {
+      arrangeUpdate();
+      sameDay([otherLesson({ teacherId: busy })]);
+
+      await expect(service.update(LESSON_ID, patch, testUser())).rejects.toThrow(
+        new ConflictException('Teacher already teaches Math in this slot.'),
+      );
+      expect(tx.masterLesson.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['a room the patch names', { roomId: NEW_ROOM_ID }, NEW_ROOM_ID],
+      ['the room a lesson already has', { dayOfWeek: 1 }, ROOM_ID],
+    ])('checks %s', async (_label, patch, bookedRoom) => {
+      arrangeUpdate();
+      sameDay([otherLesson({ roomId: bookedRoom })]);
+
+      await expect(service.update(LESSON_ID, patch, testUser())).rejects.toThrow(
+        new ConflictException('Room is already booked for Math in this slot.'),
+      );
+    });
+
+    it('checks the extra groups a lesson already brings along', async () => {
+      arrangeUpdate({ extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }] });
+      sameDay([otherLesson({ studentGroupId: EXTRA_GROUP_ID })]);
+
+      await expect(service.update(LESSON_ID, { dayOfWeek: 1 }, testUser())).rejects.toThrow(
+        new ConflictException('The group already has Math in this slot.'),
+      );
+    });
+
+    it.each([
+      ['odd weeks', { recurrence: 'ODD_WEEKS' }, { recurrence: 'EVEN_WEEKS' }],
+      ['its spring term', { startDate: day('2027-01-11') }, { endDate: day('2026-12-18') }],
+      ['its autumn term', { endDate: day('2026-12-18') }, { startDate: day('2027-01-11') }],
+    ])('goes on checking a moved lesson by %s', async (_label, stored, otherWindow) => {
+      // A patch that does not name the weeks keeps the ones the lesson had —
+      // in the clash scan, not only in the row.
+      arrangeUpdate(stored);
+      sameDay([otherLesson({ teacherId: TEACHER_ID, ...otherWindow })]);
+
+      await expect(
+        service.update(LESSON_ID, { dayOfWeek: 1 }, testUser()),
+      ).resolves.toMatchObject({ id: LESSON_ID });
+    });
+
+    it.each([
+      ['a spring term', { startDate: '2027-01-11' }, { endDate: day('2026-12-18') }],
+      ['an autumn term', { endDate: '2026-12-18' }, { startDate: day('2027-01-11') }],
+    ])('checks the lesson by the %s a patch gives it', async (_label, patch, otherWindow) => {
+      arrangeUpdate();
+      sameDay([otherLesson({ teacherId: TEACHER_ID, ...otherWindow })]);
+
+      await expect(service.update(LESSON_ID, patch, testUser())).resolves.toMatchObject({
+        id: LESSON_ID,
+      });
+    });
+
+    it.each([
+      ['an explicit null', null],
+      ['an empty string', ''],
+    ])('clears a period start given as %s', async (_label, startDate) => {
+      arrangeUpdate({ startDate: day('2027-01-11') });
+
+      await service.update(LESSON_ID, { startDate }, testUser());
+
+      expect(tx.masterLesson.update).toHaveBeenCalledWith({
+        where: { id: LESSON_ID },
+        data: { dayOfWeek: 1, startDate: null, isGenerated: false },
+        select: expect.any(Object),
+      });
+    });
+
+    it('keeps only the calendar day of a date sent as a full timestamp', async () => {
+      arrangeUpdate();
+
+      await service.update(LESSON_ID, { endDate: '2026-09-07T00:00:00.000Z' }, testUser());
+
+      expect(tx.masterLesson.update).toHaveBeenCalledWith({
+        where: { id: LESSON_ID },
+        data: { dayOfWeek: 1, endDate: day('2026-09-07'), isGenerated: false },
+        select: expect.any(Object),
+      });
+    });
+
     it('writes an UPDATE entry with before/after snapshots', async () => {
       arrangeUpdate({}, { dayOfWeek: 3 });
 
@@ -1547,10 +1971,9 @@ describe('MasterLessonsService', () => {
 
   describe('remove', () => {
     const arrangeRemove = () => {
-      tx.masterLesson.findUnique.mockResolvedValue({
-        ...lessonRecord(),
-        schoolId: SCHOOL_ID,
-      });
+      tx.masterLesson.findUnique.mockImplementation(
+        answerUnique([{ ...lessonRecord(), schoolId: SCHOOL_ID }]),
+      );
       tx.calendarLesson.deleteMany.mockResolvedValue({ count: 3 });
     };
 
@@ -1558,7 +1981,7 @@ describe('MasterLessonsService', () => {
       tx.masterLesson.findUnique.mockResolvedValue(null);
 
       await expect(service.remove(LESSON_ID, testUser())).rejects.toThrow(
-        NotFoundException,
+        new NotFoundException('Master lesson not found.'),
       );
       expect(tx.calendarLesson.deleteMany).not.toHaveBeenCalled();
       expect(tx.masterLesson.delete).not.toHaveBeenCalled();

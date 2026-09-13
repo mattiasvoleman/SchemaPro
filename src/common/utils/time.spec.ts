@@ -22,7 +22,8 @@ describe('parseTimeString', () => {
     expect(parseTimeString('08:00').getUTCSeconds()).toBe(0);
   });
 
-  it.each(['9:30', '09:30:', '0930', '', '09:30:00.500', 'aa:bb'])(
+  // '109:30' holds a valid clock at its end; the pattern is anchored at both.
+  it.each(['9:30', '09:30:', '0930', '', '09:30:00.500', 'aa:bb', '109:30'])(
     'rejects malformed input %p',
     (input) => {
       expect(() => parseTimeString(input)).toThrow(BadRequestException);
@@ -47,6 +48,21 @@ describe('parseDateString', () => {
     'rejects malformed input %p',
     (input) => {
       expect(() => parseDateString(input)).toThrow(BadRequestException);
+    },
+  );
+
+  /*
+   * The shape check is its own answer, not a slower route to the same 400.
+   * Without it these would reach `new Date` and come back — if at all — as
+   * "Invalid date: x." with nothing to say what was expected, which is the
+   * half of the message a client can act on.
+   */
+  it.each(['2026-8-05', '05/08/2026', '2026-08-05T00:00:00Z', 'x2026-08-05'])(
+    'names the expected shape when %p is not YYYY-MM-DD',
+    (input) => {
+      expect(() => parseDateString(input)).toThrow(
+        `Invalid date: ${input}. Expected YYYY-MM-DD.`,
+      );
     },
   );
 

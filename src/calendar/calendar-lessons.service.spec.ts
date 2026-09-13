@@ -29,6 +29,91 @@ const GUARDIAN_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const STARTS_AT = new Date('2026-08-10T08:00:00.000Z');
 const ENDS_AT = new Date('2026-08-10T09:00:00.000Z');
 
+/*
+ * The database as Prisma answers it.
+ *
+ * A stub that resolves a whole row hands the service every column whether its
+ * query asked for it or not, so a `select` that forgot a column the service
+ * goes on to read passes here and fails in production as `undefined`. These
+ * answer the way Prisma 5 does: only the selected columns come back, a select
+ * with nothing truthy in it is refused before anything is read, a relation
+ * named as `{}` comes back whole, and a findUnique or update without its key
+ * is refused.
+ */
+type Row = Record<string, any>;
+type Query = { where?: Row; select?: Row; data?: Row };
+
+function refuseEmptySelect(select: Row | undefined): void {
+  if (select === undefined) return;
+  const chosen = Object.values(select).filter(Boolean);
+  if (chosen.length === 0) {
+    throw new Error('Prisma refuses a `select` with no truthy value.');
+  }
+  for (const spec of chosen) {
+    if (typeof spec === 'object') refuseEmptySelect((spec as Query).select);
+  }
+}
+
+function project(row: Row, select: Row | undefined): Row {
+  if (select === undefined) return row;
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, spec]) => Boolean(spec))
+      .map(([column, spec]) => {
+        const value = row[column];
+        const nested = typeof spec === 'object' ? (spec as Query).select : undefined;
+        if (nested === undefined || value === null || value === undefined) {
+          return [column, value];
+        }
+        return [
+          column,
+          Array.isArray(value)
+            ? value.map((item: Row) => project(item, nested))
+            : project(value, nested),
+        ];
+      }),
+  );
+}
+
+/** findMany over a table: every row, as the query selects it. */
+const answerRows =
+  (rows: Row[]) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    return Promise.resolve(rows.map((row) => project(row, query.select)));
+  };
+
+/** findUnique by id over a table. */
+const answerById =
+  (rows: Row[]) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    if (query.where?.id === undefined) {
+      throw new Error('Prisma refuses a findUnique without its unique key.');
+    }
+    const row = rows.find((candidate) => candidate.id === query.where?.id);
+    return Promise.resolve(row ? project(row, query.select) : null);
+  };
+
+/** findFirst: the query is validated whether or not anything is found. */
+const answerFirst =
+  (hit: Row | null) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    return Promise.resolve(hit ? project(hit, query.select) : null);
+  };
+
+/** update by id: the stored row with the write applied, as selected. */
+const answerUpdate =
+  (stored: Row) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    if (query.where?.id === undefined) {
+      throw new Error('Prisma refuses an update without its unique key.');
+    }
+    return Promise.resolve(project({ ...stored, ...query.data }, query.select));
+  };
+
 describe('CalendarLessonsService', () => {
   let service: CalendarLessonsService;
   let tx: TxMock;
@@ -68,12 +153,14 @@ describe('CalendarLessonsService', () => {
     ...overrides,
   });
 
+  /** The lesson as the database holds it; `requireLesson` reads it by id. */
+  const storeLesson = (overrides: Record<string, unknown> = {}) =>
+    tx.calendarLesson.findUnique.mockImplementation(answerById([baseLesson(overrides)]));
+
   describe('cancel', () => {
     const arrangeCancel = (overrides: Record<string, unknown> = {}) => {
-      tx.calendarLesson.findUnique.mockResolvedValue(baseLesson(overrides));
-      tx.calendarLesson.update.mockImplementation(({ data }: any) =>
-        Promise.resolve({ id: LESSON_ID, status: data.status, note: data.note }),
-      );
+      storeLesson(overrides);
+      tx.calendarLesson.update.mockImplementation(answerUpdate(baseLesson(overrides)));
     };
 
     it('cancels a scheduled lesson, storing the reason as the note', async () => {
@@ -102,6 +189,16 @@ describe('CalendarLessonsService', () => {
       expect(tx.calendarLesson.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: { status: 'CANCELLED', note: 'Bring calculators' },
+        }),
+      );
+      // And the email says no more than it was told: no reason, no "Reason:".
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          email: {
+            subject: 'Lesson cancelled: Mathematics',
+            body: 'Mathematics on 2026-08-10T08:00:00.000Z has been cancelled.',
+          },
         }),
       );
     });
@@ -160,19 +257,17 @@ describe('CalendarLessonsService', () => {
       tx.calendarLesson.findUnique.mockResolvedValue(null);
 
       await expect(service.cancel(LESSON_ID, {}, testUser())).rejects.toThrow(
-        NotFoundException,
+        new NotFoundException('Lesson not found.'),
       );
     });
   });
 
   describe('reinstate', () => {
     it('re-schedules a cancelled lesson and broadcasts, without notifying', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(baseLesson({ status: 'CANCELLED' }));
-      tx.calendarLesson.update.mockResolvedValue({
-        id: LESSON_ID,
-        status: 'SCHEDULED',
-        note: null,
-      });
+      storeLesson({ status: 'CANCELLED' });
+      tx.calendarLesson.update.mockImplementation(
+        answerUpdate(baseLesson({ status: 'CANCELLED' })),
+      );
       const user = testUser();
 
       await expect(service.reinstate(LESSON_ID, user)).resolves.toEqual({
@@ -195,7 +290,7 @@ describe('CalendarLessonsService', () => {
     it.each(['SCHEDULED', 'COMPLETED', 'RESCHEDULED'])(
       'refuses to reinstate a %s lesson',
       async (status) => {
-        tx.calendarLesson.findUnique.mockResolvedValue(baseLesson({ status }));
+        storeLesson({ status });
 
         await expect(service.reinstate(LESSON_ID, testUser())).rejects.toThrow(
           'Only cancelled lessons can be reinstated.',
@@ -215,18 +310,12 @@ describe('CalendarLessonsService', () => {
 
   describe('assignSubstitute', () => {
     const arrangeAssign = (overrides: Record<string, unknown> = {}) => {
-      tx.calendarLesson.findUnique.mockResolvedValue(baseLesson(overrides));
-      tx.user.findUnique.mockResolvedValue({
-        id: SUB_ID,
-        role: 'TEACHER',
-        isActive: true,
-      });
-      tx.calendarLesson.findFirst.mockResolvedValue(null); // no clash
-      tx.calendarLesson.update.mockResolvedValue({
-        id: LESSON_ID,
-        status: 'SCHEDULED',
-        note: null,
-      });
+      storeLesson(overrides);
+      tx.user.findUnique.mockImplementation(
+        answerById([{ id: SUB_ID, role: 'TEACHER', isActive: true }]),
+      );
+      tx.calendarLesson.findFirst.mockImplementation(answerFirst(null)); // no clash
+      tx.calendarLesson.update.mockImplementation(answerUpdate(baseLesson(overrides)));
     };
 
     it('replaces all assignments with a single SUBSTITUTE row in the lesson tenant', async () => {
@@ -299,9 +388,10 @@ describe('CalendarLessonsService', () => {
           schoolId: SCHOOL_ID,
           userIds: [STUDENT_ID, GUARDIAN_ID, TEACHER_ID, SUB_ID],
           type: 'LESSON_SUBSTITUTE',
-          email: expect.objectContaining({
+          email: {
             subject: 'Substitute assigned: Mathematics',
-          }),
+            body: 'Mathematics on 2026-08-10T08:00:00.000Z will be covered by a substitute teacher.',
+          },
         }),
       );
     });
@@ -326,7 +416,9 @@ describe('CalendarLessonsService', () => {
 
       await expect(
         service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser()),
-      ).rejects.toThrow(ConflictException);
+      ).rejects.toThrow(
+        new ConflictException('The substitute already teaches another lesson at this time.'),
+      );
       expect(tx.calendarLessonTeacher.deleteMany).not.toHaveBeenCalled();
       expect(tx.calendarLessonTeacher.create).not.toHaveBeenCalled();
     });
@@ -351,13 +443,11 @@ describe('CalendarLessonsService', () => {
 
   describe('changeRoom', () => {
     const arrangeMove = (overrides: Record<string, unknown> = {}) => {
-      tx.calendarLesson.findUnique.mockResolvedValue(baseLesson(overrides));
-      tx.room.findUnique.mockResolvedValue({ id: NEW_ROOM_ID });
-      tx.calendarLesson.findFirst.mockResolvedValue(null);
-      tx.roomBooking.findFirst.mockResolvedValue(null);
-      tx.calendarLesson.update.mockImplementation(({ data }: any) =>
-        Promise.resolve({ id: LESSON_ID, status: 'SCHEDULED', note: data.note ?? null }),
-      );
+      storeLesson(overrides);
+      tx.room.findUnique.mockImplementation(answerById([{ id: NEW_ROOM_ID }]));
+      tx.calendarLesson.findFirst.mockImplementation(answerFirst(null));
+      tx.roomBooking.findFirst.mockImplementation(answerFirst(null));
+      tx.calendarLesson.update.mockImplementation(answerUpdate(baseLesson(overrides)));
     };
 
     it('moves the lesson to a free room and notifies the audience', async () => {
@@ -376,10 +466,17 @@ describe('CalendarLessonsService', () => {
         }),
       );
       expect(realtime.notifyLessonChanged).toHaveBeenCalledWith(tx, LESSON_ID);
-      expect(notifications.notifyUsers).toHaveBeenCalledWith(
-        tx,
-        expect.objectContaining({ type: 'LESSON_ROOM_CHANGED' }),
-      );
+      // The class and the lesson's own teachers, told what moved and when.
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(tx, {
+        schoolId: SCHOOL_ID,
+        userIds: [STUDENT_ID, GUARDIAN_ID, TEACHER_ID],
+        type: 'LESSON_ROOM_CHANGED',
+        meta: { subjectName: 'Mathematics', startsAt: '2026-08-10T08:00:00.000Z' },
+        email: {
+          subject: 'Room changed: Mathematics',
+          body: 'Mathematics on 2026-08-10T08:00:00.000Z has moved to a different room.',
+        },
+      });
     });
 
     it('excludes the lesson itself from the clash check and only counts APPROVED bookings', async () => {
@@ -507,24 +604,24 @@ describe('CalendarLessonsService', () => {
     const OTHER_GROUP_ID = '12121212-1212-4212-8212-121212121212';
 
     it('ranks class-and-subject teachers first, drops assigned and busy ones', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(baseLesson());
-      tx.teachingRequirement.findMany.mockResolvedValue([
+      storeLesson();
+      tx.teachingRequirement.findMany.mockImplementation(answerRows([
         // Teaches this exact class+subject → primary.
         { teacherId: PRIMARY_ID, coTeacherId: null, studentGroupId: GROUP_ID },
         // Teaches the subject elsewhere → fallbacks (incl. the co-teacher).
         { teacherId: OTHER_ID, coTeacherId: CO_ID, studentGroupId: OTHER_GROUP_ID },
         // Already assigned to this lesson → never suggested.
         { teacherId: TEACHER_ID, coTeacherId: null, studentGroupId: GROUP_ID },
-      ]);
+      ]));
       tx.user.findMany.mockResolvedValue([
         { id: OTHER_ID },
         { id: PRIMARY_ID },
         { id: CO_ID },
       ]);
       // CO_ID is busy at the lesson's time; everyone else is free.
-      tx.calendarLesson.findFirst.mockImplementation(({ where }: any) =>
-        Promise.resolve(
-          where.teachers.some.teacherId === CO_ID ? { id: 'clash' } : null,
+      tx.calendarLesson.findFirst.mockImplementation((query: Query) =>
+        answerFirst(query.where?.teachers.some.teacherId === CO_ID ? { id: 'clash' } : null)(
+          query,
         ),
       );
       const user = testUser();
@@ -552,7 +649,7 @@ describe('CalendarLessonsService', () => {
     });
 
     it('returns [] without querying users when nobody else is qualified', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(baseLesson());
+      storeLesson();
       tx.teachingRequirement.findMany.mockResolvedValue([
         { teacherId: TEACHER_ID, coTeacherId: null, studentGroupId: GROUP_ID },
       ]);
@@ -562,7 +659,7 @@ describe('CalendarLessonsService', () => {
     });
 
     it('returns [] when no requirements exist for the subject', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(baseLesson());
+      storeLesson();
       tx.teachingRequirement.findMany.mockResolvedValue([]);
 
       await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([]);
@@ -582,7 +679,7 @@ describe('CalendarLessonsService', () => {
   // intentional (prepare a lesson before reinstating it), so no test pins it
   // either way.
   it('rejects with BadRequestException, not a plain Error, on state violations', async () => {
-    tx.calendarLesson.findUnique.mockResolvedValue(baseLesson({ status: 'COMPLETED' }));
+    storeLesson({ status: 'COMPLETED' });
 
     await expect(service.cancel(LESSON_ID, {}, testUser())).rejects.toBeInstanceOf(
       BadRequestException,

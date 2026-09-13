@@ -37,6 +37,79 @@ const utcTime = (h: number, m: number) => new Date(Date.UTC(1970, 0, 1, h, m));
 /** `@db.Date` columns come back from Prisma at midnight UTC. */
 const utcDate = (day: string) => new Date(`${day}T00:00:00.000Z`);
 
+/*
+ * The database as Prisma answers it.
+ *
+ * A stub that resolves a whole row hands the service every column whether its
+ * query asked for it or not, so a `select` that forgot a column the service
+ * goes on to read passes here and fails in production as `undefined`. These
+ * answer the way Prisma 5 does: only the selected columns come back, a select
+ * with nothing truthy in it is refused before anything is read, a relation
+ * named as `{}` comes back whole, and a findUnique without its key is refused.
+ */
+type Row = Record<string, any>;
+type Query = { where?: Row; select?: Row; data?: Row };
+
+function refuseEmptySelect(select: Row | undefined): void {
+  if (select === undefined) return;
+  const chosen = Object.values(select).filter(Boolean);
+  if (chosen.length === 0) {
+    throw new Error('Prisma refuses a `select` with no truthy value.');
+  }
+  for (const spec of chosen) {
+    if (typeof spec === 'object') refuseEmptySelect((spec as Query).select);
+  }
+}
+
+function project(row: Row, select: Row | undefined): Row {
+  if (select === undefined) return row;
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, spec]) => Boolean(spec))
+      .map(([column, spec]) => {
+        const value = row[column];
+        const nested = typeof spec === 'object' ? (spec as Query).select : undefined;
+        if (nested === undefined || value === null || value === undefined) {
+          return [column, value];
+        }
+        return [
+          column,
+          Array.isArray(value)
+            ? value.map((item: Row) => project(item, nested))
+            : project(value, nested),
+        ];
+      }),
+  );
+}
+
+/** findMany over a table: every row, as the query selects it. */
+const answerRows =
+  (rows: Row[]) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    return Promise.resolve(rows.map((row) => project(row, query.select)));
+  };
+
+/** findUnique by id over a table. */
+const answerById =
+  (rows: Row[]) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    if (query.where?.id === undefined) {
+      throw new Error('Prisma refuses a findUnique without its unique key.');
+    }
+    const row = rows.find((candidate) => candidate.id === query.where?.id);
+    return Promise.resolve(row ? project(row, query.select) : null);
+  };
+
+/** create: the written row, with the database's own columns, as selected. */
+const answerCreate =
+  (generated: Row) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    return Promise.resolve(project({ ...generated, ...query.data }, query.select));
+  };
+
 /** One master lesson as `snapshot()` reads it back from Prisma. */
 type MasterLessonRow = {
   subjectId: string;
@@ -95,18 +168,26 @@ describe('ScheduleVersionsService', () => {
     jest.restoreAllMocks();
   });
 
+  /** The master lessons the year holds right now, as a snapshot reads them. */
+  const timetable = (rows: MasterLessonRow[]) =>
+    tx.masterLesson.findMany.mockImplementation(answerRows(rows));
+
   describe('list', () => {
     it('lists the year’s versions under the caller’s RLS context', async () => {
       const user = testUser();
-      tx.scheduleVersion.findMany.mockResolvedValue([
-        {
-          id: VERSION_ID,
-          academicYearId: YEAR_ID,
-          name: 'Draft v1',
-          lessonCount: 3,
-          createdAt: CREATED_AT,
-        },
-      ]);
+      tx.scheduleVersion.findMany.mockImplementation(
+        answerRows([
+          {
+            id: VERSION_ID,
+            schoolId: SCHOOL_ID,
+            academicYearId: YEAR_ID,
+            name: 'Draft v1',
+            lessonCount: 3,
+            createdAt: CREATED_AT,
+            lessons: [],
+          },
+        ]),
+      );
 
       await expect(service.list(YEAR_ID, user)).resolves.toEqual([
         {
@@ -136,17 +217,12 @@ describe('ScheduleVersionsService', () => {
 
   describe('create', () => {
     const arrangeYear = () => {
-      tx.academicYear.findUnique.mockResolvedValue({
-        id: YEAR_ID,
-        schoolId: SCHOOL_ID,
-      });
-      tx.scheduleVersion.create.mockResolvedValue({
-        id: VERSION_ID,
-        academicYearId: YEAR_ID,
-        name: 'Draft v1',
-        lessonCount: 1,
-        createdAt: CREATED_AT,
-      });
+      tx.academicYear.findUnique.mockImplementation(
+        answerById([{ id: YEAR_ID, schoolId: SCHOOL_ID }]),
+      );
+      tx.scheduleVersion.create.mockImplementation(
+        answerCreate({ id: VERSION_ID, createdAt: CREATED_AT }),
+      );
     };
 
     it('404s when the academic year does not exist', async () => {
@@ -160,7 +236,7 @@ describe('ScheduleVersionsService', () => {
 
     it('snapshots every master lesson with HH:MM times and flattened relations', async () => {
       arrangeYear();
-      tx.masterLesson.findMany.mockResolvedValue([masterLessonRow()]);
+      timetable([masterLessonRow()]);
 
       await service.create(YEAR_ID, 'Draft v1', testUser({ userId: USER_ID }));
 
@@ -203,7 +279,7 @@ describe('ScheduleVersionsService', () => {
 
     it('snapshots the recurrence and the date window of a term-long lesson', async () => {
       arrangeYear();
-      tx.masterLesson.findMany.mockResolvedValue([
+      timetable([
         masterLessonRow({
           recurrence: 'ODD_WEEKS',
           startDate: utcDate('2026-08-31'),
@@ -238,7 +314,7 @@ describe('ScheduleVersionsService', () => {
       // see — both plain, both unlocked — and differ only in the column. A
       // snapshot that dropped it could not tell them apart on the way back,
       // and a restore would have to guess for both.
-      tx.masterLesson.findMany.mockResolvedValue([
+      timetable([
         masterLessonRow({ isLocked: false, isGenerated: true }),
         masterLessonRow({ isLocked: false, isGenerated: false }),
       ]);
@@ -262,7 +338,7 @@ describe('ScheduleVersionsService', () => {
       // One lesson lifted out of its slot and one moved into it — the swap the
       // tray exists for. Both rows name the same day and time; only the flag
       // says that one of them is a placement and the other a memory.
-      tx.masterLesson.findMany.mockResolvedValue([
+      timetable([
         masterLessonRow({ isParked: true }),
         masterLessonRow({ isParked: false }),
       ]);
@@ -286,7 +362,7 @@ describe('ScheduleVersionsService', () => {
 
     it('returns the stored summary with an ISO timestamp', async () => {
       arrangeYear();
-      tx.masterLesson.findMany.mockResolvedValue([masterLessonRow()]);
+      timetable([masterLessonRow()]);
       const user = testUser();
 
       await expect(service.create(YEAR_ID, 'Draft v1', user)).resolves.toEqual({
@@ -301,7 +377,7 @@ describe('ScheduleVersionsService', () => {
 
     it('stores a null author for a principal with no userId', async () => {
       arrangeYear();
-      tx.masterLesson.findMany.mockResolvedValue([]);
+      timetable([]);
 
       await service.create(YEAR_ID, 'Draft v1', testUser({ userId: undefined }));
 
@@ -316,14 +392,19 @@ describe('ScheduleVersionsService', () => {
   describe('get', () => {
     it('returns the version with its lesson snapshot', async () => {
       const lessons = [{ subjectId: SUBJECT_ID }];
-      tx.scheduleVersion.findUnique.mockResolvedValue({
-        id: VERSION_ID,
-        academicYearId: YEAR_ID,
-        name: 'Draft v1',
-        lessonCount: 1,
-        createdAt: CREATED_AT,
-        lessons,
-      });
+      tx.scheduleVersion.findUnique.mockImplementation(
+        answerById([
+          {
+            id: VERSION_ID,
+            schoolId: SCHOOL_ID,
+            academicYearId: YEAR_ID,
+            name: 'Draft v1',
+            lessonCount: 1,
+            createdAt: CREATED_AT,
+            lessons,
+          },
+        ]),
+      );
 
       await expect(service.get(VERSION_ID, testUser())).resolves.toEqual({
         id: VERSION_ID,
@@ -388,27 +469,28 @@ describe('ScheduleVersionsService', () => {
     const arrangeRestore = (
       lessons: unknown = [fullLesson(), minimalLesson()],
     ) => {
-      tx.scheduleVersion.findUnique.mockResolvedValue({
-        id: VERSION_ID,
-        schoolId: SCHOOL_ID,
-        academicYearId: YEAR_ID,
-        name: 'Golden master',
-        lessons,
-      });
+      tx.scheduleVersion.findUnique.mockImplementation(
+        answerById([
+          {
+            id: VERSION_ID,
+            schoolId: SCHOOL_ID,
+            academicYearId: YEAR_ID,
+            name: 'Golden master',
+            lessonCount: Array.isArray(lessons) ? lessons.length : 0,
+            createdAt: CREATED_AT,
+            lessons,
+          },
+        ]),
+      );
       // The safety snapshot taken before the wipe reads the year and the
       // current timetable, then writes its own version row.
-      tx.academicYear.findUnique.mockResolvedValue({
-        id: YEAR_ID,
-        schoolId: SCHOOL_ID,
-      });
-      tx.masterLesson.findMany.mockResolvedValue([]);
-      tx.scheduleVersion.create.mockResolvedValue({
-        id: SAFETY_ID,
-        academicYearId: YEAR_ID,
-        name: 'Before restore of "Golden master"',
-        lessonCount: 0,
-        createdAt: CREATED_AT,
-      });
+      tx.academicYear.findUnique.mockImplementation(
+        answerById([{ id: YEAR_ID, schoolId: SCHOOL_ID }]),
+      );
+      timetable([]);
+      tx.scheduleVersion.create.mockImplementation(
+        answerCreate({ id: SAFETY_ID, createdAt: CREATED_AT }),
+      );
       tx.masterLesson.deleteMany.mockResolvedValue({ count: 0 });
       tx.masterLesson.create.mockResolvedValue({});
       tx.scheduleChangeLog.create.mockResolvedValue({});
@@ -460,6 +542,10 @@ describe('ScheduleVersionsService', () => {
       ['a non-clock string', '8:15am'],
       ['an hour past the day', '24:00'],
       ['a missing key', undefined],
+      // Both ends of the pattern are anchored: each of these holds a valid
+      // clock inside it, and toHHMM never writes either.
+      ['an extra leading digit', '108:15'],
+      ['seconds the snapshot never writes', '08:15:00'],
     ])(
       'rejects a snapshot with %s as a time before deleting anything',
       async (_label, startTime) => {
@@ -546,6 +632,28 @@ describe('ScheduleVersionsService', () => {
           recurrence: 'ALL_WEEKS',
           startDate: null,
           endDate: null,
+        }),
+      });
+    });
+
+    it('reads a window whose dates were spelled as full timestamps', async () => {
+      // The blob is the only copy of a snapshot, so a restore must not turn on
+      // how a date was spelled when it was stored: the calendar day is what a
+      // DATE column holds, and it is the first ten characters either way.
+      arrangeRestore([
+        {
+          ...minimalLesson(),
+          startDate: '2026-08-31T00:00:00.000Z',
+          endDate: '2026-12-18T00:00:00.000Z',
+        },
+      ]);
+
+      await service.restore(VERSION_ID, testUser());
+
+      expect(tx.masterLesson.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          startDate: utcDate('2026-08-31'),
+          endDate: utcDate('2026-12-18'),
         }),
       });
     });
@@ -644,11 +752,7 @@ describe('ScheduleVersionsService', () => {
       // Snapshot the row, then feed that exact blob back into a restore. The
       // two halves have to agree on the wire format or the window is lost.
       arrangeRestore();
-      tx.academicYear.findUnique.mockResolvedValue({
-        id: YEAR_ID,
-        schoolId: SCHOOL_ID,
-      });
-      tx.masterLesson.findMany.mockResolvedValue([row]);
+      timetable([row]);
       await service.create(YEAR_ID, 'Draft v1', testUser());
       const { lessons } = tx.scheduleVersion.create.mock.calls[0][0].data;
 
@@ -675,7 +779,7 @@ describe('ScheduleVersionsService', () => {
       // The live timetable being replaced runs on odd weeks. If the safety
       // snapshot flattens that, undoing this restore silently doubles the
       // lesson — so the "a restore can always be reverted" promise fails.
-      tx.masterLesson.findMany.mockResolvedValue([
+      timetable([
         masterLessonRow({
           recurrence: 'ODD_WEEKS',
           startDate: utcDate('2026-08-31'),
@@ -699,7 +803,7 @@ describe('ScheduleVersionsService', () => {
       // what a regretted restore is undone from, and a handmade lesson that
       // came back from it as the machine's would be deleted by the first
       // regeneration after the undo — with the original already overwritten.
-      tx.masterLesson.findMany.mockResolvedValue([
+      timetable([
         masterLessonRow({ isGenerated: false }),
         masterLessonRow({ isGenerated: true }),
       ]);
@@ -718,7 +822,7 @@ describe('ScheduleVersionsService', () => {
       // Undoing a restore is restoring this snapshot. If it forgot the tray,
       // the undo would put every lesson that was set aside when the restore ran
       // back into a slot that may since have been given to another lesson.
-      tx.masterLesson.findMany.mockResolvedValue([
+      timetable([
         masterLessonRow({ isParked: true }),
         masterLessonRow({ isParked: false }),
       ]);
@@ -808,7 +912,7 @@ describe('ScheduleVersionsService', () => {
        * salsoptimering", a timetable nothing was ever done to.
        */
       tx.academicYear.findUnique.mockResolvedValue({ id: YEAR_ID, schoolId: SCHOOL_ID });
-      tx.masterLesson.findMany.mockResolvedValue([masterLessonRow()]);
+      timetable([masterLessonRow()]);
       tx.scheduleVersion.create.mockResolvedValue({
         id: VERSION_ID,
         academicYearId: YEAR_ID,
@@ -836,7 +940,9 @@ describe('ScheduleVersionsService', () => {
 
   describe('remove', () => {
     it('deletes an existing version', async () => {
-      tx.scheduleVersion.findUnique.mockResolvedValue({ id: VERSION_ID });
+      tx.scheduleVersion.findUnique.mockImplementation(
+        answerById([{ id: VERSION_ID, schoolId: SCHOOL_ID, name: 'Draft v1' }]),
+      );
       tx.scheduleVersion.delete.mockResolvedValue({ id: VERSION_ID });
       const user = testUser();
 
@@ -853,7 +959,7 @@ describe('ScheduleVersionsService', () => {
       tx.scheduleVersion.findUnique.mockResolvedValue(null);
 
       await expect(service.remove(VERSION_ID, testUser())).rejects.toThrow(
-        NotFoundException,
+        new NotFoundException('Schedule version not found.'),
       );
       expect(tx.scheduleVersion.delete).not.toHaveBeenCalled();
     });

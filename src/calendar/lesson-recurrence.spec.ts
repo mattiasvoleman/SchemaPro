@@ -25,6 +25,16 @@ describe('isoWeekNumber', () => {
     expect(isoWeekNumber(date('2026-01-01'))).toBe(1);
   });
 
+  it('anchors on the first Thursday in a year whose 4 January is not a Sunday', () => {
+    // 2026 opens on a Thursday, so its 4 January is a Sunday — and every date
+    // above resolves its week in 2026, where an anchor that always assumed a
+    // Sunday gets the right answer by accident. 2027's 4 January is a Monday:
+    // assume Sunday there and every week of the spring term is numbered one
+    // too high, which flips the parity of each alternating lesson in it.
+    expect(isoWeekNumber(date('2027-01-11'))).toBe(2);
+    expect(isoWeekNumber(date('2027-06-14'))).toBe(24);
+  });
+
   it('gives every day of one week the same number', () => {
     const numbers = [
       '2026-08-17',
@@ -140,6 +150,9 @@ describe('weeksCanOverlap', () => {
     const second = window({ startDate: date('2026-10-30') });
 
     expect(weeksCanOverlap(first, second)).toBe(true);
+    // Order must not matter here either: each order is checked by its own
+    // comparison, and a touch is a clash in both.
+    expect(weeksCanOverlap(second, first)).toBe(true);
   });
 
   it('clashes when either period is open-ended', () => {
