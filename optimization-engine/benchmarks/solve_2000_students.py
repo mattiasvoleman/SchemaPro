@@ -126,14 +126,15 @@ def build_request(shape: SchoolShape) -> OptimizeScheduleRequest:
                 requirement["requiredRoomType"] = "GYMNASIUM"
             requirements.append(requirement)
 
-    # Who is in the building, which is what makes the lunch rule below reach
-    # the model at all. `_lunch_group_ids` is EXACTLY this list — the shim that
-    # used to union in every group holding a requirement is gone — so a payload
-    # that asks for a lunch window and then sends no groups has told the solver
-    # that nobody eats, and no meal is reserved anywhere in the week. The gate
-    # saw the difference and could not say so: 69 "no free 30-minute window"
-    # violations against a timetable the solver was never asked to leave room
-    # in. One entry per class, since this school has no teaching groups.
+    # Who is in the building: one home class per class, with its headcount,
+    # which is the shape the gateway sends for a school that has entered its
+    # classes. `_lunch_group_ids` takes a named list at its word, and only a
+    # payload that names nobody falls back to every group with requirements,
+    # as the schema says beside `groups`. For this school the two readings are
+    # the same set — it has no teaching groups, so the classes that eat are
+    # exactly the ones holding lessons — and naming them makes the nightly
+    # gate exercise the reading production takes rather than the fallback,
+    # which the engine's own tests hold.
     groups = [
         {
             "id": _uid(f"group-{class_index}"),

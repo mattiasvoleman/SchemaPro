@@ -554,13 +554,34 @@ empty list with a full timplan and reached the same silence.
 
 This is exactly the failure mode the validator exists for — CP-SAT reported
 FEASIBLE for the model it was given, and the model had no lunch in it. No
-engine test could see it: every test in `test_optimize.py` that sets a lunch
-window names its class, one of them after a stretch of flakiness that was the
-same bug in miniature. The fix is one line — the payload's `groups` when it
-has any, the groups with lessons when it has none. The tests beside it hold
-both halves of that rule in three places — the solver, the timeout diagnosis
-and the validator — each once with no `groups` sent on purpose and once with
-a named list taken at its word.
+engine test could see it: every test in `test_optimize.py` that solved with a
+lunch window named its class, one of them after a stretch of flakiness that
+was the same bug in miniature. The fix is one line — the payload's `groups`
+when it has any, the groups with lessons when it has none. The tests beside it
+hold both halves of that rule in three places — the solver, the timeout
+diagnosis and the validator — each once with no `groups` sent on purpose and
+once with a named list taken at its word.
+
+A sibling change read the same red gate from the other side of the seam and
+reached the opposite rule for the absent list: it made the benchmark name its
+sixteen classes, and the checker owe lunch to nobody when a request names
+nobody. The two agreed about a named list and contradicted each other about
+an absent one, and the schema had already decided which was right — the
+comment beside `groups` promises the guarantee to every group with
+requirements. So they landed together under that one rule. The benchmark
+names its classes, which is what the gateway sends for a school that has
+entered them and what the nightly gate now exercises; the checker reads who
+eats exactly as the engine does. For this school the two readings are the same
+set, and the gate command passes both ways — with the payload as built, and
+with `groups` stripped so that the fallback is what is solved and checked.
+
+The checker stopped skipping rows in the same change. Availability windows are
+folded onto the grid rather than parsed strictly, so the product's own
+00:00–23:59 closure is enforced instead of raising and being passed over; a
+row with no weekday reaches every teaching day; a GRADE_LEVEL reservation
+reaches every group whose years overlap it; and a STUDENT_GROUP row covering
+the whole lunch window excuses that class from lunch that day, as it does in
+the engine.
 
 ### Corrections to earlier entries in this document
 
