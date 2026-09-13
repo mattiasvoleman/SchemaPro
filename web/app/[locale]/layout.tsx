@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { NextIntlClientProvider, hasLocale } from "next-intl";
+import { hasLocale } from "next-intl";
 import { setRequestLocale } from "next-intl/server";
 import { routing } from "@/i18n/routing";
 import { Providers } from "@/components/providers";
@@ -31,12 +31,16 @@ export default async function LocaleLayout({
   }
   setRequestLocale(locale);
 
+  // No NextIntlClientProvider here. Without a `messages` prop it serialises
+  // the entire catalogue into the page, and on /login that was 72KB of the
+  // 80KB HTML — admin screens and engine sentences included — plus the
+  // next-intl client runtime to read it. The unauthenticated pages resolve
+  // their text on the server; (app)/layout.tsx mounts the provider for the
+  // screens that translate in the browser.
   return (
     <html lang={locale} suppressHydrationWarning>
       <body className="min-h-screen bg-background font-sans text-foreground antialiased">
-        <NextIntlClientProvider>
-          <Providers>{children}</Providers>
-        </NextIntlClientProvider>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
