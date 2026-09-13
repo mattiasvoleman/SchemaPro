@@ -45,7 +45,7 @@ os.environ.setdefault("ALLOWED_ORIGINS", "http://localhost")
 
 from app.config import Settings  # noqa: E402
 from app.solver.conflict_analyzer import AssumptionRegistry  # noqa: E402
-from app.solver.scheduler_solver import SchedulerSolver  # noqa: E402
+from app.solver.scheduler_solver import SchedulerSolver, _start_step  # noqa: E402
 from ortools.sat.python import cp_model  # noqa: E402
 
 from solve_2000_students import SchoolShape, build_request  # noqa: E402
@@ -96,6 +96,9 @@ def _assemble(shape, enabled, model, solver, request, timings=None):
         })
         return out
 
+    # The step _build_model reads off the request, so the domains profiled are
+    # the ones the service searches.
+    start_step = _start_step(request, solver._grid)
     decisions = step(
         "decisions",
         # Every argument _build_model passes, in its order. Frames narrow the
@@ -104,6 +107,7 @@ def _assemble(shape, enabled, model, solver, request, timings=None):
         # carries decides whether padded intervals are created at all.
         lambda: solver._create_lesson_decisions(
             model, request.requirements, len(rooms), request.frame_times, request.rasts,
+            step=start_step,
         ),
     )
     step("capacity", lambda: solver._add_capacity_constraints(model, registry, decisions, rooms))
@@ -129,7 +133,8 @@ def _assemble(shape, enabled, model, solver, request, timings=None):
     step("rules", lambda: solver._add_rules_constraints(
         model, registry, decisions, request.rules, day_vars,
         request.fixed_lessons, request.groups, request.constraints,
-        request.lunch_servings, request.frame_times, request.group_conflicts))
+        request.lunch_servings, request.frame_times, request.group_conflicts,
+        request.lunch_placements, step=start_step))
 
     def objective():
         terms = [

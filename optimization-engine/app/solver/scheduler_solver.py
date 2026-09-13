@@ -331,8 +331,13 @@ class SchedulerSolver:
         model = cp_model.CpModel()
         registry = AssumptionRegistry(use_assumptions=use_assumptions)
         rooms = request.rooms
+        # Read off THIS request, never kept on the solver: the timeout probe
+        # builds a relaxed copy of the week, and a week without its rasts or
+        # its sittings may step further than the week that timed out.
+        step = _start_step(request, self._grid)
         decisions = self._create_lesson_decisions(
             model, request.requirements, len(rooms), request.frame_times, request.rasts,
+            step=step,
         )
 
         self._add_capacity_constraints(model, registry, decisions, rooms)
@@ -357,6 +362,7 @@ class SchedulerSolver:
             request.fixed_lessons, request.groups, request.constraints,
             request.lunch_servings, request.frame_times,
             request.group_conflicts, request.lunch_placements,
+            step=step,
         )
         # After the lunch, because a rast's stretch is counted from the
         # previous break and the class's own meal can be that break.
@@ -853,7 +859,7 @@ class SchedulerSolver:
         return pins
 
     def _lunch_start_narrowings(
-        self, request: OptimizeScheduleRequest,
+        self, request: OptimizeScheduleRequest, *, step: int,
     ) -> dict[tuple[UUID, int], _LunchStarts] | None:
         """Where each class's lunch may start on each day, as the model says it.
 
@@ -876,10 +882,15 @@ class SchedulerSolver:
         a sitting or a lock that alone leaves no start, and only their
         intersection can still be empty. The caller decides what to make of
         that.
+
+        The window is on `step`, the variable's own domain in the builder, so
+        every narrowing composed with it is too. Nothing is lost by that: the
+        window's ends and a pin are multiples of the step (see _start_step).
         """
         rules = request.rules
         if rules is None or not _lunch_window_is_set(rules) or not request.groups:
             return None
+        lattice = _start_lattice(step, self._grid.horizon)
         window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
         lunch_group_ids = _lunch_group_ids(
             request.groups, _group_ids_with_lessons(request.requirements),
@@ -919,7 +930,7 @@ class SchedulerSolver:
                         pin, day_offset, window_start, window_end, lunch_slots,
                     )
                     starts[(group_id, day_index)] = _LunchStarts(
-                        window=cp_model.Domain(low, high),
+                        window=_on_lattice(cp_model.Domain(low, high), lattice),
                         declared=None,
                         locked=None,
                         closed=None,
@@ -949,8 +960,11 @@ class SchedulerSolver:
                         else None,
                     )
                 starts[(group_id, day_index)] = _LunchStarts(
-                    window=cp_model.Domain(
-                        day_offset + window_start, day_offset + window_end - lunch_slots,
+                    window=_on_lattice(
+                        cp_model.Domain(
+                            day_offset + window_start, day_offset + window_end - lunch_slots,
+                        ),
+                        lattice,
                     ),
                     declared=declared,
                     locked=left[0],
@@ -962,7 +976,9 @@ class SchedulerSolver:
         self, request: OptimizeScheduleRequest,
     ) -> dict[tuple[UUID, int], cp_model.Domain] | None:
         """The four sentences of _lunch_start_narrowings composed into one domain."""
-        narrowings = self._lunch_start_narrowings(request)
+        narrowings = self._lunch_start_narrowings(
+            request, step=_start_step(request, self._grid),
+        )
         if narrowings is None:
             return None
         return {key: parts.composed() for key, parts in narrowings.items()}
@@ -1024,8 +1040,15 @@ class SchedulerSolver:
         and decides nothing, and the full solve proceeds unhinted. Returns
         (verdict, hints): a verdict when the week is refused, else the chosen
         starts, empty when the stage could not decide.
+
+        ON THE FULL MODEL'S STEP, and still a relaxation of it: every start the
+        stage may choose is one the model's own variable may take. A refusal
+        here is a refusal of the model on the step, which _start_step shows is
+        a refusal of the week.
         """
-        narrowings = self._lunch_start_narrowings(request)
+        narrowings = self._lunch_start_narrowings(
+            request, step=_start_step(request, self._grid),
+        )
         if narrowings is None:
             return None, {}
         if any(parts.composed().is_empty() for parts in narrowings.values()):
@@ -1471,6 +1494,15 @@ class SchedulerSolver:
         evaluated.
         """
         self._validate_request(request)
+        # THE STEP, beside the grid it counts in. Per request, because the week
+        # decides it: one lesson locked at 08:05 takes a school searched every
+        # thirty minutes back to every five, and a log that only named the
+        # grid would not show why the same school slowed down.
+        step = _start_step(request, self._grid)
+        logger.info(
+            "start step: slot_minutes=%d step_slots=%d step_minutes=%d",
+            self._grid.slot_minutes, step, step * self._grid.slot_minutes,
+        )
         # Arithmetic first, models second: a hall the school cannot fit in is
         # decided here in microseconds and reported the way a solve would have.
         verdict = self._dining_hall_verdict(request) or self._clique_hours_verdict(request)
@@ -3277,12 +3309,17 @@ class SchedulerSolver:
             if request.rules is not None and _lunch_window_is_set(request.rules)
             else 0
         )
+        # How far apart the starts were searched. Equal to the grid means one
+        # time somewhere off the week's coarser step — a lock at 08:05, a
+        # 45-minute lesson among hours — put the whole school on every slot.
+        step_minutes = _start_step(request, self._grid) * self._grid.slot_minutes
         return (
             f"TIMEOUT ({why}) [requestId={request.request_id}]: {lessons} lessons, "
             f"{len(request.requirements)} requirements, {eating} groups eating, "
             f"changeoverMinutes={corridor}, rasts={len(request.rasts)}, "
             f"frameTimes={len(request.frame_times)}, diningSeats={seats}, "
             f"fixedLessons={len(request.fixed_lessons)}, "
+            f"startStepMinutes={step_minutes}, "
             f"budget={self._settings.solver_max_time_seconds}s. "
             + (
                 "A changeover lengthens every lesson for the overlap check and is the "
@@ -3299,11 +3336,14 @@ class SchedulerSolver:
         room_count: int,
         frames: list[FrameTime],
         rasts: list[Rast],
+        *,
+        step: int,
     ) -> list[LessonDecision]:
         decisions: list[LessonDecision] = []
         horizon = self._grid.horizon
 
         slots_per_day = self._grid.slots_per_day
+        lattice = _start_lattice(step, horizon)
 
         for requirement in requirements:
             duration = self._grid.minutes_to_slots(requirement.minutes_per_lesson)
@@ -3383,6 +3423,11 @@ class SchedulerSolver:
                 start_domain = start_domain.intersection_with(
                     self._rast_free_starts(rasts, span, duration),
                 )
+            # ON THE WEEK'S STEP, last. Every bound and hole above is cut on the
+            # grid the school wrote it on, and only the starts between the
+            # step's multiples go — none of which a timetable needs, and every
+            # bound above is itself a multiple. _start_step says why.
+            start_domain = _on_lattice(start_domain, lattice)
             for lesson_index in range(requirement.lessons_per_week):
                 lesson = LessonInstance(requirement=requirement, lesson_index=lesson_index)
                 start = model.NewIntVarFromDomain(start_domain, f"start_{lesson.key()}")
@@ -3849,26 +3894,10 @@ class SchedulerSolver:
     def _fixed_window(self, fixed: FixedLesson) -> tuple[int, int] | None:
         """Absolute slot window blocked by a fixed lesson, rounded outward.
 
-        Locked lessons are hand-placed and need not align to the slot grid;
-        the blocked window is expanded to whole slots so blocking stays
-        conservative. Returns None when the lesson lies outside the grid.
+        The rounding lives in _fixed_lesson_window, so _start_step reads the
+        very window every builder blocks rather than a second copy of it.
         """
-        if fixed.day_of_week not in self._grid.schedule_days:
-            return None
-
-        start_minutes = _hhmmss_to_minutes(fixed.start_time)
-        end_minutes = _hhmmss_to_minutes(fixed.end_time)
-        start_minutes = max(start_minutes, self._grid.day_start_minutes)
-        end_minutes = min(end_minutes, self._grid.day_end_minutes)
-        if end_minutes <= start_minutes:
-            return None
-
-        slot = self._grid.slot_minutes
-        start_slot = (start_minutes - self._grid.day_start_minutes) // slot
-        end_slot = -(-(end_minutes - self._grid.day_start_minutes) // slot)  # ceil
-
-        day_offset = self._grid.day_index(fixed.day_of_week) * self._grid.slots_per_day
-        return day_offset + start_slot, day_offset + end_slot
+        return _fixed_lesson_window(fixed, self._grid)
 
     def _resolve_weights(self, request: OptimizeScheduleRequest) -> ResolvedWeights:
         override = request.weights
@@ -4673,6 +4702,8 @@ class SchedulerSolver:
         frames: list[FrameTime],
         group_conflicts: list[tuple[UUID, UUID]] | None = None,
         lunch_placements: list[LunchPlacement] | None = None,
+        *,
+        step: int,
     ) -> dict[tuple[UUID, int], cp_model.IntVar]:
         """Hard school rules: lunch break, dining hall seats, lessons per day.
 
@@ -4724,6 +4755,7 @@ class SchedulerSolver:
         # --- Guaranteed lunch break per student group per day ---------------
         if _lunch_window_is_set(rules):
             window_start, window_end, lunch_slots = self._lunch_window_slots(rules)
+            lattice = _start_lattice(step, self._grid.horizon)
 
             seats = rules.dining_seats
             seats_literal = None
@@ -4874,8 +4906,12 @@ class SchedulerSolver:
                     low, high = self._lunch_start_bounds(
                         pin, day_offset, window_start, window_end, lunch_slots,
                     )
-                    lunch_start = model.NewIntVar(
-                        low, high, f"lunchstart_{group_id}_{day_index}",
+                    # On the week's step, as every lesson start is. Both bounds
+                    # and a pin are multiples of it (see _start_step), so the
+                    # hull loses neither end.
+                    lunch_start = model.NewIntVarFromDomain(
+                        _on_lattice(cp_model.Domain(low, high), lattice),
+                        f"lunchstart_{group_id}_{day_index}",
                     )
                     lunch_starts[(group_id, day_index)] = lunch_start
 
@@ -5336,6 +5372,247 @@ def _hhmmss_to_minutes(value: str) -> int:
 def _clock_minutes(value: str) -> int:
     hours, minutes, _seconds = (int(part) for part in value.split(":"))
     return hours * 60 + minutes
+
+
+def _fixed_lesson_window(fixed: FixedLesson, grid: TimeGrid) -> tuple[int, int] | None:
+    """Absolute slot window blocked by a fixed lesson, rounded outward.
+
+    Locked lessons are hand-placed and need not align to the slot grid;
+    the blocked window is expanded to whole slots so blocking stays
+    conservative. Returns None when the lesson lies outside the grid.
+    """
+    if fixed.day_of_week not in grid.schedule_days:
+        return None
+
+    start_minutes = _hhmmss_to_minutes(fixed.start_time)
+    end_minutes = _hhmmss_to_minutes(fixed.end_time)
+    start_minutes = max(start_minutes, grid.day_start_minutes)
+    end_minutes = min(end_minutes, grid.day_end_minutes)
+    if end_minutes <= start_minutes:
+        return None
+
+    slot = grid.slot_minutes
+    start_slot = (start_minutes - grid.day_start_minutes) // slot
+    end_slot = -(-(end_minutes - grid.day_start_minutes) // slot)  # ceil
+
+    day_offset = grid.day_index(fixed.day_of_week) * grid.slots_per_day
+    return day_offset + start_slot, day_offset + end_slot
+
+
+def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
+    """How many slots apart this week's lesson and lunch starts may be.
+
+    THE GRID STAYS; ONLY THE STARTS STEP. Every length, rounding, refusal,
+    weight and output is still counted on `grid`, and a school whose time is
+    off the five-minute grid is still told so in those words. What the step
+    changes is which values a lesson's start and a lunch's start may take:
+    the multiples of it, as holes in their domains. The nightly 400-student
+    gate writes every time on the half hour, so its lessons get 95 starts each
+    instead of 545, over the same variables and constraints.
+
+    THE STEP IS THE GCD OF EVERY CONSTANT A START IS COMPARED WITH, after the
+    model's own rounding: the day's length; each lesson's length and the
+    meal's; the lunch window; each frame's open and close, rounded both ways,
+    and its changeover, rounded up; each rast rounded outward and each sitting
+    inward; every availability row of every kind, dated or not, folded onto
+    the grid; each locked lesson's outward window within its day; each
+    hand-placed meal; each previous lesson the disruption term can read.
+
+    NO WEEK IS LOST. Let every one of those constants be a multiple of g, and
+    take any timetable the model accepts without the step. Round every start
+    DOWN to a multiple of g. Every rule still holds:
+
+      - a start bounded by a constant, a start barred from a hole whose edges
+        are constants, an end bounded by a constant (the same bound less a
+        length): rounding down never crosses a multiple;
+      - no-overlap: a ending before b starts is a + len_a <= b, and then
+        floor(a) + len_a = floor(a + len_a) <= floor(b). So every NoOverlap
+        holds, and every cumulative — rooms, seats — too: rounding can part
+        two intervals and never join them, and intervals that pairwise meet
+        share an instant, so no instant carries more than it did;
+      - the day a start falls on, `start // slots_per_day`, does not move;
+      - a pinned meal is a multiple already and stays where it was;
+      - the rast rule's "taught before" flags are bounds as above, and its
+        "still at school" test, `start >= base + last`, answers the same
+        before and after.
+
+    So a timetable exists on the step exactly when one exists at all.
+    FEASIBLE, INFEASIBLE, a conflict core and the lunch stage's refusal mean on
+    the stepped model what they meant without it.
+
+    NO OPTIMUM IS LOST EITHER, where a step is allowed. Round every start to
+    g * floor((start + t) / g) instead, for a shift t in 0..g-1. Each shift
+    keeps every rule above that is not strict, and averaged over the shifts
+    every start stays exactly where it was. So every term linear in the starts
+    keeps its average, and so does a lunch's drift, the size of a difference
+    whose sign no common rounding flips. A teacher's idle time — span less
+    taught and protected minutes, floored at zero — keeps it too, because its
+    rounded values are two neighbouring multiples of g and never straddle
+    zero. A PREFERRED_FREE or dated overlap can only shrink on average, and
+    the disruption reward reads a multiple and keeps its value. Some shift
+    then costs no more than the timetable it came from. Two sentences break
+    that average, and the answer for them is a step of 1 rather than an
+    OPTIMAL that is not one:
+
+      - A PREFERRED_BUSY row pays when a lesson does NOT overlap it. A lesson
+        straddling two adjacent busy half hours overlaps both, and only off
+        the multiples can it straddle: tests/test_start_step.py builds that
+        week, 0 without the step and 5 with it.
+      - The rast rule's "gone home" side is strict, and a lesson its own rasts
+        do not keep out of an asking break can be rounded up into lateness.
+        See _rast_rule_reads_held_lessons.
+
+    ANY NEW RULE THAT COMPARES A START WITH A CONSTANT MUST FEED THIS FUNCTION,
+    and any new objective term must keep the average above or make the step 1.
+    Nothing checks either at build time. A constant left out is a start the
+    model can no longer reach, and the week that needed it is refused, or
+    reported worse than it is, without a word — the drift solver-grid.ts risks
+    for the gateway. tests/test_start_step.py holds one case per source and
+    compares verdicts and optima with the step and without it.
+
+    ONE ODD TIME ANYWHERE brings the whole school to a step of 1, as a lesson
+    locked at 08:05 does, and it is then searched exactly as it was before the
+    step existed: slower, never wrong. A step per connected part of the school
+    is not worth its code, because the room pool joins nearly everything.
+
+    UNREADABLE IS 1. A time or a length the grid cannot read is refused by name
+    in _validate_request before any model is built, and a guess would buy
+    nothing. A previous lesson the disruption term skips is skipped here too.
+
+    Holes in the domains, not start = g * k over a narrower variable: that
+    might propagate better, and has not been tried.
+    """
+    if any(constraint.kind == "PREFERRED_BUSY" for constraint in request.constraints):
+        return 1
+    if not _rast_rule_reads_held_lessons(request, grid):
+        return 1
+
+    slots_per_day = grid.slots_per_day
+
+    def folded(value: str, *, upward: bool) -> int:
+        # The rounding frames.py, rasts.py and servings.py apply to their own
+        # rows, clipped to the day as each of them clips.
+        offset = _clock_minutes(value) - grid.day_start_minutes
+        slots = -(-offset // grid.slot_minutes) if upward else offset // grid.slot_minutes
+        return min(max(slots, 0), slots_per_day)
+
+    values = [slots_per_day]
+    try:
+        values.extend(
+            grid.minutes_to_slots(requirement.minutes_per_lesson)
+            for requirement in request.requirements
+        )
+        rules = request.rules
+        if rules is not None and _lunch_window_is_set(rules):
+            # The three readings _lunch_window_slots makes, through the same
+            # grid calls. Its refusals are _validate_request's to make.
+            values.extend((
+                grid.parse_hhmmss(rules.lunch_start_time),
+                grid.parse_hhmmss(rules.lunch_end_time),
+                grid.minutes_to_slots(rules.lunch_minutes),
+            ))
+        for constraint in request.constraints:
+            for value in (constraint.start_time, constraint.end_time):
+                slot = grid.clamp_to_grid(value)
+                if slot is not None:
+                    values.append(slot)
+        values.extend(
+            grid.parse_hhmmss(placement.start_time)
+            for placement in request.lunch_placements
+        )
+    except ValueError:
+        return 1
+
+    for frame in request.frame_times:
+        for value in (frame.start_time, frame.end_time):
+            values.extend((folded(value, upward=False), folded(value, upward=True)))
+        values.append(-(-frame.changeover_minutes // grid.slot_minutes))
+    for rast in request.rasts:
+        values.extend((
+            folded(rast.start_time, upward=False), folded(rast.end_time, upward=True),
+        ))
+    for serving in request.lunch_servings:
+        values.extend((
+            folded(serving.start_time, upward=True), folded(serving.end_time, upward=False),
+        ))
+    for fixed in request.fixed_lessons:
+        window = _fixed_lesson_window(fixed, grid)
+        if window is not None:
+            day_offset = window[0] // slots_per_day * slots_per_day
+            values.extend((window[0] - day_offset, window[1] - day_offset))
+    for previous in request.previous_lessons:
+        try:
+            values.append(grid.parse_hhmmss(previous.start_time))
+        except ValueError:
+            continue
+    return max(math.gcd(*values), 1)
+
+
+def _rast_rule_reads_held_lessons(request: OptimizeScheduleRequest, grid: TimeGrid) -> bool:
+    """Whether every lesson an asking rast reads is kept out of that break.
+
+    THE ONE STRICT COMPARISON IN THE MODEL. A class is still at school after
+    an asking break when one of its lessons starts at or after the break's end.
+    A lesson starting inside the break's last step is not, and rounded UP to
+    the next multiple it is — so _start_step's optimum argument, which rounds
+    some starts up, needs no lesson ever to start there. A lesson its own rasts
+    keep out of the break never can: its domain has a hole from the break's
+    first slot less its length to the break's last slot, and its length is at
+    least the step.
+
+    The lesson that is not kept out is a teaching group whose years the gateway
+    could not derive: its class's rule reads it through the shared pupils, and
+    no rast reaches the group itself. tests/test_start_step.py builds that
+    week, and its verdict is the same either way while its optimum is not.
+
+    The reach _add_rast_ordering_constraints uses — the class's own years for
+    the break, each requirement's own years for its holes, the groups sharing
+    pupils for its lessons — and cautious where that method skips: a day a
+    frame closes, or a stretch no lesson fits, is still asked about.
+    """
+    if not request.groups or not any(rast.requires_lesson_before for rast in request.rasts):
+        return True
+    sharing = _groups_sharing_students(request.group_conflicts)
+    spans_of: dict[UUID, set[tuple[int, int] | None]] = defaultdict(set)
+    for requirement in request.requirements:
+        spans_of[requirement.student_group_id].add(span_of(requirement))
+    holes: dict[tuple[tuple[int, int] | None, int], list[tuple[int, int]]] = {}
+    for group in request.groups:
+        if group.min_grade_level is None or group.max_grade_level is None:
+            continue
+        span = (group.min_grade_level, group.max_grade_level)
+        lesson_spans = {
+            lesson_span
+            for member in (group.id, *sharing.get(group.id, ()))
+            for lesson_span in spans_of.get(member, ())
+        }
+        for day_of_week in grid.schedule_days:
+            for _first, last, asks in blocks_with_demand(request.rasts, span, day_of_week, grid):
+                if not asks:
+                    continue
+                for lesson_span in lesson_spans:
+                    key = (lesson_span, day_of_week)
+                    if key not in holes:
+                        holes[key] = blocks_for(request.rasts, lesson_span, day_of_week, grid)
+                    if not any(start < last <= end for start, end in holes[key]):
+                        return False
+    return True
+
+
+def _start_lattice(step: int, horizon: int) -> cp_model.Domain | None:
+    """Every multiple of the step across the week, or None at a step of 1.
+
+    None rather than [0, horizon], so a week whose step is 1 builds exactly
+    the model it built before steps existed.
+    """
+    if step <= 1:
+        return None
+    return cp_model.Domain.FromValues(list(range(0, horizon + 1, step)))
+
+
+def _on_lattice(domain: cp_model.Domain, lattice: cp_model.Domain | None) -> cp_model.Domain:
+    """The domain's values on the step; the domain itself at a step of 1."""
+    return domain if lattice is None else domain.intersection_with(lattice)
 
 
 def _servings_for(

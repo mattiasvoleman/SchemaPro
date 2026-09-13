@@ -116,7 +116,7 @@ def _idle_cost(
     model = cp_model.CpModel()
     decisions = solver._create_lesson_decisions(
         model, request.requirements, len(request.rooms),
-        request.frame_times, request.rasts,
+        request.frame_times, request.rasts, step=1,
     )
     assert len(decisions) == len(placements), (len(decisions), len(placements))
 
@@ -326,7 +326,7 @@ class TestTheWeight:
         model = cp_model.CpModel()
         decisions = solver._create_lesson_decisions(
             model, request.requirements, len(request.rooms),
-            request.frame_times, request.rasts,
+            request.frame_times, request.rasts, step=1,
         )
         assert decisions
 
@@ -345,7 +345,7 @@ class TestTheWeight:
         model = cp_model.CpModel()
         decisions = solver._create_lesson_decisions(
             model, request.requirements, len(request.rooms),
-            request.frame_times, request.rasts,
+            request.frame_times, request.rasts, step=1,
         )
 
         terms = solver._add_idle_time_objective(
@@ -367,7 +367,7 @@ class TestTheWeight:
         model = cp_model.CpModel()
         decisions = solver._create_lesson_decisions(
             model, request.requirements, len(request.rooms),
-            request.frame_times, request.rasts,
+            request.frame_times, request.rasts, step=1,
         )
 
         terms = solver._add_idle_time_objective(
