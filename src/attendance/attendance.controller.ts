@@ -27,9 +27,10 @@ import { ReportAttendanceDto } from './dto/report-attendance.dto';
  * endpoint specifically. Adjust THROTTLE_TTL_SECONDS / THROTTLE_LIMIT via env
  * to tune for your school's concurrency profile.
  *
- * For multi-instance deployments, replace the default in-memory ThrottlerStorage
- * with a Redis-backed store by setting REDIS_URL in the environment — the
- * ThrottlerModule in AppModule is already wired to pick this up automatically.
+ * The counters live in this process (WindowedThrottlerStorage), which is right
+ * for a single instance. A multi-instance deployment needs a shared store:
+ * AppModule sketches the Redis path, but it is not wired — setting REDIS_URL on
+ * its own changes nothing.
  */
 @Controller('api/v1/attendance')
 @UseGuards(JwtAuthGuard, RolesGuard)
