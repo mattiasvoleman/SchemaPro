@@ -43,6 +43,103 @@ const lessonRow = (overrides: Record<string, unknown> = {}) => ({
 /** A `@db.Time` value as Prisma returns it: wall clock on the UTC epoch day. */
 const wallClock = (hhmm: string): Date => new Date(`1970-01-01T${hhmm}:00.000Z`);
 
+const STUDENT_C = '99999999-9999-4999-8999-999999999999';
+
+/*
+ * The database as Prisma answers it.
+ *
+ * A stub that resolves a whole row hands the service every column whether its
+ * query asked for it or not, so a `select` that forgot a column the service
+ * goes on to read passes here and fails in production as `undefined`. These
+ * answer the way Prisma 5 does: only the selected columns come back, a select
+ * with nothing truthy in it is refused before anything is read, a relation
+ * named as `{}` comes back whole, and a findUnique without its key is refused.
+ * A `where` is applied to the columns a fixture row spells out; a column the
+ * row leaves out does not constrain it, so fixtures name only what a test is
+ * about.
+ */
+type Row = Record<string, any>;
+type Query = { where?: Row; select?: Row };
+
+function refuseEmptySelect(select: Row | undefined): void {
+  if (select === undefined) return;
+  const chosen = Object.values(select).filter(Boolean);
+  if (chosen.length === 0) {
+    throw new Error('Prisma refuses a `select` with no truthy value.');
+  }
+  for (const spec of chosen) {
+    if (typeof spec === 'object') refuseEmptySelect((spec as Query).select);
+  }
+}
+
+function project(row: Row, select: Row | undefined): Row {
+  if (select === undefined) return row;
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, spec]) => Boolean(spec))
+      .map(([column, spec]) => {
+        const value = row[column];
+        const nested = typeof spec === 'object' ? (spec as Query).select : undefined;
+        if (nested === undefined || value === null || value === undefined) {
+          return [column, value];
+        }
+        return [
+          column,
+          Array.isArray(value)
+            ? value.map((item: Row) => project(item, nested))
+            : project(value, nested),
+        ];
+      }),
+  );
+}
+
+const same = (a: unknown, b: unknown): boolean =>
+  a instanceof Date && b instanceof Date ? a.getTime() === b.getTime() : a === b;
+
+function matches(row: Row, where: Row = {}): boolean {
+  return Object.entries(where).every(([column, condition]) => {
+    const value = row[column];
+    if (value === undefined) return true;
+    if (condition !== null && typeof condition === 'object' && !(condition instanceof Date)) {
+      return Object.entries(condition as Row).every(([operator, operand]) =>
+        operator === 'in'
+          ? (operand as unknown[]).some((candidate) => same(value, candidate))
+          : matches(value, { [operator]: operand }),
+      );
+    }
+    return same(value, condition);
+  });
+}
+
+/** findMany over a table: the rows the `where` admits, as selected. */
+const answerRows =
+  (rows: Row[]) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    return Promise.resolve(
+      rows.filter((row) => matches(row, query.where)).map((row) => project(row, query.select)),
+    );
+  };
+
+/** findUnique over a table; a compound key names columns of the row itself. */
+const answerUnique =
+  (rows: Row[]) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    const key = Object.fromEntries(
+      Object.entries(query.where ?? {}).flatMap(([column, value]) =>
+        column.includes('_') && value !== null && typeof value === 'object'
+          ? Object.entries(value as Row)
+          : [[column, value]],
+      ),
+    );
+    if (Object.keys(key).length === 0) {
+      throw new Error('Prisma refuses a findUnique without its unique key.');
+    }
+    const row = rows.find((candidate) => matches(candidate, key));
+    return Promise.resolve(row ? project(row, query.select) : null);
+  };
+
 const dto = (
   records: ReportAttendanceDto['records'],
 ): ReportAttendanceDto => ({ calendarLessonId: LESSON_ID, records });
@@ -66,14 +163,16 @@ describe('AttendanceService', () => {
       notifications as unknown as NotificationsService,
     );
 
-    tx.calendarLesson.findUnique.mockResolvedValue(lessonRow());
-    tx.calendarLessonTeacher.findUnique.mockResolvedValue({ id: 'assignment' });
+    storeLesson();
+    tx.calendarLessonTeacher.findUnique.mockImplementation(
+      answerUnique([{ id: 'assignment', calendarLessonId: LESSON_ID, teacherId: TEACHER_ID }]),
+    );
     tx.attendanceRecord.upsert.mockResolvedValue({
       createdAt: NOW,
       updatedAt: NOW,
     });
     // Nothing in the register yet — the ordinary first report.
-    tx.attendanceRecord.findMany.mockResolvedValue([]);
+    register([]);
   });
 
   afterEach(() => {
@@ -81,6 +180,15 @@ describe('AttendanceService', () => {
   });
 
   const teacher = () => testUser({ role: Role.TEACHER, userId: TEACHER_ID });
+
+  /** The lesson as the database holds it, read by id under RLS. */
+  const storeLesson = (overrides: Record<string, unknown> = {}) =>
+    tx.calendarLesson.findUnique.mockImplementation(answerUnique([lessonRow(overrides)]));
+
+  /** The attendance register as it stood before the batch arrived. */
+  const register = (
+    rows: Array<{ calendarLessonId: string; studentId: string; status: string }>,
+  ) => tx.attendanceRecord.findMany.mockImplementation(answerRows(rows));
 
   /**
    * `tx.user.findMany` serves two different reads — the home-class half of the
@@ -91,13 +199,10 @@ describe('AttendanceService', () => {
     homeClass?: string[];
     named?: Array<{ id: string; firstName: string; lastName: string }>;
   }) => {
-    tx.user.findMany.mockImplementation(
-      ({ where }: { where: { studentGroupId?: unknown } }) =>
-        Promise.resolve(
-          where.studentGroupId
-            ? (options.homeClass ?? []).map((id) => ({ id }))
-            : (options.named ?? []),
-        ),
+    tx.user.findMany.mockImplementation((query: Query) =>
+      query.where?.studentGroupId
+        ? answerRows((options.homeClass ?? []).map((id) => ({ id })))(query)
+        : answerRows(options.named ?? [])(query),
     );
   };
 
@@ -181,7 +286,7 @@ describe('AttendanceService', () => {
           dto([{ studentId: STUDENT_A, status: 'PRESENT' as never }]),
           teacher(),
         ),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(new NotFoundException(`Calendar lesson not found: ${LESSON_ID}`));
       expect(tx.attendanceRecord.upsert).not.toHaveBeenCalled();
     });
 
@@ -228,9 +333,7 @@ describe('AttendanceService', () => {
 
   describe('roster', () => {
     it('resolves membership from the lesson group, its extra groups and the participant list', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(
-        lessonRow({ extraGroups: [{ studentGroupId: EXTRA_GROUP }] }),
-      );
+      storeLesson({ extraGroups: [{ studentGroupId: EXTRA_GROUP }] });
       arrangeRoster([STUDENT_A]);
 
       // The same student twice: the roster lookup is asked once, not twice.
@@ -319,6 +422,31 @@ describe('AttendanceService', () => {
       expect(notifications.notifyUsers).not.toHaveBeenCalled();
     });
 
+    it('names every student off the roster, and says how to put it right', async () => {
+      // The ids are what the mobile client sent and what the membership has to
+      // be corrected against; the rest is the correction.
+      arrangeUsers({ homeClass: [STUDENT_A] });
+
+      await expect(
+        service.reportAttendance(
+          dto([
+            { studentId: STUDENT_A, status: 'PRESENT' as never },
+            { studentId: STUDENT_B, status: 'PRESENT' as never },
+            { studentId: STUDENT_C, status: 'PRESENT' as never },
+          ]),
+          teacher(),
+        ),
+      ).rejects.toThrow(
+        new ForbiddenException(
+          `These students are not on the roster for lesson ${LESSON_ID}: ` +
+            `${STUDENT_B}, ${STUDENT_C}. Attendance can only be recorded for ` +
+            'students in the lesson group, in a group joined to the lesson, or ' +
+            'named as individual participants — correct the group membership ' +
+            'before reporting.',
+        ),
+      );
+    });
+
     it('writes nothing at all when one entry of a batch is off the roster', async () => {
       arrangeUsers({ homeClass: [STUDENT_A] });
 
@@ -403,9 +531,7 @@ describe('AttendanceService', () => {
       // — upsert on (lesson, student) — but the alert was not, so every retry
       // told the guardian about the same absence again. A guardian who is told
       // four times learns to ignore the fifth.
-      tx.attendanceRecord.findMany.mockResolvedValue([
-        { studentId: STUDENT_A, status: 'ABSENT' },
-      ]);
+      register([{ calendarLessonId: LESSON_ID, studentId: STUDENT_A, status: 'ABSENT' }]);
 
       await reportAbsent();
 
@@ -418,13 +544,79 @@ describe('AttendanceService', () => {
     it('alerts when a correction turns a present pupil absent', async () => {
       // Not a replay — the register said something else a moment ago, and this
       // is the first time anybody could have been told.
-      tx.attendanceRecord.findMany.mockResolvedValue([
-        { studentId: STUDENT_A, status: 'PRESENT' },
+      register([{ calendarLessonId: LESSON_ID, studentId: STUDENT_A, status: 'PRESENT' }]);
+
+      await reportAbsent();
+
+      expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads this lesson's register, not the pupil's absence from another lesson", async () => {
+      // Absent from yesterday's lesson is not already absent from this one:
+      // nobody has told the guardian about this lesson yet.
+      register([
+        { calendarLessonId: 'yesterdays-lesson', studentId: STUDENT_A, status: 'ABSENT' },
       ]);
 
       await reportAbsent();
 
       expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a mark exactly as old as the register accepts', async () => {
+      // The limit is inclusive. 120 days to the millisecond is a teacher
+      // catching up after a term, not a device with a broken clock.
+      const oldest = new Date(NOW.getTime() - 120 * 24 * 60 * 60 * 1000);
+
+      await service.reportAttendance(
+        {
+          calendarLessonId: LESSON_ID,
+          records: [
+            { studentId: STUDENT_A, status: 'PRESENT' as never, recordedAt: oldest.toISOString() },
+          ],
+        } as never,
+        teacher(),
+      );
+
+      const call = tx.attendanceRecord.upsert.mock.calls[0]?.[0] as {
+        create: { recordedAt: Date };
+      };
+      expect(call.create.recordedAt).toEqual(oldest);
+    });
+
+    it('alerts only the guardians of the pupils marked absent, and says who and when', async () => {
+      arrangeUsers({
+        homeClass: [STUDENT_A, STUDENT_B],
+        named: [
+          { id: STUDENT_A, firstName: 'Åsa', lastName: 'Åkesson' },
+          { id: STUDENT_B, firstName: 'Bo', lastName: 'Berg' },
+        ],
+      });
+
+      await service.reportAttendance(
+        dto([
+          { studentId: STUDENT_A, status: 'ABSENT' as never },
+          { studentId: STUDENT_B, status: 'PRESENT' as never },
+        ]),
+        teacher(),
+      );
+
+      expect(notifications.guardiansOf).toHaveBeenCalledTimes(1);
+      expect(notifications.guardiansOf).toHaveBeenCalledWith(tx, [STUDENT_A]);
+      expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(tx, {
+        schoolId: SCHOOL_ID,
+        userIds: [GUARDIAN_ID],
+        type: 'ABSENCE_UNREPORTED',
+        meta: { studentName: 'Åsa Åkesson', subjectName: 'Matematik', date: '2026-09-02' },
+        email: {
+          subject: 'Unreported absence / Oanmäld frånvaro',
+          body:
+            'Åsa Åkesson was marked absent from Matematik on 2026-09-02 without a prior ' +
+            'absence report.\n\nÅsa Åkesson markerades frånvarande från Matematik den ' +
+            '2026-09-02 utan föranmäld frånvaro.',
+        },
+      });
     });
 
     it('alerts the guardians when no absence report exists', async () => {
@@ -455,6 +647,28 @@ describe('AttendanceService', () => {
     it('stays silent for a full-day report', async () => {
       tx.absenceReport.findMany.mockResolvedValue([
         { studentId: STUDENT_A, startTime: null, endTime: null },
+      ]);
+
+      await reportAbsent();
+
+      expect(notifications.notifyUsers).not.toHaveBeenCalled();
+    });
+
+    it('looks nobody up when every absence was reported', async () => {
+      // A report covers the lesson, so there is no alert and no name to put in
+      // one: the roster check stays the only read of Users.
+      tx.absenceReport.findMany.mockResolvedValue([
+        { studentId: STUDENT_A, startTime: null, endTime: null },
+      ]);
+
+      await reportAbsent();
+
+      expect(tx.user.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads a report that gives only one of its times as the whole day', async () => {
+      tx.absenceReport.findMany.mockResolvedValue([
+        { studentId: STUDENT_A, startTime: wallClock('08:00'), endTime: null },
       ]);
 
       await reportAbsent();
@@ -504,13 +718,11 @@ describe('AttendanceService', () => {
      */
     describe('at a school whose timezone is UTC', () => {
       beforeEach(() => {
-        tx.calendarLesson.findUnique.mockResolvedValue(
-          lessonRow({
-            school: { timezone: 'UTC' },
-            startsAt: new Date('2026-09-02T09:00:00.000Z'),
-            endsAt: new Date('2026-09-02T09:45:00.000Z'),
-          }),
-        );
+        storeLesson({
+          school: { timezone: 'UTC' },
+          startsAt: new Date('2026-09-02T09:00:00.000Z'),
+          endsAt: new Date('2026-09-02T09:45:00.000Z'),
+        });
       });
 
       it('stays silent for a report inside the lesson', async () => {
@@ -525,6 +737,21 @@ describe('AttendanceService', () => {
         await reportAbsent();
 
         expect(notifications.notifyUsers).not.toHaveBeenCalled();
+      });
+
+      // Touching is not covering: such a report shares an instant with the
+      // lesson and not one minute of it.
+      it.each([
+        ['begins as the lesson ends', '09:45', '12:00'],
+        ['ends as the lesson begins', '08:00', '09:00'],
+      ])('alerts for a report that %s', async (_label, start, end) => {
+        tx.absenceReport.findMany.mockResolvedValue([
+          { studentId: STUDENT_A, startTime: wallClock(start), endTime: wallClock(end) },
+        ]);
+
+        await reportAbsent();
+
+        expect(notifications.notifyUsers).toHaveBeenCalledTimes(1);
       });
 
       it('alerts for a report that begins after the lesson has ended', async () => {
@@ -546,13 +773,11 @@ describe('AttendanceService', () => {
       // January is +01:00, not the +02:00 that holds in September. A report of
       // 09:30–09:45 overlaps the last quarter of a 09:00–09:45 lesson under CET
       // and misses it entirely under CEST.
-      tx.calendarLesson.findUnique.mockResolvedValue(
-        lessonRow({
-          date: new Date('2026-01-14T00:00:00.000Z'),
-          startsAt: new Date('2026-01-14T08:00:00.000Z'),
-          endsAt: new Date('2026-01-14T08:45:00.000Z'),
-        }),
-      );
+      storeLesson({
+        date: new Date('2026-01-14T00:00:00.000Z'),
+        startsAt: new Date('2026-01-14T08:00:00.000Z'),
+        endsAt: new Date('2026-01-14T08:45:00.000Z'),
+      });
       tx.absenceReport.findMany.mockResolvedValue([
         {
           studentId: STUDENT_A,

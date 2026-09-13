@@ -30,6 +30,115 @@ const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const time = (h: number, m = 0) => new Date(Date.UTC(1970, 0, 1, h, m, 0));
 const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
 
+/*
+ * The database as Prisma answers it.
+ *
+ * A stub that resolves a whole row hands the service every column whether its
+ * query asked for it or not, so a `select` that forgot a column the service
+ * goes on to read passes here and fails in production as `undefined`. These
+ * answer the way Prisma 5 does: only the selected columns come back, a select
+ * with nothing truthy in it is refused before anything is read, a relation
+ * named as `{}` comes back whole, and a findUnique without its key is refused.
+ * A `where` is applied to the columns a fixture row spells out; a column the
+ * row leaves out does not constrain it, so fixtures name only what a test is
+ * about.
+ */
+type Row = Record<string, any>;
+type Query = { where?: Row; select?: Row; data?: Row };
+
+function refuseEmptySelect(select: Row | undefined): void {
+  if (select === undefined) return;
+  const chosen = Object.values(select).filter(Boolean);
+  if (chosen.length === 0) {
+    throw new Error('Prisma refuses a `select` with no truthy value.');
+  }
+  for (const spec of chosen) {
+    if (typeof spec === 'object') refuseEmptySelect((spec as Query).select);
+  }
+}
+
+function project(row: Row, select: Row | undefined): Row {
+  if (select === undefined) return row;
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, spec]) => Boolean(spec))
+      .map(([column, spec]) => {
+        const value = row[column];
+        const nested = typeof spec === 'object' ? (spec as Query).select : undefined;
+        if (nested === undefined || value === null || value === undefined) {
+          return [column, value];
+        }
+        return [
+          column,
+          Array.isArray(value)
+            ? value.map((item: Row) => project(item, nested))
+            : project(value, nested),
+        ];
+      }),
+  );
+}
+
+const same = (a: unknown, b: unknown): boolean =>
+  a instanceof Date && b instanceof Date ? a.getTime() === b.getTime() : a === b;
+
+/** The operators publish filters with: equality, in, not, gte, lte, some. */
+function matches(row: Row, where: Row = {}): boolean {
+  return Object.entries(where).every(([column, condition]) => {
+    const value = row[column];
+    if (value === undefined) return true;
+    if (condition === null || typeof condition !== 'object' || condition instanceof Date) {
+      return same(value, condition);
+    }
+    return Object.entries(condition as Row).every(([operator, operand]) => {
+      switch (operator) {
+        case 'in':
+          return (operand as unknown[]).some((candidate) => same(value, candidate));
+        case 'not':
+          return !same(value, operand);
+        case 'gte':
+          return value !== null && value >= operand;
+        case 'lte':
+          return value !== null && value <= operand;
+        case 'some':
+          return (value as Row[]).some((item) => matches(item, operand));
+        default:
+          // A to-one relation: the filter applies to the related row.
+          return matches(value, { [operator]: operand });
+      }
+    });
+  });
+}
+
+/** findMany over a table: the rows the `where` admits, as selected. */
+const answerRows =
+  (rows: Row[]) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    return Promise.resolve(
+      rows.filter((row) => matches(row, query.where)).map((row) => project(row, query.select)),
+    );
+  };
+
+/** findUnique over a table. */
+const answerUnique =
+  (rows: Row[]) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    if (!query.where || Object.keys(query.where).length === 0) {
+      throw new Error('Prisma refuses a findUnique without its unique key.');
+    }
+    const row = rows.find((candidate) => matches(candidate, query.where));
+    return Promise.resolve(row ? project(row, query.select) : null);
+  };
+
+/** create: the written row, with the database's own columns, as selected. */
+const answerCreate =
+  (generated: Row) =>
+  (query: Query = {}) => {
+    refuseEmptySelect(query.select);
+    return Promise.resolve(project({ ...generated, ...query.data }, query.select));
+  };
+
 describe('CalendarService', () => {
   let service: CalendarService;
   let tx: TxMock;
@@ -72,13 +181,17 @@ describe('CalendarService', () => {
   });
 
   const arrangeYear = (overrides: Record<string, unknown> = {}) => {
-    tx.academicYear.findUnique.mockResolvedValue({
-      id: YEAR_ID,
-      startDate: day('2026-08-01'),
-      endDate: day('2026-08-31'),
-      school: { timezone: 'UTC' },
-      ...overrides,
-    });
+    tx.academicYear.findUnique.mockImplementation(
+      answerUnique([
+        {
+          id: YEAR_ID,
+          startDate: day('2026-08-01'),
+          endDate: day('2026-08-31'),
+          school: { timezone: 'UTC' },
+          ...overrides,
+        },
+      ]),
+    );
   };
 
   /** A rast row as Prisma hands it back: `@db.Time` values anchored at 1970. */
@@ -116,16 +229,16 @@ describe('CalendarService', () => {
     } = {},
   ) => {
     arrangeYear();
-    tx.rast.findMany.mockResolvedValue(rasts);
-    tx.studentGroup.findMany.mockResolvedValue(groups);
+    tx.rast.findMany.mockImplementation(answerRows(rasts));
+    tx.studentGroup.findMany.mockImplementation(answerRows(groups));
     tx.calendarRast.create.mockResolvedValue({ id: 'created-rast' });
     tx.calendarRast.deleteMany.mockResolvedValue({ count: 0 });
-    tx.masterLesson.findMany.mockResolvedValue(templates);
-    tx.calendarLesson.findMany.mockResolvedValue(existing);
-    tx.availabilityConstraint.findMany.mockResolvedValue(closures);
-    tx.schoolBreak.findMany.mockResolvedValue(breaks);
-    tx.calendarLesson.create.mockResolvedValue({ id: 'created-lesson' });
-    tx.lunchSitting.findMany.mockResolvedValue(sittings);
+    tx.masterLesson.findMany.mockImplementation(answerRows(templates));
+    tx.calendarLesson.findMany.mockImplementation(answerRows(existing));
+    tx.availabilityConstraint.findMany.mockImplementation(answerRows(closures));
+    tx.schoolBreak.findMany.mockImplementation(answerRows(breaks));
+    tx.calendarLesson.create.mockImplementation(answerCreate({ id: 'created-lesson' }));
+    tx.lunchSitting.findMany.mockImplementation(answerRows(sittings));
     tx.calendarLunch.findMany.mockResolvedValue(existingLunches);
     tx.calendarLunch.create.mockResolvedValue({ id: 'created-lunch' });
   };
@@ -263,6 +376,8 @@ describe('CalendarService', () => {
       // Empty relations are omitted entirely, not created as empty lists.
       expect(data.extraGroups).toBeUndefined();
       expect(data.participants).toBeUndefined();
+      // And a lesson that runs carries no cancellation note for pupils to read.
+      expect(data).not.toHaveProperty('note');
     });
 
     it('runs under the caller RLS context with the extended timeout', async () => {
@@ -466,6 +581,79 @@ describe('CalendarService', () => {
           gte: new Date('2026-08-10T00:00:00.000Z'),
           lte: new Date('2026-08-10T00:00:00.000Z'),
         });
+      });
+
+      it('publishes rasts only to the classes of the year being published', async () => {
+        // Last year's 5A is a class in åk 5 as well, and would be handed this
+        // year's breaks by a query that forgot which year it was asked about.
+        arrangePublish([template()], {
+          rasts: [rastRow()],
+          groups: [
+            { id: GROUP_ID, gradeLevel: 5, kind: 'CLASS', academicYearId: YEAR_ID },
+            { id: 'last-years-5a', gradeLevel: 5, kind: 'CLASS', academicYearId: 'last-year' },
+          ],
+        });
+
+        await publishOneDay();
+
+        const classes = tx.calendarRast.create.mock.calls.map(
+          ([call]) => (call as { data: { studentGroupId: string } }).data.studentGroupId,
+        );
+        expect(classes).toEqual([GROUP_ID]);
+      });
+
+      it("publishes this school's rasts as declared, and no other school's", async () => {
+        arrangePublish([template()], {
+          rasts: [
+            { ...rastRow(), school: { academicYears: [{ id: YEAR_ID }] } },
+            {
+              ...rastRow({ name: 'Grannskolans rast' }),
+              school: { academicYears: [{ id: 'grannskolans-lasar' }] },
+            },
+          ],
+          groups: [{ id: GROUP_ID, gradeLevel: 5, kind: 'CLASS' }],
+        });
+
+        await publishOneDay();
+
+        expect(tx.calendarRast.create.mock.calls.map(([call]) => call)).toEqual([
+          {
+            data: {
+              schoolId: SCHOOL_ID,
+              studentGroupId: GROUP_ID,
+              name: 'Förmiddagsrast',
+              date: day('2026-08-10'),
+              startsAt: new Date('2026-08-10T09:40:00.000Z'),
+              endsAt: new Date('2026-08-10T10:00:00.000Z'),
+            },
+          },
+        ]);
+      });
+
+      it('serves every class that eats on the weekday, not only the last one read', async () => {
+        arrangePublish([template()], {
+          sittings: [sitting(), sitting({ studentGroupId: EXTRA_GROUP_ID })],
+        });
+
+        await publishOneDay();
+
+        expect(lunchData().map((meal) => meal.studentGroupId)).toEqual([
+          GROUP_ID,
+          EXTRA_GROUP_ID,
+        ]);
+      });
+
+      it('serves only the sittings of the year being published', async () => {
+        arrangePublish([template()], {
+          sittings: [
+            sitting({ academicYearId: YEAR_ID }),
+            sitting({ studentGroupId: 'last-years-5a', academicYearId: 'last-year' }),
+          ],
+        });
+
+        await publishOneDay();
+
+        expect(lunchData().map((meal) => meal.studentGroupId)).toEqual([GROUP_ID]);
       });
 
       it('materialises no lesson that is set aside on the tray', async () => {
@@ -690,6 +878,155 @@ describe('CalendarService', () => {
         });
       });
 
+      /*
+       * Whose closure it is decides what is written, and only this lesson's own
+       * teacher, co-teacher, room or class may decide it. Each case has a
+       * neighbour that differs in exactly that.
+       */
+      const OTHER_TEACHER_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+      const OTHER_ROOM_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      const away = (overrides: Record<string, unknown>) =>
+        closure({ resourceType: 'TEACHER', studentGroupId: null, ...overrides });
+
+      it('cancels the lesson when its co-teacher is away', async () => {
+        arrangePublish([template({ coTeacherId: CO_TEACHER_ID })], {
+          closures: [away({ userId: CO_TEACHER_ID })],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 0,
+          cancelled: 1,
+          skipped: 0,
+        });
+        expect(tx.calendarLesson.create.mock.calls[0]![0].data).toMatchObject({
+          status: 'CANCELLED',
+          note: 'Inställd: läraren är inte tillgänglig detta datum.',
+        });
+      });
+
+      it('leaves the lesson alone when another teacher is away', async () => {
+        arrangePublish([template()], { closures: [away({ userId: OTHER_TEACHER_ID })] });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 1,
+          cancelled: 0,
+          skipped: 0,
+        });
+      });
+
+      it('cancels the lesson with the room note when its room is closed', async () => {
+        // The note is what every pupil and guardian reads, so it says it was
+        // the room — not that the teacher could not come.
+        arrangePublish([template()], {
+          closures: [closure({ resourceType: 'ROOM', studentGroupId: null, roomId: ROOM_ID })],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 0,
+          cancelled: 1,
+          skipped: 0,
+        });
+        expect(tx.calendarLesson.create.mock.calls[0]![0].data).toMatchObject({
+          status: 'CANCELLED',
+          note: 'Inställd: salen är inte tillgänglig detta datum.',
+        });
+      });
+
+      it('leaves the lesson alone when another room is closed', async () => {
+        arrangePublish([template()], {
+          closures: [
+            closure({ resourceType: 'ROOM', studentGroupId: null, roomId: OTHER_ROOM_ID }),
+          ],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 1,
+          cancelled: 0,
+          skipped: 0,
+        });
+      });
+
+      it('leaves a lesson with no room alone when a closure names no room either', async () => {
+        // Idrott on the field has no room, and neither has a teacher closure.
+        // Two missing rooms are not the same room.
+        arrangePublish([template({ roomId: null })], {
+          closures: [away({ userId: OTHER_TEACHER_ID })],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 1,
+          cancelled: 0,
+          skipped: 0,
+        });
+      });
+
+      it('leaves the lesson alone when another class is closed', async () => {
+        arrangePublish([template()], {
+          closures: [closure({ studentGroupId: EXTRA_GROUP_ID })],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 1,
+          cancelled: 0,
+          skipped: 0,
+        });
+      });
+
+      it('honours every closure on the date, not only the last one read', async () => {
+        arrangePublish([template()], {
+          closures: [closure(), away({ userId: OTHER_TEACHER_ID })],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({
+          created: 0,
+          cancelled: 0,
+          skipped: 1,
+        });
+      });
+
+      it.each([
+        ['ends as the lesson begins', time(8), time(9)],
+        ['begins as the lesson ends', time(10), time(11)],
+        ['is over before the lesson begins', time(7), time(8)],
+      ])('leaves the lesson alone when the closure %s', async (_label, startTime, endTime) => {
+        // Touching is not covering, from either side.
+        arrangePublish([template()], {
+          closures: [away({ userId: TEACHER_ID, startTime, endTime })],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({ created: 1, cancelled: 0 });
+      });
+
+      /*
+       * Only midnight to midnight, or to 23:59, is the whole day. A closure
+       * that reaches one edge of the day still has hours, and a lesson outside
+       * them is held.
+       */
+      it.each([
+        ['from 13:00 to the end of the day', time(13), time(23, 59), template()],
+        ['from midnight until 08:00', time(0), time(8), template()],
+        [
+          'from midnight until 22:30, against a lesson at 22:45',
+          time(0),
+          time(22, 30),
+          template({ startTime: time(22, 45), endTime: time(23, 30) }),
+        ],
+      ])('reads a closure %s as part of a day', async (_label, startTime, endTime, lesson) => {
+        arrangePublish([lesson], {
+          closures: [away({ userId: TEACHER_ID, startTime, endTime })],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject({ created: 1, cancelled: 0 });
+      });
+
+      it('reads no group years when only a teacher is away', async () => {
+        arrangePublish([template()], { closures: [away({ userId: OTHER_TEACHER_ID })] });
+
+        await publishOneDay();
+
+        expect(tx.studentGroup.findMany).not.toHaveBeenCalled();
+      });
+
       it('ignores a preference, which is a wish and not a closure', async () => {
         // PREFERRED_FREE is something the solver trades off. Treating it as a
         // closure would silently delete lessons a school only nudged.
@@ -701,6 +1038,65 @@ describe('CalendarService', () => {
           [{ where: { type: string } }],
         ];
         expect(call[0].where.type).toBe('UNAVAILABLE');
+      });
+    });
+
+    describe('a closure for a span of years', () => {
+      /** "Åk min–max cannot be taught today", as a GRADE_LEVEL row says it. */
+      const yearsClosed = (minGradeLevel: number | null, maxGradeLevel: number | null) =>
+        closure({
+          resourceType: 'GRADE_LEVEL',
+          studentGroupId: null,
+          minGradeLevel,
+          maxGradeLevel,
+        });
+
+      const closedDay = { created: 0, cancelled: 0, skipped: 1 };
+      const heldLesson = { created: 1, cancelled: 0, skipped: 0 };
+
+      /*
+       * Both edges of a span, and both of its open ends. A class whose own year
+       * sits inside is not in school, and nothing is written for it — the
+       * answer a STUDENT_GROUP closure gives. A group with no year of its own
+       * cannot be shown to be inside any span, and erasing its lesson on a
+       * guess is the worse mistake.
+       */
+      it.each([
+        ['inside åk 7–9', 7, 9, 8, closedDay],
+        ['at the lower edge of åk 7–9', 7, 9, 7, closedDay],
+        ['at the upper edge of åk 7–9', 7, 9, 9, closedDay],
+        ['just below åk 7–9', 7, 9, 6, heldLesson],
+        ['just above åk 7–9', 7, 9, 10, heldLesson],
+        ['inside åk 9 and up', 9, null, 9, closedDay],
+        ['below åk 9 and up', 9, null, 8, heldLesson],
+        ['inside up to åk 3', null, 3, 3, closedDay],
+        ['above up to åk 3', null, 3, 4, heldLesson],
+        ['with no year, under up to åk 9', null, 9, null, heldLesson],
+      ])('resolves a class %s', async (_label, min, max, gradeLevel, expected) => {
+        arrangePublish([template()], {
+          closures: [yearsClosed(min, max)],
+          groups: [{ id: GROUP_ID, gradeLevel, kind: 'CLASS' }],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject(expected);
+      });
+
+      it("does not read another resource's closure as one for the class's year", async () => {
+        // A teacher closure names no span at all. Read as a span of years it
+        // would be one that reaches every year, and close the class.
+        arrangePublish([template()], {
+          closures: [
+            yearsClosed(1, 3),
+            closure({
+              resourceType: 'TEACHER',
+              studentGroupId: null,
+              userId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            }),
+          ],
+          groups: [{ id: GROUP_ID, gradeLevel: 8, kind: 'CLASS' }],
+        });
+
+        await expect(publishOneDay()).resolves.toMatchObject(heldLesson);
       });
     });
 
@@ -834,6 +1230,65 @@ describe('CalendarService', () => {
         await expect(publishOneDay()).resolves.toMatchObject(expected);
       });
 
+      /*
+       * A span open at one end: "åk 7 and up", "up to åk 3". The bound that is
+       * there still bounds; the one that is missing reaches as far as the
+       * school goes.
+       */
+      it.each([
+        ['åk 7 and up takes a group in åk 8', 7, null, 8, { created: 0, skipped: 1 }],
+        ['åk 7 and up leaves a group in åk 4', 7, null, 4, { created: 1, skipped: 0 }],
+        ['up to åk 3 takes a group in åk 2', null, 3, 2, { created: 0, skipped: 1 }],
+        ['up to åk 3 leaves a group in åk 5', null, 3, 5, { created: 1, skipped: 0 }],
+        ['up to åk 9 leaves a group with no year', null, 9, null, { created: 1, skipped: 0 }],
+      ])(
+        'reads a span open at one end: %s',
+        async (_label, minGradeLevel, maxGradeLevel, gradeLevel, expected) => {
+          arrangePublish([template()], {
+            breaks: [schoolBreak({ minGradeLevel, maxGradeLevel })],
+          });
+          tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel }]);
+
+          await expect(publishOneDay()).resolves.toMatchObject(expected);
+        },
+      );
+
+      it('reads group years when any break in the window names a span', async () => {
+        // A studiedag for the whole school on the Tuesday and a prao for åk 7–9
+        // on the Monday. The first needs no years and the second does; one
+        // break asking is enough.
+        arrangePublish([template()], {
+          breaks: [
+            schoolBreak({ startDate: day('2026-08-11'), endDate: day('2026-08-11') }),
+            schoolBreak({ minGradeLevel: 7, maxGradeLevel: 9 }),
+          ],
+        });
+        tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 8 }]);
+
+        await expect(
+          service.publish(dto({ fromDate: '2026-08-10', toDate: '2026-08-11' }), testUser()),
+        ).resolves.toMatchObject({ created: 0, skipped: 1 });
+      });
+
+      it('takes every break on a day, not only the last one read', async () => {
+        // A lov for the whole school and a prao for the lower years on the same
+        // Monday. The class is in åk 8, so it is the lov that sends it home.
+        arrangePublish([template()], {
+          breaks: [schoolBreak(), schoolBreak({ minGradeLevel: 1, maxGradeLevel: 3 })],
+        });
+        tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 8 }]);
+
+        await expect(publishOneDay()).resolves.toMatchObject({ created: 0, skipped: 1 });
+      });
+
+      it('reads no group years for a publish with no breaks, closures or rasts', async () => {
+        arrangePublish([template()]);
+
+        await publishOneDay();
+
+        expect(tx.studentGroup.findMany).not.toHaveBeenCalled();
+      });
+
       it('leaves a group outside the span teaching as usual', async () => {
         arrangePublish([template()], {
           breaks: [schoolBreak({ minGradeLevel: 7, maxGradeLevel: 9 })],
@@ -942,6 +1397,20 @@ describe('CalendarService', () => {
       ).resolves.toMatchObject({ created: 1, skipped: 0 });
     });
 
+    it('writes each lesson once when the window holds more than one batch of them', async () => {
+      // The writes go out fifty at a time. Eleven Monday lessons over the five
+      // Mondays of August make fifty-five: one full batch and the start of a
+      // second, which must not replay the first.
+      arrangePublish(
+        Array.from({ length: 11 }, (_, index) => template({ id: `monday-${index}` })),
+      );
+
+      await expect(
+        service.publish(dto({ fromDate: '2026-08-01', toDate: '2026-08-31' }), testUser()),
+      ).resolves.toMatchObject({ created: 55 });
+      expect(tx.calendarLesson.create).toHaveBeenCalledTimes(55);
+    });
+
     it('clamps an oversized window to the academic year', async () => {
       arrangePublish();
 
@@ -991,7 +1460,7 @@ describe('CalendarService', () => {
       tx.academicYear.findUnique.mockResolvedValue(null);
 
       await expect(service.publish(dto(), testUser())).rejects.toThrow(
-        NotFoundException,
+        new NotFoundException('Academic year not found.'),
       );
     });
 
