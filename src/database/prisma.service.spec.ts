@@ -244,9 +244,29 @@ describe('PrismaService', () => {
       );
     });
 
+    it('says what a bypassing role breaks, and where the owner rights belong instead', async () => {
+      // The operator reading this is fixing a deployment whose migrations may
+      // need exactly the rights refused here; the message has to say so.
+      const message = await boot({ rolbypassrls: true }).then(
+        () => '',
+        (error: Error) => error.message,
+      );
+
+      expect(message).toMatch(/so PostgreSQL skips every row-level-security policy/);
+      expect(message).toMatch(/multi-tenant isolation this API relies on is inert/);
+      expect(message).toMatch(/see docs\/DEPLOYMENT\.md §3/);
+      expect(message).toMatch(
+        /keep those credentials in DIRECT_URL, which is not used at runtime\.$/,
+      );
+    });
+
     it('refuses to boot when the role cannot be identified', async () => {
       await expect(boot(null)).rejects.toThrow(
         /could not determine which database role/,
+      );
+      // And says what that leaves unconfirmed, which is the reason to refuse.
+      await expect(boot(null)).rejects.toThrow(
+        /no way to confirm row-level security applies to its queries\.$/,
       );
     });
 
@@ -255,6 +275,12 @@ describe('PrismaService', () => {
 
       expect(logger.warn).toHaveBeenCalledWith(
         expect.stringContaining('owns 26 application table(s)'),
+      );
+      // And what to do about it.
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /policies do not apply to it\. DATABASE_URL should use a role that owns nothing \(see docs\/DEPLOYMENT\.md §3\)\.$/,
+        ),
       );
       expect(logger.log).toHaveBeenCalledWith('Prisma connected.');
     });

@@ -100,6 +100,12 @@ describe('HttpExceptionFilter', () => {
     expect(body()).not.toHaveProperty('internal');
   });
 
+  it('drops a code that is not a string, even one that would spell a token', () => {
+    filter.catch(new ConflictException({ message: 'Nope.', code: 409 }), host);
+
+    expect(body()).not.toHaveProperty('code');
+  });
+
   it('uses a string exception body directly and falls back to "Error" for unknown statuses', () => {
     filter.catch(new HttpException('I am a teapot', 418), host);
 
@@ -146,14 +152,28 @@ describe('HttpExceptionFilter', () => {
   });
 
   it.each([
-    ['P2002', 409, 'A resource with the same unique identifier already exists.'],
-    ['P2025', 404, 'The requested resource does not exist.'],
-    ['P2003', 400, 'The request references a resource that does not exist.'],
-  ])('maps Prisma %s to %i without leaking metadata', (code, status, detail) => {
+    [400, 'Bad Request'],
+    [401, 'Unauthorized'],
+    [409, 'Conflict'],
+    [413, 'Payload Too Large'],
+    [415, 'Unsupported Media Type'],
+    [503, 'Service Unavailable'],
+    [500, 'Internal Server Error'],
+  ])('titles a %i as "%s" and keeps the thrower’s detail', (status, title) => {
+    filter.catch(new HttpException('Detail from the thrower.', status), host);
+
+    expect(body()).toMatchObject({ status, title, detail: 'Detail from the thrower.' });
+  });
+
+  it.each([
+    ['P2002', 409, 'Conflict', 'A resource with the same unique identifier already exists.'],
+    ['P2025', 404, 'Not Found', 'The requested resource does not exist.'],
+    ['P2003', 400, 'Bad Request', 'The request references a resource that does not exist.'],
+  ])('maps Prisma %s to %i without leaking metadata', (code, status, title, detail) => {
     filter.catch(prismaError(code), host);
 
     expect(response.status).toHaveBeenCalledWith(status);
-    expect(body()).toMatchObject({ status, detail });
+    expect(body()).toMatchObject({ status, title, detail });
     // The Prisma message ("Simulated ...") must never reach the client.
     expect(JSON.stringify(body())).not.toContain('Simulated');
   });
@@ -178,6 +198,7 @@ describe('HttpExceptionFilter', () => {
 
     expect(body()).toMatchObject({
       status: 400,
+      title: 'Bad Request',
       detail: 'The request could not be processed.',
     });
     expect(JSON.stringify(body())).not.toContain('bad query shape');
@@ -192,6 +213,48 @@ describe('HttpExceptionFilter', () => {
       detail: 'An unexpected error occurred. Please try again later.',
     });
     expect(JSON.stringify(body())).not.toContain('secret internal detail');
+  });
+
+  describe('a request body that body-parser refused before any handler ran', () => {
+    /** What body-parser rejects with: a plain Error with a `type` and a status of its own. */
+    const bodyParserError = (type: string, status: number) =>
+      Object.assign(new Error('raw body-parser message'), {
+        type,
+        status,
+        statusCode: status,
+        expose: true,
+      });
+
+    it.each([
+      [
+        'entity.too.large',
+        413,
+        'Payload Too Large',
+        'The request body is too large. Split the import into smaller files and upload them one at a time.',
+      ],
+      ['entity.parse.failed', 400, 'Bad Request', 'The request body is not valid JSON.'],
+      [
+        'encoding.unsupported',
+        415,
+        'Unsupported Media Type',
+        'The request body uses an unsupported content encoding.',
+      ],
+    ])('answers %s with %i and says what to do about it', (type, status, title, detail) => {
+      // Not a 500: the CSV import one row too large used to come back as "an
+      // unexpected error occurred", sending the caller after a server fault.
+      filter.catch(bodyParserError(type, status), host);
+
+      expect(response.status).toHaveBeenCalledWith(status);
+      expect(body()).toMatchObject({ status, title, detail });
+      expect(JSON.stringify(body())).not.toContain('raw body-parser message');
+    });
+
+    it('does not let a thrown object that is no Error borrow one of those answers', () => {
+      filter.catch({ type: 'entity.too.large', status: 413 }, host);
+
+      expect(response.status).toHaveBeenCalledWith(500);
+      expect(body()).toMatchObject({ title: 'Internal Server Error' });
+    });
   });
 
   it('logs 5xx with the stack under the same traceId it returned', () => {

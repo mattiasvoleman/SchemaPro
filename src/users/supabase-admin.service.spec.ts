@@ -204,6 +204,68 @@ describe('SupabaseAdminService', () => {
       expect(call(2).url.searchParams.get('page')).toBe('2');
     });
 
+    it('passes over identities without an email while looking', async () => {
+      // GoTrue also holds phone sign-ups, which carry no email at all. One on
+      // the page must not turn the lookup into a crash.
+      fetchMock
+        .mockResolvedValueOnce(
+          jsonResponse({ msg: 'User already registered' }, 422),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            users: [
+              { id: 'phone-only', phone: '46701234567' },
+              { id: AUTH_ID, email: EMAIL },
+            ],
+            aud: 'authenticated',
+          }),
+        );
+
+      await expect(makeService().inviteUser(EMAIL)).resolves.toEqual({
+        authId: AUTH_ID,
+        emailSent: false,
+      });
+    });
+
+    describe('how far the lookup pages', () => {
+      /** A full page of 200 identities; the last one is the invitee when `match`. */
+      const fullPage = (page: number, match = false) =>
+        jsonResponse({
+          users: Array.from({ length: 200 }, (_, i) =>
+            match && i === 199
+              ? { id: AUTH_ID, email: EMAIL }
+              : { id: `bulk-${page}-${i}`, email: `bulk${page}-${i}@school.se` },
+          ),
+          aud: 'authenticated',
+        });
+
+      it('looks as far as the twentieth page', async () => {
+        fetchMock.mockResolvedValueOnce(
+          jsonResponse({ msg: 'User already registered' }, 422),
+        );
+        for (let page = 1; page <= 20; page++) {
+          fetchMock.mockResolvedValueOnce(fullPage(page, page === 20));
+        }
+
+        await expect(makeService().inviteUser(EMAIL)).resolves.toEqual({
+          authId: AUTH_ID,
+          emailSent: false,
+        });
+      });
+
+      it('stops there rather than paging a directory that never ends', async () => {
+        fetchMock
+          .mockResolvedValueOnce(jsonResponse({ msg: 'invalid email address' }, 400))
+          .mockResolvedValue(fullPage(0));
+
+        await expect(makeService().inviteUser(EMAIL)).rejects.toThrow(
+          'Supabase invite failed: invalid email address',
+        );
+        // The invite itself, then twenty pages.
+        expect(fetchMock).toHaveBeenCalledTimes(21);
+      });
+    });
+
     it('surfaces the GoTrue error when the invite fails and nobody matches', async () => {
       fetchMock
         .mockResolvedValueOnce(jsonResponse({ msg: 'invalid email address' }, 400))

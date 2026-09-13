@@ -152,6 +152,9 @@ describe('NotificationsService', () => {
     });
 
     it('mirrors to email: resolves active recipients in-tx and BCCs their addresses', async () => {
+      const warn = jest
+        .spyOn(loggerOf(service), 'warn')
+        .mockImplementation(() => undefined);
       process.env.RESEND_API_KEY = 'resend-key';
       process.env.EMAIL_FROM = 'SchemaPro <noreply@schemapro.test>';
       tx.user.findMany.mockResolvedValue([
@@ -186,6 +189,8 @@ describe('NotificationsService', () => {
       expect(url).toBe('https://api.resend.com/emails');
       expect(init.method).toBe('POST');
       expect(init.headers.Authorization).toBe('Bearer resend-key');
+      // Resend reads the body as JSON only when told it is.
+      expect(init.headers['Content-Type']).toBe('application/json');
       expect(JSON.parse(init.body)).toEqual({
         from: 'SchemaPro <noreply@schemapro.test>',
         // Recipients go on BCC so they never see each other; `to` is the sender.
@@ -194,6 +199,8 @@ describe('NotificationsService', () => {
         subject: 'Decided',
         text: 'Your leave was approved.',
       });
+      // A delivered mail is not a failed dispatch.
+      expect(warn).not.toHaveBeenCalled();
     });
 
     it('falls back to the default sender when EMAIL_FROM is unset', async () => {

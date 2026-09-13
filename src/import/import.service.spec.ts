@@ -18,6 +18,33 @@ import type {
 import type { UsersService } from '../users/users.service';
 import { ImportService } from './import.service';
 
+/**
+ * A row as Prisma returns it: only the fields the query selected. The shared
+ * mock resolves whatever a spec stubs, whole, so a field the service stopped
+ * selecting would still reach its output here and be undefined in production.
+ */
+const asSelected = (row: unknown, select?: Record<string, unknown>): unknown => {
+  if (!select || row === null || typeof row !== 'object') return row;
+  if (Array.isArray(row)) return row.map((item) => asSelected(item, select));
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, wanted]) => Boolean(wanted))
+      .map(([field, wanted]) => [
+        field,
+        asSelected(
+          (row as Record<string, unknown>)[field],
+          (wanted as { select?: Record<string, unknown> }).select,
+        ),
+      ]),
+  );
+};
+
+/** Stubs a lookup whose rows come back as the query selected them. */
+const arrangeRows = (lookup: jest.Mock, rows: unknown) =>
+  lookup.mockImplementation((args?: { select?: Record<string, unknown> }) =>
+    Promise.resolve(asSelected(rows, args?.select)),
+  );
+
 const YEAR_ID = '99999999-9999-4999-8999-999999999999';
 const GROUP_7A = '66666666-6666-4666-8666-666666666666';
 const schoolless = () => testUser({ schoolId: undefined });
@@ -58,6 +85,9 @@ describe('ImportService', () => {
           role: 'TEACHER',
           email: 'karin@example.com',
           studentGroupId: undefined,
+          // Uploading a roster is preparation, often weeks before term. It
+          // contacts nobody; inviting is a separate decision.
+          sendInvitation: false,
         }),
         expect.objectContaining({ userId: testUser().userId }),
       );
@@ -116,11 +146,31 @@ describe('ImportService', () => {
       expect(report).toEqual({ created: 1, skipped: 1, errors: [] });
       expect(users.create).toHaveBeenCalledTimes(1);
     });
+
+    it('trims the whitespace a spreadsheet leaves around names and addresses', async () => {
+      await service.importTeachers(
+        {
+          rows: [
+            { firstName: ' Karin ', lastName: 'Ek\t', email: ' karin@example.com ' },
+          ],
+        },
+        testUser(),
+      );
+
+      expect(users.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          firstName: 'Karin',
+          lastName: 'Ek',
+          email: 'karin@example.com',
+        }),
+        expect.anything(),
+      );
+    });
   });
 
   describe('importStudents', () => {
     beforeEach(() => {
-      tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_7A, name: '7A' }]);
+      arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: '7A' }]);
     });
 
     it('resolves the class by name (trimmed, case-insensitive) and assigns it', async () => {
@@ -178,8 +228,8 @@ describe('ImportService', () => {
 
   describe('importGroups', () => {
     it('creates missing groups and skips existing ones by normalized name', async () => {
-      tx.studentGroup.findMany.mockResolvedValue([{ name: '7A' }]);
-      tx.studentGroup.create.mockResolvedValue({});
+      arrangeRows(tx.studentGroup.findMany, [{ name: '7A' }]);
+      arrangeRows(tx.studentGroup.create, {});
 
       const report = await service.importGroups(
         {
@@ -204,6 +254,11 @@ describe('ImportService', () => {
           gradeLevel: 7,
         },
       });
+      // Only this läsår's classes count as taken: last year's 7B does not make
+      // this year's a duplicate.
+      expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { academicYearId: YEAR_ID } }),
+      );
     });
   });
 
@@ -212,8 +267,8 @@ describe('ImportService', () => {
       overrides.map((override) => ({ name: 'Matematik', ...override })) as never;
 
     it('creates a subject, resolving the room type by name', async () => {
-      tx.subject.findMany.mockResolvedValue([]);
-      tx.roomType.findMany.mockResolvedValue([
+      arrangeRows(tx.subject.findMany, []);
+      arrangeRows(tx.roomType.findMany, [
         { id: 'rt-slojd', name: 'Trä- och metallslöjd' },
       ]);
       tx.subject.create.mockResolvedValue({ id: 'sub-1' });
@@ -238,8 +293,8 @@ describe('ImportService', () => {
     });
 
     it('accepts a subject with no room-type requirement at all', async () => {
-      tx.subject.findMany.mockResolvedValue([]);
-      tx.roomType.findMany.mockResolvedValue([]);
+      arrangeRows(tx.subject.findMany, []);
+      arrangeRows(tx.roomType.findMany, []);
       tx.subject.create.mockResolvedValue({ id: 'sub-1' });
 
       await service.importSubjects({ rows: rows([{ roomType: '' }]) }, testUser());
@@ -250,11 +305,44 @@ describe('ImportService', () => {
       expect(data.requiredRoomTypeId).toBeNull();
     });
 
+    it('reads a room-type cell of nothing but spaces as no requirement, not as an unknown type', async () => {
+      arrangeRows(tx.subject.findMany, []);
+      arrangeRows(tx.roomType.findMany, [
+        { id: 'rt-slojd', name: 'Trä- och metallslöjd' },
+      ]);
+      tx.subject.create.mockResolvedValue({ id: 'sub-1' });
+
+      const report = await service.importSubjects(
+        { rows: rows([{ roomType: '   ' }]) },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 1, skipped: 0, errors: [] });
+      expect(tx.subject.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ requiredRoomTypeId: null }),
+      });
+    });
+
+    it('stores the name, code and colour without the whitespace around them', async () => {
+      arrangeRows(tx.subject.findMany, []);
+      arrangeRows(tx.roomType.findMany, []);
+      tx.subject.create.mockResolvedValue({ id: 'sub-1' });
+
+      await service.importSubjects(
+        { rows: rows([{ name: ' Slöjd ', code: ' SL ', color: ' #4f46e5 ' }]) },
+        testUser(),
+      );
+
+      expect(tx.subject.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ name: 'Slöjd', code: 'SL', color: '#4f46e5' }),
+      });
+    });
+
     it('fails the row on an unknown room type instead of dropping the requirement', async () => {
       // Creating the subject anyway would leave it schedulable in any room,
       // which surfaces much later as slöjden in an ordinary classroom.
-      tx.subject.findMany.mockResolvedValue([]);
-      tx.roomType.findMany.mockResolvedValue([]);
+      arrangeRows(tx.subject.findMany, []);
+      arrangeRows(tx.roomType.findMany, []);
 
       const report = await service.importSubjects(
         { rows: rows([{ name: 'Slöjd', roomType: 'Slöjdsal' }]) },
@@ -269,8 +357,8 @@ describe('ImportService', () => {
     });
 
     it('skips a subject that already exists, so a re-upload is a no-op', async () => {
-      tx.subject.findMany.mockResolvedValue([{ name: 'Matematik' }]);
-      tx.roomType.findMany.mockResolvedValue([]);
+      arrangeRows(tx.subject.findMany, [{ name: 'Matematik' }]);
+      arrangeRows(tx.roomType.findMany, []);
 
       const report = await service.importSubjects(
         { rows: rows([{ name: ' matematik ' }]) },
@@ -282,8 +370,8 @@ describe('ImportService', () => {
     });
 
     it('collapses names that differ only by case or whitespace within one file', async () => {
-      tx.subject.findMany.mockResolvedValue([]);
-      tx.roomType.findMany.mockResolvedValue([]);
+      arrangeRows(tx.subject.findMany, []);
+      arrangeRows(tx.roomType.findMany, []);
       tx.subject.create.mockResolvedValue({ id: 'sub-1' });
 
       const report = await service.importSubjects(
@@ -296,8 +384,8 @@ describe('ImportService', () => {
     });
 
     it('stores empty code and colour as null rather than empty strings', async () => {
-      tx.subject.findMany.mockResolvedValue([]);
-      tx.roomType.findMany.mockResolvedValue([]);
+      arrangeRows(tx.subject.findMany, []);
+      arrangeRows(tx.roomType.findMany, []);
       tx.subject.create.mockResolvedValue({ id: 'sub-1' });
 
       await service.importSubjects({ rows: rows([{ code: '  ', color: '' }]) }, testUser());
@@ -318,7 +406,7 @@ describe('ImportService', () => {
 
   describe('importRoomTypes', () => {
     it('creates missing types and skips existing ones by normalized name', async () => {
-      tx.roomType.findMany.mockResolvedValue([{ name: 'Klassrum' }]);
+      arrangeRows(tx.roomType.findMany, [{ name: 'Klassrum' }]);
       tx.roomType.create.mockResolvedValue({});
 
       const report = await service.importRoomTypes(
@@ -344,7 +432,7 @@ describe('ImportService', () => {
       // Room types belong to the school: a slöjdsal outlives any single
       // läsår. Scoping the existence check to a year would re-create every
       // type each August.
-      tx.roomType.findMany.mockResolvedValue([]);
+      arrangeRows(tx.roomType.findMany, []);
       tx.roomType.create.mockResolvedValue({});
 
       await service.importRoomTypes({ rows: [{ name: 'Textilslöjd' }] }, testUser());
@@ -355,13 +443,24 @@ describe('ImportService', () => {
     });
 
     it('stamps the tenant from the principal, never from the row', async () => {
-      tx.roomType.findMany.mockResolvedValue([]);
+      arrangeRows(tx.roomType.findMany, []);
       tx.roomType.create.mockResolvedValue({});
 
       await service.importRoomTypes(
         { rows: [{ name: 'Bildsal', schoolId: 'someone-elses' } as never] },
         testUser(),
       );
+
+      expect(tx.roomType.create).toHaveBeenCalledWith({
+        data: { schoolId: testUser().schoolId, name: 'Bildsal' },
+      });
+    });
+
+    it('stores the name without the whitespace around it', async () => {
+      arrangeRows(tx.roomType.findMany, []);
+      tx.roomType.create.mockResolvedValue({});
+
+      await service.importRoomTypes({ rows: [{ name: '  Bildsal ' }] }, testUser());
 
       expect(tx.roomType.create).toHaveBeenCalledWith({
         data: { schoolId: testUser().schoolId, name: 'Bildsal' },
@@ -381,8 +480,8 @@ describe('ImportService', () => {
       tx.user.findMany.mockResolvedValue([
         { id: STUDENT_ID, email: 'alma@example.com' },
       ]);
-      tx.studentGroup.findMany.mockResolvedValue([]);
-      tx.studentGroup.create.mockResolvedValue({ id: 'g-new' });
+      arrangeRows(tx.studentGroup.findMany, []);
+      arrangeRows(tx.studentGroup.create, { id: 'g-new' });
       tx.studentGroupMember.createMany.mockResolvedValue({ count: 1 });
     });
 
@@ -411,6 +510,33 @@ describe('ImportService', () => {
         ],
         skipDuplicates: true,
       });
+    });
+
+    it('creates the group as a teaching group of the posted läsår, its name trimmed', async () => {
+      // A group a membership file names cuts across home classes by
+      // definition; that is what the file exists to say.
+      await service.importMemberships(
+        {
+          academicYearId: YEAR_ID,
+          rows: [{ groupName: ' Ma71 ', email: 'alma@example.com' }],
+        },
+        testUser(),
+      );
+
+      expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { academicYearId: YEAR_ID } }),
+      );
+      expect(tx.studentGroup.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            schoolId: testUser().schoolId,
+            academicYearId: YEAR_ID,
+            name: 'Ma71',
+            kind: 'TEACHING_GROUP',
+            gradeLevel: null,
+          },
+        }),
+      );
     });
 
     it('reuses one group for many rows instead of creating duplicates', async () => {
@@ -522,8 +648,8 @@ describe('ImportService', () => {
 
 
     it('importGroups stamps the principal schoolId even when a row smuggles one', async () => {
-      tx.studentGroup.findMany.mockResolvedValue([]);
-      tx.studentGroup.create.mockResolvedValue({});
+      arrangeRows(tx.studentGroup.findMany, []);
+      arrangeRows(tx.studentGroup.create, {});
 
       await service.importGroups(
         {
@@ -550,8 +676,8 @@ describe('ImportService', () => {
       tx.user.findMany.mockResolvedValue([
         { id: STUDENT_ID, email: 'alma@example.com' },
       ]);
-      tx.studentGroup.findMany.mockResolvedValue([]);
-      tx.studentGroup.create.mockResolvedValue({ id: 'g-new' });
+      arrangeRows(tx.studentGroup.findMany, []);
+      arrangeRows(tx.studentGroup.create, { id: 'g-new' });
       tx.studentGroupMember.createMany.mockResolvedValue({ count: 1 });
 
       await service.importMemberships(
@@ -588,7 +714,7 @@ describe('ImportService', () => {
 
   describe('RLS wrapper subject', () => {
     it('importStudents hands the caller — not a substitute — to withRls', async () => {
-      tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_7A, name: '7A' }]);
+      arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: '7A' }]);
       const user = testUser();
 
       await service.importStudents(
@@ -611,8 +737,8 @@ describe('ImportService', () => {
     });
 
     it('importGroups runs its whole body under withRls with the caller as subject', async () => {
-      tx.studentGroup.findMany.mockResolvedValue([]);
-      tx.studentGroup.create.mockResolvedValue({});
+      arrangeRows(tx.studentGroup.findMany, []);
+      arrangeRows(tx.studentGroup.create, {});
       const user = testUser();
 
       await service.importGroups(
@@ -626,7 +752,7 @@ describe('ImportService', () => {
 
     it('importMemberships runs its whole body under withRls with the caller as subject', async () => {
       tx.user.findMany.mockResolvedValue([]);
-      tx.studentGroup.findMany.mockResolvedValue([]);
+      arrangeRows(tx.studentGroup.findMany, []);
       const user = testUser();
 
       await service.importMemberships(
@@ -660,7 +786,7 @@ describe('ImportService', () => {
 
   describe('importStudents: row numbering and the single class fetch', () => {
     beforeEach(() => {
-      tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_7A, name: '7A' }]);
+      arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: '7A' }]);
     });
 
     it('keeps ORIGINAL file row numbers when unresolved rows were filtered out before importPeople', async () => {
@@ -798,8 +924,8 @@ describe('ImportService', () => {
 
   describe('importGroups: name collapsing', () => {
     it('names differing only by surrounding whitespace collapse to a single trimmed create', async () => {
-      tx.studentGroup.findMany.mockResolvedValue([]);
-      tx.studentGroup.create.mockResolvedValue({});
+      arrangeRows(tx.studentGroup.findMany, []);
+      arrangeRows(tx.studentGroup.create, {});
 
       const report = await service.importGroups(
         {
@@ -828,7 +954,7 @@ describe('ImportService', () => {
       tx.user.findMany.mockResolvedValue([
         { id: STUDENT_ID, email: 'alma@example.com' },
       ]);
-      tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_7A, name: 'Ma71' }]);
+      arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: 'Ma71' }]);
       tx.studentGroupMember.createMany.mockResolvedValue({ count: 1 });
 
       const report = await service.importMemberships(
@@ -859,7 +985,7 @@ describe('ImportService', () => {
       tx.user.findMany.mockResolvedValue([
         { id: STUDENT_ID, email: 'ALMA@EXAMPLE.COM' },
       ]);
-      tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_7A, name: 'Ma71' }]);
+      arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: 'Ma71' }]);
       tx.studentGroupMember.createMany.mockResolvedValue({ count: 1 });
 
       const report = await service.importMemberships(
@@ -882,7 +1008,7 @@ describe('ImportService', () => {
 
     it('a row whose student is missing does NOT create its group as a side effect', async () => {
       tx.user.findMany.mockResolvedValue([]);
-      tx.studentGroup.findMany.mockResolvedValue([]);
+      arrangeRows(tx.studentGroup.findMany, []);
 
       const report = await service.importMemberships(
         {
@@ -905,8 +1031,8 @@ describe('ImportService', () => {
       tx.user.findMany.mockResolvedValue([
         { id: STUDENT_ID, email: 'alma@example.com' },
       ]);
-      tx.studentGroup.findMany.mockResolvedValue([]);
-      tx.studentGroup.create.mockResolvedValue({ id: 'g-new' });
+      arrangeRows(tx.studentGroup.findMany, []);
+      arrangeRows(tx.studentGroup.create, { id: 'g-new' });
       tx.studentGroupMember.createMany.mockResolvedValue({ count: 1 });
 
       const report = await service.importMemberships(
@@ -943,7 +1069,7 @@ describe('ImportService', () => {
       tx.user.findMany.mockResolvedValue([
         { id: STUDENT_ID, email: 'alma@example.com' },
       ]);
-      tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_7A, name: 'Ma71' }]);
+      arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: 'Ma71' }]);
       // Two identical (group, student) pairs reach createMany; the second is
       // dropped by skipDuplicates, so the DB reports count 1.
       tx.studentGroupMember.createMany.mockResolvedValue({ count: 1 });
@@ -988,7 +1114,7 @@ describe('ImportService', () => {
     });
 
     it('importStudents on a mixed fixture (unknown class, success, conflict)', async () => {
-      tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_7A, name: '7A' }]);
+      arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: '7A' }]);
       users.create
         .mockResolvedValueOnce({ id: 'u1' })
         .mockRejectedValueOnce(new ConflictException('exists'));
@@ -1012,8 +1138,8 @@ describe('ImportService', () => {
     });
 
     it('importGroups on a mixed fixture (existing, new, duplicate, whitespace duplicate)', async () => {
-      tx.studentGroup.findMany.mockResolvedValue([{ name: '7A' }]);
-      tx.studentGroup.create.mockResolvedValue({});
+      arrangeRows(tx.studentGroup.findMany, [{ name: '7A' }]);
+      arrangeRows(tx.studentGroup.create, {});
 
       const rows = [
         { name: '7a' }, // exists
@@ -1035,8 +1161,8 @@ describe('ImportService', () => {
         { id: STUDENT_ID, email: 'alma@example.com' },
         { id: 'aaaaaaa2-0000-4000-8000-000000000002', email: 'nils@example.com' },
       ]);
-      tx.studentGroup.findMany.mockResolvedValue([]);
-      tx.studentGroup.create.mockResolvedValue({ id: 'g-new' });
+      arrangeRows(tx.studentGroup.findMany, []);
+      arrangeRows(tx.studentGroup.create, { id: 'g-new' });
       // 3 pairs reach createMany; one is an exact duplicate → DB creates 2.
       tx.studentGroupMember.createMany.mockResolvedValue({ count: 2 });
 
@@ -1140,11 +1266,11 @@ describe('ImportService', () => {
     });
 
     beforeEach(() => {
-      tx.studentGroup.findMany.mockResolvedValue([
+      arrangeRows(tx.studentGroup.findMany, [
         { id: GROUP_7A, name: '7A' },
         { id: GROUP_7B, name: '7B' },
       ]);
-      tx.subject.findMany.mockResolvedValue([
+      arrangeRows(tx.subject.findMany, [
         { id: SUBJ_MA, name: 'Matematik', code: 'MA' },
         { id: SUBJ_SV, name: 'Svenska', code: 'SV' },
       ]);
@@ -1152,10 +1278,10 @@ describe('ImportService', () => {
         { id: TEACHER_ID, email: 'karin@example.com' },
         { id: CO_TEACHER_ID, email: 'bo@example.com' },
       ]);
-      tx.teachingRequirement.findMany.mockResolvedValue([]);
+      arrangeRows(tx.teachingRequirement.findMany, []);
       tx.teachingRequirement.create.mockResolvedValue({});
       tx.teachingRequirement.update.mockResolvedValue({});
-      tx.academicYear.findUnique.mockResolvedValue({
+      arrangeRows(tx.academicYear.findUnique, {
         startDate: YEAR_START,
         endDate: YEAR_END,
       });
@@ -1183,6 +1309,11 @@ describe('ImportService', () => {
             endDate: null,
           },
         });
+        // Compared against this läsår's timplan only: last year's 7A/MA is not
+        // the row this file updates.
+        expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { academicYearId: YEAR_ID } }),
+        );
       });
 
       it('matches the subject by CODE or by NAME, either one case-insensitively', async () => {
@@ -1236,7 +1367,7 @@ describe('ImportService', () => {
         // A real collision: "MU" is the code of Musik and the name a school
         // gave its "MU"-project subject. Picking either one silently would put
         // a whole subject's lessons somewhere nobody asked for.
-        tx.subject.findMany.mockResolvedValue([
+        arrangeRows(tx.subject.findMany, [
           { id: SUBJ_MA, name: 'Musik', code: 'MU' },
           { id: SUBJ_SV, name: 'MU', code: 'MUPROJ' },
         ]);
@@ -1249,6 +1380,24 @@ describe('ImportService', () => {
         expect(error!.row).toBe(1);
         expect(error!.message).toContain('Musik');
         expect(error!.message).toContain('MUPROJ');
+      });
+
+      it('names both candidates of an ambiguous subject, with a code only where one exists', async () => {
+        arrangeRows(tx.subject.findMany, [
+          { id: SUBJ_MA, name: 'Biologi', code: 'BI' },
+          { id: SUBJ_SV, name: 'BI', code: null },
+        ]);
+
+        const report = await run(row({ subject: 'bi' }));
+
+        expect(report.errors).toEqual([
+          {
+            row: 1,
+            message:
+              'Ämnet "bi" är tvetydigt: det matchar "Biologi" (kod BI) och "BI". ' +
+              'Skriv något som bara passar ett av dem.',
+          },
+        ]);
       });
 
       it('an unknown teacher email is a row error naming the address', async () => {
@@ -1292,6 +1441,18 @@ describe('ImportService', () => {
             }),
           },
           select: { id: true, email: true },
+        });
+      });
+
+      it('resolves teacher and co-teacher addresses written with spaces around them', async () => {
+        const report = await run(
+          row({ teacherEmail: ' karin@example.com ', coTeacherEmail: 'bo@example.com  ' }),
+        );
+
+        expect(report).toMatchObject({ created: 1, errors: [] });
+        expect(tx.teachingRequirement.create.mock.calls[0][0].data).toMatchObject({
+          teacherId: TEACHER_ID,
+          coTeacherId: CO_TEACHER_ID,
         });
       });
 
@@ -1343,12 +1504,56 @@ describe('ImportService', () => {
         // "outside its year" would confirm that it exists; the composite
         // foreign key on the insert is what refuses it. Same silence as
         // TeachingRequirementsService.assertPeriodFitsYear.
-        tx.academicYear.findUnique.mockResolvedValue(null);
+        arrangeRows(tx.academicYear.findUnique, null);
 
         const report = await run(row({ startDate: '2027-08-01' }));
 
         expect(report.errors).toEqual([]);
         expect(report.created).toBe(1);
+      });
+
+      it('says which date falls outside which läsår, in dates a school reads', async () => {
+        // A row stating only a start date is checked as well.
+        const report = await run(row({ startDate: '2027-08-01' }));
+
+        expect(report.errors).toEqual([
+          {
+            row: 1,
+            message: 'Startdatumet (2027-08-01) ligger utanför läsåret (2026-08-17–2027-06-11).',
+          },
+        ]);
+        expect(tx.academicYear.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: YEAR_ID } }),
+        );
+      });
+
+      it('checks a dated row against the year even when the other rows state no period', async () => {
+        const report = await run(row(), row({ subject: 'SV', endDate: '2027-07-01' }));
+
+        expect(report.created).toBe(1);
+        expect(report.errors).toEqual([
+          { row: 2, message: expect.stringContaining('2027-07-01') },
+        ]);
+      });
+
+      it('accepts a period that spans the läsår exactly, first day to last', async () => {
+        const report = await run(row({ startDate: '2026-08-17', endDate: '2027-06-11' }));
+
+        expect(report).toMatchObject({ created: 1, errors: [] });
+      });
+
+      it('refuses a start date the day before the läsår begins', async () => {
+        const report = await run(row({ startDate: '2026-08-16' }));
+
+        expect(report.errors).toEqual([
+          { row: 1, message: expect.stringContaining('2026-08-16') },
+        ]);
+      });
+
+      it('accepts a period of a single day', async () => {
+        const report = await run(row({ startDate: '2026-10-05', endDate: '2026-10-05' }));
+
+        expect(report).toMatchObject({ created: 1, errors: [] });
       });
     });
 
@@ -1383,7 +1588,7 @@ describe('ImportService', () => {
 
     describe('created / updated / skipped', () => {
       it('an existing row the file changes is UPDATED, by id and with every column the row states', async () => {
-        tx.teachingRequirement.findMany.mockResolvedValue([stored()]);
+        arrangeRows(tx.teachingRequirement.findMany, [stored()]);
 
         const report = await run(
           row({ lessonsPerWeek: 4, teacherEmail: 'karin@example.com' }),
@@ -1406,7 +1611,7 @@ describe('ImportService', () => {
       });
 
       it('an identical row is SKIPPED, not counted as an update — the number is what tells a school the upload did something', async () => {
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored({ teacherId: TEACHER_ID }),
         ]);
 
@@ -1417,7 +1622,7 @@ describe('ImportService', () => {
       });
 
       it('an unchanged PERIOD is compared by day, not by Date identity — Prisma hands back a fresh object per read', async () => {
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored({
             startDate: new Date('2026-09-01T00:00:00.000Z'),
             endDate: new Date('2026-12-20T00:00:00.000Z'),
@@ -1433,7 +1638,7 @@ describe('ImportService', () => {
       });
 
       it('a moved end date alone is enough to count as an update', async () => {
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored({ endDate: new Date('2026-12-20T00:00:00.000Z') }),
         ]);
 
@@ -1446,7 +1651,7 @@ describe('ImportService', () => {
         // Otherwise a teacher or a period entered by mistake could never be
         // taken back by editing the file, only in the UI, and re-uploading an
         // edited timplan would be half a mechanism.
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored({
             teacherId: TEACHER_ID,
             startDate: new Date('2026-09-01T00:00:00.000Z'),
@@ -1480,7 +1685,7 @@ describe('ImportService', () => {
        * tests are what hold the two silences apart.
        */
       it('leaves the teacher alone when the file had no teacher columns', async () => {
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored({ teacherId: TEACHER_ID, coTeacherId: CO_TEACHER_ID }),
         ]);
 
@@ -1498,7 +1703,7 @@ describe('ImportService', () => {
         // "Slöjd udda veckor" becoming "slöjd every week" doubles the subject's
         // hours and the next generation packs twice the lessons — from an
         // upload that only meant to change a number in another column.
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored({ recurrence: 'ODD_WEEKS' }),
         ]);
 
@@ -1511,7 +1716,7 @@ describe('ImportService', () => {
       });
 
       it('leaves a half-term period standing when the file had no date columns', async () => {
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored({
             startDate: new Date('2027-01-11T00:00:00.000Z'),
             endDate: new Date('2027-06-11T00:00:00.000Z'),
@@ -1533,7 +1738,7 @@ describe('ImportService', () => {
         // The count is what a school reads to decide whether the upload did
         // what they meant. Comparing fields the upload will not write would
         // report "updated" for a file that altered nothing.
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored({
             teacherId: TEACHER_ID,
             recurrence: 'EVEN_WEEKS',
@@ -1551,7 +1756,7 @@ describe('ImportService', () => {
         // The recoverable direction. A caller that forgets the key writes too
         // little, which is visible and fixable by uploading the full file; the
         // other reading empties five fields across a läsår.
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored({ teacherId: TEACHER_ID }),
         ]);
 
@@ -1594,7 +1799,7 @@ describe('ImportService', () => {
       ])(
         'a differing %s alone is enough to count as an update',
         async (_field, storedOverride, rowOverride) => {
-          tx.teachingRequirement.findMany.mockResolvedValue([
+          arrangeRows(tx.teachingRequirement.findMany, [
             stored(storedOverride),
           ]);
 
@@ -1608,7 +1813,7 @@ describe('ImportService', () => {
       it('counts an untouched re-upload of the full file as skipped', async () => {
         // The other half: with every field equal, nothing may be written. A
         // comparison that always returns false would pass the seven above.
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored({
             teacherId: TEACHER_ID,
             coTeacherId: CO_TEACHER_ID,
@@ -1633,7 +1838,7 @@ describe('ImportService', () => {
       });
 
       it('never deletes: a requirement absent from the file is left standing and counted nowhere', async () => {
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored(),
           stored({ id: 'req-2', subjectId: SUBJ_SV, lessonsPerWeek: 5 }),
         ]);
@@ -1647,7 +1852,7 @@ describe('ImportService', () => {
       });
 
       it('created + updated + skipped + errors accounts for every input row', async () => {
-        tx.teachingRequirement.findMany.mockResolvedValue([
+        arrangeRows(tx.teachingRequirement.findMany, [
           stored(), // 7A/MA, unchanged by row 1
           stored({ id: 'req-2', subjectId: SUBJ_SV, lessonsPerWeek: 5 }), // changed by row 2
         ]);

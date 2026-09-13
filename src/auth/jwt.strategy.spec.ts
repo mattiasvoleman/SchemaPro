@@ -147,6 +147,82 @@ describe('JwtStrategy', () => {
       await expect(run(strategy, token)).rejects.toThrow();
       expect(prisma.withVerifiedSubject).not.toHaveBeenCalled();
     });
+
+    /** A token the strategy would accept, but for the one claim a test changes. */
+    const tokenWith = (
+      claims: Record<string, unknown>,
+      options: { issuer?: string; audience?: string } = {},
+    ) =>
+      new JwtService({}).signAsync(
+        { sub: AUTH_ID, role: 'authenticated', ...claims },
+        {
+          algorithm: 'ES256',
+          privateKey,
+          keyid: KID,
+          issuer: options.issuer ?? 'https://issuer.test',
+          ...(options.audience ? { audience: options.audience } : {}),
+        },
+      );
+
+    /** An active account, so that nothing but the token can be refused. */
+    const withActiveAccount = (built: ReturnType<typeof buildStrategy>) => {
+      built.tx.user.findUnique.mockResolvedValue({
+        id: USER_ID,
+        schoolId: SCHOOL_ID,
+        role: 'TEACHER',
+        isActive: true,
+      });
+      return built;
+    };
+
+    it('rejects an expired token even for an active account', async () => {
+      const { strategy, prisma } = withActiveAccount(buildStrategy());
+      const token = await tokenWith({ exp: Math.floor(Date.now() / 1000) - 60 });
+
+      await expect(run(strategy, token)).rejects.toThrow(/expired/);
+      expect(prisma.withVerifiedSubject).not.toHaveBeenCalled();
+    });
+
+    it('rejects a token some other issuer signed with a key the JWKS serves', async () => {
+      const { strategy, prisma } = withActiveAccount(buildStrategy());
+      const token = await tokenWith({}, { issuer: 'https://another-project.test' });
+
+      await expect(run(strategy, token)).rejects.toThrow(/issuer invalid/);
+      expect(prisma.withVerifiedSubject).not.toHaveBeenCalled();
+    });
+
+    it('holds a token to the configured audience', async () => {
+      const built = withActiveAccount(buildStrategy({ audience: 'authenticated' }));
+
+      await expect(
+        run(built.strategy, await tokenWith({}, { audience: 'service_role' })),
+      ).rejects.toThrow(/audience invalid/);
+      await expect(
+        run(built.strategy, await tokenWith({}, { audience: 'authenticated' })),
+      ).resolves.toMatchObject({ userId: USER_ID });
+    });
+
+    it('fails the request when the signing keys cannot be fetched, instead of leaving it hanging', async () => {
+      (passportJwtSecret as jest.Mock).mockReturnValue(
+        (_request: unknown, _token: string, done: (e: unknown) => void) =>
+          done(new Error('JWKS endpoint unreachable')),
+      );
+      const { strategy, prisma } = withActiveAccount(buildStrategy());
+      const token = await tokenWith({});
+
+      let timer: NodeJS.Timeout | undefined;
+      const unanswered = new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('the strategy never answered')), 2000);
+      });
+      try {
+        await expect(Promise.race([run(strategy, token), unanswered])).rejects.toThrow(
+          /JWKS endpoint unreachable/,
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+      expect(prisma.withVerifiedSubject).not.toHaveBeenCalled();
+    });
   });
 
   describe('validate', () => {

@@ -4,6 +4,27 @@ import { createTxMock, type TxMock } from '../../test/utils/prisma-mock';
 import type { RealtimeGateway } from './realtime.gateway';
 import { RealtimeService } from './realtime.service';
 
+/**
+ * A row as Prisma returns it: only the fields the query selected. The shared
+ * mock resolves whatever a spec stubs, whole, so a field the service stopped
+ * selecting would still reach its output here and be undefined in production.
+ */
+const asSelected = (row: unknown, select?: Record<string, unknown>): unknown => {
+  if (!select || row === null || typeof row !== 'object') return row;
+  if (Array.isArray(row)) return row.map((item) => asSelected(item, select));
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, wanted]) => Boolean(wanted))
+      .map(([field, wanted]) => [
+        field,
+        asSelected(
+          (row as Record<string, unknown>)[field],
+          (wanted as { select?: Record<string, unknown> }).select,
+        ),
+      ]),
+  );
+};
+
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const LESSON_ID = '44444444-4444-4444-8444-444444444444';
 
@@ -34,6 +55,13 @@ describe('RealtimeService', () => {
 
   const client = () => tx as unknown as PrismaClient;
 
+  /** The lesson as the query returns it: only what it selected. */
+  const arrangeLesson = (row: Record<string, unknown>) =>
+    tx.calendarLesson.findUnique.mockImplementation(
+      ({ select }: { select?: Record<string, unknown> }) =>
+        Promise.resolve(asSelected(row, select)),
+    );
+
   const lessonRow = (overrides: Record<string, unknown> = {}) => ({
     id: LESSON_ID,
     schoolId: SCHOOL_ID,
@@ -58,7 +86,7 @@ describe('RealtimeService', () => {
       // this list straight into its offline cache, so an empty broadcast does
       // not merely fail to help — it wipes the roster the teacher is about to
       // take attendance with.
-      tx.calendarLesson.findUnique.mockResolvedValue(
+      arrangeLesson(
         lessonRow({
           studentGroup: {
             members: [],
@@ -78,7 +106,7 @@ describe('RealtimeService', () => {
     });
 
     it('gathers every class attending, plus pupils named individually', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(
+      arrangeLesson(
         lessonRow({
           studentGroup: { members: [{ id: 'a' }], teachingMembers: [] },
           extraGroups: [
@@ -104,7 +132,7 @@ describe('RealtimeService', () => {
     });
 
     it('counts a pupil once when two sources name them', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(
+      arrangeLesson(
         lessonRow({
           studentGroup: { members: [{ id: 'a' }], teachingMembers: [{ studentId: 'a' }] },
           participants: [{ studentId: 'a' }],
@@ -146,7 +174,7 @@ describe('RealtimeService', () => {
 
   describe('notifyLessonChanged', () => {
     it('reads the lesson through the caller’s transaction, filtering to active students', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(lessonRow());
+      arrangeLesson(lessonRow());
 
       await service.notifyLessonChanged(client(), LESSON_ID);
 
@@ -165,13 +193,30 @@ describe('RealtimeService', () => {
                 }),
               },
             },
+            // The same filter for every other class attending: a deactivated
+            // pupil of an extra group is no more on the roster than one of the
+            // home class.
+            extraGroups: {
+              select: {
+                studentGroup: {
+                  select: {
+                    members: expect.objectContaining({
+                      where: { role: 'STUDENT', isActive: true },
+                    }),
+                    teachingMembers: expect.objectContaining({
+                      where: { student: { role: 'STUDENT', isActive: true } },
+                    }),
+                  },
+                },
+              },
+            },
           }),
         }),
       );
     });
 
     it('broadcasts the wire payload to the school and its teachers', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(lessonRow());
+      arrangeLesson(lessonRow());
 
       await service.notifyLessonChanged(client(), LESSON_ID);
 
@@ -194,7 +239,7 @@ describe('RealtimeService', () => {
     });
 
     it('renders a roomless lesson with the em-dash placeholder', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(lessonRow({ room: null }));
+      arrangeLesson(lessonRow({ room: null }));
 
       await service.notifyLessonChanged(client(), LESSON_ID);
 
@@ -214,6 +259,8 @@ describe('RealtimeService', () => {
         service.notifyLessonChanged(client(), LESSON_ID),
       ).resolves.toBeUndefined();
       expect(gateway.emitLessonUpdated).not.toHaveBeenCalled();
+      // A lesson deleted in the same transaction is nothing to warn about.
+      expect(warn).not.toHaveBeenCalled();
     });
 
     it('swallows a lookup failure — broadcasting is best-effort', async () => {
@@ -229,7 +276,7 @@ describe('RealtimeService', () => {
     });
 
     it('swallows an emit failure without rejecting the mutation', async () => {
-      tx.calendarLesson.findUnique.mockResolvedValue(lessonRow());
+      arrangeLesson(lessonRow());
       gateway.emitLessonUpdated.mockImplementation(() => {
         throw new Error('socket.io down');
       });

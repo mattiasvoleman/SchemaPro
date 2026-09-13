@@ -16,6 +16,27 @@ import {
   type CalendarLessonUpdatedPayload,
 } from './realtime.types';
 
+/**
+ * A row as Prisma returns it: only the fields the query selected. The shared
+ * mock resolves whatever a spec stubs, whole, so a field the service stopped
+ * selecting would still reach its output here and be undefined in production.
+ */
+const asSelected = (row: unknown, select?: Record<string, unknown>): unknown => {
+  if (!select || row === null || typeof row !== 'object') return row;
+  if (Array.isArray(row)) return row.map((item) => asSelected(item, select));
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, wanted]) => Boolean(wanted))
+      .map(([field, wanted]) => [
+        field,
+        asSelected(
+          (row as Record<string, unknown>)[field],
+          (wanted as { select?: Record<string, unknown> }).select,
+        ),
+      ]),
+  );
+};
+
 const AUTH_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
@@ -119,8 +140,16 @@ describe('RealtimeGateway', () => {
     isActive: true,
     firstName: 'Anna',
     lastName: 'Bergström',
+    email: 'anna.bergstrom@school.se',
     ...overrides,
   });
+
+  /** The profile as the lookup returns it: only the columns it selected. */
+  const arrangeProfile = (row: Record<string, unknown>) =>
+    tx.user.findUnique.mockImplementation(
+      ({ select }: { select?: Record<string, unknown> }) =>
+        Promise.resolve(asSelected(row, select)),
+    );
 
   describe('handleConnection (auth path)', () => {
     it('disconnects a socket with no token before verifying anything', async () => {
@@ -166,7 +195,7 @@ describe('RealtimeGateway', () => {
 
     it('resolves the profile via withVerifiedSubject scoped to the verified sub', async () => {
       jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
-      tx.user.findUnique.mockResolvedValue(activeProfileRow());
+      arrangeProfile(activeProfileRow());
       const client = makeSocket({ token: TOKEN });
 
       await connect(client);
@@ -198,7 +227,7 @@ describe('RealtimeGateway', () => {
 
     it('disconnects a deactivated profile even though the row exists', async () => {
       jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
-      tx.user.findUnique.mockResolvedValue(
+      arrangeProfile(
         activeProfileRow({ isActive: false }),
       );
       const client = makeSocket({ token: TOKEN });
@@ -211,7 +240,7 @@ describe('RealtimeGateway', () => {
 
     it('puts staff in the school room with a PII-reduced label', async () => {
       jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
-      tx.user.findUnique.mockResolvedValue(activeProfileRow());
+      arrangeProfile(activeProfileRow());
       const client = makeSocket({ token: TOKEN });
 
       await connect(client);
@@ -231,6 +260,21 @@ describe('RealtimeGateway', () => {
       });
     });
 
+    it('counts a teacher as staff, not only an admin', async () => {
+      // The staff room is teachers' and school admins' alike: a teacher hears
+      // master-timetable changes and editor presence as much as an admin does.
+      jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
+      arrangeProfile(activeProfileRow({ role: 'TEACHER' }));
+      const client = makeSocket({ token: TOKEN });
+
+      await connect(client);
+
+      expect(client.join).toHaveBeenCalledWith([
+        `user:${USER_ID}`,
+        `staff:${SCHOOL_ID}`,
+      ]);
+    });
+
     it.each(['STUDENT', 'GUARDIAN'])(
       'leaves a %s out of the staff room entirely',
       async (role) => {
@@ -239,7 +283,7 @@ describe('RealtimeGateway', () => {
         // room, status and roster of lessons the database refuses to show them.
         // A socket is not a lighter-weight way in than a query.
         jwt.verifyAsync.mockResolvedValue({ sub: AUTH_ID });
-        tx.user.findUnique.mockResolvedValue(activeProfileRow({ role }));
+        arrangeProfile(activeProfileRow({ role }));
         const client = makeSocket({ token: TOKEN });
 
         await connect(client);

@@ -19,6 +19,27 @@ import type { CreateUserDto } from './dto/user.dto';
 import type { SupabaseAdminService } from './supabase-admin.service';
 import { UsersService } from './users.service';
 
+/**
+ * A row as Prisma returns it: only the fields the query selected. The shared
+ * mock resolves whatever a spec stubs, whole, so a field the service stopped
+ * selecting would still reach its output here and be undefined in production.
+ */
+const asSelected = (row: unknown, select?: Record<string, unknown>): unknown => {
+  if (!select || row === null || typeof row !== 'object') return row;
+  if (Array.isArray(row)) return row.map((item) => asSelected(item, select));
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, wanted]) => Boolean(wanted))
+      .map(([field, wanted]) => [
+        field,
+        asSelected(
+          (row as Record<string, unknown>)[field],
+          (wanted as { select?: Record<string, unknown> }).select,
+        ),
+      ]),
+  );
+};
+
 const USER_ID = '66666666-6666-4666-8666-666666666666';
 const AUTH_ID = '77777777-7777-4777-8777-777777777777';
 const GROUP_ID = '88888888-8888-4888-8888-888888888888';
@@ -57,6 +78,13 @@ describe('UsersService', () => {
   afterEach(() => {
     jest.restoreAllMocks();
   });
+
+  /** A user row as the lookup returns it: only the columns the query selected. */
+  const arrangeUser = (row: Record<string, unknown> | null) =>
+    tx.user.findUnique.mockImplementation(
+      ({ select }: { select?: Record<string, unknown> }) =>
+        Promise.resolve(asSelected(row, select)),
+    );
 
   const createDto = (overrides: Partial<CreateUserDto> = {}): CreateUserDto => ({
     role: UserRole.TEACHER,
@@ -167,6 +195,18 @@ describe('UsersService', () => {
       );
     });
 
+    it('stores the phone number it was given', async () => {
+      tx.user.create.mockResolvedValue({ id: USER_ID });
+
+      await service.create(createDto({ phone: '+46701234567' }), testUser());
+
+      expect(tx.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ phone: '+46701234567' }),
+        }),
+      );
+    });
+
     it('keeps the student group for a STUDENT', async () => {
       tx.user.create.mockResolvedValue({ id: USER_ID });
 
@@ -188,7 +228,9 @@ describe('UsersService', () => {
     it('rejects a group assignment for a non-student before touching anything', async () => {
       await expect(
         service.create(createDto({ studentGroupId: GROUP_ID }), testUser()),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('Only students can be assigned to a student group.'),
+      );
 
       expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
       expect(prisma.withRls).not.toHaveBeenCalled();
@@ -210,7 +252,12 @@ describe('UsersService', () => {
 
       await expect(
         service.create(createDto({ sendInvitation: true }), testUser()),
-      ).rejects.toThrow(ServiceUnavailableException);
+      ).rejects.toThrow(
+        // Says what to do, and nothing of what GoTrue said.
+        new ServiceUnavailableException(
+          'Could not send the invitation email. Please try again.',
+        ),
+      );
 
       // Nothing was sent, so "create and invite" keeps its all-or-nothing
       // promise — and the row we drop is our own, seconds old, with a
@@ -242,7 +289,11 @@ describe('UsersService', () => {
 
       await expect(
         service.create(createDto({ sendInvitation: true }), testUser()),
-      ).rejects.toThrow(ServiceUnavailableException);
+      ).rejects.toThrow(
+        new ServiceUnavailableException(
+          'Invitations are not configured for this deployment.',
+        ),
+      );
 
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
@@ -275,7 +326,7 @@ describe('UsersService', () => {
     });
 
     it('adopts the real identity, replacing the placeholder that blocked sign-in', async () => {
-      tx.user.findUnique.mockResolvedValue(target());
+      arrangeUser(target());
       tx.user.update.mockResolvedValue({ id: USER_ID });
 
       await expect(service.invite(USER_ID, testUser())).resolves.toEqual({
@@ -283,6 +334,9 @@ describe('UsersService', () => {
         emailSent: true,
       });
 
+      expect(tx.user.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: USER_ID } }),
+      );
       expect(supabaseAdmin.inviteUser).toHaveBeenCalledWith('anna@school.se');
       const args = tx.user.update.mock.calls[0][0] as {
         where: { id: string };
@@ -296,7 +350,7 @@ describe('UsersService', () => {
     it('reports honestly when the address already had an identity', async () => {
       // No email leaves GoTrue in this case; claiming one did would send the
       // admin waiting for a message that is never coming.
-      tx.user.findUnique.mockResolvedValue(target());
+      arrangeUser(target());
       tx.user.update.mockResolvedValue({ id: USER_ID });
       supabaseAdmin.inviteUser.mockResolvedValue({
         authId: AUTH_ID,
@@ -310,26 +364,28 @@ describe('UsersService', () => {
     });
 
     it('404s an id the caller cannot see', async () => {
-      tx.user.findUnique.mockResolvedValue(null);
+      arrangeUser(null);
 
       await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
-        NotFoundException,
+        new NotFoundException('The requested record does not exist.'),
       );
       expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
     });
 
     it('refuses to invite a deactivated person', async () => {
-      tx.user.findUnique.mockResolvedValue(target({ isActive: false }));
+      arrangeUser(target({ isActive: false }));
 
       await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
-        BadRequestException,
+        new BadRequestException(
+          'Inactive people cannot be invited. Reactivate them first.',
+        ),
       );
       expect(supabaseAdmin.inviteUser).not.toHaveBeenCalled();
     });
 
     it('leaves the row untouched when the provider fails', async () => {
       jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-      tx.user.findUnique.mockResolvedValue(target());
+      arrangeUser(target());
       supabaseAdmin.inviteUser.mockRejectedValue(new Error('gotrue down'));
 
       await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
@@ -342,7 +398,7 @@ describe('UsersService', () => {
       // The identity survives on purpose: the invitation link is already in
       // the person's inbox, and re-inviting adopts the same identity again.
       jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-      tx.user.findUnique.mockResolvedValue(target());
+      arrangeUser(target());
       tx.user.update.mockRejectedValue(knownError('P2025'));
 
       await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
@@ -355,7 +411,9 @@ describe('UsersService', () => {
       supabaseAdmin.isConfigured = false;
 
       await expect(service.invite(USER_ID, testUser())).rejects.toThrow(
-        ServiceUnavailableException,
+        new ServiceUnavailableException(
+          'Invitations are not configured for this deployment.',
+        ),
       );
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
@@ -369,7 +427,7 @@ describe('UsersService', () => {
     });
 
     it('counts sent and already-registered separately', async () => {
-      tx.user.findUnique.mockResolvedValue({
+      arrangeUser({
         id: USER_ID,
         email: 'anna@school.se',
         isActive: true,
@@ -390,7 +448,7 @@ describe('UsersService', () => {
       // Each invitation is an external side effect no transaction can undo,
       // so one bad address must not discard the invitations already sent.
       jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-      tx.user.findUnique.mockResolvedValue({
+      arrangeUser({
         id: USER_ID,
         email: 'anna@school.se',
         isActive: true,
@@ -408,7 +466,7 @@ describe('UsersService', () => {
     });
 
     it('reports a deactivated person as an error rather than skipping silently', async () => {
-      tx.user.findUnique.mockResolvedValue({
+      arrangeUser({
         id: USER_ID,
         email: 'anna@school.se',
         isActive: false,
@@ -425,7 +483,7 @@ describe('UsersService', () => {
     beforeEach(() => {
       // Every patch is judged against the row it lands on, so the stored role
       // and group have to exist for any of these to reach the write at all.
-      tx.user.findUnique.mockResolvedValue({
+      arrangeUser({
         role: UserRole.STUDENT,
         studentGroupId: null,
       });
@@ -440,6 +498,10 @@ describe('UsersService', () => {
       ).resolves.toEqual({ id: USER_ID });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+      // The row the students-only rule is judged on is the row being written.
+      expect(tx.user.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: USER_ID } }),
+      );
       expect(tx.user.update).toHaveBeenCalledWith({
         where: { id: USER_ID },
         data: { firstName: 'Maja' },
@@ -493,7 +555,9 @@ describe('UsersService', () => {
           { role: UserRole.TEACHER, studentGroupId: GROUP_ID },
           testUser(),
         ),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(
+        new BadRequestException('Only students can be assigned to a student group.'),
+      );
 
       expect(tx.user.update).not.toHaveBeenCalled();
     });
@@ -502,7 +566,7 @@ describe('UsersService', () => {
       // The patch alone looks innocent. app.current_user_group_id() does not
       // read roles, so a teacher left sitting in a student group is handed the
       // students' view of that group's lessons.
-      tx.user.findUnique.mockResolvedValue({
+      arrangeUser({
         role: UserRole.TEACHER,
         studentGroupId: null,
       });
@@ -517,7 +581,7 @@ describe('UsersService', () => {
     it('rejects a role change that would leave a group behind', async () => {
       // The other door to the same row: the group is already stored, and the
       // patch only moves the person out of being a student.
-      tx.user.findUnique.mockResolvedValue({
+      arrangeUser({
         role: UserRole.STUDENT,
         studentGroupId: GROUP_ID,
       });
@@ -532,7 +596,7 @@ describe('UsersService', () => {
     it('allows that same role change when the patch clears the group with it', async () => {
       // The control: the rule is about the merged row, so the legitimate
       // "this person is staff now" edit must still go through.
-      tx.user.findUnique.mockResolvedValue({
+      arrangeUser({
         role: UserRole.STUDENT,
         studentGroupId: GROUP_ID,
       });
@@ -564,11 +628,11 @@ describe('UsersService', () => {
     });
 
     it('404s an id the caller cannot see before validating anything', async () => {
-      tx.user.findUnique.mockResolvedValue(null);
+      arrangeUser(null);
 
       await expect(
         service.update(USER_ID, { studentGroupId: GROUP_ID }, testUser()),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(new NotFoundException('The requested record does not exist.'));
 
       expect(tx.user.update).not.toHaveBeenCalled();
     });
@@ -620,7 +684,7 @@ describe('UsersService', () => {
       tx.user.findUnique.mockResolvedValue(null);
 
       await expect(service.remove(USER_ID, testUser())).rejects.toThrow(
-        NotFoundException,
+        new NotFoundException('The requested record does not exist.'),
       );
 
       expect(tx.user.delete).not.toHaveBeenCalled();

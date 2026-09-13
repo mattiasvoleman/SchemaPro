@@ -71,4 +71,17 @@ describe('validateEnv', () => {
       expect((error as Error).message).not.toContain(secret);
     }
   });
+
+  it('refuses an environment missing required variables and names every one of them', () => {
+    // A secret nobody copied into a new deployment is the commonest
+    // misconfiguration there is; it must not be the one that boots.
+    const incomplete: Record<string, unknown> = { ...valid() };
+    delete incomplete['DATABASE_URL'];
+    delete incomplete['JWT_SECRET'];
+
+    expect(() => validateEnv(incomplete)).toThrow(
+      'Invalid or missing environment variables: DATABASE_URL, JWT_SECRET. ' +
+        'See .env.example for the required configuration.',
+    );
+  });
 });

@@ -15,6 +15,10 @@ describe('rethrowPrismaError', () => {
     expect(() => rethrowPrismaError(knownError('P2025'))).toThrow(
       NotFoundException,
     );
+    // The sentence is what the caller reads as the problem's detail.
+    expect(() => rethrowPrismaError(knownError('P2025'))).toThrow(
+      'The requested record does not exist.',
+    );
   });
 
   it('maps P2002 (unique constraint) to 409', () => {
@@ -41,6 +45,15 @@ describe('rethrowPrismaError', () => {
   it('rethrows an unmapped Prisma error code unchanged', () => {
     const error = knownError('P2010');
     expect(() => rethrowPrismaError(error)).toThrow(error);
+  });
+
+  it('maps only Prisma’s own errors, not another error carrying the same code', () => {
+    // Anything can have a `code`. Only a PrismaClientKnownRequestError is
+    // Prisma saying that a record is missing.
+    const lookalike = Object.assign(new Error('from somewhere else'), {
+      code: 'P2025',
+    });
+    expect(() => rethrowPrismaError(lookalike)).toThrow(lookalike);
   });
 
   it('rethrows a non-Prisma error unchanged', () => {

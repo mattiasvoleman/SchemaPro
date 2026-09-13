@@ -17,6 +17,27 @@ import type { PrismaService } from '../database/prisma.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { RoomBookingsService } from './room-bookings.service';
 
+/**
+ * A row as Prisma returns it: only the fields the query selected. The shared
+ * mock resolves whatever a spec stubs, whole, so a field the service stopped
+ * selecting would still reach its output here and be undefined in production.
+ */
+const asSelected = (row: unknown, select?: Record<string, unknown>): unknown => {
+  if (!select || row === null || typeof row !== 'object') return row;
+  if (Array.isArray(row)) return row.map((item) => asSelected(item, select));
+  return Object.fromEntries(
+    Object.entries(select)
+      .filter(([, wanted]) => Boolean(wanted))
+      .map(([field, wanted]) => [
+        field,
+        asSelected(
+          (row as Record<string, unknown>)[field],
+          (wanted as { select?: Record<string, unknown> }).select,
+        ),
+      ]),
+  );
+};
+
 const NOW = new Date('2026-08-05T08:00:00.000Z');
 const ROOM_ID = '44444444-4444-4444-8444-444444444444';
 const BOOKING_ID = '55555555-5555-4555-8555-555555555555';
@@ -54,10 +75,14 @@ describe('RoomBookingsService', () => {
 
   /** Default happy path: room exists, nothing clashes, create succeeds. */
   const arrangeFreeRoom = (requiresApproval = false) => {
-    tx.room.findUnique.mockResolvedValue({ id: ROOM_ID, requiresApproval });
+    tx.room.findUnique.mockImplementation(({ select }: any) =>
+      Promise.resolve(
+        asSelected({ id: ROOM_ID, name: 'Aula', requiresApproval }, select),
+      ),
+    );
     tx.calendarLesson.findFirst.mockResolvedValue(null);
-    tx.roomBooking.create.mockImplementation(({ data }: any) =>
-      Promise.resolve({ id: BOOKING_ID, status: data.status }),
+    tx.roomBooking.create.mockImplementation(({ data, select }: any) =>
+      Promise.resolve(asSelected({ id: BOOKING_ID, ...data }, select)),
     );
   };
 
@@ -152,12 +177,15 @@ describe('RoomBookingsService', () => {
     });
 
     it('rejects a zero-length range', async () => {
+      // A free room is arranged so that nothing but the range can refuse.
+      arrangeFreeRoom();
+
       await expect(
         service.create(
           dto({ endsAt: '2026-08-05T10:00:00.000Z' }) as any,
           testUser(),
         ),
-      ).rejects.toThrow(BadRequestException);
+      ).rejects.toThrow(new BadRequestException('endsAt must be after startsAt.'));
     });
 
     it('rejects a booking that has already ended', async () => {
@@ -172,6 +200,17 @@ describe('RoomBookingsService', () => {
       ).rejects.toThrow('Bookings must be in the future.');
     });
 
+    it('rejects a booking that ends at this very instant', async () => {
+      arrangeFreeRoom();
+
+      await expect(
+        service.create(
+          dto({ startsAt: '2026-08-05T07:00:00.000Z', endsAt: NOW.toISOString() }) as any,
+          testUser(),
+        ),
+      ).rejects.toThrow('Bookings must be in the future.');
+    });
+
     it('rejects an unknown room before touching availability', async () => {
       tx.room.findUnique.mockResolvedValue(null);
 
@@ -181,6 +220,16 @@ describe('RoomBookingsService', () => {
       expect(tx.calendarLesson.findFirst).not.toHaveBeenCalled();
     });
 
+    it('looks up the room the booking names, not some other row', async () => {
+      arrangeFreeRoom();
+
+      await service.create(dto() as any, testUser());
+
+      expect(tx.room.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: ROOM_ID } }),
+      );
+    });
+
     it('rejects a slot occupied by a scheduled lesson', async () => {
       arrangeFreeRoom();
       tx.calendarLesson.findFirst.mockResolvedValue({ id: 'lesson-1' });
@@ -188,7 +237,7 @@ describe('RoomBookingsService', () => {
       // The row is written before the room is asked about — that is what makes
       // the answer hold — and the throw is what takes it back out again.
       await expect(service.create(dto() as any, testUser())).rejects.toThrow(
-        ConflictException,
+        new ConflictException('A scheduled lesson already uses that room then.'),
       );
     });
 
@@ -227,6 +276,22 @@ describe('RoomBookingsService', () => {
       );
     });
 
+    it('does not read every unknown-request error as the room being taken', async () => {
+      // Prisma wraps any SQLSTATE it has no code for the same way, a deadlock
+      // included. Answering that with "already booked" would send a teacher to
+      // look for another time for a room that is free.
+      arrangeFreeRoom();
+      const deadlock = new Prisma.PrismaClientUnknownRequestError(
+        'Error occurred during query execution:\nConnectorError(ConnectorError ' +
+          '{ kind: QueryError(PostgresError { code: "40P01", message: ' +
+          '"deadlock detected" }) })',
+        { clientVersion: '0.0.0' },
+      );
+      tx.roomBooking.create.mockRejectedValue(deadlock);
+
+      await expect(service.create(dto() as any, testUser())).rejects.toBe(deadlock);
+    });
+
     it('uses a half-open overlap window so back-to-back slots do not clash', async () => {
       arrangeFreeRoom();
 
@@ -249,17 +314,21 @@ describe('RoomBookingsService', () => {
 
   describe('cancel', () => {
     const arrangeBooking = (overrides: Record<string, unknown> = {}) => {
-      tx.roomBooking.findUnique.mockResolvedValue({
+      const row = {
         id: BOOKING_ID,
+        roomId: ROOM_ID,
         bookedById: OWNER_ID,
+        title: 'Rehearsal',
         status: 'APPROVED',
         endsAt: new Date('2026-08-05T11:00:00.000Z'),
         ...overrides,
-      });
-      tx.roomBooking.update.mockResolvedValue({
-        id: BOOKING_ID,
-        status: 'CANCELLED',
-      });
+      };
+      tx.roomBooking.findUnique.mockImplementation(({ select }: any) =>
+        Promise.resolve(asSelected(row, select)),
+      );
+      tx.roomBooking.update.mockImplementation(({ data, select }: any) =>
+        Promise.resolve(asSelected({ ...row, ...data }, select)),
+      );
     };
 
     it('lets the booker cancel their own booking', async () => {
@@ -283,7 +352,9 @@ describe('RoomBookingsService', () => {
 
       await expect(
         service.cancel(BOOKING_ID, testUser({ role: Role.TEACHER })),
-      ).rejects.toThrow(ForbiddenException);
+      ).rejects.toThrow(
+        new ForbiddenException('Only the booker may cancel this booking.'),
+      );
       expect(tx.roomBooking.update).not.toHaveBeenCalled();
     });
 
@@ -291,7 +362,7 @@ describe('RoomBookingsService', () => {
       tx.roomBooking.findUnique.mockResolvedValue(null);
 
       await expect(service.cancel(BOOKING_ID, testUser())).rejects.toThrow(
-        NotFoundException,
+        new NotFoundException('Booking not found.'),
       );
     });
 
@@ -313,6 +384,22 @@ describe('RoomBookingsService', () => {
         service.cancel(BOOKING_ID, testUser()),
       ).resolves.toMatchObject({ status: 'CANCELLED' });
     });
+
+    it('checks and closes the booking it was asked about', async () => {
+      arrangeBooking();
+
+      await service.cancel(BOOKING_ID, testUser({ role: Role.TEACHER }));
+
+      expect(tx.roomBooking.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: BOOKING_ID } }),
+      );
+      expect(tx.roomBooking.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: BOOKING_ID },
+          data: { status: 'CANCELLED' },
+        }),
+      );
+    });
   });
 
   describe('decide', () => {
@@ -330,10 +417,13 @@ describe('RoomBookingsService', () => {
     });
 
     const arrangePending = (overrides: Record<string, unknown> = {}) => {
-      tx.roomBooking.findUnique.mockResolvedValue(pending(overrides));
+      const row = pending(overrides);
+      tx.roomBooking.findUnique.mockImplementation(({ select }: any) =>
+        Promise.resolve(asSelected(row, select)),
+      );
       tx.calendarLesson.findFirst.mockResolvedValue(null);
-      tx.roomBooking.update.mockImplementation(({ data }: any) =>
-        Promise.resolve({ id: BOOKING_ID, status: data.status }),
+      tx.roomBooking.update.mockImplementation(({ data, select }: any) =>
+        Promise.resolve(asSelected({ ...row, ...data }, select)),
       );
     };
 
@@ -344,8 +434,12 @@ describe('RoomBookingsService', () => {
         service.decide(BOOKING_ID, { status: 'APPROVED' }, testUser()),
       ).resolves.toEqual({ id: BOOKING_ID, status: 'APPROVED' });
 
+      expect(tx.roomBooking.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: BOOKING_ID } }),
+      );
       expect(tx.roomBooking.update).toHaveBeenCalledWith(
         expect.objectContaining({
+          where: { id: BOOKING_ID },
           data: expect.objectContaining({
             status: 'APPROVED',
             decidedById: OWNER_ID,
@@ -420,6 +514,47 @@ describe('RoomBookingsService', () => {
       );
     });
 
+    it('tells the requester in both languages that it was approved, with the note', async () => {
+      arrangePending();
+
+      await service.decide(
+        BOOKING_ID,
+        { status: 'APPROVED', note: 'Enjoy' },
+        testUser(),
+      );
+
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          email: {
+            subject: 'Room booking approved / Lokalbokning godkänd',
+            body:
+              'Your booking of Aula (Rehearsal) at 2026-08-05T10:00:00.000Z was approved.\n' +
+              'Note: Enjoy\n\n' +
+              'Din bokning av Aula (Rehearsal) 2026-08-05T10:00:00.000Z godkändes.',
+          },
+        }),
+      );
+    });
+
+    it('words a rejection as rejected and avslagen, with no note line when none was given', async () => {
+      arrangePending();
+
+      await service.decide(BOOKING_ID, { status: 'REJECTED' }, testUser());
+
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({
+          email: {
+            subject: 'Room booking rejected / Lokalbokning avslagen',
+            body:
+              'Your booking of Aula (Rehearsal) at 2026-08-05T10:00:00.000Z was rejected.\n\n' +
+              'Din bokning av Aula (Rehearsal) 2026-08-05T10:00:00.000Z avslogs.',
+          },
+        }),
+      );
+    });
+
     it('carries the decision note through to the stored row', async () => {
       arrangePending();
 
@@ -441,7 +576,7 @@ describe('RoomBookingsService', () => {
 
       await expect(
         service.decide(BOOKING_ID, { status: 'APPROVED' }, testUser()),
-      ).rejects.toThrow(NotFoundException);
+      ).rejects.toThrow(new NotFoundException('Booking not found.'));
     });
 
     it.each(['APPROVED', 'REJECTED', 'CANCELLED'])(
