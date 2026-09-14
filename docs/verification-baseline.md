@@ -390,16 +390,21 @@ Ten route shares: min 0.2259, median 0.2474, mean 0.2475, max 0.2648,
 σ 0.0104 (CV 4.2%). Range ÷ min is 17.2%, and the worst drop below the median
 is 8.7% — 34839849296's jobs row, the same window whose p99 was 181ms.
 
-**Threshold: 0.20, and exactly 0.20 passes.** Three independent rules land on
-it:
+**Threshold: 0.20, and exactly 0.20 passes.** The rules that bound it land
+within about 1% of it on either side:
 
-- min − (median − min) = 2 × 0.2259 − 0.2474 = 0.2043 → 0.20.
-- mean − 4σ = 0.2061 → 0.20; the one-sided 99%/95% tolerance factor for
-  n = 10 is about 3.98.
-- median × (1 − max(20%, 17.2%)) = 0.2474 × 0.80 = 0.1979 → 0.20, the margin
-  rule behind the 140ms budget this replaces.
+- min − (median − min) = 2 × 0.2259 − 0.2474 = 0.2043.
+- median × (1 − max(20%, 17.2%)) = 0.2474 × 0.80 = 0.1979, the margin rule
+  behind the 140ms budget this replaces.
+- A one-sided 99%/95% tolerance bound over runs: 0.2475 − 5.74 × 0.0087 =
+  0.1976 from the five runs' mean shares (0.242, 0.251, 0.247, 0.237, 0.260),
+  5.74 being the factor for n = 5. Not over the ten route shares: a run's two
+  reads divide by the same health window, so they are not ten independent
+  draws, and treating them as such (0.2475 − 3.98 × 0.0104 = 0.2061) would
+  claim more evidence than five runs hold.
 
-The lowest share seen is 12.9% above 0.20, 1.5× the worst drop seen, and from
+0.20 is the round number in 0.198–0.204, about 1% tighter than the two lower
+bounds. The lowest share seen is 12.9% above 0.20, 1.5× the worst drop seen, and from
 the median it takes a 19.2% drop to fail, 2.2× the worst drop. At 0.21 the
 lowest observation would sit 7.6% above the line, less than the 8.7% drop
 already seen; at 0.19 a typical run would need a +30% cost increase to fail,
@@ -421,25 +426,54 @@ above 5.65ms (+1.1ms per request); 34838510625's cost 0.74 and 2.99ms and fail
 above 3.69ms (+0.7ms). In general the increase that fails is health's cost ×
 (1/0.20 − 1/share): about one health request.
 
-Paired local measurements in the perf commits' bodies give yardsticks —
-indicative only, not measured on the runner:
+**What that reaches, on the runner.** Two older runs of the same command — 25
+connections, 20s per read, zero non-2xx in every row — measure it on real
+changes. Both ran the benchmark client on Node 20, where the runs since
+`15edbcc` use 22; 34825468923 on `48c82db` also ran on Node 20, and its shares
+of 0.241 and 0.242 sit inside the Node 22 runs' range, so the client's runtime
+does not account for the difference. Latencies are p50/p99 in ms.
 
-- Reverting `ccb2d80` cost −7% to −24% req/s, median −16%. At −16% a read fails
-  only where its share was below 0.238, 1 of the 10 observations; at −24%, 9 of
-  10. A median-sized revert of that commit would usually pass.
-- Reverting `e1e2789` and `e1d90c1` cost −20% to −27%: 7 to 10 of the 10
-  observations fail.
-- Catching a single commit of ~15% reliably needs less noise per route, e.g.
-  several rounds per read at about 40s a night per extra round. Not part of
-  this change.
+| Run | Commit | health | schedule-versions | optimization/jobs | Verdict |
+| :--- | :--- | ---: | ---: | ---: | :--- |
+| 34680196887 | `7634a55`, nightly | 1874 req/s, 11/29 | 252 req/s, 95/144, share **0.134** | 259 req/s, 94/129, share **0.138** | FAIL |
+| 34754776477 | `a017b19`, dispatch | 1703 req/s, 13/36 | 363 req/s, 65/136, share **0.213** | 371 req/s, 65/105, share **0.218** | PASS |
+
+- **#60's perf work reverted passes.** `git log a017b19..48c82db` is exactly
+  the rebased `e1d90c1`, `e1e2789` and `ccb2d80`, and `src` outside its tests
+  is identical between `48c82db` and `849858c`, so 34754776477 is today's
+  stack with those three commits reverted. Its mean share, 0.2155, is 12.9%
+  below the five runs' 0.2475, and 13.3% below 34839849296 and 34839859422 on
+  the same runner cluster (1703–1771 req/s). It is one run and carries one
+  run's noise. Applied to the ten observations, a 13% lower share fails only
+  where the share was below 0.230: 1 of 10. The local measurements in those
+  commits' bodies (reverting `ccb2d80` −7% to −24% req/s, `e1e2789` and
+  `e1d90c1` −20% to −27%) come from Docker Desktop, whose shape this gate does
+  not share; an earlier version of this section used them to claim the second
+  revert would fail 7 to 10 of the 10 observations.
+- **The stack before the pool fix fails.** From `7634a55` to `a017b19` the
+  shares rose 1.57×. At `68d0a08` they were still 0.136 and 0.139 (34745482891,
+  a run its write's 24/24 403 makes invalid), so the rise lies in the four
+  commits after it: the benchmark's write fixed (`7b63991`), identity looked up
+  once instead of twice (`80e60a4`), the API's pool sized to the 25 connections
+  the stack runs (`6c8917c`) and the throttler's window storage (`a017b19`). A
+  regression that size, −36% of the share, fails in every runner state seen.
+- **So the gate catches a read roughly a quarter to a third more expensive,**
+  not a change the size of #60's perf work. The ten shares' own spread — worst
+  drop 8.7% below the median — is most of that 13%, so no floor between them
+  both catches it and leaves room for the noise. That needs less noise per
+  route first, e.g. several rounds per read at about 40s a night per extra
+  round. Not part of this change.
+
+The unit test holds both runs to these verdicts.
 
 **What the share cannot see.** A regression on the path health shares — the
 framework, the pool, a global interceptor — slows health too, and the share
 rises. Only the health guard can catch that, and only when it is large: if
 health's p99 grows with its cost, the p99 guard fires at +56% on the runs at
 32ms and +127% on 34838510625 at 22ms. An upper limit on the share was
-rejected: the recent auth-path perf commits moved read req/s by +8% to +37%,
-and a ceiling would fail the nightly on every such improvement.
+rejected: #60's three perf commits raised the shares about 15% on the runner
+(0.2155 → 0.2475), and a ceiling would fail the nightly on every such
+improvement.
 
 **The health guard.**
 

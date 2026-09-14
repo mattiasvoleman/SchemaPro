@@ -185,6 +185,42 @@ test('reads 33% more expensive per request fail in every runner state seen; 12% 
   }
 });
 
+// What that reaches on real changes, from two older runs of the same command.
+// git log a017b19..48c82db is exactly e1d90c1, e1e2789 and ccb2d80, rebased,
+// and src outside its tests is identical between 48c82db and 849858c: the
+// first run is today's stack with #60's three auth/RLS perf commits reverted.
+// The second predates 80e60a4 (identity looked up once, not twice) and 6c8917c
+// (the pool sized to the 25 connections).
+const BEFORE = {
+  // a017b19, dispatched 2026-09-13.
+  34754776477: runOf({
+    health: [13, 36, 225, 1703, 34055],
+    versions: [65, 136, 404, 363, 7255],
+    jobs: [65, 105, 171, 371, 7429],
+    write: [50, 174, 174, 24],
+  }),
+  // 7634a55, nightly 2026-09-12.
+  34680196887: runOf({
+    health: [11, 29, 189, 1874, 37485],
+    versions: [95, 144, 198, 252, 5033],
+    jobs: [94, 129, 166, 259, 5183],
+    write: [49, 189, 189, 24],
+  }),
+};
+
+test("on real runs the gate misses #60's perf commits reverted and catches the pool before its fix", () => {
+  const reverted = gate(BEFORE[34754776477]);
+  assert.equal(exitCodeOf(reverted), 0, report(reverted));
+  assert.ok(has(reverted, '✓ read share', 'GET /api/v1/schedule-versions', '0.213 ≥ 0.20'));
+  assert.ok(has(reverted, '✓ read share', 'GET /api/v1/optimization/jobs', '0.218 ≥ 0.20'));
+
+  const pool = gate(BEFORE[34680196887]);
+  assert.equal(exitCodeOf(pool), 1, report(pool));
+  assert.ok(has(pool, '✗ read share', 'GET /api/v1/schedule-versions', '0.134 < 0.20'));
+  assert.ok(has(pool, '✗ read share', 'GET /api/v1/optimization/jobs', '0.138 < 0.20'));
+  assert.equal(pool.lines.at(-1), 'FAIL: 2 gate(s) failed.');
+});
+
 test('the share is compared unrounded: 354 ÷ 1771 fails, 355 ÷ 1771 passes, exactly 0.20 passes', () => {
   const low = gate(edit(D, 'read:optimization-jobs', { rps: 354 }));
   assert.equal(exitCodeOf(low), 1);

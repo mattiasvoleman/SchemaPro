@@ -22,11 +22,21 @@
  * cancels the runner's speed. Over five runs, ten route shares, it ranged
  * 0.2259–0.2648 (median 0.2474) while health itself ranged 1722–2708 req/s.
  *
- * READ_SHARE_MIN = 0.20; exactly 0.20 passes. Three rules land there: min −
- * (median − min) = 0.2043, mean − 4σ = 0.2061, median × 0.8 = 0.1979. The
- * lowest share seen is 13% above it. A read whose per-request cost grows by x
- * fails when share ÷ (1 + x) < 0.20: from +12.9% in the slowest runner state
- * seen, +23.7% at the median, and in every state seen from +32.4%.
+ * READ_SHARE_MIN = 0.20; exactly 0.20 passes. The rules that bound it give
+ * 0.198–0.204: min − (median − min) = 0.2043, median × 0.8 = 0.1979, and a
+ * one-sided 99%/95% tolerance bound over the five runs' mean shares, 0.1976 —
+ * over runs, not the ten route shares, because a run's two reads divide by
+ * one health window. The lowest share seen is 13% above 0.20. A read whose
+ * per-request cost grows by x fails when share ÷ (1 + x) < 0.20: from +12.9%
+ * at the lowest share seen, +23.7% at the median, and in every state seen
+ * from +32.4%.
+ *
+ * WHAT THAT REACHES, ON THE RUNNER. 34680196887 on 7634a55, before the pool
+ * was sized to the load and identity looked up once, measured shares of 0.134
+ * and 0.138 and fails. 34754776477 on a017b19 — today's stack with #60's three
+ * auth/RLS perf commits reverted, shares 13% below today's — measured 0.213
+ * and 0.218 and passes. The gate catches a read a quarter to a third more
+ * expensive, not a change the size of that perf work.
  *
  * WHAT IT CANNOT SEE. A regression on the path health shares — the framework,
  * the pool, a global interceptor — slows health too, and the share rises. Only
