@@ -55,8 +55,9 @@ if (MEASURE_FLOOR && !(Number.isInteger(FLOOR_ROUNDS) && FLOOR_ROUNDS > 0)) {
  * Note on coverage: the gateway's *read* surface is deliberately small. The
  * web client queries Supabase directly (see web/lib/queries.ts), so this API
  * handles writes, AI proxying and the SS12000 integration feed rather than
- * list endpoints. These are the JWT-authenticated GETs that actually exist —
- * do not add invented paths here, they would measure 404s.
+ * list endpoints. The benchmark times two of the API's authenticated list
+ * reads, not every GET it has — and only paths that exist: an invented one
+ * would measure 404s.
  */
 const SCENARIOS = [
   {
@@ -71,9 +72,8 @@ const SCENARIOS = [
     //
     // A read much slower than this is therefore not slow "in its own query".
     // On CI's seed the two lists below return [] — the seed creates no schedule
-    // versions or optimization jobs — so their query is an index probe that
-    // finds nothing, and their distance above this row is that authenticated
-    // path.
+    // versions or optimization jobs — so their query matches no row, and their
+    // distance above this row is that authenticated path.
     request: { method: 'GET', path: '/health/ready' },
   },
   {
