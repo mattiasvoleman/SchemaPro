@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { PoolConfig } from 'pg';
+import { PrismaPgWithEndedTransactionGuard } from './ended-transaction-guard';
 
 /**
  * The API's connection pool, read from DATABASE_URL.
@@ -134,8 +135,14 @@ function errorCode(error: Error): string {
     : 'none';
 }
 
-/** The driver adapter PrismaClient needs. Nothing connects until first use. */
+/**
+ * The driver adapter PrismaClient needs. Nothing connects until first use.
+ *
+ * It is PrismaPg with ended-transaction-guard.ts around every transaction: a
+ * transaction that times out mid-plan would otherwise keep sending statements
+ * on a connection the pool has lent to the next request.
+ */
 export function createPgAdapter(databaseUrl: string | undefined): PrismaPg {
   const { pool, schema } = pgAdapterSettings(databaseUrl);
-  return new PrismaPg(pool, { schema, ...poolErrorLogging });
+  return new PrismaPgWithEndedTransactionGuard(pool, { schema, ...poolErrorLogging });
 }

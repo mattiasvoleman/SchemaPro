@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { PrismaPgWithEndedTransactionGuard } from './ended-transaction-guard';
 import { createPgAdapter, pgAdapterSettings, poolErrorLogging } from './pool-config';
 
 /** docker-compose.yml's API connection, which the latency gate sizes at 25. */
@@ -135,6 +136,10 @@ describe('createPgAdapter', () => {
 
   it('builds a PrismaPg adapter without connecting', () => {
     expect(createPgAdapter(COMPOSE_URL)).toBeInstanceOf(PrismaPg);
+  });
+
+  it('guards every transaction against statements sent after its end', () => {
+    expect(createPgAdapter(COMPOSE_URL)).toBeInstanceOf(PrismaPgWithEndedTransactionGuard);
   });
 
   it('refuses what the settings refuse', () => {
