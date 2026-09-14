@@ -83,7 +83,7 @@ creates a complete demo school ready for schedule generation.
 
 ### Prerequisites
 
-- Node.js 20+, npm
+- Node.js 22.12+, npm
 - A [Supabase](https://supabase.com) project (Auth + Postgres)
 - Python 3.11+ (for the AI engine)
 
@@ -92,7 +92,9 @@ creates a complete demo school ready for schedule generation.
 ```bash
 npm install
 cp .env.example .env       # fill in Supabase connection strings + JWT secret
-npm run migrate:deploy     # tables, indexes, RLS, policies
+# Migrations read the owner connection from DIRECT_URL on the command itself:
+# the Prisma CLI does not load .env (docs/DEPLOYMENT.md §2).
+DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres" npm run migrate:deploy
 npm run prisma:generate
 npm run dev:api            # http://localhost:4000
 ```

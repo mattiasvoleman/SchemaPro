@@ -63,15 +63,21 @@ All in the Supabase dashboard:
 Migrations run as the database owner (the `postgres` user), using the
 **direct** connection (port 5432), not the pooler.
 
-```bash
-# In the repo root — .env with the OWNER connection for this step:
-DATABASE_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres"
-DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres"
+That connection is `DIRECT_URL`, and the Prisma CLI reads it only from the
+environment of the command that runs it (through `prisma.config.ts`). Since
+Prisma 7 the CLI does not load `.env`, and it never falls back to
+`DATABASE_URL`, so give it on the command line:
 
+```bash
 npm ci
-npm run migrate:deploy    # tables, indexes, RLS, policies (both migrations)
-npm run migrate:status    # verify: "Database schema is up to date!"
+DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres" npm run migrate:status   # read-only: what is pending
+DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres" npm run migrate:deploy   # tables, indexes, RLS, policies
+DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres" npm run migrate:status   # verify: "Database schema is up to date!"
 ```
+
+`DIRECT_URL` is the owner connection and nothing else: `prisma migrate` and
+`npm run db:seed` use it, and the API never reads it, so it does not belong in
+the API's environment (step 5).
 
 ## 3. Create the API's least-privilege database role
 
@@ -138,7 +144,6 @@ Run it with (see `.env.example` for the full annotated list):
 | `PORT` | `4000` |
 | `CORS_ORIGINS` | web origin first (also used for invite links), e.g. `https://app.yourschool.example` |
 | `DATABASE_URL` | the pooled `app_authenticated` string from step 3 |
-| `DIRECT_URL` | same value (migrations are run separately, step 2) |
 | `JWT_SECRET` | Supabase JWT secret (first-party HS256 service tokens only) |
 | `JWT_ISSUER` | **required** — `https://<ref>.supabase.co/auth/v1`; the API reads Supabase's ES256 public keys from `<JWT_ISSUER>/.well-known/jwks.json` |
 | `JWT_AUDIENCE` | `authenticated` |
@@ -148,6 +153,10 @@ Run it with (see `.env.example` for the full annotated list):
 | `AI_ENGINE_API_KEY` | the shared secret from step 0 |
 | `AI_ENGINE_TIMEOUT_MS` | `90000` (must exceed the solver timeout) |
 | `THROTTLE_TTL_SECONDS` / `THROTTLE_LIMIT` | `60` / `120` |
+
+No `DIRECT_URL` here: that is the owner connection from step 2, and the API
+never reads it. Keeping owner credentials out of the API's environment is the
+point.
 
 Verify: any request without a bearer token returns `401` in the RFC-7807
 shape, e.g. `curl -i https://api.yourschool.example/api/v1/subjects -X POST`.

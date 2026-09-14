@@ -79,13 +79,17 @@ always preserves.
 ## Migration
 
 ```bash
-npx prisma migrate deploy   # 20260712100000_lesson_locking_and_change_log
+DIRECT_URL=<owner direct URL> npm run migrate:deploy
+                            # 20260712100000_lesson_locking_and_change_log
                             # 20260713080000_tier3_solver_and_job_history
                             # 20260713120000_co_teaching
                             # 20260713150000_lesson_participants
-npx prisma generate
+npm run prisma:generate      # needs no database
 cd web && npm install        # socket.io-client, jspdf, jspdf-autotable
 ```
+
+The owner connection goes on the command as `DIRECT_URL` (docs/DEPLOYMENT.md
+§2): since Prisma 7 the CLI reads no `.env` and never `DATABASE_URL`.
 
 Adds `MasterLessons.isLocked` + `coTeacherId`, `Subjects.requiredRoomType`, `TeachingRequirements.coTeacherId`, `ScheduleChangeLogs`, `ScheduleVersions`, `OptimizationJobs` (all RLS-protected, admin-only for the new tables).
 
