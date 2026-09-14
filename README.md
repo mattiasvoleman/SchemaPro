@@ -94,7 +94,7 @@ npm install
 cp .env.example .env       # fill in Supabase connection strings + JWT secret
 # Migrations read the owner connection from DIRECT_URL on the command itself:
 # the Prisma CLI does not load .env (docs/DEPLOYMENT.md §2).
-DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres" npm run migrate:deploy
+DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<ref>.supabase.co:5432/postgres?sslmode=require&uselibpqcompat=true" npm run migrate:deploy
 npm run prisma:generate
 npm run dev:api            # http://localhost:4000
 ```

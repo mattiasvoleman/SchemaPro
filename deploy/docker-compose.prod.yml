@@ -63,6 +63,8 @@ services:
       # silently disable every tenancy policy.
       # No DIRECT_URL: that is the owner connection the run book's migrate step
       # uses, and the API never reads it.
+      # Give the URL an sslmode (docs/DEPLOYMENT.md §3): without one, pg
+      # connects unencrypted.
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL (app_authenticated role, pooled)}
 
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (Supabase JWT secret)}
