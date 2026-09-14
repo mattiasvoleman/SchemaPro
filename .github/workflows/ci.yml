@@ -298,6 +298,27 @@ jobs:
       - name: RLS policy assertions
         run: ./scripts/test/run-rls-tests.sh
 
+      # The assertions above reach Postgres through psql, and the e2e suite
+      # mocks PrismaService, so until this step nothing here ran the API's own
+      # database layer against a database. Under Prisma 7 that layer is
+      # @prisma/adapter-pg over pg's pool, and the tenancy model rests on what
+      # they do with a transaction: claims gone at COMMIT on a reused
+      # connection, a batch's claims and query in one transaction, READ
+      # COMMITTED, a row lock held until commit. The probe asserts those through
+      # the real PrismaService and services, plus the error shapes they map (a
+      # double booking is a 409, a row in another school a 404) and that time
+      # and date columns read raw are the Dates the model API returns. Every
+      # assertion is decided by database state, never by a sleep.
+      #
+      # After the RLS step because it acts in the school its fixtures plant.
+      # A pool of two, so the URL's connection_limit is what sizes it; the
+      # probe narrows it to one where it needs a connection reused.
+      - name: Prisma adapter probe
+        env:
+          DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@localhost:5432/schemapro?schema=public&connection_limit=2
+          PROBE_OWNER_URL: postgresql://postgres:postgres_local@localhost:5432/schemapro
+        run: npx ts-node --transpile-only scripts/test/prisma-adapter-probe.ts
+
       - name: Database logs
         if: failure()
         run: docker compose logs db --no-color --tail=100
