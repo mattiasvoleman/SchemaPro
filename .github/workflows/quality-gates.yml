@@ -25,12 +25,12 @@ on:
         type: boolean
         default: true
       # A one-off measurement, not a gate: the api-latency job alone, which then
-      # also measures the authenticated-read floor and a 300-sample write after
-      # its gated scenarios (api-latency.mjs --floor). The other four jobs are
-      # skipped so the dispatch bills one job. On schedule `inputs` is empty, so
-      # every condition below is what it was and the nightly run is unchanged.
+      # also measures rounds of the authenticated-read floor after its gated
+      # scenarios (api-latency.mjs --floor). The other four jobs are skipped so
+      # the dispatch bills one job. On schedule `inputs` is empty, so every
+      # condition below is what it was and the nightly run is unchanged.
       latency_floor:
-        description: 'Run only the API latency job, plus the ungated authenticated-read floor and a 300-sample write'
+        description: 'Run only the API latency job, plus the ungated authenticated-read floor rounds'
         type: boolean
         default: false
 
@@ -252,7 +252,7 @@ jobs:
           --students 2000 --json
 
   api-latency:
-    name: API — P99 latency (50ms read / 150ms update)
+    name: API — P99 latency (140ms read / 150ms update)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:

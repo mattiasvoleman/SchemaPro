@@ -32,7 +32,7 @@ could be evaluated at all.
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
 | Solver, 2,000 students | ✗ 1,300 validated (~9.5 min); 2,000 now measured honestly: TIMEOUT at 570s |
 | Web dependency audit | ✓ pass (0/0/0) |
-| API P99 latency | — needs a seeded DB (CI only) |
+| API P99 latency | ✗ reads 87–107ms vs 50ms on the CI runner (gated at 140ms from its floor); write 104ms vs 150ms over 300 samples |
 | Lighthouse LCP/TTI | — not yet run |
 | Web unit coverage | ✗ 88.98% vs 95% (ratcheted at 87; harness landed) |
 | INP | — not lab-measurable at all |
@@ -267,8 +267,8 @@ so these are unblocked — `npm run bench:lighthouse`.
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
 | Schedule generation, 2,000 students | < 10s | **400 in <10s; 1,300 in ~9.5 min; 2,000 TIMEOUT at 570s** | ✗ |
-| API P99, reads | ≤ 50ms | **71–86ms** on list endpoints | ✗ |
-| API P99, updates | ≤ 150ms | **83ms** | ✓ |
+| API P99, reads | ≤ 50ms | **87–107ms** on list endpoints on the CI runner; gated at 140ms (below) | ✗ |
+| API P99, updates | ≤ 150ms | **104ms** over 300 samples on the CI runner | ✓ |
 
 ### API latency, measured against the real stack
 
@@ -294,8 +294,10 @@ around its query — token verification, the identity lookup's transaction, the
 guards and the RLS transaction the handler runs in. Writes pass with headroom.
 
 Caveats worth carrying: these are Docker Desktop numbers on a laptop VM, so
-treat them as relative rather than absolute — CI is the gating run. The write
-figure is 24 serial samples, not a flood (see below), so its p99 is indicative.
+treat them as relative rather than absolute — CI is the gating run, and its
+numbers and the budgets they set are further down. The write figure here is 24
+serial samples, not a flood, so its p99 is the slowest of them; the gate now
+takes 300.
 
 **The gateway's read surface is small by design.** The web client queries
 Supabase directly (`web/lib/queries.ts`); this API handles writes, AI proxying
@@ -308,10 +310,80 @@ throttler is 120 req/60s, and `POST /attendance/report` carries its own
 `@Throttle({ limit: 10, ttl: 30_000 })`. Under load 99.9% of responses were
 429, and the benchmark cheerfully reported PASS on the throttler's latency
 until the non-2xx guard was tightened from "all failed" to ">1% failed". The
-attendance route is now sampled serially at 3.2s intervals instead: 10 per 30s
-is 0.33 req/s and autocannon's minimum rate is 1 req/s, so the allowance cannot
-be expressed to it at all. Raise `THROTTLE_LIMIT` on the target before a run —
+attendance route is now sampled serially instead — 10 per 30s is 0.33 req/s and
+autocannon's minimum rate is 1 req/s, so the allowance cannot be expressed to it
+at all — in 300 single requests 300ms apart across twelve throttler buckets
+(below). Raise `THROTTLE_LIMIT` on the target before a run —
 the throttler is not what this gate measures.
+
+### The gate's budgets come from the runner's floor
+
+**§2's 50ms read target is not met on the CI runner, and the gate no longer
+claims it.** Since 2026-09-14 `quality-gates.yml` → api-latency gates the two
+authenticated reads at **140ms** p99, keeps the write at §2's **150ms** but
+measures it over 300 samples instead of 24, and keeps `/health/ready` at 50ms.
+Nothing else in the gate changed: 25 connections, 20s per read scenario, the
+same scenarios in the same order, failure on >1% non-2xx, the same fixtures and
+token.
+
+The numbers are quality-gates run 34832429087 on `15edbcc`: the latency job
+alone (`latency_floor`), on the 2-vCPU `ubuntu-latest` runner, 25 connections,
+20s per read. Zero non-2xx in every row.
+
+| Scenario | p50 | p99 | max | Role |
+| :--- | ---: | ---: | ---: | :--- |
+| `GET /health/ready` | 11ms | 32ms | 241ms | gated at 50ms |
+| `GET /api/v1/schedule-versions` | 49ms | 107ms | 363ms | read |
+| `GET /api/v1/optimization/jobs` | 49ms | 87ms | 224ms | read |
+| floor, round 1 | 50ms | 96ms | 150ms | F |
+| floor, round 2 | 50ms | 86ms | 241ms | F |
+| floor, round 3 | 50ms | 94ms | 214ms | F |
+| `POST /api/v1/attendance/report`, 24 samples 3.2s apart | 52ms | 194ms | 194ms | the old write gate |
+| `POST /api/v1/attendance/report`, 300 samples, 12 trackers | 51ms | 104ms | 157ms | the write gate now |
+
+The floor is
+`GET /api/v1/schedule-versions?academicYearId=00000000-0000-4000-8000-000000000000`:
+a valid v4 UUID naming no academic year, so the answer is `200 []` after
+everything a real authenticated read pays. The same two reads measured 86 and
+72ms p99 in run 34825468923 a few hours earlier — schedule-versions moved 24%
+between two runs on the same runner type, the size of the margin below.
+
+The derivation:
+
+- **F** = the floor rounds' p99s: median 94ms, max 96ms.
+- A route's **extra** Δ = its p99 − median(F): schedule-versions +13ms, jobs
+  −7ms.
+- **Margin** m = max(20%, spread over F ∪ reads) = (107 − 86) / 86 = 24.4%.
+- **Read budget** = (max F + max(0, max Δ)) × (1 + m), rounded up to 10ms =
+  (96 + 13) × 1.244 = 135.6 → **140ms**.
+- **Write**: the 300-sample p99 of 104ms × 1.2 = 125ms ≤ 150ms, so **150ms**
+  stays.
+
+**Why 50ms cannot hold here.** It lies below the measured floor of every
+authenticated read. Before and around its own query each one pays JWT
+verification, the identity lookup's transaction, the guards, the RLS batch the
+handler's query runs in, and serialisation — and the floor pays all of that for
+a query that matches no row, at 86–96ms p99. 50ms stays §2's target; the gate
+now catches a regression above this runner's floor instead of failing every
+night below it.
+
+**Why the write needed more samples, not a bigger budget.** Over 24 samples the
+p99 is the slowest single write — 152ms in run 34825468923, 194ms in
+34832429087 — roughly their p96, and on a fresh database only the first sample
+inserts. Over 300 it is rank 297. At the route's own pace of one sample per 3.2s
+that would take 16 minutes, so the samples rotate across twelve
+`X-Forwarded-For` addresses 300ms apart: the throttler keys its bucket on
+`req.ip`, `main.ts` trusts one proxy hop, and each bucket sees a hit at most
+every 3.6s — 9 inside any 30s, under the limit of 10. A mistake there would show
+as 429s and fail the run on the non-2xx check. That check is unchanged, which
+over 300 samples means up to 3 non-2xx pass where 24 allowed none.
+
+**What it costs the nightly.** The write's spacing goes from 23 × 3.2s to
+299 × 0.3s, and it makes 300 requests instead of 24: about 105s instead of 75s,
+so the benchmark step grows by roughly 30s. The step times agree — 304s in
+34832429087, which added the three floor rounds and the 300-sample write, 138s
+in 34825468923 without them. `--floor` now adds only the three floor rounds,
+about 60s.
 
 ### The solver cannot accept a 2,000-student school
 
