@@ -132,9 +132,16 @@ describe('CSV import (e2e)', () => {
       harness.tx['user']!['findMany']!.mockResolvedValue([
         { id: 'u-karin', email: 'karin.ek@example.com' },
       ]);
-      harness.tx['academicYear']!['findUnique']!.mockResolvedValue({
-        startDate: new Date('2026-08-17T00:00:00.000Z'),
-        endDate: new Date('2027-06-11T00:00:00.000Z'),
+      // Row 2 states a period, so the import reads the year's bounds FOR SHARE,
+      // as a raw query. The shared mock would hand back a model proxy for
+      // `$queryRaw`, which is not callable.
+      Object.assign(harness.tx, {
+        $queryRaw: jest.fn().mockResolvedValue([
+          {
+            startDate: new Date('2026-08-17T00:00:00.000Z'),
+            endDate: new Date('2027-06-11T00:00:00.000Z'),
+          },
+        ]),
       });
       harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
         {
@@ -391,7 +398,7 @@ describe('CSV import (e2e)', () => {
       harness.tx['subject']!['findMany']!.mockResolvedValue([]);
       harness.tx['user']!['findMany']!.mockResolvedValue([]);
       harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([]);
-      harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+      Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([]) });
 
       await post(harness, 'requirements')
         .send({

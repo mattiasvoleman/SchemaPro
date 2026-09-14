@@ -20,7 +20,7 @@ export interface LockedTable {
   /** Every column the table has. A SELECT naming any other column throws. */
   columns: readonly string[];
   /** The lock clause the statement has to end in. */
-  lock: 'FOR UPDATE' | 'FOR NO KEY UPDATE';
+  lock: 'FOR UPDATE' | 'FOR NO KEY UPDATE' | 'FOR SHARE';
 }
 
 /**
@@ -38,7 +38,7 @@ export function lockingRead(
   call: unknown[],
 ): Record<string, unknown>[] {
   const sql = rawSql(call).replace(/\s+/g, ' ').trim();
-  const read = /^SELECT (.+) FROM "(\w+)" WHERE "id" = \?::uuid (FOR (?:NO KEY )?UPDATE)$/.exec(sql);
+  const read = /^SELECT (.+) FROM "(\w+)" WHERE "id" = \?::uuid (FOR (?:(?:NO KEY )?UPDATE|SHARE))$/.exec(sql);
   const values = call.slice(1);
   if (
     read === null ||

@@ -10,6 +10,7 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
 import type {
   ImportRequirementRowDto,
@@ -1208,6 +1209,23 @@ describe('ImportService', () => {
     const YEAR_START = new Date('2026-08-17T00:00:00.000Z');
     const YEAR_END = new Date('2027-06-11T00:00:00.000Z');
 
+    /**
+     * AcademicYears as the upload's read of the year has to name it: FOR SHARE,
+     * the lock a year PATCH moving the bounds waits on.
+     */
+    const YEARS: LockedTable = {
+      name: 'AcademicYears',
+      columns: [
+        'id', 'schoolId', 'name', 'startDate', 'endDate', 'isActive', 'createdAt',
+        'updatedAt',
+      ],
+      lock: 'FOR SHARE',
+    };
+    /** The years the read of the bounds can find. */
+    let years: Record<string, unknown>[];
+    /** The read of the year's bounds. */
+    let queryRaw: jest.Mock;
+
     /** A valid row; each test overrides only the column it is about. */
     const row = (
       overrides: Partial<ImportRequirementRowDto> = {},
@@ -1281,10 +1299,23 @@ describe('ImportService', () => {
       arrangeRows(tx.teachingRequirement.findMany, []);
       tx.teachingRequirement.create.mockResolvedValue({});
       tx.teachingRequirement.update.mockResolvedValue({});
-      arrangeRows(tx.academicYear.findUnique, {
-        startDate: YEAR_START,
-        endDate: YEAR_END,
-      });
+      years = [
+        {
+          id: YEAR_ID,
+          schoolId: testUser().schoolId,
+          name: '2026/2027',
+          isActive: true,
+          startDate: YEAR_START,
+          endDate: YEAR_END,
+        },
+      ];
+      // The auto-vivifying mock would hand back a model proxy for `$queryRaw`,
+      // and a proxy is not callable. It answers as the table would, from the
+      // years above, and throws on a read that takes another lock or none.
+      queryRaw = jest.fn((...call: unknown[]) =>
+        Promise.resolve(lockingRead(YEARS, years, call)),
+      );
+      Object.assign(tx, { $queryRaw: queryRaw });
     });
 
     describe('resolution', () => {
@@ -1496,7 +1527,9 @@ describe('ImportService', () => {
       it('does not read the academic year at all when no row states a period', async () => {
         await run(row(), row({ subject: 'SV' }));
 
-        expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+        // Nor lock it: an upload that dates nothing cannot strand anything, so
+        // it has no reason to hold up a year PATCH for its whole run.
+        expect(queryRaw).not.toHaveBeenCalled();
       });
 
       it('says nothing about a year the caller cannot see, and lets the foreign key refuse the row', async () => {
@@ -1504,7 +1537,7 @@ describe('ImportService', () => {
         // "outside its year" would confirm that it exists; the composite
         // foreign key on the insert is what refuses it. Same silence as
         // TeachingRequirementsService.assertPeriodFitsYear.
-        arrangeRows(tx.academicYear.findUnique, null);
+        years = [];
 
         const report = await run(row({ startDate: '2027-08-01' }));
 
@@ -1522,9 +1555,7 @@ describe('ImportService', () => {
             message: 'Startdatumet (2027-08-01) ligger utanför läsåret (2026-08-17–2027-06-11).',
           },
         ]);
-        expect(tx.academicYear.findUnique).toHaveBeenCalledWith(
-          expect.objectContaining({ where: { id: YEAR_ID } }),
-        );
+        expect(queryRaw.mock.calls.map((call) => call.slice(1))).toEqual([[YEAR_ID]]);
       });
 
       it('checks a dated row against the year even when the other rows state no period', async () => {
@@ -1554,6 +1585,38 @@ describe('ImportService', () => {
         const report = await run(row({ startDate: '2026-10-05', endDate: '2026-10-05' }));
 
         expect(report).toMatchObject({ created: 1, errors: [] });
+      });
+
+      // Every dated row is measured against bounds read once, before the first
+      // write. A year PATCH counts only committed periods, so one committing
+      // between that read and the upload's commit counts none of these rows and
+      // strands them. FOR SHARE is what the PATCH's FOR NO KEY UPDATE waits on,
+      // and it holds only while the transaction that took it is open: the one
+      // that writes every row.
+      it('reads the year FOR SHARE once, before the first write, in the transaction that writes every row', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored({ subjectId: SUBJ_SV })]);
+        const ranIn = transactionsOf(prisma);
+        const readIn = ranIn(queryRaw);
+        const createdIn = ranIn(tx.teachingRequirement.create);
+        const updatedIn = ranIn(tx.teachingRequirement.update);
+
+        const report = await run(
+          row({ startDate: '2026-09-01' }),
+          row({ subject: 'SV', endDate: '2027-01-15' }),
+        );
+
+        expect(report).toEqual({ created: 1, updated: 1, skipped: 0, errors: [] });
+        expect(readIn).toEqual([expect.stringMatching(/^withRls#\d+$/)]);
+        expect(createdIn).toEqual(readIn);
+        expect(updatedIn).toEqual(readIn);
+        const [call] = queryRaw.mock.calls;
+        expect(rawSql(call)).toMatch(
+          /SELECT "startDate", "endDate"\s+FROM "AcademicYears"\s+WHERE "id" = \?::uuid\s+FOR SHARE/,
+        );
+        expect(call.slice(1)).toEqual([YEAR_ID]);
+        expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+          tx.teachingRequirement.create.mock.invocationCallOrder[0],
+        );
       });
     });
 

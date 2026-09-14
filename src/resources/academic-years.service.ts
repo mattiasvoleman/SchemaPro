@@ -154,10 +154,13 @@ export class AcademicYearsService {
    * a period both counts let through lies inside the year they build together,
    * and a dated period is itself what keeps that year from inverting.
    *
-   * What the lock does not hold still is a period written at the same moment.
-   * SchoolBreaksService and TeachingRequirementsService read the year without
-   * a lock, so a lov saved while these counts run can land outside bounds they
-   * have already cleared.
+   * A period written at the same moment is held still from the other side.
+   * SchoolBreaksService, TeachingRequirementsService and the timplan import
+   * read these bounds FOR SHARE in the transaction that writes the period
+   * (readYearBoundsForShare), and FOR SHARE and this lock wait on each other.
+   * A period whose read came first has committed before this lock is granted,
+   * so the counts, each a statement of its own, see it; a period whose read
+   * comes second waits for this PATCH and is measured against what it wrote.
    *
    * FOR NO KEY UPDATE rather than FOR UPDATE: see the Isolation section of
    * PrismaService — every year-scoped insert takes FOR KEY SHARE on this row. A
