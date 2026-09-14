@@ -12,6 +12,10 @@
  *   node scripts/bench/api-latency.mjs --url http://localhost:4000 \
  *     --token "$JWT" --duration 20
  *
+ * `--floor` (with `--floor-rounds`, default 3) also measures, after the gated
+ * scenarios and without gating either, the authenticated-read floor and a
+ * 300-sample write — see FLOOR and WRITE_SAMPLE. Without it nothing new runs.
+ *
  * Requires a real database behind the API: the numbers are meaningless against
  * a mocked Prisma layer, since the transaction and RLS cost is the thing being
  * measured. In CI this runs against the docker-compose stack.
@@ -37,6 +41,13 @@ const CONNECTIONS = Number(flag('--connections', '25'));
 const WRITE_BODY_FILE = flag('--write-body');
 const ACADEMIC_YEAR_ID = flag('--academic-year', process.env.ACADEMIC_YEAR_ID);
 const asJson = args.includes('--json');
+const MEASURE_FLOOR = args.includes('--floor');
+const FLOOR_ROUNDS = Number(flag('--floor-rounds', '3'));
+
+if (MEASURE_FLOOR && !(Number.isInteger(FLOOR_ROUNDS) && FLOOR_ROUNDS > 0)) {
+  console.error('--floor-rounds must be a positive integer.');
+  process.exit(2);
+}
 
 /**
  * Budgets come straight from §2. `kind` selects which one applies.
@@ -108,6 +119,62 @@ const SCENARIOS = [
   },
 ];
 
+/**
+ * Measured only with --floor, and only after every gated scenario has run, so
+ * those run in the nightly's order and warm state. Neither is gated: a row with
+ * `budgetMs: null` never sets the failure flag. Both still count in the non-2xx
+ * check at the end — a floor made of 401s would be a flattering number.
+ *
+ * FLOOR is the cheapest request that pays everything a real authenticated read
+ * pays: token verification, the identity lookup's transaction, the guards and
+ * the throttler, ParseUUIDPipe, and the RLS transaction the handler's query
+ * runs in under its policy. The year id is a valid v4 UUID naming no academic
+ * year, so the answer is 200 [] rather than a 400 or a 404. It is an existing
+ * route on purpose: the stack runs the production image, which should neither
+ * ship a benchmark-only route nor be measured with a module graph production
+ * does not have. Several rounds, because their spread beside the two list rows
+ * is the run's own noise.
+ */
+const FLOOR = {
+  name: 'floor: GET /api/v1/schedule-versions (no matching row)',
+  kind: 'floor',
+  budgetMs: null,
+  request: {
+    method: 'GET',
+    path: '/api/v1/schedule-versions?academicYearId=00000000-0000-4000-8000-000000000000',
+  },
+};
+
+/**
+ * The gated write's p99 is the largest of 24 samples, roughly their p96, and
+ * on a fresh database only its first sample inserts. This one keeps its body,
+ * token, lesson and single serial client, and takes 300 samples: p99 is rank
+ * 297.
+ *
+ * The route's `@Throttle({ limit: 10, ttl: 30_000 })` is why the gated one is
+ * spaced 3.2 s. ThrottlerGuard keys a bucket on controller, handler, throttler
+ * name and tracker, and the tracker is `req.ip` (@nestjs/throttler 6.5.0's
+ * default getTracker; nothing in src replaces it). main.ts trusts one proxy
+ * hop, so `req.ip` is the single X-Forwarded-For entry sent here. Twelve of
+ * them in rotation at 300 ms apart keep each bucket's hits ≥ 3.6 s apart — at
+ * most 9 inside any 30 s, under the limit of 10. Were that wrong, the samples
+ * would be 429s and the non-2xx check would fail the run instead.
+ */
+const WRITE_SAMPLE = {
+  name: 'write: POST /api/v1/attendance/report (300 samples, 12 trackers)',
+  kind: 'update',
+  budgetMs: null,
+  serialSamples: 300,
+  serialIntervalMs: 300,
+  trackers: 12,
+  request: {
+    method: 'POST',
+    path: '/api/v1/attendance/report',
+    headers: { 'content-type': 'application/json' },
+    body: null,
+  },
+};
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const percentile = (sorted, p) =>
   sorted.length === 0
@@ -132,6 +199,10 @@ async function runSerial(scenario) {
         headers: {
           ...(scenario.request.headers ?? {}),
           ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}),
+          // One throttler bucket per address; see WRITE_SAMPLE.
+          ...(scenario.trackers
+            ? { 'x-forwarded-for': `198.51.100.${(i % scenario.trackers) + 1}` }
+            : {}),
         },
         body: scenario.request.body,
       });
@@ -204,30 +275,43 @@ const runnable = SCENARIOS.filter((s) => {
   return true;
 });
 
+const rowOf = (scenario, result) => ({
+  scenario: scenario.name,
+  kind: scenario.kind,
+  budgetMs: scenario.budgetMs,
+  p50Ms: result.latency.p50,
+  p99Ms: result.latency.p99,
+  maxMs: result.latency.max,
+  requestsPerSecond: Math.round(result.requests.average),
+  totalRequests: result.requests?.total ?? 0,
+  non2xx: result.non2xx ?? 0,
+});
+
 const results = [];
 let failed = false;
 let unauthorized = 0;
 
 for (const scenario of runnable) {
-  const result = await run(scenario);
-  const non2xx = result.non2xx ?? 0;
-  const total = result.requests?.total ?? 0;
-  unauthorized += non2xx;
-
-  const row = {
-    scenario: scenario.name,
-    kind: scenario.kind,
-    budgetMs: scenario.budgetMs,
-    p50Ms: result.latency.p50,
-    p99Ms: result.latency.p99,
-    maxMs: result.latency.max,
-    requestsPerSecond: Math.round(result.requests.average),
-    totalRequests: total,
-    non2xx,
-  };
+  const row = rowOf(scenario, await run(scenario));
+  unauthorized += row.non2xx;
   results.push(row);
 
   if (row.p99Ms > scenario.budgetMs) failed = true;
+}
+
+// Ungated, so nothing here touches `failed`: `p99Ms > null` is true for any
+// p99 above zero. The rows stay in `results` for the non-2xx check.
+if (MEASURE_FLOOR) {
+  for (let round = 1; round <= FLOOR_ROUNDS; round++) {
+    const scenario = { ...FLOOR, name: `${FLOOR.name}, round ${round}/${FLOOR_ROUNDS}` };
+    results.push(rowOf(scenario, await run({ ...scenario, request: { ...FLOOR.request } })));
+  }
+  if (writeBody) {
+    WRITE_SAMPLE.request.body = writeBody;
+    results.push(rowOf(WRITE_SAMPLE, await run(WRITE_SAMPLE)));
+  } else {
+    skipped.push(`${WRITE_SAMPLE.name} (no --write-body supplied)`);
+  }
 }
 
 if (asJson) {
@@ -235,11 +319,12 @@ if (asJson) {
 } else {
   console.log(`Target: ${BASE_URL}  (${CONNECTIONS} connections, ${DURATION}s each)\n`);
   for (const r of results) {
-    const mark = r.p99Ms > r.budgetMs ? '✗' : '✓';
+    const gated = r.budgetMs !== null;
+    const mark = !gated ? '·' : r.p99Ms > r.budgetMs ? '✗' : '✓';
     console.log(
       `  ${mark} ${r.scenario}\n` +
         `      p50 ${r.p50Ms}ms   p99 ${r.p99Ms}ms   max ${r.maxMs}ms   ` +
-        `budget ${r.budgetMs}ms   ${r.requestsPerSecond} req/s   ` +
+        `${gated ? `budget ${r.budgetMs}ms` : 'not gated'}   ${r.requestsPerSecond} req/s   ` +
         `non-2xx ${r.non2xx}/${r.totalRequests}`,
     );
   }
