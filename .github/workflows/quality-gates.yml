@@ -24,6 +24,15 @@ on:
         description: 'Run mutation testing (slow)'
         type: boolean
         default: true
+      # A one-off measurement, not a gate: the api-latency job alone, which then
+      # also measures the authenticated-read floor and a 300-sample write after
+      # its gated scenarios (api-latency.mjs --floor). The other four jobs are
+      # skipped so the dispatch bills one job. On schedule `inputs` is empty, so
+      # every condition below is what it was and the nightly run is unchanged.
+      latency_floor:
+        description: 'Run only the API latency job, plus the ungated authenticated-read floor and a 300-sample write'
+        type: boolean
+        default: false
 
 concurrency:
   group: quality-gates-${{ github.ref }}
@@ -33,7 +42,7 @@ jobs:
   visual-baselines:
     name: Regenerate visual baselines (native runner)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.latency_floor
     timeout-minutes: 40
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
@@ -93,7 +102,7 @@ jobs:
   mutation:
     name: API — mutation score (Stryker ≥85%)
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || inputs.run_mutation
+    if: (github.event_name == 'schedule' || inputs.run_mutation) && !inputs.latency_floor
     timeout-minutes: 90
     env:
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
@@ -150,6 +159,8 @@ jobs:
   lighthouse:
     name: Web — Lighthouse (LCP/TTI/a11y)
     runs-on: ubuntu-latest
+    # Wrapped in ${{ }}: a YAML value that opens with `!` is a tag.
+    if: ${{ !inputs.latency_floor }}
     timeout-minutes: 30
     defaults:
       run:
@@ -205,6 +216,7 @@ jobs:
   solver-benchmark:
     name: Solver — generation gate & §2 report
     runs-on: ubuntu-latest
+    if: ${{ !inputs.latency_floor }}
     timeout-minutes: 30
     defaults:
       run:
@@ -339,6 +351,7 @@ jobs:
           --academic-year '${{ steps.fixtures.outputs.academic_year }}'
           --write-body /tmp/write-body.json
           --duration 20 --connections 25
+          ${{ inputs.latency_floor && '--floor' || '' }}
 
       - name: Stack logs
         if: failure()
