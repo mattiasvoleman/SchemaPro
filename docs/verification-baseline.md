@@ -283,10 +283,15 @@ warning below about why that number is the first thing to check.
 | `GET /api/v1/optimization/jobs` | 54ms | 86ms | 50ms | ✗ |
 | `POST /api/v1/attendance/report` | 40ms | 83ms | 150ms | ✓ |
 
-`/health/ready` is one `SELECT 1`, so ~12ms is the framework-plus-connection
-floor on this hardware. The two list endpoints sit at roughly six times that,
-which places their cost in their own queries and RLS policy evaluation rather
-than in the stack. Writes pass with headroom.
+`/health/ready` is `@Public()` and `@SkipThrottle()`: no bearer token, no
+identity lookup, no transaction, no RLS — one bare `SELECT 1`. So ~12ms is what
+the framework and a pooled connection cost on this hardware, not the floor of an
+authenticated read. The two list endpoints sit at roughly six times that, and
+that is not their own queries: the seed creates no schedule versions or
+optimization jobs, so both return `[]` and their query is an index probe that
+finds no row for a policy to judge. The gap is the path every JWT request pays
+around its query — token verification, the identity lookup's transaction, the
+guards and the RLS transaction the handler runs in. Writes pass with headroom.
 
 Caveats worth carrying: these are Docker Desktop numbers on a laptop VM, so
 treat them as relative rather than absolute — CI is the gating run. The write

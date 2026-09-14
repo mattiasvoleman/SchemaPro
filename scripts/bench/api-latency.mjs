@@ -52,9 +52,17 @@ const SCENARIOS = [
     name: 'GET /health/ready',
     kind: 'read',
     budgetMs: 50,
-    // Public, and one `SELECT 1` round trip. This is the floor: whatever it
-    // costs is pure framework + connection overhead, so a read endpoint that
-    // is much slower is slow in its own query, not in the stack.
+    // `@Public()` and `@SkipThrottle()`: no bearer token, no identity lookup,
+    // no transaction, no RLS — one bare `SELECT 1` on the pool. It is what the
+    // framework and a pooled connection cost, NOT the floor of an authenticated
+    // read, which also pays token verification, the identity lookup's
+    // transaction, the guards and the RLS transaction its handler runs in.
+    //
+    // A read much slower than this is therefore not slow "in its own query".
+    // On CI's seed the two lists below return [] — the seed creates no schedule
+    // versions or optimization jobs — so their query is an index probe that
+    // finds nothing, and their distance above this row is that authenticated
+    // path.
     request: { method: 'GET', path: '/health/ready' },
   },
   {
