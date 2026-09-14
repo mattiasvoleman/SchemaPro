@@ -52,10 +52,14 @@ identity provisioning stays an explicit admin action). Response:
 `PrismaService.withServiceKeyLookup`. That lookup is the one step that cannot
 be tenant-scoped — the tenant is what it resolves — so the transaction sets
 `app.service_key_lookup` and matches only `integration_keys_service_lookup`
-(SELECT) and `integration_keys_service_touch` (UPDATE, for `lastUsedAt`):
-non-revoked rows of `IntegrationApiKeys`, and no other table. A revoked key is
-invisible to the lookup, so revocation takes effect on the next request. The
-school id comes from the key row, never from request input.
+(SELECT) and `integration_keys_service_touch` (UPDATE): non-revoked rows of
+`IntegrationApiKeys`, and no other table. A revoked key is invisible to the
+lookup, so revocation takes effect on the next request. The guard's UPDATE
+writes only `lastUsedAt`, but the policy does not hold it there: it names no
+column and no school, and its `WITH CHECK` asks only that the key stay
+unrevoked. Inside the lookup a statement can rewrite any column of any
+school's live key, `schoolId` and `keyHash` included; only revoking one is
+refused. The school id comes from the key row, never from request input.
 
 **The service principal is tenant-scoped in the database.** There is no user,
 but integration requests do not run outside RLS: the API connects as
@@ -87,14 +91,16 @@ Each write policy has a `WITH CHECK` on the same school, so a write can
 neither create a row in another school nor move one there. There is no INSERT
 on `Users` (unknown emails come back in `needsProvisioning`) and no DELETE
 policy on any table. The `Users` policy scopes rows, not columns; the import
-writes only `firstName`, `lastName` and `studentGroupId`. A guardian link also
-has composite foreign keys to `Users (id, schoolId)` on both sides, so its
-guardian and its student belong to the link's school whoever writes it.
+writes `firstName`, `lastName` and `studentGroupId`, and Prisma adds
+`updatedAt` to every such UPDATE. A guardian link also has composite foreign
+keys to `Users (id, schoolId)` on both sides, so its guardian and its student
+belong to the link's school whoever writes it.
 
-No other table has a service-principal policy. A table under row-level
-security without one reads as empty to the principal rather than refusing it:
-`IntegrationApiKeys` once the key is resolved, `RoomTypes` and `LunchSettings`
-among them. That is how both feeds broke before `20260914150000`. The seven
+No other table has a service-principal policy. Every such table but one reads
+as empty to the principal rather than refusing it, since `authenticated` holds
+it and row-level security filters out every row: `IntegrationApiKeys` once the
+key is resolved, `RoomTypes` and `LunchSettings` among them. That is how both
+feeds broke before `20260914150000`. The seven
 tables in the third row had no policy, so a lesson's required `subject` came
 back missing and `/activities` and `/calendarEvents` answered 500 for any
 school with a lesson. With only `Subjects` and `Rooms` readable they answered
@@ -103,11 +109,15 @@ lessons with no teachers either. A relation added to a feed's `select` needs
 its table in this list and in section 3 of the suite below. The feeds read
 teachers and pupils as id columns, so `Users` needs no more than it has.
 
-`_prisma_migrations` is the exception: it is the one table in `public` without
-row-level security, and `authenticated` holds SELECT, INSERT, UPDATE and
-DELETE on it. Every `app_authenticated` connection, the service principal
-included, reads all of its rows and can delete them. It holds Prisma's
-migration history, not school data.
+The one that refuses it is `_prisma_migrations`, Prisma's migration history,
+which holds no school data. Until `20260914180000` it was the one table in `public` without
+row-level security, `authenticated` held SELECT, INSERT, UPDATE and DELETE on
+it, and every `app_authenticated` connection, the service principal included,
+read all of its rows and could delete them. That migration revoked every
+privilege on it from `anon`, `authenticated`, `service_role` and
+`app_authenticated`, and switched row-level security on with no policy. The
+principal and every other API role are now refused with "permission denied";
+only the role that runs the migrations, which owns the table, reaches it.
 
 **Asserted against Postgres.** `scripts/test/rls-policies.sql` runs as
 `app_authenticated`. Section 2: the key-lookup principal sees API keys, but no
@@ -121,8 +131,10 @@ filed under the second school but attached to the first school's lesson, which
 the first school's principal must not see. The runner refuses to start when any
 of them is missing. Section 4: neither
 setting survives COMMIT. Sections 5 and 6: it sees no `RoomTypes` and no
-`LunchSettings`. The write policies' `WITH CHECK` clauses are not asserted
-there.
+`LunchSettings`. Section 14: `_prisma_migrations` refuses this role a read and
+a DELETE with no principal, as the service principal and as the key lookup,
+and no API role holds any privilege on it. The write policies' `WITH CHECK`
+clauses are not asserted there.
 
 Wire personnummer/civic numbers are intentionally not accepted or stored.
 

@@ -1334,8 +1334,8 @@ BEGIN
   -- Every table rather than a chosen few: "sees nothing" is only worth
   -- asserting if nothing is what it means, and a table added later must not be
   -- able to opt out of it by being forgotten here. `_prisma_migrations` is
-  -- Prisma's own schema history — no tenant data, no RLS — and is the single
-  -- exclusion.
+  -- Prisma's own schema history — no tenant data, and no API role may touch
+  -- it at all (section 14) — and is the single exclusion.
   FOR t IN
     SELECT c.oid, c.relname
       FROM pg_class c
@@ -1878,8 +1878,11 @@ END $$;
 -- policy must carry. That rule needs 26 exemptions here — the service role
 -- crosses tenants by design, and a policy keyed on the caller's own id is
 -- already inside one school — and a rule with 26 exemptions rots into a list
--- nobody maintains. This one has none, and a new table cannot be added without
--- either satisfying it or changing it on purpose.
+-- nobody maintains. This one has a single exemption, from its no-policy half
+-- only: `_prisma_migrations`, Prisma's own history, has row security on and no
+-- policy on purpose, because no API role is meant to reach it at all (section
+-- 14). A new table cannot be added without either satisfying the rule or
+-- changing it on purpose.
 --
 -- The floor guards the query itself: a catalog filter that quietly stopped
 -- matching would otherwise pass as a clean run, which is how a previous
@@ -1894,7 +1897,7 @@ DECLARE
 BEGIN
   SELECT count(*)::int INTO checked
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname <> '_prisma_migrations';
+  WHERE n.nspname = 'public' AND c.relkind = 'r';
 
   IF checked < 25 THEN
     RAISE EXCEPTION
@@ -1904,7 +1907,6 @@ BEGIN
   SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO unprotected
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
-    AND c.relname <> '_prisma_migrations'
     AND NOT c.relrowsecurity;
 
   IF unprotected IS NOT NULL THEN
@@ -2016,3 +2018,103 @@ BEGIN
 END $$;
 
 ROLLBACK;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 14: Prisma's migration history is refused to every API role.
+--
+-- `_prisma_migrations` holds no tenant data, which is why it has no policy.
+-- What it holds is the schema's history: a deleted row makes the next
+-- `migrate deploy` run that migration again, and an unfinished one stops every
+-- deploy after it. Both table-wide GRANTs in the migrations reached it, so
+-- until 20260914180000 app_authenticated read all of it and could delete all
+-- of it, with no principal and inside a service transaction alike.
+--
+-- A refusal is required, not an empty result. Empty is also what row security
+-- alone gives a role that has been granted the table again, and that is the
+-- regression to catch: the next `GRANT ... ON ALL TABLES IN SCHEMA "public"`.
+-- The catalog half names the roles this connection cannot become: anon, which
+-- PostgREST uses for a request with no token, and service_role, which bypasses
+-- row security and so has nothing but the missing grant between it and the
+-- history.
+-- ---------------------------------------------------------------------------
+
+-- Exercised as this role, under each principal it can hold. The RAISE inside
+-- each block is no insufficient_privilege, so it escapes the handler: a read
+-- or a delete that went through fails the run, inside a transaction that psql
+-- then never commits.
+BEGIN;
+SELECT set_config('app.test_school_a', :'school_a', true);
+
+DO $$
+DECLARE
+  principal text;
+  n         bigint;
+BEGIN
+  FOREACH principal IN ARRAY ARRAY['no principal', 'the service principal', 'the key lookup']
+  LOOP
+    PERFORM set_config('app.service_school_id',
+      CASE principal WHEN 'the service principal'
+        THEN current_setting('app.test_school_a') ELSE '' END, true);
+    PERFORM set_config('app.service_key_lookup',
+      CASE principal WHEN 'the key lookup' THEN 'on' ELSE '' END, true);
+
+    -- A refusal needs no principal at all, so the principal is shown to be in
+    -- effect before its refusals are counted as its own. Through the helpers,
+    -- not a table: a read of "Schools" here also runs the authenticated
+    -- policies, and the fallback auth.uid() cannot cast the empty
+    -- request.jwt.claims that earlier sections' transactions leave behind.
+    IF principal = 'the service principal' THEN
+      IF app.current_service_school_id()
+           IS DISTINCT FROM current_setting('app.test_school_a')::uuid THEN
+        RAISE EXCEPTION
+          'migration-history: the service principal is not in effect (school %)',
+          app.current_service_school_id();
+      END IF;
+    ELSIF principal = 'the key lookup' AND NOT app.is_service_key_lookup() THEN
+      RAISE EXCEPTION 'migration-history: the key lookup is not in effect';
+    END IF;
+
+    BEGIN
+      SELECT count(*) INTO n FROM "_prisma_migrations";
+      RAISE EXCEPTION
+        'migration-history: app_authenticated with % read % row(s) of _prisma_migrations',
+        principal, n;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+
+    BEGIN
+      DELETE FROM "_prisma_migrations";
+      GET DIAGNOSTICS n = ROW_COUNT;
+      RAISE EXCEPTION
+        'migration-history: app_authenticated with % deleted % row(s) of _prisma_migrations',
+        principal, n;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
+END $$;
+
+ROLLBACK;
+
+DO $$
+DECLARE
+  api_role text;
+  held     text;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class
+           WHERE oid = 'public._prisma_migrations'::regclass) THEN
+    RAISE EXCEPTION 'migration-history: row security is off on _prisma_migrations';
+  END IF;
+
+  FOREACH api_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated']
+  LOOP
+    SELECT string_agg(p, ', ') INTO held
+      FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE',
+                        'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public._prisma_migrations', p);
+    IF held IS NOT NULL THEN
+      RAISE EXCEPTION
+        'migration-history: % holds % on _prisma_migrations', api_role, held;
+    END IF;
+  END LOOP;
+END $$;
