@@ -13,8 +13,8 @@
  *     --token "$JWT" --duration 20
  *
  * `--floor` (with `--floor-rounds`, default 3) also measures, after the gated
- * scenarios and without gating either, the authenticated-read floor and a
- * 300-sample write — see FLOOR and WRITE_SAMPLE. Without it nothing new runs.
+ * scenarios and without gating it, the authenticated-read floor — see FLOOR.
+ * Without it nothing new runs.
  *
  * Requires a real database behind the API: the numbers are meaningless against
  * a mocked Prisma layer, since the transaction and RLS cost is the thing being
@@ -50,7 +50,8 @@ if (MEASURE_FLOOR && !(Number.isInteger(FLOOR_ROUNDS) && FLOOR_ROUNDS > 0)) {
 }
 
 /**
- * Budgets come straight from §2. `kind` selects which one applies.
+ * Health and the write keep §2's budgets. The two authenticated reads are
+ * budgeted from the floor measured on the runner — see the comment above them.
  *
  * Note on coverage: the gateway's *read* surface is deliberately small. The
  * web client queries Supabase directly (see web/lib/queries.ts), so this API
@@ -76,17 +77,36 @@ const SCENARIOS = [
     // distance above this row is that authenticated path.
     request: { method: 'GET', path: '/health/ready' },
   },
+  // The two authenticated reads are gated at 140 ms, from the floor measured
+  // on the runner rather than from §2. quality-gates run 34832429087 on
+  // 15edbcc, the latency job alone on the 2-vCPU runner, 25 connections, 20 s
+  // per read, p99:
+  //
+  //   GET /api/v1/schedule-versions               107 ms
+  //   GET /api/v1/optimization/jobs                87 ms
+  //   FLOOR (below), rounds 1, 2 and 3             96, 86 and 94 ms
+  //
+  // F is the three floor rounds: median 94, max 96. A route's extra is its p99
+  // less median(F): schedule-versions +13, jobs −7. The margin is the larger
+  // of 20% and the spread over F and the reads together, (107 − 86) / 86 =
+  // 24.4%. The budget is (max F + the largest extra, if positive) × (1 +
+  // margin), rounded up to 10 ms: (96 + 13) × 1.244 = 135.6 → 140.
+  //
+  // §2's 50 ms is still the target, and on this runner it lies below the
+  // floor of every authenticated read: JWT verification, the identity lookup's
+  // transaction, the guards, the RLS batch and serialisation are paid before
+  // and around a query that here matches no row.
   {
     name: 'GET /api/v1/schedule-versions',
     kind: 'read',
-    budgetMs: 50,
+    budgetMs: 140,
     needsAcademicYear: true,
     request: { method: 'GET', path: '/api/v1/schedule-versions' },
   },
   {
     name: 'GET /api/v1/optimization/jobs',
     kind: 'read',
-    budgetMs: 50,
+    budgetMs: 140,
     needsAcademicYear: true,
     request: { method: 'GET', path: '/api/v1/optimization/jobs' },
   },
@@ -106,10 +126,26 @@ const SCENARIOS = [
     // 10 per 30s is 0.33 req/s, and autocannon's overallRate is an integer
     // ≥1 req/s — the allowance cannot be expressed to it at all. So this
     // scenario is sampled serially instead: spaced single requests, each
-    // timed individually. Far fewer samples than a flood, so treat the p99
-    // as indicative; every sample is a real upsert rather than a rejection.
-    serialSamples: 24,
-    serialIntervalMs: 3200,
+    // timed individually, every one a real upsert rather than a rejection.
+    //
+    // 300 samples, so p99 is rank 297. With 24 it was the slowest single
+    // write, roughly their p96, and on a fresh database only the first sample
+    // inserts. At one bucket's pace of 3.2 s, 300 would take 16 minutes, so
+    // the samples rotate across trackers. ThrottlerGuard keys a bucket on
+    // controller, handler, throttler name and tracker, and the tracker is
+    // `req.ip` (@nestjs/throttler 6.5.0's default getTracker; nothing in src
+    // replaces it). main.ts trusts one proxy hop, so `req.ip` is the single
+    // X-Forwarded-For entry runSerial sends. Twelve of them in rotation at
+    // 300 ms apart keep each bucket's hits ≥ 3.6 s apart — at most 9 inside
+    // any 30 s, under the limit of 10. Were that wrong, the samples would be
+    // 429s and the non-2xx check would fail the run instead.
+    //
+    // 150 ms stays. In run 34832429087 (see the reads above) these 300
+    // samples gave p50 51, p99 104, max 157 ms, and 104 × 1.2 = 125 is inside
+    // it; the same run's 24 gave p99 194 ms, which was their max.
+    serialSamples: 300,
+    serialIntervalMs: 300,
+    trackers: 12,
     request: {
       method: 'POST',
       path: '/api/v1/attendance/report',
@@ -121,9 +157,9 @@ const SCENARIOS = [
 
 /**
  * Measured only with --floor, and only after every gated scenario has run, so
- * those run in the nightly's order and warm state. Neither is gated: a row with
- * `budgetMs: null` never sets the failure flag. Both still count in the non-2xx
- * check at the end — a floor made of 401s would be a flattering number.
+ * those run in the nightly's order and warm state. It is not gated: a row with
+ * `budgetMs: null` never sets the failure flag. Its rows still count in the
+ * non-2xx check at the end — a floor made of 401s would be a flattering number.
  *
  * FLOOR is the cheapest request that pays everything a real authenticated read
  * pays: token verification, the identity lookup's transaction, the guards and
@@ -142,36 +178,6 @@ const FLOOR = {
   request: {
     method: 'GET',
     path: '/api/v1/schedule-versions?academicYearId=00000000-0000-4000-8000-000000000000',
-  },
-};
-
-/**
- * The gated write's p99 is the largest of 24 samples, roughly their p96, and
- * on a fresh database only its first sample inserts. This one keeps its body,
- * token, lesson and single serial client, and takes 300 samples: p99 is rank
- * 297.
- *
- * The route's `@Throttle({ limit: 10, ttl: 30_000 })` is why the gated one is
- * spaced 3.2 s. ThrottlerGuard keys a bucket on controller, handler, throttler
- * name and tracker, and the tracker is `req.ip` (@nestjs/throttler 6.5.0's
- * default getTracker; nothing in src replaces it). main.ts trusts one proxy
- * hop, so `req.ip` is the single X-Forwarded-For entry sent here. Twelve of
- * them in rotation at 300 ms apart keep each bucket's hits ≥ 3.6 s apart — at
- * most 9 inside any 30 s, under the limit of 10. Were that wrong, the samples
- * would be 429s and the non-2xx check would fail the run instead.
- */
-const WRITE_SAMPLE = {
-  name: 'write: POST /api/v1/attendance/report (300 samples, 12 trackers)',
-  kind: 'update',
-  budgetMs: null,
-  serialSamples: 300,
-  serialIntervalMs: 300,
-  trackers: 12,
-  request: {
-    method: 'POST',
-    path: '/api/v1/attendance/report',
-    headers: { 'content-type': 'application/json' },
-    body: null,
   },
 };
 
@@ -199,7 +205,7 @@ async function runSerial(scenario) {
         headers: {
           ...(scenario.request.headers ?? {}),
           ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}),
-          // One throttler bucket per address; see WRITE_SAMPLE.
+          // One throttler bucket per address; see the attendance scenario.
           ...(scenario.trackers
             ? { 'x-forwarded-for': `198.51.100.${(i % scenario.trackers) + 1}` }
             : {}),
@@ -305,12 +311,6 @@ if (MEASURE_FLOOR) {
   for (let round = 1; round <= FLOOR_ROUNDS; round++) {
     const scenario = { ...FLOOR, name: `${FLOOR.name}, round ${round}/${FLOOR_ROUNDS}` };
     results.push(rowOf(scenario, await run({ ...scenario, request: { ...FLOOR.request } })));
-  }
-  if (writeBody) {
-    WRITE_SAMPLE.request.body = writeBody;
-    results.push(rowOf(WRITE_SAMPLE, await run(WRITE_SAMPLE)));
-  } else {
-    skipped.push(`${WRITE_SAMPLE.name} (no --write-body supplied)`);
   }
 }
 
