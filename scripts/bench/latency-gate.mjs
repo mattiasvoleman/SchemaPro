@@ -42,11 +42,13 @@
  * the pool, a global interceptor — slows health too, and the share rises. Only
  * the absolute health guard below catches that, and only when it is large.
  *
- * THE HEALTH GUARD keeps the denominator honest: p99 ≤ 50 ms (§2's read
- * target, the one row that meets it, 22–32 ms seen) and ≥ 1000 req/s (1722–2708
- * seen). Passing both proves every read ≥ 200 req/s, a mean ≤ 125 ms at 25
- * connections, so a collapsed health window cannot turn a regression into a
- * pass.
+ * THE HEALTH GUARD bounds the denominator: p99 ≤ 50 ms (§2's read target, the
+ * one row that meets it, 22–32 ms seen) and ≥ 1000 req/s (1722–2708 seen).
+ * Passing both proves every read ≥ 200 req/s, a mean ≤ 125 ms at 25
+ * connections, whatever health did. It does not cancel the denominator:
+ * health is one 20 s window, and a window slowed but still inside the guard
+ * inflates every share alike — 34839859422 with health at 1240 req/s and p99
+ * 49 ms lets reads 60% more expensive pass at 0.221 and 0.230.
  *
  * THE WRITE is measured against a serial GET of the floor interleaved with it,
  * and printed as write ÷ baseline at p50, p95 and p99 — not gated. Every p99

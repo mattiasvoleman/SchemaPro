@@ -325,8 +325,9 @@ measured against the same run's own `GET /health/ready`:
 
 - **Reads**: each authenticated read's throughput as a share of health's
   throughput must be **≥ 0.20**.
-- **Health**: an absolute guard, **p99 ≤ 50ms** and **≥ 1000 req/s**, so that a
-  collapsing baseline can never make a regression look like a pass.
+- **Health**: an absolute guard, **p99 ≤ 50ms** and **≥ 1000 req/s**. Passing
+  it proves every read ≥ 200 req/s whatever health did; it bounds the
+  denominator and does not cancel it (below).
 - **The write** is measured against a serial baseline interleaved with it and
   printed as write ÷ baseline at p50, p95 and p99. It is **not gated** until ten
   runs have calibrated a threshold (below).
@@ -484,6 +485,19 @@ improvement.
   Passing both proves each read ≥ 200 req/s — a mean latency ≤ 125ms at 25
   connections — whatever health did. At 900 req/s the reads of 34839859422
   would show shares of 0.49 and 0.51, and the run still fails.
+- **What it does not prove.** Health is one 20s window, and a window slowed but
+  still inside both guards inflates every share by the same factor.
+  34839859422 with health at 1240 req/s and p99 49ms — 28% below its own
+  health throughput, both guards passing — lets reads 60% more expensive pass
+  at shares of 0.221 and 0.230, and the unit test holds that too. Health is
+  always the run's first saturated window. The floor rounds, whose first round
+  likewise follows a quiet stretch (the serial write), show that window 2–8%
+  below the next two in all four runs with them (469 against 479, 677 against
+  694–697, 444 against 480–481, 460 against 481–483 req/s). That much is inside
+  the ten calibration shares; a larger one-off disturbance in health's single
+  window is not. Measuring health again after the reads and dividing by the
+  faster window would close most of it for about 20s a night — a design
+  change, not part of this one.
 - **No new false failures.** Health's p99 ÷ mean latency is 2.20–2.47 in the
   logs, so a p99 of 50ms corresponds to about 1100–1240 req/s. Slowed
   uniformly, 34839859422 (1722 req/s, p99 32ms) fails the p99 guard at 1.56×
