@@ -136,6 +136,121 @@ JOIN "Rooms" r ON r."schoolId" = p."schoolId" AND r.code = 'RLSFIX'
 WHERE s.slug = 'rls-fixture-school'
 ON CONFLICT ("preferenceId", "roomId") DO NOTHING;
 
+-- A lesson in EACH school, weekly and dated, with a row in every table the
+-- SS12000 feeds select through. `/activities` reads MasterLessons with their
+-- Subjects, StudentGroups, MasterLessonGroups and MasterLessonStudents;
+-- `/calendarEvents` reads CalendarLessons with Subjects, StudentGroups, Rooms,
+-- CalendarLessonTeachers, CalendarLessonGroups and CalendarLessonStudents.
+--
+-- The seed creates no lessons at all. Without these, section 3 would find the
+-- service principal's own lesson rows missing for want of rows rather than for
+-- want of a policy, and would find none of the other school's because there
+-- are none to find.
+--
+-- The second school has no year or class of its own, so it gets one year and
+-- two classes: the lesson's own and an extra one.
+INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+SELECT s.id, 'RLS Fixture Year', current_date - 180, current_date + 180, true, now()
+FROM "Schools" s
+WHERE s.slug = 'rls-fixture-school'
+ON CONFLICT ("schoolId", name) DO NOTHING;
+
+INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "updatedAt")
+SELECT y."schoolId", y.id, g.name, now()
+FROM "AcademicYears" y
+JOIN "Schools" s ON s.id = y."schoolId"
+CROSS JOIN (VALUES ('RLS Fixture Class'), ('RLS Fixture Extra')) AS g(name)
+WHERE s.slug = 'rls-fixture-school' AND y.name = 'RLS Fixture Year'
+ON CONFLICT ("schoolId", "academicYearId", name) DO NOTHING;
+
+-- What each school's lesson is made of, and the lessons themselves once they
+-- exist. A view rather than a CTE because every statement below reads it
+-- afresh, so the link rows find the lessons the statements before them
+-- inserted. The weekly lesson sits on a Monday at 06:10, an hour no seeded or
+-- generated timetable uses, and that is what it is recognised by.
+CREATE OR REPLACE TEMP VIEW rls_fixture_lesson AS
+SELECT s.id AS "schoolId", y.id AS year_id, sub.id AS subject_id, room.id AS room_id,
+       home.id AS group_id, extra.id AS extra_group_id, teacher.id AS teacher_id,
+       pupil.id AS pupil_id,
+       y."startDate" + (8 - extract(isodow FROM y."startDate")::int) % 7 AS lesson_date,
+       ml.id AS master_lesson_id, cl.id AS calendar_lesson_id
+FROM "Schools" s
+JOIN LATERAL (
+  SELECT id, "startDate" FROM "AcademicYears"
+  WHERE "schoolId" = s.id AND "isActive" ORDER BY "createdAt" LIMIT 1
+) y ON true
+JOIN LATERAL (
+  SELECT id FROM "Subjects" WHERE "schoolId" = s.id ORDER BY code LIMIT 1
+) sub ON true
+JOIN LATERAL (
+  SELECT id FROM "Rooms" WHERE "schoolId" = s.id ORDER BY name LIMIT 1
+) room ON true
+JOIN LATERAL (
+  SELECT id FROM "StudentGroups"
+  WHERE "schoolId" = s.id AND "academicYearId" = y.id AND kind = 'CLASS'
+  ORDER BY name LIMIT 1
+) home ON true
+JOIN LATERAL (
+  SELECT id FROM "StudentGroups"
+  WHERE "schoolId" = s.id AND "academicYearId" = y.id AND kind = 'CLASS'
+  ORDER BY name OFFSET 1 LIMIT 1
+) extra ON true
+JOIN LATERAL (
+  SELECT id FROM "Users"
+  WHERE "schoolId" = s.id AND role = 'TEACHER' AND "isActive" ORDER BY email LIMIT 1
+) teacher ON true
+JOIN LATERAL (
+  SELECT id FROM "Users"
+  WHERE "schoolId" = s.id AND role = 'STUDENT' AND "isActive" ORDER BY email LIMIT 1
+) pupil ON true
+LEFT JOIN LATERAL (
+  SELECT id FROM "MasterLessons"
+  WHERE "schoolId" = s.id AND "dayOfWeek" = 1 AND "startTime" = '06:10' LIMIT 1
+) ml ON true
+LEFT JOIN LATERAL (
+  SELECT id FROM "CalendarLessons" WHERE "masterLessonId" = ml.id LIMIT 1
+) cl ON true
+WHERE s.slug = 'rls-fixture-school'
+   OR s.id = (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school'
+              ORDER BY "createdAt" LIMIT 1);
+
+INSERT INTO "MasterLessons"
+  ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId",
+   "dayOfWeek", "startTime", "endTime", "updatedAt")
+SELECT "schoolId", year_id, subject_id, group_id, teacher_id, room_id,
+       1, '06:10', '06:50', now()
+FROM rls_fixture_lesson
+WHERE master_lesson_id IS NULL;
+
+INSERT INTO "MasterLessonGroups" ("schoolId", "masterLessonId", "studentGroupId")
+SELECT "schoolId", master_lesson_id, extra_group_id FROM rls_fixture_lesson
+ON CONFLICT ("masterLessonId", "studentGroupId") DO NOTHING;
+
+INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId")
+SELECT "schoolId", master_lesson_id, pupil_id FROM rls_fixture_lesson
+ON CONFLICT ("masterLessonId", "studentId") DO NOTHING;
+
+INSERT INTO "CalendarLessons"
+  ("schoolId", "masterLessonId", "subjectId", "studentGroupId", "roomId",
+   date, "startsAt", "endsAt", "updatedAt")
+SELECT "schoolId", master_lesson_id, subject_id, group_id, room_id, lesson_date,
+       (lesson_date + time '06:10') AT TIME ZONE 'Europe/Stockholm',
+       (lesson_date + time '06:50') AT TIME ZONE 'Europe/Stockholm', now()
+FROM rls_fixture_lesson
+WHERE calendar_lesson_id IS NULL;
+
+INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId")
+SELECT "schoolId", calendar_lesson_id, teacher_id FROM rls_fixture_lesson
+ON CONFLICT ("calendarLessonId", "teacherId") DO NOTHING;
+
+INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId")
+SELECT "schoolId", calendar_lesson_id, extra_group_id FROM rls_fixture_lesson
+ON CONFLICT ("calendarLessonId", "studentGroupId") DO NOTHING;
+
+INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId")
+SELECT "schoolId", calendar_lesson_id, pupil_id FROM rls_fixture_lesson
+ON CONFLICT ("calendarLessonId", "studentId") DO NOTHING;
+
 -- An active key for the FIRST school, so the key-lookup assertions have
 -- something to find, and a revoked one so revocation can be asserted.
 INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", "createdAt")

@@ -6,8 +6,7 @@ import { PrismaService } from '../database/prisma.service';
  * SS12000:2020-inspired read API + roster import.
  *
  * Every method receives the school id resolved by `IntegrationKeyGuard` and
- * filters explicitly by it — integration calls run outside RLS (system
- * transaction), so tenant isolation is enforced here, in code, on every query.
+ * acts for that one school; the tenancy note below says what holds it there.
  *
  * Field naming follows SS12000 conventions (persons, groups, activities,
  * calendarEvents, displayName, groupMemberships, …); see
@@ -22,6 +21,12 @@ import { PrismaService } from '../database/prisma.service';
  * that one school, so the `where: { schoolId }` clauses below are defence in
  * depth rather than the only thing standing between two tenants: a query that
  * forgets one returns nothing instead of leaking.
+ *
+ * The same property cuts the other way. A table with no service-principal
+ * policy reads as empty here, not as denied: a required relation into it
+ * throws "Inconsistent query result" (a 500), and a list relation silently
+ * comes back `[]`. So every table a `select` below reaches needs a policy, and
+ * a row in section 3 of scripts/test/rls-policies.sql.
  *
  * These methods previously used `withSystemTransaction` on the assumption that
  * it bypassed RLS. It does not, so every endpoint here returned empty payloads

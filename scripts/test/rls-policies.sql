@@ -117,6 +117,7 @@ SELECT set_config('app.service_school_id', :'school_a', true);
 DO $$
 DECLARE
   n        bigint;
+  tbl      text;
   school_a uuid := app.current_service_school_id();
 BEGIN
   IF school_a IS NULL THEN
@@ -145,6 +146,32 @@ BEGIN
   IF n <> 0 THEN
     RAISE EXCEPTION 'service-principal: leaked % student groups from other schools', n;
   END IF;
+
+  -- The lessons, and every table `/activities` and `/calendarEvents` select a
+  -- lesson through. Until 20260914150000 seven of these had no policy for this
+  -- principal, so a lesson's required subject came back missing and both feeds
+  -- answered 500 for any school with a lesson; nothing here counted them. Both
+  -- halves count real rows: the fixtures plant a lesson with a row in each table
+  -- in both schools, and the runner refuses to start without the other school's.
+  FOREACH tbl IN ARRAY ARRAY[
+    'MasterLessons', 'CalendarLessons', 'Subjects', 'Rooms',
+    'MasterLessonGroups', 'MasterLessonStudents',
+    'CalendarLessonTeachers', 'CalendarLessonGroups', 'CalendarLessonStudents'
+  ] LOOP
+    EXECUTE format('SELECT count(*) FROM %I WHERE "schoolId" = $1', tbl)
+      INTO n USING school_a;
+    IF n = 0 THEN
+      RAISE EXCEPTION
+        'service-principal: saw 0 % rows for its own school — the SS12000 feeds cannot read them', tbl;
+    END IF;
+
+    EXECUTE format('SELECT count(*) FROM %I WHERE "schoolId" <> $1', tbl)
+      INTO n USING school_a;
+    IF n <> 0 THEN
+      RAISE EXCEPTION
+        'service-principal: leaked % % rows from other schools', n, tbl;
+    END IF;
+  END LOOP;
 
   SELECT count(*) INTO n FROM "IntegrationApiKeys";
   IF n <> 0 THEN
