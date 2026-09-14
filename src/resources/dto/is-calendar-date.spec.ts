@@ -83,7 +83,7 @@ describe('CreateTeachingRequirementDto period validation', () => {
       validate(dto({ startDate: '2027-01-11', endDate: '2027-06-11' })),
     ).resolves.toEqual([]);
     await expect(validate(dto())).resolves.toEqual([]);
-    // Null is "no bound", not a malformed date — @ValidateIf lets it past.
+    // Null is "no bound", not a malformed date — @IsOptional() lets it past.
     await expect(
       validate(dto({ startDate: null, endDate: null })),
     ).resolves.toEqual([]);

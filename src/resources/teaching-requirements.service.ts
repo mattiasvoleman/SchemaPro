@@ -6,6 +6,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { SLOT_MINUTES, fitsTheGrid } from '../common/solver-grid';
 import { parseDateString } from '../common/utils/time';
+import { readYearBoundsForShare } from './academic-year-bounds';
 import type {
   CreateTeachingRequirementDto,
   UpdateTeachingRequirementDto,
@@ -69,7 +70,9 @@ export class TeachingRequirementsService {
    *
    * A stated period does read the year first, but only to measure the dates
    * against it (`assertPeriodFitsYear`) — never to decide whether the id was
-   * the caller's to name. That answer is still the database's alone.
+   * the caller's to name. That answer is still the database's alone. The read
+   * takes FOR SHARE on the year, held until the period commits, so a year PATCH
+   * cannot narrow the bounds past it in between — see readYearBoundsForShare.
    */
   async create(
     dto: CreateTeachingRequirementDto,
@@ -86,10 +89,7 @@ export class TeachingRequirementsService {
         // runs the whole year by definition, so there is nothing the year's
         // bounds could contradict.
         if (startDate || endDate) {
-          const year = await tx.academicYear.findUnique({
-            where: { id: dto.academicYearId },
-            select: { startDate: true, endDate: true },
-          });
+          const year = await readYearBoundsForShare(tx, dto.academicYearId);
           this.assertPeriodFitsYear(year, startDate, endDate);
         }
 
@@ -136,18 +136,17 @@ export class TeachingRequirementsService {
         if (dto.startDate !== undefined || dto.endDate !== undefined) {
           const existing = await tx.teachingRequirement.findUnique({
             where: { id },
-            select: {
-              startDate: true,
-              endDate: true,
-              academicYear: { select: { startDate: true, endDate: true } },
-            },
+            select: { academicYearId: true, startDate: true, endDate: true },
           });
           // Nothing to measure against, and nothing to say about it: the
           // update below answers an unknown or foreign id with the 404 it has
           // always answered with.
           if (existing) {
+            // The year in a read of its own, locked, for the reason create()
+            // gives. The id needs no lock: no PATCH moves a requirement to
+            // another year.
             this.assertPeriodFitsYear(
-              existing.academicYear,
+              await readYearBoundsForShare(tx, existing.academicYearId),
               dto.startDate !== undefined ? startDate : existing.startDate,
               dto.endDate !== undefined ? endDate : existing.endDate,
             );

@@ -5,6 +5,7 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString, todayInZone } from '../common/utils/time';
+import { readYearBoundsForShare } from './academic-year-bounds';
 import type {
   CreateSchoolBreakDto,
   UpdateSchoolBreakDto,
@@ -73,6 +74,10 @@ export class SchoolBreaksService {
    * composite (id, schoolId) foreign key, which is the one check RLS could not
    * have made, because PostgreSQL runs referential integrity as the referenced
    * table's owner with row security off.
+   *
+   * The read takes FOR SHARE on the year, held until this lov commits, so a
+   * year PATCH cannot narrow the bounds past it in between — see
+   * readYearBoundsForShare.
    */
   async create(
     dto: CreateSchoolBreakDto,
@@ -87,10 +92,7 @@ export class SchoolBreaksService {
 
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        const year = await tx.academicYear.findUnique({
-          where: { id: dto.academicYearId },
-          select: { startDate: true, endDate: true },
-        });
+        const year = await readYearBoundsForShare(tx, dto.academicYearId);
         this.assertRangeFitsYear(year, startDate, endDate);
 
         const created = await tx.schoolBreak.create({
@@ -154,18 +156,22 @@ export class SchoolBreaksService {
         const existing = await tx.schoolBreak.findUnique({
           where: { id },
           select: {
+            academicYearId: true,
             startDate: true,
             endDate: true,
             minGradeLevel: true,
             maxGradeLevel: true,
-            academicYear: { select: { startDate: true, endDate: true } },
           },
         });
         // Nothing to measure against, and nothing to say about it: the update
         // below answers an unknown or cross-tenant id with its own 404.
         if (existing) {
+          // The year in a read of its own rather than joined to the break, so
+          // the lock falls on the year's row, which is what a year PATCH waits
+          // on (readYearBoundsForShare). The id needs no lock: no PATCH moves a
+          // lov to another year.
           this.assertRangeFitsYear(
-            existing.academicYear,
+            await readYearBoundsForShare(tx, existing.academicYearId),
             startDate ?? existing.startDate,
             endDate ?? existing.endDate,
           );

@@ -188,6 +188,11 @@ model User {
 
   school         School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   // A student's primary group (null for teachers/admins).
+  //
+  // Not visible here, and load-bearing: a CHECK refuses a group on any other
+  // role, because app.current_user_group_id() hands whoever holds one the
+  // pupils' read path. Prisma cannot express it — see migration
+  // 20260914120000_bara_en_elev_har_en_klass.
   studentGroupId String?       @db.Uuid
   studentGroup   StudentGroup? @relation("StudentGroupMembers", fields: [studentGroupId], references: [id], onDelete: SetNull)
 
@@ -356,6 +361,11 @@ model AcademicYear {
   @@unique([id, schoolId])
   @@index([schoolId])
   @@index([schoolId, startDate, endDate])
+  // Not stated here, because schema.prisma cannot state a partial index: the
+  // unique index AcademicYears_one_active_per_school on (schoolId) WHERE
+  // isActive, from migration 20260914090000. It is what keeps a school to one
+  // active year. Prisma's differ skips it, so a migration generated from this
+  // file will never mention it, whether it is there or not.
   @@map("AcademicYears")
 }
 

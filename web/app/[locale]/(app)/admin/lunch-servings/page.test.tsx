@@ -359,6 +359,44 @@ describe("saving a sitting", () => {
     });
   });
 
+  it("drags the upper bound along when the lower one passes it", async () => {
+    /*
+     * A stage that reads backwards was never what anybody meant, and the
+     * service refuses it after the fact. The pair is corrected as it is typed
+     * — and since the two selects moved onto components/ui/grade-span-field,
+     * that rule lives somewhere this page does not own. Asserted here so a
+     * change over there cannot quietly hand the kitchen an empty sitting.
+     */
+    const user = userEvent.setup();
+    render(<LunchServingsPage />);
+
+    await open(user);
+    await user.click(screen.getByRole("combobox", { name: "gradeSpan" }));
+    await user.click(await screen.findByRole("option", { name: "grade(9)" }));
+    await save(user);
+
+    expect(createMock.mock.calls[0]?.[0]).toMatchObject({
+      minGradeLevel: 9,
+      maxGradeLevel: 9,
+    });
+  });
+
+  it("drags the lower bound along when the upper one falls below it", async () => {
+    // The other direction, which nothing covered.
+    const user = userEvent.setup();
+    render(<LunchServingsPage />);
+
+    await open(user);
+    await user.click(screen.getByRole("combobox", { name: "gradeSpan – to" }));
+    await user.click(await screen.findByRole("option", { name: "grade(1)" }));
+    await save(user);
+
+    expect(createMock.mock.calls[0]?.[0]).toMatchObject({
+      minGradeLevel: 1,
+      maxGradeLevel: 1,
+    });
+  });
+
   it("sends an empty seat field as null, not as zero", async () => {
     /*
      * Number("") is 0, and the API refuses a sitting for nobody. An empty field

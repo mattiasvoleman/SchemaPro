@@ -1008,9 +1008,15 @@ export default function TimetablePage() {
     [deleteLesson, createLesson, history],
   );
 
-  useHistoryKeyboard(history, (kind, entry) => {
-    if (entry) toast.info(kind === "undo" ? t("undone") : t("redone"));
-  });
+  useHistoryKeyboard(
+    history,
+    (kind, entry) => {
+      if (entry) toast.info(kind === "undo" ? t("undone") : t("redone"));
+    },
+    // The same report doUndo/doRedo give below: Ctrl+Z is not a quieter way
+    // to hit a 409 than the toolbar button.
+    (_kind, error) => showError(error),
+  );
 
   const doUndo = async () => {
     try {

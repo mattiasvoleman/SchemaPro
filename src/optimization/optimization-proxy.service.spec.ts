@@ -1407,6 +1407,71 @@ describe('OptimizationProxyService', () => {
       );
     });
 
+    it('sends each rast as the engine reads it, lesson-before rule included and never its name', async () => {
+      /*
+       * The engine's Rast forbids unknown fields and wants HH:MM:SS, while
+       * Prisma hands a TIME back as a 1970 Date. requiresLessonBefore has to
+       * ride along as stored: dropped, the engine's default of false quietly
+       * switches off a rule the school turned on, and nothing says so. The two
+       * rows carry opposite values, so no constant passes for the mapping.
+       *
+       * The name stays behind — the engine only subtracts minutes, and a name
+       * is one more thing that could identify a school in a payload built to be
+       * anonymous. The rows carry one anyway, as they would the day somebody
+       * widens the select, so the mapping has to leave it behind on its own.
+       */
+      arrange();
+      tx.rast.findMany.mockResolvedValue([
+        {
+          name: 'Förmiddagsrast',
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          dayOfWeek: null,
+          startTime: new Date('1970-01-01T09:40:00.000Z'),
+          endTime: new Date('1970-01-01T10:00:00.000Z'),
+          requiresLessonBefore: true,
+        },
+        {
+          name: 'Fredagsrast',
+          minGradeLevel: 7,
+          maxGradeLevel: 9,
+          dayOfWeek: 5,
+          startTime: new Date('1970-01-01T13:30:00.000Z'),
+          endTime: new Date('1970-01-01T13:45:00.000Z'),
+          requiresLessonBefore: false,
+        },
+      ]);
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().rasts).toEqual([
+        {
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          dayOfWeek: null,
+          startTime: '09:40:00',
+          endTime: '10:00:00',
+          requiresLessonBefore: true,
+        },
+        {
+          minGradeLevel: 7,
+          maxGradeLevel: 9,
+          dayOfWeek: 5,
+          startTime: '13:30:00',
+          endTime: '13:45:00',
+          requiresLessonBefore: false,
+        },
+      ]);
+      // Through the year's school, as the frames and the sittings are read, so
+      // a request naming another school's year cannot pull this school's rows.
+      const [query] = tx.rast.findMany.mock.calls[0];
+      expect(query.where).toEqual({
+        school: { academicYears: { some: { id: ACADEMIC_YEAR } } },
+      });
+      expect(query.select).not.toHaveProperty('name');
+    });
+
     // -----------------------------------------------------------------------
     // Sittningarna, on their way back
     // -----------------------------------------------------------------------

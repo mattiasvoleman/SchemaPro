@@ -1,4 +1,6 @@
+import { Prisma } from '@prisma/client';
 import request from 'supertest';
+import { lockingRead, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 
 /**
@@ -19,10 +21,35 @@ const SUBJECT_ID = '99999999-9999-4999-8999-999999999999';
 const STUDENT_ID = '88888888-8888-4888-8888-888888888888';
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 
+/** A `@db.Time` value as Prisma hands it back: a Date anchored at 1970-01-01. */
+const wallClock = (time: string): Date => new Date(`1970-01-01T${time}:00.000Z`);
+
+/** What Prisma throws when RLS hides the row a write names. */
+const notFound = () =>
+  new Prisma.PrismaClientKnownRequestError('Simulated P2025', {
+    code: 'P2025',
+    clientVersion: Prisma.prismaVersion.client,
+  });
+
 describe('Planning surface (e2e)', () => {
   let harness: TestHarness;
   const http = () => harness.app.getHttpServer();
   const admin = () => asUser({});
+
+  /**
+   * Answers the locking read an update() takes from `rows`, as the table would
+   * (see lockingRead): a read that drops its lock, its key or a column throws,
+   * and the request 500s instead of passing on a row it never asked for.
+   */
+  const givenLockedRows = (table: LockedTable, rows: Record<string, unknown>[]) => {
+    // The auto-vivifying tx hands back a model proxy for `$queryRaw`, and a
+    // proxy is not callable.
+    const queryRaw = jest.fn((...call: unknown[]) =>
+      Promise.resolve(lockingRead(table, rows, call)),
+    );
+    Object.assign(harness.tx, { $queryRaw: queryRaw });
+    return queryRaw;
+  };
 
   beforeAll(async () => {
     harness = await createTestApp();
@@ -34,6 +61,12 @@ describe('Planning surface (e2e)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    // The harness outlives the test, and the table one test answered from is
+    // not the next one's.
+    delete (harness.tx as Record<string, unknown>)['$queryRaw'];
   });
 
   describe('academic years', () => {
@@ -459,6 +492,502 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  // The RBAC table at the bottom proves a teacher is turned away from the three
+  // routes below, and that 403 comes from RolesGuard before any handler runs.
+  // What follows is the admin getting through: the route resolving, the DTO
+  // taking the body the page actually sends through the real ValidationPipe,
+  // the school stamped by the service rather than the client, and @db.Time
+  // leaving as a clock rather than a 1970 timestamp.
+
+  describe('lunchsittningar (lunch servings)', () => {
+    const SERVING_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+
+    const storedServing = (overrides: Record<string, unknown> = {}) => ({
+      id: SERVING_ID,
+      schoolId: SCHOOL_ID,
+      minGradeLevel: 4,
+      maxGradeLevel: 6,
+      dayOfWeek: null,
+      startTime: wallClock('11:00'),
+      endTime: wallClock('11:30'),
+      seats: null,
+      createdAt: new Date('2026-08-31T09:00:00.000Z'),
+      updatedAt: new Date('2026-08-31T09:00:00.000Z'),
+      ...overrides,
+    });
+
+    /** The stored sitting, found by its own id under update()'s lock and by nothing else. */
+    const givenServing = (overrides: Record<string, unknown> = {}) =>
+      givenLockedRows(
+        { name: 'LunchServings', columns: Object.keys(storedServing()), lock: 'FOR UPDATE' },
+        [storedServing(overrides)],
+      );
+
+    it('lists the flow as clock times, and only the fields the page reads', async () => {
+      harness.tx['lunchServing']!['findMany']!.mockResolvedValue([storedServing()]);
+
+      const response = await request(http())
+        .get('/api/v1/lunch-servings')
+        .set('x-test-user', admin())
+        .expect(200);
+
+      // The row carries @db.Time Dates and the school's id. Neither is what the
+      // page reads, and the Dates are what the lunch-settings route once sent
+      // to a client asking for a clock.
+      expect(response.body).toEqual([
+        {
+          id: SERVING_ID,
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          dayOfWeek: null,
+          startTime: '11:00',
+          endTime: '11:30',
+          seats: null,
+        },
+      ]);
+    });
+
+    it('creates the every-day sitting for the caller’s school, null day and seats included', async () => {
+      harness.tx['lunchServing']!['create']!.mockResolvedValue(storedServing());
+
+      // The page's body (admin/lunch-servings/page.tsx): an empty seats field is
+      // sent as null, the hall's own limit, and "every day" as dayOfWeek: null.
+      const response = await request(http())
+        .post('/api/v1/lunch-servings')
+        .set('x-test-user', admin())
+        .send({
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          dayOfWeek: null,
+          startTime: '11:00',
+          endTime: '11:30',
+          seats: null,
+        })
+        .expect(201);
+
+      expect(response.body).toMatchObject({ id: SERVING_ID, startTime: '11:00', endTime: '11:30' });
+      const args = harness.tx['lunchServing']!['create']!.mock.calls[0]?.[0] as {
+        data: { schoolId: string; dayOfWeek: number | null; seats: number | null };
+      };
+      expect(args.data).toMatchObject({ schoolId: SCHOOL_ID, dayOfWeek: null, seats: null });
+    });
+
+    it('400s a sitting with no chairs, before it reaches the database', async () => {
+      await request(http())
+        .post('/api/v1/lunch-servings')
+        .set('x-test-user', admin())
+        .send({ minGradeLevel: 4, maxGradeLevel: 6, startTime: '11:00', endTime: '11:30', seats: 0 })
+        .expect(400);
+
+      expect(harness.tx['lunchServing']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('checks a PATCH against the stored window, not the payload alone', async () => {
+      // Sent alone, 10:30 is a valid time. Against the stored 11:00 it is a
+      // sitting that ends before it begins.
+      givenServing();
+
+      await request(http())
+        .patch(`/api/v1/lunch-servings/${SERVING_ID}`)
+        .set('x-test-user', admin())
+        .send({ endTime: '10:30' })
+        .expect(400);
+
+      expect(harness.tx['lunchServing']!['update']).not.toHaveBeenCalled();
+    });
+
+    it('writes only the fields a PATCH names', async () => {
+      givenServing();
+      harness.tx['lunchServing']!['update']!.mockResolvedValue(storedServing({ seats: 60 }));
+
+      const response = await request(http())
+        .patch(`/api/v1/lunch-servings/${SERVING_ID}`)
+        .set('x-test-user', admin())
+        .send({ seats: 60 })
+        .expect(200);
+
+      expect(response.body).toMatchObject({ seats: 60, startTime: '11:00' });
+      expect(harness.tx['lunchServing']!['update']).toHaveBeenCalledWith({
+        where: { id: SERVING_ID },
+        data: { seats: 60 },
+      });
+    });
+
+    it('deletes with 204 and no body', async () => {
+      harness.tx['lunchServing']!['delete']!.mockResolvedValue(storedServing());
+
+      const response = await request(http())
+        .delete(`/api/v1/lunch-servings/${SERVING_ID}`)
+        .set('x-test-user', admin())
+        .expect(204);
+
+      expect(response.body).toEqual({});
+      expect(harness.tx['lunchServing']!['delete']).toHaveBeenCalledWith({
+        where: { id: SERVING_ID },
+      });
+    });
+
+    it('400s on an id that is not a v4 uuid, before touching the table', async () => {
+      // update() reads the row under a lock, so that read is what the pipe has
+      // to stop; findUnique is not called on this path at all.
+      const queryRaw = givenServing();
+
+      await request(http())
+        .patch('/api/v1/lunch-servings/not-a-uuid')
+        .set('x-test-user', admin())
+        .send({ seats: 60 })
+        .expect(400);
+
+      expect(queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('404s on a sitting RLS hides, rather than a 500', async () => {
+      harness.tx['lunchServing']!['delete']!.mockRejectedValueOnce(notFound());
+
+      await request(http())
+        .delete(`/api/v1/lunch-servings/${SERVING_ID}`)
+        .set('x-test-user', admin())
+        .expect(404);
+    });
+  });
+
+  describe('raster', () => {
+    const RAST_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+    /**
+     * What the admin page sends, for a create and an edit alike: its submit
+     * builds one object from the whole form (admin/rasts/page.tsx), and its
+     * "every day" option is `dayOfWeek: null`.
+     */
+    const PAGE_BODY = {
+      name: 'Förmiddagsrast',
+      minGradeLevel: 4,
+      maxGradeLevel: 6,
+      dayOfWeek: null,
+      startTime: '09:40',
+      endTime: '10:00',
+      requiresLessonBefore: false,
+    };
+
+    const storedRast = (overrides: Record<string, unknown> = {}) => ({
+      id: RAST_ID,
+      schoolId: SCHOOL_ID,
+      name: 'Förmiddagsrast',
+      minGradeLevel: 4,
+      maxGradeLevel: 6,
+      dayOfWeek: null,
+      startTime: wallClock('09:40'),
+      endTime: wallClock('10:00'),
+      requiresLessonBefore: false,
+      createdAt: new Date('2026-09-05T09:00:00.000Z'),
+      updatedAt: new Date('2026-09-05T09:00:00.000Z'),
+      ...overrides,
+    });
+
+    /** The stored rast, found by its own id under update()'s lock and by nothing else. */
+    const givenRast = (overrides: Record<string, unknown> = {}) =>
+      givenLockedRows(
+        { name: 'Rasts', columns: Object.keys(storedRast()), lock: 'FOR UPDATE' },
+        [storedRast(overrides)],
+      );
+
+    it('lists them as clock times, with whether a lesson must come first', async () => {
+      harness.tx['rast']!['findMany']!.mockResolvedValue([storedRast()]);
+
+      const response = await request(http())
+        .get('/api/v1/rasts')
+        .set('x-test-user', admin())
+        .expect(200);
+
+      expect(response.body).toEqual([
+        {
+          id: RAST_ID,
+          name: 'Förmiddagsrast',
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          dayOfWeek: null,
+          startTime: '09:40',
+          endTime: '10:00',
+          requiresLessonBefore: false,
+        },
+      ]);
+    });
+
+    it('creates the every-day rast the page sends, for the caller’s school and with its rule', async () => {
+      // The rule is sent switched on: the page's default is false, and so is
+      // the service's, so a flag that never reached the row would pass unseen.
+      harness.tx['rast']!['create']!.mockResolvedValue(storedRast({ requiresLessonBefore: true }));
+
+      const response = await request(http())
+        .post('/api/v1/rasts')
+        .set('x-test-user', admin())
+        .send({ ...PAGE_BODY, requiresLessonBefore: true })
+        .expect(201);
+
+      expect(response.body).toMatchObject({
+        id: RAST_ID,
+        startTime: '09:40',
+        endTime: '10:00',
+        requiresLessonBefore: true,
+      });
+      const args = harness.tx['rast']!['create']!.mock.calls[0]?.[0] as {
+        data: { schoolId: string; dayOfWeek: number | null; requiresLessonBefore: boolean };
+      };
+      expect(args.data).toMatchObject({
+        schoolId: SCHOOL_ID,
+        dayOfWeek: null,
+        requiresLessonBefore: true,
+      });
+    });
+
+    it('400s the lesson-before rule sent as the string "true"', async () => {
+      // enableImplicitConversion is off, so "true" is not true anywhere. Refused
+      // here it is a 400 the form can show, not a type error from the database.
+      await request(http())
+        .post('/api/v1/rasts')
+        .set('x-test-user', admin())
+        .send({ ...PAGE_BODY, requiresLessonBefore: 'true' })
+        .expect(400);
+
+      expect(harness.tx['rast']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('takes the whole form back as an edit, not only the field that changed', async () => {
+      givenRast();
+      harness.tx['rast']!['update']!.mockResolvedValue(
+        storedRast({ dayOfWeek: 5, requiresLessonBefore: true }),
+      );
+
+      const response = await request(http())
+        .patch(`/api/v1/rasts/${RAST_ID}`)
+        .set('x-test-user', admin())
+        .send({ ...PAGE_BODY, dayOfWeek: 5, requiresLessonBefore: true })
+        .expect(200);
+
+      expect(response.body).toMatchObject({
+        id: RAST_ID,
+        dayOfWeek: 5,
+        startTime: '09:40',
+        requiresLessonBefore: true,
+      });
+      expect(harness.tx['rast']!['update']).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: RAST_ID },
+          data: expect.objectContaining({ dayOfWeek: 5, requiresLessonBefore: true }),
+        }),
+      );
+    });
+
+    it('deletes with 204 and no body', async () => {
+      harness.tx['rast']!['delete']!.mockResolvedValue(storedRast());
+
+      const response = await request(http())
+        .delete(`/api/v1/rasts/${RAST_ID}`)
+        .set('x-test-user', admin())
+        .expect(204);
+
+      expect(response.body).toEqual({});
+      expect(harness.tx['rast']!['delete']).toHaveBeenCalledWith({ where: { id: RAST_ID } });
+    });
+
+    it('400s on an id that is not a v4 uuid, before touching the table', async () => {
+      await request(http())
+        .delete('/api/v1/rasts/1')
+        .set('x-test-user', admin())
+        .expect(400);
+
+      expect(harness.tx['rast']!['delete']).not.toHaveBeenCalled();
+    });
+
+    it('404s on a rast RLS hides, rather than a 500', async () => {
+      harness.tx['rast']!['delete']!.mockRejectedValueOnce(notFound());
+
+      await request(http())
+        .delete(`/api/v1/rasts/${RAST_ID}`)
+        .set('x-test-user', admin())
+        .expect(404);
+    });
+  });
+
+  describe('en lunch lagd för hand (lunch sittings)', () => {
+    const SITTING_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+
+    /** What the grid sends when the school clicks a meal onto a day (admin/timetable/page.tsx). */
+    const PLACE_BODY = {
+      academicYearId: YEAR_ID,
+      studentGroupId: GROUP_ID,
+      dayOfWeek: 2,
+      startTime: '13:00',
+    };
+
+    const storedSitting = (overrides: Record<string, unknown> = {}) => ({
+      id: SITTING_ID,
+      schoolId: SCHOOL_ID,
+      academicYearId: YEAR_ID,
+      studentGroupId: GROUP_ID,
+      dayOfWeek: 2,
+      startTime: wallClock('13:00'),
+      endTime: wallClock('13:30'),
+      headcount: 24,
+      isGenerated: false,
+      createdAt: new Date('2026-09-11T09:00:00.000Z'),
+      updatedAt: new Date('2026-09-11T09:00:00.000Z'),
+      ...overrides,
+    });
+
+    // Lunch on and thirty minutes long, and GROUP_ID a class of YEAR_ID with 24
+    // pupils at home in it: what every placement reads before it writes.
+    beforeEach(() => {
+      harness.tx['lunchSetting']!['findUnique']!.mockResolvedValue({
+        lunchEnabled: true,
+        lunchMinutes: 30,
+      });
+      harness.tx['studentGroup']!['findFirst']!.mockResolvedValue({ id: GROUP_ID });
+      harness.tx['user']!['count']!.mockResolvedValue(24);
+    });
+
+    // clearAllMocks keeps a stubbed value, so these would otherwise answer for
+    // every describe below this one.
+    afterEach(() => {
+      harness.tx['lunchSetting']!['findUnique']!.mockReset();
+      harness.tx['studentGroup']!['findFirst']!.mockReset();
+      harness.tx['user']!['count']!.mockReset();
+    });
+
+    it('places the meal the grid sends as the school’s, as long as lunch is', async () => {
+      harness.tx['lunchSitting']!['upsert']!.mockResolvedValue(storedSitting());
+
+      const response = await request(http())
+        .post('/api/v1/lunch-sittings')
+        .set('x-test-user', admin())
+        .send(PLACE_BODY)
+        .expect(201);
+
+      expect(response.body).toEqual({
+        id: SITTING_ID,
+        studentGroupId: GROUP_ID,
+        dayOfWeek: 2,
+        startTime: '13:00',
+        endTime: '13:30',
+        headcount: 24,
+        isGenerated: false,
+      });
+      // The end is the school's one lunch length after the start, the tenant
+      // comes from the principal, and false is what makes the next run keep
+      // the meal and send it back as a pin.
+      const args = harness.tx['lunchSitting']!['upsert']!.mock.calls[0]?.[0] as {
+        create: { schoolId: string; endTime: Date; headcount: number; isGenerated: boolean };
+      };
+      expect(args.create).toMatchObject({
+        schoolId: SCHOOL_ID,
+        endTime: wallClock('13:30'),
+        headcount: 24,
+        isGenerated: false,
+      });
+    });
+
+    it('400s a body that names its own end, before anything is read', async () => {
+      // Only the start: the length is the school's lunchMinutes, and an end in
+      // the body would be a second answer to how long lunch is — one a meal
+      // placed by hand would go on giving after the setting changed.
+      await request(http())
+        .post('/api/v1/lunch-sittings')
+        .set('x-test-user', admin())
+        .send({ ...PLACE_BODY, endTime: '13:45' })
+        .expect(400);
+
+      expect(harness.tx['lunchSetting']!['findUnique']).not.toHaveBeenCalled();
+      expect(harness.tx['lunchSitting']!['upsert']).not.toHaveBeenCalled();
+    });
+
+    it('moves the solver’s meal as a drag sends it: pinned, a lunch long, in place of that day’s', async () => {
+      harness.tx['lunchSitting']!['findUnique']!.mockResolvedValue(
+        storedSitting({ isGenerated: true }),
+      );
+      harness.tx['lunchSitting']!['deleteMany']!.mockResolvedValue({ count: 1 });
+      harness.tx['lunchSitting']!['update']!.mockResolvedValue(
+        storedSitting({ dayOfWeek: 3, startTime: wallClock('13:15'), endTime: wallClock('13:45') }),
+      );
+
+      // A drag names both the day and the start (moveLunch in the grid).
+      const response = await request(http())
+        .patch(`/api/v1/lunch-sittings/${SITTING_ID}`)
+        .set('x-test-user', admin())
+        .send({ dayOfWeek: 3, startTime: '13:15' })
+        .expect(200);
+
+      expect(response.body).toMatchObject({
+        dayOfWeek: 3,
+        startTime: '13:15',
+        endTime: '13:45',
+        isGenerated: false,
+      });
+      // A class eats once a day, so Wednesday's meal makes way for the one
+      // dragged onto it rather than failing on the unique key.
+      expect(harness.tx['lunchSitting']!['deleteMany']).toHaveBeenCalledWith({
+        where: { academicYearId: YEAR_ID, studentGroupId: GROUP_ID, dayOfWeek: 3 },
+      });
+      expect(harness.tx['lunchSitting']!['update']).toHaveBeenCalledWith({
+        where: { id: SITTING_ID },
+        data: {
+          dayOfWeek: 3,
+          startTime: wallClock('13:15'),
+          endTime: wallClock('13:45'),
+          isGenerated: false,
+        },
+      });
+    });
+
+    it('removes a meal placed by hand with 204 and no body', async () => {
+      harness.tx['lunchSitting']!['findUnique']!.mockResolvedValue(storedSitting());
+
+      const response = await request(http())
+        .delete(`/api/v1/lunch-sittings/${SITTING_ID}`)
+        .set('x-test-user', admin())
+        .expect(204);
+
+      expect(response.body).toEqual({});
+      expect(harness.tx['lunchSitting']!['delete']).toHaveBeenCalledWith({
+        where: { id: SITTING_ID },
+      });
+    });
+
+    it('refuses to remove the solver’s meal, which would leave the day with none', async () => {
+      harness.tx['lunchSitting']!['findUnique']!.mockResolvedValue(
+        storedSitting({ isGenerated: true }),
+      );
+
+      await request(http())
+        .delete(`/api/v1/lunch-sittings/${SITTING_ID}`)
+        .set('x-test-user', admin())
+        .expect(400);
+
+      expect(harness.tx['lunchSitting']!['delete']).not.toHaveBeenCalled();
+    });
+
+    it('400s on an id that is not a v4 uuid, before touching the table', async () => {
+      await request(http())
+        .patch('/api/v1/lunch-sittings/not-a-uuid')
+        .set('x-test-user', admin())
+        .send({ dayOfWeek: 3 })
+        .expect(400);
+
+      expect(harness.tx['lunchSitting']!['findUnique']).not.toHaveBeenCalled();
+    });
+
+    it('404s on a meal RLS hides, rather than a 500', async () => {
+      // Under RLS another school's row reads as no row at all.
+      harness.tx['lunchSitting']!['findUnique']!.mockResolvedValue(null);
+
+      await request(http())
+        .delete(`/api/v1/lunch-sittings/${SITTING_ID}`)
+        .set('x-test-user', admin())
+        .expect(404);
+
+      expect(harness.tx['lunchSitting']!['delete']).not.toHaveBeenCalled();
+    });
+  });
+
   describe('låsta tider för en årskurs', () => {
     it('creates a year-range lock that names no resource', async () => {
       harness.tx['availabilityConstraint']!['create']!.mockResolvedValue({
@@ -543,6 +1072,9 @@ describe('Planning surface (e2e)', () => {
       ['GET', '/api/v1/frame-times'],
       ['POST', '/api/v1/lunch-servings'],
       ['GET', '/api/v1/lunch-servings'],
+      ['POST', '/api/v1/rasts'],
+      ['GET', '/api/v1/rasts'],
+      ['POST', '/api/v1/lunch-sittings'],
     ] as const;
 
     it.each(adminOnly)('denies a teacher on %s %s', async (method, path) => {

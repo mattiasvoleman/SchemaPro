@@ -12,6 +12,7 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
 import { TeachingRequirementsService } from './teaching-requirements.service';
 import type {
@@ -32,6 +33,23 @@ const YEAR = {
   startDate: new Date('2026-08-17T00:00:00.000Z'),
   endDate: new Date('2027-06-11T00:00:00.000Z'),
 };
+
+/**
+ * AcademicYears as a period writer's read of the year has to name it: FOR
+ * SHARE, the lock a year PATCH moving the bounds waits on.
+ */
+const YEARS: LockedTable = {
+  name: 'AcademicYears',
+  columns: [
+    'id', 'schoolId', 'name', 'startDate', 'endDate', 'isActive', 'createdAt',
+    'updatedAt',
+  ],
+  lock: 'FOR SHARE',
+};
+
+/** The SQL of that read, as the tagged template sends it. */
+const YEAR_READ =
+  /SELECT "startDate", "endDate"\s+FROM "AcademicYears"\s+WHERE "id" = \?::uuid\s+FOR SHARE/;
 
 const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
@@ -77,12 +95,32 @@ describe('TeachingRequirementsService', () => {
   let service: TeachingRequirementsService;
   let tx: TxMock;
   let prisma: PrismaMock;
+  /** The years the read of the bounds can find: none until a test stores one. */
+  let years: Record<string, unknown>[];
+  /** The read of the year's bounds. */
+  let queryRaw: jest.Mock;
 
   beforeEach(() => {
     tx = createTxMock();
     prisma = createPrismaMock(tx);
     service = new TeachingRequirementsService(prisma as unknown as PrismaService);
+    years = [];
+    // The auto-vivifying mock would hand back a model proxy for `$queryRaw`,
+    // and a proxy is not callable. It answers as the table would, from the
+    // year a test stored, and throws on a read that takes another lock or
+    // none. A year nobody stored is one RLS hides.
+    queryRaw = jest.fn((...call: unknown[]) =>
+      Promise.resolve(lockingRead(YEARS, years, call)),
+    );
+    Object.assign(tx, { $queryRaw: queryRaw });
   });
+
+  /** The läsår, stored where the read of the bounds finds it by its own id. */
+  const givenYear = (): void => {
+    years = [
+      { id: YEAR_ID, schoolId: SCHOOL_ID, name: '2026/2027', isActive: true, ...YEAR },
+    ];
+  };
 
   const dto = (
     overrides: Partial<CreateTeachingRequirementDto> = {},
@@ -120,8 +158,8 @@ describe('TeachingRequirementsService', () => {
         },
       });
       // A requirement without a period runs the whole year by definition, so
-      // there is nothing to measure and the year is never fetched.
-      expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+      // there is nothing to measure and the year is neither fetched nor locked.
+      expect(queryRaw).not.toHaveBeenCalled();
     });
 
     it('persists explicit teachers and load figures', async () => {
@@ -150,7 +188,7 @@ describe('TeachingRequirementsService', () => {
     });
 
     it('persists a spring-only period and its recurrence', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
 
       await service.create(
@@ -162,10 +200,6 @@ describe('TeachingRequirementsService', () => {
         testUser(),
       );
 
-      expect(tx.academicYear.findUnique).toHaveBeenCalledWith({
-        where: { id: YEAR_ID },
-        select: { startDate: true, endDate: true },
-      });
       expect(tx.teachingRequirement.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
@@ -178,8 +212,34 @@ describe('TeachingRequirementsService', () => {
       );
     });
 
+    // AcademicYearsService.update counts the periods outside the bounds it is
+    // about to store, and this create measures the period against the bounds
+    // it reads. withRls runs READ COMMITTED, so read without a lock the two
+    // pass each other: the PATCH counts before the requirement commits, the
+    // requirement reads the bounds before the PATCH commits, and both land a
+    // period outside its year. FOR SHARE is what the PATCH's FOR NO KEY UPDATE
+    // waits on, and it holds only while the transaction that took it is open.
+    it('reads the year FOR SHARE, in the transaction that stores the period', async () => {
+      givenYear();
+      tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
+      const ranIn = transactionsOf(prisma);
+      const readIn = ranIn(queryRaw);
+      const createdIn = ranIn(tx.teachingRequirement.create);
+
+      await service.create(dto({ startDate: '2027-01-11' }), testUser());
+
+      expect(readIn).toEqual([expect.stringMatching(/^withRls#\d+$/)]);
+      expect(createdIn).toEqual(readIn);
+      const [call] = queryRaw.mock.calls;
+      expect(rawSql(call)).toMatch(YEAR_READ);
+      expect(call.slice(1)).toEqual([YEAR_ID]);
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.teachingRequirement.create.mock.invocationCallOrder[0],
+      );
+    });
+
     it('answers with the period as dates, not as invented midnight instants', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.teachingRequirement.create.mockResolvedValue({
         id: REQUIREMENT_ID,
         startDate: new Date('2027-01-11T00:00:00.000Z'),
@@ -218,7 +278,7 @@ describe('TeachingRequirementsService', () => {
     });
 
     it('refuses a period that reaches past the end of the läsår', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
 
       // The answer names the field and the year's own bounds: the admin has to
       // know which of two date pickers to move, and how far.
@@ -234,7 +294,7 @@ describe('TeachingRequirementsService', () => {
 
     it('accepts a period that starts on the first day of the läsår', async () => {
       // Both bounds are inclusive: the day the year starts is inside it.
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
 
       await expect(
@@ -243,7 +303,7 @@ describe('TeachingRequirementsService', () => {
     });
 
     it('refuses an end before its start instead of letting the CHECK 500', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
 
       await expect(
         service.create(
@@ -259,7 +319,7 @@ describe('TeachingRequirementsService', () => {
     it('accepts a period of a single day', async () => {
       // A study visit or a test day: a start and an end on the same date is a
       // period, not an inverted one.
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
 
       await expect(
@@ -271,7 +331,8 @@ describe('TeachingRequirementsService', () => {
     });
 
     it('says nothing about a year RLS hides, and lets the FK refuse it', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(null);
+      // No year stored: the read of the bounds finds no row, which is what a
+      // year belonging to another school reads as.
       tx.teachingRequirement.create.mockRejectedValue(prismaError('P2003'));
 
       // Not 400 "outside its year": that answer would confirm the year exists.
@@ -317,7 +378,7 @@ describe('TeachingRequirementsService', () => {
 
     it.each([40, 45, 50, 60, 90])('accepts %s minutes', async (minutesPerLesson) => {
       // 40 and 50 are the reason the grid moved; they were impossible before.
-      tx.academicYear.findUnique.mockResolvedValue(YEAR);
+      givenYear();
       tx.teachingRequirement.create.mockResolvedValue({ id: 'req-1' });
 
       await expect(
@@ -355,22 +416,22 @@ describe('TeachingRequirementsService', () => {
 
   describe('update', () => {
     /**
-     * The stored period and its year, read back the way Prisma answers the
-     * query that was sent: found only by the row's own id, cut to the fields
-     * the select names, the year through its own nested select. A stub that
-     * returns the row whatever was asked would let a read that dropped
-     * `endDate` measure the merge against `undefined` — and pass it.
+     * The stored period and its year, read back the way the database answers
+     * the queries that were sent: the row found only by its own id and cut to
+     * the fields the select names, the year only by the id the row names. A
+     * stub that returns the row whatever was asked would let a read that
+     * dropped `endDate` measure the merge against `undefined` — and pass it.
      */
     const givenRequirement = (period: {
       startDate: Date | null;
       endDate: Date | null;
     }) => {
+      givenYear();
       const row = {
         id: REQUIREMENT_ID,
         schoolId: SCHOOL_ID,
         academicYearId: YEAR_ID,
         ...period,
-        academicYear: { id: YEAR_ID, schoolId: SCHOOL_ID, ...YEAR },
       };
       tx.teachingRequirement.findUnique.mockImplementation(
         ({ where, select }: { where?: { id?: string }; select?: Selection }) => {
@@ -418,8 +479,11 @@ describe('TeachingRequirementsService', () => {
         where: { id: REQUIREMENT_ID },
         data: { lessonsPerWeek: 2, minutesPerLesson: 90 },
       });
-      // Neither date was sent, so the row is not read to merge a period.
+      // Neither date was sent, so the row is not read to merge a period, and
+      // the year is not locked: an edit that moves no date strands nothing, so
+      // it has no reason to wait for a year PATCH or to hold one up.
       expect(tx.teachingRequirement.findUnique).not.toHaveBeenCalled();
+      expect(queryRaw).not.toHaveBeenCalled();
     });
 
     it.each<[string, UpdateTeachingRequirementDto]>([
@@ -507,6 +571,28 @@ describe('TeachingRequirementsService', () => {
         new BadRequestException('endDate must not be before startDate.'),
       );
       expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+
+    it('reads the row’s own year FOR SHARE, in the transaction that moves the period', async () => {
+      givenRequirement({ startDate: null, endDate: null });
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
+      const ranIn = transactionsOf(prisma);
+      const readIn = ranIn(queryRaw);
+      const updatedIn = ranIn(tx.teachingRequirement.update);
+
+      await service.update(REQUIREMENT_ID, { endDate: '2027-01-15' }, testUser());
+
+      // The same race as create()'s, from a PATCH: the year the requirement
+      // belongs to is the one whose next move has to wait, so that is the id
+      // locked.
+      expect(readIn).toEqual([expect.stringMatching(/^withRls#\d+$/)]);
+      expect(updatedIn).toEqual(readIn);
+      const [call] = queryRaw.mock.calls;
+      expect(rawSql(call)).toMatch(YEAR_READ);
+      expect(call.slice(1)).toEqual([YEAR_ID]);
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.teachingRequirement.update.mock.invocationCallOrder[0],
+      );
     });
 
     it('leaves an unreadable row to update()’s own 404', async () => {

@@ -503,6 +503,9 @@ describe('RastsService', () => {
     });
 
     it('maps an unknown or cross-tenant id (P2025) to 404', async () => {
+      // Another school's row is invisible under RLS, so the delete matches
+      // nothing and Prisma answers P2025. To this caller that is exactly "not
+      // there" — and anything more specific would confirm the row exists.
       tx.rast.delete.mockRejectedValue(prismaError('P2025'));
 
       await expect(

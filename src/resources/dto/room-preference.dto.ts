@@ -9,7 +9,6 @@ import {
   IsUUID,
   Max,
   Min,
-  ValidateIf,
 } from 'class-validator';
 
 /**
@@ -42,14 +41,12 @@ export class CreateRoomPreferenceDto {
    * send year-6 pupils to a högstadie room, which is the error that is not
    * survivable. Both bounds or neither; the database enforces it too.
    */
-  @ValidateIf((dto: { minGradeLevel?: number | null }) => dto.minGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(12)
   minGradeLevel?: number | null;
 
-  @ValidateIf((dto: { maxGradeLevel?: number | null }) => dto.maxGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -103,14 +100,12 @@ export class UpdateRoomPreferenceDto {
    * send year-6 pupils to a högstadie room, which is the error that is not
    * survivable. Both bounds or neither; the database enforces it too.
    */
-  @ValidateIf((dto: { minGradeLevel?: number | null }) => dto.minGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(12)
   minGradeLevel?: number | null;
 
-  @ValidateIf((dto: { maxGradeLevel?: number | null }) => dto.maxGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)

@@ -9,7 +9,6 @@ import {
   Max,
   MaxLength,
   Min,
-  ValidateIf,
 } from 'class-validator';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -19,17 +18,14 @@ export class CreateAvailabilityConstraintDto {
   @IsEnum(ConstraintResource)
   resourceType!: ConstraintResource;
 
-  @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.userId !== null)
   @IsOptional()
   @IsUUID('4')
   userId?: string | null;
 
-  @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.roomId !== null)
   @IsOptional()
   @IsUUID('4')
   roomId?: string | null;
 
-  @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.studentGroupId !== null)
   @IsOptional()
   @IsUUID('4')
   studentGroupId?: string | null;
@@ -45,28 +41,24 @@ export class CreateAvailabilityConstraintDto {
    * class spanning 6-7 is caught by a 4-6 lock: a reservation holds students
    * free, and holding someone free needlessly is the safe error.
    */
-  @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.minGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(12)
   minGradeLevel?: number | null;
 
-  @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.maxGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(12)
   maxGradeLevel?: number | null;
 
-  @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.dayOfWeek !== null)
   @IsOptional()
   @IsInt()
   @Min(1)
   @Max(7)
   dayOfWeek?: number | null;
 
-  @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.date !== null)
   @IsOptional()
   @Matches(ISO_DATE, { message: 'date must be YYYY-MM-DD.' })
   date?: string | null;
@@ -81,7 +73,6 @@ export class CreateAvailabilityConstraintDto {
   @IsEnum(ConstraintType)
   type?: ConstraintType;
 
-  @ValidateIf((dto: CreateAvailabilityConstraintDto) => dto.reason !== null)
   @IsOptional()
   @IsString()
   @MaxLength(300)
@@ -93,17 +84,14 @@ export class UpdateAvailabilityConstraintDto {
   @IsEnum(ConstraintResource)
   resourceType?: ConstraintResource;
 
-  @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.userId !== null)
   @IsOptional()
   @IsUUID('4')
   userId?: string | null;
 
-  @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.roomId !== null)
   @IsOptional()
   @IsUUID('4')
   roomId?: string | null;
 
-  @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.studentGroupId !== null)
   @IsOptional()
   @IsUUID('4')
   studentGroupId?: string | null;
@@ -119,28 +107,24 @@ export class UpdateAvailabilityConstraintDto {
    * class spanning 6-7 is caught by a 4-6 lock: a reservation holds students
    * free, and holding someone free needlessly is the safe error.
    */
-  @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.minGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(12)
   minGradeLevel?: number | null;
 
-  @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.maxGradeLevel !== null)
   @IsOptional()
   @IsInt()
   @Min(0)
   @Max(12)
   maxGradeLevel?: number | null;
 
-  @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.dayOfWeek !== null)
   @IsOptional()
   @IsInt()
   @Min(1)
   @Max(7)
   dayOfWeek?: number | null;
 
-  @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.date !== null)
   @IsOptional()
   @Matches(ISO_DATE, { message: 'date must be YYYY-MM-DD.' })
   date?: string | null;
@@ -157,7 +141,6 @@ export class UpdateAvailabilityConstraintDto {
   @IsEnum(ConstraintType)
   type?: ConstraintType;
 
-  @ValidateIf((dto: UpdateAvailabilityConstraintDto) => dto.reason !== null)
   @IsOptional()
   @IsString()
   @MaxLength(300)

@@ -218,6 +218,49 @@ describe("saving a frame", () => {
     });
   });
 
+  it("drags the upper bound along when the lower one passes it", async () => {
+    /*
+     * A stage that reads backwards was never what anybody meant, and nothing
+     * short of the database refuses it: the DTO checks each bound on its own,
+     * and FrameTimes_grade_span_is_ordered answers with a 500 the school cannot
+     * act on. Correcting the pair as it is typed is the difference between a
+     * form that helps and one that scolds — and since the two selects moved
+     * onto components/ui/grade-span-field, the rule lives somewhere this page
+     * does not own. Which is exactly why it is asserted here: a change over
+     * there must not quietly widen a ramtid.
+     */
+    const user = userEvent.setup();
+    render(<FrameTimesPage />);
+
+    await open(user);
+    await user.click(screen.getByRole("combobox", { name: "gradeSpan" }));
+    await user.click(await screen.findByRole("option", { name: "grade(9)" }));
+    await save(user);
+
+    expect(createMock.mock.calls[0]?.[0]).toMatchObject({
+      minGradeLevel: 9,
+      maxGradeLevel: 9,
+    });
+  });
+
+  it("drags the lower bound along when the upper one falls below it", async () => {
+    // The other direction. Raising the lower bound pushes the upper one along;
+    // lowering the upper bound has to pull the lower one back, or an inverted
+    // span walks past the DTO and is stopped by a database CHECK as a 500.
+    const user = userEvent.setup();
+    render(<FrameTimesPage />);
+
+    await open(user);
+    await user.click(screen.getByRole("combobox", { name: "gradeSpan – to" }));
+    await user.click(await screen.findByRole("option", { name: "grade(1)" }));
+    await save(user);
+
+    expect(createMock.mock.calls[0]?.[0]).toMatchObject({
+      minGradeLevel: 1,
+      maxGradeLevel: 1,
+    });
+  });
+
   it("sends the years as numbers, which is what the DTO validates", async () => {
     const user = userEvent.setup();
     render(<FrameTimesPage />);

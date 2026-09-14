@@ -576,6 +576,7 @@ describe('Ss12000Service', () => {
           ),
       );
       tx.user.update.mockResolvedValue({});
+      tx.user.updateMany.mockResolvedValue({ count: 1 });
       tx.guardianStudent.upsert.mockResolvedValue({});
     });
 
@@ -710,12 +711,45 @@ describe('Ss12000Service', () => {
         select: { id: true },
       });
       expect(tx.studentGroup.create).not.toHaveBeenCalled();
-      expect(tx.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ studentGroupId: 'g-existing' }),
-        }),
-      );
-      expect(result.groupsCreated).toBe(0);
+      // Keyed on the role as well as the id: the role was read without a lock,
+      // so the write is where it is judged.
+      expect(tx.user.updateMany).toHaveBeenCalledWith({
+        where: { id: STUDENT_ID, role: 'STUDENT' },
+        data: { studentGroupId: 'g-existing' },
+      });
+      expect(tx.user.update).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ updated: 1, groupsCreated: 0 });
+    });
+
+    it('gives a person made a teacher mid-sync their names and no class', async () => {
+      // Read as a student; an admin's PATCH commits before the write, so the
+      // role-keyed UPDATE matches no row.
+      arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+      tx.studentGroup.findFirst.mockResolvedValue({ id: 'g-existing' });
+      tx.user.updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await service.importPersons(SCHOOL_ID, [
+        {
+          email: 'karin@example.test',
+          givenName: 'Karin',
+          familyName: 'Nygren',
+          groupDisplayName: '7A',
+        },
+      ]);
+
+      expect(tx.user.update).toHaveBeenCalledTimes(1);
+      expect(tx.user.update).toHaveBeenCalledWith({
+        where: { id: STUDENT_ID },
+        data: { firstName: 'Karin', lastName: 'Nygren' },
+      });
+      // What the sync reports had the PATCH landed before the read: the row
+      // was written, and a teacher listed in a class has nothing to report.
+      expect(result).toEqual({
+        updated: 1,
+        groupsCreated: 0,
+        guardianLinks: 0,
+        needsProvisioning: [],
+      });
     });
 
     it('creates an unknown class in the active year and enrols the student', async () => {
@@ -734,11 +768,10 @@ describe('Ss12000Service', () => {
         data: { schoolId: SCHOOL_ID, academicYearId: YEAR_ID, name: '7B' },
         select: { id: true },
       });
-      expect(tx.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ studentGroupId: 'g-new' }),
-        }),
-      );
+      expect(tx.user.updateMany).toHaveBeenCalledWith({
+        where: { id: STUDENT_ID, role: 'STUDENT' },
+        data: { studentGroupId: 'g-new' },
+      });
       expect(result.groupsCreated).toBe(1);
     });
 
@@ -750,6 +783,7 @@ describe('Ss12000Service', () => {
       ]);
 
       expect(tx.studentGroup.findFirst).not.toHaveBeenCalled();
+      expect(tx.user.updateMany).not.toHaveBeenCalled();
       expect(tx.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.not.objectContaining({ studentGroupId: expect.anything() }),

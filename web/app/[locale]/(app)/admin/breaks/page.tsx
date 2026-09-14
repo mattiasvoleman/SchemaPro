@@ -91,6 +91,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
+import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
@@ -120,9 +121,6 @@ import {
 
 const KINDS: BreakKind[] = ["HOLIDAY", "STAFF_DAY"];
 
-/** Förskoleklass through gymnasiets third year, as admin/constraints has it. */
-const GRADES = Array.from({ length: 13 }, (_, grade) => grade);
-
 /**
  * Whether the break carries a year span at all.
  *
@@ -139,9 +137,9 @@ interface BreakForm {
   startDate: string;
   endDate: string;
   scope: Scope;
-  /** As the selects hold them; only sent when `scope` is "grades". */
-  minGradeLevel: string;
-  maxGradeLevel: string;
+  /** Held whatever the scope says; only SENT when `scope` is "grades". */
+  minGradeLevel: number;
+  maxGradeLevel: number;
 }
 
 const EMPTY_FORM: BreakForm = {
@@ -153,8 +151,8 @@ const EMPTY_FORM: BreakForm = {
   // The lower stage, which is the span a studiedag most often covers. Only
   // reachable once somebody switches the scope away from "hela skolan", so
   // these are never sent by accident.
-  minGradeLevel: "0",
-  maxGradeLevel: "6",
+  minGradeLevel: 0,
+  maxGradeLevel: 6,
 };
 
 /** What the last write did, kept on screen rather than in a toast. */
@@ -259,8 +257,8 @@ export default function BreaksPage() {
       startDate: schoolBreak.startDate,
       endDate: schoolBreak.endDate,
       scope: schoolBreak.minGradeLevel === null ? "school" : "grades",
-      minGradeLevel: String(schoolBreak.minGradeLevel ?? 0),
-      maxGradeLevel: String(schoolBreak.maxGradeLevel ?? 6),
+      minGradeLevel: schoolBreak.minGradeLevel ?? 0,
+      maxGradeLevel: schoolBreak.maxGradeLevel ?? 6,
     });
     setDialogOpen(true);
   };
@@ -276,8 +274,8 @@ export default function BreaksPage() {
       // of it, because "från åk 4" with no upper bound could mean 4-9 or could
       // be a form nobody finished — and the two differ by however many classes
       // lose a week of lessons.
-      minGradeLevel: form.scope === "grades" ? Number(form.minGradeLevel) : null,
-      maxGradeLevel: form.scope === "grades" ? Number(form.maxGradeLevel) : null,
+      minGradeLevel: form.scope === "grades" ? form.minGradeLevel : null,
+      maxGradeLevel: form.scope === "grades" ? form.maxGradeLevel : null,
     };
     try {
       const saved = editing
@@ -618,67 +616,26 @@ export default function BreaksPage() {
               </Select>
             </div>
 
+            {/*
+              Shown only for the narrowed scope, and that is where "hela skolan"
+              lives — one field up, as the scope itself. `allowAll` inside the
+              span would be a second way to say it, and the two could then
+              disagree about a lov that deletes lessons.
+            */}
             {form.scope === "grades" ? (
-              <div className="space-y-2">
-                <Label>{t("gradeSpan")}</Label>
-                <div className="flex items-center gap-2">
-                  <Select
-                    value={form.minGradeLevel}
-                    onValueChange={(value) =>
-                      setForm({
-                        ...form,
-                        minGradeLevel: value,
-                        // Kept ordered as the admin types, the way
-                        // admin/constraints does it: a span that reads
-                        // backwards was never what anybody meant, and refusing
-                        // it afterwards is a worse conversation than not
-                        // letting it happen.
-                        maxGradeLevel:
-                          Number(value) > Number(form.maxGradeLevel)
-                            ? value
-                            : form.maxGradeLevel,
-                      })
-                    }
-                  >
-                    <SelectTrigger aria-label={t("gradeFromLabel")}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {GRADES.map((grade) => (
-                        <SelectItem key={grade} value={String(grade)}>
-                          {tGrades("grade", { grade })}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <span className="text-sm text-foreground">–</span>
-                  <Select
-                    value={form.maxGradeLevel}
-                    onValueChange={(value) =>
-                      setForm({
-                        ...form,
-                        maxGradeLevel: value,
-                        minGradeLevel:
-                          Number(value) < Number(form.minGradeLevel)
-                            ? value
-                            : form.minGradeLevel,
-                      })
-                    }
-                  >
-                    <SelectTrigger aria-label={t("gradeToLabel")}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {GRADES.map((grade) => (
-                        <SelectItem key={grade} value={String(grade)}>
-                          {tGrades("grade", { grade })}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <p className="text-xs leading-relaxed text-foreground">{t("gradeHint")}</p>
-              </div>
+              <GradeSpanField
+                label={t("gradeSpan")}
+                fromLabel={t("gradeFromLabel")}
+                toLabel={t("gradeToLabel")}
+                min={form.minGradeLevel}
+                max={form.maxGradeLevel}
+                onChange={({ min, max }) =>
+                  setForm({ ...form, minGradeLevel: min, maxGradeLevel: max })
+                }
+                hint={t("gradeHint")}
+                // 7:1, as everything else this page prints small.
+                hintClassName="text-xs leading-relaxed text-foreground"
+              />
             ) : null}
 
             {/*

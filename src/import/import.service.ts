@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { parseDateString } from '../common/utils/time';
+import { readYearBoundsForShare } from '../resources/academic-year-bounds';
 import { UsersService } from '../users/users.service';
 import type {
   ImportGroupsDto,
@@ -427,11 +428,15 @@ export class ImportService {
       // without one runs the whole year by definition and has nothing the
       // year's bounds could contradict. Same reasoning as
       // TeachingRequirementsService.create.
+      //
+      // Read FOR SHARE, so the lock is held until the whole upload commits.
+      // Every dated row below is measured against these bounds, and a year
+      // PATCH committing between this read and that commit would count none of
+      // the rows, since none has committed, and strand them. The lock makes
+      // that PATCH wait for the upload, or the upload for the PATCH — see
+      // readYearBoundsForShare.
       const year = dto.rows.some((row) => row.startDate || row.endDate)
-        ? await tx.academicYear.findUnique({
-            where: { id: dto.academicYearId },
-            select: { startDate: true, endDate: true },
-          })
+        ? await readYearBoundsForShare(tx, dto.academicYearId)
         : null;
 
       const existing = await tx.teachingRequirement.findMany({

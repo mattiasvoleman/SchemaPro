@@ -95,10 +95,17 @@ export function useScheduleHistory(): ScheduleHistory {
   };
 }
 
-/** Binds Ctrl/Cmd+Z (undo) and Ctrl/Cmd+Shift+Z or Ctrl+Y (redo). */
+/**
+ * Binds Ctrl/Cmd+Z (undo) and Ctrl/Cmd+Shift+Z or Ctrl+Y (redo). A failed
+ * operation is routed to `onError` (the entry stays replayable on its stack)
+ * and never escapes as an unhandled rejection — the toolbar buttons catch the
+ * same failure and report it, so the shortcut must not be the one path that
+ * fails silently.
+ */
 export function useHistoryKeyboard(
   history: Pick<ScheduleHistory, "undo" | "redo">,
   onDone?: (kind: "undo" | "redo", entry: HistoryEntry | null) => void,
+  onError?: (kind: "undo" | "redo", error: unknown) => void,
 ): void {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -117,13 +124,19 @@ export function useHistoryKeyboard(
       const key = event.key.toLowerCase();
       if (key === "z" && !event.shiftKey) {
         event.preventDefault();
-        void history.undo().then((entry) => onDone?.("undo", entry));
+        void history.undo().then(
+          (entry) => onDone?.("undo", entry),
+          (error) => onError?.("undo", error),
+        );
       } else if ((key === "z" && event.shiftKey) || key === "y") {
         event.preventDefault();
-        void history.redo().then((entry) => onDone?.("redo", entry));
+        void history.redo().then(
+          (entry) => onDone?.("redo", entry),
+          (error) => onError?.("redo", error),
+        );
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [history, onDone]);
+  }, [history, onDone, onError]);
 }

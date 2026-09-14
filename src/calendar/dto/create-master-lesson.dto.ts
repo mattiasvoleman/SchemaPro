@@ -11,7 +11,6 @@ import {
   Matches,
   Max,
   Min,
-  ValidateIf,
 } from 'class-validator';
 
 const TIME = /^\d{2}:\d{2}$/;
@@ -32,7 +31,6 @@ export class CreateMasterLessonDto {
   @IsUUID('4')
   studentGroupId!: string;
 
-  @ValidateIf((dto: CreateMasterLessonDto) => dto.teacherId !== null)
   @IsOptional()
   @IsUUID('4')
   teacherId?: string | null;
@@ -45,12 +43,10 @@ export class CreateMasterLessonDto {
    * recreates through this route, dropped it silently. Only the solver's own
    * write-back set the column, and it bypasses this validator entirely.
    */
-  @ValidateIf((dto: { coTeacherId?: string | null }) => dto.coTeacherId !== null)
   @IsOptional()
   @IsUUID('4')
   coTeacherId?: string | null;
 
-  @ValidateIf((dto: CreateMasterLessonDto) => dto.roomId !== null)
   @IsOptional()
   @IsUUID('4')
   roomId?: string | null;

@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -48,15 +49,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-/** Förskoleklass through gymnasiets third year — the Swedish span. */
-const GRADES = Array.from({ length: 13 }, (_, grade) => grade);
 const WEEKDAYS = [1, 2, 3, 4, 5] as const;
 /** The select's stand-in for `dayOfWeek: null`, which a Select cannot hold. */
 const EVERY_DAY = "all";
 
 interface ServingForm {
-  minGradeLevel: string;
-  maxGradeLevel: string;
+  minGradeLevel: number;
+  maxGradeLevel: number;
   dayOfWeek: string;
   startTime: string;
   endTime: string;
@@ -64,8 +63,8 @@ interface ServingForm {
 }
 
 const EMPTY_FORM: ServingForm = {
-  minGradeLevel: "4",
-  maxGradeLevel: "6",
+  minGradeLevel: 4,
+  maxGradeLevel: 6,
   dayOfWeek: EVERY_DAY,
   startTime: "11:00",
   endTime: "11:40",
@@ -140,8 +139,8 @@ export default function LunchServingsPage() {
   const openEdit = (serving: LunchServing) => {
     setEditing(serving);
     setForm({
-      minGradeLevel: String(serving.minGradeLevel),
-      maxGradeLevel: String(serving.maxGradeLevel),
+      minGradeLevel: serving.minGradeLevel,
+      maxGradeLevel: serving.maxGradeLevel,
       dayOfWeek: serving.dayOfWeek === null ? EVERY_DAY : String(serving.dayOfWeek),
       startTime: formatTime(serving.startTime),
       endTime: formatTime(serving.endTime),
@@ -152,8 +151,8 @@ export default function LunchServingsPage() {
 
   const submit = async () => {
     const body = {
-      minGradeLevel: Number(form.minGradeLevel),
-      maxGradeLevel: Number(form.maxGradeLevel),
+      minGradeLevel: form.minGradeLevel,
+      maxGradeLevel: form.maxGradeLevel,
       dayOfWeek: form.dayOfWeek === EVERY_DAY ? null : Number(form.dayOfWeek),
       startTime: form.startTime,
       endTime: form.endTime,
@@ -425,62 +424,18 @@ export default function LunchServingsPage() {
             <DialogTitle>{editing ? t("edit") : t("add")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>{t("gradeSpan")}</Label>
-              <div className="flex items-center gap-2">
-                <Select
-                  value={form.minGradeLevel}
-                  onValueChange={(value) =>
-                    setForm({
-                      ...form,
-                      minGradeLevel: value,
-                      // Keep the pair ordered as the admin types rather than
-                      // rejecting it afterwards.
-                      maxGradeLevel:
-                        Number(value) > Number(form.maxGradeLevel)
-                          ? value
-                          : form.maxGradeLevel,
-                    })
-                  }
-                >
-                  <SelectTrigger aria-label={t("gradeSpan")}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GRADES.map((grade) => (
-                      <SelectItem key={grade} value={String(grade)}>
-                        {tGrades("grade", { grade })}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <span aria-hidden="true">–</span>
-                <Select
-                  value={form.maxGradeLevel}
-                  onValueChange={(value) =>
-                    setForm({
-                      ...form,
-                      maxGradeLevel: value,
-                      minGradeLevel:
-                        Number(value) < Number(form.minGradeLevel)
-                          ? value
-                          : form.minGradeLevel,
-                    })
-                  }
-                >
-                  <SelectTrigger aria-label={`${t("gradeSpan")} – ${tCommon("to")}`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {GRADES.map((grade) => (
-                      <SelectItem key={grade} value={String(grade)}>
-                        {tGrades("grade", { grade })}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            {/* No "every year": a sitting is a stage's turn at the tables, and
+                one covering the whole school at once is the thing the flow
+                below exists to warn about. The API refuses it outright. */}
+            <GradeSpanField
+              label={t("gradeSpan")}
+              toLabel={`${t("gradeSpan")} – ${tCommon("to")}`}
+              min={form.minGradeLevel}
+              max={form.maxGradeLevel}
+              onChange={({ min, max }) =>
+                setForm({ ...form, minGradeLevel: min, maxGradeLevel: max })
+              }
+            />
 
             <div className="space-y-2">
               <Label>{t("day")}</Label>

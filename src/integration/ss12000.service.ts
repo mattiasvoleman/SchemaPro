@@ -339,14 +339,42 @@ export class Ss12000Service {
           }
         }
 
-        await tx.user.update({
-          where: { id: user.id },
-          data: {
-            ...(person.givenName ? { firstName: person.givenName } : {}),
-            ...(person.familyName ? { lastName: person.familyName } : {}),
-            ...(studentGroupId ? { studentGroupId } : {}),
-          },
-        });
+        // The class is written by the statement that checks the role, because
+        // the role above was read without a lock. Under READ COMMITTED an
+        // admin's PATCH making this person a teacher can commit between that
+        // read and this write, and an UPDATE keyed on the id alone would then
+        // put a teacher in the class — handing them the pupils' read path,
+        // since app.current_user_group_id() never looks at the role. An UPDATE
+        // that waits on the row lock re-evaluates its WHERE against the row
+        // that committed, so `role: 'STUDENT'` is judged at the moment of the
+        // write rather than at the read.
+        //
+        // Users_only_a_student_has_a_class states the same rule in the table;
+        // this is what keeps the sync from meeting that CHECK. Without it the
+        // lost race is a check violation, and the whole batch rolls back with
+        // a 500 over one person.
+        //
+        // When the role has moved, the person gets their names and no class:
+        // exactly what the sync does for someone already a teacher when read,
+        // so the race ends in one of its two serial outcomes. They are still
+        // counted in `updated` — their row was written — and nothing new is
+        // reported, as nothing is for a teacher the roster lists in a class.
+        // A class created for them above stays; the roster named it.
+        const names = {
+          ...(person.givenName ? { firstName: person.givenName } : {}),
+          ...(person.familyName ? { lastName: person.familyName } : {}),
+        };
+        const enrolled =
+          studentGroupId !== undefined &&
+          (
+            await tx.user.updateMany({
+              where: { id: user.id, role: 'STUDENT' },
+              data: { ...names, studentGroupId },
+            })
+          ).count === 1;
+        if (!enrolled) {
+          await tx.user.update({ where: { id: user.id }, data: names });
+        }
         updated++;
 
         // Guardian relations by email (existing guardian accounts only).

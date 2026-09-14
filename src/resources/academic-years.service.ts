@@ -24,7 +24,17 @@ export class AcademicYearsService {
     }
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        // Only one academic year may be active per school.
+        // Only one academic year may be active per school, and the partial
+        // unique index AcademicYears_one_active_per_school is what holds it.
+        // This UPDATE runs at READ COMMITTED and cannot see a year another
+        // transaction activates meanwhile, so two activations at once used to
+        // both commit. Now the second fails on its own write with P2002, which
+        // rethrowPrismaError answers with 409; nothing here catches it, so its
+        // hand-over rolls back with it.
+        //
+        // The hand-over still comes first. The index is checked as each row is
+        // written, not at commit, so writing the new year active while the old
+        // one still is would be refused every time, race or not.
         if (dto.isActive) {
           await tx.academicYear.updateMany({
             where: { schoolId, isActive: true },
@@ -68,6 +78,8 @@ export class AcademicYearsService {
           await this.assertYearStillHoldsItsPeriods(tx, id, dto);
         }
 
+        // The same hand-over as in create(), ahead of the write for the same
+        // reason: the one-active-year index checks the row as it lands.
         if (dto.isActive) {
           await tx.academicYear.updateMany({
             where: { schoolId, isActive: true, id: { not: id } },
@@ -154,10 +166,13 @@ export class AcademicYearsService {
    * a period both counts let through lies inside the year they build together,
    * and a dated period is itself what keeps that year from inverting.
    *
-   * What the lock does not hold still is a period written at the same moment.
-   * SchoolBreaksService and TeachingRequirementsService read the year without
-   * a lock, so a lov saved while these counts run can land outside bounds they
-   * have already cleared.
+   * A period written at the same moment is held still from the other side.
+   * SchoolBreaksService, TeachingRequirementsService and the timplan import
+   * read these bounds FOR SHARE in the transaction that writes the period
+   * (readYearBoundsForShare), and FOR SHARE and this lock wait on each other.
+   * A period whose read came first has committed before this lock is granted,
+   * so the counts, each a statement of its own, see it; a period whose read
+   * comes second waits for this PATCH and is measured against what it wrote.
    *
    * FOR NO KEY UPDATE rather than FOR UPDATE: see the Isolation section of
    * PrismaService — every year-scoped insert takes FOR KEY SHARE on this row. A

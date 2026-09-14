@@ -5,7 +5,6 @@ import {
   Matches,
   Max,
   Min,
-  ValidateIf,
 } from 'class-validator';
 
 const TIME = /^\d{2}:\d{2}(:\d{2})?$/;
@@ -43,14 +42,12 @@ export class UpsertLunchSettingsDto {
    * Seats in the dining hall. Null means the school has no limit worth
    * modelling, and the solver then places lunch exactly as it did before.
    */
-  @ValidateIf((dto: UpsertLunchSettingsDto) => dto.diningSeats !== null)
   @IsOptional()
   @IsInt()
   @Min(1)
   @Max(5000)
   diningSeats?: number | null;
 
-  @ValidateIf((dto: UpsertLunchSettingsDto) => dto.maxLessonsPerDayPerGroup !== null)
   @IsOptional()
   @IsInt()
   @Min(1)

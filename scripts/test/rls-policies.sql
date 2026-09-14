@@ -1898,3 +1898,93 @@ BEGIN
       policyless;
   END IF;
 END $$;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 13: only a pupil has a class, whichever door the write comes in by.
+--
+-- app.current_user_group_id() returns "studentGroupId" without asking the
+-- role, so a teacher or guardian holding a class reads its lessons, meals and
+-- rasts the way its pupils do. UsersService refuses that row in words, but
+-- users_admin_all lets an admin's own token UPDATE "Users" through PostgREST,
+-- and a check read in one statement can be outrun before the write in the
+-- next. Only Users_only_a_student_has_a_class holds for every writer, so it is
+-- exercised here as that admin, by both doors: a class given to a teacher, and
+-- a pupil made a teacher who keeps theirs.
+--
+-- The legitimate half sits beside them. A constraint that refused every class
+-- write, or a policy that hid the rows, would pass the two refusals alone.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+SELECT set_config('request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id', 'role', 'authenticated')::text, true);
+
+DO $$
+DECLARE
+  pupil   uuid;
+  teacher uuid;
+  home    uuid;
+  other   uuid;
+  n       bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION
+      'student-class: expected to act as an admin of school A, resolved role %',
+      app.current_user_role();
+  END IF;
+
+  SELECT id, "studentGroupId" INTO pupil, home FROM "Users"
+   WHERE role = 'STUDENT' AND "studentGroupId" IS NOT NULL
+   ORDER BY id LIMIT 1;
+  SELECT id INTO teacher FROM "Users"
+   WHERE role = 'TEACHER' AND "studentGroupId" IS NULL
+   ORDER BY id LIMIT 1;
+  SELECT id INTO other FROM "StudentGroups"
+   WHERE id <> home
+   ORDER BY id LIMIT 1;
+  IF pupil IS NULL OR teacher IS NULL OR other IS NULL THEN
+    RAISE EXCEPTION
+      'student-class: no pupil with a class (%), teacher (%) or second class (%) to test with',
+      pupil, teacher, other;
+  END IF;
+
+  -- A pupil moving class still goes through.
+  UPDATE "Users" SET "studentGroupId" = other WHERE id = pupil;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'student-class: moving a pupil to another class updated % row(s)', n;
+  END IF;
+
+  -- A class given to a teacher. The RAISE inside the block is no
+  -- check_violation, so it escapes the handler: an accepted write (1 row) and
+  -- a policy-filtered one (0) both fail here, each under its own count.
+  BEGIN
+    UPDATE "Users" SET "studentGroupId" = home WHERE id = teacher;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RAISE EXCEPTION
+      'student-class: a teacher was put in a class (% row(s) updated)', n;
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- A pupil made a teacher who keeps the class: `PATCH { role }` before
+  -- 3b1931c, and a direct write through PostgREST after it.
+  BEGIN
+    UPDATE "Users" SET role = 'TEACHER' WHERE id = pupil;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    RAISE EXCEPTION
+      'student-class: a pupil became a teacher and kept their class (% row(s) updated)', n;
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- The same change made whole, role and class in one write, is allowed.
+  UPDATE "Users" SET role = 'TEACHER', "studentGroupId" = NULL WHERE id = pupil;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'student-class: making a pupil a teacher without their class updated % row(s)', n;
+  END IF;
+END $$;
+
+ROLLBACK;

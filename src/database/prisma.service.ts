@@ -81,6 +81,13 @@ interface ConnectionRole {
  * PATCH exactly as the write would and leaves those inserts alone. The user,
  * academic-year and room-rule PATCHes take it. Nothing references the four
  * tables whose PATCHes take FOR UPDATE, so there the two locks behave alike.
+ *
+ * A write that only needs a row to stay as it read it takes FOR SHARE. A lov,
+ * a teaching requirement and a timplan upload measure their dates against the
+ * academic year and read it FOR SHARE (readYearBoundsForShare): that conflicts
+ * with the year PATCH's FOR NO KEY UPDATE, so one of the two waits for the
+ * other, and with neither FOR SHARE nor FOR KEY SHARE, so periods saved into
+ * one year do not queue behind each other or behind their own inserts.
  */
 @Injectable()
 export class PrismaService
