@@ -361,6 +361,11 @@ model AcademicYear {
   @@unique([id, schoolId])
   @@index([schoolId])
   @@index([schoolId, startDate, endDate])
+  // Not stated here, because schema.prisma cannot state a partial index: the
+  // unique index AcademicYears_one_active_per_school on (schoolId) WHERE
+  // isActive, from migration 20260914090000. It is what keeps a school to one
+  // active year. Prisma's differ skips it, so a migration generated from this
+  // file will never mention it, whether it is there or not.
   @@map("AcademicYears")
 }
 

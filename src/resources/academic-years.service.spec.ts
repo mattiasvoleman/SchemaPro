@@ -146,6 +146,23 @@ describe('AcademicYearsService', () => {
       expect(deactivatedAt).toBeLessThan(createdAt);
     });
 
+    // Two activations at once. The hand-over of the second finds nothing to
+    // deactivate (the first's year was not active in its snapshot), and the
+    // one-active-year index refuses its write with P2002. That has to leave the
+    // transaction body as a rejection, which is what makes withRls roll the
+    // transaction back, and reach the caller as 409.
+    it('lets a racing activation’s P2002 abort its transaction, and answers 409', async () => {
+      const lost = prismaError('P2002');
+      tx.academicYear.updateMany.mockResolvedValue({ count: 0 });
+      tx.academicYear.create.mockRejectedValue(lost);
+
+      await expect(
+        service.create(dto({ isActive: true }), testUser()),
+      ).rejects.toThrow(ConflictException);
+
+      await expect(prisma.withRls.mock.results[0].value).rejects.toBe(lost);
+    });
+
     it('rejects startDate after endDate', async () => {
       await expect(
         service.create(
@@ -262,6 +279,35 @@ describe('AcademicYearsService', () => {
         where: { id: YEAR_ID },
         data: { isActive: false },
       });
+    });
+
+    // The one-active-year index checks a row as it is written, not at commit:
+    // an UPDATE setting a second year active fails on that statement, even in
+    // a transaction that would deactivate the first one next. Written the other
+    // way round, every activation while another year is active would be a 409.
+    it('hands the active flag over before it writes the year active', async () => {
+      tx.academicYear.updateMany.mockResolvedValue({ count: 1 });
+      tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
+
+      await service.update(YEAR_ID, { isActive: true }, testUser());
+
+      expect(
+        tx.academicYear.updateMany.mock.invocationCallOrder[0],
+      ).toBeLessThan(tx.academicYear.update.mock.invocationCallOrder[0]);
+    });
+
+    // As in create: a racing activation's write is refused by the index, and
+    // the refusal has to abort the transaction rather than be handled in it.
+    it('lets a racing activation’s P2002 abort its transaction, and answers 409', async () => {
+      const lost = prismaError('P2002');
+      tx.academicYear.updateMany.mockResolvedValue({ count: 0 });
+      tx.academicYear.update.mockRejectedValue(lost);
+
+      await expect(
+        service.update(YEAR_ID, { isActive: true }, testUser()),
+      ).rejects.toThrow(ConflictException);
+
+      await expect(prisma.withRls.mock.results[0].value).rejects.toBe(lost);
     });
 
     it('sends only the provided fields, dates parsed', async () => {
