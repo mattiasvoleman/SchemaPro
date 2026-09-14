@@ -43,6 +43,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
+import { createPgAdapter } from '../../src/database/pool-config';
 import { PrismaService } from '../../src/database/prisma.service';
 import { NotificationsService } from '../../src/notifications/notifications.service';
 import { readYearBoundsForShare } from '../../src/resources/academic-year-bounds';
@@ -235,6 +236,65 @@ async function runChecks(
       (error: unknown) => error === rolledBack,
     );
     await assertClearedAfter('withRls rolled back');
+  });
+
+  // ---- (k) a transaction takes no statement after its end
+  // Prisma's timeout ends a transaction while its plan may still be sending
+  // statements; ended-transaction-guard.ts refuses them. Timing the real
+  // timeout is a race, so the end is driven on the adapter directly, over a
+  // pool of one: what is asserted is only what the server then shows.
+  type GuardedAdapter = Awaited<ReturnType<ReturnType<typeof createPgAdapter>['connect']>>;
+  type AdapterTransaction = Awaited<ReturnType<GuardedAdapter['startTransaction']>>;
+  const statement = (sql: string) => ({ sql, args: [], argTypes: [] });
+  const backendOf = async (tx: AdapterTransaction): Promise<number> =>
+    Number((await tx.queryRaw(statement('SELECT pg_backend_pid()'))).rows[0]?.[0]);
+
+  await check('(k) a statement after ROLLBACK is refused and never runs on the reused connection', async () => {
+    const adapter = await createPgAdapter(withConnectionLimit(appUrl, 1)).connect();
+    try {
+      const ended = await adapter.startTransaction();
+      const endedOn = await backendOf(ended);
+      await ended.executeRaw(statement('ROLLBACK'));
+      await ended.rollback();
+      await assert.rejects(
+        ended.queryRaw(statement(`SELECT set_config('app.probe_after_end', 'ran', false)`)),
+        /Statement refused: its transaction has already ended\./,
+      );
+
+      const next = await adapter.startTransaction();
+      assert.equal(await backendOf(next), endedOn, 'an answered ROLLBACK did not hand its connection on');
+      const { rows } = await next.queryRaw(
+        statement(`SELECT current_setting('app.probe_after_end', true)`),
+      );
+      assert.ok(
+        rows[0]?.[0] === null || rows[0]?.[0] === '',
+        `the refused statement ran on the next borrower's connection: ${JSON.stringify(rows)}`,
+      );
+      await next.executeRaw(statement('ROLLBACK'));
+      await next.rollback();
+    } finally {
+      await adapter.dispose();
+    }
+  });
+
+  await check('(k) a connection released without an answered end is destroyed, not reused', async () => {
+    const adapter = await createPgAdapter(withConnectionLimit(appUrl, 1)).connect();
+    try {
+      const abandoned = await adapter.startTransaction();
+      const abandonedOn = await backendOf(abandoned);
+      await abandoned.rollback();
+
+      const next = await adapter.startTransaction();
+      assert.notEqual(
+        await backendOf(next),
+        abandonedOn,
+        'the pool lent out a connection whose transaction was never ended',
+      );
+      await next.executeRaw(statement('ROLLBACK'));
+      await next.rollback();
+    } finally {
+      await adapter.dispose();
+    }
   });
 
   // ---- (c) a batch is one transaction
