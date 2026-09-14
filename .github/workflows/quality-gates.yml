@@ -6,7 +6,9 @@ name: Quality Gates
 # nightly and on demand rather than on every pull request.
 #
 # Everything here is a hard gate: each job exits non-zero when its threshold is
-# missed. Nothing is advisory.
+# missed. One figure is printed and not yet gated: api-latency's write against
+# the baseline interleaved with it, until ten runs have calibrated a threshold
+# for it (docs/verification-baseline.md). Nothing else is advisory.
 #
 # Actions are pinned to commit SHAs for the same reason as in ci.yml — a `@v5`
 # tag is a pointer somebody else can move — with the release name kept in the
@@ -252,7 +254,7 @@ jobs:
           --students 2000 --json
 
   api-latency:
-    name: API — P99 latency (140ms read / 150ms update)
+    name: API — latency (read share ≥ 0.20 of health)
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -313,8 +315,9 @@ jobs:
         run: npm run db:seed
 
       # Emits the admin authId, an academicYearId and an attendance payload.
-      # Without these the benchmark skips three of its four scenarios and would
-      # report a green pass having measured only /health/ready.
+      # Without them the benchmark skips both reads and the write. api-latency.mjs
+      # would call that run invalid rather than pass it, but this step fails
+      # first and says why.
       - name: Benchmark fixtures
         id: fixtures
         run: |
