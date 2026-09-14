@@ -263,6 +263,18 @@ test('a collapsed health window cannot turn the reads into a pass', () => {
   assert.equal(verdict.lines.at(-1), 'FAIL: 1 gate(s) failed.');
 });
 
+// The guard bounds the denominator; it does not cancel it. Health 28% below
+// 34839859422's own, p99 49 ms, both guards passing: every share is inflated
+// by the same 1722 ÷ 1240, and reads 60% more expensive pass. The docs say so.
+test('a health window slowed inside its guard inflates every share: reads 60% more expensive pass', () => {
+  const verdict = gate(slowerReads(edit(E, 'health', { rps: 1240, p99Ms: 49 }), 1.6));
+  assert.equal(exitCodeOf(verdict), 0, report(verdict));
+  assert.ok(has(verdict, '✓ health p99', '49ms ≤ 50ms'));
+  assert.ok(has(verdict, '✓ health throughput', '1240 req/s ≥ 1000 req/s'));
+  assert.ok(has(verdict, '✓ read share', 'GET /api/v1/schedule-versions', '0.221 ≥ 0.20'));
+  assert.ok(has(verdict, '✓ read share', 'GET /api/v1/optimization/jobs', '0.230 ≥ 0.20'));
+});
+
 test('health that counted no request fails every share instead of dividing into a pass', () => {
   const verdict = gate(edit(D, 'health', { rps: 0, totalRequests: 0 }));
   assert.equal(exitCodeOf(verdict), 1);
@@ -283,7 +295,21 @@ test('a run without health or either read is invalid, never a pass', () => {
   assert.ok(!has(noHealth, 'read share') && !has(noHealth, 'floor share'), report(noHealth));
 });
 
-test('more than 1% non-2xx in any row is invalid: 4 of 300 writes, a baseline, a floor round at 5%', () => {
+test('more than 1% non-2xx in any row is invalid: a read, health, 4 of 300 writes, a baseline, a floor round at 5%', () => {
+  // The rows where errors flatter the verdict. A read answering fast 401s
+  // shows a share far above the line, and a health row of fast failures
+  // inflates its denominator; the share line may say ✓, the run is invalid.
+  const read = gate(edit(D, 'read:schedule-versions', { non2xx: 89, rps: 5000 }));
+  assert.equal(exitCodeOf(read), 2, report(read));
+  assert.ok(has(read, '✓ read share', 'GET /api/v1/schedule-versions', '2.823 ≥ 0.20'));
+  assert.ok(has(read, '✗ non-2xx', 'GET /api/v1/schedule-versions', '1.0% (89/8820)'));
+  assert.equal(exitCodeOf(gate(edit(D, 'read:schedule-versions', { non2xx: 88 }))), 0);
+
+  const health = gate(edit(D, 'health', { non2xx: 355 }));
+  assert.equal(exitCodeOf(health), 2, report(health));
+  assert.ok(has(health, '✗ non-2xx', 'GET /health/ready', '1.0% (355/35422)'));
+  assert.equal(exitCodeOf(gate(edit(D, 'health', { non2xx: 354 }))), 0);
+
   assert.equal(exitCodeOf(gate(edit(D, 'write', { non2xx: 4 }))), 2);
   assert.equal(exitCodeOf(gate(edit(D, 'write', { non2xx: 3 }))), 0);
   assert.equal(exitCodeOf(gate([...D, { ...BASELINE, non2xx: 4 }])), 2);

@@ -93,8 +93,9 @@ const SCENARIOS = [
     //
     // It is also the gate's denominator. The reads are judged by their share
     // of this row's throughput in the same run, which cancels the runner's
-    // speed, and this row alone keeps an absolute guard, so that a collapsed
-    // denominator cannot make a regression look like a pass.
+    // speed, and this row alone keeps an absolute guard. The guard bounds the
+    // denominator without cancelling it: passing proves every read ≥ 200 req/s,
+    // and a window slowed but still inside it inflates every share alike.
     request: { method: 'GET', path: '/health/ready' },
   },
   // The two authenticated reads are gated on their throughput as a share of
