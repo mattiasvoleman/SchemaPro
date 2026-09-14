@@ -5,10 +5,14 @@ name: Quality Gates
 # Lighthouse are wall-clock measurements that need a quiet machine), so they run
 # nightly and on demand rather than on every pull request.
 #
-# Everything here is a hard gate: each job exits non-zero when its threshold is
-# missed. One figure is printed and not yet gated: api-latency's write against
-# the baseline interleaved with it, until ten runs have calibrated a threshold
-# for it (docs/verification-baseline.md). Nothing else is advisory.
+# The mutation, Lighthouse, solver and API latency jobs are hard gates: each
+# exits non-zero when its threshold is missed. The visual-baselines job,
+# dispatch-only, regenerates the Linux screenshot baselines for review and gates
+# no code. Printed beside the gates and deciding nothing: api-latency's §2
+# milliseconds on every row, its floor-round shares and its write ratios — the
+# write against its interleaved baseline until ten runs have calibrated a
+# threshold for it (docs/verification-baseline.md) — and the solver job's
+# 2,000-student §2 figure, reported after its 400-student gate.
 #
 # Actions are pinned to commit SHAs for the same reason as in ci.yml — a `@v5`
 # tag is a pointer somebody else can move — with the release name kept in the
