@@ -288,8 +288,8 @@ identity lookup, no transaction, no RLS — one bare `SELECT 1`. So ~12ms is wha
 the framework and a pooled connection cost on this hardware, not the floor of an
 authenticated read. The two list endpoints sit at roughly six times that, and
 that is not their own queries: the seed creates no schedule versions or
-optimization jobs, so both return `[]` and their query is an index probe that
-finds no row for a policy to judge. The gap is the path every JWT request pays
+optimization jobs, so both return `[]` from a query that matches no row for a
+policy to judge. The gap is the path every JWT request pays
 around its query — token verification, the identity lookup's transaction, the
 guards and the RLS transaction the handler runs in. Writes pass with headroom.
 
@@ -299,8 +299,8 @@ figure is 24 serial samples, not a flood (see below), so its p99 is indicative.
 
 **The gateway's read surface is small by design.** The web client queries
 Supabase directly (`web/lib/queries.ts`); this API handles writes, AI proxying
-and the SS12000 feed. Only three JWT-authenticated GET endpoints exist, and all
-three are measured above. An earlier version of the benchmark invented paths
+and the SS12000 feed. The benchmark times two of the API's authenticated list
+reads, not every GET it has. An earlier version of the benchmark invented paths
 like `/api/v1/resources/rooms` that do not exist and would have timed 404s.
 
 **Two endpoints cannot be flood-tested, for good reasons.** The global
