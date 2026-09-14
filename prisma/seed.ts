@@ -21,6 +21,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_ROOM_TYPES } from '../src/resources/default-room-types';
+import { createPgAdapter } from '../src/database/pool-config';
 import { PrismaClient } from '@prisma/client';
 
 const databaseUrl = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
@@ -29,7 +30,10 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+// Prisma 7 takes the connection from a driver adapter; the `datasources`
+// override is gone. The API's own helper builds it, so the seed qualifies
+// tables with the same schema the API does.
+const prisma = new PrismaClient({ adapter: createPgAdapter(databaseUrl) });
 
 const SCHOOL_SLUG = 'demo-skola';
 

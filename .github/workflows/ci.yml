@@ -24,8 +24,10 @@ jobs:
     name: API — typecheck, tests & coverage
     runs-on: ubuntu-latest
     env:
-      # `prisma validate` resolves env("DATABASE_URL") / env("DIRECT_URL");
-      # placeholder values are enough — nothing connects to a database in CI.
+      # Neither placeholder is needed any more: schema.prisma names no env(),
+      # and prisma.config.ts reads DIRECT_URL with a '' fallback, so `prisma
+      # validate` and `generate` run without either. They stay harmless —
+      # nothing connects to a database in this job.
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
       DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
       # §2 mandates ≥95%, which remains the target. jest.base.js carries

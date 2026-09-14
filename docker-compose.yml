@@ -39,6 +39,7 @@ services:
     command: ["npx", "prisma", "migrate", "deploy"]
     environment:
       # Migrations run as the owner; the API itself never uses this role.
+      # Prisma 7's CLI reads only DIRECT_URL, through prisma.config.ts.
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_local}@db:5432/schemapro?schema=public
       DIRECT_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres_local}@db:5432/schemapro?schema=public
     depends_on:
@@ -57,13 +58,18 @@ services:
       # Least-privilege connection — RLS enforced on every query.
       #
       # connection_limit is the API's own pool, and it is set rather than left
-      # to Prisma, whose default is physical cores × 2 + 1: three or five on the
-      # 2-CPU runner the latency gate uses. Every request holds a pooled
+      # to a default. The pool is pg's under @prisma/adapter-pg, and pg reads
+      # nothing from the URL's query string: src/database/pool-config.ts maps
+      # connection_limit onto the pool's `max`. Without it pg opens at most 10 —
+      # no longer Prisma 5's physical cores × 2 + 1, which was three or five on
+      # the 2-CPU runner the latency gate uses. Every request holds a pooled
       # connection through its interactive transactions, so a pool smaller than
       # the concurrency the stack is driven with is a queue in front of every
       # query. 25 is that concurrency — scripts/bench/api-latency.mjs's own.
+      #
+      # No DIRECT_URL: that is the owner connection migrate uses, and the API
+      # never reads it.
       DATABASE_URL: postgresql://app_authenticated:app_authenticated_local@db:5432/schemapro?schema=public&connection_limit=${DATABASE_POOL_SIZE:-25}
-      DIRECT_URL: postgresql://app_authenticated:app_authenticated_local@db:5432/schemapro?schema=public
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (your Supabase JWT secret) in the environment}
       JWT_ISSUER: ${JWT_ISSUER:?Set JWT_ISSUER (<SUPABASE_URL>/auth/v1) — the API reads its JWKS from it}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-authenticated}
