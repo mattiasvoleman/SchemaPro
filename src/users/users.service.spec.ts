@@ -532,10 +532,11 @@ describe('UsersService', () => {
 
     // Against a student with no group, a PATCH making them a teacher and one
     // putting them in a class would each pass on a row read without a lock, and
-    // together store a teacher in the class: a row no constraint on Users
-    // refuses, and one app.current_user_group_id() reads without asking the
-    // role. withRls runs READ COMMITTED, so only a lock makes the second PATCH
-    // wait for the first and be judged against what it wrote.
+    // together try to store a teacher in the class, a row
+    // app.current_user_group_id() reads without asking the role. The CHECK on
+    // Users refuses it only as a 500. withRls runs READ COMMITTED, so only a
+    // lock makes the second PATCH wait for the first and be judged, with a
+    // 400, against what it wrote.
     it('reads the row it merges against under a lock, in the transaction that writes it', async () => {
       tx.user.update.mockResolvedValue({ id: USER_ID });
       const ranIn = transactionsOf(prisma);

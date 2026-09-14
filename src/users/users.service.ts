@@ -211,11 +211,10 @@ export class UsersService {
    * `withRls` runs READ COMMITTED, where a plain read holds nothing still.
    * Against a student with no group, a PATCH making them a teacher and a PATCH
    * putting them in 7B would each pass against the row the other has not
-   * changed yet, and together store a teacher in 7B. No constraint on Users ties
-   * the group to the role, so the race does not end in an error: the row is
-   * stored, and the teacher is handed the students' read path on 7B's lessons.
-   * With the lock the second PATCH waits for the first to commit and is judged
-   * against what it wrote.
+   * changed yet, and together try to store a teacher in 7B. The CHECK
+   * Users_only_a_student_has_a_class refuses that row, but only as an unmapped
+   * 500 for whichever PATCH writes second. With the lock the second PATCH waits
+   * for the first to commit, is judged against what it wrote, and gets the 400.
    *
    * FOR NO KEY UPDATE rather than FOR UPDATE: see the Isolation section of
    * PrismaService. Raw SQL because Prisma has no locking read. Under RLS the
