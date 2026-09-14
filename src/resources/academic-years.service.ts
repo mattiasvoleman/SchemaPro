@@ -24,7 +24,17 @@ export class AcademicYearsService {
     }
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        // Only one academic year may be active per school.
+        // Only one academic year may be active per school, and the partial
+        // unique index AcademicYears_one_active_per_school is what holds it.
+        // This UPDATE runs at READ COMMITTED and cannot see a year another
+        // transaction activates meanwhile, so two activations at once used to
+        // both commit. Now the second fails on its own write with P2002, which
+        // rethrowPrismaError answers with 409; nothing here catches it, so its
+        // hand-over rolls back with it.
+        //
+        // The hand-over still comes first. The index is checked as each row is
+        // written, not at commit, so writing the new year active while the old
+        // one still is would be refused every time, race or not.
         if (dto.isActive) {
           await tx.academicYear.updateMany({
             where: { schoolId, isActive: true },
@@ -68,6 +78,8 @@ export class AcademicYearsService {
           await this.assertYearStillHoldsItsPeriods(tx, id, dto);
         }
 
+        // The same hand-over as in create(), ahead of the write for the same
+        // reason: the one-active-year index checks the row as it lands.
         if (dto.isActive) {
           await tx.academicYear.updateMany({
             where: { schoolId, isActive: true, id: { not: id } },
