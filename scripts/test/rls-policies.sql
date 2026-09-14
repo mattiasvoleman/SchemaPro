@@ -2061,9 +2061,9 @@ BEGIN
 
     -- A refusal needs no principal at all, so the principal is shown to be in
     -- effect before its refusals are counted as its own. Through the helpers,
-    -- not a table: a read of "Schools" here also runs the authenticated
-    -- policies, and the fallback auth.uid() cannot cast the empty
-    -- request.jwt.claims that earlier sections' transactions leave behind.
+    -- not a table: a count of "Schools" would run the authenticated policies
+    -- too, and so measure what every policy admits rather than which
+    -- principal is set.
     IF principal = 'the service principal' THEN
       IF app.current_service_school_id()
            IS DISTINCT FROM current_setting('app.test_school_a')::uuid THEN
