@@ -137,20 +137,44 @@ export class AcademicYearsService {
    * fix a typo in June) are unaffected. It is the narrowing and the shift that
    * are stopped, which is exactly the pair that strands periods.
    *
-   * `year` is null when the lookup found nothing, which under RLS means the
+   * `year` is missing when the lookup found nothing, which under RLS means the
    * year is not the caller's. Silent on purpose: the update below answers that
    * with the 404 it has always answered with, and counting somebody else's
    * requirements at them would confirm the year exists.
+   *
+   * THE BOUNDS ARE READ UNDER A ROW LOCK, in the transaction that writes them.
+   * `withRls` runs READ COMMITTED, where a plain read holds nothing still, and
+   * nothing on AcademicYears orders the two dates. Against a year with no dated
+   * period yet, a PATCH moving the start to 2027-06-01 and one moving the end
+   * to 2026-09-01 would each pass against the row the other has not changed,
+   * and together store a year that ends before it starts. With the lock the
+   * second PATCH waits for the first to commit and is measured against what it
+   * wrote. The periods the counts see needed no lock of their own: each of the
+   * four comparisons is made against a bound one of the two PATCHes moved, so
+   * a period both counts let through lies inside the year they build together,
+   * and a dated period is itself what keeps that year from inverting.
+   *
+   * What the lock does not hold still is a period written at the same moment.
+   * SchoolBreaksService and TeachingRequirementsService read the year without
+   * a lock, so a lov saved while these counts run can land outside bounds they
+   * have already cleared.
+   *
+   * FOR NO KEY UPDATE rather than FOR UPDATE: see the Isolation section of
+   * PrismaService — every year-scoped insert takes FOR KEY SHARE on this row. A
+   * raw `date` column comes back as the same midnight-UTC Date the model API
+   * returns.
    */
   private async assertYearStillHoldsItsPeriods(
     tx: Prisma.TransactionClient,
     id: string,
     dto: UpdateAcademicYearDto,
   ): Promise<void> {
-    const year = await tx.academicYear.findUnique({
-      where: { id },
-      select: { startDate: true, endDate: true },
-    });
+    const [year] = await tx.$queryRaw<Pick<AcademicYear, 'startDate' | 'endDate'>[]>`
+      SELECT "startDate", "endDate"
+      FROM "AcademicYears"
+      WHERE "id" = ${id}::uuid
+      FOR NO KEY UPDATE
+    `;
     if (!year) return;
 
     // The bounds as they will END UP, not as they arrived: a PATCH carrying

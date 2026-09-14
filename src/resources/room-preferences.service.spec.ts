@@ -11,10 +11,12 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
 import { RoomPreferencesService } from './room-preferences.service';
 
 const PREF_ID = '77777777-7777-4777-8777-777777777777';
+const OTHER_PREF_ID = '78787878-7878-4878-8878-787878787878';
 const SUBJECT_ID = '99999999-9999-4999-8999-999999999999';
 const TYPE_ID = '66666666-6666-4666-8666-666666666666';
 const ROOM_A = '11111111-1111-4111-8111-111111111111';
@@ -74,23 +76,58 @@ describe('RoomPreferencesService', () => {
   let tx: TxMock;
   let prisma: PrismaMock;
 
+  const RULES: LockedTable = {
+    name: 'RoomPreferences',
+    columns: [
+      'id', 'schoolId', 'subjectId', 'kind', 'minGradeLevel', 'maxGradeLevel',
+      'roomTypeId', 'weight', 'createdAt', 'updatedAt',
+    ],
+    lock: 'FOR NO KEY UPDATE',
+  };
+  /** The rules update()'s locking read can find. */
+  let rules: Record<string, unknown>[];
+  /** Every stored rule's rooms, as RoomPreferenceRooms holds them. */
+  let ruleRooms: Record<string, unknown>[];
+  /** The locking read of the stored rule in update(). */
+  let queryRaw: jest.Mock;
+
   beforeEach(() => {
     tx = createTxMock();
+    // The auto-vivifying mock would hand back a model proxy for `$queryRaw`,
+    // and a proxy is not callable. It answers as the table would, from the rule
+    // a test stored.
+    queryRaw = jest.fn((...call: unknown[]) =>
+      Promise.resolve(lockingRead(RULES, rules, call)),
+    );
+    Object.assign(tx, { $queryRaw: queryRaw });
     prisma = createPrismaMock(tx);
     service = new RoomPreferencesService(prisma as unknown as PrismaService);
     tx.roomPreference.create.mockResolvedValue({ id: PREF_ID });
     tx.roomPreference.update.mockResolvedValue({ id: PREF_ID });
+    tx.roomPreferenceRoom.findMany.mockImplementation(
+      ({ where, select }: { where?: Record<string, unknown>; select?: Selection } = {}) => {
+        if (Object.keys(where ?? {}).join() !== 'preferenceId') {
+          throw new Error(`A rule's rooms read by something other than the rule: ${JSON.stringify(where)}`);
+        }
+        return Promise.resolve(
+          ruleRooms
+            .filter((entry) => entry.preferenceId === where?.preferenceId)
+            .map((entry) => selected(entry, select)),
+        );
+      },
+    );
     // update() reads the stored row before it validates the merge; without it
     // every PATCH would be a 404.
     givenRule({ kind: 'WISH', minGradeLevel: null, maxGradeLevel: null, roomIds: [ROOM_A] });
   });
 
   /**
-   * The stored rule, read back the way Prisma answers the query that was sent:
-   * found only by its own id, its columns always, its rooms only when the
-   * include names them and through the include's own select. A stub that hands
-   * back the room list whatever was asked would let a merge that lost it arm a
-   * lock against rooms nobody checked.
+   * The stored rule, read back the way the table answers the queries sent for
+   * it: its columns through the locking read, found only by its own id, and its
+   * rooms through their own query, found only by the rule's id and cut to the
+   * fields it selects. Another rule's rooms are stored beside them, so a read
+   * that loses the rule's id, or a stub that handed back the list whatever was
+   * asked, cannot arm a lock against rooms nobody checked.
    */
   const givenRule = (rule: {
     kind: 'WISH' | 'LOCK';
@@ -100,36 +137,20 @@ describe('RoomPreferencesService', () => {
   }) => {
     const { roomIds, ...columns } = rule;
     const schoolId = testUser().schoolId;
-    const scalars = {
-      id: PREF_ID,
-      schoolId,
-      subjectId: SUBJECT_ID,
-      roomTypeId: null,
-      weight: 100,
-      ...columns,
-    };
-    const rooms = roomIds.map((roomId) => ({ roomPreferenceId: PREF_ID, schoolId, roomId }));
-    tx.roomPreference.findUnique.mockImplementation(
-      ({
-        where,
-        include,
-      }: {
-        where?: { id?: string };
-        include?: { rooms?: boolean | { select?: Selection } };
-      }) => {
-        if (where?.id === undefined) {
-          throw new Error('Prisma: findUnique needs a unique field in `where`.');
-        }
-        if (where.id !== PREF_ID) return Promise.resolve(null);
-        const relation = include?.rooms;
-        if (!relation) return Promise.resolve(scalars);
-        const select = typeof relation === 'object' ? relation.select : undefined;
-        return Promise.resolve({
-          ...scalars,
-          rooms: rooms.map((entry) => selected(entry, select)),
-        });
+    rules = [
+      {
+        id: PREF_ID,
+        schoolId,
+        subjectId: SUBJECT_ID,
+        roomTypeId: null,
+        weight: 100,
+        ...columns,
       },
-    );
+    ];
+    ruleRooms = [
+      ...roomIds.map((roomId) => ({ preferenceId: PREF_ID, schoolId, roomId })),
+      { preferenceId: OTHER_PREF_ID, schoolId, roomId: ROOM_B },
+    ];
   };
 
   /**
@@ -279,6 +300,61 @@ describe('RoomPreferencesService', () => {
       await expect(
         service.update(PREF_ID, { roomTypeId: TYPE_ID, roomIds: [ROOM_A] }, testUser()),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    // Against a wish for Bryggan 3 over åk 4-6, a PATCH arming it as a lock and
+    // a PATCH moving it to a room fenced to åk 7-9 would each pass on a row read
+    // without a lock (the first measured against Bryggan 3, the second not
+    // measured, being a wish) and together store a lock nobody can honour.
+    // withRls runs READ COMMITTED, so only a lock makes the second PATCH wait
+    // for the first and be measured against what it wrote.
+    it('reads the rule it merges against under a lock, in the transaction that writes it', async () => {
+      givenRule({ kind: 'WISH', minGradeLevel: 4, maxGradeLevel: 6, roomIds: [ROOM_A] });
+      givenRooms([
+        { id: ROOM_A, name: 'Bryggan 3', minGradeLevel: null, maxGradeLevel: null },
+      ]);
+      const ranIn = transactionsOf(prisma);
+      const readIn = ranIn(queryRaw);
+      const roomsReadIn = ranIn(tx.roomPreferenceRoom.findMany);
+      const writtenIn = ranIn(tx.roomPreference.update);
+
+      await service.update(PREF_ID, { kind: 'LOCK' }, testUser());
+
+      // A lock lasts as long as the transaction that took it, so the read and
+      // the write have to share one, and it has to be withRls's. The rooms are
+      // read in it too, and only once the rule is locked, since the lock is
+      // what holds them still.
+      expect(readIn).toEqual([expect.stringMatching(/^withRls#\d+$/)]);
+      expect(roomsReadIn).toEqual(readIn);
+      expect(writtenIn).toEqual(readIn);
+      const [call] = queryRaw.mock.calls;
+      expect(rawSql(call)).toMatch(
+        /SELECT "kind", "minGradeLevel", "maxGradeLevel"\s+FROM "RoomPreferences"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
+      );
+      expect(call.slice(1)).toEqual([PREF_ID]);
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.roomPreferenceRoom.findMany.mock.invocationCallOrder[0],
+      );
+      expect(tx.roomPreferenceRoom.findMany.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.roomPreference.update.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('measures a lock against the rooms a PATCH names, not the ones it replaces', async () => {
+      // The stored room would hold åk 4 and the room the PATCH moves the lock
+      // to would not. Measuring the stored list for a PATCH that brings its own
+      // would clear the lock against a room it is about to stop naming.
+      givenRule({ kind: 'LOCK', minGradeLevel: 4, maxGradeLevel: 4, roomIds: [ROOM_A] });
+      givenRooms([
+        { id: ROOM_A, name: 'Bryggan 3', minGradeLevel: null, maxGradeLevel: null },
+        { id: ROOM_B, name: 'Optimisten 4', minGradeLevel: 7, maxGradeLevel: 9 },
+      ]);
+
+      await expect(
+        service.update(PREF_ID, { roomIds: [ROOM_B] }, testUser()),
+      ).rejects.toThrow('Optimisten 4');
+      expect(tx.roomPreferenceRoom.findMany).not.toHaveBeenCalled();
+      expect(tx.roomPreference.update).not.toHaveBeenCalled();
     });
   });
 
@@ -500,7 +576,7 @@ describe('RoomPreferencesService', () => {
     });
 
     it('reports an unknown rule as missing rather than as a write failure', async () => {
-      tx.roomPreference.findUnique.mockResolvedValue(null);
+      rules = [];
 
       await expect(service.update(PREF_ID, { kind: 'LOCK' }, testUser())).rejects.toThrow(
         /not found/,

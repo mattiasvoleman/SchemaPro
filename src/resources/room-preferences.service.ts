@@ -78,6 +78,30 @@ export class RoomPreferencesService {
    * that moves a single year bound says nothing about the other. Validating the
    * DTO alone lets the database answer with a constraint violation the admin
    * cannot act on, and lets a lock be armed against rooms nobody re-checked.
+   *
+   * READ UNDER A ROW LOCK, in the transaction that writes it. `withRls` runs
+   * READ COMMITTED, where a plain read holds nothing still, and the lock check
+   * trusts three things off the stored row that another PATCH can be changing.
+   * Against a wish for Bryggan 3 over åk 4-6, a PATCH that only arms it as a
+   * lock is measured against Bryggan 3 and passes, and a PATCH that only moves
+   * it to Optimisten 4, fenced to åk 7-9, is still a wish and is not measured
+   * at all. Each passes against the row the other has not changed, and together
+   * they store a lock on Optimisten 4 for åk 4-6: a week the engine cannot
+   * build, reported as "no room satisfies capacity/type/years". No CHECK can
+   * refuse that row, because the fence lives on Rooms. The span merges against
+   * the same row, but there the table's two CHECKs say what assertGradeSpan
+   * says, so that race on its own ends as a 500 and not as a stored row.
+   *
+   * The rooms are read after the lock rather than in it. This service replaces
+   * them only in the update below, behind the same lock, so holding the rule
+   * holds its list; a room deleted elsewhere cascades out of it, which is
+   * RoomsService.remove's to guard.
+   *
+   * FOR NO KEY UPDATE rather than FOR UPDATE: see the Isolation section of
+   * PrismaService. Raw SQL because Prisma has no locking read. Under RLS the
+   * lock also needs the UPDATE policy, which `room_preferences_admin_all`
+   * grants the admin the controller already requires, so a rule in another
+   * school still reads as missing.
    */
   async update(id: string, dto: UpdateRoomPreferenceDto, user: AuthenticatedUser) {
     const schoolId = requireSchoolId(user);
@@ -90,10 +114,14 @@ export class RoomPreferencesService {
 
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        const current = await tx.roomPreference.findUnique({
-          where: { id },
-          include: { rooms: { select: { roomId: true } } },
-        });
+        const [current] = await tx.$queryRaw<
+          { kind: RoomRuleKind; minGradeLevel: number | null; maxGradeLevel: number | null }[]
+        >`
+          SELECT "kind", "minGradeLevel", "maxGradeLevel"
+          FROM "RoomPreferences"
+          WHERE "id" = ${id}::uuid
+          FOR NO KEY UPDATE
+        `;
         if (!current) {
           throw new NotFoundException(`Room rule ${id} not found.`);
         }
@@ -104,10 +132,19 @@ export class RoomPreferencesService {
           dto.maxGradeLevel !== undefined ? dto.maxGradeLevel : current.maxGradeLevel;
         assertGradeSpan(minGradeLevel, maxGradeLevel);
 
+        const targetRoomIds = touchesTarget
+          ? roomIds
+          : (
+              await tx.roomPreferenceRoom.findMany({
+                where: { preferenceId: id },
+                select: { roomId: true },
+              })
+            ).map((entry) => entry.roomId);
+
         await this.assertLockCanBeHonoured(
           tx,
           dto.kind ?? current.kind,
-          touchesTarget ? roomIds : current.rooms.map((entry) => entry.roomId),
+          targetRoomIds,
           minGradeLevel,
           maxGradeLevel,
         );
