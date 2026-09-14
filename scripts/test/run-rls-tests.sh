@@ -107,12 +107,13 @@ if [ "${foreign_rule_rooms:-0}" = "0" ]; then
   exit 1
 fi
 
-# The second school's lesson rows, table by table. Section 3 asserts the service
-# principal sees none of another school's rows in the tables the SS12000 feeds
-# read, and one table with nothing planted over there makes its half pass while
-# proving nothing. The same list as section 3's; counted as the owner.
-for table in MasterLessons CalendarLessons Subjects Rooms MasterLessonGroups \
-    MasterLessonStudents CalendarLessonTeachers CalendarLessonGroups CalendarLessonStudents; do
+# The second school's rows, table by table. Section 3 asserts the service
+# principal sees none of another school's rows in the tables SS12000 reads, and
+# one table with nothing planted over there makes its half pass while proving
+# nothing. The same list as section 3's; counted as the owner.
+for table in AcademicYears StudentGroups GuardianStudents MasterLessons CalendarLessons \
+    Subjects Rooms MasterLessonGroups MasterLessonStudents \
+    CalendarLessonTeachers CalendarLessonGroups CalendarLessonStudents; do
   foreign_rows="$(
     compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
       -v ON_ERROR_STOP=1 -tAc \
@@ -121,6 +122,28 @@ for table in MasterLessons CalendarLessons Subjects Rooms MasterLessonGroups \
   )"
   if [ "${foreign_rows:-0}" = "0" ]; then
     echo "FAIL: no ${table} rows in the second school; fixtures did not run." >&2
+    exit 1
+  fi
+done
+
+# And in each link table, a row attached to one of the primary school's lessons
+# but filed under another school. Without one, a policy that asked the lesson's
+# school instead of the row's own passes section 3.
+for link in MasterLessonGroups:MasterLessons:masterLessonId \
+    MasterLessonStudents:MasterLessons:masterLessonId \
+    CalendarLessonTeachers:CalendarLessons:calendarLessonId \
+    CalendarLessonGroups:CalendarLessons:calendarLessonId \
+    CalendarLessonStudents:CalendarLessons:calendarLessonId; do
+  IFS=: read -r table lessons lesson_key <<< "$link"
+  crossed_rows="$(
+    compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+      -v ON_ERROR_STOP=1 -tAc \
+      "SELECT count(*) FROM \"${table}\" x JOIN \"${lessons}\" l ON l.id = x.\"${lesson_key}\" \
+        WHERE l.\"schoolId\" = '${school_a}' AND x.\"schoolId\" <> l.\"schoolId\"" \
+    | tr -d '[:space:]'
+  )"
+  if [ "${crossed_rows:-0}" = "0" ]; then
+    echo "FAIL: no ${table} row filed under another school than its lesson's; fixtures did not run." >&2
     exit 1
   fi
 done

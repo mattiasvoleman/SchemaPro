@@ -85,33 +85,41 @@ What the principal is granted, always on the key's school only:
 
 Each write policy has a `WITH CHECK` on the same school, so a write can
 neither create a row in another school nor move one there. There is no INSERT
-on `Users` (unknown emails come back in `needsProvisioning`) and no DELETE on
-any table. The `Users` policy scopes rows, not columns; the import writes only
-`firstName`, `lastName` and `studentGroupId`. A guardian link also has
-composite foreign keys to `Users (id, schoolId)` on both sides, so its
+on `Users` (unknown emails come back in `needsProvisioning`) and no DELETE
+policy on any table. The `Users` policy scopes rows, not columns; the import
+writes only `firstName`, `lastName` and `studentGroupId`. A guardian link also
+has composite foreign keys to `Users (id, schoolId)` on both sides, so its
 guardian and its student belong to the link's school whoever writes it.
 
-No other table has a service-principal policy, and such a table reads as
-empty to the principal rather than refusing it: `IntegrationApiKeys` once the
-key is resolved, `RoomTypes` and `LunchSettings` among them. That is how both
-feeds broke before `20260914150000`. The seven tables in the third row had no
-policy, so a lesson's required `subject` came back missing and `/activities`
-and `/calendarEvents` answered 500 for any school with a lesson. With only
-`Subjects` and `Rooms` readable they answered 200 instead: lessons with no
-named pupils and no extra classes, and dated lessons with no teachers either.
-A relation added to a feed's `select` needs its
-table in this list. The feeds read teachers and pupils as id columns, so
-`Users` needs no more than it has.
+No other table has a service-principal policy. A table under row-level
+security without one reads as empty to the principal rather than refusing it:
+`IntegrationApiKeys` once the key is resolved, `RoomTypes` and `LunchSettings`
+among them. That is how both feeds broke before `20260914150000`. The seven
+tables in the third row had no policy, so a lesson's required `subject` came
+back missing and `/activities` and `/calendarEvents` answered 500 for any
+school with a lesson. With only `Subjects` and `Rooms` readable they answered
+200 instead: lessons with no named pupils and no extra classes, and dated
+lessons with no teachers either. A relation added to a feed's `select` needs
+its table in this list and in section 3 of the suite below. The feeds read
+teachers and pupils as id columns, so `Users` needs no more than it has.
+
+`_prisma_migrations` is the exception: it is the one table in `public` without
+row-level security, and `authenticated` holds SELECT, INSERT, UPDATE and
+DELETE on it. Every `app_authenticated` connection, the service principal
+included, reads all of its rows and can delete them. It holds Prisma's
+migration history, not school data.
 
 **Asserted against Postgres.** `scripts/test/rls-policies.sql` runs as
 `app_authenticated`. Section 2: the key-lookup principal sees API keys, but no
 users, no schools and no revoked key. Section 3: the service principal sees
-exactly one school and its own users, no other school's users or student
-groups on a query without a tenant filter, and no API keys; and in
-`MasterLessons`, `CalendarLessons` and the seven tables in the third row, its
-own school's rows and none of another's. The fixtures plant a lesson with a
-row in each of those tables in both schools, and the runner refuses to start
-when the other school has none. Section 4: neither
+exactly one school, its own users and no other school's on a query without a
+tenant filter, and no API keys; and in `AcademicYears`, `StudentGroups`,
+`GuardianStudents`, `MasterLessons`, `CalendarLessons` and the seven tables in
+the third row, its own school's rows and none of another's. The fixtures plant
+rows in each of those tables in both schools, and in each link table a row
+filed under the second school but attached to the first school's lesson, which
+the first school's principal must not see. The runner refuses to start when any
+of them is missing. Section 4: neither
 setting survives COMMIT. Sections 5 and 6: it sees no `RoomTypes` and no
 `LunchSettings`. The write policies' `WITH CHECK` clauses are not asserted
 there.

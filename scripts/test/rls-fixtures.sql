@@ -163,11 +163,34 @@ CROSS JOIN (VALUES ('RLS Fixture Class'), ('RLS Fixture Extra')) AS g(name)
 WHERE s.slug = 'rls-fixture-school' AND y.name = 'RLS Fixture Year'
 ON CONFLICT ("schoolId", "academicYearId", name) DO NOTHING;
 
+-- The second school's guardian, linked to that school's pupil, so section 3
+-- counts a GuardianStudents row that exists over there. The first school's
+-- guardian above is the one sections 7e and 7f act as; this one is never a
+-- principal.
+INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+SELECT s.id, 'rls-fixture-guardian-b@example.invalid', 'Fixture', 'Guardian B', 'GUARDIAN',
+       '00000000-0000-4000-8000-000000000005', true, now()
+FROM "Schools" s
+WHERE s.slug = 'rls-fixture-school'
+  AND NOT EXISTS (
+    SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000005'
+  );
+
+INSERT INTO "GuardianStudents" ("schoolId", "guardianId", "studentId", "createdAt")
+SELECT g."schoolId", g.id, p.id, now()
+FROM "Users" g
+JOIN "Users" p ON p."authId" = '00000000-0000-4000-8000-000000000002'
+WHERE g."authId" = '00000000-0000-4000-8000-000000000005'
+ON CONFLICT ("guardianId", "studentId") DO NOTHING;
+
 -- What each school's lesson is made of, and the lessons themselves once they
 -- exist. A view rather than a CTE because every statement below reads it
 -- afresh, so the link rows find the lessons the statements before them
 -- inserted. The weekly lesson sits on a Monday at 06:10, an hour no seeded or
 -- generated timetable uses, and that is what it is recognised by.
+--
+-- Every ingredient is joined LEFT, so a school that lacks one still has a row
+-- here and the check below can name what is missing.
 CREATE OR REPLACE TEMP VIEW rls_fixture_lesson AS
 SELECT s.id AS "schoolId", y.id AS year_id, sub.id AS subject_id, room.id AS room_id,
        home.id AS group_id, extra.id AS extra_group_id, teacher.id AS teacher_id,
@@ -175,31 +198,31 @@ SELECT s.id AS "schoolId", y.id AS year_id, sub.id AS subject_id, room.id AS roo
        y."startDate" + (8 - extract(isodow FROM y."startDate")::int) % 7 AS lesson_date,
        ml.id AS master_lesson_id, cl.id AS calendar_lesson_id
 FROM "Schools" s
-JOIN LATERAL (
+LEFT JOIN LATERAL (
   SELECT id, "startDate" FROM "AcademicYears"
   WHERE "schoolId" = s.id AND "isActive" ORDER BY "createdAt" LIMIT 1
 ) y ON true
-JOIN LATERAL (
+LEFT JOIN LATERAL (
   SELECT id FROM "Subjects" WHERE "schoolId" = s.id ORDER BY code LIMIT 1
 ) sub ON true
-JOIN LATERAL (
+LEFT JOIN LATERAL (
   SELECT id FROM "Rooms" WHERE "schoolId" = s.id ORDER BY name LIMIT 1
 ) room ON true
-JOIN LATERAL (
+LEFT JOIN LATERAL (
   SELECT id FROM "StudentGroups"
   WHERE "schoolId" = s.id AND "academicYearId" = y.id AND kind = 'CLASS'
   ORDER BY name LIMIT 1
 ) home ON true
-JOIN LATERAL (
+LEFT JOIN LATERAL (
   SELECT id FROM "StudentGroups"
   WHERE "schoolId" = s.id AND "academicYearId" = y.id AND kind = 'CLASS'
   ORDER BY name OFFSET 1 LIMIT 1
 ) extra ON true
-JOIN LATERAL (
+LEFT JOIN LATERAL (
   SELECT id FROM "Users"
   WHERE "schoolId" = s.id AND role = 'TEACHER' AND "isActive" ORDER BY email LIMIT 1
 ) teacher ON true
-JOIN LATERAL (
+LEFT JOIN LATERAL (
   SELECT id FROM "Users"
   WHERE "schoolId" = s.id AND role = 'STUDENT' AND "isActive" ORDER BY email LIMIT 1
 ) pupil ON true
@@ -213,6 +236,37 @@ LEFT JOIN LATERAL (
 WHERE s.slug = 'rls-fixture-school'
    OR s.id = (SELECT id FROM "Schools" WHERE slug <> 'rls-fixture-school'
               ORDER BY "createdAt" LIMIT 1);
+
+-- A school the view cannot build a lesson for would otherwise get none, and
+-- section 3 would then report the service principal's zero there as a policy
+-- that cannot read, which sends whoever reads the failure to the wrong file.
+DO $$
+DECLARE
+  f       record;
+  schools int;
+  missing text;
+BEGIN
+  SELECT count(*) INTO schools FROM rls_fixture_lesson;
+  IF schools <> 2 THEN
+    RAISE EXCEPTION
+      'rls-fixtures: found % school(s) for the lesson fixture, expected the seeded school and rls-fixture-school', schools;
+  END IF;
+
+  FOR f IN SELECT * FROM rls_fixture_lesson LOOP
+    missing := concat_ws(', ',
+      CASE WHEN f.year_id IS NULL THEN 'an active academic year' END,
+      CASE WHEN f.subject_id IS NULL THEN 'a subject' END,
+      CASE WHEN f.room_id IS NULL THEN 'a room' END,
+      CASE WHEN f.extra_group_id IS NULL THEN 'two classes in its active year' END,
+      CASE WHEN f.teacher_id IS NULL THEN 'an active teacher' END,
+      CASE WHEN f.pupil_id IS NULL THEN 'an active pupil' END);
+    IF missing <> '' THEN
+      RAISE EXCEPTION
+        'rls-fixtures: school % lacks %, so the lesson fixture cannot plant a lesson there',
+        f."schoolId", missing;
+    END IF;
+  END LOOP;
+END $$;
 
 INSERT INTO "MasterLessons"
   ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId",
@@ -249,6 +303,41 @@ ON CONFLICT ("calendarLessonId", "studentGroupId") DO NOTHING;
 
 INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId")
 SELECT "schoolId", calendar_lesson_id, pupil_id FROM rls_fixture_lesson
+ON CONFLICT ("calendarLessonId", "studentId") DO NOTHING;
+
+-- One link row of each kind filed under the SECOND school but attached to the
+-- FIRST school's lessons: the second school's extra class, pupil and teacher.
+-- Every link table references its lesson by id alone, so such a row can be
+-- written. The service-principal policies answer by the row's own school, so
+-- the first school's principal must not see these, and section 3 counts them
+-- in its "none of another school's" half. A policy that asked the lesson's
+-- school instead would show them there.
+CREATE OR REPLACE TEMP VIEW rls_fixture_crossed AS
+SELECT b."schoolId", a.master_lesson_id, a.calendar_lesson_id,
+       b.extra_group_id, b.teacher_id, b.pupil_id
+FROM rls_fixture_lesson a
+JOIN rls_fixture_lesson b ON b."schoolId" <> a."schoolId"
+JOIN "Schools" s ON s.id = b."schoolId"
+WHERE s.slug = 'rls-fixture-school';
+
+INSERT INTO "MasterLessonGroups" ("schoolId", "masterLessonId", "studentGroupId")
+SELECT "schoolId", master_lesson_id, extra_group_id FROM rls_fixture_crossed
+ON CONFLICT ("masterLessonId", "studentGroupId") DO NOTHING;
+
+INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId")
+SELECT "schoolId", master_lesson_id, pupil_id FROM rls_fixture_crossed
+ON CONFLICT ("masterLessonId", "studentId") DO NOTHING;
+
+INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId")
+SELECT "schoolId", calendar_lesson_id, teacher_id FROM rls_fixture_crossed
+ON CONFLICT ("calendarLessonId", "teacherId") DO NOTHING;
+
+INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId")
+SELECT "schoolId", calendar_lesson_id, extra_group_id FROM rls_fixture_crossed
+ON CONFLICT ("calendarLessonId", "studentGroupId") DO NOTHING;
+
+INSERT INTO "CalendarLessonStudents" ("schoolId", "calendarLessonId", "studentId")
+SELECT "schoolId", calendar_lesson_id, pupil_id FROM rls_fixture_crossed
 ON CONFLICT ("calendarLessonId", "studentId") DO NOTHING;
 
 -- An active key for the FIRST school, so the key-lookup assertions have

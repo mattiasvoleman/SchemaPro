@@ -22,11 +22,13 @@ import { PrismaService } from '../database/prisma.service';
  * depth rather than the only thing standing between two tenants: a query that
  * forgets one returns nothing instead of leaking.
  *
- * The same property cuts the other way. A table with no service-principal
- * policy reads as empty here, not as denied: a required relation into it
- * throws "Inconsistent query result" (a 500), and a list relation silently
- * comes back `[]`. So every table a `select` below reaches needs a policy, and
- * a row in section 3 of scripts/test/rls-policies.sql.
+ * The same property cuts the other way. A table under row-level security with
+ * no service-principal policy reads as empty here, not as denied: a required
+ * relation into it throws "Inconsistent query result" (a 500), and a list
+ * relation silently comes back `[]`. So every table a query below reads needs
+ * a policy, and a row in section 3 of scripts/test/rls-policies.sql.
+ * `_prisma_migrations`, the one table in `public` without row-level security,
+ * is not empty here but readable and writable; nothing below touches it.
  *
  * These methods previously used `withSystemTransaction` on the assumption that
  * it bypassed RLS. It does not, so every endpoint here returned empty payloads
