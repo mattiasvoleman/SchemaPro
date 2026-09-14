@@ -80,7 +80,11 @@ describe('Import payload limits (e2e)', () => {
     harness.tx['subject']!['findMany']!.mockResolvedValue([]);
     harness.tx['user']!['findMany']!.mockResolvedValue([]);
     harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([]);
-    harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+    // Every row states a period, so the import reads the year's bounds FOR
+    // SHARE, as a raw query. The shared mock would hand back a model proxy for
+    // `$queryRaw`, which is not callable; no row is what a year the caller
+    // cannot see reads as.
+    Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([]) });
 
     await request(harness.app.getHttpServer())
       .post('/api/v1/import/requirements')

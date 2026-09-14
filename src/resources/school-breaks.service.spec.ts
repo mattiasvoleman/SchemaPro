@@ -12,6 +12,7 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
 import { SchoolBreaksService } from './school-breaks.service';
 import type {
@@ -34,6 +35,23 @@ const YEAR = {
   startDate: new Date('2026-08-17T00:00:00.000Z'),
   endDate: new Date('2027-06-11T00:00:00.000Z'),
 };
+
+/**
+ * AcademicYears as a period writer's read of the year has to name it: FOR
+ * SHARE, the lock a year PATCH moving the bounds waits on.
+ */
+const YEARS: LockedTable = {
+  name: 'AcademicYears',
+  columns: [
+    'id', 'schoolId', 'name', 'startDate', 'endDate', 'isActive', 'createdAt',
+    'updatedAt',
+  ],
+  lock: 'FOR SHARE',
+};
+
+/** The SQL of that read, as the tagged template sends it. */
+const YEAR_READ =
+  /SELECT "startDate", "endDate"\s+FROM "AcademicYears"\s+WHERE "id" = \?::uuid\s+FOR SHARE/;
 
 const date = (value: string): Date => new Date(`${value}T00:00:00.000Z`);
 
@@ -188,6 +206,10 @@ describe('SchoolBreaksService', () => {
   let prisma: PrismaMock;
   /** Whatever survived the last purge, in fixture order. */
   let survivors: FixtureLesson[];
+  /** The years the read of the bounds can find: none until a test stores one. */
+  let years: Record<string, unknown>[];
+  /** The read of the year's bounds. */
+  let queryRaw: jest.Mock;
 
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(NOW);
@@ -195,6 +217,15 @@ describe('SchoolBreaksService', () => {
     prisma = createPrismaMock(tx);
     service = new SchoolBreaksService(prisma as unknown as PrismaService);
     survivors = [];
+    years = [];
+    // The auto-vivifying mock would hand back a model proxy for `$queryRaw`,
+    // and a proxy is not callable. It answers as the table would, from the
+    // year a test stored, and throws on a read that takes another lock or
+    // none. A year nobody stored is one RLS hides.
+    queryRaw = jest.fn((...call: unknown[]) =>
+      Promise.resolve(lockingRead(YEARS, years, call)),
+    );
+    Object.assign(tx, { $queryRaw: queryRaw });
     tx.calendarLesson.deleteMany.mockResolvedValue({ count: 0 });
     // The purge reads the school to learn its timezone, because "today" has to
     // be the school's day and not the server's — an hour after midnight in
@@ -205,11 +236,11 @@ describe('SchoolBreaksService', () => {
     );
   });
 
-  /** The läsår, found by its id and cut to what the query selects. */
+  /** The läsår, stored where the read of the bounds finds it by its own id. */
   const givenYear = (): void => {
-    tx.academicYear.findUnique.mockImplementation(
-      byId(YEAR_ID, { id: YEAR_ID, schoolId: SCHOOL_ID, name: '2026/2027', ...YEAR }),
-    );
+    years = [
+      { id: YEAR_ID, schoolId: SCHOOL_ID, name: '2026/2027', isActive: true, ...YEAR },
+    ];
   };
 
   afterEach(() => {
@@ -310,6 +341,33 @@ describe('SchoolBreaksService', () => {
       });
     });
 
+    // AcademicYearsService.update counts the lov outside the bounds it is about
+    // to store, and this create measures the range against the bounds it
+    // reads. withRls runs READ COMMITTED, so read without a lock the two pass
+    // each other: the PATCH counts before the lov commits, the lov reads the
+    // bounds before the PATCH commits, and both land a lov outside its year,
+    // where it no longer keeps lessons out of the week it closes. FOR SHARE is
+    // what the PATCH's FOR NO KEY UPDATE waits on, and it holds only while the
+    // transaction that took it is open.
+    it('reads the year FOR SHARE, in the transaction that stores the lov', async () => {
+      givenYear();
+      tx.schoolBreak.create.mockResolvedValue(storedBreak());
+      const ranIn = transactionsOf(prisma);
+      const readIn = ranIn(queryRaw);
+      const createdIn = ranIn(tx.schoolBreak.create);
+
+      await service.create(dto(), testUser());
+
+      expect(readIn).toEqual([expect.stringMatching(/^withRls#\d+$/)]);
+      expect(createdIn).toEqual(readIn);
+      const [call] = queryRaw.mock.calls;
+      expect(rawSql(call)).toMatch(YEAR_READ);
+      expect(call.slice(1)).toEqual([YEAR_ID]);
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.schoolBreak.create.mock.invocationCallOrder[0],
+      );
+    });
+
     it('refuses a range that reaches past the end of the läsår', async () => {
       givenYear();
 
@@ -406,7 +464,8 @@ describe('SchoolBreaksService', () => {
     });
 
     it('says nothing about a year RLS hides, and lets the FK refuse it', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(null);
+      // No year stored: the read of the bounds finds no row, which is what a
+      // year belonging to another school reads as.
       tx.schoolBreak.create.mockRejectedValue(prismaError('P2003'));
 
       // Not 400 "outside its year": that answer would confirm the year exists.
@@ -664,14 +723,14 @@ describe('SchoolBreaksService', () => {
   });
 
   describe('update', () => {
-    /** The row as stored, with its year, read back through the query sent for it. */
+    /**
+     * The row as stored, read back through the query sent for it, and its year
+     * where the read of the bounds finds it by the id the row names.
+     */
     const givenExisting = (overrides: Record<string, unknown> = {}) => {
+      givenYear();
       tx.schoolBreak.findUnique.mockImplementation(
-        byId(BREAK_ID, {
-          ...storedBreak(),
-          academicYear: { id: YEAR_ID, schoolId: SCHOOL_ID, ...YEAR },
-          ...overrides,
-        }),
+        byId(BREAK_ID, { ...storedBreak(), ...overrides }),
       );
     };
 
@@ -868,6 +927,27 @@ describe('SchoolBreaksService', () => {
       // A lesson materialized into the range after the lov was saved must not
       // survive every later edit of the row that says it cannot exist.
       expect(result.removedCalendarLessons).toBe(1);
+    });
+
+    it('reads the break’s own year FOR SHARE, in the transaction that moves it', async () => {
+      givenExisting();
+      tx.schoolBreak.update.mockResolvedValue(storedBreak({ endDate: date('2027-03-05') }));
+      const ranIn = transactionsOf(prisma);
+      const readIn = ranIn(queryRaw);
+      const updatedIn = ranIn(tx.schoolBreak.update);
+
+      await service.update(BREAK_ID, { endDate: '2027-03-05' }, testUser());
+
+      // The same race as create()'s, from a PATCH: the year the break belongs
+      // to is the one whose next move has to wait, so that is the id locked.
+      expect(readIn).toEqual([expect.stringMatching(/^withRls#\d+$/)]);
+      expect(updatedIn).toEqual(readIn);
+      const [call] = queryRaw.mock.calls;
+      expect(rawSql(call)).toMatch(YEAR_READ);
+      expect(call.slice(1)).toEqual([YEAR_ID]);
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.schoolBreak.update.mock.invocationCallOrder[0],
+      );
     });
 
     it('leaves an unreadable row to update()’s own 404', async () => {
