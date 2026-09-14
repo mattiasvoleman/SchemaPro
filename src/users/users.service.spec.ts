@@ -14,6 +14,7 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
 import type { CreateUserDto } from './dto/user.dto';
 import type { SupabaseAdminService } from './supabase-admin.service';
@@ -480,10 +481,35 @@ describe('UsersService', () => {
   });
 
   describe('update', () => {
+    const USERS: LockedTable = {
+      name: 'Users',
+      columns: [
+        'id', 'schoolId', 'authId', 'role', 'firstName', 'lastName', 'email',
+        'phone', 'isActive', 'invitedAt', 'createdAt', 'updatedAt', 'studentGroupId',
+      ],
+      lock: 'FOR NO KEY UPDATE',
+    };
+    /** The rows update()'s locking read can find. */
+    let users: Record<string, unknown>[];
+    /** The locking read of the stored role and group. */
+    let queryRaw: jest.Mock;
+
+    /** The row as stored, found by its own id and by nothing else; null stores none. */
+    const storeUser = (row: Record<string, unknown> | null) => {
+      users = row === null ? [] : [{ id: USER_ID, ...row }];
+    };
+
     beforeEach(() => {
+      // The auto-vivifying mock would hand back a model proxy for `$queryRaw`,
+      // and a proxy is not callable. It answers as the table would, from the
+      // row a test stored.
+      queryRaw = jest.fn((...call: unknown[]) =>
+        Promise.resolve(lockingRead(USERS, users, call)),
+      );
+      Object.assign(tx, { $queryRaw: queryRaw });
       // Every patch is judged against the row it lands on, so the stored role
       // and group have to exist for any of these to reach the write at all.
-      arrangeUser({
+      storeUser({
         role: UserRole.STUDENT,
         studentGroupId: null,
       });
@@ -498,14 +524,39 @@ describe('UsersService', () => {
       ).resolves.toEqual({ id: USER_ID });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
-      // The row the students-only rule is judged on is the row being written.
-      expect(tx.user.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: USER_ID } }),
-      );
       expect(tx.user.update).toHaveBeenCalledWith({
         where: { id: USER_ID },
         data: { firstName: 'Maja' },
       });
+    });
+
+    // Against a student with no group, a PATCH making them a teacher and one
+    // putting them in a class would each pass on a row read without a lock, and
+    // together store a teacher in the class: a row no constraint on Users
+    // refuses, and one app.current_user_group_id() reads without asking the
+    // role. withRls runs READ COMMITTED, so only a lock makes the second PATCH
+    // wait for the first and be judged against what it wrote.
+    it('reads the row it merges against under a lock, in the transaction that writes it', async () => {
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+      const ranIn = transactionsOf(prisma);
+      const readIn = ranIn(queryRaw);
+      const writtenIn = ranIn(tx.user.update);
+
+      await service.update(USER_ID, { studentGroupId: GROUP_ID }, testUser());
+
+      // A lock lasts as long as the transaction that took it, so the read and
+      // the write have to share one, and it has to be withRls's, the one
+      // interactive transaction under the caller's claims.
+      expect(readIn).toEqual([expect.stringMatching(/^withRls#\d+$/)]);
+      expect(writtenIn).toEqual(readIn);
+      const [call] = queryRaw.mock.calls;
+      expect(rawSql(call)).toMatch(
+        /SELECT "role", "studentGroupId"\s+FROM "Users"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
+      );
+      expect(call.slice(1)).toEqual([USER_ID]);
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.user.update.mock.invocationCallOrder[0],
+      );
     });
 
     it('passes an explicit null through to clear a field', async () => {
@@ -566,7 +617,7 @@ describe('UsersService', () => {
       // The patch alone looks innocent. app.current_user_group_id() does not
       // read roles, so a teacher left sitting in a student group is handed the
       // students' view of that group's lessons.
-      arrangeUser({
+      storeUser({
         role: UserRole.TEACHER,
         studentGroupId: null,
       });
@@ -581,7 +632,7 @@ describe('UsersService', () => {
     it('rejects a role change that would leave a group behind', async () => {
       // The other door to the same row: the group is already stored, and the
       // patch only moves the person out of being a student.
-      arrangeUser({
+      storeUser({
         role: UserRole.STUDENT,
         studentGroupId: GROUP_ID,
       });
@@ -596,7 +647,7 @@ describe('UsersService', () => {
     it('allows that same role change when the patch clears the group with it', async () => {
       // The control: the rule is about the merged row, so the legitimate
       // "this person is staff now" edit must still go through.
-      arrangeUser({
+      storeUser({
         role: UserRole.STUDENT,
         studentGroupId: GROUP_ID,
       });
@@ -628,7 +679,7 @@ describe('UsersService', () => {
     });
 
     it('404s an id the caller cannot see before validating anything', async () => {
-      arrangeUser(null);
+      storeUser(null);
 
       await expect(
         service.update(USER_ID, { studentGroupId: GROUP_ID }, testUser()),

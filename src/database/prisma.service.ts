@@ -59,16 +59,28 @@ interface ConnectionRole {
  * row, say — would come back as a 500 for whichever request lost. The code
  * that does guard a race is written for READ COMMITTED too: room optimisation's
  * apply takes an advisory lock and then reads, and the availability-constraint,
- * frame-time, lunch-serving and rast PATCHes read the row they merge against
- * `FOR UPDATE`. Both rely on the waiting transaction seeing what the other one
- * committed. Under SERIALIZABLE its snapshot predates that commit, and the wait
- * ends in a serialization failure instead. Other PATCHes that merge against
- * their stored row read it without a lock.
+ * frame-time, lunch-serving, rast, room-rule, user and academic-year PATCHes
+ * read the row they merge against under a row lock. Both rely on the waiting
+ * transaction seeing what the other one committed. Under SERIALIZABLE its
+ * snapshot predates that commit, and the wait ends in a serialization failure
+ * instead. Other PATCHes that merge against their stored row read it without a
+ * lock.
  *
  * What that asks of a caller: a read inside `withRls` holds nothing still. A
  * rule checked on a read and trusted by a later write needs the row locked
  * (`SELECT ... FOR UPDATE`), an advisory lock taken before the read, or a
  * constraint that states the rule where the write lands.
+ *
+ * Which row lock. PostgreSQL takes FOR KEY SHARE on a row for every insert
+ * whose foreign key points at it, held until that insert's transaction ends,
+ * and FOR UPDATE conflicts with it. On a row other tables reference, a PATCH
+ * reading it FOR UPDATE waits out any transaction writing rows that point at
+ * it, and holds that transaction up in turn: a run writing a teacher's
+ * lessons, or anything year-scoped. FOR NO KEY UPDATE is the lock an UPDATE
+ * that changes no unique-indexed column takes anyway, so it queues a second
+ * PATCH exactly as the write would and leaves those inserts alone. The user,
+ * academic-year and room-rule PATCHes take it. Nothing references the four
+ * tables whose PATCHes take FOR UPDATE, so there the two locks behave alike.
  */
 @Injectable()
 export class PrismaService

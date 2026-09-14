@@ -204,6 +204,25 @@ export class UsersService {
     return report;
   }
 
+  /**
+   * The stored role and group are read under a row lock, in the transaction
+   * that writes them.
+   *
+   * `withRls` runs READ COMMITTED, where a plain read holds nothing still.
+   * Against a student with no group, a PATCH making them a teacher and a PATCH
+   * putting them in 7B would each pass against the row the other has not
+   * changed yet, and together store a teacher in 7B. No constraint on Users ties
+   * the group to the role, so the race does not end in an error: the row is
+   * stored, and the teacher is handed the students' read path on 7B's lessons.
+   * With the lock the second PATCH waits for the first to commit and is judged
+   * against what it wrote.
+   *
+   * FOR NO KEY UPDATE rather than FOR UPDATE: see the Isolation section of
+   * PrismaService. Raw SQL because Prisma has no locking read. Under RLS the
+   * lock also needs the UPDATE policy to admit the row, and `users_admin_all`
+   * does for the admin the controller already requires, so a user in another
+   * school still reads as missing and gets the same 404.
+   */
   async update(id: string, dto: UpdateUserDto, user: AuthenticatedUser): Promise<User> {
     try {
       return await this.prisma.withRls(user, async (tx) => {
@@ -215,10 +234,12 @@ export class UsersService {
         // app.current_user_group_id() reads studentGroupId without looking at
         // the role, so a teacher or guardian sitting in a student group is
         // handed the students' read path on that group's lessons.
-        const current = await tx.user.findUnique({
-          where: { id },
-          select: { role: true, studentGroupId: true },
-        });
+        const [current] = await tx.$queryRaw<Pick<User, 'role' | 'studentGroupId'>[]>`
+          SELECT "role", "studentGroupId"
+          FROM "Users"
+          WHERE "id" = ${id}::uuid
+          FOR NO KEY UPDATE
+        `;
         if (!current) {
           throw new NotFoundException('The requested record does not exist.');
         }

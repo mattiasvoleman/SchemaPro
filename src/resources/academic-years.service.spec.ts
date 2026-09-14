@@ -12,6 +12,7 @@ import {
   type PrismaMock,
   type TxMock,
 } from '../../test/utils/prisma-mock';
+import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
 import { AcademicYearsService } from './academic-years.service';
 import type {
@@ -36,25 +37,6 @@ const prismaError = (code: string): Prisma.PrismaClientKnownRequestError =>
     code,
     clientVersion: Prisma.prismaVersion.client,
   });
-
-/**
- * What Prisma hands back for a `select`: the fields asked for and nothing else,
- * and a refusal for a selection with no truthy field in it ("needs at least one
- * truthy value"). A stub that returns the whole row whatever the query asked
- * for lets a read that forgets a field feed `undefined` to the guard behind it,
- * and the guard then passes.
- */
-function selected(
-  row: Record<string, unknown>,
-  select?: Record<string, unknown>,
-): Record<string, unknown> {
-  if (select === undefined) return row;
-  const fields = Object.keys(select).filter((field) => select[field]);
-  if (fields.length === 0) {
-    throw new Error('Prisma: a `select` needs at least one truthy value.');
-  }
-  return Object.fromEntries(fields.map((field) => [field, row[field]]));
-}
 
 // ---------------------------------------------------------------------------
 // The year's lov as a table the stranded-break count actually runs against.
@@ -200,29 +182,41 @@ describe('AcademicYearsService', () => {
   });
 
   describe('update', () => {
-    /** The year row, read back the way Prisma answers the query sent for it. */
-    const givenYear = (year: { startDate: Date; endDate: Date } = YEAR) => {
-      tx.academicYear.findUnique.mockImplementation(
-        ({
-          where,
-          select,
-        }: {
-          where?: { id?: string };
-          select?: Record<string, unknown>;
-        }) => {
-          if (where?.id === undefined) {
-            throw new Error('Prisma: findUnique needs a unique field in `where`.');
-          }
-          const row = {
-            id: YEAR_ID,
-            schoolId: SCHOOL_ID,
-            name: '2026/2027',
-            isActive: true,
-            ...year,
-          };
-          return Promise.resolve(where.id === YEAR_ID ? selected(row, select) : null);
-        },
+    const YEARS: LockedTable = {
+      name: 'AcademicYears',
+      columns: [
+        'id', 'schoolId', 'name', 'startDate', 'endDate', 'isActive', 'createdAt',
+        'updatedAt',
+      ],
+      lock: 'FOR NO KEY UPDATE',
+    };
+    /** The years update()'s locking read can find: none until a test stores one. */
+    let years: Record<string, unknown>[];
+    /** The locking read of the stored bounds. */
+    let queryRaw: jest.Mock;
+
+    beforeEach(() => {
+      years = [];
+      // The auto-vivifying mock would hand back a model proxy for `$queryRaw`,
+      // and a proxy is not callable. It answers as the table would, from the
+      // year a test stored: a year nobody stored is one the lock does not find.
+      queryRaw = jest.fn((...call: unknown[]) =>
+        Promise.resolve(lockingRead(YEARS, years, call)),
       );
+      Object.assign(tx, { $queryRaw: queryRaw });
+    });
+
+    /** The year row as stored, found by its own id and by nothing else. */
+    const givenYear = (year: { startDate: Date; endDate: Date } = YEAR) => {
+      years = [
+        {
+          id: YEAR_ID,
+          schoolId: SCHOOL_ID,
+          name: '2026/2027',
+          isActive: true,
+          ...year,
+        },
+      ];
     };
 
     const givenBreaks = (breaks: FixtureBreak[]) => {
@@ -296,11 +290,43 @@ describe('AcademicYearsService', () => {
 
       await service.update(YEAR_ID, { name: 'Läsår 26/27' }, testUser());
 
-      // A rename cannot strand a period, and the containment check costs two
-      // more queries inside the update's transaction — not a toll to charge
-      // every edit of the year's name or its active flag.
-      expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+      // A rename cannot strand a period, and the containment check costs a row
+      // lock and two more queries inside the update's transaction — not a toll
+      // to charge every edit of the year's name or its active flag.
+      expect(queryRaw).not.toHaveBeenCalled();
       expect(tx.teachingRequirement.count).not.toHaveBeenCalled();
+    });
+
+    // Against a year with no dated period yet, a PATCH moving the start to June
+    // and one moving the end to September would each pass on a row read without
+    // a lock, and together store a year that ends before it starts, which
+    // nothing on AcademicYears refuses. withRls runs READ COMMITTED, so only a
+    // lock makes the second PATCH wait for the first and be measured against
+    // what it wrote.
+    it('reads the bounds it merges against under a lock, in the transaction that writes them', async () => {
+      givenYear();
+      tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.schoolBreak.count.mockResolvedValue(0);
+      tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
+      const ranIn = transactionsOf(prisma);
+      const readIn = ranIn(queryRaw);
+      const writtenIn = ranIn(tx.academicYear.update);
+
+      await service.update(YEAR_ID, { endDate: '2027-06-18' }, testUser());
+
+      // A lock lasts as long as the transaction that took it, so the read and
+      // the write have to share one, and it has to be withRls's, the one
+      // interactive transaction under the caller's claims.
+      expect(readIn).toEqual([expect.stringMatching(/^withRls#\d+$/)]);
+      expect(writtenIn).toEqual(readIn);
+      const [call] = queryRaw.mock.calls;
+      expect(rawSql(call)).toMatch(
+        /SELECT "startDate", "endDate"\s+FROM "AcademicYears"\s+WHERE "id" = \?::uuid\s+FOR NO KEY UPDATE/,
+      );
+      expect(call.slice(1)).toEqual([YEAR_ID]);
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.teachingRequirement.count.mock.invocationCallOrder[0],
+      );
     });
 
     it('refuses to move the year out from under existing periods, and says how many', async () => {
@@ -464,7 +490,8 @@ describe('AcademicYearsService', () => {
     });
 
     it('leaves a year RLS hides to update()’s own 404', async () => {
-      tx.academicYear.findUnique.mockResolvedValue(null);
+      // No year is stored, which is all the locking read finds of a year RLS
+      // hides.
       tx.academicYear.update.mockRejectedValue(prismaError('P2025'));
 
       // Counting somebody else's requirements at them would confirm the year
