@@ -32,7 +32,7 @@ could be evaluated at all.
 | Bundle size | ✓ pass (tiered; 30/30 routes, shared 126.1/130KB) |
 | Solver, 2,000 students | ✗ 1,300 validated (~9.5 min); 2,000 now measured honestly: TIMEOUT at 570s |
 | Web dependency audit | ✓ pass (0/0/0) |
-| API P99 latency | ✗ reads 87–107ms vs 50ms on the CI runner (gated at 140ms from its floor); write 104ms vs 150ms over 300 samples |
+| API P99 latency | ✗ §2 not met on the CI runner: reads p99 66–181ms vs 50ms, write p99 85–167ms vs 150ms over 300 samples; gated relative to the run's health check instead, where five runs pass (read shares 0.226–0.265 vs ≥ 0.20) |
 | Lighthouse LCP/TTI | — not yet run |
 | Web unit coverage | ✗ 88.98% vs 95% (ratcheted at 87; harness landed) |
 | INP | — not lab-measurable at all |
@@ -50,7 +50,7 @@ could be evaluated at all.
 | Accessibility | `web/e2e/a11y.spec.ts` (axe-core) + `web/lighthouserc.json` | `ci.yml` → web, `quality-gates.yml` → lighthouse |
 | Bundle size | `scripts/bench/bundle-size.mjs` | `ci.yml` → web |
 | Frontend performance | `web/lighthouserc.json` | `quality-gates.yml` → lighthouse (nightly) |
-| API P99 latency | `scripts/bench/api-latency.mjs` | `quality-gates.yml` → api-latency (nightly) |
+| API latency | `scripts/bench/api-latency.mjs` (measures), `scripts/bench/latency-gate.mjs` (verdict) | `quality-gates.yml` → api-latency (nightly); the verdict's tests in `ci.yml` → api |
 | Solver wall clock | `optimization-engine/benchmarks/solve_2000_students.py` | `quality-gates.yml` → solver-benchmark (nightly) |
 | Solver model diagnosis | `optimization-engine/benchmarks/profile_model.py` (build breakdown, ablation, rules×objective matrix) | not gated — diagnostic, lifts the complexity guard |
 | Schedule correctness | `optimization-engine/benchmarks/validate_schedule.py` — re-derives every rule from the request and checks the response, sharing no code with the model builders | `quality-gates.yml` → solver-benchmark (nightly, 400 students) |
@@ -267,8 +267,8 @@ so these are unblocked — `npm run bench:lighthouse`.
 | Metric | Target | Measured | Status |
 | :--- | :--- | :--- | :--- |
 | Schedule generation, 2,000 students | < 10s | **400 in <10s; 1,300 in ~9.5 min; 2,000 TIMEOUT at 570s** | ✗ |
-| API P99, reads | ≤ 50ms | **87–107ms** on list endpoints on the CI runner; gated at 140ms (below) | ✗ |
-| API P99, updates | ≤ 150ms | **104ms** over 300 samples on the CI runner | ✓ |
+| API P99, reads | ≤ 50ms | **66–181ms** on the two list endpoints over five CI runs; printed, not gated — the gate is each read's share of health's throughput (below) | ✗ |
+| API P99, updates | ≤ 150ms | **85–167ms** over 300 samples in four CI runs, above 150ms in one; printed, not gated until its baseline is calibrated (below) | ✗ |
 
 ### API latency, measured against the real stack
 
@@ -276,7 +276,7 @@ Run on docker-compose (Postgres + API + solver) with a seeded database,
 25 connections, 20s per scenario. **Zero non-2xx in every scenario** — see the
 warning below about why that number is the first thing to check.
 
-| Scenario | p50 | p99 | Budget | |
+| Scenario | p50 | p99 | §2 target | |
 | :--- | ---: | ---: | ---: | :--- |
 | `GET /health/ready` | 5ms | 12ms | 50ms | ✓ |
 | `GET /api/v1/schedule-versions` | 52ms | 71ms | 50ms | ✗ |
@@ -295,9 +295,10 @@ guards and the RLS transaction the handler runs in. Writes pass with headroom.
 
 Caveats worth carrying: these are Docker Desktop numbers on a laptop VM, so
 treat them as relative rather than absolute — CI is the gating run, and its
-numbers and the budgets they set are further down. The write figure here is 24
-serial samples, not a flood, so its p99 is the slowest of them; the gate now
-takes 300.
+numbers and the gate they set are further down. Nor do they fit that gate's
+thresholds: health's p50 here is a tenth of a read's, where on the runner it is
+about a quarter. The write figure here is 24 serial samples, not a flood, so
+its p99 is the slowest of them; the benchmark now takes 300.
 
 **The gateway's read surface is small by design.** The web client queries
 Supabase directly (`web/lib/queries.ts`); this API handles writes, AI proxying
@@ -312,78 +313,226 @@ throttler is 120 req/60s, and `POST /attendance/report` carries its own
 until the non-2xx guard was tightened from "all failed" to ">1% failed". The
 attendance route is now sampled serially instead — 10 per 30s is 0.33 req/s and
 autocannon's minimum rate is 1 req/s, so the allowance cannot be expressed to it
-at all — in 300 single requests 300ms apart across twelve throttler buckets
-(below). Raise `THROTTLE_LIMIT` on the target before a run —
+at all — in 300 single requests 300ms apart across twelve throttler buckets,
+each with a baseline GET halfway to the next (below). Raise `THROTTLE_LIMIT` on the target before a run —
 the throttler is not what this gate measures.
 
-### The gate's budgets come from the runner's floor
+### The gate is relative to the run's own health check
 
-**§2's 50ms read target is not met on the CI runner, and the gate no longer
-claims it.** Since 2026-09-14 `quality-gates.yml` → api-latency gates the two
-authenticated reads at **140ms** p99, keeps the write at §2's **150ms** but
-measures it over 300 samples instead of 24, and keeps `/health/ready` at 50ms.
-Nothing else in the gate changed: 25 connections, 20s per read scenario, the
-same scenarios in the same order, failure on >1% non-2xx, the same fixtures and
+**No absolute millisecond decides the run.** Since 2026-09-14
+`quality-gates.yml` → api-latency fails on quantities that hold across runners,
+measured against the same run's own `GET /health/ready`:
+
+- **Reads**: each authenticated read's throughput as a share of health's
+  throughput must be **≥ 0.20**.
+- **Health**: an absolute guard, **p99 ≤ 50ms** and **≥ 1000 req/s**, so that a
+  collapsing baseline can never make a regression look like a pass.
+- **The write** is measured against a serial baseline interleaved with it and
+  printed as write ÷ baseline at p50, p95 and p99. It is **not gated** until ten
+  runs have calibrated a threshold (below).
+- **Invalid, exit 2**: more than 1% non-2xx in any row, as before, and — new —
+  health or either read not measured. A share without its numerator or its
+  denominator has no verdict; before, a missing `--academic-year` skipped both
+  reads and printed PASS.
+
+Every p50, p99 and max is still printed, with §2's 50ms / 150ms beside each row
+as met or not met. Unchanged: 25 connections, 20s per read, the scenarios and
+their order, the 300-sample write on twelve trackers, the fixtures and the
 token.
 
-The numbers are quality-gates run 34832429087 on `15edbcc`: the latency job
-alone (`latency_floor`), on the 2-vCPU `ubuntu-latest` runner, 25 connections,
-20s per read. Zero non-2xx in every row.
+The verdict is `scripts/bench/latency-gate.mjs`, a pure module with no imports.
+`scripts/bench/latency-gate.test.mjs` runs it on the five runs below with
+`node --test` in `ci.yml` → api, so a change to the gate is proven on the pull
+request, not first at night.
 
-| Scenario | p50 | p99 | max | Role |
-| :--- | ---: | ---: | ---: | :--- |
-| `GET /health/ready` | 11ms | 32ms | 241ms | gated at 50ms |
-| `GET /api/v1/schedule-versions` | 49ms | 107ms | 363ms | read |
-| `GET /api/v1/optimization/jobs` | 49ms | 87ms | 224ms | read |
-| floor, round 1 | 50ms | 96ms | 150ms | F |
-| floor, round 2 | 50ms | 86ms | 241ms | F |
-| floor, round 3 | 50ms | 94ms | 214ms | F |
-| `POST /api/v1/attendance/report`, 24 samples 3.2s apart | 52ms | 194ms | 194ms | the old write gate |
-| `POST /api/v1/attendance/report`, 300 samples, 12 trackers | 51ms | 104ms | 157ms | the write gate now |
+**Why the absolute budgets failed.** Five latency-only runs on the 2-vCPU
+`ubuntu-latest` runner, 25 connections, 20s per read, zero non-2xx in every
+row. They measure the same application code: `48c82db` carries rebased copies
+of the three perf commits, and `15edbcc` and `849858c` changed only the
+benchmark and its docs. Latencies are p50/p99 in ms.
+
+| Run | Commit | health | schedule-versions | optimization/jobs | floor rounds | write p50/p99/max |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| 34825468923 | `48c82db` | 2433 req/s, 8/24 | 586 req/s, 40/86 | 590 req/s, 41/72 | – | 43/152/152, 24 samples |
+| 34832429087 | `15edbcc` | 1930 req/s, 11/32 | 476 req/s, 49/107 | 494 req/s, 49/87 | 469, 479, 479 req/s | 51/104/157 |
+| 34838510625 | `849858c` | 2708 req/s, 8/22 | 670 req/s, 35/69 | 670 req/s, 36/66 | 677, 694, 697 req/s | 39/167/236 |
+| 34839849296 | `849858c` | 1771 req/s, 12/32 | 441 req/s, 53/120 | 400 req/s, 58/181 | 444, 481, 480 req/s | 48/85/193 |
+| 34839859422 | `849858c` | 1722 req/s, 12/32 | 439 req/s, 53/115 | 456 req/s, 53/90 | 460, 481, 483 req/s | 48/100/183 |
+
+On `849858c`, with no code change, the 140ms read / 150ms write budgets failed
+two runs of three: 34838510625 on the write's p99 of 167ms, 34839849296 on
+jobs' p99 of 181ms. Health's own throughput moved 1.57× across the five runs. A
+millisecond budget wide enough for the slow runner lets a read double on the
+fast one — at 34838510625's 69 and 66ms a read needed +103% to reach 140ms —
+and one tight enough for the fast runner fails the slow one on noise.
+
+**Why throughput, and not a latency ratio.**
+
+- autocannon reports whole milliseconds, and health's p50 is 8–12ms: rounding
+  alone moves a p50 ratio's denominator by 4–6%. The req/s figures rest on
+  8,000–54,000 counted requests.
+- At 25 closed-loop connections req/s = 25 ÷ mean latency, so the share is
+  exactly the inverse ratio of the mean latencies. It covers the whole
+  distribution, which is where an extra per-request cost shows.
+- Over the five runs health p50 ÷ read p50 ranged 0.195–0.229 (34825468923 is
+  already below 0.20), health p99 ÷ read p99 0.177–0.368 (2.1×), and the req/s
+  share 0.226–0.265 (1.17×), while health itself ranged 1722–2708 req/s.
+
+| Run | schedule-versions | optimization/jobs | floor rounds (not gated) |
+| :--- | ---: | ---: | ---: |
+| 34825468923 | 0.241 | 0.242 | – |
+| 34832429087 | 0.247 | 0.256 | 0.243, 0.248, 0.248 |
+| 34838510625 | 0.247 | 0.247 | 0.250, 0.256, 0.257 |
+| 34839849296 | 0.249 | 0.226 | 0.251, 0.272, 0.271 |
+| 34839859422 | 0.255 | 0.265 | 0.267, 0.279, 0.280 |
+
+Ten route shares: min 0.2259, median 0.2474, mean 0.2475, max 0.2648,
+σ 0.0104 (CV 4.2%). Range ÷ min is 17.2%, and the worst drop below the median
+is 8.7% — 34839849296's jobs row, the same window whose p99 was 181ms.
+
+**Threshold: 0.20, and exactly 0.20 passes.** Three independent rules land on
+it:
+
+- min − (median − min) = 2 × 0.2259 − 0.2474 = 0.2043 → 0.20.
+- mean − 4σ = 0.2061 → 0.20; the one-sided 99%/95% tolerance factor for
+  n = 10 is about 3.98.
+- median × (1 − max(20%, 17.2%)) = 0.2474 × 0.80 = 0.1979 → 0.20, the margin
+  rule behind the 140ms budget this replaces.
+
+The lowest share seen is 12.9% above 0.20, 1.5× the worst drop seen, and from
+the median it takes a 19.2% drop to fail, 2.2× the worst drop. At 0.21 the
+lowest observation would sit 7.6% above the line, less than the 8.7% drop
+already seen; at 0.19 a typical run would need a +30% cost increase to fail,
+and the best +39%.
+
+**Sensitivity.** At saturation req/s ∝ 1 ÷ per-request core time, so a read
+that becomes x more expensive fails when share ÷ (1 + x) < 0.20:
+
+| Share seen | share | fails from |
+| :--- | ---: | ---: |
+| lowest (34839849296, jobs) | 0.2259 | +12.9% |
+| median | 0.2474 | +23.7% |
+| highest (34839859422, jobs) | 0.2648 | +32.4% |
+
+The unit test holds the gate to it: reads 33% more expensive fail all five
+runs, 12% more expensive pass all five. In core time on two saturated vCPUs,
+34839849296's health costs 1.13ms and schedule-versions 4.54ms, which fails
+above 5.65ms (+1.1ms per request); 34838510625's cost 0.74 and 2.99ms and fail
+above 3.69ms (+0.7ms). In general the increase that fails is health's cost ×
+(1/0.20 − 1/share): about one health request.
+
+Paired local measurements in the perf commits' bodies give yardsticks —
+indicative only, not measured on the runner:
+
+- Reverting `ccb2d80` cost −7% to −24% req/s, median −16%. At −16% a read fails
+  only where its share was below 0.238, 1 of the 10 observations; at −24%, 9 of
+  10. A median-sized revert of that commit would usually pass.
+- Reverting `e1e2789` and `e1d90c1` cost −20% to −27%: 7 to 10 of the 10
+  observations fail.
+- Catching a single commit of ~15% reliably needs less noise per route, e.g.
+  several rounds per read at about 40s a night per extra round. Not part of
+  this change.
+
+**What the share cannot see.** A regression on the path health shares — the
+framework, the pool, a global interceptor — slows health too, and the share
+rises. Only the health guard can catch that, and only when it is large: if
+health's p99 grows with its cost, the p99 guard fires at +56% on the runs at
+32ms and +127% on 34838510625 at 22ms. An upper limit on the share was
+rejected: the recent auth-path perf commits moved read req/s by +8% to +37%,
+and a ceiling would fail the nightly on every such improvement.
+
+**The health guard.**
+
+- **p99 ≤ 50ms**, failing above: §2's own read target, the one row that meets
+  it on the runner, and the guard it already had. Seen: 22–32ms, 1.56–2.27×
+  headroom.
+- **≥ 1000 req/s**, failing below: this guards the denominator directly.
+  Passing both proves each read ≥ 200 req/s — a mean latency ≤ 125ms at 25
+  connections — whatever health did. At 900 req/s the reads of 34839859422
+  would show shares of 0.49 and 0.51, and the run still fails.
+- **No new false failures.** Health's p99 ÷ mean latency is 2.20–2.47 in the
+  logs, so a p99 of 50ms corresponds to about 1100–1240 req/s. Slowed
+  uniformly, 34839859422 (1722 req/s, p99 32ms) fails the p99 guard at 1.56×
+  and the req/s floor only at 1.72×: the p99 guard fires first.
+
+**The write takes 300 samples on twelve trackers.** Over 24 samples the p99 is
+the slowest single write — 152ms in run 34825468923, 194ms in 34832429087 —
+roughly their p96, and on a fresh database only the first sample inserts. Over
+300 it is rank 297. At the route's own pace of one sample per 3.2s that would
+take 16 minutes, so the samples rotate across twelve `X-Forwarded-For`
+addresses 300ms apart: the throttler keys its bucket on `req.ip`, `main.ts`
+trusts one proxy hop, and each bucket sees a hit at most every 3.6s — 9 inside
+any 30s, under the limit of 10. A mistake there would show as 429s and fail the
+run on the non-2xx check, which over 300 samples lets up to 3 non-2xx pass
+where 24 allowed none.
+
+**The write's baseline is interleaved with it.** Each write sample is followed
+150ms later by one serial GET of the floor with the same token and
+`X-Forwarded-For`, and 150ms after that by the next write. The writes stay
+300ms plus latencies apart, so the arithmetic above is unchanged, and the GET
+counts in its own handler's bucket. The pair is adjacent in time and each
+follows the other after the same idle, which cancels the runner's CPU speed,
+the authenticated path (token, identity lookup, guards, RLS), the network stack
+and short disturbances. It does not cancel write-only I/O — WAL flush,
+checkpoints — and that remainder is what calibration measures. The run prints
+write ÷ baseline at p50, p95 and p99 from unrounded samples, and write p50 ÷
+health p50 as a fallback candidate.
+
+**Why not a ratio to the load rows.** Over the four 300-sample runs:
+
+| Ratio | 34832429087 | 34838510625 | 34839849296 | 34839859422 | Spread |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| write p50 ÷ health p50 | 4.64 | 4.88 | 4.00 | 4.00 | 22% |
+| write p50 ÷ schedule-versions p50 | 1.04 | 1.11 | 0.91 | 0.91 | 23% |
+| write p50 ÷ health mean latency | 3.94 | 4.22 | 3.40 | 3.31 | 27% |
+| write p99 ÷ health p99 | 3.25 | 7.59 | 2.66 | 3.13 | 2.9× |
+| write p99 ÷ schedule-versions p99 | 0.97 | 2.42 | 0.71 | 0.87 | 3.4× |
+
+§2's update target is a p99, and every p99 ratio spans 2.9–3.4×. A median
+ratio divides a serial service time on an idle box by a latency that is mostly
+queueing under 25 connections, and the two scale differently with core count
+and with the CPU-to-disk speed ratio. Four runs are too few for an honest
+threshold anyway, and the tail does not follow CPU speed: 34838510625 had the
+fastest CPU (health 2708 req/s), the best write p50 (39ms) and the worst write
+tail (p99 167ms, max 236ms).
+
+**Calibrating the write.** Exactly ten runs of the merged code, each with 300
+pairs and zero non-2xx in both rows, including at least one with health below
+2000 req/s and one above 2300 — the two runner clusters seen so far — or up to
+fifteen until they do. The nightly supplies them at no extra cost, and the
+validation dispatch before merge is run 1. Then:
+
+- A percentile is gateable if its ratio's range ÷ min over the ten runs is
+  ≤ 25% (the read share's is 17%, the old margin 24%).
+- Gate p99 if it is gateable (§2's statistic), else p95, else p50.
+- The threshold is max + (max − median), rounded up to 0.1, and the run fails
+  when the ratio exceeds it.
+- If no percentile qualifies, the write stays ungated and the ten runs go back
+  for a decision.
+
+Setting that threshold also makes the write and its baseline required rows.
+
+**What it costs the nightly.** No extra sleep — the 300ms between writes is
+split in two — so the baseline adds 300 serial GETs, about 3–5s and at most
+15s. One disclosed trade-off: each write now follows 150ms idle and a GET
+instead of 300ms idle, so later absolute write numbers are not strictly
+continuous with the table above. The benchmark step took 226–228s with
+`--floor` on `849858c`, 304s in 34832429087, which ran both writes, and 138s in
+34825468923 with neither the floor rounds nor the 300-sample write. `--floor`
+adds the three floor rounds, about 60s.
+
+**Scope.** The thresholds are calibrated for GitHub `ubuntu-latest`, 2 vCPU,
+25 connections, 20s per read. The Docker Desktop table above is not
+comparable: health's p50 there is a tenth of a read's (5 against 52–54ms),
+where on the runner it is about a quarter, so a local run can fail the share on
+the laptop's shape alone. Read its milliseconds, not its verdict.
 
 The floor is
 `GET /api/v1/schedule-versions?academicYearId=00000000-0000-4000-8000-000000000000`:
 a valid v4 UUID naming no academic year, so the answer is `200 []` after
-everything a real authenticated read pays. The same two reads measured 86 and
-72ms p99 in run 34825468923 a few hours earlier — schedule-versions moved 24%
-between two runs on the same runner type, the size of the margin below.
-
-The derivation:
-
-- **F** = the floor rounds' p99s: median 94ms, max 96ms.
-- A route's **extra** Δ = its p99 − median(F): schedule-versions +13ms, jobs
-  −7ms.
-- **Margin** m = max(20%, spread over F ∪ reads) = (107 − 86) / 86 = 24.4%.
-- **Read budget** = (max F + max(0, max Δ)) × (1 + m), rounded up to 10ms =
-  (96 + 13) × 1.244 = 135.6 → **140ms**.
-- **Write**: the 300-sample p99 of 104ms × 1.2 = 125ms ≤ 150ms, so **150ms**
-  stays.
-
-**Why 50ms cannot hold here.** It lies below the measured floor of every
-authenticated read. Before and around its own query each one pays JWT
-verification, the identity lookup's transaction, the guards, the RLS batch the
-handler's query runs in, and serialisation — and the floor pays all of that for
-a query that matches no row, at 86–96ms p99. 50ms stays §2's target; the gate
-now catches a regression above this runner's floor instead of failing every
-night below it.
-
-**Why the write needed more samples, not a bigger budget.** Over 24 samples the
-p99 is the slowest single write — 152ms in run 34825468923, 194ms in
-34832429087 — roughly their p96, and on a fresh database only the first sample
-inserts. Over 300 it is rank 297. At the route's own pace of one sample per 3.2s
-that would take 16 minutes, so the samples rotate across twelve
-`X-Forwarded-For` addresses 300ms apart: the throttler keys its bucket on
-`req.ip`, `main.ts` trusts one proxy hop, and each bucket sees a hit at most
-every 3.6s — 9 inside any 30s, under the limit of 10. A mistake there would show
-as 429s and fail the run on the non-2xx check. That check is unchanged, which
-over 300 samples means up to 3 non-2xx pass where 24 allowed none.
-
-**What it costs the nightly.** The write's spacing goes from 23 × 3.2s to
-299 × 0.3s, and it makes 300 requests instead of 24: about 105s instead of 75s,
-so the benchmark step grows by roughly 30s. The step times agree — 304s in
-34832429087, which added the three floor rounds and the 300-sample write, 138s
-in 34825468923 without them. `--floor` now adds only the three floor rounds,
-about 60s.
+everything a real authenticated read pays. The 140ms read budget this gate
+replaces was derived from 34832429087's floor rounds; the derivation is in this
+file's git history.
 
 ### The solver cannot accept a 2,000-student school
 
@@ -811,9 +960,9 @@ violations", and that is all CI should be read as claiming.
    alone. Generate them in a Linux container:
    `npm run test:visual:update`, then review the images in the PR.
 
-4. **API latency needs a seeded database.** `api-latency.mjs` refuses to report
-   when every request returns non-2xx, so it cannot be satisfied against the
-   mocked Prisma layer. `quality-gates.yml` brings up `docker-compose.yml`,
+4. **API latency needs a seeded database.** `api-latency.mjs` calls a run
+   invalid when more than 1% of any row's responses are non-2xx, so it cannot be
+   satisfied against the mocked Prisma layer. `quality-gates.yml` brings up `docker-compose.yml`,
    seeds, and mints a token with `scripts/bench/mint-token.mjs`; the seed script
    must create an active `SCHOOL_ADMIN` for that step to find a subject.
 

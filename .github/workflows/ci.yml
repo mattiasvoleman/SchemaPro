@@ -77,6 +77,13 @@ jobs:
       - name: Unit + integration tests with coverage
         run: npm run test:cov
 
+      # The verdict of quality-gates.yml's nightly latency job, run on the rows
+      # of five real CI runs. latency-gate.mjs imports nothing, so this needs
+      # neither autocannon nor the stack, and a change to the gate is proven on
+      # the pull request rather than first at night.
+      - name: Latency gate verdict (node:test)
+        run: node --test scripts/bench/latency-gate.test.mjs
+
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
