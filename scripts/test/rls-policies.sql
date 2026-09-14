@@ -142,18 +142,19 @@ BEGIN
       'service-principal: saw 0 users for its own school — policy is too strict, or fixtures are empty';
   END IF;
 
-  SELECT count(*) INTO n FROM "StudentGroups" WHERE "schoolId" <> school_a;
-  IF n <> 0 THEN
-    RAISE EXCEPTION 'service-principal: leaked % student groups from other schools', n;
-  END IF;
-
-  -- The lessons, and every table `/activities` and `/calendarEvents` select a
-  -- lesson through. Until 20260914150000 seven of these had no policy for this
-  -- principal, so a lesson's required subject came back missing and both feeds
-  -- answered 500 for any school with a lesson; nothing here counted them. Both
-  -- halves count real rows: the fixtures plant a lesson with a row in each table
-  -- in both schools, and the runner refuses to start without the other school's.
+  -- Every other table the SS12000 feeds and the import read, beyond Schools and
+  -- Users above. Until 20260914150000 seven of them had no policy for this
+  -- principal, so a lesson's required subject came back missing and both lesson
+  -- feeds answered 500 for any school with a lesson, and nothing here counted
+  -- them. Both halves count real rows: the fixtures plant rows in each table in
+  -- both schools, and the runner refuses to start without the other school's.
+  --
+  -- The five link tables also hold rows filed under the other school but
+  -- attached to this school's lessons. The policies answer by the row's own
+  -- school, so those rows belong to the second half; a policy that asked the
+  -- lesson's school instead would count them there.
   FOREACH tbl IN ARRAY ARRAY[
+    'AcademicYears', 'StudentGroups', 'GuardianStudents',
     'MasterLessons', 'CalendarLessons', 'Subjects', 'Rooms',
     'MasterLessonGroups', 'MasterLessonStudents',
     'CalendarLessonTeachers', 'CalendarLessonGroups', 'CalendarLessonStudents'
@@ -162,7 +163,7 @@ BEGIN
       INTO n USING school_a;
     IF n = 0 THEN
       RAISE EXCEPTION
-        'service-principal: saw 0 % rows for its own school — the SS12000 feeds cannot read them', tbl;
+        'service-principal: saw 0 % rows for its own school — SS12000 cannot read them', tbl;
     END IF;
 
     EXECUTE format('SELECT count(*) FROM %I WHERE "schoolId" <> $1', tbl)
