@@ -188,6 +188,11 @@ model User {
 
   school         School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   // A student's primary group (null for teachers/admins).
+  //
+  // Not visible here, and load-bearing: a CHECK refuses a group on any other
+  // role, because app.current_user_group_id() hands whoever holds one the
+  // pupils' read path. Prisma cannot express it — see migration
+  // 20260914120000_bara_en_elev_har_en_klass.
   studentGroupId String?       @db.Uuid
   studentGroup   StudentGroup? @relation("StudentGroupMembers", fields: [studentGroupId], references: [id], onDelete: SetNull)
 
