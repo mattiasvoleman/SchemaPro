@@ -107,6 +107,24 @@ if [ "${foreign_rule_rooms:-0}" = "0" ]; then
   exit 1
 fi
 
+# The second school's lesson rows, table by table. Section 3 asserts the service
+# principal sees none of another school's rows in the tables the SS12000 feeds
+# read, and one table with nothing planted over there makes its half pass while
+# proving nothing. The same list as section 3's; counted as the owner.
+for table in MasterLessons CalendarLessons Subjects Rooms MasterLessonGroups \
+    MasterLessonStudents CalendarLessonTeachers CalendarLessonGroups CalendarLessonStudents; do
+  foreign_rows="$(
+    compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+      -v ON_ERROR_STOP=1 -tAc \
+      "SELECT count(*) FROM \"${table}\" WHERE \"schoolId\" <> '${school_a}'" \
+    | tr -d '[:space:]'
+  )"
+  if [ "${foreign_rows:-0}" = "0" ]; then
+    echo "FAIL: no ${table} rows in the second school; fixtures did not run." >&2
+    exit 1
+  fi
+done
+
 if [ -z "$admin_auth_id" ]; then
   echo "FAIL: no SCHOOL_ADMIN with an authId in the primary school." >&2
   exit 1

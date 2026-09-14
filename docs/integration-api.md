@@ -65,7 +65,8 @@ Every `Ss12000Service` method runs inside
 `app.service_school_id` with `set_config(…, true)`. The setting is
 transaction-local, so it cannot outlive the transaction on a pooled
 connection. The service-principal policies
-(`prisma/migrations/20260806010000_service_principal_policies`) compare each
+(`prisma/migrations/20260806010000_service_principal_policies` and
+`20260914150000_integrationen_ser_vad_en_lektion_ar_gjord_av`) compare each
 row's school with that setting, which confines every statement to the key's
 school. The service's own `where: { schoolId }` clauses are defence in depth,
 not the boundary: a query that forgets one sees nothing from another school
@@ -77,6 +78,7 @@ What the principal is granted, always on the key's school only:
 |---|---|
 | `Schools` | SELECT — its own row, matched on `id` |
 | `AcademicYears`, `MasterLessons`, `CalendarLessons` | SELECT |
+| `Subjects`, `Rooms`, `MasterLessonGroups`, `MasterLessonStudents`, `CalendarLessonTeachers`, `CalendarLessonGroups`, `CalendarLessonStudents` | SELECT — what `/activities` and `/calendarEvents` read a lesson through |
 | `Users` | SELECT, UPDATE |
 | `StudentGroups` | SELECT, INSERT |
 | `GuardianStudents` | SELECT, INSERT, UPDATE — the import upserts links |
@@ -89,18 +91,27 @@ any table. The `Users` policy scopes rows, not columns; the import writes only
 composite foreign keys to `Users (id, schoolId)` on both sides, so its
 guardian and its student belong to the link's school whoever writes it.
 
-No other table has a service-principal policy, so every other table is closed
-to the principal: `IntegrationApiKeys` once the key is resolved, and also
-`Subjects`, `Rooms` and the lesson link tables `MasterLessonGroups`,
-`MasterLessonStudents`, `CalendarLessonTeachers`, `CalendarLessonGroups` and
-`CalendarLessonStudents`, which `/activities` and `/calendarEvents` select
-through.
+No other table has a service-principal policy, and such a table reads as
+empty to the principal rather than refusing it: `IntegrationApiKeys` once the
+key is resolved, `RoomTypes` and `LunchSettings` among them. That is how both
+feeds broke before `20260914150000`. The seven tables in the third row had no
+policy, so a lesson's required `subject` came back missing and `/activities`
+and `/calendarEvents` answered 500 for any school with a lesson. With only
+`Subjects` and `Rooms` readable they answered 200 instead: lessons with no
+named pupils and no extra classes, and dated lessons with no teachers either.
+A relation added to a feed's `select` needs its
+table in this list. The feeds read teachers and pupils as id columns, so
+`Users` needs no more than it has.
 
 **Asserted against Postgres.** `scripts/test/rls-policies.sql` runs as
 `app_authenticated`. Section 2: the key-lookup principal sees API keys, but no
 users, no schools and no revoked key. Section 3: the service principal sees
 exactly one school and its own users, no other school's users or student
-groups on a query without a tenant filter, and no API keys. Section 4: neither
+groups on a query without a tenant filter, and no API keys; and in
+`MasterLessons`, `CalendarLessons` and the seven tables in the third row, its
+own school's rows and none of another's. The fixtures plant a lesson with a
+row in each of those tables in both schools, and the runner refuses to start
+when the other school has none. Section 4: neither
 setting survives COMMIT. Sections 5 and 6: it sees no `RoomTypes` and no
 `LunchSettings`. The write policies' `WITH CHECK` clauses are not asserted
 there.

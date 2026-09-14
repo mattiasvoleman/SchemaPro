@@ -15,7 +15,9 @@ export interface IntegrationRequest extends Request {
 /**
  * Authenticates external systems on the SS12000-style API via `X-API-Key`.
  * Keys are stored as SHA-256 hashes; a match scopes the request to exactly
- * one school (`req.integrationSchoolId`), which every query filters by.
+ * one school (`req.integrationSchoolId`). `Ss12000Service` acts for that
+ * school through `withServicePrincipal`, whose policies hold every statement
+ * to it; the queries' own `schoolId` filters are not the boundary.
  */
 @Injectable()
 export class IntegrationKeyGuard implements CanActivate {
