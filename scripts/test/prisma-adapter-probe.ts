@@ -248,30 +248,43 @@ async function runChecks(
   const statement = (sql: string) => ({ sql, args: [], argTypes: [] });
   const backendOf = async (tx: AdapterTransaction): Promise<number> =>
     Number((await tx.queryRaw(statement('SELECT pg_backend_pid()'))).rows[0]?.[0]);
+  // Every borrowed transaction is released in its own finally, before
+  // dispose(). pg-pool's end() waits for every checked-out connection, so an
+  // assertion that failed while one was still out would hang the probe instead
+  // of failing it. rollback() runs exactly once per transaction: pg-pool throws
+  // on a second release, and the guard releases a connection whose end was
+  // never answered with an error, so the pool destroys it and end() resolves.
 
   await check('(k) a statement after ROLLBACK is refused and never runs on the reused connection', async () => {
     const adapter = await createPgAdapter(withConnectionLimit(appUrl, 1)).connect();
     try {
       const ended = await adapter.startTransaction();
-      const endedOn = await backendOf(ended);
-      await ended.executeRaw(statement('ROLLBACK'));
-      await ended.rollback();
+      let endedOn: number;
+      try {
+        endedOn = await backendOf(ended);
+        await ended.executeRaw(statement('ROLLBACK'));
+      } finally {
+        await ended.rollback();
+      }
       await assert.rejects(
         ended.queryRaw(statement(`SELECT set_config('app.probe_after_end', 'ran', false)`)),
         /Statement refused: its transaction has already ended\./,
       );
 
       const next = await adapter.startTransaction();
-      assert.equal(await backendOf(next), endedOn, 'an answered ROLLBACK did not hand its connection on');
-      const { rows } = await next.queryRaw(
-        statement(`SELECT current_setting('app.probe_after_end', true)`),
-      );
-      assert.ok(
-        rows[0]?.[0] === null || rows[0]?.[0] === '',
-        `the refused statement ran on the next borrower's connection: ${JSON.stringify(rows)}`,
-      );
-      await next.executeRaw(statement('ROLLBACK'));
-      await next.rollback();
+      try {
+        assert.equal(await backendOf(next), endedOn, 'an answered ROLLBACK did not hand its connection on');
+        const { rows } = await next.queryRaw(
+          statement(`SELECT current_setting('app.probe_after_end', true)`),
+        );
+        assert.ok(
+          rows[0]?.[0] === null || rows[0]?.[0] === '',
+          `the refused statement ran on the next borrower's connection: ${JSON.stringify(rows)}`,
+        );
+        await next.executeRaw(statement('ROLLBACK'));
+      } finally {
+        await next.rollback();
+      }
     } finally {
       await adapter.dispose();
     }
@@ -281,17 +294,25 @@ async function runChecks(
     const adapter = await createPgAdapter(withConnectionLimit(appUrl, 1)).connect();
     try {
       const abandoned = await adapter.startTransaction();
-      const abandonedOn = await backendOf(abandoned);
-      await abandoned.rollback();
+      let abandonedOn: number;
+      try {
+        abandonedOn = await backendOf(abandoned);
+      } finally {
+        // No ROLLBACK is sent: releasing without an answered end is the case.
+        await abandoned.rollback();
+      }
 
       const next = await adapter.startTransaction();
-      assert.notEqual(
-        await backendOf(next),
-        abandonedOn,
-        'the pool lent out a connection whose transaction was never ended',
-      );
-      await next.executeRaw(statement('ROLLBACK'));
-      await next.rollback();
+      try {
+        assert.notEqual(
+          await backendOf(next),
+          abandonedOn,
+          'the pool lent out a connection whose transaction was never ended',
+        );
+        await next.executeRaw(statement('ROLLBACK'));
+      } finally {
+        await next.rollback();
+      }
     } finally {
       await adapter.dispose();
     }
