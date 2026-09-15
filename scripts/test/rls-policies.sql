@@ -210,6 +210,95 @@ END
 $$;
 
 -- ---------------------------------------------------------------------------
+-- 4b. A connection a user request has used still serves the next principal.
+--
+-- Section 4 proves the claims' value ends at COMMIT. The setting does not go
+-- back to unset, though: once a transaction on a connection has set
+-- request.jwt.claims, current_setting('request.jwt.claims', true) reads ''
+-- there instead of NULL. withRls sets claims on every user request and the API
+-- pools connections, so the SS12000 principal and the key lookup open their
+-- transactions on exactly such connections. The fallback auth.uid() cast that
+-- '' to jsonb and raised, and every policy calling app.current_*() raised with
+-- it: through the real PrismaService both helpers failed with 22P02 until
+-- 20260914230000_en_tom_claimsinstallning_ar_ingen_anvandare. Sections 1-3
+-- could not see it, because no section before them sets claims.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id', 'role', 'authenticated')::text,
+  true
+);
+COMMIT;
+
+-- The state under test, asserted rather than assumed: were the setting NULL
+-- here, the blocks below would pass without exercising anything.
+DO $$
+BEGIN
+  IF current_setting('request.jwt.claims', true) IS DISTINCT FROM '' THEN
+    RAISE EXCEPTION
+      'used-connection: expected request.jwt.claims to read '''' after COMMIT, got %',
+      quote_nullable(current_setting('request.jwt.claims', true));
+  END IF;
+END
+$$;
+
+-- Each handler names invalid_text_representation, the 22P02 the cast raised,
+-- so the bare JSON error comes out saying which principal broke. The count
+-- assertions raise P0001, which the handler does not catch.
+BEGIN;
+SELECT set_config('app.service_school_id', :'school_a', true);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "Schools";
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'used-connection: service principal sees % school(s), expected its own one', n;
+  END IF;
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION
+    'used-connection: service principal raised on a connection that had carried user claims: %',
+    SQLERRM;
+END
+$$;
+COMMIT;
+
+BEGIN;
+SELECT set_config('app.service_key_lookup', 'on', true);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "IntegrationApiKeys";
+  IF n = 0 THEN
+    RAISE EXCEPTION 'used-connection: key lookup sees no api key';
+  END IF;
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION
+    'used-connection: key lookup raised on a connection that had carried user claims: %',
+    SQLERRM;
+END
+$$;
+COMMIT;
+
+-- And no principal at all is still deny, not an error.
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "Users";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'used-connection: no principal sees % user(s), expected 0', n;
+  END IF;
+EXCEPTION WHEN invalid_text_representation THEN
+  RAISE EXCEPTION
+    'used-connection: no principal raised instead of seeing nothing: %', SQLERRM;
+END
+$$;
+
+-- ---------------------------------------------------------------------------
 -- 5. RoomTypes: school-owned rows, isolated like every other tenant table.
 --
 -- Room types carry a school's own vocabulary (Hemkunskapssal, Trä- och
@@ -258,9 +347,10 @@ ROLLBACK;
 
 -- The SS12000 service principal has no room-type policy and must see nothing.
 --
--- Claims are reset to an empty object rather than left alone: a ROLLBACK
--- restores the setting to '' rather than unsetting it, and auth.uid() cannot
--- parse an empty string as JSON. '{}' is the honest encoding of "no user".
+-- Claims are reset to an empty object rather than left alone. A ROLLBACK
+-- leaves the setting reading '', which auth.uid() took for malformed JSON
+-- until 20260914230000; section 4b asserts that case by itself, so this block
+-- stays about the policy. '{}' is the honest encoding of "no user".
 BEGIN;
 SELECT set_config('request.jwt.claims', '{}', true);
 SELECT set_config('app.service_school_id', :'school_a', true);

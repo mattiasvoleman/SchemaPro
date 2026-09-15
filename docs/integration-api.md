@@ -136,6 +136,14 @@ a DELETE with no principal, as the service principal and as the key lookup,
 and no API role holds any privilege on it. The write policies' `WITH CHECK`
 clauses are not asserted there.
 
+Section 4b runs both principals on a connection where an earlier transaction
+set user claims, as a pooled connection has after any user request. PostgreSQL
+leaves that setting reading `''` after COMMIT, not unset. The plain-PostgreSQL
+fallback `auth.uid()` raised on `''` until `20260914230000`, and every policy
+calling `app.current_school_id()` raised with it, so both helpers answered 500
+there. Supabase's own `auth.uid()` reads `''` as no user, and that migration
+leaves it untouched.
+
 Wire personnummer/civic numbers are intentionally not accepted or stored.
 
 ## Positioning
