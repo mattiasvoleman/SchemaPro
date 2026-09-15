@@ -357,17 +357,41 @@ jobs:
 
       # Static analysis across every package. `--error` makes any finding fail
       # the job; the rulesets cover OWASP Top 10 patterns for TS/JS and Python.
+      #
+      # The engine runs as a plain container, not through semgrep/semgrep-action.
+      # That action is deprecated and starts returntocorp/semgrep-agent:v1, whose
+      # Semgrep 1.36.0 cannot read today's registry rules: it raised `invalid
+      # rule severity value: MEDIUM`, the container still exited 0, and the step
+      # went green having scanned nothing (job 104116906318). Here semgrep is
+      # the container's own process and `run:` executes under `bash -e`, so any
+      # non-zero exit fails the step — a finding, a config the engine rejects,
+      # rules it cannot fetch, an engine that is killed.
+      #
+      # Pinned to the multi-arch index digest. The tag in front only names the
+      # release the digest was resolved from; Docker pulls by the digest. To
+      # bump, take the top-level Digest from
+      #   docker buildx imagetools inspect semgrep/semgrep:<version>
+      # Resolved 2026-09-15. The same command reproduces the gate locally, run
+      # in a `git archive HEAD` export: a working tree carries node_modules and
+      # build output that this checkout never has.
+      #
+      # Keep the mount at /src. The checkout belongs to the runner's user and
+      # semgrep runs as root, so git would call the repository dubiously owned;
+      # the image's /root/.gitconfig trusts exactly /src, which is what lets
+      # semgrep list the tracked files. Mounted anywhere else the scan exits 2.
       - name: Semgrep SAST
-        uses: semgrep/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d # v1
-        with:
-          config: >-
-            p/owasp-top-ten
-            p/typescript
-            p/javascript
-            p/python
-            p/secrets
-            p/nestjs
-            p/react
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src
+          semgrep/semgrep:1.176.1@sha256:34ab619bf1391a24bfda3f05debd0d8a6ce3093c2d5f9d39cfc00f83c1397823
+          semgrep scan
+          --config=p/owasp-top-ten
+          --config=p/typescript
+          --config=p/javascript
+          --config=p/python
+          --config=p/secrets
+          --config=p/nestjs
+          --config=p/react
+          --error --metrics=off
 
   mobile:
     name: Mobile — typecheck & tests
