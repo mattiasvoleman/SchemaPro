@@ -8304,6 +8304,132 @@ def test_a_timeout_names_the_pupils_buffer_among_what_shaped_the_model() -> None
     assert "first thing to try at 0" not in quiet
 
 
+# ---------------------------------------------------------------------------
+# A MARGIN THAT DOES NOT FIT IS A REFUSAL, NOT A CRASH.
+#
+# A window exactly as wide as the lesson satisfies the frame check and then
+# loses its only start to a margin, because the domain pushes the first start
+# forward by the changing and pulls the last one back by the shower and the
+# corridor. The domain that leaves is EMPTY, which is not an INFEASIBLE with a
+# core: CP-SAT raises `var #0 has no domain()`, the engine wrapped it in a
+# SolverBuildError and the school read a 500 with a variable name in it.
+#
+# Older than the pupils' buffer — a corridor alone does it wherever a frame
+# reaches the day's end — and the buffer widens the trigger to any window
+# opening on the day's first slot. Both shapes are below, through the API the
+# other refusals answer on.
+# ---------------------------------------------------------------------------
+
+
+def test_a_pupil_buffer_with_nowhere_to_go_is_a_400_not_a_500(client: TestClient) -> None:
+    """The leftover the buffer left behind, answered by name.
+
+    An 08:00-09:00 frame offers a 60-minute lesson every minute it needs, so the
+    frame refusal must not be the one that fires — its sentence would tell this
+    school its frame times leave no room for an hour they do offer, and send it
+    to widen a window that is not the problem. Five minutes of changing is.
+    """
+    payload = _pupil_buffer_payload(5, 0, lessons_per_week=1, end="09:00:00")
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "INVALID_SCHEDULE_INPUT"
+    assert body["details"]["code"] == "MARGIN_NO_WINDOW_FOR_REQUIREMENT"
+    # The numbers a school can act on: the lesson, the margin, and what a day
+    # has left for the lesson once the margin has taken its five minutes.
+    params = body["details"]["params"]
+    assert (params["minutes"], params["before"], params["after"]) == (60, 5, 0)
+    assert (params["changeover"], params["remaining"]) == (0, 55)
+
+
+def test_a_corridor_with_nowhere_to_go_is_refused_by_name_too(client: TestClient) -> None:
+    """The same emptiness a school could reach before the buffer existed.
+
+    A frame that runs to the end of the configured day, exactly as wide as the
+    lesson: the corridor may not spill into tomorrow morning, so it comes off
+    the last start and the domain is empty with no pupil buffer anywhere in the
+    payload. That is the 500 that predates this feature, and it has to be named
+    by the same sentence rather than by a second code for the same fact.
+    """
+    payload = _pupil_buffer_payload(0, 0, lessons_per_week=1, changeover=5, end="18:00:00")
+    payload["frameTimes"][0]["startTime"] = "17:00:00"  # type: ignore[index]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["details"]["code"] == "MARGIN_NO_WINDOW_FOR_REQUIREMENT"
+    params = body["details"]["params"]
+    assert (params["before"], params["after"], params["changeover"]) == (0, 0, 5)
+    assert params["remaining"] == 55
+    # And the sentence says which of the three margins it is, because the
+    # corridor is a frame's row and the buffer a requirement's.
+    assert "5 minutes of changeover" in body["message"]
+
+
+def test_a_margin_that_fits_on_one_day_is_not_refused(client: TestClient) -> None:
+    """The refusal is about the WEEK, and one day is enough to save it.
+
+    Monday holds two hours for this stage and the other four days hold exactly
+    the one the lesson takes. A check that refused as soon as ANY day was too
+    narrow would refuse this week — and this week has a timetable: the lesson
+    goes on Monday at 08:05, with the five minutes before it that the school
+    asked for.
+    """
+    payload = _pupil_buffer_payload(5, 0, lessons_per_week=1, end="09:00:00")
+    # Each day gets its own frame: the frames of a stage COMPOSE as an
+    # intersection, so a wider Monday row beside an every-day row would narrow
+    # Monday to the every-day window and prove nothing.
+    payload["frameTimes"] = [
+        {
+            "minGradeLevel": 0,
+            "maxGradeLevel": 12,
+            "dayOfWeek": day,
+            "startTime": "08:00:00",
+            "endTime": "10:00:00" if day == 1 else "09:00:00",
+            "changeoverMinutes": 0,
+        }
+        for day in (1, 2, 3, 4, 5)
+    ]
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] in {"OPTIMAL", "FEASIBLE"}
+    assert [(lesson["dayOfWeek"], lesson["startTime"][:5]) for lesson in body["lessons"]] == [
+        (1, "08:05"),
+    ]
+
+
+def test_the_same_window_without_margins_solves_exactly_as_it_did(client: TestClient) -> None:
+    """The half of the check that must never fire.
+
+    The window the two refusals above are measured against is a perfectly good
+    window: with both numbers at zero the hour holds the hour, and every school
+    that has written no margin has to go on getting its timetable. This is the
+    row the check is skipped for, and the reason it is skipped rather than
+    reported as a margin of zero.
+    """
+    payload = _pupil_buffer_payload(0, 0, lessons_per_week=1, end="09:00:00")
+
+    response = client.post(
+        "/api/v1/optimize", json=payload, headers={"X-API-Key": API_KEY},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] in {"OPTIMAL", "FEASIBLE"}
+    assert [lesson["startTime"][:5] for lesson in body["lessons"]] == ["08:00"]
+
 
 def _teaching_group_school(
     classes: int = 12,

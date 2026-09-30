@@ -440,6 +440,20 @@ MESSAGES: dict[str, str] = {
         "({grades, select, any {years unknown} other {years {grades}}}): its {minutes}-minute "
         "lessons need a window, and the widest any day still offers is {remaining} minutes."
     ),
+    # Its own code, NOT a second reading of the one above. The frame may be
+    # perfectly good and the margin the thing that does not fit: a window exactly
+    # as wide as the lesson offers every minute the lesson needs, and the sentence
+    # above would tell a school its frame times leave no room for minutes they do
+    # offer — sending it to the wrong screen to change the wrong number.
+    "MARGIN_NO_WINDOW_FOR_REQUIREMENT": (
+        "The time around the lessons of requirement {requirement} "
+        "({grades, select, any {years unknown} other {years {grades}}}) leaves them no day to "
+        "run on: its {minutes}-minute lessons take {before} minutes before and {after} minutes "
+        "after for the pupils, {changeover, select, 0 {with no changeover between lessons} "
+        "other {plus {changeover} minutes of changeover between lessons}}, and the widest any "
+        "day then leaves for the lesson itself is {remaining} minutes. Shorten the lessons, "
+        "shorten those margins, or widen the window they all have to fit inside."
+    ),
     "RAST_NO_STRETCH_FOR_REQUIREMENT": (
         "The rasts leave no room for requirement {requirement} "
         "({grades, select, any {years unknown} other {years {grades}}}): its {minutes}-minute "
