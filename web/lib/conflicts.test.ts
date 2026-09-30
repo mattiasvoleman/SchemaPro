@@ -1576,6 +1576,50 @@ describe("findOpenSlots", () => {
     ]);
   });
 
+  it("counts a class still showering after its idrott as busy, but not its teacher", () => {
+    /*
+     * The same slot the half-open test above calls free, with 20 minutes of
+     * dusch on the lesson before it.
+     *
+     * Without this the page would offer a slot validatePlacement then refuses —
+     * and the admin has already accepted it by clicking. The existing lesson's
+     * buffer is the half this search can know; the buffer of the lesson being
+     * planned is not, because the subject is still being picked.
+     *
+     * The teacher is deliberately untouched by the same widening, which is why
+     * the fallback teacher below is the one the slot comes back with in the
+     * second case: t1 is free, the CLASS is not.
+     */
+    const showeringUntilTwenty = makePlacement({
+      id: "existing",
+      dayOfWeek: 1,
+      startMinutes: 480,
+      endMinutes: 540,
+      studentGroupId: "gA",
+      teacherId: "t1",
+      minutesAfter: 20,
+    });
+    const search = (placements: Placement[]) =>
+      findOpenSlots({
+        studentGroupIds: ["gA"],
+        durationMinutes: 60,
+        primaryTeacherIds: ["t1"],
+        fallbackTeacherIds: [],
+        placements,
+        constraints: [],
+        days: [1],
+        dayStartMinutes: 480,
+        dayEndMinutes: 600,
+        stepMinutes: 15,
+      });
+
+    // 09:00 is inside the dusch, and 09:00-10:00 is the only slot that fits.
+    expect(search([showeringUntilTwenty])).toEqual([]);
+    // The same lesson without the buffer leaves it free, which is what pins the
+    // refusal above on the buffer and not on the lesson.
+    expect(search([{ ...showeringUntilTwenty, minutesAfter: undefined }])).toHaveLength(1);
+  });
+
   it("counts a class attending another lesson as an extra group as busy", () => {
     const jointLesson = makePlacement({
       id: "joint",

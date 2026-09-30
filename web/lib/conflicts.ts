@@ -694,7 +694,24 @@ function groupFreeAt(
   for (const placement of placements) {
     if (placement.dayOfWeek !== dayOfWeek) continue;
     if (!groupsOf(placement).includes(groupId)) continue;
-    if (overlaps(startMinutes, endMinutes, placement.startMinutes, placement.endMinutes)) {
+    // Widened by the EXISTING lesson's own buffer, which is the half this
+    // function can know: the class is still in the omklädningsrummet after its
+    // idrott, so the twenty minutes after it are not a slot the class can meet
+    // in. The buffer of the lesson being PLANNED is not knowable here — the
+    // subject is being picked in the dialog and may have no requirement for
+    // these groups yet — so a slot this offers is still checked by
+    // validatePlacement when the lesson is actually placed.
+    //
+    // teacherFreeAt below is deliberately NOT widened, for the reason
+    // validatePlacement states at shareTheClock.
+    if (
+      overlaps(
+        startMinutes,
+        endMinutes,
+        placement.startMinutes - (placement.minutesBefore ?? 0),
+        placement.endMinutes + (placement.minutesAfter ?? 0),
+      )
+    ) {
       return false;
     }
   }
