@@ -85,6 +85,9 @@ interface RequirementFixture {
   coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** The pupils' ombyte and dusch, 0 on every subject that needs none. */
+  minutesBefore: number;
+  minutesAfter: number;
   recurrence: "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";
   startDate: string | null;
   endDate: string | null;
@@ -100,6 +103,8 @@ const requirements: RequirementFixture[] = [
     coTeacherId: null,
     lessonsPerWeek: 2,
     minutesPerLesson: 60,
+    minutesBefore: 0,
+    minutesAfter: 0,
     recurrence: "ODD_WEEKS",
     startDate: null,
     endDate: null,
@@ -113,6 +118,8 @@ const requirements: RequirementFixture[] = [
     coTeacherId: null,
     lessonsPerWeek: 2,
     minutesPerLesson: 60,
+    minutesBefore: 0,
+    minutesAfter: 0,
     recurrence: "EVEN_WEEKS",
     startDate: null,
     endDate: null,
@@ -937,6 +944,75 @@ describe("Timplan while its data is still arriving", () => {
     const sent = updateMock.mock.calls[0][0] as Record<string, unknown>;
     expect(sent.startDate).toBeNull();
     expect(sent.endDate).toBeNull();
+  });
+
+  /*
+   * The pupils' own time, which is not the lesson's.
+   *
+   * The whole design rests on the buffers lying OUTSIDE the teaching: 60
+   * minutes with 10 before and 20 after occupies the class for 90 and is still
+   * 60 minutes of undervisning. The failure that would look fine on screen is
+   * the dialog quietly folding them into minutesPerLesson — every hour figure
+   * on the page would then grow, and the timplan would claim teaching the
+   * school does not do. So these assert both halves: the buffers arrive, and
+   * the lesson length is untouched.
+   */
+  it("sends the pupils' ombyte and dusch without touching the lesson's length", async () => {
+    render(<RequirementsPage />);
+    const user = await openCell("cellLabel(7A|Bild)");
+
+    fireEvent.change(screen.getByLabelText("minutesBefore"), { target: { value: "10" } });
+    fireEvent.change(screen.getByLabelText("minutesAfter"), { target: { value: "20" } });
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    expect(createMock).toHaveBeenCalledTimes(1);
+    const sent = createMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(sent.minutesBefore).toBe(10);
+    expect(sent.minutesAfter).toBe(20);
+    // Numbers, not the strings the form holds: the DTO is @IsInt and a "10"
+    // would be a 400 the admin reads as "something went wrong".
+    expect(sent.minutesPerLesson).toBe(60);
+  });
+
+  it("reads an existing buffer back into the dialog, and lets an admin take it off", async () => {
+    // A school that stops showering after idrotten has to be able to say so,
+    // and 0 is the only way to say it: the columns are plain integers with a
+    // default of 0, so there is no null to clear them with the way a period
+    // has one. An omitted key would leave the old 20 standing forever.
+    state.requirements = loaded([
+      { ...requirements[0], recurrence: "ALL_WEEKS", minutesBefore: 10, minutesAfter: 20 },
+    ]);
+    render(<RequirementsPage />);
+    const user = await openCell("cellLabelSet(7A|Samhällsorientering|2|60)");
+
+    expect((screen.getByLabelText("minutesBefore") as HTMLInputElement).value).toBe("10");
+    expect((screen.getByLabelText("minutesAfter") as HTMLInputElement).value).toBe("20");
+
+    fireEvent.change(screen.getByLabelText("minutesBefore"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("minutesAfter"), { target: { value: "" } });
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    const sent = updateMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(sent.minutesBefore).toBe(0);
+    expect(sent.minutesAfter).toBe(0);
+  });
+
+  it("refuses to save a buffer the database would reject", async () => {
+    // `min`/`max` on an <input type="number"> constrain the spinner and
+    // nothing else — a typed 90 passes them and comes back as a 400 about a
+    // column the admin never named. 0..60 is the CHECK on the column itself.
+    render(<RequirementsPage />);
+    await openCell("cellLabel(7A|Bild)");
+
+    fireEvent.change(screen.getByLabelText("minutesAfter"), { target: { value: "90" } });
+    expect(
+      (screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("minutesAfter"), { target: { value: "60" } });
+    expect(
+      (screen.getByRole("button", { name: "save" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 
   it("keeps the hours footnote with the figure it qualifies", () => {
