@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { AvailabilityConstraint, MasterLesson } from "@/lib/types";
 import {
   buildGroupConflictMap,
+  buildPupilBufferMap,
   conflictKinds,
   detectConflicts,
   findOpenSlots,
+  pupilBufferOf,
   suggestPlacements,
   teacherIdsOf,
   toPlacement,
@@ -318,6 +320,270 @@ describe("validatePlacement group conflicts", () => {
     const other = makePlacement({ id: "other", extraGroupIds: ["gShared"] });
     expect(validatePlacement(candidate, [other], [])).toEqual([
       { kind: "GROUP", otherLessonId: "other" },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validatePlacement — the pupils' own time around a lesson (ombyte, dusch)
+//
+// The rule that only widens ONE arm, which is the whole of it: the class is in
+// the omklädningsrummet, the idrottslärare is not, and the gymnastiksal stands
+// empty. So a buffer must create a GROUP clash where the clock shows none, and
+// must leave a teacher pair and a room pair in that same gap alone. Both
+// directions are tested, because a check that widened everything and a check
+// that widened nothing both pass a test that only looks at the pupils.
+// ---------------------------------------------------------------------------
+
+describe("validatePlacement pupil buffers", () => {
+  /** 09:00–10:00, as every placement here is. Its neighbour starts at 10:00. */
+  const nextSlot = (overrides: Partial<Placement> = {}) =>
+    makePlacement({ id: "other", startMinutes: 10 * 60, endMinutes: 11 * 60, ...overrides });
+
+  it("flags a pupil clash the buffer alone creates, back to back on the clock", () => {
+    // 09:00–10:00 with 20 minutes of dusch reaches 10:20, into a lesson the
+    // same class has at 10:00. Nothing overlaps on the clock: the old check
+    // reported nothing at all here, and the API now refuses it.
+    const candidate = makePlacement({ studentGroupId: "gA", minutesAfter: 20 });
+    expect(validatePlacement(candidate, [nextSlot({ studentGroupId: "gA" })], [])).toEqual([
+      { kind: "GROUP", otherLessonId: "other", pupilBufferOnly: true },
+    ]);
+  });
+
+  it("flags it from the OTHER lesson's buffer too", () => {
+    // The candidate needs nothing; the 10:00 lesson needs 15 minutes of ombyte
+    // first, which reaches back to 09:45 — inside the candidate.
+    const candidate = makePlacement({ studentGroupId: "gA" });
+    const other = nextSlot({ studentGroupId: "gA", minutesBefore: 15 });
+    expect(validatePlacement(candidate, [other], [])).toEqual([
+      { kind: "GROUP", otherLessonId: "other", pupilBufferOnly: true },
+    ]);
+  });
+
+  it("adds both sides up: neither buffer closes the gap alone, together they do", () => {
+    // A 20-minute gap, 10 minutes of dusch on the first lesson and 10 of ombyte
+    // on the second: 09:00–10:00 becomes 09:00–10:10 and 10:20–11:00 becomes
+    // 10:10–11:00. Half-open, so 10:10 against 10:10 is still free — which is
+    // the boundary the pupil window has to keep, exactly as the clock one does.
+    const candidate = makePlacement({ studentGroupId: "gA", minutesAfter: 10 });
+    const twentyLater = nextSlot({
+      studentGroupId: "gA",
+      startMinutes: 10 * 60 + 20,
+      minutesBefore: 10,
+    });
+    expect(validatePlacement(candidate, [twentyLater], [])).toEqual([]);
+
+    // One more minute on either side and the two windows meet.
+    expect(
+      validatePlacement(makePlacement({ studentGroupId: "gA", minutesAfter: 11 }), [
+        twentyLater,
+      ], []),
+    ).toEqual([{ kind: "GROUP", otherLessonId: "other", pupilBufferOnly: true }]);
+    expect(
+      validatePlacement(candidate, [{ ...twentyLater, minutesBefore: 11 }], []),
+    ).toEqual([{ kind: "GROUP", otherLessonId: "other", pupilBufferOnly: true }]);
+  });
+
+  it("leaves the TEACHER arm on the teaching span, buffer or no buffer", () => {
+    // The idrottslärare does not shower with the class. Refusing this would
+    // cost them the lesson after every idrott they teach.
+    const candidate = makePlacement({ teacherId: "t1", minutesAfter: 30 });
+    expect(validatePlacement(candidate, [nextSlot({ teacherId: "t1" })], [])).toEqual([]);
+    // ...and symmetrically, from the other lesson's ombyte.
+    expect(
+      validatePlacement(makePlacement({ teacherId: "t1" }), [
+        nextSlot({ teacherId: "t1", minutesBefore: 30 }),
+      ], []),
+    ).toEqual([]);
+  });
+
+  it("leaves the ROOM arm on the teaching span, buffer or no buffer", () => {
+    // The hall is empty while the children are changing, and it is the scarcest
+    // room the school has.
+    const candidate = makePlacement({ roomId: "r1", minutesAfter: 30 });
+    expect(validatePlacement(candidate, [nextSlot({ roomId: "r1" })], [])).toEqual([]);
+    expect(
+      validatePlacement(makePlacement({ roomId: "r1" }), [
+        nextSlot({ roomId: "r1", minutesBefore: 30 }),
+      ], []),
+    ).toEqual([]);
+  });
+
+  it("reports a real overlap as a plain GROUP clash, without the buffer flag", () => {
+    // The flag means "the clocks do not overlap", and it is what turns the
+    // refusal into a sentence about ombyte. On a lesson that genuinely sits on
+    // top of another it would be a lie the page then tells the admin.
+    const candidate = makePlacement({ studentGroupId: "gA", minutesAfter: 20 });
+    const overlapping = makePlacement({ id: "other", studentGroupId: "gA" });
+    expect(validatePlacement(candidate, [overlapping], [])).toEqual([
+      { kind: "GROUP", otherLessonId: "other" },
+    ]);
+  });
+
+  it("refuses nothing extra when the buffer meets a lesson sharing no pupils", () => {
+    // makePlacement gives every placement its own group, so this is two
+    // unrelated classes back to back — the common case, and the one a check
+    // that widened the window without checking the groups would break.
+    expect(validatePlacement(makePlacement({ minutesAfter: 45 }), [nextSlot()], [])).toEqual(
+      [],
+    );
+  });
+
+  it("does not let a buffer cross the alternating weeks that keep two lessons apart", () => {
+    // Slöjd on odd weeks and idrott on even weeks never share a week, so no
+    // amount of dusch on one can reach the other.
+    const candidate = makePlacement({
+      studentGroupId: "gA",
+      recurrence: "ODD_WEEKS",
+      minutesAfter: 30,
+    });
+    expect(
+      validatePlacement(candidate, [nextSlot({ studentGroupId: "gA", recurrence: "EVEN_WEEKS" })], []),
+    ).toEqual([]);
+  });
+
+  it("widens the pupil window for a shared STUDENT as well as a shared group", () => {
+    // The individual-participant arm is the same arm: a pupil taking an
+    // elective is in the omklädningsrummet on the same minutes their class is.
+    const candidate = makePlacement({ studentIds: ["s1"], minutesAfter: 20 });
+    expect(
+      validatePlacement(candidate, [nextSlot({ studentIds: ["s1"] })], []),
+    ).toEqual([{ kind: "GROUP", otherLessonId: "other", pupilBufferOnly: true }]);
+  });
+
+  it("leaves the frame, the meal and the constraints on the teaching span", () => {
+    /*
+     * NOT widened, and stated here so the omission is a decision on the record.
+     *
+     * A ramtid is the hours a stage may be TAUGHT in, a lunchsittning is when a
+     * class eats, and an UNAVAILABLE rule is a window somebody is away in. The
+     * API widens none of them either — it widens the lesson-against-lesson
+     * pupil arm and nothing else — and inventing it here would make the browser
+     * refuse placements the server accepts, which is the one failure this file
+     * exists to prevent.
+     */
+    const candidate = makePlacement({
+      studentGroupId: "gA",
+      startMinutes: 14 * 60,
+      endMinutes: 15 * 60,
+      minutesAfter: 30,
+    });
+    const constraint = makeConstraint({
+      resourceType: "STUDENT_GROUP",
+      studentGroupId: "gA",
+      startTime: "15:00",
+      endTime: "16:00",
+    });
+    expect(validatePlacement(candidate, [], [constraint])).toEqual([]);
+
+    const lunchOf = new Map([
+      ["gA:1", { startMinutes: 15 * 60, endMinutes: 15 * 60 + 30 }],
+    ]);
+    expect(
+      validatePlacement(
+        candidate,
+        [],
+        [],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        lunchOf,
+      ),
+    ).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildPupilBufferMap / pupilBufferOf / toPlacement with buffers
+// ---------------------------------------------------------------------------
+
+describe("buildPupilBufferMap", () => {
+  const requirement = (
+    studentGroupId: string,
+    subjectId: string,
+    minutesBefore: number,
+    minutesAfter: number,
+  ) => ({ studentGroupId, subjectId, minutesBefore, minutesAfter });
+
+  it("keys on the pair a requirement is unique on, and keeps only the rows with a number", () => {
+    const map = buildPupilBufferMap([
+      requirement("gA", "idh", 10, 20),
+      // Every other subject at every school: nothing to wait for, and nothing
+      // worth a map entry to look up.
+      requirement("gA", "ma", 0, 0),
+      requirement("gB", "idh", 0, 15),
+    ]);
+
+    expect([...map.keys()].sort()).toEqual(["gA:idh", "gB:idh"]);
+    expect(map.get("gA:idh")).toEqual({ minutesBefore: 10, minutesAfter: 20 });
+    expect(map.get("gB:idh")).toEqual({ minutesBefore: 0, minutesAfter: 15 });
+  });
+
+  it("reads a lesson's buffer off its primary class, and answers nothing for a lesson that has none", () => {
+    const map = buildPupilBufferMap([requirement("gA", "idh", 10, 20)]);
+
+    expect(pupilBufferOf(map, { studentGroupId: "gA", subjectId: "idh" })).toEqual({
+      minutesBefore: 10,
+      minutesAfter: 20,
+    });
+    // Same class, other subject; and the same subject for a class that does not
+    // read it. Neither is a buffer of 0 — it is no row at all.
+    expect(pupilBufferOf(map, { studentGroupId: "gA", subjectId: "ma" })).toBeUndefined();
+    expect(pupilBufferOf(map, { studentGroupId: "gB", subjectId: "idh" })).toBeUndefined();
+    // A caller with no timplan at all asks nothing of the map.
+    expect(pupilBufferOf(undefined, { studentGroupId: "gA", subjectId: "idh" })).toBeUndefined();
+  });
+
+  it("carries the buffer onto the placement, and leaves one without it exactly as it was", () => {
+    const lesson = makeLesson({ studentGroupId: "gA", subjectId: "idh" });
+    const map = buildPupilBufferMap([requirement("gA", "idh", 10, 20)]);
+
+    expect(toPlacement(lesson, map)).toMatchObject({ minutesBefore: 10, minutesAfter: 20 });
+    // Not 0: the fields are absent, which is what keeps a caller that knows
+    // nothing about the timplan producing the placement it always produced.
+    expect(Object.hasOwn(toPlacement(lesson), "minutesBefore")).toBe(false);
+    expect(Object.hasOwn(toPlacement(lesson, new Map()), "minutesAfter")).toBe(false);
+  });
+
+  it("is what detectConflicts marks a whole grid with", () => {
+    // The grid's own path, which maps lessons to placements itself and so has
+    // to be handed the map rather than the placements.
+    const lessons = [
+      makeLesson({ id: "L1", studentGroupId: "gA", subjectId: "idh" }),
+      makeLesson({
+        id: "L2",
+        studentGroupId: "gA",
+        subjectId: "ma",
+        startTime: "10:00",
+        endTime: "11:00",
+      }),
+    ];
+    const map = buildPupilBufferMap([
+      { studentGroupId: "gA", subjectId: "idh", minutesBefore: 0, minutesAfter: 20 },
+    ]);
+
+    // Without the map the two lessons are back to back and clean.
+    expect(detectConflicts(lessons, []).size).toBe(0);
+
+    const flagged = detectConflicts(
+      lessons,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      map,
+    );
+    expect(flagged.get("L1")).toEqual([
+      { kind: "GROUP", otherLessonId: "L2", pupilBufferOnly: true },
+    ]);
+    // Both ends of the pair are marked, or the grid rings only one of two
+    // lessons that are equally in the way of each other.
+    expect(flagged.get("L2")).toEqual([
+      { kind: "GROUP", otherLessonId: "L1", pupilBufferOnly: true },
     ]);
   });
 });
@@ -1308,6 +1574,50 @@ describe("findOpenSlots", () => {
         isFallback: false,
       },
     ]);
+  });
+
+  it("counts a class still showering after its idrott as busy, but not its teacher", () => {
+    /*
+     * The same slot the half-open test above calls free, with 20 minutes of
+     * dusch on the lesson before it.
+     *
+     * Without this the page would offer a slot validatePlacement then refuses —
+     * and the admin has already accepted it by clicking. The existing lesson's
+     * buffer is the half this search can know; the buffer of the lesson being
+     * planned is not, because the subject is still being picked.
+     *
+     * The teacher is deliberately untouched by the same widening, which is why
+     * the fallback teacher below is the one the slot comes back with in the
+     * second case: t1 is free, the CLASS is not.
+     */
+    const showeringUntilTwenty = makePlacement({
+      id: "existing",
+      dayOfWeek: 1,
+      startMinutes: 480,
+      endMinutes: 540,
+      studentGroupId: "gA",
+      teacherId: "t1",
+      minutesAfter: 20,
+    });
+    const search = (placements: Placement[]) =>
+      findOpenSlots({
+        studentGroupIds: ["gA"],
+        durationMinutes: 60,
+        primaryTeacherIds: ["t1"],
+        fallbackTeacherIds: [],
+        placements,
+        constraints: [],
+        days: [1],
+        dayStartMinutes: 480,
+        dayEndMinutes: 600,
+        stepMinutes: 15,
+      });
+
+    // 09:00 is inside the dusch, and 09:00-10:00 is the only slot that fits.
+    expect(search([showeringUntilTwenty])).toEqual([]);
+    // The same lesson without the buffer leaves it free, which is what pins the
+    // refusal above on the buffer and not on the lesson.
+    expect(search([{ ...showeringUntilTwenty, minutesAfter: undefined }])).toHaveLength(1);
   });
 
   it("counts a class attending another lesson as an extra group as busy", () => {

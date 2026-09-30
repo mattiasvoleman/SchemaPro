@@ -446,6 +446,11 @@ export class OptimizationProxyService {
         coTeacherId: true,
         lessonsPerWeek: true,
         minutesPerLesson: true,
+        // The pupil buffers. Numbers, not names, so they cross to the engine
+        // like the lesson length beside them — and they are the class's own
+        // occupancy, never the teacher's or the room's.
+        minutesBefore: true,
+        minutesAfter: true,
         // Never forwarded — the engine has no notion of weeks. Read here
         // because the subtraction below compares a preserved lesson's weeks
         // against these, and stamped on the lessons the run produces so a
@@ -752,6 +757,11 @@ export class OptimizationProxyService {
           teacherId: r.teacherId ? anonId(teacherAnonMap, r.teacherId) : null,
           lessonsPerWeek: remaining,
           minutesPerLesson: r.minutesPerLesson,
+          // Forwarded as they stand, beside the length and not folded into it:
+          // the engine has to place 60 minutes of teaching and keep the class
+          // clear for 90, and a sum would lose which of the two it was told.
+          minutesBefore: r.minutesBefore,
+          minutesAfter: r.minutesAfter,
           studentGroupSize: needs.studentGroupSize,
           minGradeLevel: needs.minGradeLevel,
           maxGradeLevel: needs.maxGradeLevel,

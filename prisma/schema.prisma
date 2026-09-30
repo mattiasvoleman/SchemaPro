@@ -433,6 +433,48 @@ model TeachingRequirement {
   lessonsPerWeek   Int     @default(1)
   minutesPerLesson Int     @default(60)
 
+  /// Minutes the PUPILS are occupied on either side of the lesson: ombyte
+  /// before idrotten, dusch and ombyte after it.
+  ///
+  /// OUTSIDE THE LESSON. A 60-minute lesson with 10 before and 20 after still
+  /// teaches 60 — `minutesPerLesson` is untouched and the timplan still counts
+  /// 60 — while the class is unavailable for 90. The numbers do not shorten the
+  /// teaching, they say what surrounds it.
+  ///
+  /// SAID PER REQUIREMENT, which is to say per (class, subject). Not on the
+  /// subject, because ombyte is a property of what THIS class does in this
+  /// subject: 4.1 walks from the far corridor and 4.2 from the hall next door,
+  /// and the same idrott needs different margins for the two. Not per stage
+  /// either, for the same reason — the walk is the class's, not the årskurs's.
+  ///
+  /// ONLY THE PUPILS ARE BLOCKED. Not the teacher, who does not shower with the
+  /// class and may teach the slot on either side. Not the room, which stands
+  /// empty through both windows — the class is in the omklädningsrummet, not in
+  /// the gymnastiksal.
+  ///
+  /// WHY THIS IS NOT THE CHANGEOVER CORRIDOR (FrameTimes.changeoverMinutes).
+  /// That one is a FLOOR ON THE GAP between any two lessons of a stage, and the
+  /// solver argues itself down to one end of it: padding both sides turns a
+  /// ten-minute rule into a silent twenty, and padding the front makes 08:00 an
+  /// illegal start for the first lesson of the day (scheduler_solver.py:103-105,
+  /// padded_of). It declines to pad the room at all, because a room needs no
+  /// time to become itself again (:3834-3838).
+  ///
+  /// Neither argument reaches these two columns. A pupil buffer is not one rule
+  /// counted twice: ombyte before and dusch after are two different things the
+  /// children actually do, each named on its own, so 10 + 20 is thirty minutes
+  /// of real occupancy and not a doubled ten. Nor is it a gap the schema may
+  /// quietly shrink — 08:00 idrott genuinely means the class is changing at
+  /// 07:50, which is the school's answer and not an artefact of the encoding.
+  /// The room is left alone here for precisely the reason the solver gives for
+  /// its own room arm: nobody is in it.
+  ///
+  /// 0..60 on each, as CHECK constraints mirroring the DTO's bounds. Default 0,
+  /// so nothing changes for any school until somebody writes a number, and the
+  /// whole mechanism costs a school that never does exactly nothing.
+  minutesBefore Int @default(0)
+  minutesAfter  Int @default(0)
+
   /// Which weeks the requirement is read over, inherited by every lesson the
   /// optimizer generates for it. `lessonsPerWeek` counts weeks the requirement
   /// actually runs, so 2 lessons a week over a spring-only window is two a week

@@ -349,16 +349,33 @@ jobs:
 
       # autocannon is installed --no-save for the same reason as Stryker: its
       # transitive deps carry moderate advisories and it ships nothing.
+      #
+      # No `${{ }}` reaches the script text: the fixture outputs and the floor
+      # switch arrive through env. An expression is pasted into the script
+      # before bash parses it, so a quote in the value would close the argument
+      # and the rest would run as shell; a variable expands after parsing and
+      # stays one argument. Semgrep's run-shell-injection rule blocked this step
+      # for the switch alone: it treats every `inputs` expression as
+      # caller-controlled and does not look at step outputs at all. The outputs
+      # go through env anyway. They carry what the fixture query read from the
+      # database — a base64url JWT and a UUID today, neither able to hold a
+      # quote — and staying safe should not rest on the rule's blind spot.
+      # LATENCY_FLOOR is empty unless the dispatch asked for the floor rounds,
+      # so its expansion adds `--floor` or nothing.
       - name: Benchmark
+        env:
+          TOKEN: ${{ steps.fixtures.outputs.token }}
+          ACADEMIC_YEAR: ${{ steps.fixtures.outputs.academic_year }}
+          LATENCY_FLOOR: ${{ inputs.latency_floor && 'true' || '' }}
         run: >-
           npm install --no-save --no-audit --no-fund autocannon@^8 &&
           node scripts/bench/api-latency.mjs
           --url http://localhost:4000
-          --token '${{ steps.fixtures.outputs.token }}'
-          --academic-year '${{ steps.fixtures.outputs.academic_year }}'
+          --token "$TOKEN"
+          --academic-year "$ACADEMIC_YEAR"
           --write-body /tmp/write-body.json
           --duration 20 --connections 25
-          ${{ inputs.latency_floor && '--floor' || '' }}
+          ${LATENCY_FLOOR:+--floor}
 
       - name: Stack logs
         if: failure()

@@ -23,6 +23,23 @@ export interface MasterLessonConflict {
   masterLessonId?: string;
 }
 
+/**
+ * Minutes the PUPILS of a lesson are occupied outside it: ombyte before
+ * idrotten, dusch and ombyte after. Written on the TeachingRequirement, so it is
+ * said once per (class, subject) and read here per lesson.
+ *
+ * It blocks the children and nothing else. The teacher and the room arms of the
+ * clash check keep the exact half-open test — see findConflicts, which states
+ * why.
+ */
+interface PupilBuffer {
+  minutesBefore: number;
+  minutesAfter: number;
+}
+
+/** What a lesson nobody wrote a number for occupies outside itself: nothing. */
+const NO_BUFFER: PupilBuffer = { minutesBefore: 0, minutesAfter: 0 };
+
 export interface MasterLessonResult {
   id: string;
   academicYearId: string;
@@ -152,6 +169,7 @@ export class MasterLessonsService {
           id: null,
           academicYearId: dto.academicYearId,
           studentGroupId: dto.studentGroupId,
+          subjectId: dto.subjectId,
         },
         candidate,
       );
@@ -293,6 +311,9 @@ export class MasterLessonsService {
               id: lesson.id,
               academicYearId: lesson.academicYearId,
               studentGroupId: lesson.studentGroupId,
+              // No PATCH moves a lesson to another subject, so the stored one is
+              // the one whose requirement carries the buffer.
+              subjectId: lesson.subjectId,
             },
             candidate,
           );
@@ -519,6 +540,49 @@ export class MasterLessonsService {
     return membersOf;
   }
 
+  /**
+   * (class, subject) → the minutes its pupils are occupied outside the lesson.
+   *
+   * HOW A LESSON REACHES ITS REQUIREMENT. It cannot name one: `MasterLessons`
+   * has no `teachingRequirementId` column, and there is no join to invent. What
+   * it does carry is the three ids the requirement is unique on —
+   * `@@unique([schoolId, academicYearId, studentGroupId, subjectId])` — so
+   * (year, group, subject) identifies exactly one requirement row. That is the
+   * same key the regeneration path already maps demand with
+   * (optimization-proxy.service.ts, preservedByDemand, which says so in as many
+   * words), and it is the cheapest correct source: one indexed read of the
+   * year's requirements answers for the candidate and for every lesson it might
+   * meet, instead of a lookup per lesson.
+   *
+   * ONLY the rows that carry a number. Every school has zeroes today and most
+   * always will, so the common answer is an empty map: every lookup then reads
+   * NO_BUFFER, the windows below collapse to the exact half-open test the check
+   * has always used, and the whole mechanism costs one query that finds nothing.
+   */
+  private async pupilBuffersOf(
+    tx: PrismaClient,
+    academicYearId: string,
+  ): Promise<Map<string, PupilBuffer>> {
+    const rows = await tx.teachingRequirement.findMany({
+      where: {
+        academicYearId,
+        OR: [{ minutesBefore: { gt: 0 } }, { minutesAfter: { gt: 0 } }],
+      },
+      select: {
+        studentGroupId: true,
+        subjectId: true,
+        minutesBefore: true,
+        minutesAfter: true,
+      },
+    });
+    return new Map(
+      rows.map((row) => [
+        `${row.studentGroupId}:${row.subjectId}`,
+        { minutesBefore: row.minutesBefore, minutesAfter: row.minutesAfter },
+      ]),
+    );
+  }
+
   private async findConflicts(
     tx: PrismaClient,
     lesson: {
@@ -526,6 +590,8 @@ export class MasterLessonsService {
       id: string | null;
       academicYearId: string;
       studentGroupId: string;
+      /** Needed to find the requirement that carries the pupil buffer. */
+      subjectId: string;
     },
     candidate: {
       dayOfWeek: number;
@@ -582,6 +648,9 @@ export class MasterLessonsService {
         coTeacherId: true,
         roomId: true,
         studentGroupId: true,
+        // The other half of the key its own pupil buffer is found by; the name
+        // beside it is for the message, and the id is for the lookup.
+        subjectId: true,
         startTime: true,
         endTime: true,
         recurrence: true,
@@ -599,17 +668,55 @@ export class MasterLessonsService {
       endDate: candidate.endDate ?? null,
     };
 
+    /**
+     * The pupil buffers of every requirement in the year that has one.
+     *
+     * Read before the narrowing below, because the narrowing now depends on
+     * them: a buffer can bring two lessons together that do not touch on the
+     * clock, so the exact test cannot decide on its own which lessons are worth
+     * asking about. Skipped when the day is empty — there is nothing to be early
+     * or late for — and otherwise one query that finds nothing at the vast
+     * majority of schools. See pupilBuffersOf.
+     */
+    const buffers =
+      sameDay.length === 0
+        ? new Map<string, PupilBuffer>()
+        : await this.pupilBuffersOf(tx, lesson.academicYearId);
+    const bufferOf = (groupId: string, subjectId: string): PupilBuffer =>
+      buffers.get(`${groupId}:${subjectId}`) ?? NO_BUFFER;
+
+    /**
+     * The candidate's own buffer, read off its PRIMARY class's requirement.
+     *
+     * One buffer for the lesson rather than one per class on it. An extra class
+     * attending this same idrott changes in the same omklädningsrum on the same
+     * minutes, so the lesson has one answer; taking the widest of several
+     * requirements would let a class that merely joins lengthen the lesson's
+     * occupancy for everybody, which is not what any of the rows says.
+     */
+    const candidateBuffer = bufferOf(lesson.studentGroupId, lesson.subjectId);
+    const pupilStart = candidate.startMinutes - candidateBuffer.minutesBefore;
+    const pupilEnd = candidate.endMinutes + candidateBuffer.minutesAfter;
+
     // Narrowed before the roster is loaded below, so a day with fifty lessons
     // and one overlap still asks about one overlap. Sharing a time slot is only
     // a clash if some week holds both lessons: slöjd on odd weeks and
     // hemkunskap on even weeks may share the slot, the room and the teacher —
     // that is the point of alternating weeks.
-    const clashing = sameDay.filter(
-      (other) =>
-        toMinutes(other.startTime) < candidate.endMinutes &&
-        candidate.startMinutes < toMinutes(other.endTime) &&
-        weeksCanOverlap(candidateWeeks, other),
-    );
+    //
+    // The widest of the tests below, deliberately: this is the PUPIL window, and
+    // both lessons' buffers count. Either can be what brings the two together —
+    // the candidate's own shower running into the other lesson, or the other
+    // lesson's ombyte reaching back into the candidate. The teacher and the room
+    // arms narrow it again inside the loop, where `shareTheClock` says why.
+    const clashing = sameDay.filter((other) => {
+      if (!weeksCanOverlap(candidateWeeks, other)) return false;
+      const buffer = bufferOf(other.studentGroupId, other.subjectId);
+      return (
+        toMinutes(other.startTime) - buffer.minutesBefore < pupilEnd &&
+        pupilStart < toMinutes(other.endTime) + buffer.minutesAfter
+      );
+    });
 
     /**
      * Which pupils each group in play holds.
@@ -642,15 +749,60 @@ export class MasterLessonsService {
     }
 
     for (const other of clashing) {
+      /**
+       * The EXACT half-open test the check has always used, and the ONLY test
+       * the teacher and the room arms below are allowed to see.
+       *
+       * THIS IS A DECISION, NOT AN OVERSIGHT. The buffer blocks the PUPILS. The
+       * idrottslärare does not change or shower with the class and is free to
+       * teach the slot on either side; the gymnastiksal stands empty for those
+       * same minutes, because the children are in the omklädningsrummet and not
+       * in it. Widening these two arms would cost an idrottslärare a third of
+       * their teachable week and make a hall that is already scarce unbookable
+       * for half an hour around every lesson — refusing placements that are
+       * perfectly true. The solver reasons its own room arm out the same way:
+       * "a room needs no time to become itself again"
+       * (scheduler_solver.py:3834-3838).
+       *
+       * `clashing` is now the wider pupil window, so without this the two arms
+       * would inherit it silently — which is exactly the refusal the decision
+       * forbids.
+       */
+      const shareTheClock =
+        toMinutes(other.startTime) < candidate.endMinutes &&
+        candidate.startMinutes < toMinutes(other.endTime);
+
+      const otherBuffer = bufferOf(other.studentGroupId, other.subjectId);
+      /**
+       * The refusal a clash the BUFFER ALONE created earns, in place of the
+       * plain-overlap one.
+       *
+       * An admin looking at 09:00-10:00 beside 10:00-11:00, refused with "the
+       * group already has Idrott och hälsa in this slot", reads it as a bug in
+       * the grid: there is no overlap anywhere on their screen. Naming the
+       * ombyte and the minutes it costs makes the refusal something they can act
+       * on — move the lesson, or lower the number on the timplan.
+       *
+       * Swedish, because unlike the messages beside it this sentence exists to
+       * explain a mechanism the school itself configured, and it is folded
+       * straight into the 409 the admin reads.
+       */
+      const changing = (who: string): string =>
+        `${who}: ` +
+        [ombyteOf('den här lektionen', candidateBuffer), ombyteOf(other.subject.name, otherBuffer)]
+          .filter((part): part is string => part !== null)
+          .join(', och ') +
+        '.';
+
       const otherTeachers = [other.teacherId, other.coTeacherId].filter(Boolean);
-      if (candidateTeachers.some((id) => otherTeachers.includes(id))) {
+      if (shareTheClock && candidateTeachers.some((id) => otherTeachers.includes(id))) {
         conflicts.push({
           kind: 'TEACHER',
           message: `Teacher already teaches ${other.subject.name} in this slot.`,
           masterLessonId: other.id,
         });
       }
-      if (candidate.roomId && other.roomId === candidate.roomId) {
+      if (shareTheClock && candidate.roomId && other.roomId === candidate.roomId) {
         conflicts.push({
           kind: 'ROOM',
           message: `Room is already booked for ${other.subject.name} in this slot.`,
@@ -664,7 +816,9 @@ export class MasterLessonsService {
       if ([...candidateGroups].some((groupId) => otherGroups.has(groupId))) {
         conflicts.push({
           kind: 'GROUP',
-          message: `The group already has ${other.subject.name} in this slot.`,
+          message: shareTheClock
+            ? `The group already has ${other.subject.name} in this slot.`
+            : changing('Klassen är upptagen med ombyte eller dusch i den här tiden'),
           masterLessonId: other.id,
         });
       } else {
@@ -678,7 +832,11 @@ export class MasterLessonsService {
         if (shared) {
           conflicts.push({
             kind: 'GROUP',
-            message: `Students of this group already have ${other.subject.name} in this slot.`,
+            message: shareTheClock
+              ? `Students of this group already have ${other.subject.name} in this slot.`
+              : changing(
+                  'Elever i gruppen är upptagna med ombyte eller dusch i den här tiden',
+                ),
             masterLessonId: other.id,
           });
         }
@@ -701,7 +859,11 @@ export class MasterLessonsService {
       if (busyStudent) {
         conflicts.push({
           kind: 'GROUP',
-          message: `A participating student already has ${other.subject.name} in this slot.`,
+          message: shareTheClock
+            ? `A participating student already has ${other.subject.name} in this slot.`
+            : changing(
+                'En deltagande elev är upptagen med ombyte eller dusch i den här tiden',
+              ),
           masterLessonId: other.id,
         });
       }
@@ -717,7 +879,11 @@ export class MasterLessonsService {
         if (reverse > 0) {
           conflicts.push({
             kind: 'GROUP',
-            message: `A student of this class attends ${other.subject.name} in this slot.`,
+            message: shareTheClock
+              ? `A student of this class attends ${other.subject.name} in this slot.`
+              : changing(
+                  'En elev i klassen är upptagen med ombyte eller dusch i den här tiden',
+                ),
             masterLessonId: other.id,
           });
         }
@@ -725,6 +891,15 @@ export class MasterLessonsService {
     }
 
     // Weekly (recurring) unavailability for the involved resources.
+    //
+    // Measured against the lesson itself, buffer and all left out, including on
+    // the STUDENT_GROUP arm. A constraint is a rule about when a resource may be
+    // TAUGHT, and the buffer is not teaching — widening this would refuse an
+    // idrott that ends exactly where the group's afternoon stops, over twenty
+    // minutes of showering that the rule was never written about. If a school
+    // wants those minutes held too it can say so by moving the constraint, which
+    // is a sentence it already has. Deliberately out of scope here rather than
+    // forgotten.
     const constraints = await tx.availabilityConstraint.findMany({
       where: {
         type: 'UNAVAILABLE',
@@ -1001,6 +1176,26 @@ function parseDateOrNull(value: string | null | undefined): Date | null {
 
 function toMinutes(time: Date): number {
   return time.getUTCHours() * 60 + time.getUTCMinutes();
+}
+
+/**
+ * One lesson's buffer as half a sentence: "Idrott och hälsa kräver 10 min ombyte
+ * före och 20 min dusch och ombyte efter".
+ *
+ * Null when the lesson has no buffer at all, so the refusal names only the
+ * lesson that actually costs the minutes. A clash is never explained by two
+ * empty buffers — if both were empty the two lessons would overlap outright and
+ * get the plain message instead.
+ */
+function ombyteOf(label: string, buffer: PupilBuffer): string | null {
+  const sides: string[] = [];
+  if (buffer.minutesBefore > 0) {
+    sides.push(`${buffer.minutesBefore} min ombyte före`);
+  }
+  if (buffer.minutesAfter > 0) {
+    sides.push(`${buffer.minutesAfter} min dusch och ombyte efter`);
+  }
+  return sides.length === 0 ? null : `${label} kräver ${sides.join(' och ')}`;
 }
 
 function toHHMM(time: Date): string {

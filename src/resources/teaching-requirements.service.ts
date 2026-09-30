@@ -103,6 +103,13 @@ export class TeachingRequirementsService {
             coTeacherId: dto.coTeacherId ?? null,
             lessonsPerWeek: dto.lessonsPerWeek ?? 1,
             minutesPerLesson: dto.minutesPerLesson ?? 60,
+            // The pupil buffers, stated here rather than left to the column
+            // default for the same reason every other figure above is: the
+            // created row is answered back to the caller, and a field the
+            // insert omitted comes back from the database rather than from the
+            // request. Zero is the school that has not asked for ombyte.
+            minutesBefore: dto.minutesBefore ?? 0,
+            minutesAfter: dto.minutesAfter ?? 0,
             recurrence: dto.recurrence ?? 'ALL_WEEKS',
             startDate,
             endDate,
@@ -165,6 +172,12 @@ export class TeachingRequirementsService {
               : {}),
             ...(dto.minutesPerLesson !== undefined
               ? { minutesPerLesson: dto.minutesPerLesson }
+              : {}),
+            ...(dto.minutesBefore !== undefined
+              ? { minutesBefore: dto.minutesBefore }
+              : {}),
+            ...(dto.minutesAfter !== undefined
+              ? { minutesAfter: dto.minutesAfter }
               : {}),
             ...(dto.recurrence !== undefined
               ? { recurrence: dto.recurrence }
