@@ -1155,8 +1155,8 @@ describe("Timplan CSV", () => {
     await user.click(exportButton());
     const [firstName, firstFile] = mockDownloadCsv.mock.calls[0] as [string, string];
     expect(firstName).toBe("timplan.csv");
-    expect(firstFile).toContain("7A;SO;2;60;;;udda;;");
-    expect(firstFile).toContain("7A;SL;2;60;;;jamna;;");
+    expect(firstFile).toContain("7A;SO;2;60;0;0;;;udda;;");
+    expect(firstFile).toContain("7A;SL;2;60;0;0;;;jamna;;");
     expect(firstFile).not.toContain("8B");
 
     // Move the picker to next autumn and ask again. The file has to follow —
@@ -1167,7 +1167,7 @@ describe("Timplan CSV", () => {
 
     await user.click(exportButton());
     const [, secondFile] = mockDownloadCsv.mock.calls[1] as [string, string];
-    expect(secondFile).toContain("8B;BI;1;60;;;alla;;");
+    expect(secondFile).toContain("8B;BI;1;60;0;0;;;alla;;");
     expect(secondFile).not.toContain("7A");
   });
 
