@@ -336,6 +336,51 @@ MESSAGES: dict[str, str] = {
         "the {slotMinutes}-minute scheduling grid. Use whole multiples of {slotMinutes} minutes."
     ),
 
+    # ---- The teachers' own time -----------------------------------------
+    #
+    # EVERY ONE OF THESE NAMES THE RULE AND NONE OF THEM NAMES THE TEACHER.
+    # The gateway keeps a map for the rule's id and turns it back; the teacher
+    # map is discarded on purpose, so a sentence naming a teacher would reach
+    # the school as a uuid that resolves to nobody — and a person's name may
+    # not enter a stored conflict at all. The rule is also the thing to go and
+    # change, which is what a refusal is for.
+    "TEACHER_LUNCH_WINDOW_TOO_NARROW": (
+        "The teacher working-time rule {rule} guarantees a {minutes}-minute lunch inside "
+        "{windowStart}-{windowEnd}, and that window holds "
+        "{remaining, plural, one {# minute} other {# minutes}} of the school day. Widen the "
+        "window, shorten the lunch, or move it inside the hours the school teaches in."
+    ),
+    "TEACHER_LUNCH_LEAVES_NO_START": (
+        "{causes, select, locked {Locked lessons} closed {Reservations on the teacher} "
+        "locked_closed {Locked lessons and reservations on the teacher} other {These rules}} "
+        "leave the teacher working-time rule {rule} no {minutes}-minute lunch inside "
+        "{windowStart}-{windowEnd} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}. Move a locked "
+        "lesson, shorten the reservation, or widen the window."
+    ),
+    "TEACHER_REST_LONGER_THAN_THE_NIGHT": (
+        "The teacher working-time rule {rule} asks for {restMinutes} minutes between the last "
+        "lesson of one day and the first of the next, and the longest night this week can give "
+        "is {nightMinutes} minutes: the teacher's {lessons, plural, one {# lesson} "
+        "other {# lessons}} "
+        "cannot all be placed on days that are not next to each other. Shorten the rest, "
+        "lengthen the school day, or give this teacher fewer lessons."
+    ),
+    "TEACHER_LUNCH_HAS_NOWHERE_TO_GO": (
+        "The {minutes}-minute lunch the teacher working-time rule {rule} guarantees inside "
+        "{windowStart}-{windowEnd} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} "
+        "4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}} is one of the rules "
+        "that cannot all hold at once: the teacher's lessons, the locked lessons and the "
+        "reservations leave nowhere to put it. Widen the window, shorten the lunch, or free "
+        "the middle of that day."
+    ),
+    "TEACHER_REST_CANNOT_BE_KEPT": (
+        "The rest of {restMinutes} minutes that the teacher working-time rule {rule} asks for "
+        "after {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} "
+        "6 {Saturday} 7 {Sunday} other {day {day}}} is one of the rules that cannot all hold at "
+        "once. Shorten the rest, or free the end of that day or the start of the next one."
+    ),
+
     # ---- The timeout probe ----------------------------------------------
     "PROBE_NOTHING_HELPED": (
         "No timetable was found within {budget} s, and none of the {rules, plural, "
@@ -370,6 +415,20 @@ MESSAGES: dict[str, str] = {
     ),
     "PROBE_SOLVED_WITHOUT_LUNCH": (
         "With the guaranteed lunch break switched off, a timetable was found in {seconds} s."
+    ),
+    # TWO PROBES AND NEVER ONE "teachers' working time", for the reason the
+    # lunch above is three: a school cannot switch its teachers' working time
+    # off, and being told it could is true and useless. A guaranteed lunch is
+    # widened or shortened on one screen; a night's rest is a different number
+    # on the same row, and which of the two it is decides what a rektor does
+    # next.
+    "PROBE_SOLVED_WITHOUT_TEACHER_LUNCH": (
+        "With the teachers' own guaranteed lunch switched off, a timetable was found in "
+        "{seconds} s."
+    ),
+    "PROBE_SOLVED_WITHOUT_TEACHER_REST": (
+        "With the teachers' own minimum rest between two teaching days switched off, a "
+        "timetable was found in {seconds} s."
     ),
 
     # ---- What CP-SAT itself blames --------------------------------------
