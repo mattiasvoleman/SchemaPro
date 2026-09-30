@@ -4145,6 +4145,10 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "endTime",
         "changeoverMinutes",
     }
+    # minutesBefore and minutesAfter are the pupils' own time around a lesson,
+    # and they are on the REQUIREMENT because that is where a school configures
+    # them: the same Idrott subject needs five minutes for a year-2 class and
+    # twenty for a year-9 one.
     assert _field_names(AnonymousRequirement) == {
         "id",
         "subjectId",
@@ -4153,6 +4157,8 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "coTeacherId",
         "lessonsPerWeek",
         "minutesPerLesson",
+        "minutesBefore",
+        "minutesAfter",
         "studentGroupSize",
         "minGradeLevel",
         "maxGradeLevel",
@@ -7743,6 +7749,377 @@ def test_a_timeout_names_what_shaped_the_model() -> None:
         OptimizeScheduleRequest.model_validate(_changeover_payload(0)), "test",
     )
 
+
+# ---------------------------------------------------------------------------
+# Ombyte och dusch: the time around an idrottslektion that belongs to the
+# PUPILS and to nobody else.
+#
+# The user's decision, which these tests exist to pin: the extra minutes block
+# the class's own no-overlap family, every family for a group sharing its
+# pupils, and its lunch. NOT the teacher, who may take the next class the
+# minute the lesson ends, and NOT the room, which is free as soon as they walk
+# out of it. Two tests below are feasibility cases that only pass while that
+# holds — they are the decision, written as arithmetic.
+# ---------------------------------------------------------------------------
+
+
+def _pupil_buffer_payload(
+    before: int,
+    after: int,
+    *,
+    lessons_per_week: int = 4,
+    changeover: int = 0,
+    end: str = "12:00:00",
+) -> dict[str, object]:
+    """One teacher, one class, one room, an 08:00-12:00 day.
+
+    Four sixty-minute lessons fill the four hours of a single day exactly, so
+    the week is refused unless the pupils' buffer is honoured at exactly zero —
+    which is what makes the behaviour visible rather than a matter of the
+    solver's taste. The same shape with a second day has room for the buffer
+    and is what the response assertions below read.
+    """
+    group_id = str(uuid4())
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": str(uuid4()),
+                "subjectId": str(uuid4()),
+                "studentGroupId": group_id,
+                "teacherId": str(uuid4()),
+                "lessonsPerWeek": lessons_per_week,
+                "minutesPerLesson": 60,
+                "minutesBefore": before,
+                "minutesAfter": after,
+                "studentGroupSize": 24,
+                "minGradeLevel": 4,
+                "maxGradeLevel": 6,
+            }
+        ],
+        "groups": [
+            {"id": group_id, "lunchHeadcount": 24, "minGradeLevel": 4, "maxGradeLevel": 6},
+        ],
+        "rooms": [{"id": str(uuid4()), "capacity": 30}],
+        "constraints": [],
+        "frameTimes": [
+            {
+                "minGradeLevel": 0,
+                "maxGradeLevel": 12,
+                "dayOfWeek": None,
+                "startTime": "08:00:00",
+                "endTime": end,
+                "changeoverMinutes": changeover,
+            },
+        ],
+    }
+
+
+def test_the_pupils_extra_time_is_taken_outside_the_lesson() -> None:
+    """The edge that makes the rule visible at all.
+
+    Four sixty-minute lessons in a four-hour day leave not one minute over, so
+    the same payload solves with no buffer and cannot solve with any. A buffer
+    folded INTO the lesson — the other way this could have been built — would
+    have solved all three, paid the school's idrott out of its own hours, and
+    shown the school a lesson it does not give.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    def status(before: int, after: int) -> str:
+        solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1"))
+        request = OptimizeScheduleRequest.model_validate(
+            _pupil_buffer_payload(before, after),
+        )
+        return solver.solve(request).status
+
+    assert status(0, 0) in {"OPTIMAL", "FEASIBLE"}
+    assert status(5, 0) == "INFEASIBLE"
+    assert status(0, 5) == "INFEASIBLE"
+
+
+def test_two_lessons_of_one_class_keep_the_pupils_extra_time_apart() -> None:
+    """What a class actually gets out of the feature, read off the response.
+
+    Ten minutes to change before and twenty to shower after: two lessons of the
+    same class on one day must then lie at least thirty minutes apart, because
+    the first class's shower and the second's changing are both real time and
+    neither can be spent in the other. And the day's first lesson starts at
+    08:10 rather than 08:00, because the changing happens before it.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2"))
+    request = OptimizeScheduleRequest.model_validate(_pupil_buffer_payload(10, 20))
+
+    response = solver.solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    assert len(response.lessons) == 4
+    by_day: dict[int, list[tuple[int, int]]] = {}
+    for lesson in response.lessons:
+        start = int(lesson.start_time[:2]) * 60 + int(lesson.start_time[3:5])
+        end = int(lesson.end_time[:2]) * 60 + int(lesson.end_time[3:5])
+        assert start >= 8 * 60 + 10, f"{lesson.start_time} leaves no time to change"
+        by_day.setdefault(lesson.day_of_week, []).append((start, end))
+    for day, slots in by_day.items():
+        slots.sort()
+        for (_, first_end), (second_start, _) in zip(slots, slots[1:]):
+            assert second_start - first_end >= 30, (
+                f"day {day}: only {second_start - first_end} minutes to shower and change"
+            )
+
+
+def _two_class_payload(
+    *, after: int, teachers: int, rooms: int, day_end: int = 600,
+) -> dict[str, object]:
+    """Two classes of an hour each in a two-hour day: back to back or nothing.
+
+    One lesson needs the pupils to shower for half an hour afterwards. The day
+    holds exactly the two lessons and nothing else, so the week solves only
+    while the resource the two lessons SHARE — one teacher, or one room — is
+    free the moment the first lesson ends. That is the user's decision written
+    as arithmetic: read the pupils' interval in either family and this is
+    INFEASIBLE, which is what was measured before it was written down.
+    """
+    first, second = str(uuid4()), str(uuid4())
+    teacher_ids = [str(uuid4()) for _ in range(teachers)]
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [
+            {
+                "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": group,
+                "teacherId": teacher_ids[index % teachers],
+                "lessonsPerWeek": 1, "minutesPerLesson": 60, "studentGroupSize": 24,
+                # The idrottslektion is the first requirement; the second is an
+                # ordinary lesson for a class sharing none of its pupils.
+                "minutesAfter": after if index == 0 else 0,
+            }
+            for index, group in enumerate((first, second))
+        ],
+        "rooms": [{"id": str(uuid4()), "capacity": 30} for _ in range(rooms)],
+        "constraints": [],
+    }
+
+
+def test_the_teacher_may_start_the_next_class_the_minute_the_lesson_ends() -> None:
+    """Idrottsläraren is not the one showering, and the model must know it.
+
+    Two hours, two lessons of an hour, one teacher, half an hour of shower on
+    the first: the only timetable is 08:00-09:00 and 09:00-10:00, and it exists
+    only because the teacher's no-overlap family reads padded_of rather than the
+    pupils' interval. Measured the other way round, with the teacher's family
+    reading pupil_padded_of, this same week is INFEASIBLE — so the assertion is
+    the decision and not a description of the solver's mood.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1", SCHEDULE_DAY_END_MINUTES=600))
+    request = OptimizeScheduleRequest.model_validate(
+        _two_class_payload(after=30, teachers=1, rooms=2),
+    )
+
+    response = solver.solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    placed = sorted((lesson.start_time[:5], lesson.end_time[:5]) for lesson in response.lessons)
+    assert placed == [("08:00", "09:00"), ("09:00", "10:00")]
+
+
+def test_the_room_is_free_the_moment_the_pupils_walk_out_of_it() -> None:
+    """The same week with the room shared instead of the teacher.
+
+    A hall needs no time to become itself again — the decision not to pad the
+    room pool with the corridor, reached again from the other side: the shower
+    happens to the children, and the next class can be changing for the hall
+    while it does. Two teachers here, so nothing but the single room can bind.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1", SCHEDULE_DAY_END_MINUTES=600))
+    request = OptimizeScheduleRequest.model_validate(
+        _two_class_payload(after=30, teachers=2, rooms=1),
+    )
+
+    response = solver.solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    placed = sorted((lesson.start_time[:5], lesson.end_time[:5]) for lesson in response.lessons)
+    assert placed == [("08:00", "09:00"), ("09:00", "10:00")]
+    assert len({lesson.room_id for lesson in response.lessons}) == 1
+
+
+def test_a_class_still_in_the_shower_has_not_had_its_lunch() -> None:
+    """The third family the user's decision names, and the least obvious one.
+
+    A meal the model records while the class is still undressed is a meal
+    nobody had — the same fact as 7A eating while Ma71 is taught, which the
+    lunch already routes around. Here the window holds the meal at exactly
+    11:00-11:30 and the stage may not be taught before 10:00, so the one
+    timetable is a lesson at 10:00-11:00 flush against the meal. Half an hour
+    of shower leaves nowhere for it, and INFEASIBLE is the honest answer.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    def week(after: int) -> dict[str, object]:
+        payload = _pupil_buffer_payload(0, after, lessons_per_week=1)
+        payload["frameTimes"][0]["startTime"] = "10:00:00"  # type: ignore[index]
+        payload["rules"] = {
+            "lunchStartTime": "11:00:00",
+            "lunchEndTime": "11:30:00",
+            "lunchMinutes": 30,
+        }
+        return payload
+
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1", SCHEDULE_DAY_END_MINUTES=720))
+
+    flush = solver.solve(OptimizeScheduleRequest.model_validate(week(0)))
+    assert flush.status in {"OPTIMAL", "FEASIBLE"}
+    assert (flush.lessons[0].start_time[:5], flush.lessons[0].end_time[:5]) == ("10:00", "11:00")
+    assert [lunch.start_time[:5] for lunch in flush.lunches] == ["11:00"]
+
+    assert solver.solve(
+        OptimizeScheduleRequest.model_validate(week(30)),
+    ).status == "INFEASIBLE"
+
+
+def test_a_zero_buffer_leaves_the_model_exactly_as_it_was() -> None:
+    """Every school, until somebody writes a number on a requirement.
+
+    With both values at zero the pupils' interval IS the corridor's padded one —
+    the same object, not an equal copy — so a school that has asked for nothing
+    pays not one interval proto for this feature. And with no corridor either,
+    both are the bare lesson, which is the model as it shipped.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver, padded_of, pupil_padded_of
+
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2"))
+
+    def decisions_for(payload: dict[str, object]) -> tuple[cp_model.CpModel, list]:
+        request = OptimizeScheduleRequest.model_validate(payload)
+        model = cp_model.CpModel()
+        return model, solver._create_lesson_decisions(
+            model, request.requirements, len(request.rooms), request.frame_times,
+            request.rasts, step=1,
+        )
+
+    model, bare = decisions_for(_pupil_buffer_payload(0, 0))
+    assert bare
+    assert all(decision.lead == 0 and decision.trail == 0 for decision in bare)
+    assert all(pupil_padded_of(model, d) is padded_of(model, d) for d in bare)
+    assert all(pupil_padded_of(model, d) is d.interval for d in bare)
+
+    # A corridor and no buffer: the pupils see the padded interval, which is
+    # what they have always seen, and still no second proto.
+    model, padded = decisions_for(_pupil_buffer_payload(0, 0, changeover=10))
+    assert all(pupil_padded_of(model, d) is padded_of(model, d) for d in padded)
+    assert all(pupil_padded_of(model, d) is not d.interval for d in padded)
+
+
+def test_the_pupils_time_may_not_reach_into_a_neighbouring_day() -> None:
+    """Both edges of the domain, read off the proto.
+
+    Day d is addressed as [d*spd, (d+1)*spd), so an unclipped first lesson would
+    have its changing room in YESTERDAY's last slots and an unclipped last one
+    its shower in tomorrow's first — collisions with lessons that are not on the
+    same day at all. The frame here is the whole configured day, so the clip is
+    the only thing holding either edge.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2"))
+    request = OptimizeScheduleRequest.model_validate(
+        _pupil_buffer_payload(10, 20, end="18:00:00"),
+    )
+    model = cp_model.CpModel()
+
+    decisions = solver._create_lesson_decisions(
+        model, request.requirements, len(request.rooms), request.frame_times, request.rasts,
+        step=1,
+    )
+
+    grid = solver._grid
+    assert (decisions[0].lead, decisions[0].trail) == (2, 4)
+    domain = cp_model.Domain.from_flat_intervals(list(decisions[0].start.proto.domain))
+    # Ten minutes of changing is two slots, so the day's first legal start is
+    # 08:10 and 08:05 is one the school cannot be offered.
+    assert domain.contains(2)
+    assert not domain.contains(1)
+    # And twenty minutes of shower is four: the last start is the one whose
+    # trailing margin ends exactly on the day's last slot.
+    assert domain.contains(grid.slots_per_day - 12 - 4)
+    assert not domain.contains(grid.slots_per_day - 12 - 3)
+
+
+def test_the_corridor_and_the_pupils_buffer_compose() -> None:
+    """A school with both has asked for both, and gets their sum.
+
+    After idrotten a class showers, changes, AND THEN walks to its next room, so
+    a ten-minute corridor beside twenty minutes of shower is thirty minutes
+    before the class's next lesson may begin — forty, with ten to change into
+    the next one. A max would have spent the corridor twice and delivered the
+    class still walking.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings(SCHEDULE_DAYS="1,2"))
+    request = OptimizeScheduleRequest.model_validate(
+        _pupil_buffer_payload(10, 20, changeover=10),
+    )
+
+    response = solver.solve(request)
+
+    assert response.status in {"OPTIMAL", "FEASIBLE"}
+    by_day: dict[int, list[tuple[int, int]]] = {}
+    for lesson in response.lessons:
+        start = int(lesson.start_time[:2]) * 60 + int(lesson.start_time[3:5])
+        end = int(lesson.end_time[:2]) * 60 + int(lesson.end_time[3:5])
+        by_day.setdefault(lesson.day_of_week, []).append((start, end))
+    for day, slots in by_day.items():
+        slots.sort()
+        for (_, first_end), (second_start, _) in zip(slots, slots[1:]):
+            assert second_start - first_end >= 40, (
+                f"day {day}: {second_start - first_end} minutes for a shower, a change "
+                "and a corridor"
+            )
+    # THE FRAME BOUNDS THE TEACHING AND THE DAY'S EDGE BOUNDS THE BODIES, which
+    # is what the two domains below say. Under this 08:00-12:00 frame the last
+    # start is the frame's close less the lesson and nothing else: the shower and
+    # the corridor are allowed to run past the hours the stage may be TAUGHT in,
+    # exactly as the corridor always has been.
+    model = cp_model.CpModel()
+    decisions = solver._create_lesson_decisions(
+        model, request.requirements, len(request.rooms), request.frame_times, request.rasts,
+        step=1,
+    )
+    domain = cp_model.Domain.from_flat_intervals(list(decisions[0].start.proto.domain))
+    close = (12 - 8) * 60 // solver._grid.slot_minutes
+    assert domain.contains(close - 12)
+    assert not domain.contains(close - 12 + 1)
+
+    # Against the day's own edge both margins bind, and they bind TOGETHER: the
+    # last start is the one whose shower and corridor end on the day's last slot.
+    wide = OptimizeScheduleRequest.model_validate(
+        _pupil_buffer_payload(10, 20, changeover=10, end="18:00:00"),
+    )
+    model = cp_model.CpModel()
+    decisions = solver._create_lesson_decisions(
+        model, wide.requirements, len(wide.rooms), wide.frame_times, wide.rasts, step=1,
+    )
+    domain = cp_model.Domain.from_flat_intervals(list(decisions[0].start.proto.domain))
+    spd = solver._grid.slots_per_day
+    assert domain.contains(spd - 12 - 4 - 2)
+    assert not domain.contains(spd - 12 - 4 - 1)
 
 
 def _teaching_group_school(

@@ -83,8 +83,16 @@ class LessonDecision:
     room_index: cp_model.IntVar
     #: Slots of corridor this lesson's stage asks for after it. Zero by default.
     changeover: int = 0
+    #: Slots the PUPILS are occupied before the lesson and after it — changing,
+    #: showering, changing again — rounded up onto the grid from the
+    #: requirement's minutesBefore and minutesAfter. Zero for every lesson
+    #: nobody has written a number for. See pupil_padded_of for who sees them.
+    lead: int = 0
+    trail: int = 0
     #: The interval plus that margin, built once and shared. See padded_of.
     _padded: cp_model.IntervalVar | None = None
+    #: The same lesson as the PUPILS are occupied by it. See pupil_padded_of.
+    _pupils: cp_model.IntervalVar | None = None
 
 
 def padded_of(model: cp_model.CpModel, decision: LessonDecision) -> cp_model.IntervalVar:
@@ -100,9 +108,21 @@ def padded_of(model: cp_model.CpModel, decision: LessonDecision) -> cp_model.Int
     which is why _estimate_model_size, which predicts variable counts, needs no
     new term for it.
 
-    Padded at the END only. Padding both sides turns a ten-minute rule into a
-    silent twenty, and padding the front makes 08:00 an illegal start for the
-    first lesson of the day.
+    THE CORRIDOR IS PADDED AT ONE END, THE PUPILS' CHANGING AT BOTH, AND THE
+    DIFFERENCE IS NOT A STYLE. A corridor is ONE body walking between two
+    places: the walk happens once between a pair of lessons, so each lesson
+    carries it once, and a lesson carrying it at both ends would turn a
+    ten-minute rule into a silent twenty and make 08:00 an illegal start for
+    the first lesson of the day. Changing and showering are not a distance
+    between two lessons but TIME THE PUPILS ARE UNAVAILABLE, and they are
+    unavailable before the lesson as well as after it — so that margin is
+    two-sided, and it lives in pupil_padded_of rather than here.
+
+    THIS interval is what the TEACHER's family sees, and it is exactly what it
+    saw before the pupils had a margin at all. The teacher is not the one
+    changing: the user's decision is that idrottsläraren may take the next
+    class the minute the lesson ends, and the room the pupils have left may be
+    taken by anybody. Neither of them reads pupil_padded_of.
 
     Memoised on the decision: a lesson appears in the teacher family, its own
     group's family, one family per group that shares its pupils and the lunch
@@ -119,6 +139,55 @@ def padded_of(model: cp_model.CpModel, decision: LessonDecision) -> cp_model.Int
             f"padded_{decision.lesson.key()}",
         )
     return decision._padded
+
+
+def pupil_padded_of(
+    model: cp_model.CpModel, decision: LessonDecision,
+) -> cp_model.IntervalVar:
+    """The interval a family of PUPILS should see: `[start - lead, end + trail + changeover)`.
+
+    The lesson, the minutes before it the class spends changing, and the
+    minutes after it they spend showering and changing back. Every family whose
+    members are the children reads this one — the class's own no-overlap, each
+    family for a group that shares its pupils, and the lunch — while the
+    teacher's family and the room pool keep reading padded_of. That split IS
+    the feature: the pupils are busy, nobody else is.
+
+    THE TRAILING MARGIN IS ADDITIVE, NOT A MAX. After idrotten a class showers,
+    changes, and THEN walks to the next room, so a school that declares both a
+    corridor and twenty minutes of shower has asked for both and gets their
+    sum. A max would quietly spend the corridor twice — once as a corridor and
+    once as part of the shower — and deliver a class to its next lesson still
+    walking. The leading side takes no corridor of its own for the reason
+    padded_of gives: the walk between two lessons is carried once, by the
+    lesson before.
+
+    NO NEW VARIABLES, on the same terms as padded_of: the start is `start`
+    shifted by a constant and the end is `end` shifted by a constant, both
+    affine, so this is one more interval proto and not one more IntVar. The
+    start domain is what keeps `start - lead` inside its own day — see
+    _create_lesson_decisions, which raises the lower bound by the lead for
+    exactly that reason.
+
+    Memoised like _padded, and for the same arithmetic: a lesson sits in its
+    own group's family, in one family per sharing group and in the lunch's, so
+    the interval is built once and handed out.
+
+    ZERO IS THE MODEL AS IT WAS. With no buffers declared this returns
+    padded_of's own answer — the padded interval, or the bare lesson when there
+    is no corridor either — so a school that has written no number gets not one
+    extra proto, and the pupils' families are the sets they have always been.
+    """
+    if decision.lead == 0 and decision.trail == 0:
+        return padded_of(model, decision)
+    if decision._pupils is None:
+        decision._pupils = model.NewIntervalVar(
+            decision.start - decision.lead,
+            decision.duration + decision.lead + decision.trail + decision.changeover,
+            decision.end + decision.trail + decision.changeover,
+            f"pupils_{decision.lesson.key()}",
+        )
+    return decision._pupils
 
 
 def _grade_span_text(low: int | None, high: int | None) -> str:
@@ -1796,6 +1865,18 @@ class SchedulerSolver:
                                                asks; the minutes a rast reserves
                                                cost no variables at all
 
+        NO TERM FOR THE PADDED INTERVALS, and that is a measurement rather than
+        an omission. A lesson can now carry two extra interval protos — the
+        corridor's padded_of and the pupils' pupil_padded_of — and each reuses
+        the lesson's own `start` and `end` through affine expressions, so
+        neither adds an IntVar or a BoolVar. What this function predicts is the
+        VARIABLE count, which is what MAX_MODEL_COMPLEXITY is calibrated in, so
+        the honest update for the pupils' interval was to check the arithmetic
+        and write this paragraph. A future padding that needs a variable of its
+        own — an AddMinEquality against the day's end, say, which is exactly
+        what _create_lesson_decisions rejected in favour of clipping a domain —
+        owes this table a term.
+
         On the 2,000-student benchmark this predicts ~99.6K against a measured
         92,546 — an upper bound within 8%. If a builder's encoding changes,
         change its term here in the same commit; the benchmark check is
@@ -3360,11 +3441,29 @@ class SchedulerSolver:
             # own row and not the two UNAVAILABLE constraints around it. With no
             # frames every day is (0, slots_per_day) and this is the expression
             # it always was. _validate_request has already refused the case
-            # where the windows leave a requirement nowhere to go, so every
-            # interval below is non-empty.
+            # where the WINDOWS leave a requirement nowhere to go, so every
+            # interval below is non-empty — as far as the windows go.
+            #
+            # THE MARGINS BELOW ARE NOT IN THAT REFUSAL, and neither the corridor
+            # nor the pupils' buffer ever has been: a lesson that fits its stage's
+            # window exactly, whose margin then does not, empties this domain and
+            # reaches the caller as CP-SAT's own "var has no domain" — a 500
+            # where a named 4xx belongs. The corridor can only do it where a frame
+            # reaches the day's end; a lead can do it wherever a window is exactly
+            # as wide as the lesson and opens on the day's first slot. It wants a
+            # refusal of its own in _validate_request, with a sentence that names
+            # the margin rather than blaming the frame for minutes it does offer.
+            # Deliberately not smuggled into FRAME_NO_WINDOW_FOR_REQUIREMENT,
+            # whose sentence would then be untrue about the frame.
             span = span_of(requirement)
             windows = day_windows(frames, span, self._grid)
             changeover = changeover_slots(frames, span, self._grid)
+            # The pupils' own margin, rounded UP for the reason a corridor is:
+            # it is a floor on time the class is unavailable, so a value that
+            # misses the grid takes the next whole slot rather than lose the
+            # remainder. Seven minutes on a five-minute grid is two slots.
+            lead = -(-requirement.minutes_before // self._grid.slot_minutes)
+            trail = -(-requirement.minutes_after // self._grid.slot_minutes)
             # THE DAY'S EDGE IS CLIPPED IN THE DOMAIN, not with a constraint.
             #
             # A padded interval runs `changeover` slots past the lesson, and the
@@ -3372,36 +3471,50 @@ class SchedulerSolver:
             # last lesson would pad into tomorrow morning's slots and collide
             # with a lesson that is not on the same day at all.
             #
+            # BOTH EDGES NOW, because the pupils' interval reaches backwards as
+            # well: it starts `lead` slots before the lesson, and a first lesson
+            # left unclipped would have its changing room in YESTERDAY's last
+            # slots — the same collision in the other direction, and an interval
+            # with a start below the horizon's floor on day 0 besides.
+            #
             # Two other fixes were considered and both are worse. A guard band
             # in TimeGrid (a `day_stride` wider than `slots_per_day`) re-encodes
             # every absolute slot for every school, so the next regeneration
             # moves lessons across the whole estate — and two places decode with
             # `// slots_per_day` that a rename would miss silently. An
             # AddMinEquality against the day's end costs an IntVar and a
-            # constraint per lesson. Clipping the upper bound costs nothing.
+            # constraint per lesson. Clipping the bounds costs nothing.
+            #
+            # THE FRAME BOUNDS THE TEACHING, THE DAY'S EDGE BOUNDS THE BODIES,
+            # which is why the two compose as a min and a max rather than by
+            # subtraction. A frame says which hours a stage may be TAUGHT in: a
+            # lesson may end exactly at its close and still let the corridor and
+            # the shower run past it, exactly as the corridor has always been
+            # allowed to. What may not happen is either margin crossing into a
+            # neighbouring day, and that is the day's own edge talking. So the
+            # close is clipped with the whole trailing margin and the open is
+            # raised only where the lead would otherwise reach below the day.
             #
             # The price is that the last lesson of a day may not END later than
-            # the day's close minus the margin, which binds only for a school
+            # the day's close minus those margins, which binds only for a school
             # teaching to 18:00 with no ramtid. Wherever a frame closes earlier,
             # `close_slot - duration` is the tighter bound and nothing is lost.
-            start_domain = cp_model.Domain.FromIntervals(
-                [
-                    [
-                        day * slots_per_day + open_slot,
-                        day * slots_per_day
-                        + min(close_slot, slots_per_day - changeover)
-                        - duration,
-                    ]
-                    for day, (open_slot, close_slot) in sorted(windows.items())
-                    # A day too narrow for this lesson drops out here rather
-                    # than reaching Domain.FromIntervals as a reversed pair.
-                    # That happens to be safe today — FromIntervals discards
-                    # such a pair silently — but it is undocumented behaviour
-                    # to hang a whole feature's correctness on, and "silently
-                    # discards" is one release away from "raises".
-                    if min(close_slot, slots_per_day - changeover) - open_slot >= duration
-                ],
-            )
+            day_ranges: list[list[int]] = []
+            for day, (open_slot, close_slot) in sorted(windows.items()):
+                first = max(open_slot, lead)
+                last = min(close_slot, slots_per_day - changeover - trail) - duration
+                # A day too narrow for this lesson drops out here rather than
+                # reaching Domain.FromIntervals as a reversed pair. That happens
+                # to be safe today — FromIntervals discards such a pair silently
+                # — but it is undocumented behaviour to hang a whole feature's
+                # correctness on, and "silently discards" is one release away
+                # from "raises".
+                if last < first:
+                    continue
+                day_ranges.append(
+                    [day * slots_per_day + first, day * slots_per_day + last],
+                )
+            start_domain = cp_model.Domain.FromIntervals(day_ranges)
 
             # RASTER CUT HOLES IN THE SAME DOMAIN, for the reason the paragraph
             # above gives for frames: the minutes a stage is free never become
@@ -3444,6 +3557,8 @@ class SchedulerSolver:
                         interval=interval,
                         room_index=room_index,
                         changeover=changeover,
+                        lead=lead,
+                        trail=trail,
                     ),
                 )
 
@@ -3501,6 +3616,15 @@ class SchedulerSolver:
         model: cp_model.CpModel,
         decisions: list[LessonDecision],
     ) -> None:
+        """One teacher is one body: no overlapping lessons, corridor included.
+
+        padded_of, NOT pupil_padded_of, and the line is the user's decision
+        rather than an oversight. The minutes around an idrottslektion are the
+        PUPILS' — changing and showering — and the teacher spends none of them
+        undressed. Reading the pupils' interval here would forbid the very thing
+        a school does on purpose: idrottsläraren taking the next class in the
+        hall while the last one is still in the changing room.
+        """
         grouped: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
             requirement = decision.lesson.requirement
@@ -3537,6 +3661,11 @@ class SchedulerSolver:
         enforces, and taking it literally would put every one of A's intervals
         into a single NoOverlap TWICE — asking each interval not to overlap
         itself, which turns the whole request INFEASIBLE.
+
+        BOTH LAYERS ARE FAMILIES OF CHILDREN, so both read pupil_padded_of: a
+        class changing for idrotten is as unavailable as a class being taught,
+        and the pupils Ma71 shares with 7A are the ones in the changing room.
+        The teacher's family next door reads padded_of instead — see there.
         """
         grouped: dict[UUID, list[LessonDecision]] = {}
         for decision in decisions:
@@ -3546,7 +3675,7 @@ class SchedulerSolver:
         for group_decisions in grouped.values():
             if len(group_decisions) > 1:
                 model.AddNoOverlap(
-                    [padded_of(model, decision) for decision in group_decisions],
+                    [pupil_padded_of(model, decision) for decision in group_decisions],
                 )
 
         for first_id, second_id in group_conflicts or []:
@@ -3554,7 +3683,7 @@ class SchedulerSolver:
                 continue
             combined = grouped.get(first_id, []) + grouped.get(second_id, [])
             if len(combined) > 1:
-                model.AddNoOverlap([padded_of(model, decision) for decision in combined])
+                model.AddNoOverlap([pupil_padded_of(model, decision) for decision in combined])
 
     def _add_room_allocation(
         self,
@@ -5087,8 +5216,14 @@ class SchedulerSolver:
                         )
                         headcounts.append(headcount)
                 if lunch_intervals:
+                    # THE PUPILS' OWN INTERVAL, like every other family whose
+                    # members are the children: a class still in the changing
+                    # room has not got its break, and a meal that starts while
+                    # they are showering is a meal the model records and nobody
+                    # eats. Twenty minutes of shower is worth more of a lunch
+                    # break than a corridor ever was.
                     model.AddNoOverlap(
-                        [padded_of(model, decision) for decision in lessons]
+                        [pupil_padded_of(model, decision) for decision in lessons]
                         + lunch_intervals,
                     )
                     # The break also has to be free of the lessons this group's
@@ -5111,7 +5246,10 @@ class SchedulerSolver:
                     # NoOverlap over there — that one carries no lunch.
                     for other_id in sharing:
                         model.AddNoOverlap(
-                            [padded_of(model, decision) for decision in by_group[other_id]]
+                            [
+                                pupil_padded_of(model, decision)
+                                for decision in by_group[other_id]
+                            ]
                             + lunch_intervals,
                         )
 
