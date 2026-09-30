@@ -98,26 +98,6 @@ export interface Placement {
   minutesAfter?: number;
 }
 
-/** Minute-based view of a lesson placement used for validation. */
-export interface Placement {
-  id: string | null;
-  dayOfWeek: number;
-  startMinutes: number;
-  endMinutes: number;
-  teacherId: string | null;
-  coTeacherId?: string | null;
-  roomId: string | null;
-  studentGroupId: string;
-  /** Additional classes attending. */
-  extraGroupIds?: string[];
-  /** Individual participating students. */
-  studentIds?: string[];
-  /** Which weeks the lesson runs; absent means every week. */
-  recurrence?: LessonRecurrence;
-  startDate?: string | null;
-  endDate?: string | null;
-}
-
 /**
  * Whether two placements can ever fall in the same week.
  *
