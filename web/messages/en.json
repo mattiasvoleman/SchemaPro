@@ -321,7 +321,8 @@
     "teachesLabel": "Teaches",
     "teachesNothing": "No timplan entry for the active academic year.",
     "asCoTeacher": "co-teacher",
-    "noGroupInfo": "No group membership to show for this role."
+    "noGroupInfo": "No group membership to show for this role.",
+    "workTimeLabel": "Working time"
   },
   "requirements": {
     "title": "Curriculum",
@@ -1075,6 +1076,34 @@
     "deleteTitle": "Delete this break?",
     "deleteBody": "{name} will be removed. The solver may then place lessons in that time on its next run.",
     "bandLabel": "Break"
+  },
+  "teacherWorkTime": {
+    "title": "Working time for {name}",
+    "hardRuleHint": "These are hard requirements: the solver refuses the whole week if it cannot fit them, and names the teacher's row that did not work out.",
+    "lunchMinutes": "Lunch (minutes)",
+    "lunchMinutesHint": "Unbroken minutes of lunch the teacher is owed. Leave empty if no lunch rule applies.",
+    "windowStart": "Earliest",
+    "windowEnd": "Latest",
+    "windowHint": "Lunch must both start and end inside the window. The length and the two times belong together — either all three, or none of them.",
+    "restMinutes": "Daily rest (minutes)",
+    "restMinutesHint": "At least this long between the last lesson of one day and the first of the next.",
+    "restEqualsHours": "{hours} hours",
+    "restEqualsHoursMinutes": "{hours} h {minutes} min",
+    "emptyMeansNoRule": "All four fields empty means no working-time rule applies to this teacher. A suggestion is not stored until you press Save.",
+    "useSuggestion": "Use the suggestion: 30 min between 10:30 and 13:30, and 11 hours of rest",
+    "cleared": "The working-time rule has been removed.",
+    "editFor": "Change working time for {name}",
+    "noRule": "No working-time rule. The solver promises this teacher neither lunch nor rest.",
+    "summaryLunch": "{minutes} min lunch between {start} and {end}",
+    "summaryRestHours": "At least {hours} hours of rest between two days",
+    "summaryRestHoursMinutes": "At least {hours} h {minutes} min of rest between two days",
+    "lunchTrioIncomplete": "The length of lunch and its window belong together. Fill in all three fields, or empty all three.",
+    "lunchMinutesOutOfRange": "Lunch is given in whole minutes, between {min} and {max}.",
+    "lunchMinutesOffGrid": "Lunch must be a whole multiple of {step} minutes — the solver's grid is {step} minutes.",
+    "lunchWindowBackwards": "The end of the window must fall after its start.",
+    "lunchWindowTooNarrow": "The window is {window} minutes wide and does not hold a lunch of {minutes} minutes.",
+    "lunchWindowOffGrid": "The window's times must fall on whole {step}-minute intervals, for example 10:30 or 10:35.",
+    "restOutOfRange": "Daily rest is given in whole minutes, between {min} and {max}."
   },
   "engineMessages": {
     "AVAIL_CONSTRAINT_BLOCKS_LESSONS": "A constraint on {kind, select, TEACHER {a teacher} ROOM {room {resource}} STUDENT_GROUP {class {resource}} other {years {grades}}} {day, select, 0 {on {date}} 1 {on Mondays} 2 {on Tuesdays} 3 {on Wednesdays} 4 {on Thursdays} 5 {on Fridays} 6 {on Saturdays} 7 {on Sundays} other {on day {day}}} {start}-{end} blocks lessons that have to be placed.",

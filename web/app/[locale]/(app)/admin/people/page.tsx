@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {
   ChevronRight,
+  Clock,
   Link2,
   Mail,
   Pencil,
@@ -16,6 +17,10 @@ import {
 } from "lucide-react";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
+import {
+  TeacherWorkTimeDialog,
+  TeacherWorkTimeSummary,
+} from "@/components/schedule/teacher-work-time-dialog";
 import { studentsToCsv, teachersToCsv } from "@/lib/csv";
 import {
   useCrudMutations,
@@ -28,8 +33,9 @@ import {
   useRequirements,
   useSubjects,
   useStudentGuardians,
+  useTeacherWorkRules,
 } from "@/lib/queries";
-import type { Person, StudentGroup, UserRole } from "@/lib/types";
+import type { Person, StudentGroup, TeacherWorkRule, UserRole } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -73,6 +79,21 @@ import {
 const ROLES: UserRole[] = ["STUDENT", "TEACHER", "SCHOOL_ADMIN", "GUARDIAN"];
 const NO_GROUP = "__none__";
 
+/**
+ * Who a working-time rule can belong to.
+ *
+ * STAFF, not TEACHER alone. An undervisande rektor carries SCHOOL_ADMIN in this
+ * schema and the timplan names her as freely as anybody else, so she has a last
+ * lesson for a night to follow and a day for a lunch to sit in — and the
+ * gateway's assertIsStaff admits her for exactly that reason. Offering the rule
+ * to TEACHER only would leave her the one member of staff who cannot be given
+ * one, through the UI, over a rule the API and the database both accept.
+ *
+ * A pupil and a guardian teach nothing, so there is no rule to write and no
+ * button to draw.
+ */
+const MAY_HAVE_WORK_TIME: UserRole[] = ["TEACHER", "SCHOOL_ADMIN"];
+
 interface PersonForm {
   firstName: string;
   lastName: string;
@@ -105,6 +126,7 @@ function PersonDetail({
   homeClass,
   teachingGroups,
   taught,
+  workRule,
   subjectName,
   t,
 }: {
@@ -112,37 +134,56 @@ function PersonDetail({
   homeClass: string;
   teachingGroups: StudentGroup[];
   taught: TaughtGroup[];
+  /** Their stored working time, or undefined when they have none. */
+  workRule: TeacherWorkRule | undefined;
   subjectName: (id: string) => string;
   t: (key: string, values?: Record<string, string | number>) => string;
 }) {
-  if (person.role === "TEACHER") {
+  if (person.role !== "STUDENT") {
     return (
-      <div className="space-y-1.5">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {t("teachesLabel")}
-        </p>
-        {taught.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("teachesNothing")}</p>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {taught.map((entry) => (
-              <Badge
-                key={`${entry.group.id}-${entry.subjectId}`}
-                variant="outline"
-                className="font-normal"
-              >
-                {entry.group.name} · {subjectName(entry.subjectId)}
-                {entry.isCoTeacher ? ` (${t("asCoTeacher")})` : ""}
-              </Badge>
-            ))}
+      <div className="space-y-3">
+        {person.role === "TEACHER" ? (
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t("teachesLabel")}
+            </p>
+            {taught.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t("teachesNothing")}</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {taught.map((entry) => (
+                  <Badge
+                    key={`${entry.group.id}-${entry.subjectId}`}
+                    variant="outline"
+                    className="font-normal"
+                  >
+                    {entry.group.name} · {subjectName(entry.subjectId)}
+                    {entry.isCoTeacher ? ` (${t("asCoTeacher")})` : ""}
+                  </Badge>
+                ))}
+              </div>
+            )}
           </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">{t("noGroupInfo")}</p>
         )}
+        {/*
+          Here rather than in a column of its own, for the reason the raster page
+          gives about its lesson-before flag: an eighth column would be blank on
+          every student and guardian row, and it would cost width the e-post and
+          the invitation state need more. The person's own row is already where
+          this app answers questions that are about one member of staff.
+        */}
+        {MAY_HAVE_WORK_TIME.includes(person.role) ? (
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t("workTimeLabel")}
+            </p>
+            <TeacherWorkTimeSummary rule={workRule} />
+          </div>
+        ) : null}
       </div>
     );
-  }
-
-  if (person.role !== "STUDENT") {
-    return <p className="text-sm text-muted-foreground">{t("noGroupInfo")}</p>;
   }
 
   return (
@@ -175,6 +216,7 @@ function PersonDetail({
 
 export default function PeoplePage() {
   const t = useTranslations("people");
+  const tWorkTime = useTranslations("teacherWorkTime");
   const tCommon = useTranslations("common");
   const tRoles = useTranslations("roles");
   const tCsvImport = useTranslations("csvImport");
@@ -185,6 +227,16 @@ export default function PeoplePage() {
   const { data: years } = useAcademicYears();
   const activeYearId = years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
   const { data: requirements } = useRequirements(activeYearId);
+  /**
+   * The staff's working-time rules, read once for the whole list.
+   *
+   * At most one row per person and no row for most of them, so this is a lookup
+   * by userId rather than an index — see useTeacherWorkRules.
+   */
+  const { data: workRules } = useTeacherWorkRules();
+  const workRuleOf = (teacherId: string) =>
+    workRules?.find((rule) => rule.userId === teacherId);
+  const [workTimeFor, setWorkTimeFor] = useState<Person | null>(null);
   const [guardiansFor, setGuardiansFor] = useState<Person | null>(null);
   const { data: studentGuardians } = useStudentGuardians(guardiansFor?.id ?? null);
   const guardianLinks = useGuardianLinkActions();
@@ -514,6 +566,26 @@ export default function PeoplePage() {
                         <Link2 />
                       </Button>
                     ) : null}
+                    {/*
+                      Only on a member of staff's row, the way the guardian link
+                      is only on a student's: see MAY_HAVE_WORK_TIME for why the
+                      undervisande rektor counts and a pupil does not.
+                    */}
+                    {MAY_HAVE_WORK_TIME.includes(person.role) ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setWorkTimeFor(person)}
+                        aria-label={tWorkTime("editFor", {
+                          name: `${person.firstName} ${person.lastName}`,
+                        })}
+                        title={tWorkTime("editFor", {
+                          name: `${person.firstName} ${person.lastName}`,
+                        })}
+                      >
+                        <Clock />
+                      </Button>
+                    ) : null}
                     <Button
                       variant="ghost"
                       size="icon"
@@ -548,6 +620,7 @@ export default function PeoplePage() {
                           requirements ?? [],
                           groups ?? [],
                         )}
+                        workRule={workRuleOf(person.id)}
                         subjectName={subjectName}
                         t={t}
                       />
@@ -768,6 +841,24 @@ export default function PeoplePage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/*
+        Mounted only while it is open, and KEYED BY THE TEACHER AND THEIR ROW.
+        The dialog fills its draft once, at mount, so that a background refetch
+        of the rules query cannot throw away half-typed input; the key is what
+        makes the other direction work too — a row that arrives after the dialog
+        was opened, or one replaced by a save, changes the key and the form is
+        filled again from what is now stored.
+      */}
+      {workTimeFor ? (
+        <TeacherWorkTimeDialog
+          key={`${workTimeFor.id}:${workRuleOf(workTimeFor.id)?.id ?? "none"}`}
+          open
+          onOpenChange={(open) => !open && setWorkTimeFor(null)}
+          teacher={workTimeFor}
+          rule={workRuleOf(workTimeFor.id)}
+        />
+      ) : null}
 
       <CsvImportDialog
         kinds={["students", "teachers"]}

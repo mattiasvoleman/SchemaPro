@@ -321,7 +321,8 @@
     "teachesLabel": "Undervisar",
     "teachesNothing": "Ingen timplanspost för det aktiva läsåret.",
     "asCoTeacher": "medlärare",
-    "noGroupInfo": "Ingen grupptillhörighet att visa för den här rollen."
+    "noGroupInfo": "Ingen grupptillhörighet att visa för den här rollen.",
+    "workTimeLabel": "Arbetstid"
   },
   "requirements": {
     "title": "Timplan",
@@ -1075,6 +1076,34 @@
     "deleteTitle": "Ta bort rasten?",
     "deleteBody": "{name} tas bort. Motorn får då lägga lektioner i den tiden vid nästa körning.",
     "bandLabel": "Rast"
+  },
+  "teacherWorkTime": {
+    "title": "Arbetstid för {name}",
+    "hardRuleHint": "Det här är hårda krav: motorn vägrar hela veckan om den inte får plats med dem, och säger vilken lärares rad som inte gick ihop.",
+    "lunchMinutes": "Lunch (minuter)",
+    "lunchMinutesHint": "Sammanhängande minuter läraren ska ha till lunch. Lämna tomt om ingen lunchregel gäller.",
+    "windowStart": "Tidigast",
+    "windowEnd": "Senast",
+    "windowHint": "Lunchen måste både börja och sluta inom fönstret. Längden och de två klockslagen hör ihop — antingen alla tre, eller inget av dem.",
+    "restMinutes": "Dygnsvila (minuter)",
+    "restMinutesHint": "Minst så lång tid mellan dagens sista lektion och nästa dags första.",
+    "restEqualsHours": "{hours} timmar",
+    "restEqualsHoursMinutes": "{hours} tim {minutes} min",
+    "emptyMeansNoRule": "Alla fyra fälten tomma betyder att ingen arbetstidsregel gäller för läraren. Ett förslag sparas först när du trycker Spara.",
+    "useSuggestion": "Använd förslaget: 30 min mellan 10:30 och 13:30, och 11 timmars vila",
+    "cleared": "Arbetstidsregeln är borttagen.",
+    "editFor": "Ändra arbetstid för {name}",
+    "noRule": "Ingen arbetstidsregel. Motorn lovar den här läraren varken lunch eller dygnsvila.",
+    "summaryLunch": "{minutes} min lunch mellan {start} och {end}",
+    "summaryRestHours": "Minst {hours} timmars dygnsvila mellan två dagar",
+    "summaryRestHoursMinutes": "Minst {hours} tim {minutes} min dygnsvila mellan två dagar",
+    "lunchTrioIncomplete": "Lunchens längd och dess fönster hör ihop. Fyll i alla tre fälten, eller töm alla tre.",
+    "lunchMinutesOutOfRange": "Lunchen anges i hela minuter, mellan {min} och {max}.",
+    "lunchMinutesOffGrid": "Lunchen måste vara ett jämnt {step}-tal minuter — motorns rutnät är {step} minuter.",
+    "lunchWindowBackwards": "Fönstrets slut måste ligga efter dess början.",
+    "lunchWindowTooNarrow": "Fönstret är {window} minuter brett och rymmer inte {minutes} minuters lunch.",
+    "lunchWindowOffGrid": "Fönstrets tider måste ligga på hela {step}-minutersintervall, till exempel 10:30 eller 10:35.",
+    "restOutOfRange": "Dygnsvilan anges i hela minuter, mellan {min} och {max}."
   },
   "engineMessages": {
     "LUNCH_HALL_CANNOT_FEED_THE_SCHOOL": "Matsalen räcker inte till hela skolan på {day, select, 1 {måndagen} 2 {tisdagen} 3 {onsdagen} 4 {torsdagen} 5 {fredagen} 6 {lördagen} 7 {söndagen} other {dag {day}}}: {students, plural, one {# elev} other {# elever}} som äter {minutes} minuter var behöver {needed} elevminuter, och {seats} platser under {windowStart}–{windowEnd} ger {offered}. Lägg till platser, vidga lunchfönstret, eller korta lunchen.",

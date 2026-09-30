@@ -45,6 +45,10 @@ const people = [
   person("st-1", "Alma", "Berg", "STUDENT", "g-7a"),
   person("st-2", "Nils", "Ek", "STUDENT", "g-7b"),
   person("t-1", "Karin", "Ek", "TEACHER", null, "2026-08-01T10:00:00.000Z"),
+  // Already invited, so the bulk-invitation count below keeps its meaning. She
+  // is here for the undervisande rektor: SCHOOL_ADMIN in this schema, named by
+  // the timplan like anybody else, and therefore owed a working time too.
+  person("a-1", "Rita", "Nilsson", "SCHOOL_ADMIN", null, "2026-08-01T10:00:00.000Z"),
 ];
 
 /** Alma takes Ma71 on top of her home class; Nils takes nothing extra. */
@@ -63,8 +67,19 @@ const requirements = [
   },
 ];
 
+/**
+ * Karin's working time, when a test gives her one. Held outside the factory
+ * because `vi.mock` is hoisted above every `const` in this file.
+ */
+const state = vi.hoisted(() => ({ workRules: [] as unknown[] }));
+
 vi.mock("@/lib/queries", () => ({
   usePeople: () => ({ data: people, isLoading: false }),
+  useTeacherWorkRules: () => ({ data: state.workRules }),
+  useTeacherWorkRuleActions: () => ({
+    save: { mutateAsync: vi.fn(), isPending: false },
+    remove: { mutateAsync: vi.fn(), isPending: false },
+  }),
   useGroups: () => ({ data: groups }),
   useGroupMemberships: () => ({ data: memberships }),
   useAcademicYears: () => ({ data: [{ id: "year-1", name: "2026/2027", isActive: true }] }),
@@ -113,12 +128,13 @@ const searchBox = () => screen.getByRole("textbox", { name: "searchPlaceholder" 
 describe("People page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    state.workRules = [];
   });
 
   it("renders without crashing and lists everybody", () => {
     render(<PeoplePage />);
 
-    expect(rowNames()).toHaveLength(3);
+    expect(rowNames()).toHaveLength(4);
   });
 
   it("searches by name", async () => {
@@ -170,8 +186,14 @@ describe("People page", () => {
     expect(screen.getByText("inviteAll(1)")).toBeInTheDocument();
   });
   describe("clicking a person's name", () => {
+    /*
+     * Anchored. The row's action buttons name the person too — "Ändra arbetstid
+     * för Karin Ek" — so an unanchored pattern matches the expander and the
+     * working-time button both, and every query through this helper fails with a
+     * message about ambiguity rather than about the panel.
+     */
     const nameButton = (name: string) =>
-      screen.getByRole("button", { name: new RegExp(name) });
+      screen.getByRole("button", { name: new RegExp(`^${name}$`) });
 
     it("reveals nothing until the name is clicked", () => {
       render(<PeoplePage />);
@@ -245,6 +267,116 @@ describe("People page", () => {
 
       await user.click(button);
       expect(nameButton("Alma Berg")).toHaveAttribute("aria-expanded", "true");
+    });
+
+    /**
+     * A teacher's working time is administered from their own row, the way a
+     * student's guardians are. What only this page can get wrong is the pairing:
+     * the rule is looked up by userId out of a table that holds a row for almost
+     * nobody, so an off-by-one lookup would show one teacher another's lunch.
+     */
+    describe("a teacher's working time", () => {
+      const workRule = {
+        id: "w-1",
+        userId: "t-1",
+        lunchMinutes: 30,
+        lunchStartTime: "10:30:00",
+        lunchEndTime: "13:30:00",
+        minDailyRestMinutes: 660,
+      };
+
+      it("says plainly when a teacher has none — not four zeroes", async () => {
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+
+        await user.click(nameButton("Karin Ek"));
+
+        expect(screen.getByText("workTimeLabel")).toBeInTheDocument();
+        expect(screen.getByText("noRule")).toBeInTheDocument();
+      });
+
+      it("reads the stored rule back beside what the teacher teaches", async () => {
+        state.workRules = [workRule];
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+
+        await user.click(nameButton("Karin Ek"));
+
+        expect(screen.getByText("summaryLunch(30|10:30|13:30)")).toBeInTheDocument();
+        expect(screen.getByText("summaryRestHours(11)")).toBeInTheDocument();
+      });
+
+      it("is reachable from a teacher's row and from no pupil's", () => {
+        render(<PeoplePage />);
+
+        expect(
+          screen.getByRole("button", { name: "editFor(Karin Ek)" }),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "editFor(Alma Berg)" })).toBeNull();
+      });
+
+      it("is reachable from the undervisande rektor's row too", () => {
+        /*
+         * She carries SCHOOL_ADMIN in this schema and the timplan names her like
+         * anybody else, so she has a last lesson for a night to follow. The
+         * gateway's assertIsStaff admits her; offering the rule to TEACHER only
+         * would leave her the one member of staff the UI cannot give one.
+         */
+        render(<PeoplePage />);
+
+        expect(
+          screen.getByRole("button", { name: "editFor(Rita Nilsson)" }),
+        ).toBeInTheDocument();
+      });
+
+      it("shows the rektor's rule without claiming she has a timplan", async () => {
+        state.workRules = [{ ...workRule, id: "w-2", userId: "a-1" }];
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+
+        await user.click(nameButton("Rita Nilsson"));
+
+        expect(screen.getByText("workTimeLabel")).toBeInTheDocument();
+        expect(screen.getByText("summaryRestHours(11)")).toBeInTheDocument();
+        // "Undervisar" stays a teacher's heading: taughtGroupsOf reads the
+        // timplan by teacherId and an admin row there is the exception, not the
+        // rule, so the panel does not promise a list it cannot fill.
+        expect(screen.queryByText("teachesLabel")).toBeNull();
+      });
+
+      it("offers no rule to a guardian or a pupil", async () => {
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+
+        await user.click(nameButton("Alma Berg"));
+
+        expect(screen.queryByText("workTimeLabel")).toBeNull();
+      });
+
+      it("opens the form filled from that teacher's own row", async () => {
+        state.workRules = [workRule];
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+
+        await user.click(screen.getByRole("button", { name: "editFor(Karin Ek)" }));
+
+        expect(screen.getByText("title(Karin Ek)")).toBeInTheDocument();
+        expect(screen.getByLabelText("lunchMinutes")).toHaveValue(30);
+        expect(screen.getByLabelText("windowStart")).toHaveValue("10:30");
+      });
+
+      it("opens empty for a teacher the table says nothing about", async () => {
+        // The row that exists belongs to somebody else; a lookup that ignored
+        // userId would hand Karin their lunch.
+        state.workRules = [{ ...workRule, id: "w-9", userId: "t-other" }];
+        const user = userEvent.setup();
+        render(<PeoplePage />);
+
+        await user.click(screen.getByRole("button", { name: "editFor(Karin Ek)" }));
+
+        expect(screen.getByLabelText("lunchMinutes")).toHaveValue(null);
+        expect(screen.getByText("emptyMeansNoRule")).toBeInTheDocument();
+      });
     });
   });
 });
