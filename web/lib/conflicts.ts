@@ -132,9 +132,16 @@ export function weeksCanOverlap(a: Placement, b: Placement): boolean {
  * several classes into ONE placement carrying the rest in extraGroupIds. A
  * second copy of this line in that file read only the first of them, and a
  * frame closing the morning for the second class was silently not applied.
+ *
+ * Takes the two fields rather than a whole Placement, because pupilBufferOf
+ * asks the same question of a MasterLesson — which is not one, and would
+ * otherwise have needed the third copy of this line.
  */
-export function groupsOf(placement: Placement): string[] {
-  return [placement.studentGroupId, ...(placement.extraGroupIds ?? [])];
+export function groupsOf(lesson: {
+  studentGroupId: string;
+  extraGroupIds?: string[];
+}): string[] {
+  return [lesson.studentGroupId, ...(lesson.extraGroupIds ?? [])];
 }
 
 /**
@@ -160,6 +167,10 @@ export function teacherIdsOf(placement: Placement): string[] {
  * it does carry is the pair a requirement is unique on within a läsår — group
  * and subject — which is the same key the API's own findConflicts maps buffers
  * with, and the same key admin/requirements indexes its matrix on.
+ *
+ * A lesson may reach SEVERAL rows, one per class attending it, and pupilBufferOf
+ * takes the widest of them; the map is keyed per class because the timplan is
+ * written per class, and it is the lesson that gathers them.
  *
  * Only the rows carrying a number go in. The overwhelmingly common map is
  * therefore empty, every lookup misses, and nothing about the clash check
@@ -187,19 +198,57 @@ export function buildPupilBufferMap(
 }
 
 /**
- * The buffer a lesson inherits, read off its PRIMARY class's requirement.
+ * The buffer a lesson inherits: the WIDEST minutesBefore and the widest
+ * minutesAfter among the requirements of the classes attending it, for this
+ * subject.
  *
- * One answer per lesson rather than one per class on it, which is the reading
- * the API argues at the same lookup: an extra class joining the same idrott
- * changes in the same omklädningsrum on the same minutes, so the lesson has one
- * answer — and taking the widest of several requirements would let a class that
- * merely joins lengthen the occupancy for everybody, which no row says.
+ * One answer per lesson rather than one per class on it — the lesson has a
+ * single pupil window, in the API's data model as in this one — but read off
+ * every attending group and not only the primary one. The pupils of a visiting
+ * class change and shower exactly as the host class does, and the lesson holds
+ * all of them: taking the host's row alone would have let a guest class join an
+ * idrott and be expected in its next lesson while it was still in the
+ * omklädningsrummet.
+ *
+ * ERRING TOWARDS TOO LONG IS THE RIGHT DIRECTION. The two mistakes are not each
+ * other's mirror. Blocking too long refuses a placement that would have worked,
+ * and an admin sees why and can lower the number; blocking too little puts a
+ * class in a lesson while half of it is still in the shower, and nothing says a
+ * word.
+ *
+ * THE COST, so it is on the record: a guest class with a longer rule lengthens
+ * the block for the host class as well. The host's own pupils are then held for
+ * minutes no row of theirs asks for, and a host class that never invites
+ * anybody is unaffected. Per-class windows on one lesson would be the
+ * alternative, and that is a different model than the one the API, the solver
+ * and this file share — one lesson, one pupil window.
+ *
+ * The gateway reads the same widest (master-lessons.service.ts, findConflicts).
+ * The two must agree: if this one is the narrower, the grid offers a slot the
+ * API then refuses; if it is the wider, the editor refuses what the API accepts.
  */
 export function pupilBufferOf(
   buffers: PupilBufferMap | undefined,
-  lesson: { studentGroupId: string; subjectId: string },
+  lesson: { studentGroupId: string; extraGroupIds?: string[]; subjectId: string },
 ): PupilBuffer | undefined {
-  return buffers?.get(`${lesson.studentGroupId}:${lesson.subjectId}`);
+  if (!buffers) return undefined;
+
+  let widest: PupilBuffer | undefined;
+  for (const groupId of groupsOf(lesson)) {
+    const buffer = buffers.get(`${groupId}:${lesson.subjectId}`);
+    if (buffer === undefined) continue;
+    // Undefined until some attending class has a row, which keeps "no timplan
+    // reaches this lesson" distinct from "0 minutes on both sides": absent is
+    // what lets toPlacement produce the placement it always produced.
+    widest =
+      widest === undefined
+        ? buffer
+        : {
+            minutesBefore: Math.max(widest.minutesBefore, buffer.minutesBefore),
+            minutesAfter: Math.max(widest.minutesAfter, buffer.minutesAfter),
+          };
+  }
+  return widest;
 }
 
 export function toPlacement(lesson: MasterLesson, buffers?: PupilBufferMap): Placement {
