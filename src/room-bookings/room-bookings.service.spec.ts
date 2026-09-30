@@ -86,18 +86,26 @@ describe('RoomBookingsService', () => {
     );
   };
 
+  /** A known-request error the way Prisma 7's client builds one. */
+  const knownRequestError = (code: string, message: string) =>
+    new Prisma.PrismaClientKnownRequestError(message, {
+      code,
+      clientVersion: Prisma.prismaVersion.client,
+    });
+
   /**
    * What PostgreSQL sends back when the exclusion constraint refuses a second
-   * active booking of the room, as Prisma re-wraps it: no error code of its
-   * own, the SQLSTATE and the constraint name buried in the message.
+   * active booking of the room, as the pg driver adapter and Prisma 7 re-wrap
+   * it: P2039, the catch-all "Database error", with the SQLSTATE and the
+   * constraint name inside the message. The text is how the message of a real
+   * double booking ends in scripts/test/prisma-adapter-probe.ts; Prisma puts
+   * the failing call and its source frame in front of it.
    */
   const roomHeldOnce = () =>
-    new Prisma.PrismaClientUnknownRequestError(
-      'Error occurred during query execution:\nConnectorError(ConnectorError ' +
-        '{ kind: QueryError(PostgresError { code: "23P01", message: ' +
-        '"conflicting key value violates exclusion constraint ' +
-        '\\"RoomBookings_room_is_held_once\\"" }) })',
-      { clientVersion: '0.0.0' },
+    knownRequestError(
+      'P2039',
+      'Database error. Code: `23P01`. Message: `conflicting key value violates ' +
+        'exclusion constraint "RoomBookings_room_is_held_once"`',
     );
 
   describe('create', () => {
@@ -276,20 +284,46 @@ describe('RoomBookingsService', () => {
       );
     });
 
-    it('does not read every unknown-request error as the room being taken', async () => {
-      // Prisma wraps any SQLSTATE it has no code for the same way, a deadlock
-      // included. Answering that with "already booked" would send a teacher to
-      // look for another time for a room that is free.
+    it('does not read a deadlock as the room being taken', async () => {
+      // The adapter reports a deadlock or a write conflict as P2034. Answering
+      // that with "already booked" would send a teacher to look for another
+      // time for a room that is free.
       arrangeFreeRoom();
-      const deadlock = new Prisma.PrismaClientUnknownRequestError(
-        'Error occurred during query execution:\nConnectorError(ConnectorError ' +
-          '{ kind: QueryError(PostgresError { code: "40P01", message: ' +
-          '"deadlock detected" }) })',
-        { clientVersion: '0.0.0' },
+      const deadlock = knownRequestError(
+        'P2034',
+        'Transaction failed due to a write conflict or a deadlock. Please retry your transaction',
       );
       tx.roomBooking.create.mockRejectedValue(deadlock);
 
       await expect(service.create(dto() as any, testUser())).rejects.toBe(deadlock);
+    });
+
+    it('does not read every P2039 as the room being taken', async () => {
+      // P2039 is Prisma's code for any SQLSTATE it has no code of its own for,
+      // a CHECK violation included, so the constraint's name is what decides.
+      arrangeFreeRoom();
+      const checkViolation = knownRequestError(
+        'P2039',
+        'Database error. Code: `23514`. Message: `new row for relation ' +
+          '"RoomBookings" violates check constraint "RoomBookings_range_is_ordered"`',
+      );
+      tx.roomBooking.create.mockRejectedValue(checkViolation);
+
+      await expect(service.create(dto() as any, testUser())).rejects.toBe(checkViolation);
+    });
+
+    it('does not read another error code that mentions the constraint as the room being taken', async () => {
+      // A raw query failing on the same constraint arrives as P2010. create()
+      // runs no raw write, so a P2010 naming it here came from somewhere else.
+      arrangeFreeRoom();
+      const rawFailure = knownRequestError(
+        'P2010',
+        'Raw query failed. Code: `23P01`. Message: `conflicting key value violates ' +
+          'exclusion constraint "RoomBookings_room_is_held_once"`',
+      );
+      tx.roomBooking.create.mockRejectedValue(rawFailure);
+
+      await expect(service.create(dto() as any, testUser())).rejects.toBe(rawFailure);
     });
 
     it('uses a half-open overlap window so back-to-back slots do not clash', async () => {

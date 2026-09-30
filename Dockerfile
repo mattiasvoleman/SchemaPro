@@ -20,13 +20,17 @@
 # =============================================================================
 FROM node:22-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS builder
 
-# OpenSSL is required by the Prisma query engine.
+# OpenSSL is required by Prisma's schema engine, which `prisma migrate deploy`
+# runs (the compose `migrate` service uses this image). Prisma 7 has no Rust
+# query engine any more; queries go through @prisma/adapter-pg.
 RUN apt-get update && apt-get install -y --no-install-recommends openssl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-COPY package.json package-lock.json ./
+# prisma.config.ts names the schema and, for migrate, the DIRECT_URL datasource.
+# `prisma generate` needs no database variable to read it.
+COPY package.json package-lock.json prisma.config.ts ./
 COPY prisma ./prisma
 RUN npm ci --no-audit --no-fund \
     && npx prisma generate
@@ -56,6 +60,9 @@ WORKDIR /app
 COPY --from=builder /build/package.json ./package.json
 COPY --from=builder /build/node_modules ./node_modules
 COPY --from=builder /build/prisma ./prisma
+# The compose `migrate` service runs `prisma migrate deploy` from this image,
+# and without the config the CLI has no datasource to migrate.
+COPY --from=builder /build/prisma.config.ts ./prisma.config.ts
 COPY --from=builder /build/dist ./dist
 
 USER appuser

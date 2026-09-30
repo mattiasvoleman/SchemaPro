@@ -214,20 +214,24 @@ Supabase can do it from the browser.
 
 ```bash
 npm ci
-npm run migrate:deploy
+DIRECT_URL="postgresql://postgres:<DB_PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres?sslmode=require&uselibpqcompat=true" npm run migrate:deploy
 ```
 
-with the database connection string set to the **administrator** account (this
-is the one time the admin account is correct — creating tables requires it).
+with `DIRECT_URL` set to the **administrator** account's connection string,
+shown below (this is the one time the admin account is correct — creating
+tables requires it). It has to be given on the command like that: the
+migration tool reads nothing from a `.env` file, and never uses
+`DATABASE_URL`.
 
 2. If you have to do it yourself, the connection string is:
 
 ```
-postgresql://postgres:<DB_PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres
+postgresql://postgres:<DB_PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres?sslmode=require&uselibpqcompat=true
 ```
 
 where `<DB_PASSWORD>` is from Step 2 and `<PROJECT_REF>` is the `abcdefgh`
-part of your Supabase URL.
+part of your Supabase URL. Keep the `?sslmode=require&uselibpqcompat=true` at
+the end: it is what encrypts the connection (Step 6b explains).
 
 **Check it worked**: in Supabase, go to **Table Editor**. You should see a list
 of tables including `Schools`, `Users`, `Rooms`, `CalendarLessons`. If the list
@@ -319,7 +323,6 @@ log looks *fine* is the port problem described above, not a crash.
 | `NODE_ENV` | `production` |
 | `PORT` | `4000` |
 | `DATABASE_URL` | see the box below |
-| `DIRECT_URL` | the same value as `DATABASE_URL` |
 | `JWT_SECRET` | your `JWT_SECRET` from Step 2 |
 | `JWT_ISSUER` | **must be exact** — `<SUPABASE_URL>/auth/v1`, e.g. `https://abcdefgh.supabase.co/auth/v1`. The API downloads Supabase's public signing keys from `<JWT_ISSUER>/.well-known/jwks.json`, so a typo here makes every login fail with 401 |
 | `JWT_AUDIENCE` | `authenticated` |
@@ -341,7 +344,7 @@ log looks *fine* is the port problem described above, not a crash.
 The database connection string is:
 
 ```
-postgresql://app_authenticated.<PROJECT_REF>:<APP_PASSWORD>@aws-0-<REGION>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1
+postgresql://app_authenticated.<PROJECT_REF>:<APP_PASSWORD>@aws-0-<REGION>.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&sslmode=require&uselibpqcompat=true
 ```
 
 Replace `<PROJECT_REF>` (the `abcdefgh` part of your Supabase URL),
@@ -350,9 +353,19 @@ shows the exact string under **Settings → Database → Connection pooling** �
 copy it from there and swap in the `app_authenticated` username and password
 rather than typing it by hand.
 
+> Keep `&sslmode=require&uselibpqcompat=true` at the end, even if the string
+> you copy from Supabase does not have it. It is what encrypts the
+> connection between Railway and the database. Without it the API still
+> works, but sends everything unencrypted, and nothing warns you.
+> `docs/DEPLOYMENT.md` §3 explains the other options.
+
 > Notice this uses `app_authenticated`, not `postgres`. That is Step 4 doing
 > its job. If you find yourself pasting `postgres:` here, stop and re-read
 > Step 4.
+
+> There is no `DIRECT_URL` in Railway. That name is for the administrator
+> connection in Step 5, typed on the command that runs the migration, and the
+> API never reads it.
 
 3. Under **Settings → Networking**, click **Generate Domain**. Save it as
    `API_URL`.
@@ -500,8 +513,9 @@ If step 3 fails, the solver is the thing to look at — check
 | Login works, then "No active user profile is linked to this account" | The email or UUID in Step 9 does not match the auth user exactly. |
 | Login works, but every save returns a bare 401 | `JWT_ISSUER` is missing or misspelled, so the API cannot fetch Supabase's signing keys. It must be `<SUPABASE_URL>/auth/v1`, with no trailing slash. |
 | Web app loads but nothing saves; console shows CORS errors | `CORS_ORIGINS` on the API is not exactly your `WEB_URL`. |
-| API refuses to start: *"the database role ... has the BYPASSRLS attribute"* | `DATABASE_URL` is using the `postgres` owner instead of `app_authenticated`, which would switch off every privacy rule. Fix the role in `DATABASE_URL`; leave `DIRECT_URL` as the owner. |
+| API refuses to start: *"the database role ... has the BYPASSRLS attribute"* | `DATABASE_URL` is using the `postgres` owner instead of `app_authenticated`, which would switch off every privacy rule. Fix the role in `DATABASE_URL`. The owner belongs only in the `DIRECT_URL` typed for a migration (Step 5), never in Railway. |
 | `<API_URL>/health` works, `/health/ready` does not | `DATABASE_URL` is wrong, or the `app_authenticated` password does not match Step 4. |
+| API log says *"unable to verify the first certificate"* | `DATABASE_URL` ends in `sslmode=require` without `&uselibpqcompat=true`. On its own, `sslmode=require` makes the API check the database's certificate, which fails when it does not trust whoever issued it. Add the missing part (Step 6b). |
 | Solver keeps restarting | `API_KEY` is shorter than 32 characters. |
 | "Generate" fails but everything else works | `AI_ENGINE_URL` or `AI_ENGINE_API_KEY` on the API does not match the solver. |
 | "Generate" fails with **"AI engine unavailable"** specifically | `AI_ENGINE_URL` is not a usable URL — almost always a missing `https://`, or quotes left around the value. The solver itself is fine; do not go looking at it. Since the check was added the API refuses to start on this instead, naming `AI_ENGINE_URL`. |
@@ -523,7 +537,9 @@ always says what is wrong in plain English near the bottom.
   This is the main reason to pay for Pro on a real deployment.
 - **Updating**: when the code changes on GitHub, Railway and Vercel redeploy on
   their own. If a change touches the database, someone technical needs to run
-  `npm run migrate:deploy` again.
+  the migration again, the same way as in Step 5:
+  `DIRECT_URL="<administrator connection string>" npm run migrate:deploy`.
+  A `.env` file is not read.
 - **Adding schools**: repeat Step 9 with a different name and slug. Each school
   is walled off from the others by the rules you set up in Steps 4 and 5.
 - **Secrets**: if anyone who had access to the values in your notes leaves,

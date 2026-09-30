@@ -7,6 +7,19 @@ import {
 import { PrismaClient } from '@prisma/client';
 import type { PrismaPromise } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { createPgAdapter } from './pool-config';
+
+/**
+ * The batch helpers' transaction options, stated rather than inherited.
+ *
+ * Prisma 5 gave a batch no wait limit and no timeout of its own: it queued on
+ * the pool's 10 s `pool_timeout` and then ran for as long as its statements
+ * took. Prisma 7 applies its interactive defaults to a batch as well — 2 s to
+ * get a connection, 5 s to finish — and withVerifiedSubject is a batch on
+ * every authenticated request, so a busy pool would start refusing logins
+ * after two seconds. 10 s is the old wait; 15 s is withRls's own timeout.
+ */
+const BATCH_TRANSACTION_OPTIONS = { maxWait: 10_000, timeout: 15_000 } as const;
 
 /** The connecting role's RLS-relevant privileges, read from `pg_roles`. */
 interface ConnectionRole {
@@ -95,6 +108,16 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(PrismaService.name);
+
+  /**
+   * Prisma 7 has no engine of its own to read DATABASE_URL: the client needs a
+   * driver adapter, and this is pg's pool built from that same variable — sized,
+   * timed and checked in pool-config.ts. Nothing connects here; onModuleInit's
+   * $connect does, and then checks the role before anything else runs.
+   */
+  constructor() {
+    super({ adapter: createPgAdapter(process.env.DATABASE_URL) });
+  }
 
   async onModuleInit(): Promise<void> {
     await this.$connect();
@@ -242,19 +265,20 @@ export class PrismaService
    *
    * This runs on every authenticated request, and it is exactly two
    * statements: the claims, then one lookup. An interactive transaction — the
-   * callback form `withRls` uses — makes each statement its own request from
-   * Node to the query engine, plus one to open the transaction and one to
-   * commit it, with an open-transaction entry and a timeout timer in the engine
-   * and a proxied transaction client built in JS for the duration. A batch
-   * hands the engine both statements at once, and the engine runs BEGIN, the
-   * claims, the lookup and COMMIT on one connection, in that order.
+   * callback form `withRls` uses — takes each statement through the client
+   * runtime on its own, plus a step to open the transaction and one to commit
+   * it, with an open-transaction entry and a timeout timer held for the
+   * duration and a proxied transaction client built in JS. A batch hands the
+   * client both statements at once, and @prisma/adapter-pg runs BEGIN, the
+   * claims, the lookup and COMMIT on one pooled pg connection, in that order.
+   * How long it may wait for that connection is BATCH_TRANSACTION_OPTIONS.
    *
    * Postgres receives the same statements in the same transaction: the claims
    * still end at COMMIT, and the lookup still reads the database on every
    * request, so a deactivated account is still refused on the next one. That
    * is also why `query` returns a PrismaPromise instead of being awaited in a
-   * callback — the lookup has to reach the engine unexecuted, behind the
-   * claims.
+   * callback — the lookup has to reach the client unexecuted, behind the
+   * claims. scripts/test/prisma-adapter-probe.ts asserts both against Postgres.
    */
   async withVerifiedSubject<T>(
     authId: string,
@@ -271,9 +295,9 @@ export class PrismaService
    * `withRls(user, (tx) => tx.job.findMany(...))` and
    * `queryWithRls(user, (db) => db.job.findMany(...))` put the same statements
    * in the same transaction: BEGIN, the claims, the query, COMMIT. The second
-   * skips the interactive transaction's extra requests to the query engine —
-   * see withVerifiedSubject. It also has no transaction timeout of its own,
-   * which a single statement does not need.
+   * skips the interactive transaction's extra round trips — see
+   * withVerifiedSubject. Its wait and timeout are BATCH_TRANSACTION_OPTIONS
+   * rather than a caller's choice, which a single statement does not need.
    *
    * Anything that reads and then decides, writes, or awaits between statements
    * still belongs in `withRls`: a batch is fixed before the first statement runs.
@@ -285,15 +309,15 @@ export class PrismaService
     return this.batchUnderClaims(user.authId, query);
   }
 
-  /** BEGIN, the claims, `query`, COMMIT — handed to the engine as one batch. */
+  /** BEGIN, the claims, `query`, COMMIT — handed to the client as one batch. */
   private async batchUnderClaims<T>(
     authId: string,
     query: (client: PrismaClient) => PrismaPromise<T>,
   ): Promise<T> {
-    const [, result] = await this.$transaction([
-      this.claimsFor(this, authId),
-      query(this),
-    ]);
+    const [, result] = await this.$transaction(
+      [this.claimsFor(this, authId), query(this)],
+      BATCH_TRANSACTION_OPTIONS,
+    );
     return result;
   }
 

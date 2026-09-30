@@ -19,8 +19,9 @@
 # override IMAGE_TAG per release so a rollback is a tag change, not a rebuild.
 #
 # ---- Release run book ------------------------------------------------------
-#   1. Apply migrations from a machine with the owner DATABASE_URL:
-#        npm run migrate:deploy
+#   1. Apply migrations from a machine with the owner DIRECT_URL, given on
+#      the command — the Prisma CLI reads no .env and never DATABASE_URL:
+#        DIRECT_URL=<owner direct URL> npm run migrate:deploy
 #   2. Roll the services:
 #        IMAGE_TAG=<sha> docker compose -f deploy/docker-compose.prod.yml up -d
 #   3. Verify:
@@ -60,8 +61,11 @@ services:
       # Least-privilege pooled connection. This role must NOT own the schema —
       # RLS is not enforced for table owners, so an owner connection would
       # silently disable every tenancy policy.
+      # No DIRECT_URL: that is the owner connection the run book's migrate step
+      # uses, and the API never reads it.
+      # Give the URL an sslmode (docs/DEPLOYMENT.md §3): without one, pg
+      # connects unencrypted.
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL (app_authenticated role, pooled)}
-      DIRECT_URL: ${DIRECT_URL:?Set DIRECT_URL (app_authenticated role, direct)}
 
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET (Supabase JWT secret)}
       JWT_ISSUER: ${JWT_ISSUER:?Set JWT_ISSUER (<SUPABASE_URL>/auth/v1) — the API reads its JWKS from it}

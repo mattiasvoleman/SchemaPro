@@ -8,10 +8,13 @@ const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 /**
  * The wrappers are pure plumbing around `this.$transaction`, so the spec
  * builds the service without running the PrismaClient constructor (which
- * would validate DATABASE_URL and spin up an engine) and stubs $transaction
+ * builds the pg driver adapter from DATABASE_URL) and stubs $transaction
  * to hand the callback a fake tx. What matters — and what these tests pin —
  * is WHICH session variables each wrapper injects and with WHAT values,
  * because those settings are the entire tenancy model.
+ *
+ * The constructor has its own block at the end. It needs no database either:
+ * pg opens nothing until the first query.
  */
 describe('PrismaService', () => {
   let service: PrismaService;
@@ -131,10 +134,19 @@ describe('PrismaService', () => {
 
       expect(query).toHaveBeenCalledWith(service);
       expect(transaction).toHaveBeenCalledTimes(1);
-      expect(transaction).toHaveBeenCalledWith([
-        'claims-statement',
-        'lookup-statement',
-      ]);
+      expect(transaction).toHaveBeenCalledWith(
+        ['claims-statement', 'lookup-statement'],
+        { maxWait: 10_000, timeout: 15_000 },
+      );
+    });
+
+    it('gives the batch Prisma 5’s pool wait and withRls’s timeout, not Prisma 7’s 2 s and 5 s', async () => {
+      // Every authenticated request goes through here. Left to the client's
+      // defaults, a pool busy for two seconds would start refusing logins.
+      await service.withVerifiedSubject(AUTH_ID, lookup);
+
+      const [, options] = transaction.mock.calls[0] as unknown[];
+      expect(options).toEqual({ maxWait: 10_000, timeout: 15_000 });
     });
 
     it('injects the verified subject as the sub claim', async () => {
@@ -170,10 +182,10 @@ describe('PrismaService', () => {
       ).resolves.toEqual(['a job']);
 
       expect(query).toHaveBeenCalledWith(service);
-      expect(transaction).toHaveBeenCalledWith([
-        'claims-statement',
-        'list-statement',
-      ]);
+      expect(transaction).toHaveBeenCalledWith(
+        ['claims-statement', 'list-statement'],
+        { maxWait: 10_000, timeout: 15_000 },
+      );
 
       const [claims, sub, role] = rawValues(
         clientExecuteRaw.mock.calls[0] as unknown[],
@@ -350,6 +362,31 @@ describe('PrismaService', () => {
     it('does not warn when the role owns nothing', async () => {
       await boot({});
       expect(logger.warn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('construction', () => {
+    // Prisma 7 will not construct a client without a driver adapter, and this
+    // one is built from DATABASE_URL (test/setup-env.ts sets a fake one).
+    it('builds a client from DATABASE_URL without connecting to it', async () => {
+      const prisma = new PrismaService();
+
+      // Not toBeInstanceOf. Prisma 7's constructor returns a proxy that is not
+      // `instanceof` the subclass, or even PrismaClient (5.22's was both), so
+      // what is pinned is that the service's own methods are on what Nest gets.
+      expect(prisma.withRls).toBe(PrismaService.prototype.withRls);
+      expect(prisma.onModuleInit).toBe(PrismaService.prototype.onModuleInit);
+      await expect(prisma.$disconnect()).resolves.toBeUndefined();
+    });
+
+    it('reads DATABASE_URL when it is constructed, and refuses one pool-config refuses', () => {
+      const configured = process.env.DATABASE_URL;
+      process.env.DATABASE_URL = `${configured}?query_timeout=1000`;
+      try {
+        expect(() => new PrismaService()).toThrow(/query_timeout/);
+      } finally {
+        process.env.DATABASE_URL = configured;
+      }
     });
   });
 });

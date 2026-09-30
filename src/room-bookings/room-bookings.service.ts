@@ -24,16 +24,22 @@ export interface RoomBookingResult {
 
 /**
  * The exclusion constraint that stops two active bookings holding one room at
- * the same time — see migration
- * 20260822131500_a_room_holds_one_thing_at_a_time. Prisma has no error code
- * for SQLSTATE 23P01 and hands the whole PostgreSQL message back inside an
- * unknown-request error, so the constraint is recognised by name.
+ * the same time — see migration 20260822131500_a_room_is_booked_once.
+ *
+ * Under the pg driver adapter SQLSTATE 23P01 has no Prisma code of its own. It
+ * arrives as P2039, Prisma's catch-all "Database error", with PostgreSQL's
+ * message inside, so the constraint is still recognised by name. The code is
+ * checked as well: a raw query's P2010, or any other error that merely
+ * mentions the name, is not the room being taken. Prisma 5 raised this as an
+ * unknown-request error instead, and matching that class after the upgrade
+ * turned every double booking into a 500.
  */
 const ROOM_HELD_ONCE = 'RoomBookings_room_is_held_once';
 
 function isRoomAlreadyHeld(error: unknown): boolean {
   return (
-    error instanceof Prisma.PrismaClientUnknownRequestError &&
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2039' &&
     error.message.includes(ROOM_HELD_ONCE)
   );
 }
