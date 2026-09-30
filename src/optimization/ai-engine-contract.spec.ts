@@ -61,12 +61,17 @@ const SERVING_FIELDS = [
   'startTime',
 ];
 
+/** `minutesBefore`/`minutesAfter` are the pupil buffers — the class's occupancy
+ *  outside the lesson, which the engine must keep clear for the CHILDREN and for
+ *  neither the teacher nor the room. */
 const REQUIREMENT_FIELDS = [
   'coTeacherId',
   'id',
   'lessonsPerWeek',
   'maxGradeLevel',
   'minGradeLevel',
+  'minutesAfter',
+  'minutesBefore',
   'minutesPerLesson',
   'requiredRoomType',
   'studentGroupId',

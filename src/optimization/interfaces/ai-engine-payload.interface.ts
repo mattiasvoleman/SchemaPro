@@ -41,6 +41,26 @@ export interface AnonymousRequirement {
   teacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /**
+   * Minutes the PUPILS are occupied on either side of the lesson — ombyte
+   * before idrotten, dusch after — and nothing else.
+   *
+   * Outside `minutesPerLesson`, which keeps its own number: the engine still
+   * places a lesson of that length and still owes the timplan that many
+   * minutes. What these add is how far the CLASS's occupancy reaches past the
+   * lesson it is placing, so two lessons for the same children cannot be laid
+   * end to end when the first ends in a shower.
+   *
+   * The pupil arm only. Not the teacher's no-overlap family and not the room's
+   * — the idrottslärare does not shower with the class and the hall is empty
+   * while it does. That asymmetry is the whole point, and it is why this is not
+   * FrameTimes.changeoverMinutes with a different name: a corridor is a floor
+   * on every gap of a stage, these are two named things one class does.
+   *
+   * 0..60 each, 0 for every requirement no school has written a number on.
+   */
+  minutesBefore: number;
+  minutesAfter: number;
   /** Active-student headcount — an aggregate used for room-capacity checks. */
   studentGroupSize: number;
   /** When set, lessons for this requirement may only use rooms of this type. */
