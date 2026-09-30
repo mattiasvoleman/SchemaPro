@@ -3557,19 +3557,22 @@ class SchedulerSolver:
             # frames every day is (0, slots_per_day) and this is the expression
             # it always was. _validate_request has already refused the case
             # where the WINDOWS leave a requirement nowhere to go, so every
-            # interval below is non-empty — as far as the windows go.
+            # interval below is non-empty as far as the windows go.
             #
-            # THE MARGINS BELOW ARE NOT IN THAT REFUSAL, and neither the corridor
-            # nor the pupils' buffer ever has been: a lesson that fits its stage's
-            # window exactly, whose margin then does not, empties this domain and
-            # reaches the caller as CP-SAT's own "var has no domain" — a 500
-            # where a named 4xx belongs. The corridor can only do it where a frame
-            # reaches the day's end; a lead can do it wherever a window is exactly
-            # as wide as the lesson and opens on the day's first slot. It wants a
-            # refusal of its own in _validate_request, with a sentence that names
-            # the margin rather than blaming the frame for minutes it does offer.
-            # Deliberately not smuggled into FRAME_NO_WINDOW_FOR_REQUIREMENT,
-            # whose sentence would then be untrue about the frame.
+            # AND THE MARGINS BELOW ARE IN A REFUSAL OF THEIR OWN, beside that
+            # one: a lesson that fits its stage's window exactly, whose margin
+            # then does not, used to empty this domain and reach the caller as
+            # CP-SAT's own "var has no domain" — a 500 where a named 4xx belongs.
+            # The corridor can only do it where a frame reaches the day's end,
+            # which is older than the pupils' buffer; a lead can do it wherever a
+            # window is exactly as wide as the lesson and opens on the day's
+            # first slot. MARGIN_NO_WINDOW_FOR_REQUIREMENT names the margin
+            # rather than blaming the frame for minutes it does offer, and is
+            # deliberately not folded into FRAME_NO_WINDOW_FOR_REQUIREMENT, whose
+            # sentence would then be untrue about the frame. Its arithmetic is
+            # the arithmetic below, and the two must stay the same one: a check
+            # that rounded differently would either refuse a week this builds
+            # perfectly well or let the 500 back through.
             span = span_of(requirement)
             windows = day_windows(frames, span, self._grid)
             changeover = changeover_slots(frames, span, self._grid)
