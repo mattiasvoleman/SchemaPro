@@ -791,7 +791,7 @@ export default function PeoplePage() {
                 </TableRow>
                 {expandedId === person.id ? (
                   <TableRow id={`person-detail-${person.id}`} className="bg-muted/30">
-                    <TableCell colSpan={6} className="py-3">
+                    <TableCell colSpan={7} className="py-3">
                       <PersonDetail
                         person={person}
                         homeClass={groupName(person.studentGroupId)}
