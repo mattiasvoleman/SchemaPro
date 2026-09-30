@@ -3888,6 +3888,15 @@ class SchedulerSolver:
         mentor hour also blocks Ma71's generated lessons for the window. If
         the fixed lesson occupies a room, no generated lesson may be assigned
         that room during the window.
+
+        ONE DISJUNCTION PER PAIR, WIDENED BY THE UNION OF THE MARGINS. A lesson
+        can share a locked lesson's teacher and its pupils at once, and then two
+        margins apply to the same window: the teacher's corridor and the
+        pupils' changing. Both are intervals AROUND THE SAME LESSON BODY, so
+        each side's requirement is nested inside the other's — avoiding the
+        window for the wider of the two is avoiding it for both — and the widest
+        margin on each side is the whole answer. Two separate disjunctions would
+        cost two more booleans per pair to say it.
         """
         room_index_by_id = {room.id: idx for idx, room in enumerate(rooms)}
 
@@ -3942,6 +3951,18 @@ class SchedulerSolver:
                         # very collision the corridor exists to prevent, on the
                         # placements a human chose deliberately.
                         margin=decision.changeover,
+                        # AND THE PUPILS' OWN MARGIN, BUT ONLY WHERE THE LOCK
+                        # REACHES THE PUPILS. A locked lesson that merely shares
+                        # the teacher blocks nothing for the children — the class
+                        # is not in it — so their changing time has no business
+                        # widening that window, and widening it anyway would
+                        # forbid the teacher the back-to-back the whole feature
+                        # promises they may keep. Where the lock DOES hold the
+                        # class (its own group, or one sharing its pupils), the
+                        # children cannot be changing during it either: they
+                        # would have to be in two places.
+                        lead=decision.lead if shares_group else 0,
+                        trail=decision.trail if shares_group else 0,
                     )
                     continue
 
@@ -3960,11 +3981,15 @@ class SchedulerSolver:
                         abs_end,
                         tag=f"fixed_roomwin_{fixed.id}_{decision.lesson.key()}",
                         guard=assigned_here,
-                        # NO margin on the room arm. The corridor is about a
-                        # body walking between two places; a room needs no time
-                        # to become itself again, and a school that wants the
-                        # room to breathe declares a rast. This mirrors the
-                        # decision not to pad the room cumulative.
+                        # NO margin on the room arm, and no pupil buffer either.
+                        # The corridor is about a body walking between two
+                        # places; a room needs no time to become itself again,
+                        # and a school that wants the room to breathe declares a
+                        # rast. Changing and showering are the same answer from
+                        # the other side: they happen to the children, not to the
+                        # hall, and the hall is free the moment they walk out of
+                        # it. This mirrors the decision not to pad the room
+                        # cumulative.
                         margin=0,
                     )
 
@@ -3977,6 +4002,8 @@ class SchedulerSolver:
         tag: str,
         guard: cp_model.IntVar | None,
         margin: int = 0,
+        lead: int = 0,
+        trail: int = 0,
     ) -> None:
         """decision must end before, or start after, the [abs_start, abs_end) window.
 
@@ -3986,13 +4013,25 @@ class SchedulerSolver:
         it after the fixed lesson leaves. That is not the double-padding
         padded_of avoids; there the two lessons each carry their own margin, so
         padding both ends would count one corridor twice.
+
+        `lead` and `trail` widen it ASYMMETRICALLY, by the minutes the pupils
+        spend changing before this lesson and showering after it. Each lands on
+        its own side and nowhere else: `trail` where the generated lesson ends
+        before the locked window, `lead` where it starts after — which is the
+        one place the two halves of the corridor argument above do not apply,
+        because these minutes are not a distance to be walked once but time the
+        class is unavailable at a particular end of its lesson.
+        THEY ADD TO THE CORRIDOR RATHER THAN REPLACING IT, exactly as
+        pupil_padded_of adds them to a generated pair: a class showers, changes
+        and then walks. Only the caller knows whether a lock reaches the
+        children at all, so it passes zero where it does not.
         """
         before = model.NewBoolVar(f"before_{tag}")
         after = model.NewBoolVar(f"after_{tag}")
-        model.Add(decision.end + margin <= abs_start).OnlyEnforceIf(before)
-        model.Add(decision.end + margin > abs_start).OnlyEnforceIf(before.Not())
-        model.Add(decision.start >= abs_end + margin).OnlyEnforceIf(after)
-        model.Add(decision.start < abs_end + margin).OnlyEnforceIf(after.Not())
+        model.Add(decision.end + margin + trail <= abs_start).OnlyEnforceIf(before)
+        model.Add(decision.end + margin + trail > abs_start).OnlyEnforceIf(before.Not())
+        model.Add(decision.start >= abs_end + margin + lead).OnlyEnforceIf(after)
+        model.Add(decision.start < abs_end + margin + lead).OnlyEnforceIf(after.Not())
         if guard is None:
             model.AddBoolOr([before, after])
         else:

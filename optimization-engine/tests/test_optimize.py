@@ -8122,6 +8122,126 @@ def test_the_corridor_and_the_pupils_buffer_compose() -> None:
     assert not domain.contains(spd - 12 - 4 - 1)
 
 
+def _locked_pupil_payload(
+    *,
+    before: int = 0,
+    after: int = 0,
+    locked_start: str,
+    locked_end: str,
+    shares_teacher: bool,
+    shares_group: bool,
+    room_shared: bool = False,
+) -> dict[str, object]:
+    """One generated lesson, one locked lesson, and what the two have in common."""
+    own_group, other_group = str(uuid4()), str(uuid4())
+    own_teacher, other_teacher = str(uuid4()), str(uuid4())
+    rooms = [{"id": str(uuid4()), "capacity": 30}]
+    if not room_shared:
+        rooms.append({"id": str(uuid4()), "capacity": 30})
+    return {
+        "requestId": str(uuid4()),
+        "academicYearId": str(uuid4()),
+        "requirements": [{
+            "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": own_group,
+            "teacherId": own_teacher, "lessonsPerWeek": 1, "minutesPerLesson": 60,
+            "minutesBefore": before, "minutesAfter": after, "studentGroupSize": 24,
+        }],
+        "rooms": rooms,
+        "constraints": [],
+        "fixedLessons": [{
+            "id": str(uuid4()),
+            "teacherId": own_teacher if shares_teacher else other_teacher,
+            "coTeacherId": None,
+            "studentGroupId": own_group if shares_group else other_group,
+            "extraGroupIds": [],
+            "roomId": rooms[0]["id"] if room_shared else None,
+            "dayOfWeek": 1,
+            "startTime": f"{locked_start}:00",
+            "endTime": f"{locked_end}:00",
+        }],
+    }
+
+
+def _locked_solve(payload: dict[str, object], day_end: int):  # type: ignore[no-untyped-def]
+    """The week on a single day ending at `day_end` minutes past midnight."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(
+        _settings(SCHEDULE_DAYS="1", SCHEDULE_DAY_END_MINUTES=day_end),
+    )
+    return solver.solve(OptimizeScheduleRequest.model_validate(payload))
+
+
+def test_a_locked_lesson_on_the_class_is_widened_by_the_pupils_buffer() -> None:
+    """A hand-placed lesson is a constant window, not an interval.
+
+    So pupil_padded_of never reaches it, and the widening has to be applied
+    where the window is built — asymmetrically, because the two numbers are
+    asymmetric: the changing goes on the side the class arrives from and the
+    shower on the side it leaves by. Here a locked lesson holds the class until
+    10:00 and the day ends at 11:00, leaving exactly one legal start; fifteen
+    minutes of changing pushes it past the end of the day, which is the only way
+    a test can see a widening that has no interval to point at.
+    """
+    on_time = _locked_solve(_locked_pupil_payload(
+        locked_start="08:00", locked_end="10:00",
+        shares_teacher=False, shares_group=True,
+    ), day_end=660)
+    assert on_time.status in {"OPTIMAL", "FEASIBLE"}
+    assert (on_time.lessons[0].start_time[:5], on_time.lessons[0].end_time[:5]) == (
+        "10:00", "11:00",
+    )
+
+    changing = _locked_solve(_locked_pupil_payload(
+        before=15, locked_start="08:00", locked_end="10:00",
+        shares_teacher=False, shares_group=True,
+    ), day_end=660)
+    assert changing.status == "INFEASIBLE"
+
+    # And the trailing side against a lock the class reaches later in the day:
+    # flush against it without a shower, impossible with one.
+    flush = _locked_solve(_locked_pupil_payload(
+        locked_start="09:00", locked_end="10:00",
+        shares_teacher=False, shares_group=True,
+    ), day_end=600)
+    assert flush.status in {"OPTIMAL", "FEASIBLE"}
+    assert (flush.lessons[0].start_time[:5], flush.lessons[0].end_time[:5]) == ("08:00", "09:00")
+
+    showering = _locked_solve(_locked_pupil_payload(
+        after=20, locked_start="09:00", locked_end="10:00",
+        shares_teacher=False, shares_group=True,
+    ), day_end=600)
+    assert showering.status == "INFEASIBLE"
+
+
+def test_a_locked_lesson_sharing_only_the_teacher_or_the_room_is_not_widened() -> None:
+    """The other half of the decision, on the placements a human chose.
+
+    A locked lesson that merely shares the teacher blocks nothing for the
+    children — they are not in it — so their shower has no business widening
+    that window, and widening it anyway would forbid idrottsläraren the very
+    back-to-back the feature promises. The same for a locked lesson that only
+    shares the room. Both weeks here have exactly one legal start, 08:00, which
+    exists only while the window is left at the corridor's own margin.
+    """
+    teacher = _locked_solve(_locked_pupil_payload(
+        after=30, locked_start="09:00", locked_end="10:00",
+        shares_teacher=True, shares_group=False,
+    ), day_end=600)
+    assert teacher.status in {"OPTIMAL", "FEASIBLE"}
+    assert (teacher.lessons[0].start_time[:5], teacher.lessons[0].end_time[:5]) == (
+        "08:00", "09:00",
+    )
+
+    room = _locked_solve(_locked_pupil_payload(
+        after=30, locked_start="09:00", locked_end="10:00",
+        shares_teacher=False, shares_group=False, room_shared=True,
+    ), day_end=600)
+    assert room.status in {"OPTIMAL", "FEASIBLE"}
+    assert (room.lessons[0].start_time[:5], room.lessons[0].end_time[:5]) == ("08:00", "09:00")
+
+
 def _teaching_group_school(
     classes: int = 12,
     tgs_per_class: int = 8,
