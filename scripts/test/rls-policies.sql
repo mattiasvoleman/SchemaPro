@@ -1328,6 +1328,281 @@ $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- 7g. TeacherWorkRules: a teacher owns their own arbetstid and nobody else's.
+--
+-- Three arms, and the third is why this section is not a copy of 7b. Admin-all
+-- and staff-select are the familiar pair. On top of them a TEACHER may read and
+-- WRITE their own row — the first write policy since availability_teacher_modify
+-- that lets a member author anything at all — and that policy is the one whose
+-- failures are silent in both directions.
+--
+-- Too narrow, and a teacher cannot record the lunch the whole table exists to
+-- protect, so the feature is simply dead for everyone but the administrator. Too
+-- wide, and a teacher edits a COLLEAGUE'S row: raising somebody else's rest to
+-- eleven hours is an admin-only decision that would refuse the school's week by
+-- name, reached from a session that has no business making it, and lowering it
+-- takes away a protection the colleague was promised. Deleting it is the same
+-- escalation once more, which is why USING carries the id test and not only WITH
+-- CHECK — the hole section 7 found on AvailabilityConstraints.
+--
+-- The admin's row is written for a DIFFERENT teacher than the one that acts
+-- below, on purpose: @@unique([userId]) means one row per teacher, so a teacher
+-- asserting "I can write my own" against a row that is already theirs would be
+-- measuring the unique index instead of the policy.
+--
+-- A pupil and a guardian are asserted against those very rows, in the same
+-- transaction, for the reason 7d gives: their zero proves nothing against an
+-- empty table. And both are asserted at all because `_staff_select` is the
+-- policy shape that twice shipped carrying the tenant predicate and no role
+-- check — here it would hand a pupil the name-shaped question "when does my
+-- teacher eat".
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+-- psql does not expand :variables inside a dollar-quoted block, so the other
+-- school's pupil is handed to the block through a setting, as section 8 does.
+SELECT set_config('app.test_student_b', :'student_b', true);
+
+DO $$
+DECLARE colleague uuid; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'work-rules: expected to be acting as an admin, am %',
+      app.current_user_role();
+  END IF;
+
+  -- The SECOND teacher by authId. The teacher who acts further down is the
+  -- first, and the third is the one nobody has a rule for yet — the three are
+  -- picked by the same ordering in every block here so they stay distinct.
+  SELECT id INTO colleague FROM "Users"
+   WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+   ORDER BY "authId" OFFSET 1 LIMIT 1;
+  IF colleague IS NULL THEN
+    RAISE EXCEPTION 'work-rules: the seed has fewer than two teachers to tell apart';
+  END IF;
+
+  -- The whole rule, with the trio and the night. An admin manages any teacher's
+  -- arbetstid, which is the path a school actually fills the table in by.
+  INSERT INTO "TeacherWorkRules"
+    ("schoolId", "userId", "lunchMinutes", "lunchStartTime", "lunchEndTime",
+     "minDailyRestMinutes", "updatedAt")
+  VALUES (app.current_school_id(), colleague, 30, '10:30', '13:30', 660, now());
+
+  SELECT count(*) INTO n FROM "TeacherWorkRules";
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'work-rules: an admin cannot write their own school''s arbetstid (% row(s))', n;
+  END IF;
+
+  -- Another school's USER, stamped with this school's id — the shape a policy
+  -- alone cannot refuse, since the row's schoolId is honestly this admin's. The
+  -- composite (userId, schoolId) foreign key is what answers, and it has to:
+  -- referential integrity runs as Users' OWNER with row security off, so a
+  -- single-column key would validate a teacher this school cannot even SELECT.
+  -- The pupil is the one foreign user the runner can hand in; the key knows
+  -- nothing about roles, so it is the same assertion a foreign teacher would be.
+  BEGIN
+    INSERT INTO "TeacherWorkRules"
+      ("schoolId", "userId", "minDailyRestMinutes", "updatedAt")
+    VALUES (app.current_school_id(), current_setting('app.test_student_b')::uuid,
+            660, now());
+    RAISE EXCEPTION
+      'work-rules: an admin wrote an arbetstid about another school''s user';
+  EXCEPTION
+    WHEN foreign_key_violation OR insufficient_privilege THEN NULL;
+  END;
+
+  -- And a row stamped with a school that is not this one. The id is a literal
+  -- because psql does not substitute :variables inside a DO block, and it does
+  -- not need to be a real school: WITH CHECK and the foreign key are both
+  -- correct ways to refuse this. What matters is that nothing lands.
+  BEGIN
+    INSERT INTO "TeacherWorkRules"
+      ("schoolId", "userId", "minDailyRestMinutes", "updatedAt")
+    VALUES ('00000000-0000-4000-8000-0000000000ff', colleague, 660, now());
+    RAISE EXCEPTION 'work-rules: an admin wrote an arbetstid into another school';
+  EXCEPTION
+    WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+
+  -- The weaker half of the tenant question, and it is named as weak: the
+  -- fixtures plant no rule in the second school, so with nothing over there this
+  -- reads zero whatever the policies say. The two refused writes above are what
+  -- actually bite. Making this half prove something needs a rule planted in the
+  -- other tenant and a runner guard that the planting happened, the way section
+  -- 7d's room lock has — both live in files this section does not own.
+  SELECT count(*) INTO n FROM "TeacherWorkRules"
+   WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'work-rules: % arbetstid(er) from another school visible — tenant isolation is not enforced', n;
+  END IF;
+END
+$$;
+
+-- Now the same table as a teacher of this school. The admin's row is still in
+-- the open transaction, so there is a colleague's rule to read and to fail to
+-- rewrite.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE me uuid := app.current_user_id(); colleague uuid; stranger uuid; n bigint;
+BEGIN
+  IF me IS NULL OR app.current_user_role() <> 'TEACHER' THEN
+    RAISE EXCEPTION
+      'work-rules: expected to be acting as a TEACHER of school A, am % (%)',
+      app.current_user_role(), me;
+  END IF;
+
+  SELECT id INTO colleague FROM "Users"
+   WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+   ORDER BY "authId" OFFSET 1 LIMIT 1;
+  SELECT id INTO stranger FROM "Users"
+   WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+   ORDER BY "authId" OFFSET 2 LIMIT 1;
+  IF colleague = me OR stranger IS NULL OR stranger = me THEN
+    RAISE EXCEPTION 'work-rules: the three teachers this block needs are not distinct';
+  END IF;
+
+  -- Readable: the grid shows a colleague's day, and a refusal that names a rule
+  -- row is unreadable to somebody who cannot open it.
+  SELECT count(*) INTO n FROM "TeacherWorkRules";
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'work-rules: a teacher cannot read the arbetstid that binds their week (% row(s))', n;
+  END IF;
+
+  -- Their OWN row, which is the whole point of the third policy.
+  INSERT INTO "TeacherWorkRules"
+    ("schoolId", "userId", "lunchMinutes", "lunchStartTime", "lunchEndTime", "updatedAt")
+  VALUES (app.current_school_id(), me, 30, '10:30', '13:30', now());
+  SELECT count(*) INTO n FROM "TeacherWorkRules" WHERE "userId" = me;
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'work-rules: a teacher cannot record their own lunch (% row(s))', n;
+  END IF;
+
+  UPDATE "TeacherWorkRules" SET "minDailyRestMinutes" = 660, "updatedAt" = now()
+   WHERE "userId" = me;
+  SELECT count(*) INTO n FROM "TeacherWorkRules"
+   WHERE "userId" = me AND "minDailyRestMinutes" = 660;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'work-rules: a teacher cannot change their own arbetstid';
+  END IF;
+
+  -- A third teacher's row, which they have no business authoring. WITH CHECK is
+  -- what refuses this, and it must: an arbetstid is a hard rule, so writing one
+  -- onto a colleague is refusing the school's week in that colleague's name.
+  BEGIN
+    INSERT INTO "TeacherWorkRules"
+      ("schoolId", "userId", "minDailyRestMinutes", "updatedAt")
+    VALUES (app.current_school_id(), stranger, 1320, now());
+    RAISE EXCEPTION
+      'work-rules: a teacher authored a colleague''s arbetstid';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- And the colleague's EXISTING row, which is where USING does the work. A
+  -- policy that checked only WITH CHECK leaves these two statements silent: no
+  -- error, no rows matched by USING, and the update simply appears to have been
+  -- applied. So the row is read back rather than the statement trusted.
+  UPDATE "TeacherWorkRules" SET "minDailyRestMinutes" = 61, "updatedAt" = now()
+   WHERE "userId" = colleague;
+  SELECT count(*) INTO n FROM "TeacherWorkRules"
+   WHERE "userId" = colleague AND "minDailyRestMinutes" = 660;
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'work-rules: a teacher rewrote a colleague''s night (% row(s) left at 660)', n;
+  END IF;
+
+  DELETE FROM "TeacherWorkRules" WHERE "userId" = colleague;
+  SELECT count(*) INTO n FROM "TeacherWorkRules" WHERE "userId" = colleague;
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'work-rules: a teacher deleted a colleague''s arbetstid (% row(s) left)', n;
+  END IF;
+END
+$$;
+
+-- A pupil of the same school, whom a tenant-only staff read would let straight
+-- through. Looked up while the teacher is still in force: a teacher reads the
+-- school's users and a pupil reads only their own row, so this is the one order
+-- in which the lookup is legal (the same reason 7d and 7e give).
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  -- Without this guard the block passes vacuously: an authId that resolves to no
+  -- user has no role, reads nothing, and looks exactly like success.
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION
+      'work-rules: expected to be acting as a STUDENT of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+
+  -- Two rows are in this transaction to be seen — the admin wrote one and the
+  -- teacher the other.
+  SELECT count(*) INTO n FROM "TeacherWorkRules";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'work-rules: a pupil reads % teacher arbetstid(er); the staff read has lost its role check', n;
+  END IF;
+END
+$$;
+
+-- And a guardian, who has no policy of their own on this table and would reach
+-- it through the same staff read. The literal authId, because the pupil in force
+-- cannot look up anyone else's row.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION
+      'work-rules: expected to be acting as a GUARDIAN of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+
+  SELECT count(*) INTO n FROM "TeacherWorkRules";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'work-rules: a guardian reads % teacher arbetstid(er); the staff read has lost its role check', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 8: a guardian link cannot reach across schools.
 --
 -- This was a live cross-tenant hole, reproduced end to end before it was fixed:

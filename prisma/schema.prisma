@@ -152,6 +152,7 @@ model School {
   integrationApiKeys      IntegrationApiKey[]
   roomBookings            RoomBooking[]
   roomPreferences         RoomPreference[]
+  teacherWorkRules        TeacherWorkRule[]
   lunchSetting            LunchSetting?
 
   @@map("Schools")
@@ -202,6 +203,12 @@ model User {
   calendarLessonTeachers  CalendarLessonTeacher[]  @relation("AssignedTeacher")
   recordedAttendance      AttendanceRecord[]       @relation("AttendanceRecorder")
   availabilityConstraints AvailabilityConstraint[] @relation("ConstraintTeacher")
+  /// At most one row, which the database enforces with @@unique([userId]) on
+  /// the other side. A list rather than an optional single relation because the
+  /// key is composite — (userId, schoolId), like every other reference here —
+  /// and Prisma reads a one-to-one off the key's own uniqueness, which a unique
+  /// on one of its two columns does not give it.
+  workRules               TeacherWorkRule[]        @relation("WorkRuleTeacher")
 
   // Relations where this user is the student.
   attendanceRecords   AttendanceRecord[]      @relation("AttendanceStudent")
@@ -1085,6 +1092,89 @@ model AvailabilityConstraint {
   @@index([studentGroupId, dayOfWeek])
   @@index([date])
   @@map("AvailabilityConstraints")
+}
+
+/// En lärares arbetstid: the lunch a teacher is owed, and the rest between two
+/// of their days.
+///
+/// The counterpart of the table above, and the thing it cannot say. An
+/// AvailabilityConstraint with resourceType TEACHER is a teacher CLOSING hours —
+/// "jag är ledig på fredagar" — a subtraction from the week the solver may not
+/// place anything in. It is the only per-teacher row in the schema, and nothing
+/// anywhere says a teacher is OWED something: the model protects pupils with a
+/// lunch window per class and a rast per stage, and leaves the adult who walks
+/// them there with no meal, no break and no evening.
+///
+/// HARD RULES, EVERY ONE OF THEM. A week that cannot honour a row here is
+/// refused, and the refusal names the row. That is why the table exists instead
+/// of a weight: a lunch the solver may trade against a fuller Tuesday is not a
+/// lunch, it is a preference, and a school reading "schemat är klart" has no way
+/// to discover which teacher paid for it.
+///
+/// EVERY RULE IS OPTIONAL, AND NULL MEANS IT DOES NOT APPLY. A school that has
+/// filled in nobody is refused nothing, which is what makes this safe to deploy
+/// into every existing database: no row exists, so no week changes. Null is not
+/// "zero minutes" and not "the default": there is deliberately no default, since
+/// a number nobody chose would start refusing weeks that used to solve.
+///
+/// ITS OWN TABLE, NOT COLUMNS ON `User`. Two reasons, and either alone decides
+/// it. `Users` is the PII table — the fenced block of firstName/lastName/email/
+/// phone, masked at the gateway and never sent to the engine — and a scheduling
+/// rule the solver reads has no business behind that fence, where every reader
+/// has to be trusted with the name beside it. And every other scheduling rule in
+/// this schema is already a table of its own: FrameTimes, LunchServings, Rasts,
+/// RoomPreferences. A rule on `User` would be the one a developer looking for
+/// the rules does not find.
+model TeacherWorkRule {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId String @db.Uuid
+  /// The teacher. Reached through a composite (id, schoolId) key like every
+  /// other reference here, because a foreign-key check runs as the referenced
+  /// table's owner with row security OFF — so a userId the caller cannot even
+  /// SELECT would still validate, and one school could write a rule about
+  /// another school's teacher.
+  userId   String @db.Uuid
+
+  /// Minutes of lunch the teacher must get, somewhere inside the window below.
+  ///
+  /// The trio is all-or-nothing: all three set, or all three null. Half a rule
+  /// cannot be read — 30 minutes with no window is a lunch the solver may place
+  /// at 07:00, and a window with no length is a window nothing has to happen in.
+  /// The DB enforces it, and so does the DTO; see the migration.
+  ///
+  /// 5..240 and a multiple of 5, because the solver's grid is five minutes wide
+  /// and a rule it cannot express is a week that fails forever rather than a bad
+  /// request once.
+  lunchMinutes        Int?
+  /// The earliest the lunch may start and the latest it may end. The window is
+  /// at least `lunchMinutes` wide, which the DB checks: a 30-minute lunch inside
+  /// a 20-minute window is arithmetic nobody can satisfy, and it would be
+  /// refused on every run from then on rather than at the moment it was typed.
+  lunchStartTime      DateTime? @db.Time(0)
+  lunchEndTime        DateTime? @db.Time(0)
+
+  /// Minutes between the END of the teacher's last lesson one day and the START
+  /// of their first the next.
+  ///
+  /// 60..1320 — an hour at the bottom, twenty-two hours at the top. Null means
+  /// the rule does not apply. The bound at the top is what keeps a typo from
+  /// being a proof: 1440 minutes of rest is a teacher who can never teach two
+  /// days running, and the engine would have to refuse the week to say so.
+  minDailyRestMinutes Int?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user   User   @relation("WorkRuleTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  /// One row per teacher. Not per läsår and not per weekday: a person's meal and
+  /// a person's night belong to the person, not to the curriculum, and a rule
+  /// keyed per year would be missing every August — at exactly the moment a new
+  /// timetable is being generated.
+  @@unique([userId])
+  @@index([schoolId])
+  @@map("TeacherWorkRules")
 }
 
 /// Ramtider: the hours of the day a stage of the school may be taught in.
