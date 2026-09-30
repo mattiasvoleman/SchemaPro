@@ -152,6 +152,11 @@ describe('TeachingRequirementsService', () => {
           coTeacherId: null,
           lessonsPerWeek: 1,
           minutesPerLesson: 60,
+          // No ombyte and no dusch: the only answer that is true for a school
+          // that has not been asked, and the one every row carried before the
+          // columns existed.
+          minutesBefore: 0,
+          minutesAfter: 0,
           recurrence: 'ALL_WEEKS',
           startDate: null,
           endDate: null,
@@ -183,6 +188,41 @@ describe('TeachingRequirementsService', () => {
             lessonsPerWeek: 3,
             minutesPerLesson: 45,
           }),
+        }),
+      );
+    });
+
+    it('persists the ombyte before the lesson and the dusch after it', async () => {
+      tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.create(
+        dto({ minutesPerLesson: 60, minutesBefore: 10, minutesAfter: 20 }),
+        testUser(),
+      );
+
+      expect(tx.teachingRequirement.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            // The buffers lie OUTSIDE the lesson: the teaching is still 60
+            // minutes and the timplan still counts 60, while the class is
+            // occupied for 90. A create that folded them in would credit idrotten
+            // with half an hour it never taught.
+            minutesPerLesson: 60,
+            minutesBefore: 10,
+            minutesAfter: 20,
+          }),
+        }),
+      );
+    });
+
+    it('takes one side of the buffer without inventing the other', async () => {
+      tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.create(dto({ minutesAfter: 20 }), testUser());
+
+      expect(tx.teachingRequirement.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ minutesBefore: 0, minutesAfter: 20 }),
         }),
       );
     });
@@ -486,9 +526,64 @@ describe('TeachingRequirementsService', () => {
       expect(queryRaw).not.toHaveBeenCalled();
     });
 
+    it('sends the two buffers and nothing they were not asked about', async () => {
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.update(
+        REQUIREMENT_ID,
+        { minutesBefore: 10, minutesAfter: 20 },
+        testUser(),
+      );
+
+      expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+        where: { id: REQUIREMENT_ID },
+        data: { minutesBefore: 10, minutesAfter: 20 },
+      });
+      // Neither date moved, so the row is not read and the year is not locked —
+      // the same thrift the load figures get.
+      expect(tx.teachingRequirement.findUnique).not.toHaveBeenCalled();
+      expect(queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('leaves the dusch alone when only the ombyte is moved', async () => {
+      // The distinction the whole per-field spread exists for. A PATCH lowering
+      // the ombyte to 5 must not read the omitted `minutesAfter` as 0 and throw
+      // away the twenty minutes of shower the school already wrote: the class
+      // would be booked into the next lesson while it is still wet, on an edit
+      // that answered 200.
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.update(REQUIREMENT_ID, { minutesBefore: 5 }, testUser());
+
+      expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+        where: { id: REQUIREMENT_ID },
+        data: { minutesBefore: 5 },
+      });
+    });
+
+    it('writes an explicit zero rather than reading it as "leave it"', async () => {
+      // 0 is a value, not an absence: it is how a school takes an ombyte back
+      // off a requirement. A spread on truthiness would make that edit silently
+      // impossible — the same trap `lessonsPerWeek` avoids the same way.
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.update(
+        REQUIREMENT_ID,
+        { minutesBefore: 0, minutesAfter: 0 },
+        testUser(),
+      );
+
+      expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
+        where: { id: REQUIREMENT_ID },
+        data: { minutesBefore: 0, minutesAfter: 0 },
+      });
+    });
+
     it.each<[string, UpdateTeachingRequirementDto]>([
       ['the co-teacher', { coTeacherId: CO_TEACHER_ID }],
       ['the recurrence', { recurrence: 'EVEN_WEEKS' }],
+      ['the ombyte before the lesson', { minutesBefore: 10 }],
+      ['the dusch after it', { minutesAfter: 20 }],
     ])('a PATCH naming only %s writes it', async (_field, patch) => {
       // A dropped field is an edit that answers 200 and changes nothing: the
       // odd/even split the admin just chose, still "every week" underneath.

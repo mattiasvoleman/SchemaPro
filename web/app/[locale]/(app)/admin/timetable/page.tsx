@@ -107,8 +107,10 @@ import {
 } from "@/lib/lesson-audience";
 import {
   buildGroupConflictMap,
+  buildPupilBufferMap,
   detectConflicts,
   findOpenSlots,
+  pupilBufferOf,
   suggestPlacements,
   teacherIdsOf,
   toPlacement,
@@ -542,6 +544,20 @@ export default function TimetablePage() {
   }, [lunchSittings]);
 
   /**
+   * The pupils' ombyte and dusch, per (class, subject).
+   *
+   * `undefined` while the timplan has not answered, which is the file's own
+   * convention for "not checked" — and the honest reading: a buffer nobody has
+   * loaded yet must not be reported as 0 and let a drag through that the API
+   * then refuses with a 409. `useRequirements` is keyed on the läsår, so this
+   * follows the year the grid is showing.
+   */
+  const pupilBuffers = useMemo(
+    () => (requirements ? buildPupilBufferMap(requirements) : undefined),
+    [requirements],
+  );
+
+  /**
    * Whether a placement sits in a room its subject's locks forbid.
    *
    * The subject comes off the lesson and the stage off its group, so this is a
@@ -573,6 +589,7 @@ export default function TimetablePage() {
         frameTimes,
         lunchOf,
         roomLock,
+        pupilBuffers,
       ),
     [
       lessons,
@@ -583,6 +600,7 @@ export default function TimetablePage() {
       frameTimes,
       lunchOf,
       roomLock,
+      pupilBuffers,
     ],
   );
 
@@ -603,8 +621,11 @@ export default function TimetablePage() {
    * as one would refuse B the very slot A was lifted out of.
    */
   const placements = useMemo(
-    () => (lessons ?? []).filter((lesson) => !lesson.isParked).map(toPlacement),
-    [lessons],
+    () =>
+      (lessons ?? [])
+        .filter((lesson) => !lesson.isParked)
+        .map((lesson) => toPlacement(lesson, pupilBuffers)),
+    [lessons, pupilBuffers],
   );
 
   const validateChange = useCallback(
@@ -624,6 +645,12 @@ export default function TimetablePage() {
             studentGroupId: lesson.studentGroupId,
             extraGroupIds: lesson.extraGroupIds,
             studentIds: lesson.studentIds,
+            // The dragged lesson's OWN ombyte and dusch. Left off, the
+            // candidate would be checked without the minutes every other
+            // placement on the grid is carrying: the drag would be let into a
+            // slot the API then refuses with a 409, and only after the move
+            // has visibly happened.
+            ...pupilBufferOf(pupilBuffers, lesson),
           },
           placements,
           constraints ?? [],
@@ -651,6 +678,7 @@ export default function TimetablePage() {
       gradeSpanOf,
       frameTimes,
       lunchOf,
+      pupilBuffers,
     ],
   );
 
@@ -799,6 +827,38 @@ export default function TimetablePage() {
     [audienceByLesson],
   );
 
+  /**
+   * "Eleverna upptagna 07:50–09:20: 10 min ombyte före, 20 min dusch och ombyte
+   * efter" — or nothing at all, which is every lesson at nearly every school.
+   *
+   * The wording is the API's own (master-lessons.service.ts, ombyteOf), because
+   * the 409 an admin may read next says the same thing about the same minutes
+   * and two spellings of one rule is one too many. The SPAN is here and not
+   * there: the grid's reader is looking at a rectangle and needs to know how far
+   * past it the class is gone, which is exactly what the rectangle cannot show.
+   */
+  const pupilTimeNoteOf = useCallback(
+    (lesson: MasterLesson): string | undefined => {
+      const buffer = pupilBufferOf(pupilBuffers, lesson);
+      if (!buffer) return undefined;
+      const sides = [
+        buffer.minutesBefore > 0
+          ? t("pupilTimeBefore", { minutes: buffer.minutesBefore })
+          : null,
+        buffer.minutesAfter > 0
+          ? t("pupilTimeAfter", { minutes: buffer.minutesAfter })
+          : null,
+      ].filter((side): side is string => side !== null);
+      if (sides.length === 0) return undefined;
+      return t("pupilTime", {
+        start: minutesToHHMM(timeToMinutes(lesson.startTime) - buffer.minutesBefore),
+        end: minutesToHHMM(timeToMinutes(lesson.endTime) + buffer.minutesAfter),
+        detail: sides.join(", "),
+      });
+    },
+    [pupilBuffers, t],
+  );
+
   const toGridLesson = useCallback(
     (lesson: MasterLesson): TimetableLesson => {
       const subject = subjectById.get(lesson.subjectId);
@@ -831,6 +891,10 @@ export default function TimetablePage() {
         locked: lesson.isLocked,
         recurrenceNote: recurrenceBadge(lesson, t) ?? undefined,
         conflicted: conflictMap.has(lesson.id),
+        // Hover text only — the rectangle keeps showing the teaching time. A
+        // buffer the grid shows nowhere makes the refusal of the next slot look
+        // like a bug in the grid.
+        pupilTimeNote: pupilTimeNoteOf(lesson),
         remoteEditor: remoteEditors.get(lesson.id),
         // Only when the class is PARTLY here. "28/28" on every one of a class's
         // own lessons is noise on the common case, and a lesson that names the
@@ -858,6 +922,7 @@ export default function TimetablePage() {
       audienceByLesson,
       onlyGroup,
       groupLabel,
+      pupilTimeNoteOf,
       t,
     ],
   );
@@ -1135,30 +1200,68 @@ export default function TimetablePage() {
     (id: string, change: LessonChange) => {
       const lesson = lessonById.get(id);
       if (!lesson) return;
-      const hasWeekend = (lessons ?? []).some((l) => l.dayOfWeek > 5);
-      const options = suggestPlacements(
-        {
-          id,
-          dayOfWeek: change.dayOfWeek,
-          startMinutes: change.startMinutes,
-          endMinutes: change.endMinutes,
-          teacherId: lesson.teacherId,
-          coTeacherId: lesson.coTeacherId,
-          roomId: lesson.roomId,
-          studentGroupId: lesson.studentGroupId,
-          extraGroupIds: lesson.extraGroupIds,
-          studentIds: lesson.studentIds,
-        },
+      const candidate: Placement = {
+        id,
+        dayOfWeek: change.dayOfWeek,
+        startMinutes: change.startMinutes,
+        endMinutes: change.endMinutes,
+        teacherId: lesson.teacherId,
+        coTeacherId: lesson.coTeacherId,
+        roomId: lesson.roomId,
+        studentGroupId: lesson.studentGroupId,
+        extraGroupIds: lesson.extraGroupIds,
+        studentIds: lesson.studentIds,
+        // The same buffer validateChange checks with. Without it the search
+        // would rank slots by a rule the editor does not use and offer one it
+        // then refuses — the worst kind of suggestion, since the admin has
+        // already accepted it by clicking.
+        ...pupilBufferOf(pupilBuffers, lesson),
+      };
+      /*
+       * WHY the slot was refused, when the grid shows no reason at all.
+       *
+       * "Platsen är upptagen — här är närmaste lediga" over two lessons that
+       * visibly do not touch reads as a bug in the grid. It is not: the class is
+       * changing or showering in between, which the school itself configured on
+       * the timplan. So the refusal names that, and only when the buffer is the
+       * WHOLE reason — a slot that is also double-booked on the clock has a
+       * plainer explanation, and offering the subtler one first would send an
+       * admin to admin/requirements to lower a number that was never the
+       * problem.
+       */
+      const hits = validatePlacement(
+        candidate,
         placements,
         constraints ?? [],
-        {
-          days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
-          studentGroupOf,
-        },
+        studentGroupOf,
+        groupConflictMap,
+        gradeSpanOf,
+        frameTimes,
+        lunchOf,
       );
+      if (hits.length > 0 && hits.every((hit) => hit.pupilBufferOnly)) {
+        toast.info(t("pupilTimeRefused"));
+      }
+      const hasWeekend = (lessons ?? []).some((l) => l.dayOfWeek > 5);
+      const options = suggestPlacements(candidate, placements, constraints ?? [], {
+        days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
+        studentGroupOf,
+      });
       setSuggesting({ lesson, options });
     },
-    [lessonById, lessons, placements, constraints, studentGroupOf],
+    [
+      lessonById,
+      lessons,
+      placements,
+      constraints,
+      studentGroupOf,
+      groupConflictMap,
+      gradeSpanOf,
+      frameTimes,
+      lunchOf,
+      pupilBuffers,
+      t,
+    ],
   );
 
   const applySuggestion = async (suggestion: PlacementSuggestion) => {

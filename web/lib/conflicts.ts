@@ -37,6 +37,65 @@ export interface ConflictHit {
   kind: ConflictKind;
   /** The other master lesson involved, when applicable. */
   otherLessonId?: string;
+  /**
+   * GROUP only: the two lessons do not overlap on the clock at all, and the
+   * clash exists solely because the PUPILS need time on one side or the other —
+   * ombyte before idrotten, dusch after it.
+   *
+   * A flag rather than a sentence, because lib/ holds no user-facing text: the
+   * page turns it into the Swedish the API's own 409 uses. It is here because
+   * the kind alone misleads in exactly this case — "the group is busy" over a
+   * slot an admin can see is empty reads as a bug in the grid, not as a rule
+   * the school itself configured.
+   *
+   * NOT a ConflictKind of its own, deliberately. The API reports this as a
+   * GROUP conflict with a different message (master-lessons.service.ts,
+   * findConflicts), and this file exists to mirror its verdicts — a kind the
+   * server never sends would be a second vocabulary for one rule.
+   */
+  pupilBufferOnly?: true;
+}
+
+/**
+ * Minutes the PUPILS of a lesson are occupied outside it: ombyte before
+ * idrotten, dusch and ombyte after it.
+ *
+ * The browser mirror of the API's own PupilBuffer. Written on the
+ * TeachingRequirement, so it is said once per (class, subject) and read here
+ * per lesson — see buildPupilBufferMap for how a lesson reaches its row.
+ */
+export interface PupilBuffer {
+  minutesBefore: number;
+  minutesAfter: number;
+}
+
+/** Minute-based view of a lesson placement used for validation. */
+export interface Placement {
+  id: string | null;
+  dayOfWeek: number;
+  startMinutes: number;
+  endMinutes: number;
+  teacherId: string | null;
+  coTeacherId?: string | null;
+  roomId: string | null;
+  studentGroupId: string;
+  /** Additional classes attending. */
+  extraGroupIds?: string[];
+  /** Individual participating students. */
+  studentIds?: string[];
+  /** Which weeks the lesson runs; absent means every week. */
+  recurrence?: LessonRecurrence;
+  startDate?: string | null;
+  endDate?: string | null;
+  /**
+   * The pupils' own minutes on either side of this lesson. Absent — the file's
+   * convention for an optional argument — means none are checked, which is the
+   * honest reading of a caller that has not loaded the timplan: every school
+   * carries 0 here today and most always will, and with both absent every test
+   * below collapses to the exact half-open one the check has always used.
+   */
+  minutesBefore?: number;
+  minutesAfter?: number;
 }
 
 /** Minute-based view of a lesson placement used for validation. */
@@ -113,8 +172,62 @@ export function teacherIdsOf(placement: Placement): string[] {
   );
 }
 
-export function toPlacement(lesson: MasterLesson): Placement {
+/**
+ * (class, subject) → the minutes its pupils are occupied outside the lesson.
+ *
+ * HOW A LESSON REACHES ITS REQUIREMENT. It cannot name one: MasterLesson has no
+ * teachingRequirementId, in the API's schema any more than in lib/types.ts. What
+ * it does carry is the pair a requirement is unique on within a läsår — group
+ * and subject — which is the same key the API's own findConflicts maps buffers
+ * with, and the same key admin/requirements indexes its matrix on.
+ *
+ * Only the rows carrying a number go in. The overwhelmingly common map is
+ * therefore empty, every lookup misses, and nothing about the clash check
+ * changes.
+ */
+export type PupilBufferMap = Map<string, PupilBuffer>;
+
+export function buildPupilBufferMap(
+  requirements: Array<{
+    studentGroupId: string;
+    subjectId: string;
+    minutesBefore: number;
+    minutesAfter: number;
+  }>,
+): PupilBufferMap {
+  const map: PupilBufferMap = new Map();
+  for (const requirement of requirements) {
+    if (requirement.minutesBefore === 0 && requirement.minutesAfter === 0) continue;
+    map.set(`${requirement.studentGroupId}:${requirement.subjectId}`, {
+      minutesBefore: requirement.minutesBefore,
+      minutesAfter: requirement.minutesAfter,
+    });
+  }
+  return map;
+}
+
+/**
+ * The buffer a lesson inherits, read off its PRIMARY class's requirement.
+ *
+ * One answer per lesson rather than one per class on it, which is the reading
+ * the API argues at the same lookup: an extra class joining the same idrott
+ * changes in the same omklädningsrum on the same minutes, so the lesson has one
+ * answer — and taking the widest of several requirements would let a class that
+ * merely joins lengthen the occupancy for everybody, which no row says.
+ */
+export function pupilBufferOf(
+  buffers: PupilBufferMap | undefined,
+  lesson: { studentGroupId: string; subjectId: string },
+): PupilBuffer | undefined {
+  return buffers?.get(`${lesson.studentGroupId}:${lesson.subjectId}`);
+}
+
+export function toPlacement(lesson: MasterLesson, buffers?: PupilBufferMap): Placement {
+  // Spread rather than defaulted to 0, so a caller that knows nothing about the
+  // timplan produces exactly the placement it always did.
+  const buffer = pupilBufferOf(buffers, lesson);
   return {
+    ...(buffer ?? {}),
     id: lesson.id,
     dayOfWeek: lesson.dayOfWeek,
     startMinutes: timeToMinutes(lesson.startTime),
@@ -133,6 +246,24 @@ export function toPlacement(lesson: MasterLesson): Placement {
 
 function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
   return aStart < bEnd && bStart < aEnd;
+}
+
+/**
+ * Whether two placements occupy the same PUPILS at any minute — each span
+ * widened by its own buffer before the comparison.
+ *
+ * Both lessons' buffers count, and either can be what brings the two together:
+ * the candidate's own dusch running into the next lesson, or the next lesson's
+ * ombyte reaching back into the candidate. Absent means 0 on both sides, at
+ * which point this is `overlaps` on the teaching spans.
+ */
+function pupilsOverlap(a: Placement, b: Placement): boolean {
+  return overlaps(
+    a.startMinutes - (a.minutesBefore ?? 0),
+    a.endMinutes + (a.minutesAfter ?? 0),
+    b.startMinutes - (b.minutesBefore ?? 0),
+    b.endMinutes + (b.minutesAfter ?? 0),
+  );
 }
 
 /**
@@ -238,16 +369,31 @@ export function validatePlacement(
   for (const other of others) {
     if (candidate.id !== null && other.id === candidate.id) continue;
     if (other.dayOfWeek !== candidate.dayOfWeek) continue;
-    if (
-      !overlaps(
-        candidate.startMinutes,
-        candidate.endMinutes,
-        other.startMinutes,
-        other.endMinutes,
-      )
-    ) {
-      continue;
-    }
+
+    /**
+     * THE EXACT half-open test the check has always used, and the only one the
+     * teacher and the room arms below are allowed to see.
+     *
+     * A DECISION, NOT AN OVERSIGHT. The buffer blocks the PUPILS. The
+     * idrottslärare neither changes nor showers with the class and may teach the
+     * slot on either side; the gymnastiksal stands empty for those same minutes,
+     * because the children are in the omklädningsrummet and not in it. Widening
+     * these two arms would cost an idrottslärare a third of a teachable week and
+     * make a scarce hall unbookable around every lesson — refusing placements
+     * that are perfectly true. The API reasons its own two arms out the same way
+     * (master-lessons.service.ts, shareTheClock), and so does the solver's room
+     * arm; this file exists to say what they say.
+     */
+    const shareTheClock = overlaps(
+      candidate.startMinutes,
+      candidate.endMinutes,
+      other.startMinutes,
+      other.endMinutes,
+    );
+    // Wider whenever either lesson carries a buffer, and identical to
+    // shareTheClock when neither does — which is every school today.
+    const sharePupilTime = pupilsOverlap(candidate, other);
+    if (!shareTheClock && !sharePupilTime) continue;
 
     // Sharing a time slot is only a clash if some week holds both: slöjd on
     // odd weeks and hemkunskap on even weeks may share slot, room and teacher.
@@ -255,10 +401,10 @@ export function validatePlacement(
 
     const candidateTeachers = teacherIdsOf(candidate);
     const otherTeachers = teacherIdsOf(other);
-    if (candidateTeachers.some((id) => otherTeachers.includes(id))) {
+    if (shareTheClock && candidateTeachers.some((id) => otherTeachers.includes(id))) {
       hits.push({ kind: "TEACHER", otherLessonId: other.id ?? undefined });
     }
-    if (candidate.roomId && other.roomId === candidate.roomId) {
+    if (shareTheClock && candidate.roomId && other.roomId === candidate.roomId) {
       hits.push({ kind: "ROOM", otherLessonId: other.id ?? undefined });
     }
     const candidateGroups = groupsOf(candidate);
@@ -287,8 +433,17 @@ export function validatePlacement(
     // checks overlap by design — a class and one of its own students in both
     // lessons trips all of them — and a caller counting raw hits would
     // otherwise read one clash as two.
-    if (groupClash || studentBusy) {
-      hits.push({ kind: "GROUP", otherLessonId: other.id ?? undefined });
+    //
+    // The pupil arm, and the ONLY arm the buffer widens: `sharePupilTime`
+    // rather than `shareTheClock`. A lesson can reach this point on the wider
+    // test alone, in which case the groups clash and the clocks do not, and the
+    // hit says so — see ConflictHit.pupilBufferOnly for why the kind cannot.
+    if (sharePupilTime && (groupClash || studentBusy)) {
+      hits.push({
+        kind: "GROUP",
+        otherLessonId: other.id ?? undefined,
+        ...(shareTheClock ? {} : { pupilBufferOnly: true as const }),
+      });
     }
   }
 
@@ -404,8 +559,16 @@ export function detectConflicts(
   lunchOf?: Map<string, { startMinutes: number; endMinutes: number }>,
   /** The school's room locks; without them locks are not checked. */
   roomLock?: RoomLockCheck,
+  /**
+   * The pupils' ombyte and dusch per (class, subject). Without it the buffers
+   * are not checked — which is what every caller did before they existed.
+   *
+   * Passed here rather than baked into the lessons, because this function maps
+   * them to placements itself: a caller has no seam to inject them through.
+   */
+  pupilBuffers?: PupilBufferMap,
 ): Map<string, ConflictHit[]> {
-  const placements = lessons.map(toPlacement);
+  const placements = lessons.map((lesson) => toPlacement(lesson, pupilBuffers));
   const result = new Map<string, ConflictHit[]>();
 
   for (const placement of placements) {
@@ -531,7 +694,24 @@ function groupFreeAt(
   for (const placement of placements) {
     if (placement.dayOfWeek !== dayOfWeek) continue;
     if (!groupsOf(placement).includes(groupId)) continue;
-    if (overlaps(startMinutes, endMinutes, placement.startMinutes, placement.endMinutes)) {
+    // Widened by the EXISTING lesson's own buffer, which is the half this
+    // function can know: the class is still in the omklädningsrummet after its
+    // idrott, so the twenty minutes after it are not a slot the class can meet
+    // in. The buffer of the lesson being PLANNED is not knowable here — the
+    // subject is being picked in the dialog and may have no requirement for
+    // these groups yet — so a slot this offers is still checked by
+    // validatePlacement when the lesson is actually placed.
+    //
+    // teacherFreeAt below is deliberately NOT widened, for the reason
+    // validatePlacement states at shareTheClock.
+    if (
+      overlaps(
+        startMinutes,
+        endMinutes,
+        placement.startMinutes - (placement.minutesBefore ?? 0),
+        placement.endMinutes + (placement.minutesAfter ?? 0),
+      )
+    ) {
       return false;
     }
   }

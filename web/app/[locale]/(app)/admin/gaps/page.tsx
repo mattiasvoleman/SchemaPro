@@ -338,7 +338,14 @@ export default function GapsPage() {
       }),
     [groups, memberships, studentGroupOf],
   );
-  const placements = useMemo(() => (lessons ?? []).map(toPlacement), [lessons]);
+  // Wrapped rather than passed by reference: toPlacement takes an optional
+  // pupil-buffer map as its second argument, which `map` would fill with the
+  // array index. This page loads no timplan, so it passes none — the buffers
+  // are not applied to the gap report. See lib/conflicts.ts.
+  const placements = useMemo(
+    () => (lessons ?? []).map((lesson) => toPlacement(lesson)),
+    [lessons],
+  );
 
   const scheduleData: ScheduleData = useMemo(
     () => ({

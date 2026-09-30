@@ -25,6 +25,8 @@ const TODAY = new Date('2026-08-03T00:00:00.000Z');
 const SCHOOL_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const YEAR_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const SUBJECT_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+/** The other lesson's subject — the other half of its own buffer's key. */
+const OTHER_SUBJECT_ID = '00000000-aaaa-4aaa-8aaa-000000000004';
 const GROUP_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const EXTRA_GROUP_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const OTHER_EXTRA_GROUP_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
@@ -203,6 +205,7 @@ describe('MasterLessonsService', () => {
     coTeacherId: null,
     roomId: '00000000-aaaa-4aaa-8aaa-000000000002',
     studentGroupId: '00000000-aaaa-4aaa-8aaa-000000000003',
+    subjectId: OTHER_SUBJECT_ID,
     startTime: t('10:30'),
     endTime: t('11:30'),
     subject: { name: 'Math' },
@@ -230,6 +233,26 @@ describe('MasterLessonsService', () => {
       Promise.resolve(pupils.filter((pupil) => matches(pupil, query.where)).length),
     );
   };
+
+  /**
+   * The pupil buffers the year carries, as pupilBuffersOf reads them: the
+   * requirements somebody wrote a number on, keyed by (class, subject) because
+   * a MasterLesson cannot name its requirement any other way.
+   *
+   * Unstubbed the table answers `[]` — no school has written a number — which is
+   * why every test above this one still measures the exact half-open window.
+   */
+  const arrangeBuffers = (
+    rows: Array<{
+      studentGroupId: string;
+      subjectId: string;
+      minutesBefore?: number;
+      minutesAfter?: number;
+    }>,
+  ) =>
+    tx.teachingRequirement.findMany.mockImplementation(
+      answerRows(rows.map((row) => ({ minutesBefore: 0, minutesAfter: 0, ...row }))),
+    );
 
   // -------------------------------------------------------------------
   // create
@@ -870,6 +893,203 @@ describe('MasterLessonsService', () => {
       ).resolves.toMatchObject({ id: LESSON_ID });
     });
 
+    // -----------------------------------------------------------------
+    // Ombyte före och dusch efter: the pupil buffer
+    // -----------------------------------------------------------------
+
+    describe('ombyte och dusch kring lektionen', () => {
+      /** Idrott 10:00–11:00 for GROUP_ID, with 20 minutes of shower after it. */
+      const arrangeShower = (
+        buffer: { minutesBefore?: number; minutesAfter?: number } = { minutesAfter: 20 },
+      ) => {
+        arrangeCreate();
+        arrangeBuffers([{ studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, ...buffer }]);
+      };
+
+      it('refuses a lesson only the shower reaches', async () => {
+        // 10:00–11:00 idrott and 11:00–12:00 matematik do not overlap by one
+        // minute, and the check has always allowed exactly this. It stops being
+        // allowed the moment the class needs twenty minutes to shower first: the
+        // children are in the omklädningsrummet until 11:20 and cannot be in
+        // matematik at 11:00.
+        arrangeShower();
+        sameDay([
+          otherLesson({
+            studentGroupId: GROUP_ID,
+            startTime: t('11:00'),
+            endTime: t('12:00'),
+          }),
+        ]);
+
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject({
+          message:
+            'Klassen är upptagen med ombyte eller dusch i den här tiden: ' +
+            'den här lektionen kräver 20 min dusch och ombyte efter.',
+        });
+      });
+
+      it('refuses the class ahead of the lesson too, for the ombyte before it', async () => {
+        arrangeShower({ minutesBefore: 10 });
+        sameDay([
+          otherLesson({
+            studentGroupId: GROUP_ID,
+            startTime: t('09:00'),
+            endTime: t('10:00'),
+          }),
+        ]);
+
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject({
+          message:
+            'Klassen är upptagen med ombyte eller dusch i den här tiden: ' +
+            'den här lektionen kräver 10 min ombyte före.',
+        });
+      });
+
+      it('counts both lessons’ buffers, neither of which is enough alone', async () => {
+        // 09:00–09:45 slöjd, then idrott at 10:00. Fifteen minutes apart, and the
+        // gap survives either buffer on its own: the idrott's 10 minutes of
+        // ombyte reach back only to 09:50, and the slöjd's own 10 minutes reach
+        // forward only to 09:55. Together they meet, and the class is in two
+        // places at 09:52.
+        arrangeCreate();
+        arrangeBuffers([
+          { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, minutesBefore: 10 },
+          { studentGroupId: GROUP_ID, subjectId: OTHER_SUBJECT_ID, minutesAfter: 10 },
+        ]);
+        sameDay([
+          otherLesson({
+            studentGroupId: GROUP_ID,
+            startTime: t('09:00'),
+            endTime: t('09:45'),
+          }),
+        ]);
+
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject({
+          message:
+            'Klassen är upptagen med ombyte eller dusch i den här tiden: ' +
+            'den här lektionen kräver 10 min ombyte före, och ' +
+            'Math kräver 10 min dusch och ombyte efter.',
+        });
+      });
+
+      it('leaves the gap alone when each buffer only reaches half of it', async () => {
+        // The same 09:45/10:00 gap, with only the idrott's own 10 minutes: the
+        // class is free from 09:45 and changing from 09:50. Nothing to refuse,
+        // and a padding that fired here would be padding a corridor rather than
+        // naming what the children do.
+        arrangeShower({ minutesBefore: 10 });
+        sameDay([
+          otherLesson({
+            studentGroupId: GROUP_ID,
+            startTime: t('09:00'),
+            endTime: t('09:45'),
+          }),
+        ]);
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({
+          id: LESSON_ID,
+        });
+      });
+
+      it('does NOT hold the teacher or the room through the shower', async () => {
+        // The user's decision, and the one this whole feature turns on. Same
+        // teacher and same room, 11:00–12:00, against an idrott that keeps its
+        // class until 11:20: the idrottslärare does not shower with them and the
+        // gymnastiksal is empty while they do, so both placements are true.
+        // Refusing here would cost the teacher a third of their week and make a
+        // scarce hall unbookable around every lesson.
+        arrangeShower();
+        sameDay([
+          otherLesson({
+            teacherId: TEACHER_ID,
+            roomId: ROOM_ID,
+            startTime: t('11:00'),
+            endTime: t('12:00'),
+          }),
+        ]);
+
+        await expect(service.create(createDto(), testUser())).resolves.toMatchObject({
+          id: LESSON_ID,
+        });
+      });
+
+      it('still refuses the teacher and the room on a real overlap', async () => {
+        // The other half of the same decision: the exact half-open test survives
+        // the widening rather than being replaced by it.
+        arrangeShower();
+        sameDay([
+          otherLesson({
+            teacherId: TEACHER_ID,
+            roomId: ROOM_ID,
+            startTime: t('10:30'),
+            endTime: t('11:30'),
+          }),
+        ]);
+
+        const promise = service.create(createDto(), testUser());
+        await expect(promise).rejects.toBeInstanceOf(ConflictException);
+        await expect(promise).rejects.toMatchObject({
+          message:
+            'Teacher already teaches Math in this slot. ' +
+            'Room is already booked for Math in this slot.',
+        });
+      });
+
+      it('reaches a pupil the two groups merely share', async () => {
+        // 4.1 and 4ma1 are different groups holding the same child, and the
+        // buffer follows the child rather than the group name.
+        arrangeShower();
+        arrangePupils(
+          [{ id: STUDENT_ID, studentGroupId: GROUP_ID }],
+          [{ studentId: STUDENT_ID, studentGroupId: TEACHING_GROUP_ID }],
+        );
+        sameDay([
+          otherLesson({
+            studentGroupId: TEACHING_GROUP_ID,
+            startTime: t('11:00'),
+            endTime: t('12:00'),
+          }),
+        ]);
+
+        await expect(service.create(createDto(), testUser())).rejects.toMatchObject({
+          message:
+            'Elever i gruppen är upptagna med ombyte eller dusch i den här tiden: ' +
+            'den här lektionen kräver 20 min dusch och ombyte efter.',
+        });
+      });
+
+      it('asks the year only for the requirements that carry a number', async () => {
+        // The thrift the mechanism has to pay for itself with: a school that has
+        // never written an ombyte gets one query that finds nothing, and every
+        // window below then collapses to the exact test.
+        arrangeShower();
+        sameDay([otherLesson()]);
+
+        await service.create(createDto(), testUser());
+
+        expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith({
+          where: {
+            academicYearId: YEAR_ID,
+            OR: [{ minutesBefore: { gt: 0 } }, { minutesAfter: { gt: 0 } }],
+          },
+          select: {
+            studentGroupId: true,
+            subjectId: true,
+            minutesBefore: true,
+            minutesAfter: true,
+          },
+        });
+      });
+
+      it('asks nothing about buffers on a day with no other lesson', async () => {
+        arrangeShower();
+
+        await service.create(createDto(), testUser());
+
+        expect(tx.teachingRequirement.findMany).not.toHaveBeenCalled();
+      });
+    });
+
     it.each([
       ['TEACHER', 'The teacher is unavailable in this slot.'],
       ['ROOM', 'The room is unavailable in this slot.'],
@@ -1126,6 +1346,33 @@ describe('MasterLessonsService', () => {
       );
       tx.masterLesson.update.mockResolvedValue(lessonRecord(updatedOverrides));
     };
+
+    it('finds the buffer through the subject the stored lesson already has', async () => {
+      // A PATCH never names a subject, so the buffer has to be found from the
+      // row. Moving this idrott to 11:00–12:00 puts its own class's 09:00–10:00
+      // matematik 60 minutes away and its shower reaches back… nowhere — but the
+      // matematik keeps the class until 10:20, and the idrott now starts inside
+      // that. Nothing in the patch says "idrott"; only lesson.subjectId does.
+      arrangeUpdate();
+      arrangeBuffers([
+        { studentGroupId: GROUP_ID, subjectId: OTHER_SUBJECT_ID, minutesAfter: 20 },
+      ]);
+      sameDay([
+        otherLesson({
+          studentGroupId: GROUP_ID,
+          startTime: t('09:00'),
+          endTime: t('10:00'),
+        }),
+      ]);
+
+      await expect(
+        service.update(LESSON_ID, { startTime: '10:10', endTime: '11:10' }, testUser()),
+      ).rejects.toMatchObject({
+        message:
+          'Klassen är upptagen med ombyte eller dusch i den här tiden: ' +
+          'Math kräver 20 min dusch och ombyte efter.',
+      });
+    });
 
     it('404s on an unknown lesson', async () => {
       tx.masterLesson.findUnique.mockResolvedValue(null);

@@ -175,6 +175,16 @@ import {
 
 const NO_TEACHER = "__none__";
 
+/**
+ * Whether a pupil buffer field holds something the API will take: an integer
+ * from 0 to 60, the bounds CreateTeachingRequirementDto and the column's own
+ * CHECK both state. An emptied field reads as 0, which is what it means.
+ */
+function bufferInRange(value: string): boolean {
+  const minutes = Number(value);
+  return Number.isInteger(minutes) && minutes >= 0 && minutes <= 60;
+}
+
 interface CellTarget {
   groupId: string;
   subjectId: string;
@@ -184,6 +194,13 @@ interface CellTarget {
 interface CellForm {
   lessonsPerWeek: string;
   minutesPerLesson: string;
+  /**
+   * The pupils' own extra time, held as text like every other number in this
+   * dialog — an emptied `<input type="number">` reads as "", and storing that
+   * as a number would make the field unclearable.
+   */
+  minutesBefore: string;
+  minutesAfter: string;
   teacherId: string;
   coTeacherId: string;
   recurrence: LessonRecurrence;
@@ -326,6 +343,8 @@ export default function RequirementsPage() {
     coTeacherId?: string | null;
     lessonsPerWeek?: number;
     minutesPerLesson?: number;
+    minutesBefore?: number;
+    minutesAfter?: number;
     recurrence?: LessonRecurrence;
     startDate?: string | null;
     endDate?: string | null;
@@ -336,6 +355,8 @@ export default function RequirementsPage() {
   const [form, setForm] = useState<CellForm>({
     lessonsPerWeek: "2",
     minutesPerLesson: "60",
+    minutesBefore: "0",
+    minutesAfter: "0",
     teacherId: NO_TEACHER,
     coTeacherId: NO_TEACHER,
     recurrence: "ALL_WEEKS",
@@ -495,6 +516,8 @@ export default function RequirementsPage() {
     setForm({
       lessonsPerWeek: String(existing?.lessonsPerWeek ?? 2),
       minutesPerLesson: String(existing?.minutesPerLesson ?? 60),
+      minutesBefore: String(existing?.minutesBefore ?? 0),
+      minutesAfter: String(existing?.minutesAfter ?? 0),
       teacherId: existing?.teacherId ?? NO_TEACHER,
       coTeacherId: existing?.coTeacherId ?? NO_TEACHER,
       recurrence: existing?.recurrence ?? "ALL_WEEKS",
@@ -507,6 +530,13 @@ export default function RequirementsPage() {
     if (!cell || !activeYearId) return;
     const lessonsPerWeek = Number(form.lessonsPerWeek);
     const minutesPerLesson = Number(form.minutesPerLesson);
+    // Always sent, never omitted. Both are plain integers on the requirement
+    // with a default of 0 — there is no "leave it alone" value to express the
+    // way an emptied date has — so a field cleared back to nothing has to
+    // arrive as the 0 it means, or an admin could never take a shower buffer
+    // off again. `Number("")` is 0, which is exactly that reading.
+    const minutesBefore = Number(form.minutesBefore);
+    const minutesAfter = Number(form.minutesAfter);
     const teacherId = form.teacherId === NO_TEACHER ? null : form.teacherId;
     const coTeacherId =
       form.coTeacherId === NO_TEACHER || form.coTeacherId === form.teacherId
@@ -530,6 +560,8 @@ export default function RequirementsPage() {
           id: cell.existing.id,
           lessonsPerWeek,
           minutesPerLesson,
+          minutesBefore,
+          minutesAfter,
           teacherId,
           coTeacherId,
           recurrence: form.recurrence,
@@ -545,6 +577,8 @@ export default function RequirementsPage() {
           coTeacherId,
           lessonsPerWeek,
           minutesPerLesson,
+          minutesBefore,
+          minutesAfter,
           recurrence: form.recurrence,
           startDate,
           endDate,
@@ -1040,6 +1074,47 @@ export default function RequirementsPage() {
                 />
               </div>
             </div>
+            {/*
+              The pupils' own time, on the row BELOW the lesson's own length and
+              not beside it — the pair above says how long the teaching is, and
+              these two say how long the class is gone. Bounds are the API's
+              (0..60, CreateTeachingRequirementDto) so a number the database
+              would refuse never leaves the dialog, and step={5} because a
+              school types 10 or 15 minutes of ombyte, never 13.
+
+              Each input carries its own hint. The two say different things —
+              ombyte before, dusch and ombyte after — and the sentence that
+              matters most is in the second one: only the children are
+              occupied, which is the whole reason this is not a longer lesson.
+            */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="req-minutes-before">{t("minutesBefore")}</Label>
+                <Input
+                  id="req-minutes-before"
+                  type="number"
+                  min={0}
+                  max={60}
+                  step={5}
+                  value={form.minutesBefore}
+                  onChange={(e) => setForm({ ...form, minutesBefore: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">{t("minutesBeforeHint")}</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="req-minutes-after">{t("minutesAfter")}</Label>
+                <Input
+                  id="req-minutes-after"
+                  type="number"
+                  min={0}
+                  max={60}
+                  step={5}
+                  value={form.minutesAfter}
+                  onChange={(e) => setForm({ ...form, minutesAfter: e.target.value })}
+                />
+                <p className="text-xs text-muted-foreground">{t("minutesAfterHint")}</p>
+              </div>
+            </div>
             <div className="space-y-2">
               <Label>{tCommon("teacher")}</Label>
               <Select
@@ -1121,6 +1196,12 @@ export default function RequirementsPage() {
                 disabled={
                   Number(form.lessonsPerWeek) < 1 ||
                   Number(form.minutesPerLesson) < 15 ||
+                  // The buffers are capped in the database as well as in the
+                  // DTO, so an out-of-range number would come back as a 400
+                  // about a column the admin did not name. `min`/`max` on the
+                  // input only constrain the spinner — a typed 90 passes them.
+                  !bufferInRange(form.minutesBefore) ||
+                  !bufferInRange(form.minutesAfter) ||
                   mutations.create.isPending ||
                   mutations.update.isPending
                 }
