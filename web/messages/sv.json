@@ -1107,6 +1107,7 @@
     "PROBE_NOTHING_HELPED": "Inget schema hittades inom {budget} s, och ingen av de {rules, plural, one {# regel} other {# regler}} som provades gjorde att ett dök upp inom {slice} s var. Veckan kan helt enkelt vara stor — prova med längre tid.",
     "PROBE_ONE_RULE_HELPED": "Inget schema hittades inom {budget} s, men veckan gick att lösa när en enda regel lättades. {rules, plural, one {Regeln står nedan} other {De # reglerna står nedan}} — en mätning, inte ett bevis.",
     "PROBE_SOLVED_WITHOUT_CHANGEOVER": "Med marginalen mellan lektioner satt till 0 hittades ett schema på {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS": "Med elevernas extra tid före och efter lektionerna satt till 0 hittades ett schema på {seconds} s.",
     "PROBE_SOLVED_WITHOUT_LESSON_BEFORE_RAST": "Med kravet på en lektion före rasten borttaget hittades ett schema på {seconds} s. Rasterna själva låg kvar.",
     "PROBE_SOLVED_WITHOUT_RASTS": "Med rasterna borttagna hittades ett schema på {seconds} s.",
     "PROBE_SOLVED_WITHOUT_SERVINGS": "Med sittningarna per stadium borttagna, så att hela lunchfönstret var öppet för alla, hittades ett schema på {seconds} s.",

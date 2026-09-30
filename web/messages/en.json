@@ -1120,6 +1120,7 @@
     "PROBE_NOTHING_HELPED": "No timetable was found within {budget} s, and none of the {rules, plural, one {# rule} other {# rules}} probed made one appear inside {slice} s each. The week may simply be large; try a longer budget.",
     "PROBE_ONE_RULE_HELPED": "No timetable was found within {budget} s, but relaxing a single rule made the same week solve. {rules, plural, one {The rule is listed below} other {The # rules are listed below}} — a measurement, not a proof.",
     "PROBE_SOLVED_WITHOUT_CHANGEOVER": "With the margin between lessons set to 0, a timetable was found in {seconds} s.",
+    "PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS": "With the extra time the pupils need before and after their lessons set to 0, a timetable was found in {seconds} s.",
     "PROBE_SOLVED_WITHOUT_DINING_SEATS": "With the dining hall's seat limit removed, a timetable was found in {seconds} s.",
     "PROBE_SOLVED_WITHOUT_LUNCH": "With the guaranteed lunch break switched off, a timetable was found in {seconds} s.",
     "PROBE_SOLVED_WITHOUT_LESSON_BEFORE_RAST": "With the requirement of a lesson before a break dropped, a timetable was found in {seconds} s. The breaks themselves were left in place.",
