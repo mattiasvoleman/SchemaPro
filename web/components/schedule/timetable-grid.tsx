@@ -54,6 +54,19 @@ export interface TimetableLesson {
   share?: string;
   /** What `share` means, spelled out for a reader who cannot see the badge. */
   shareLabel?: string;
+  /**
+   * The minutes the PUPILS are occupied outside this lesson, already worded by
+   * the page — ombyte before idrotten, dusch and ombyte after it.
+   *
+   * IN THE HOVER TEXT ONLY, and the rectangle is deliberately left alone. The
+   * block is sized by the clock, and the extra time is not teaching: folding it
+   * into startMinutes/endMinutes would draw a 60-minute lesson as 90 and make
+   * every timetable read longer than the school teaches. But a rule that
+   * refuses the next slot while showing nothing at all is a grid that looks
+   * broken, so the reason is one hover away — the same trade the time itself
+   * makes, which the axis is too coarse to show either.
+   */
+  pupilTimeNote?: string;
 }
 
 export interface LessonChange {
@@ -1003,7 +1016,16 @@ function TimetableGridInner({
                         `${clockOf(lesson.startMinutes)}-${clockOf(lesson.endMinutes)}`,
                         lesson.title,
                         ...facts,
-                      ].join(" · ")}
+                        // NOT in `facts`, which is also what the block prints
+                        // when it has room. A fourth line inside the rectangle
+                        // would change what fits and push a real subject or a
+                        // period badge out for a note about time that is not
+                        // the lesson's; and the block's geometry stays the
+                        // teaching time either way. See pupilTimeNote.
+                        lesson.pupilTimeNote,
+                      ]
+                        .filter((fact): fact is string => Boolean(fact))
+                        .join(" · ")}
                       className={cn(
                         "absolute overflow-hidden rounded-md border-l-4 p-1.5 text-left text-xs shadow-sm transition-shadow",
                         onLessonClick || editable

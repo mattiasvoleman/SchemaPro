@@ -294,6 +294,56 @@ describe("TimetableGrid time axis and vertical placement", () => {
         "09:05-09:45 · Math · 7A · A1 · PERIOD",
       );
     });
+
+    it("puts the pupils' extra time on the hover text and nowhere else", () => {
+      /*
+       * The rule that refuses the next slot, made readable.
+       *
+       * The pupils may be occupied well past the rectangle — ombyte before
+       * idrotten, dusch after it — and the rectangle is sized by the clock, so
+       * there is nowhere in it to say so. Folding the minutes into
+       * startMinutes/endMinutes was the alternative and is wrong: a 60-minute
+       * lesson would be drawn as 90 and every timetable would read longer than
+       * the school teaches.
+       *
+       * So it belongs to the tooltip, LAST, and not to `facts` — which is also
+       * what the block prints when it has room, and a fourth line there would
+       * push a real subject or a period badge out of a block that fits three.
+       */
+      render(
+        <TimetableGrid
+          lessons={[
+            detailed({
+              startMinutes: 540,
+              endMinutes: 600,
+              pupilTimeNote: "Eleverna upptagna 08:50–10:20",
+            }),
+          ]}
+        />,
+      );
+
+      const block = screen.getByRole("button", { name: /Math/ });
+      expect(block.title).toBe(
+        "09:00-10:00 · Math · 7A · A1 · PERIOD · Eleverna upptagna 08:50–10:20",
+      );
+      // Not in the block, and not in the line a screen reader is given when the
+      // facts do not fit: both are built from `facts`.
+      expect(block.textContent).not.toContain("Eleverna");
+      // And the geometry is still the teaching hour. 09:00-10:00 in the default
+      // 08:00-16:00 window at 1.1 px/min is 66px from the top, 66px tall.
+      expect(block.style.top).toBe("66px");
+      expect(block.style.height).toBe("66px");
+    });
+
+    it("leaves the hover text exactly as it was for a lesson with no extra time", () => {
+      // Which is every lesson at nearly every school: an absent note must not
+      // leave a trailing separator on the tooltip.
+      render(<TimetableGrid lessons={[detailed({ startMinutes: 540, endMinutes: 600 })]} />);
+
+      expect(screen.getByRole("button", { name: /Math/ }).title).toBe(
+        "09:00-10:00 · Math · 7A · A1 · PERIOD",
+      );
+    });
   });
 
   it("widens the hour window to fit early and late lessons", () => {
