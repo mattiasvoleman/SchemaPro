@@ -5589,11 +5589,12 @@ def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
 
     THE STEP IS THE GCD OF EVERY CONSTANT A START IS COMPARED WITH, after the
     model's own rounding: the day's length; each lesson's length and the
-    meal's; the lunch window; each frame's open and close, rounded both ways,
-    and its changeover, rounded up; each rast rounded outward and each sitting
-    inward; every availability row of every kind, dated or not, folded onto
-    the grid; each locked lesson's outward window within its day; each
-    hand-placed meal; each previous lesson the disruption term can read.
+    meal's; each requirement's two pupil buffers, rounded up; the lunch window;
+    each frame's open and close, rounded both ways, and its changeover, rounded
+    up; each rast rounded outward and each sitting inward; every availability
+    row of every kind, dated or not, folded onto the grid; each locked lesson's
+    outward window within its day; each hand-placed meal; each previous lesson
+    the disruption term can read.
 
     A FRAME IS READ OUTWARD TOO, AND NEED NOT BE. frames.day_windows is the
     only reader of a frame's times, and it rounds inward: the open up, the
@@ -5710,6 +5711,18 @@ def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
     except ValueError:
         return 1
 
+    for requirement in request.requirements:
+        # The pupils' changing time, rounded up as _create_lesson_decisions
+        # rounds it. Both bound a start — the lead from below, since the domain's
+        # first slot of the day rises by it, and the trail from above through the
+        # day's clipped close — and a buffer left out of this gcd is a week
+        # refused for want of a start the school could have had. Zero feeds
+        # nothing: gcd(0, n) is n, which is why the overwhelming majority of
+        # requirements, carrying no buffer at all, cost no step here.
+        values.extend((
+            -(-requirement.minutes_before // grid.slot_minutes),
+            -(-requirement.minutes_after // grid.slot_minutes),
+        ))
     for frame in request.frame_times:
         for value in (frame.start_time, frame.end_time):
             values.extend((folded(value, upward=False), folded(value, upward=True)))
