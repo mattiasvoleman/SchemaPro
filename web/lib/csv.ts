@@ -187,37 +187,54 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
   },
   requirements: {
     filename: "timplan.csv",
+    // minutesBefore and minutesAfter are the API's own field names rather than
+    // Swedish like their neighbours, because the two are read back by name in
+    // the payload the dialog posts and one spelling of a rule is enough. The
+    // importer takes Swedish spellings too (see REQUIREMENT_COLUMNS) — a hand
+    // that adds the column to its own file writes ombyte, not minutesBefore.
+    //
+    // They sit next to minuter_per_lektion, where the three numbers that
+    // describe one lesson's shape stand together: the reader sees the pupils'
+    // extra time beside the lesson length it lies OUTSIDE of.
     headers: [
       "grupp",
       "amne",
       "lektioner_per_vecka",
       "minuter_per_lektion",
+      "minutesBefore",
+      "minutesAfter",
       "larare",
       "medlarare",
       "veckor",
       "fran",
       "till",
     ],
-    // The examples exist to show the two columns nobody guesses right. Row two
-    // is 120 minutes on ODD weeks with a second teacher — the slöjd/hemkunskap
+    // The examples exist to show the columns nobody guesses right. Row two is
+    // 120 minutes on ODD weeks with a second teacher — the slöjd/hemkunskap
     // shape, where a group reads a long pass every other week; row three is a
-    // subject read for one term only, which is what the date pair is for. A
-    // template of three identical "alla veckor, hela läsåret" rows would teach
-    // an administrator that the last three columns are decoration.
+    // subject read for one term only, which is what the date pair is for; row
+    // four is the idrott the minute pair exists for, ten minutes of ombyte
+    // before and twenty of dusch after, which are minutes OUTSIDE the 60 the
+    // same row teaches in. A template of identical "alla veckor, hela läsåret,
+    // noll minuter" rows would teach an administrator that the last five
+    // columns are decoration.
     exampleRows: [
-      ["7A", "MA", "3", "60", "karin.ek@example.com", "", "alla", "", ""],
+      ["7A", "MA", "3", "60", "0", "0", "karin.ek@example.com", "", "alla", "", ""],
       [
         "Sl71",
         "SLTX",
         "1",
         "120",
+        "0",
+        "0",
         "karin.ek@example.com",
         "bo.alm@example.com",
         "udda",
         "",
         "",
       ],
-      ["7A", "SV", "2", "45", "", "", "alla", "2026-01-12", "2026-03-27"],
+      ["7A", "SV", "2", "45", "0", "0", "", "", "alla", "2026-01-12", "2026-03-27"],
+      ["7A", "IDH", "2", "60", "10", "20", "karin.ek@example.com", "", "alla", "", ""],
     ],
   },
 };
@@ -384,6 +401,10 @@ const FIELD_LABELS: Record<string, string> = {
   subject: "amne",
   lessonsPerWeek: "lektioner_per_vecka",
   minutesPerLesson: "minuter_per_lektion",
+  // As the template's header spells them, so a complaint about a cell names the
+  // column an administrator can actually find in the file.
+  minutesBefore: "minutesBefore",
+  minutesAfter: "minutesAfter",
   teacherEmail: "larare",
   coTeacherEmail: "medlarare",
   recurrence: "veckor",
@@ -535,6 +556,14 @@ export type RequirementRow = {
   subject: string;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /**
+   * The pupils' own minutes on either side of the lesson — ombyte before
+   * idrotten, dusch after it. Optional in the file, like the teachers and the
+   * dates: absent means the key is left out and the requirement keeps whatever
+   * it carries, an empty cell means 0.
+   */
+  minutesBefore?: number;
+  minutesAfter?: number;
   teacherEmail?: string | null;
   coTeacherEmail?: string | null;
   recurrence: LessonRecurrence;
@@ -560,6 +589,16 @@ const REQUIREMENT_COLUMNS = {
     "lektionslangd",
     "minutesperlesson",
   ],
+  // The template writes the API's field name; the Swedish spellings are here
+  // because an administrator who adds the column by hand writes what the
+  // timplan page calls it — "Ombyte före (minuter)" — and not a camelCase
+  // identifier. "minuter" alone is taken by minutesPerLesson above, so neither
+  // side may claim it.
+  // A bare "fore" and "efter" are deliberately NOT accepted: they are the words
+  // a school also writes over a pair of date or time columns, and a mistaken
+  // match here would read a date as minutes and refuse the whole row.
+  minutesBefore: ["minutesbefore", "ombytefore", "minuterfore"],
+  minutesAfter: ["minutesafter", "duschefter", "ombyteefter", "minuterefter"],
   teacherEmail: [
     "larare",
     "undervisandelarare",
@@ -759,6 +798,34 @@ export function mapRequirementRows(parsed: ParsedCsv): {
       );
     }
 
+    /*
+     * The pupils' own minutes on either side, 0..60 as the requirement's own
+     * CHECK constraints and DTO have them.
+     *
+     * OPTIONAL, and empty means 0 — unlike the two numbers above, where an
+     * empty cell is a row the API would reject. Zero is the honest reading here
+     * and the only one the column can have: minutesBefore is not nullable, 0 is
+     * what nearly every row in a school's timplan carries, and a blank cell in a
+     * column of minutes says "none" rather than "unknown". Which is also what
+     * csvImport.updatesNotDeletes already promises the administrator about an
+     * empty cell in a column the file has.
+     */
+    const pupilMinutes = (field: "minutesBefore" | "minutesAfter"): number | null => {
+      const raw = cell(field);
+      const minutes = raw === "" ? 0 : Number(raw);
+      if (!Number.isInteger(minutes) || minutes < 0 || minutes > 60) {
+        fail(
+          `Rad ${rowNumber}: ${FIELD_LABELS[field]} "${raw}" är inte ett heltal mellan 0 och 60.`,
+        );
+        return null;
+      }
+      return minutes;
+    };
+    const minutesBefore = pupilMinutes("minutesBefore");
+    if (minutesBefore === null) return;
+    const minutesAfter = pupilMinutes("minutesAfter");
+    if (minutesAfter === null) return;
+
     const rawRecurrence = cell("recurrence");
     const recurrence = RECURRENCE_BY_WORD[normalizeHeader(rawRecurrence)];
     if (recurrence === undefined) {
@@ -799,6 +866,14 @@ export function mapRequirementRows(parsed: ParsedCsv): {
     // Since this import updates, a file that never had a `larare` column must
     // not strip the teacher off every requirement it touches — only an empty
     // cell in a column the school did write is an instruction to clear.
+    // Same distinction for the pupils' minutes, and the same reason: a school's
+    // own spreadsheet predates these two columns, and uploading it to fix a
+    // lesson count must not silently zero the ombyte on every idrott it touches.
+    // A NEW requirement made from a file without them gets the column default,
+    // which is 0 — so "absent means 0" still holds wherever there is nothing to
+    // leave alone.
+    if (columnOf.has("minutesBefore")) row.minutesBefore = minutesBefore;
+    if (columnOf.has("minutesAfter")) row.minutesAfter = minutesAfter;
     if (columnOf.has("teacherEmail")) row.teacherEmail = cell("teacherEmail") || null;
     if (columnOf.has("coTeacherEmail")) {
       row.coTeacherEmail = cell("coTeacherEmail") || null;
@@ -985,6 +1060,8 @@ export function requirementsToCsv(
     coTeacherId: string | null;
     lessonsPerWeek: number;
     minutesPerLesson: number;
+    minutesBefore: number;
+    minutesAfter: number;
     recurrence: LessonRecurrence;
     startDate: string | null;
     endDate: string | null;
@@ -1022,6 +1099,12 @@ export function requirementsToCsv(
       subject,
       String(requirement.lessonsPerWeek),
       String(requirement.minutesPerLesson),
+      // Always written, zeroes included. A blank cell would import as 0 anyway,
+      // so it would be the same number said less clearly; and a file whose
+      // columns are all present is the one an administrator can edit in place
+      // without wondering whether an empty cell means "none" or "leave it".
+      String(requirement.minutesBefore),
+      String(requirement.minutesAfter),
       teacher,
       coTeacher,
       RECURRENCE_WORD[requirement.recurrence],

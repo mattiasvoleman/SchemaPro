@@ -887,11 +887,23 @@ describe("subjects", () => {
 
 describe("teaching requirements", () => {
   const HEAD =
-    "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;medlarare;veckor;fran;till\r\n";
+    "grupp;amne;lektioner_per_vecka;minuter_per_lektion;minutesBefore;minutesAfter;" +
+    "larare;medlarare;veckor;fran;till\r\n";
 
-  /** A minimal well-formed file with one data row, per-cell overridable. */
+  /**
+   * A minimal well-formed file with one data row, per-cell overridable.
+   *
+   * The cells are addressed by their column number, which is the order HEAD
+   * writes: 0 grupp, 1 amne, 2 lektioner_per_vecka, 3 minuter_per_lektion,
+   * 4 minutesBefore, 5 minutesAfter, 6 larare, 7 medlarare, 8 veckor, 9 fran,
+   * 10 till.
+   *
+   * The two minute columns are left EMPTY here rather than "0", so that nearly
+   * every test below also asserts that an empty cell in a column the file has
+   * reads as 0 — the file's own promise in csvImport.updatesNotDeletes.
+   */
   const oneRow = (cells: Partial<Record<number, string>> = {}) => {
-    const row = ["7A", "MA", "3", "60", "", "", "", "", ""];
+    const row = ["7A", "MA", "3", "60", "", "", "", "", "", "", ""];
     for (const [index, value] of Object.entries(cells)) row[Number(index)] = value!;
     return HEAD + row.join(";") + "\r\n";
   };
@@ -907,7 +919,11 @@ describe("teaching requirements", () => {
    */
   const manyRows = (pairs: [string, string][]) =>
     HEAD +
-    pairs.map(([group, subject]) => [group, subject, "3", "60", "", "", "", "", ""].join(";")).join("\r\n") +
+    pairs
+      .map(([group, subject]) =>
+        [group, subject, "3", "60", "", "", "", "", "", "", ""].join(";"),
+      )
+      .join("\r\n") +
     "\r\n";
 
   it("names both lines when the same class and subject appear twice", () => {
@@ -979,6 +995,8 @@ describe("teaching requirements", () => {
       "endDate",
       "groupName",
       "lessonsPerWeek",
+      "minutesAfter",
+      "minutesBefore",
       "minutesPerLesson",
       "recurrence",
       "startDate",
@@ -1030,6 +1048,8 @@ describe("teaching requirements", () => {
         subject: "MA",
         lessonsPerWeek: 3,
         minutesPerLesson: 60,
+        minutesBefore: 0,
+        minutesAfter: 0,
         teacherEmail: "karin.ek@example.com",
         coTeacherEmail: null,
         recurrence: "ALL_WEEKS",
@@ -1041,6 +1061,8 @@ describe("teaching requirements", () => {
         subject: "SLTX",
         lessonsPerWeek: 1,
         minutesPerLesson: 120,
+        minutesBefore: 0,
+        minutesAfter: 0,
         teacherEmail: "karin.ek@example.com",
         coTeacherEmail: "bo.alm@example.com",
         recurrence: "ODD_WEEKS",
@@ -1052,11 +1074,29 @@ describe("teaching requirements", () => {
         subject: "SV",
         lessonsPerWeek: 2,
         minutesPerLesson: 45,
+        minutesBefore: 0,
+        minutesAfter: 0,
         teacherEmail: null,
         coTeacherEmail: null,
         recurrence: "ALL_WEEKS",
         startDate: "2026-01-12",
         endDate: "2026-03-27",
+      },
+      {
+        // The row the minute pair exists for: 60 minutes of idrott, with ten
+        // minutes of ombyte before and twenty of dusch after that are NOT part
+        // of the lesson.
+        groupName: "7A",
+        subject: "IDH",
+        lessonsPerWeek: 2,
+        minutesPerLesson: 60,
+        minutesBefore: 10,
+        minutesAfter: 20,
+        teacherEmail: "karin.ek@example.com",
+        coTeacherEmail: null,
+        recurrence: "ALL_WEEKS",
+        startDate: null,
+        endDate: null,
       },
     ]);
     expect(CSV_TEMPLATES.requirements.filename).toBe("timplan.csv");
@@ -1133,7 +1173,7 @@ describe("teaching requirements", () => {
     ];
 
     it.each(spellings)('reads "%s" as %s', (written, expected) => {
-      const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 6: written })));
+      const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 8: written })));
 
       expect(errors).toEqual([]);
       expect(rows[0]?.recurrence).toBe(expected);
@@ -1150,7 +1190,7 @@ describe("teaching requirements", () => {
 
     it("says which words exist when it does not recognise one", () => {
       const { rows, errors } = mapRequirementRows(
-        parseCsv(oneRow({ 6: "varannan vecka" })),
+        parseCsv(oneRow({ 8: "varannan vecka" })),
       );
 
       expect(rows).toEqual([]);
@@ -1207,6 +1247,89 @@ describe("teaching requirements", () => {
         ]);
       },
     );
+
+    describe("the pupils' own minutes", () => {
+      it("accepts both ends of the requirement's own 0..60", () => {
+        const low = mapRequirementRows(parseCsv(oneRow({ 4: "0", 5: "0" })));
+        const high = mapRequirementRows(parseCsv(oneRow({ 4: "60", 5: "60" })));
+
+        expect(low.errors).toEqual([]);
+        expect(high.errors).toEqual([]);
+        expect(low.rows[0]).toMatchObject({ minutesBefore: 0, minutesAfter: 0 });
+        expect(high.rows[0]).toMatchObject({ minutesBefore: 60, minutesAfter: 60 });
+      });
+
+      it("reads the idrott row the pair exists for", () => {
+        const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 4: "10", 5: "20" })));
+
+        expect(errors).toEqual([]);
+        // The lesson is still 60 minutes long; these thirty are outside it.
+        expect(rows[0]).toMatchObject({
+          minutesPerLesson: 60,
+          minutesBefore: 10,
+          minutesAfter: 20,
+        });
+      });
+
+      it("reads an EMPTY cell as 0 rather than rejecting the row", () => {
+        // Unlike the two numbers above, where an empty cell is a row the API
+        // would refuse. 0 is what nearly every timplan row carries, and a blank
+        // cell in a column of minutes says "none".
+        const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 4: "", 5: "" })));
+
+        expect(errors).toEqual([]);
+        expect(rows[0]).toMatchObject({ minutesBefore: 0, minutesAfter: 0 });
+      });
+
+      it.each(["61", "-1", "1.5", "5,5", "tio minuter"])(
+        'rejects minutesBefore "%s" with the same sentence the other numbers use',
+        (value) => {
+          const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 4: value })));
+
+          expect(rows).toEqual([]);
+          expect(errors).toEqual([
+            {
+              row: 1,
+              message: `Rad 1: minutesBefore "${value}" är inte ett heltal mellan 0 och 60.`,
+            },
+          ]);
+        },
+      );
+
+      it.each(["61", "-5", "abc"])('rejects minutesAfter "%s"', (value) => {
+        const { rows, errors } = mapRequirementRows(parseCsv(oneRow({ 5: value })));
+
+        expect(rows).toEqual([]);
+        expect(errors).toEqual([
+          {
+            row: 1,
+            message: `Rad 1: minutesAfter "${value}" är inte ett heltal mellan 0 och 60.`,
+          },
+        ]);
+      });
+
+      it("complains once per row, about the first column that is wrong", () => {
+        // The file's rule everywhere: an administrator fixes the row, and two
+        // sentences about one row read as two problems.
+        const { errors } = mapRequirementRows(parseCsv(oneRow({ 4: "99", 5: "99" })));
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]?.message).toContain("minutesBefore");
+      });
+
+      it("also reads the Swedish headers a hand would write", () => {
+        // The template writes the API's field names; a school that adds the
+        // column itself writes what the timplan page calls it.
+        const csv =
+          "grupp;amne;lektioner_per_vecka;minuter_per_lektion;ombyte_fore;dusch_efter\r\n" +
+          "7A;IDH;2;60;10;20\r\n";
+        const { rows, errors, columns } = mapRequirementRows(parseCsv(csv));
+
+        expect(errors).toEqual([]);
+        expect(rows[0]).toMatchObject({ minutesBefore: 10, minutesAfter: 20 });
+        expect([...columns].sort()).toContain("minutesBefore");
+      });
+    });
   });
 
   describe("dates", () => {
@@ -1215,7 +1338,7 @@ describe("teaching requirements", () => {
       // Letting it through would start the period two days into March without
       // anybody being told.
       const { rows, errors } = mapRequirementRows(
-        parseCsv(oneRow({ 7: "2026-02-30" })),
+        parseCsv(oneRow({ 9: "2026-02-30" })),
       );
 
       expect(rows).toEqual([]);
@@ -1231,7 +1354,7 @@ describe("teaching requirements", () => {
     it.each(["2026-13-01", "12/01/2026", "2026-1-2", "2026-02-30T00:00:00Z"])(
       'rejects "%s"',
       (value) => {
-        expect(mapRequirementRows(parseCsv(oneRow({ 8: value }))).errors).toEqual([
+        expect(mapRequirementRows(parseCsv(oneRow({ 10: value }))).errors).toEqual([
           {
             row: 1,
             message: `Rad 1: till "${value}" är inte ett datum som finns. Skriv det som åååå-mm-dd.`,
@@ -1241,17 +1364,17 @@ describe("teaching requirements", () => {
     );
 
     it("accepts a leap day that exists and rejects the one that does not", () => {
-      expect(mapRequirementRows(parseCsv(oneRow({ 7: "2028-02-29" }))).errors).toEqual(
+      expect(mapRequirementRows(parseCsv(oneRow({ 9: "2028-02-29" }))).errors).toEqual(
         [],
       );
-      expect(mapRequirementRows(parseCsv(oneRow({ 7: "2027-02-29" }))).errors).toHaveLength(
+      expect(mapRequirementRows(parseCsv(oneRow({ 9: "2027-02-29" }))).errors).toHaveLength(
         1,
       );
     });
 
     it("rejects a period that ends before it starts", () => {
       const { rows, errors } = mapRequirementRows(
-        parseCsv(oneRow({ 7: "2026-06-12", 8: "2026-01-12" })),
+        parseCsv(oneRow({ 9: "2026-06-12", 10: "2026-01-12" })),
       );
 
       expect(rows).toEqual([]);
@@ -1265,7 +1388,7 @@ describe("teaching requirements", () => {
 
     it("accepts a one-day period (from equal to till)", () => {
       const { errors } = mapRequirementRows(
-        parseCsv(oneRow({ 7: "2026-01-12", 8: "2026-01-12" })),
+        parseCsv(oneRow({ 9: "2026-01-12", 10: "2026-01-12" })),
       );
 
       expect(errors).toEqual([]);
@@ -1284,6 +1407,11 @@ describe("teaching requirements", () => {
         subject: "MA",
         lessonsPerWeek: 3,
         minutesPerLesson: 60,
+        // Empty cells in columns the file HAS. For the teachers and the dates
+        // that means null — clear them — and for the minutes it means 0, which
+        // is the same instruction said in the only value the column can hold.
+        minutesBefore: 0,
+        minutesAfter: 0,
         teacherEmail: null,
         coTeacherEmail: null,
         recurrence: "ALL_WEEKS",
@@ -1304,6 +1432,31 @@ describe("teaching requirements", () => {
         minutesPerLesson: 60,
         recurrence: "ODD_WEEKS",
       });
+    });
+
+    it("a file written before the minute columns existed does not zero them", () => {
+      /*
+       * The nine-column file every school that has exported its timplan once
+       * already has on disk. Uploaded to fix a lesson count, it must not read as
+       * "no ombyte anywhere" — which is what an always-written 0 would have
+       * meant, since the import UPDATES and 0 is a legitimate value.
+       *
+       * Both halves of the statement are asserted: the key is absent from the
+       * row, AND the column set the server writes by does not name it.
+       */
+      const csv =
+        "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;medlarare;veckor;fran;till\r\n" +
+        "7A;IDH;2;60;karin@s.se;;alla;;\r\n";
+      const { rows, errors, columns } = mapRequirementRows(parseCsv(csv));
+
+      expect(errors).toEqual([]);
+      expect(rows[0]).not.toHaveProperty("minutesBefore");
+      expect(rows[0]).not.toHaveProperty("minutesAfter");
+      expect(columns).not.toContain("minutesBefore");
+      expect(columns).not.toContain("minutesAfter");
+      // And the rest of the row still lands, so the old file remains a usable
+      // file rather than a rejected one.
+      expect(rows[0]).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 60 });
     });
   });
 
@@ -1328,6 +1481,8 @@ describe("teaching requirements", () => {
       coTeacherId: null,
       lessonsPerWeek: 3,
       minutesPerLesson: 60,
+      minutesBefore: 0,
+      minutesAfter: 0,
       recurrence: "ALL_WEEKS" as const,
       startDate: null,
       endDate: null,
@@ -1349,11 +1504,11 @@ describe("teaching requirements", () => {
       );
 
       expect(dataLines(csv)).toEqual([
-        "7A;MA;3;60;;;alla;;",
+        "7A;MA;3;60;0;0;;;alla;;",
         // A blank code is not a code: writing it would leave the ämne cell
         // empty and the row unimportable.
-        "7A;Textilslöjd;3;60;;;alla;;",
-        "7A;Bild;3;60;;;alla;;",
+        "7A;Textilslöjd;3;60;0;0;;;alla;;",
+        "7A;Bild;3;60;0;0;;;alla;;",
       ]);
       expect(csv).not.toContain("s-ma");
     });
@@ -1366,7 +1521,7 @@ describe("teaching requirements", () => {
         people,
       );
 
-      expect(dataLines(csv)).toEqual(["7A;MA;3;60;karin@s.se;bo@s.se;alla;;"]);
+      expect(dataLines(csv)).toEqual(["7A;MA;3;60;0;0;karin@s.se;bo@s.se;alla;;"]);
     });
 
     it("writes the recurrence as the word the importer reads back", () => {
@@ -1381,15 +1536,38 @@ describe("teaching requirements", () => {
       );
 
       expect(dataLines(csv)).toEqual([
-        "7A;MA;3;60;;;udda;;",
-        "7A;MA;3;60;;;jamna;;",
+        "7A;MA;3;60;0;0;;;udda;;",
+        "7A;MA;3;60;0;0;;;jamna;;",
       ]);
     });
 
     it("leaves the period columns blank when the requirement has no bounds", () => {
       const csv = requirementsToCsv([requirement()], groups, subjects, people);
 
-      expect(dataLines(csv)).toEqual(["7A;MA;3;60;;;alla;;"]);
+      expect(dataLines(csv)).toEqual(["7A;MA;3;60;0;0;;;alla;;"]);
+    });
+
+    it("writes the pupils' minutes always, zeroes and all", () => {
+      /*
+       * Never blank, though a blank cell would import back as the same 0.
+       *
+       * The file is a school's working copy: every column present is a column
+       * an administrator can fill in where they sit, and an empty cell in a
+       * column of minutes invites the question the teacher and date columns
+       * really do have — whether it means "none" or "leave it". Two zeroes
+       * answer it in advance.
+       */
+      const csv = requirementsToCsv(
+        [requirement(), requirement({ minutesBefore: 10, minutesAfter: 20 })],
+        groups,
+        subjects,
+        people,
+      );
+
+      expect(dataLines(csv)).toEqual([
+        "7A;MA;3;60;0;0;;;alla;;",
+        "7A;MA;3;60;10;20;;;alla;;",
+      ]);
     });
 
     it("skips a row whose group or subject it cannot name", () => {
@@ -1404,7 +1582,7 @@ describe("teaching requirements", () => {
         people,
       );
 
-      expect(dataLines(csv)).toEqual(["7A;MA;3;60;;;alla;;"]);
+      expect(dataLines(csv)).toEqual(["7A;MA;3;60;0;0;;;alla;;"]);
     });
 
     it("skips a row whose teacher it cannot name rather than blanking the cell", () => {
@@ -1424,7 +1602,8 @@ describe("teaching requirements", () => {
     it("writes a header-only file when there is nothing to export", () => {
       expect(requirementsToCsv([], groups, subjects, people)).toBe(
         "﻿" +
-          "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;medlarare;veckor;fran;till\r\n",
+          "grupp;amne;lektioner_per_vecka;minuter_per_lektion;minutesBefore;minutesAfter;" +
+          "larare;medlarare;veckor;fran;till\r\n",
       );
     });
 
@@ -1634,6 +1813,8 @@ describe("export round trips", () => {
           coTeacherId: null,
           lessonsPerWeek: 3,
           minutesPerLesson: 60,
+          minutesBefore: 0,
+          minutesAfter: 0,
           recurrence: "ALL_WEEKS",
           startDate: null,
           endDate: null,
@@ -1645,6 +1826,8 @@ describe("export round trips", () => {
           coTeacherId: "t-bo",
           lessonsPerWeek: 1,
           minutesPerLesson: 120,
+          minutesBefore: 0,
+          minutesAfter: 0,
           recurrence: "ODD_WEEKS",
           startDate: "2026-01-12",
           endDate: "2026-03-27",
@@ -1672,6 +1855,8 @@ describe("export round trips", () => {
         subject: "MA",
         lessonsPerWeek: 3,
         minutesPerLesson: 60,
+        minutesBefore: 0,
+        minutesAfter: 0,
         teacherEmail: "karin@s.se",
         coTeacherEmail: null,
         recurrence: "ALL_WEEKS",
@@ -1685,12 +1870,69 @@ describe("export round trips", () => {
         subject: "Textilslöjd",
         lessonsPerWeek: 1,
         minutesPerLesson: 120,
+        minutesBefore: 0,
+        minutesAfter: 0,
         teacherEmail: "karin@s.se",
         coTeacherEmail: "bo@s.se",
         recurrence: "ODD_WEEKS",
         startDate: "2026-01-12",
         endDate: "2026-03-27",
       },
+    ]);
+  });
+
+  it("carries the pupils' ombyte and dusch out and back unchanged", () => {
+    /*
+     * The round trip the two columns exist for: export, edit in Excel, upload
+     * again. Both numbers have to survive as numbers — a 10 written as a string
+     * and read back as a 10 is the whole contract — and the pair must not swap
+     * places, which is what a test with one non-zero number could not see.
+     *
+     * 0 and 60 are the ends of the requirement's own range, so the row also
+     * says that neither end is lost on the way through a spreadsheet.
+     */
+    const exported = requirementsToCsv(
+      [
+        {
+          studentGroupId: "g-7a",
+          subjectId: "s-idh",
+          teacherId: null,
+          coTeacherId: null,
+          lessonsPerWeek: 2,
+          minutesPerLesson: 60,
+          minutesBefore: 10,
+          minutesAfter: 20,
+          recurrence: "ALL_WEEKS",
+          startDate: null,
+          endDate: null,
+        },
+        {
+          studentGroupId: "g-7a",
+          subjectId: "s-ma",
+          teacherId: null,
+          coTeacherId: null,
+          lessonsPerWeek: 3,
+          minutesPerLesson: 60,
+          minutesBefore: 0,
+          minutesAfter: 60,
+          recurrence: "ALL_WEEKS",
+          startDate: null,
+          endDate: null,
+        },
+      ],
+      [{ id: "g-7a", name: "7A" }],
+      [
+        { id: "s-idh", name: "Idrott och hälsa", code: "IDH" },
+        { id: "s-ma", name: "Matematik", code: "MA" },
+      ],
+      [],
+    );
+    const { rows, errors } = mapRequirementRows(parseCsv(exported));
+
+    expect(errors).toEqual([]);
+    expect(rows.map((row) => [row.subject, row.minutesBefore, row.minutesAfter])).toEqual([
+      ["IDH", 10, 20],
+      ["MA", 0, 60],
     ]);
   });
 
