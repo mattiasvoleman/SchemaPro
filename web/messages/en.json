@@ -1011,6 +1011,7 @@
     "idleHint": "An idle gap is a hole between the first and the last lesson of a day — time somebody spends waiting at school. It is counted per pupil, so a gap can be half a class while the other half is in a lesson. Time before the first and after the last lesson does not count; they are not here for it. Heaviest week first.",
     "idleLunchWindow": "{minutes} min of lunch is credited once a day, to the first gap in the window that can hold it.",
     "idleLunchOff": "No lunch break is configured, so no gap is credited for a meal.",
+    "idlePupilTime": "The timetable plan gives some lessons extra time for the pupils — changing before and showering after. That time counts as occupied, so a gap that looks empty on the grid may be missing here: the class is in the changing room, and the timetable editor will not let a lesson in there either.",
     "idleMinimum": "Count gaps from",
     "idleScope": "Show",
     "idleScopeAll": "Classes and teachers",

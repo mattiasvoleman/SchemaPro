@@ -82,7 +82,17 @@ export interface GroupMembership {
  * already in the caller's hands — this module fetches nothing.
  */
 export interface ScheduleData {
-  /** The whole academic year's lessons, as the grid holds them. */
+  /**
+   * The whole academic year's lessons, as the grid holds them.
+   *
+   * A placement may carry the pupils' own minutes on either side of it — the
+   * ombyte before idrotten and the dusch after — which the caller puts there by
+   * building it with `toPlacement(lesson, pupilBuffers)`. Those minutes occupy
+   * the PUPILS, so they fill a hole in a class's day and leave a teacher's
+   * untouched; see `occupation`. A caller that has not loaded the timplan
+   * carries none of them, and every answer below is then the one this module
+   * gave before they existed.
+   */
   placements: Placement[];
   /** Weekly UNAVAILABLE rules occupy time exactly as a lesson does. */
   constraints: AvailabilityConstraint[];
@@ -300,7 +310,21 @@ function hasBodies(bodies: Bodies): boolean {
 }
 
 /**
- * Whether this one lesson occupies any of the probed bodies.
+ * Whether a probe stands for PUPILS — a class, several classes, or one named
+ * pupil — rather than for a teacher or a room.
+ *
+ * Which is the question the pupil buffer turns on: the minutes of ombyte and
+ * dusch occupy the children and nobody else. baseProbe fills studentGroupId
+ * with the module's own sentinel, so a teacher or room probe names no group at
+ * all, and a cohort probe names both a group and the one pupil it stands for.
+ */
+function standsForPupils(probe: Placement): boolean {
+  return probe.studentGroupId !== NO_GROUP || (probe.studentIds?.length ?? 0) > 0;
+}
+
+/**
+ * The stretch this one lesson occupies the probed bodies for — null when it
+ * occupies none of them.
  *
  * The probe is laid over the lesson's own slot and validated against that
  * lesson alone, so the only thing the answer can depend on is whether the two
@@ -308,14 +332,37 @@ function hasBodies(bodies: Bodies): boolean {
  * half-open there, which also settles the degenerate rows for free: a lesson
  * ending when it starts overlaps nothing, its own probe included, and so
  * occupies nobody.
+ *
+ * WIDER THAN THE LESSON FOR PUPILS, and exactly the lesson for anybody else.
+ * A class with 20 minutes of dusch after its idrott is not idle in them, so
+ * they are not a hole — and the timetable editor would refuse a lesson dropped
+ * there (lib/conflicts.ts, pupilsOverlap), which is the whole reason this
+ * report must count them: a håltimme nothing can be moved into is not a
+ * håltimme, it is a report sending a schedule-maker to try a drag the grid
+ * then rejects. The teacher's own report keeps the teaching span, for the
+ * reason validatePlacement gives at shareTheClock: the idrottslärare neither
+ * changes nor showers with the class.
+ *
+ * The buffer reaches this function on the placement itself — the caller builds
+ * its placements with toPlacement(lesson, buffers) — so a caller that has not
+ * loaded the timplan passes none and every interval below is the exact one
+ * this module has always used.
+ *
+ * A start pulled back by an ombyte can precede the day's first lesson, and that
+ * is the honest reading: the pupils are at school, in the omklädningsrummet.
+ * The day the report measures holes inside is bounded by these same intervals,
+ * so the ombyte before the first lesson never becomes a hole of its own.
  */
-function occupies(
+function occupation(
   probes: Placement[],
   placement: Placement,
   known: KnownMemberships,
-): boolean {
-  return probes.some(
-    (probe) =>
+): Interval | null {
+  let occupied = false;
+  let pupils = false;
+
+  for (const probe of probes) {
+    if (
       validatePlacement(
         {
           ...probe,
@@ -327,8 +374,26 @@ function occupies(
         [],
         known.studentGroupOf,
         known.groupConflicts,
-      ).length > 0,
-  );
+      ).length === 0
+    ) {
+      continue;
+    }
+    occupied = true;
+    // The pupil reading is the widest one, so the first pupil probe that
+    // matches settles the answer and the rest of the set is not asked. A mixed
+    // set — "when are 7A and Karin both free" — therefore counts the buffer as
+    // soon as the class is what the lesson occupies.
+    if (standsForPupils(probe)) {
+      pupils = true;
+      break;
+    }
+  }
+
+  if (!occupied) return null;
+  return {
+    start: placement.startMinutes - (pupils ? (placement.minutesBefore ?? 0) : 0),
+    end: placement.endMinutes + (pupils ? (placement.minutesAfter ?? 0) : 0),
+  };
 }
 
 /** Whether this one weekly rule closes time for any of the probed bodies. */
@@ -392,11 +457,9 @@ function collectBusy(
   const closedByDay = new Map<number, Interval[]>();
 
   for (const placement of data.placements) {
-    if (!occupies(probes, placement, known)) continue;
-    pushInterval(lessonsByDay, placement.dayOfWeek, {
-      start: placement.startMinutes,
-      end: placement.endMinutes,
-    });
+    const busyFor = occupation(probes, placement, known);
+    if (busyFor === null) continue;
+    pushInterval(lessonsByDay, placement.dayOfWeek, busyFor);
   }
 
   for (const day of days) {

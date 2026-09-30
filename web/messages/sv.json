@@ -1011,6 +1011,7 @@
     "idleHint": "En håltimme är en lucka mellan dagens första och sista lektion — tid någon sitter av på skolan. Den räknas per elev, så en lucka kan gälla halva klassen medan den andra halvan har lektion. Tiden före första och efter sista lektionen räknas inte, då är man inte här. Tyngsta veckan först.",
     "idleLunchWindow": "{minutes} min lunch dras av en gång per dag, från den första lucka i fönstret som rymmer den.",
     "idleLunchOff": "Ingen lunchtid är inställd, så ingen lucka får avdrag för mat.",
+    "idlePupilTime": "Timplanen ger några lektioner extra tid för eleverna — ombyte före och dusch efter. Den tiden räknas som upptagen, så en lucka som ser tom ut i rutnätet kan saknas här: klassen står i omklädningsrummet, och schemaeditorn släpper inte in en lektion där heller.",
     "idleMinimum": "Räkna luckor från",
     "idleScope": "Visa",
     "idleScopeAll": "Klasser och lärare",

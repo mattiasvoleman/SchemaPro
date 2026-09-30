@@ -76,10 +76,11 @@ import {
   useLunchSettings,
   useMasterLessons,
   usePeople,
+  useRequirements,
   useRooms,
   useFrameTimes,
 } from "@/lib/queries";
-import { buildGroupConflictMap, toPlacement } from "@/lib/conflicts";
+import { buildGroupConflictMap, buildPupilBufferMap, toPlacement } from "@/lib/conflicts";
 import { buildGradeSpans } from "@/lib/grade-span";
 import {
   DEFAULT_MINIMUM_GAP_MINUTES,
@@ -291,6 +292,10 @@ export default function GapsPage() {
   const { data: memberships } = useGroupMemberships();
   const { data: frameTimes } = useFrameTimes();
   const { data: lunchSettings } = useLunchSettings();
+  // The timplan, for one thing only: the minutes the pupils are occupied
+  // outside a lesson. The same query the timetable page reads its buffers from,
+  // so the two pages cannot disagree about which minutes are taken.
+  const { data: requirements } = useRequirements(activeYear?.id ?? null);
 
   // -------------------------------------------------------------------
   // The bodies, and the schedule they are asked about
@@ -338,13 +343,23 @@ export default function GapsPage() {
       }),
     [groups, memberships, studentGroupOf],
   );
-  // Wrapped rather than passed by reference: toPlacement takes an optional
-  // pupil-buffer map as its second argument, which `map` would fill with the
-  // array index. This page loads no timplan, so it passes none — the buffers
-  // are not applied to the gap report. See lib/conflicts.ts.
+  /**
+   * (class, subject) → the minutes the class is occupied outside the lesson.
+   *
+   * Undefined while the timplan is in flight rather than an empty map, for the
+   * reason the frames and the roster are: an empty map is a school where nobody
+   * changes for anything, and reading "not loaded yet" as that reports holes the
+   * children are standing in the omklädningsrummet through.
+   */
+  const pupilBuffers = useMemo(
+    () => (requirements ? buildPupilBufferMap(requirements) : undefined),
+    [requirements],
+  );
+  // Wrapped rather than passed by reference: toPlacement takes the pupil-buffer
+  // map as its second argument, which `map` would fill with the array index.
   const placements = useMemo(
-    () => (lessons ?? []).map((lesson) => toPlacement(lesson)),
-    [lessons],
+    () => (lessons ?? []).map((lesson) => toPlacement(lesson, pupilBuffers)),
+    [lessons, pupilBuffers],
   );
 
   const scheduleData: ScheduleData = useMemo(
@@ -839,6 +854,20 @@ export default function GapsPage() {
               })
             : t("idleLunchOff")}
         </p>
+        {/*
+          Only when the school has actually written ombyte or dusch on a
+          timplanspost. The map holds the rows carrying a number and nothing
+          else, so it is empty at nearly every school — and a sentence about a
+          rule nobody has set would be one more line to read past on a page that
+          already asks three questions. When the rule DOES exist it has to be
+          said: the report is then quietly not reporting holes an administrator
+          can see on the grid, and silence about that reads as a missing row.
+        */}
+        {pupilBuffers !== undefined && pupilBuffers.size > 0 && (
+          <p className="max-w-prose text-sm leading-relaxed text-foreground">
+            {t("idlePupilTime")}
+          </p>
+        )}
 
         <div className="flex flex-wrap items-end gap-3">
           <div className="w-48 space-y-2">
