@@ -2135,6 +2135,78 @@ class SchedulerSolver:
                         "remaining": remaining,
                     })
 
+            # AND THE MARGINS ROUND THE LESSON, which the check above does not
+            # count. It asks whether the WINDOW holds the lesson; the domain the
+            # model then builds pushes the first start forward by the pupils'
+            # leading buffer and pulls the last one back by their trailing one
+            # and the corridor, because neither margin may cross into a
+            # neighbouring day (_build_decisions argues both clips there). So a
+            # window exactly as wide as the lesson passes the frame check and
+            # empties the domain anyway — and an empty domain is not even an
+            # INFEASIBLE with a core: CP-SAT raises `var #0 has no domain()`,
+            # which became a SolverBuildError and reached the school as a 500
+            # with nothing in it to act on. The corridor alone could do it
+            # wherever a frame reached the day's end, which is older than the
+            # pupils' buffer; the buffer widens the trigger to any window that
+            # opens on the day's first slot.
+            #
+            # BEFORE THE RASTS, in the order the model itself empties the
+            # domain: the day ranges are cut from the windows and these margins,
+            # and only then do the rasts intersect what is left. A margin that
+            # has already left no day to start on is the earlier fact.
+            #
+            # The arithmetic is _build_decisions', deliberately down to the
+            # rounding: a second rule here would eventually disagree with the
+            # model about which days it kept, and this refusal would either
+            # refuse a week that would have solved or let the 500 back through.
+            span = span_of(requirement)
+            changeover = changeover_slots(request.frame_times, span, self._grid)
+            lead = -(-requirement.minutes_before // self._grid.slot_minutes)
+            trail = -(-requirement.minutes_after // self._grid.slot_minutes)
+            # Skipped when every margin is zero, and not merely as an economy:
+            # with no margins this asks exactly what the frame check above asked,
+            # and the sentence would blame margins of zero for a window that is
+            # simply too narrow for the lesson.
+            if lead or trail or changeover:
+                widest = 0
+                for open_slot, close_slot in day_windows(
+                    request.frame_times, span, self._grid,
+                ).values():
+                    first = max(open_slot, lead)
+                    last = min(
+                        close_slot, self._grid.slots_per_day - changeover - trail,
+                    )
+                    widest = max(widest, last - first)
+                if widest < duration_slots:
+                    grades = (
+                        "any"
+                        if requirement.min_grade_level is None
+                        else _grade_span_text(
+                            requirement.min_grade_level, requirement.max_grade_level,
+                        )
+                    )
+                    # What a day still leaves for the LESSON once the margins
+                    # have taken theirs — not the window, which the frame check
+                    # already reports and which this school's window may be
+                    # perfectly good.
+                    #
+                    # THE MARGINS ARE REPORTED AS THE GRID ROUNDS THEM, not as
+                    # they were typed: seven minutes before on a five-minute grid
+                    # takes ten, and ten is what leaves the window. Written the
+                    # other way the sentence's own numbers would not add up to
+                    # the window a school can measure them against — and the
+                    # rounded figure is the one it has to get under.
+                    remaining = widest * self._grid.slot_minutes
+                    raise InvalidScheduleInputError.of("MARGIN_NO_WINDOW_FOR_REQUIREMENT", {
+                        "requirement": str(requirement.id),
+                        "grades": grades,
+                        "minutes": requirement.minutes_per_lesson,
+                        "before": lead * self._grid.slot_minutes,
+                        "after": trail * self._grid.slot_minutes,
+                        "changeover": changeover * self._grid.slot_minutes,
+                        "remaining": remaining,
+                    })
+
             # And a rast cuts holes in the same domain, so it can empty it the
             # same way — worse, in fact: a frame leaves one narrow window, while
             # rasts can leave several fragments none of which holds the lesson.
