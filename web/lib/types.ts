@@ -176,6 +176,23 @@ export interface TeachingRequirement {
   lessonsPerWeek: number;
   minutesPerLesson: number;
   /**
+   * Minutes the PUPILS are occupied before the lesson and after it — ombyte
+   * before idrotten, dusch and ombyte after it. 0..60, and 0 for every subject
+   * that needs none, which is nearly all of them.
+   *
+   * OUTSIDE the lesson, not part of it: 60 minutes of teaching with 10 before
+   * and 20 after occupies the class for 90 and is still 60 minutes of
+   * teaching, so `minutesPerLesson` keeps its number and so does every hour
+   * figure derived from it (lib/teaching-hours.ts reads neither of these).
+   *
+   * And only the pupils. The teacher may take the slot on either side and the
+   * sal stands empty while the class is in the omklädningsrummet — which is
+   * why lib/conflicts.ts widens the group arm alone and leaves TEACHER and
+   * ROOM on the teaching span.
+   */
+  minutesBefore: number;
+  minutesAfter: number;
+  /**
    * Which weeks the subject is read over — said once on the requirement and
    * inherited by every lesson generated from it, rather than corrected lesson
    * by lesson in the master timetable afterwards.

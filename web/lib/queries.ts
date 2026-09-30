@@ -216,7 +216,11 @@ export function useRequirements(academicYearId: string | null) {
         supabase
           .from("TeachingRequirements")
           .select(
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, recurrence, startDate, endDate",
+            // The column list is explicit, so a column the API has gained is
+            // invisible here until it is named — minutesBefore/minutesAfter
+            // would have read as `undefined` on every requirement, which the
+            // timplan dialog would then have saved back as 0.
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, minutesBefore, minutesAfter, recurrence, startDate, endDate",
           )
           .eq("academicYearId", academicYearId!)
           .order("id")

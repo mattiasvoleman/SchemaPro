@@ -241,6 +241,10 @@ describe("taughtGroupsOf", () => {
     coTeacherId,
     lessonsPerWeek: 3,
     minutesPerLesson: 60,
+    // Nor is the pupils' ombyte and dusch, which no group section reads — 0 is
+    // what nearly every subject carries and what the column defaults to.
+    minutesBefore: 0,
+    minutesAfter: 0,
     // Not what these tests are about, but a requirement carries its own period
     // now and the fixture has to be a whole one — see lib/teaching-hours.ts.
     recurrence: "ALL_WEEKS" as const,
