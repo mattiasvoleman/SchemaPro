@@ -250,6 +250,18 @@ export type { FrameTime } from "@/lib/frame-times";
 export type { LunchServing } from "@/lib/lunch-servings";
 export type { Rast } from "@/lib/rasts";
 
+/**
+ * A teacher's own working time: the lunch they are owed and the night between
+ * two teaching days.
+ *
+ * Re-exported from lib/teacher-work-rules.ts, which owns the shape because it
+ * owns the rules that read it — the all-or-nothing lunch trio, the bounds and
+ * what an empty field means. Unlike every other per-teacher row in this file it
+ * is something the school OWES the teacher rather than an hour the teacher
+ * closes, which is why it is not an AvailabilityConstraint.
+ */
+export type { TeacherWorkRule } from "@/lib/teacher-work-rules";
+
 /** A published rast as PostgREST returns it. */
 export interface CalendarRast {
   id: string;

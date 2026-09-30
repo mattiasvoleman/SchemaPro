@@ -41,6 +41,8 @@ import {
   useSubjects,
   useSubstituteSuggestions,
   useTeacherLessons,
+  useTeacherWorkRuleActions,
+  useTeacherWorkRules,
   useUpdateMasterLesson,
   type ImportReport,
   type OptimizationJob,
@@ -190,6 +192,160 @@ describe("useSubjects", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error?.message).toBe("permission denied for table Subjects");
     expect(result.current.data).toBeUndefined();
+  });
+});
+
+/**
+ * The column list is the contract here, not an implementation detail.
+ *
+ * A field missing from it is not an error anywhere — PostgREST returns the rows
+ * without it, the hook's type says it is there, and the form draws it EMPTY. The
+ * next save of the row then writes null over whatever the school had set, which
+ * is a working-time rule quietly deleted by an unrelated edit.
+ */
+describe("useTeacherWorkRules", () => {
+  const rows = [
+    {
+      id: "w-1",
+      userId: "t-1",
+      lunchMinutes: 30,
+      lunchStartTime: "10:30:00",
+      lunchEndTime: "13:30:00",
+      minDailyRestMinutes: 660,
+    },
+    {
+      id: "w-2",
+      userId: "t-2",
+      lunchMinutes: null,
+      lunchStartTime: null,
+      lunchEndTime: null,
+      minDailyRestMinutes: 540,
+    },
+  ];
+
+  it("stores the rows under ['teacher-work-rules'] with every rule field named", async () => {
+    stubTable("TeacherWorkRules", ok(rows));
+    const { queryClient, wrapper } = createHarness();
+    const { result } = renderHook(() => useTeacherWorkRules(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual(rows);
+    expect(queryClient.getQueryData(["teacher-work-rules"])).toEqual(rows);
+    expect(supabaseMocks.from).toHaveBeenCalledWith("TeacherWorkRules");
+    expect(argsFor("TeacherWorkRules", "select")).toEqual([
+      ["id, userId, lunchMinutes, lunchStartTime, lunchEndTime, minDailyRestMinutes"],
+    ]);
+    expect(argsFor("TeacherWorkRules", "order")).toEqual([["userId"], ["id"]]);
+  });
+
+  it("is empty for a school that has set nobody's working time", async () => {
+    // The normal case, and the one every school is in today. An empty table is
+    // not an error state and must not read as one.
+    stubTable("TeacherWorkRules", ok([]));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useTeacherWorkRules(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toEqual([]);
+  });
+});
+
+/**
+ * The endpoint is keyed by the TEACHER, not by the row.
+ *
+ * `PUT /:userId` upserts that teacher's rule and `DELETE /:userId` removes it;
+ * there is no collection to POST into, because the table holds at most one row
+ * per teacher. A caller reaching for useCrudMutations would send the row id and
+ * 404 for exactly the teacher whose rule it meant to change — and the teacher's
+ * id must not appear in the BODY either, where the DTO's whitelist and
+ * forbidNonWhitelisted turn it into a 400 with nothing wrong in it.
+ */
+describe("useTeacherWorkRuleActions", () => {
+  it("upserts at /:userId with the teacher named only in the path", async () => {
+    const harness = createHarness();
+    const { result } = renderHook(() => useTeacherWorkRuleActions(), {
+      wrapper: harness.wrapper,
+    });
+
+    await act(async () => {
+      await result.current.save.mutateAsync({
+        userId: "t-1",
+        lunchMinutes: 30,
+        lunchStartTime: "10:30",
+        lunchEndTime: "13:30",
+        minDailyRestMinutes: 660,
+      });
+    });
+
+    expect(mockApi.put).toHaveBeenCalledWith("/api/v1/teacher-work-rules/t-1", {
+      lunchMinutes: 30,
+      lunchStartTime: "10:30",
+      lunchEndTime: "13:30",
+      minDailyRestMinutes: 660,
+    });
+    // Not ["people"]: a rule is not part of the person row, and invalidating the
+    // register would refetch the school's longest list on every lunch saved.
+    expect(invalidatedKeys(harness)).toEqual([["teacher-work-rules"]]);
+  });
+
+  it("carries the nulls through, so a rule can be narrowed as well as widened", async () => {
+    const harness = createHarness();
+    const { result } = renderHook(() => useTeacherWorkRuleActions(), {
+      wrapper: harness.wrapper,
+    });
+
+    await act(async () => {
+      await result.current.save.mutateAsync({
+        userId: "t-1",
+        lunchMinutes: null,
+        lunchStartTime: null,
+        lunchEndTime: null,
+        minDailyRestMinutes: 660,
+      });
+    });
+
+    expect(mockApi.put).toHaveBeenCalledWith("/api/v1/teacher-work-rules/t-1", {
+      lunchMinutes: null,
+      lunchStartTime: null,
+      lunchEndTime: null,
+      minDailyRestMinutes: 660,
+    });
+  });
+
+  it("deletes by the teacher's id", async () => {
+    const harness = createHarness();
+    const { result } = renderHook(() => useTeacherWorkRuleActions(), {
+      wrapper: harness.wrapper,
+    });
+
+    await act(async () => {
+      await result.current.remove.mutateAsync("t-1");
+    });
+
+    expect(mockApi.delete).toHaveBeenCalledWith("/api/v1/teacher-work-rules/t-1");
+    expect(invalidatedKeys(harness)).toEqual([["teacher-work-rules"]]);
+  });
+
+  it("leaves the cache alone when the write fails", async () => {
+    mockApi.put.mockRejectedValueOnce(new Error("HTTP 400"));
+    const harness = createHarness();
+    const { result } = renderHook(() => useTeacherWorkRuleActions(), {
+      wrapper: harness.wrapper,
+    });
+
+    await act(async () => {
+      await expect(
+        result.current.save.mutateAsync({
+          userId: "t-1",
+          lunchMinutes: 30,
+          lunchStartTime: "10:30",
+          lunchEndTime: "10:40",
+          minDailyRestMinutes: null,
+        }),
+      ).rejects.toThrow("HTTP 400");
+    });
+
+    expect(harness.invalidateSpy).not.toHaveBeenCalled();
   });
 });
 
