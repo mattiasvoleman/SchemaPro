@@ -849,6 +849,11 @@ function refusalMaps(maps: RoomAnonMaps): AnonMaps {
     groupAnonMap: maps.groups,
     roomTypeAnonMap: maps.roomTypes,
     constraintAnonMap: maps.constraints,
+    // This route sends no arbetstider — it moves lessons between rooms and
+    // leaves every time exactly where it was, so no teacher's lunch or night can
+    // be the thing it fails on. Empty rather than absent, so the map stays
+    // required in AnonMaps and a route that genuinely needs it cannot forget.
+    workRuleAnonMap: new Map(),
     nameById: new Map(),
     lessonAnonMap: maps.lessons,
   };

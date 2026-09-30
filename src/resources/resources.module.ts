@@ -27,11 +27,20 @@ import { LunchSittingsService } from './lunch-sittings.service';
 import { FrameTimesService } from './frame-times.service';
 import { SchoolBreaksController } from './school-breaks.controller';
 import { SchoolBreaksService } from './school-breaks.service';
+import { TeacherWorkRulesController } from './teacher-work-rules.controller';
+import { TeacherWorkRulesService } from './teacher-work-rules.service';
 
 /**
- * School catalog CRUD (admin-only). Reads happen directly against Supabase
- * under RLS from the clients; every mutation flows through these endpoints so
- * validation, tenancy checks and auditing live in one place.
+ * School catalog CRUD. Reads happen directly against Supabase under RLS from
+ * the clients; every mutation flows through these endpoints so validation,
+ * tenancy checks and auditing live in one place.
+ *
+ * Admin-only throughout, with one exception that is the point of the resource
+ * rather than a hole in the rule: `TeacherWorkRulesController` also admits a
+ * TEACHER, who may read the school's arbetstider and write their OWN row. Its
+ * service refuses any other row, and so does the table's own
+ * `teacher_work_rules_teacher_own` policy — for the writers that never reach
+ * this module at all.
  */
 @Module({
   controllers: [
@@ -49,6 +58,7 @@ import { SchoolBreaksService } from './school-breaks.service';
     RastsController,
     LunchSittingsController,
     SchoolBreaksController,
+    TeacherWorkRulesController,
   ],
   providers: [
     RoomTypesService,
@@ -65,6 +75,7 @@ import { SchoolBreaksService } from './school-breaks.service';
     RastsService,
     LunchSittingsService,
     SchoolBreaksService,
+    TeacherWorkRulesService,
   ],
 })
 export class ResourcesModule {}

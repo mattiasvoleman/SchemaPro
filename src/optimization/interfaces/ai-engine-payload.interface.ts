@@ -206,6 +206,48 @@ export interface AnonymousRoomPreference {
   weight: number;
 }
 
+/**
+ * En lärares arbetstid: the lunch one teacher must get, and the rest between two
+ * of their days.
+ *
+ * The counterpart of an `AnonymousConstraint` with resourceKind TEACHER, and the
+ * thing that one cannot say. A constraint CLOSES hours — it subtracts them from
+ * the week — and there was no way at all to state that a teacher is OWED
+ * something, so a generated week could hand somebody six lessons back to back
+ * with no meal in them and end one day at 19:30 before opening the next at 07:40.
+ *
+ * HARD, both of them. A week that cannot honour a row here is refused, and the
+ * refusal names the row — which is why `id` is here at all and why the gateway
+ * anonymises it REVERSIBLY (workRuleAnonMap). The teacher map is discarded on
+ * purpose, because no person's name may enter the stored conflicts; the rule's id
+ * is what the school can actually open.
+ *
+ * EVERY FIELD IS NULLABLE, AND NULL MEANS THE RULE DOES NOT APPLY. Not zero and
+ * not a default: a school that has filled in nobody must be refused nothing, so
+ * an empty `teacherWorkRules` has to leave every week exactly as it was. The
+ * three lunch fields travel together — all three, or all three null — which the
+ * database, the DTO and the engine's pre-flight arithmetic each check, because a
+ * lunch with no window may be placed at 07:00 and a window with no length is a
+ * window nothing has to happen in.
+ */
+export interface AnonymousTeacherWorkRule {
+  /** The RULE's anonymous id, reversible so a refusal names a row to open. */
+  id: string;
+  /** The teacher's anonymous id, from the same map the requirements use. */
+  teacherId: string;
+  /** Minutes of lunch; a multiple of 5, the solver's grid. Null: no lunch rule. */
+  lunchMinutes: number | null;
+  /** HH:MM:SS, or null together with the rest of the trio. */
+  lunchStartTime: string | null;
+  /** HH:MM:SS, or null together with the rest of the trio. */
+  lunchEndTime: string | null;
+  /**
+   * Minutes between the END of this teacher's last lesson one day and the START
+   * of their first the next. Null: no rest rule.
+   */
+  minDailyRestMinutes: number | null;
+}
+
 export interface AnonymousConstraint {
   id: string;
   resourceKind: ResourceKind;
@@ -330,6 +372,18 @@ export interface AiEngineScheduleRequest {
   lunchPlacements: AnonymousLunchPlacement[];
   /** Raster. Empty means no stage has a declared break. */
   rasts: AnonymousRast[];
+  /**
+   * Lärarnas arbetstid. Empty means no teacher has one — which is every school
+   * until somebody fills a row in, and is what makes this list safe to add: an
+   * empty one refuses nothing and changes no week.
+   *
+   * A top-level list rather than fields on `AnonymousRequirement`, because a rule
+   * belongs to the TEACHER and a requirement is per (class, subject): the same
+   * teacher carries eight of them, and eight copies of one lunch rule are eight
+   * things to disagree. The engine also needs the rule for a teacher whose whole
+   * week is hand-placed, and such a teacher has no requirement left at all.
+   */
+  teacherWorkRules: AnonymousTeacherWorkRule[];
   /** Locked master lessons the solver must plan around (never re-placed). */
   fixedLessons: AnonymousFixedLesson[];
   /** Every group the week concerns, with its dining-hall headcount. */
