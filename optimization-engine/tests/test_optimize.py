@@ -8242,6 +8242,69 @@ def test_a_locked_lesson_sharing_only_the_teacher_or_the_room_is_not_widened() -
     assert (room.lessons[0].start_time[:5], room.lessons[0].end_time[:5]) == ("08:00", "09:00")
 
 
+def test_the_probe_offers_the_pupils_buffer_at_zero() -> None:
+    """A new candidate for "try it at zero", beside the corridor.
+
+    Worse than the corridor per minute, in fact: it lengthens the interval the
+    class's own families see at BOTH ends. And better to report, because a
+    school can act on it — somebody typed twenty minutes on a requirement, and
+    fifteen may do.
+    """
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+    payload = _pupil_buffer_payload(10, 20, changeover=5)
+    relaxations = dict(solver._timeout_relaxations(
+        OptimizeScheduleRequest.model_validate(payload),
+    ))
+
+    assert list(relaxations) == [
+        "PROBE_SOLVED_WITHOUT_CHANGEOVER",
+        "PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS",
+    ]
+    # A real change to the request, not a relabel — and the corridor it is
+    # named apart from is left exactly where it was.
+    relaxed = relaxations["PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS"]
+    assert all(
+        (requirement.minutes_before, requirement.minutes_after) == (0, 0)
+        for requirement in relaxed.requirements
+    )
+    assert relaxed.frame_times[0].changeover_minutes == 5
+    # Nothing is offered to a school that has written no number.
+    assert not any(
+        code == "PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS"
+        for code, _ in solver._timeout_relaxations(
+            OptimizeScheduleRequest.model_validate(_pupil_buffer_payload(0, 0, changeover=5)),
+        )
+    )
+
+
+def test_a_timeout_names_the_pupils_buffer_among_what_shaped_the_model() -> None:
+    """The widest SUM, because what the model pays per lesson is the two ends."""
+    from app.schemas.schedule import OptimizeScheduleRequest
+    from app.solver.scheduler_solver import SchedulerSolver
+
+    solver = SchedulerSolver(_settings())
+
+    line = solver._timeout_diagnosis(
+        OptimizeScheduleRequest.model_validate(_pupil_buffer_payload(10, 20)), "test",
+    )
+
+    assert "pupilBufferMinutes=30" in line
+    assert "changeoverMinutes=0" in line
+    assert "worth a run at 0" in line
+    # A week nobody has written one for is told nothing about it, and nothing
+    # about a corridor it has not written either.
+    quiet = solver._timeout_diagnosis(
+        OptimizeScheduleRequest.model_validate(_pupil_buffer_payload(0, 0)), "test",
+    )
+    assert "pupilBufferMinutes=0" in quiet
+    assert "worth a run at 0" not in quiet
+    assert "first thing to try at 0" not in quiet
+
+
+
 def _teaching_group_school(
     classes: int = 12,
     tgs_per_class: int = 8,

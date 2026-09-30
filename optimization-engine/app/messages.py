@@ -350,6 +350,10 @@ MESSAGES: dict[str, str] = {
     "PROBE_SOLVED_WITHOUT_CHANGEOVER": (
         "With the margin between lessons set to 0, a timetable was found in {seconds} s."
     ),
+    "PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS": (
+        "With the extra time the pupils need before and after their lessons set to 0, a "
+        "timetable was found in {seconds} s."
+    ),
     "PROBE_SOLVED_WITHOUT_LESSON_BEFORE_RAST": (
         "With the requirement of a lesson before a break dropped, a timetable was found in "
         "{seconds} s. The breaks themselves were left in place."

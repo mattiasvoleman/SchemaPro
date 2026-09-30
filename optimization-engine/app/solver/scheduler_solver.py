@@ -3317,6 +3317,30 @@ class SchedulerSolver:
                     ],
                 }),
             ))
+        if any(
+            requirement.minutes_before > 0 or requirement.minutes_after > 0
+            for requirement in request.requirements
+        ):
+            # BESIDE THE CORRIDOR AND FOR THE SAME MEASURED REASON: it lengthens
+            # the interval an overlap check sees, and that is what turns a
+            # one-second week into a whole budget. Worse than the corridor per
+            # minute, in fact — it lengthens at both ends, so two lessons of the
+            # class cost lead + trail between them — and better to report,
+            # because a school CAN act on it: somebody typed twenty minutes on a
+            # requirement, and fifteen may do. Named apart from the corridor
+            # because the two are different rows on different screens, and "the
+            # margin between lessons" would send a rektor to the wrong one.
+            out.append((
+                "PROBE_SOLVED_WITHOUT_PUPIL_BUFFERS",
+                request.model_copy(update={
+                    "requirements": [
+                        requirement.model_copy(
+                            update={"minutes_before": 0, "minutes_after": 0},
+                        )
+                        for requirement in request.requirements
+                    ],
+                }),
+            ))
         if any(rast.requires_lesson_before for rast in request.rasts):
             # BEFORE the rasts themselves, and separately from them, for the
             # reason the lunch is three probes and not one: "with the rasts
@@ -3376,6 +3400,13 @@ class SchedulerSolver:
         """
         lessons = sum(r.lessons_per_week for r in request.requirements)
         corridor = max((f.changeover_minutes for f in request.frame_times), default=0)
+        # The widest SUM, not the widest single number: what the model pays per
+        # lesson is the two ends together, and a requirement asking 10 before and
+        # 20 after is a thirty-minute lesson longer than it looks.
+        buffer_minutes = max(
+            (r.minutes_before + r.minutes_after for r in request.requirements),
+            default=0,
+        )
         seats = request.rules.dining_seats if request.rules is not None else None
         # THE NUMBER THE MODEL FED, not the length of `groups`. They differ
         # exactly where this line matters most: a payload that names nobody is
@@ -3394,20 +3425,32 @@ class SchedulerSolver:
         # time somewhere off the week's coarser step — a lock at 08:05, a
         # 45-minute lesson among hours — put the whole school on every slot.
         step_minutes = _start_step(request, self._grid) * self._grid.slot_minutes
+        # One sentence per thing worth trying at zero, in the order the
+        # measurements rank them, and none at all for a week that carries
+        # neither — the line already says what was in force, and advice about a
+        # rule nobody wrote is noise in a log somebody is reading at speed.
+        hints = []
+        if corridor > 0:
+            hints.append(
+                "A changeover lengthens every lesson for the overlap check and is the "
+                "first thing to try at 0.",
+            )
+        if buffer_minutes > 0:
+            hints.append(
+                "A pupil buffer lengthens it at BOTH ends for the classes' own "
+                "families — the teacher and the room are left free — so two lessons "
+                "of one class cost the sum between them; worth a run at 0.",
+            )
         return (
             f"TIMEOUT ({why}) [requestId={request.request_id}]: {lessons} lessons, "
             f"{len(request.requirements)} requirements, {eating} groups eating, "
-            f"changeoverMinutes={corridor}, rasts={len(request.rasts)}, "
+            f"changeoverMinutes={corridor}, "
+            f"pupilBufferMinutes={buffer_minutes}, rasts={len(request.rasts)}, "
             f"frameTimes={len(request.frame_times)}, diningSeats={seats}, "
             f"fixedLessons={len(request.fixed_lessons)}, "
             f"startStepMinutes={step_minutes}, "
             f"budget={self._settings.solver_max_time_seconds}s. "
-            + (
-                "A changeover lengthens every lesson for the overlap check and is the "
-                "first thing to try at 0."
-                if corridor > 0
-                else ""
-            )
+            + " ".join(hints)
         )
 
     def _create_lesson_decisions(
