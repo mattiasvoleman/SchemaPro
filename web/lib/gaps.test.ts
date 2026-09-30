@@ -1328,6 +1328,153 @@ describe("findIdleGaps", () => {
       }).map((report) => report.subjectId),
     ).toEqual(["7A", "7B"]);
   });
+
+  describe("the pupils' ombyte and dusch", () => {
+    /*
+     * A hole a lesson cannot be moved into is not a håltimme.
+     *
+     * The class is changing and showering in those minutes, and the timetable
+     * editor refuses a lesson dropped there (lib/conflicts.ts, pupilsOverlap).
+     * Reporting it would send a schedule-maker to attempt a drag the grid then
+     * rejects, over a rectangle that looks empty — the worst kind of row.
+     */
+    it("does not report a hole the pupils' own minutes fill entirely", () => {
+      // 09:00–10:00 with 20 minutes of dusch, then 10:20: a twenty-minute hole
+      // on the clock, and none at all for the children.
+      const placements = [
+        classLesson("7A", hm(9), hm(10), { minutesAfter: 20 }),
+        classLesson("7A", hm(10, 20), hm(11, 20)),
+      ];
+
+      expect(
+        findIdleGaps({
+          studentGroupIds: ["7A"],
+          placements,
+          constraints: [],
+          days: [1],
+          minimumMinutes: 15,
+        }),
+      ).toEqual([]);
+
+      // The twin that gives the absence its meaning: the same two lessons
+      // without the rule leave a twenty-minute hole, which IS reported.
+      const bare = [
+        classLesson("7A", hm(9), hm(10)),
+        classLesson("7A", hm(10, 20), hm(11, 20)),
+      ];
+      expect(
+        findIdleGaps({
+          studentGroupIds: ["7A"],
+          placements: bare,
+          constraints: [],
+          days: [1],
+          minimumMinutes: 15,
+        })[0]?.gaps,
+      ).toMatchObject([{ startMinutes: hm(10), endMinutes: hm(10, 20), minutes: 20 }]);
+    });
+
+    it("shortens a hole by the minutes at each end, and still reports the rest", () => {
+      // 09:00–10:00 with 15 minutes of dusch and a lesson at 11:00 needing 10
+      // minutes of ombyte: an hour on the clock, 10:15–10:50 for the pupils.
+      const placements = [
+        classLesson("7A", hm(9), hm(10), { minutesAfter: 15 }),
+        classLesson("7A", hm(11), hm(12), { minutesBefore: 10 }),
+      ];
+
+      const [report] = findIdleGaps({
+        studentGroupIds: ["7A"],
+        placements,
+        constraints: [],
+        days: [1],
+      });
+
+      expect(report.gaps).toMatchObject([
+        {
+          startMinutes: hm(10, 15),
+          endMinutes: hm(10, 50),
+          minutes: 35,
+          idleMinutes: 35,
+        },
+      ]);
+      expect(report.totalMinutes).toBe(35);
+    });
+
+    it("drops a hole the minutes shorten below the minimum", () => {
+      // 30 minutes on the clock, 20 left once the dusch is counted, and the
+      // school counts holes from 30: a changeover, not a håltimme.
+      const placements = [
+        classLesson("7A", hm(9), hm(10), { minutesAfter: 10 }),
+        classLesson("7A", hm(10, 30), hm(11, 30)),
+      ];
+      const query = { studentGroupIds: ["7A"], placements, constraints: [], days: [1] };
+
+      expect(findIdleGaps({ ...query, minimumMinutes: 30 })).toEqual([]);
+      expect(findIdleGaps({ ...query, minimumMinutes: 20 })).toHaveLength(1);
+    });
+
+    it("leaves a teacher's own hole on the teaching span", () => {
+      /*
+       * The same lesson, the same 30 minutes of dusch, asked about the
+       * idrottslärare instead: they neither change nor shower with the class and
+       * are free the minute the lesson ends. Widening this would cost them a
+       * hole that is really theirs to fill, and would disagree with both the
+       * editor and the API, which keep the teacher arm on the teaching span.
+       */
+      const placements = [
+        teacherLesson("t1", hm(9), hm(10), { minutesAfter: 30 }),
+        teacherLesson("t1", hm(11), hm(12)),
+      ];
+
+      expect(
+        findIdleGaps({ teacherIds: ["t1"], placements, constraints: [], days: [1] })[0]
+          ?.gaps,
+      ).toMatchObject([{ startMinutes: hm(10), endMinutes: hm(11), minutes: 60 }]);
+    });
+
+    it("counts the minutes of a lesson the class only attends as a guest", () => {
+      // One lesson, two classes, and the buffer is on the placement — which is
+      // where pupilBufferOf has already taken the widest of the attending
+      // groups' rules. Both classes' reports must read the same minutes.
+      const placements = [
+        classLesson("7A", hm(9), hm(10), {
+          extraGroupIds: ["7B"],
+          minutesAfter: 20,
+        }),
+        classLesson("7A", hm(10, 20), hm(11), { extraGroupIds: ["7B"] }),
+      ];
+
+      expect(
+        findIdleGaps({
+          studentGroupIds: ["7A", "7B"],
+          placements,
+          constraints: [],
+          days: [1],
+          minimumMinutes: 15,
+        }),
+      ).toEqual([]);
+    });
+
+    it("does not let the minutes before the first lesson become a hole", () => {
+      // The ombyte pulls the day's first busy interval back to 08:50, before
+      // the first lesson starts. The day is bounded by the same intervals, so
+      // 08:50–09:00 is inside nothing and the afternoon hole is the only row.
+      const placements = [
+        classLesson("7A", hm(9), hm(10), { minutesBefore: 10, minutesAfter: 10 }),
+        classLesson("7A", hm(11), hm(12), { minutesAfter: 10 }),
+      ];
+
+      const [report] = findIdleGaps({
+        studentGroupIds: ["7A"],
+        placements,
+        constraints: [],
+        days: [1],
+      });
+
+      expect(report.gaps).toMatchObject([
+        { startMinutes: hm(10, 10), endMinutes: hm(11), minutes: 50 },
+      ]);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

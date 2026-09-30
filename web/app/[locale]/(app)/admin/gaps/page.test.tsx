@@ -63,6 +63,10 @@ const state = vi.hoisted(() => ({
   // landing last changes the spans without changing the roster.
   groups: null as unknown[] | null,
   lunch: null as unknown,
+  // The timplan, for the minutes the pupils are occupied outside a lesson.
+  // Empty is the ordinary school; undefined models the query in flight, which
+  // must not read as "nobody changes for anything".
+  requirements: [] as unknown[] | undefined,
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -75,6 +79,7 @@ vi.mock("@/lib/queries", () => ({
   useGroupMemberships: () => ({ data: state.memberships }),
   useFrameTimes: () => ({ data: state.frameTimes }),
   useLunchSettings: () => ({ data: state.lunch }),
+  useRequirements: () => ({ data: state.requirements }),
 }));
 
 // Namespace-aware key echo. The namespace is part of the assertion on purpose:
@@ -221,6 +226,34 @@ const LUNCH = {
   maxLessonsPerDayPerGroup: null,
 };
 
+/**
+ * A timplanspost for the week's only subject, carrying the pupils' own minutes
+ * on either side of the lesson — the row an idrott gets.
+ *
+ * Every lesson in the fixture reads sub-1, so one row reaches both of a class's
+ * lessons; that is the same pair (class, subject) the API and the grid key
+ * buffers on and not a simplification of it.
+ */
+const requirement = (
+  studentGroupId: string,
+  minutesBefore: number,
+  minutesAfter: number,
+) => ({
+  id: `req-${studentGroupId}`,
+  academicYearId: "y-1",
+  subjectId: "sub-1",
+  studentGroupId,
+  teacherId: null,
+  coTeacherId: null,
+  lessonsPerWeek: 2,
+  minutesPerLesson: 60,
+  minutesBefore,
+  minutesAfter,
+  recurrence: "ALL_WEEKS" as const,
+  startDate: null,
+  endDate: null,
+});
+
 const unavailable = (
   userId: string,
   dayOfWeek: number,
@@ -251,6 +284,7 @@ beforeEach(() => {
   state.frameTimes = [];
   state.groups = null;
   state.lunch = LUNCH;
+  state.requirements = [];
 });
 
 // ---------------------------------------------------------------------------
@@ -798,6 +832,95 @@ describe("Gaps page — idle gaps", () => {
 
     expect(reportNames()).toEqual(["7Agaps.kindGroup"]);
     expect(statusOf("gaps.idleTitle")).toHaveTextContent("gaps.idleCount(1)");
+  });
+
+  describe("the pupils' ombyte and dusch", () => {
+    /*
+     * The wiring this section exists to protect: the page must load the timplan
+     * and hand its minutes to the engine.
+     *
+     * Without them the report points at a hole the timetable editor will not let
+     * a lesson into — the class is in the omklädningsrummet, the grid refuses
+     * the drag (lib/conflicts.ts, pupilsOverlap), and the report says nothing
+     * about why. 9C is the class the case is built on: lunch off, its only hole
+     * is 11:00–11:30 between two of its own lessons.
+     */
+    const lunchOff = () => {
+      state.lunch = { ...LUNCH, lunchEnabled: false };
+    };
+
+    it("stops reporting a hole the class spends showering", () => {
+      lunchOff();
+      render(<GapsPage />);
+
+      // The baseline: no timplan minutes, and the hole is a håltimme.
+      expect(reportNames()).toContain("9Cgaps.kindGroup");
+
+      cleanup();
+      // 30 minutes of dusch after the 10:30–11:00 lesson reaches 11:30, which
+      // is when the next one starts.
+      state.requirements = [requirement("g-9c", 0, 30)];
+      render(<GapsPage />);
+
+      expect(reportNames()).not.toContain("9Cgaps.kindGroup");
+    });
+
+    it("leaves the teacher of that same lesson exactly as idle as before", () => {
+      // Per teaches both of 9C's lessons and is free the minute the first one
+      // ends — he does not shower with the class. His 11:00–11:30 hole is real
+      // and must survive a rule written about the pupils.
+      lunchOff();
+      state.requirements = [requirement("g-9c", 0, 30)];
+      render(<GapsPage />);
+
+      expect(
+        within(reportFor("Per Nord"))
+          .getAllByRole("listitem")
+          .map((item) => item.textContent),
+      ).toContain("days.3 11:00–11:30 · gaps.durationMinutes(30) · gaps.lengthShort");
+    });
+
+    it("still reports an ordinary hole the minutes do not reach", () => {
+      // 7A's Wednesday morning: 08–09, then 10:20. Ten minutes of ombyte and
+      // twenty of dusch shorten the hole from 80 minutes to 50 and leave it a
+      // håltimme — the report gets shorter, not quieter. The label follows the
+      // waiting time as it always does, so the row moves from lång to
+      // medellång: the class really is waiting less.
+      state.requirements = [requirement("g-7a", 10, 20)];
+      render(<GapsPage />);
+
+      expect(within(reportFor("7A")).getAllByRole("listitem")[0].textContent).toBe(
+        "days.3 09:20–10:10 · gaps.durationMinutes(50) · gaps.idleStudents(2|2) · gaps.lengthMedium",
+      );
+    });
+
+    it("says on the page that the extra time is counted, but only when it exists", () => {
+      // A sentence about a rule no school has set is one more line to read past
+      // on a page that already asks three questions. Once the rule exists the
+      // report is quietly not reporting holes an admin can see on the grid, and
+      // saying nothing about that reads as a missing row.
+      render(<GapsPage />);
+      expect(screen.queryByText("gaps.idlePupilTime")).toBeNull();
+
+      cleanup();
+      state.requirements = [requirement("g-7a", 10, 20)];
+      render(<GapsPage />);
+      expect(screen.getByText("gaps.idlePupilTime")).toBeTruthy();
+    });
+
+    it("does not read a timplan still in flight as a school with no extra time", () => {
+      // `undefined` is the query in flight, and the page must pass it on as
+      // that: an empty map would report 9C's hole for as long as the request
+      // takes, and an admin who clicks it gets a refusal from the grid.
+      lunchOff();
+      state.requirements = undefined;
+      render(<GapsPage />);
+
+      // The rest of the report still stands — the page is not held back on the
+      // timplan, it simply applies no minutes it has not been given.
+      expect(reportHeadings().length).toBeGreaterThan(0);
+      expect(screen.queryByText("gaps.idlePupilTime")).toBeNull();
+    });
   });
 });
 
