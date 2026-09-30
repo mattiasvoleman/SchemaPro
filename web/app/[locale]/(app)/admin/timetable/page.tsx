@@ -107,8 +107,10 @@ import {
 } from "@/lib/lesson-audience";
 import {
   buildGroupConflictMap,
+  buildPupilBufferMap,
   detectConflicts,
   findOpenSlots,
+  pupilBufferOf,
   suggestPlacements,
   teacherIdsOf,
   toPlacement,
@@ -542,6 +544,20 @@ export default function TimetablePage() {
   }, [lunchSittings]);
 
   /**
+   * The pupils' ombyte and dusch, per (class, subject).
+   *
+   * `undefined` while the timplan has not answered, which is the file's own
+   * convention for "not checked" — and the honest reading: a buffer nobody has
+   * loaded yet must not be reported as 0 and let a drag through that the API
+   * then refuses with a 409. `useRequirements` is keyed on the läsår, so this
+   * follows the year the grid is showing.
+   */
+  const pupilBuffers = useMemo(
+    () => (requirements ? buildPupilBufferMap(requirements) : undefined),
+    [requirements],
+  );
+
+  /**
    * Whether a placement sits in a room its subject's locks forbid.
    *
    * The subject comes off the lesson and the stage off its group, so this is a
@@ -573,6 +589,7 @@ export default function TimetablePage() {
         frameTimes,
         lunchOf,
         roomLock,
+        pupilBuffers,
       ),
     [
       lessons,
@@ -583,6 +600,7 @@ export default function TimetablePage() {
       frameTimes,
       lunchOf,
       roomLock,
+      pupilBuffers,
     ],
   );
 
@@ -603,8 +621,11 @@ export default function TimetablePage() {
    * as one would refuse B the very slot A was lifted out of.
    */
   const placements = useMemo(
-    () => (lessons ?? []).filter((lesson) => !lesson.isParked).map(toPlacement),
-    [lessons],
+    () =>
+      (lessons ?? [])
+        .filter((lesson) => !lesson.isParked)
+        .map((lesson) => toPlacement(lesson, pupilBuffers)),
+    [lessons, pupilBuffers],
   );
 
   const validateChange = useCallback(
@@ -624,6 +645,12 @@ export default function TimetablePage() {
             studentGroupId: lesson.studentGroupId,
             extraGroupIds: lesson.extraGroupIds,
             studentIds: lesson.studentIds,
+            // The dragged lesson's OWN ombyte and dusch. Left off, the
+            // candidate would be checked without the minutes every other
+            // placement on the grid is carrying: the drag would be let into a
+            // slot the API then refuses with a 409, and only after the move
+            // has visibly happened.
+            ...pupilBufferOf(pupilBuffers, lesson),
           },
           placements,
           constraints ?? [],
@@ -651,6 +678,7 @@ export default function TimetablePage() {
       gradeSpanOf,
       frameTimes,
       lunchOf,
+      pupilBuffers,
     ],
   );
 
@@ -1148,6 +1176,11 @@ export default function TimetablePage() {
           studentGroupId: lesson.studentGroupId,
           extraGroupIds: lesson.extraGroupIds,
           studentIds: lesson.studentIds,
+          // The same buffer validateChange checks with. Without it the search
+          // would rank slots by a rule the editor does not use and offer one it
+          // then refuses — the worst kind of suggestion, since the admin has
+          // already accepted it by clicking.
+          ...pupilBufferOf(pupilBuffers, lesson),
         },
         placements,
         constraints ?? [],
@@ -1158,7 +1191,7 @@ export default function TimetablePage() {
       );
       setSuggesting({ lesson, options });
     },
-    [lessonById, lessons, placements, constraints, studentGroupOf],
+    [lessonById, lessons, placements, constraints, studentGroupOf, pupilBuffers],
   );
 
   const applySuggestion = async (suggestion: PlacementSuggestion) => {
