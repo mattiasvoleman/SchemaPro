@@ -41,6 +41,32 @@ export class CreateTeachingRequirementDto {
   minutesPerLesson?: number;
 
   /**
+   * Minutes the PUPILS are occupied before the lesson, and after it: ombyte
+   * before idrotten, dusch and ombyte after it.
+   *
+   * Outside the lesson, not part of it — `minutesPerLesson` keeps its number
+   * and the timplan keeps its hours, while the class is unavailable for the
+   * lesson plus both buffers. Only the children: the teacher may take the slot
+   * on either side, and the sal stands empty while the class is in the
+   * omklädningsrummet. See the schema for why the corridor's argument against
+   * padding both ends does not reach these two.
+   *
+   * 0..60 mirrors the CHECK constraints on the columns, so a number the
+   * database would refuse is refused here instead — with the field named.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(60)
+  minutesBefore?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(60)
+  minutesAfter?: number;
+
+  /**
    * Which weeks the subject is read over. Said once here and inherited by
    * every lesson generated from the requirement, instead of once per lesson in
    * the master timetable after the lessons already exist.
@@ -92,6 +118,19 @@ export class UpdateTeachingRequirementDto {
   @Min(15)
   @Max(240)
   minutesPerLesson?: number;
+
+  /** Pupil buffers around the lesson; see the create DTO for what they mean. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(60)
+  minutesBefore?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(60)
+  minutesAfter?: number;
 
   @IsOptional()
   @IsEnum(LessonRecurrence)
