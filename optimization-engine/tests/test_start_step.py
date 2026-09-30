@@ -195,6 +195,18 @@ SOURCES: list[tuple[str, Callable[[dict], None], int]] = [
      lambda p: _append(p, "frameTimes", _frame("08:00", "18:00", changeover=10)), 10),
     ("a changeover of seven minutes, rounded up to ten",
      lambda p: _append(p, "frameTimes", _frame("08:00", "18:00", changeover=7)), 10),
+    # The pupils' own two buffers. Each bounds a start on ONE side — the lead
+    # from below, through the day's first legal start, and the trail from above,
+    # through the day's clipped close — so each needs a row of its own, and each
+    # row is the only thing that notices if its half stops feeding the gcd.
+    ("ten minutes to change before the lesson",
+     lambda p: p["requirements"][0].update(minutesBefore=10), 10),
+    ("twenty minutes to shower after it",
+     lambda p: p["requirements"][0].update(minutesAfter=20), 10),
+    ("seven minutes to change, rounded up to ten",
+     lambda p: p["requirements"][0].update(minutesBefore=7), 10),
+    ("twenty-two minutes to shower, rounded up to twenty-five",
+     lambda p: p["requirements"][0].update(minutesAfter=22), 5),
     ("a rast 09:40-10:00",
      lambda p: _append(p, "rasts", _window("09:40", "10:00")), 10),
     ("a rast off the grid, 09:42-10:30, rounded outward to 09:40",
@@ -536,6 +548,17 @@ def _random_week(rng: random.Random) -> dict:
             "startTime": _clock(nudged(at(0, 180))),
         })
 
+    # The pupils' own time around a lesson, drawn LAST so that every week above
+    # is the week this generator drew before the buffers existed. Drawing them
+    # inside `requirement` would have consumed from the same stream and dealt
+    # every seed a different school, which turns a redistribution of the
+    # verdicts below into something nobody can read. One requirement in four
+    # gets a pair, sometimes off the grid so the rounding up feeds the step too.
+    for row in requirements:
+        if rng.random() < 0.25:
+            row["minutesBefore"] = rng.choice((0, 0, 5, 10, 7))
+            row["minutesAfter"] = rng.choice((0, 10, 20, 15))
+
     return {
         "requestId": str(uuid4()), "academicYearId": str(uuid4()),
         "requirements": requirements, "groups": classes, "rooms": rooms,
@@ -622,7 +645,10 @@ def test_a_step_never_changes_whether_a_week_has_a_timetable() -> None:
     # slot; its stepped refusals are held by the reproductions in
     # test_optimize.py, which now run stepped: the packed frames on ten
     # minutes, the register of idle classes on thirty.
-    # Measured when written: 39 and 23 of 160 seeds.
+    # Measured when written: 39 and 23 of 160 seeds. 32 and 19 since the pupils'
+    # buffers joined the generator: the weeks themselves are unchanged — they are
+    # drawn before the buffers are — but a buffer off the grid can take its own
+    # week's step to 1, and a week the step does not touch is skipped above.
     assert compared["FEASIBLE"] >= 25 and compared["INFEASIBLE"] >= 12, compared
 
 
