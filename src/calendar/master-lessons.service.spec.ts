@@ -1088,6 +1088,141 @@ describe('MasterLessonsService', () => {
 
         expect(tx.teachingRequirement.findMany).not.toHaveBeenCalled();
       });
+
+      /*
+       * A lesson two classes attend takes the WIDEST buffer among them.
+       *
+       * The pupils of a visiting class change and shower too, and the lesson
+       * holds all of them, so the only number that covers everybody on it is the
+       * largest. The cost is stated as plainly in the tests as in the code: a
+       * guest with a longer rule lengthens the block for the HOST class as well,
+       * which no single row asked for — and that is the direction to err in,
+       * because the other error puts a class in matematiken while it is still in
+       * duschen.
+       */
+      describe('gästklassen räknas med', () => {
+        it("takes the guest's longer dusch, although the host class's own row is shorter", async () => {
+          // 7A reads idrott with five minutes of dusch; 7B, joining, has twenty.
+          // 11:15 clears 7A's own rule by ten minutes and is still refused —
+          // exactly the cost, and 7B's children are in omklädningsrummet until
+          // 11:20 whoever the lesson belongs to.
+          arrangeCreate();
+          arrangeBuffers([
+            { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, minutesAfter: 5 },
+            { studentGroupId: EXTRA_GROUP_ID, subjectId: SUBJECT_ID, minutesAfter: 20 },
+          ]);
+          sameDay([
+            otherLesson({
+              studentGroupId: GROUP_ID,
+              startTime: t('11:15'),
+              endTime: t('12:15'),
+            }),
+          ]);
+
+          await expect(
+            service.create(createDto({ extraGroupIds: [EXTRA_GROUP_ID] }), testUser()),
+          ).rejects.toMatchObject({
+            message:
+              'Klassen är upptagen med ombyte eller dusch i den här tiden: ' +
+              'den här lektionen kräver 20 min dusch och ombyte efter.',
+          });
+        });
+
+        it('a guest with no rule of its own does not shrink the host class’s', async () => {
+          // The widening is a maximum, not an average: `buffers` holds only the
+          // requirements somebody wrote a number on, so a guest without one
+          // contributes nothing rather than a zero. Averaging — or letting the
+          // last group read win — would quietly halve a dusch by adding a class.
+          arrangeCreate();
+          arrangeBuffers([
+            { studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, minutesAfter: 20 },
+          ]);
+          sameDay([
+            otherLesson({
+              studentGroupId: GROUP_ID,
+              startTime: t('11:15'),
+              endTime: t('12:15'),
+            }),
+          ]);
+
+          await expect(
+            service.create(createDto({ extraGroupIds: [EXTRA_GROUP_ID] }), testUser()),
+          ).rejects.toMatchObject({
+            message:
+              'Klassen är upptagen med ombyte eller dusch i den här tiden: ' +
+              'den här lektionen kräver 20 min dusch och ombyte efter.',
+          });
+        });
+
+        it("reads the OTHER lesson's guest class by the same rule", async () => {
+          // Both sides or neither. The candidate has no buffer at all here; what
+          // reaches back into it is the ombyte of a class that merely joins the
+          // lesson it is being placed against, and forgetting that half would
+          // make the check depend on which lesson somebody happened to move.
+          arrangeCreate();
+          arrangeBuffers([
+            {
+              studentGroupId: EXTRA_GROUP_ID,
+              subjectId: OTHER_SUBJECT_ID,
+              minutesBefore: 20,
+            },
+          ]);
+          sameDay([
+            otherLesson({
+              studentGroupId: GROUP_ID,
+              extraGroups: [{ studentGroupId: EXTRA_GROUP_ID }],
+              startTime: t('11:15'),
+              endTime: t('12:15'),
+            }),
+          ]);
+
+          await expect(service.create(createDto(), testUser())).rejects.toMatchObject({
+            message:
+              'Klassen är upptagen med ombyte eller dusch i den här tiden: ' +
+              'Math kräver 20 min ombyte före.',
+          });
+        });
+
+        it('still holds neither the teacher nor the room through a guest’s dusch', async () => {
+          // The decision the whole feature turns on, now that a guest class can
+          // be what widens the window: the idrottslärare does not shower with
+          // 7B either, and the gymnastiksal is just as empty. Same teacher, same
+          // room, 11:15 — and nothing on the clock overlaps.
+          arrangeCreate();
+          arrangeBuffers([
+            { studentGroupId: EXTRA_GROUP_ID, subjectId: SUBJECT_ID, minutesAfter: 20 },
+          ]);
+          sameDay([
+            otherLesson({
+              teacherId: TEACHER_ID,
+              roomId: ROOM_ID,
+              startTime: t('11:15'),
+              endTime: t('12:15'),
+            }),
+          ]);
+
+          await expect(
+            service.create(createDto({ extraGroupIds: [EXTRA_GROUP_ID] }), testUser()),
+          ).resolves.toMatchObject({ id: LESSON_ID });
+        });
+
+        it('asks the year for the buffers once, not once per class on the lesson', async () => {
+          // The map is keyed on (group, subject) and read per group, so adding a
+          // guest class costs a lookup and not a query.
+          arrangeCreate();
+          arrangeBuffers([
+            { studentGroupId: EXTRA_GROUP_ID, subjectId: SUBJECT_ID, minutesAfter: 20 },
+          ]);
+          sameDay([otherLesson()]);
+
+          await service.create(
+            createDto({ extraGroupIds: [EXTRA_GROUP_ID] }),
+            testUser(),
+          );
+
+          expect(tx.teachingRequirement.findMany).toHaveBeenCalledTimes(1);
+        });
+      });
     });
 
     it.each([

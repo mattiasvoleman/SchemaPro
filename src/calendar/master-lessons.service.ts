@@ -26,7 +26,8 @@ export interface MasterLessonConflict {
 /**
  * Minutes the PUPILS of a lesson are occupied outside it: ombyte before
  * idrotten, dusch and ombyte after. Written on the TeachingRequirement, so it is
- * said once per (class, subject) and read here per lesson.
+ * said once per (class, subject) and read here per lesson — over every class
+ * attending that lesson, widest wins, which `widestBufferOf` argues.
  *
  * It blocks the children and nothing else. The teacher and the room arms of the
  * clash check keep the exact half-open test — see findConflicts, which states
@@ -558,6 +559,10 @@ export class MasterLessonsService {
    * always will, so the common answer is an empty map: every lookup then reads
    * NO_BUFFER, the windows below collapse to the exact half-open test the check
    * has always used, and the whole mechanism costs one query that finds nothing.
+   *
+   * The year's rows, not the candidate's group's: a lesson is looked up under
+   * every class attending it (see `widestBufferOf`), and a guest class's
+   * requirement has to be in the same map for that to mean anything.
    */
   private async pupilBuffersOf(
     tx: PrismaClient,
@@ -682,19 +687,57 @@ export class MasterLessonsService {
       sameDay.length === 0
         ? new Map<string, PupilBuffer>()
         : await this.pupilBuffersOf(tx, lesson.academicYearId);
-    const bufferOf = (groupId: string, subjectId: string): PupilBuffer =>
-      buffers.get(`${groupId}:${subjectId}`) ?? NO_BUFFER;
-
     /**
-     * The candidate's own buffer, read off its PRIMARY class's requirement.
+     * One buffer for a lesson: the WIDEST before and the WIDEST after among the
+     * requirements of the classes attending it, for this subject.
      *
-     * One buffer for the lesson rather than one per class on it. An extra class
-     * attending this same idrott changes in the same omklädningsrum on the same
-     * minutes, so the lesson has one answer; taking the widest of several
-     * requirements would let a class that merely joins lengthen the lesson's
-     * occupancy for everybody, which is not what any of the rows says.
+     * Not the primary class's. The pupils of a visiting class change and shower
+     * too, and the lesson holds all of them — one omklädningsrum, one set of
+     * minutes — so the only figure that covers everybody on it is the largest.
+     * Erring towards blocking too long is the right direction here: the opposite
+     * error puts a class in its next lesson while it is still in duschen, which
+     * is not a placement anybody can rescue afterwards, while a block that is
+     * ten minutes too generous only costs a slot.
+     *
+     * THE COST, STATED: a guest class with a longer rule lengthens the block for
+     * the HOST class as well. 7A's idrott, ten minutes of ombyte, joined by 7B
+     * whose row says twenty, is refused around twenty for both — 7A's own row
+     * never said so. That is accepted deliberately, and it is the price of the
+     * paragraph above; a school that does not want it gives the two classes the
+     * same number, which is the honest reading of two classes sharing a lesson
+     * anyway.
+     *
+     * A class with no row of its own contributes nothing rather than a zero:
+     * `buffers` holds only the requirements somebody wrote a number on (see
+     * pupilBuffersOf), so a guest with no rule cannot shrink the host's.
      */
-    const candidateBuffer = bufferOf(lesson.studentGroupId, lesson.subjectId);
+    const widestBufferOf = (
+      groupIds: Iterable<string>,
+      subjectId: string,
+    ): PupilBuffer => {
+      let widest = NO_BUFFER;
+      for (const groupId of groupIds) {
+        const buffer = buffers.get(`${groupId}:${subjectId}`);
+        if (!buffer) continue;
+        widest = {
+          minutesBefore: Math.max(widest.minutesBefore, buffer.minutesBefore),
+          minutesAfter: Math.max(widest.minutesAfter, buffer.minutesAfter),
+        };
+      }
+      return widest;
+    };
+
+    /** Every class ON a lesson: the one it belongs to, plus the classes joining. */
+    const groupsAttending = (other: {
+      studentGroupId: string;
+      extraGroups: { studentGroupId: string }[];
+    }): string[] => [
+      other.studentGroupId,
+      ...other.extraGroups.map((entry) => entry.studentGroupId),
+    ];
+
+    /** The candidate's own buffer, over its primary class and its guests alike. */
+    const candidateBuffer = widestBufferOf(candidateGroups, lesson.subjectId);
     const pupilStart = candidate.startMinutes - candidateBuffer.minutesBefore;
     const pupilEnd = candidate.endMinutes + candidateBuffer.minutesAfter;
 
@@ -709,9 +752,14 @@ export class MasterLessonsService {
     // the candidate's own shower running into the other lesson, or the other
     // lesson's ombyte reaching back into the candidate. The teacher and the room
     // arms narrow it again inside the loop, where `shareTheClock` says why.
+    //
+    // The other lesson's buffer is taken over ITS attending classes, by the same
+    // rule as the candidate's: the widest wins on both sides, or a guest class's
+    // longer rule would hold on the lesson being placed and be forgotten on the
+    // lesson it is placed against.
     const clashing = sameDay.filter((other) => {
       if (!weeksCanOverlap(candidateWeeks, other)) return false;
-      const buffer = bufferOf(other.studentGroupId, other.subjectId);
+      const buffer = widestBufferOf(groupsAttending(other), other.subjectId);
       return (
         toMinutes(other.startTime) - buffer.minutesBefore < pupilEnd &&
         pupilStart < toMinutes(other.endTime) + buffer.minutesAfter
@@ -735,10 +783,7 @@ export class MasterLessonsService {
         ? new Set<string>()
         : new Set<string>([
             ...candidateGroups,
-            ...clashing.flatMap((other) => [
-              other.studentGroupId,
-              ...other.extraGroups.map((entry) => entry.studentGroupId),
-            ]),
+            ...clashing.flatMap(groupsAttending),
           ]);
     const membersOf = await this.rosterOf(tx, groupsInPlay);
     const candidatePupils = new Set<string>();
@@ -772,7 +817,11 @@ export class MasterLessonsService {
         toMinutes(other.startTime) < candidate.endMinutes &&
         candidate.startMinutes < toMinutes(other.endTime);
 
-      const otherBuffer = bufferOf(other.studentGroupId, other.subjectId);
+      // Hoisted above the buffer it feeds: the same set answers "do the two
+      // lessons share a class" below and "whose ombyte does this lesson hold"
+      // here, and they must not be allowed to disagree.
+      const otherGroups = new Set<string>(groupsAttending(other));
+      const otherBuffer = widestBufferOf(otherGroups, other.subjectId);
       /**
        * The refusal a clash the BUFFER ALONE created earns, in place of the
        * plain-overlap one.
@@ -809,10 +858,6 @@ export class MasterLessonsService {
           masterLessonId: other.id,
         });
       }
-      const otherGroups = new Set<string>([
-        other.studentGroupId,
-        ...other.extraGroups.map((entry) => entry.studentGroupId),
-      ]);
       if ([...candidateGroups].some((groupId) => otherGroups.has(groupId))) {
         conflicts.push({
           kind: 'GROUP',
