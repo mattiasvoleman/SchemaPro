@@ -95,11 +95,13 @@ const STUDENTS_CSV =
   "Alma;Berg;alma@example.com;7A\r\n" +
   "Nils;Ek;nils@example.com;7B\r\n";
 const TEACHERS_CSV = BOM + "fornamn;efternamn;epost\r\nKarin;Ek;karin.ek@example.com\r\n";
-// The timplan template's own columns, in its own order.
+// The timplan template's own columns, in its own order — including the pupils'
+// own minutes on either side of the lesson, which every exported file carries.
 const REQUIREMENTS_CSV =
   BOM +
-  "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;medlarare;veckor;fran;till\r\n" +
-  "7A;MA;3;60;karin.ek@example.com;;udda;;\r\n";
+  "grupp;amne;lektioner_per_vecka;minuter_per_lektion;minutesBefore;minutesAfter;" +
+  "larare;medlarare;veckor;fran;till\r\n" +
+  "7A;IDH;2;60;10;20;karin.ek@example.com;;udda;;\r\n";
 
 function renderDialog(props: Partial<CsvImportDialogProps> = {}) {
   const queryClient = new QueryClient({
@@ -559,6 +561,8 @@ describe("CsvImportDialog import", () => {
         "subject",
         "lessonsPerWeek",
         "minutesPerLesson",
+        "minutesBefore",
+        "minutesAfter",
         "teacherEmail",
         "coTeacherEmail",
         "recurrence",
@@ -568,9 +572,14 @@ describe("CsvImportDialog import", () => {
       rows: [
         {
           groupName: "7A",
-          subject: "MA",
-          lessonsPerWeek: 3,
+          subject: "IDH",
+          lessonsPerWeek: 2,
           minutesPerLesson: 60,
+          // The pupils' own minutes travel as numbers, not as the strings the
+          // file holds — and the server must know the column was there at all,
+          // which is what the two new names in `columns` say.
+          minutesBefore: 10,
+          minutesAfter: 20,
           teacherEmail: "karin.ek@example.com",
           coTeacherEmail: null,
           recurrence: "ODD_WEEKS",
