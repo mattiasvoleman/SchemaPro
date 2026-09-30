@@ -27,7 +27,7 @@ import type {
  * What a timplan row is worth writing.
  *
  * The two sizing fields are always written — every file must carry them. The
- * other five are written only when the FILE had that column, so the type makes
+ * other seven are written only when the FILE had that column, so the type makes
  * them optional and `requirementIsUnchanged` compares only what is there.
  */
 type RequirementValues = {
@@ -35,12 +35,15 @@ type RequirementValues = {
   coTeacherId?: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** The pupils' ombyte and dusch, outside the lesson; 0 when nobody wrote one. */
+  minutesBefore?: number;
+  minutesAfter?: number;
   recurrence?: LessonRecurrence;
   startDate?: Date | null;
   endDate?: Date | null;
 };
 
-/** A stored row, which always has all seven. */
+/** A stored row, which always has all nine. */
 type StoredRequirementValues = Required<RequirementValues>;
 
 /**
@@ -380,7 +383,7 @@ export class ImportService {
        * Absent reads as none of them: silence means "change nothing else",
        * which is the recoverable direction. A caller that forgets the key
        * writes too little — visible, and fixable by uploading the full file —
-       * where the other reading empties five fields across a läsår.
+       * where the other reading resets seven fields across a läsår.
        */
       const writable = new Set(dto.columns ?? []);
 
@@ -449,6 +452,8 @@ export class ImportService {
           coTeacherId: true,
           lessonsPerWeek: true,
           minutesPerLesson: true,
+          minutesBefore: true,
+          minutesAfter: true,
           recurrence: true,
           startDate: true,
           endDate: true,
@@ -550,10 +555,12 @@ export class ImportService {
          *
          * A COLUMN THE FILE NEVER HAD is not authoritative about anything. A
          * school's own spreadsheet is usually the four required columns wide —
-         * the teachers and the terms were set in the app, not in Excel — and
-         * uploading it to correct one lesson count must not strip the teacher
-         * off every requirement it touches. That is silent loss across a whole
-         * läsår under a report that says "312 updated" and lists no errors.
+         * the teachers, the terms and the ombyte were set in the app, not in
+         * Excel — and uploading it to correct one lesson count must not strip
+         * the teacher off every requirement it touches, nor send a class to
+         * matematik straight out of duschen by zeroing an idrott's twenty
+         * minutes. That is silent loss across a whole läsår under a report that
+         * says "312 updated" and lists no errors.
          *
          * The rows cannot tell the two apart on their own. They omit the key
          * when the column is absent, but the global ValidationPipe runs
@@ -566,6 +573,19 @@ export class ImportService {
         const values: RequirementValues = {
           lessonsPerWeek: row.lessonsPerWeek,
           minutesPerLesson: row.minutesPerLesson,
+          // An empty ombyte cell is a 0, not a silence: the columns are
+          // optional on the row so a school need not type two zeroes per line,
+          // and within a column the file has, "nothing" is the school saying
+          // there is no ombyte. The `?? 0` is therefore the empty cell, and the
+          // `writable.has` around it is the missing column — the same two
+          // silences the block above separates, for a field whose "none"
+          // happens to be a number rather than a null.
+          ...(writable.has('minutesBefore')
+            ? { minutesBefore: row.minutesBefore ?? 0 }
+            : {}),
+          ...(writable.has('minutesAfter')
+            ? { minutesAfter: row.minutesAfter ?? 0 }
+            : {}),
           ...(writable.has('teacherEmail') ? { teacherId } : {}),
           ...(writable.has('coTeacherEmail') ? { coTeacherId } : {}),
           ...(writable.has('recurrence') ? { recurrence: row.recurrence } : {}),
@@ -581,6 +601,15 @@ export class ImportService {
               academicYearId: dto.academicYearId,
               studentGroupId,
               subjectId: subject.id,
+              // Both buffers stated at 0, and overwritten by `values` when the
+              // file had the columns. "Leave it as it was" has nothing to
+              // protect on a create — no ombyte anybody entered in the app is
+              // standing here to lose — so a file without the columns writes the
+              // zeroes rather than leaving the two columns for the schema's
+              // default to fill in. The row this method creates is then the row
+              // this method describes, which is what the import report claims.
+              minutesBefore: 0,
+              minutesAfter: 0,
               ...values,
             },
           });
@@ -778,6 +807,12 @@ export class ImportService {
 
     if (current.lessonsPerWeek !== values.lessonsPerWeek) return false;
     if (current.minutesPerLesson !== values.minutesPerLesson) return false;
+    if ('minutesBefore' in values && current.minutesBefore !== values.minutesBefore) {
+      return false;
+    }
+    if ('minutesAfter' in values && current.minutesAfter !== values.minutesAfter) {
+      return false;
+    }
     if ('teacherId' in values && current.teacherId !== values.teacherId) {
       return false;
     }

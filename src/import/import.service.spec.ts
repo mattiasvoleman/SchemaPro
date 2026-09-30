@@ -1249,6 +1249,8 @@ describe('ImportService', () => {
      * load-bearing, because a column the file never had must not be written.
      */
     const ALL_COLUMNS = [
+      'minutesBefore',
+      'minutesAfter',
       'teacherEmail',
       'coTeacherEmail',
       'recurrence',
@@ -1277,6 +1279,11 @@ describe('ImportService', () => {
       coTeacherId: null,
       lessonsPerWeek: 3,
       minutesPerLesson: 60,
+      // A stored row always has both, never null: the columns are NOT NULL with
+      // a default of 0. A fixture that left them out would read as `undefined`
+      // through the select and make every unchanged row look changed.
+      minutesBefore: 0,
+      minutesAfter: 0,
       recurrence: 'ALL_WEEKS',
       startDate: null,
       endDate: null,
@@ -1335,6 +1342,8 @@ describe('ImportService', () => {
             coTeacherId: CO_TEACHER_ID,
             lessonsPerWeek: 3,
             minutesPerLesson: 60,
+            minutesBefore: 0,
+            minutesAfter: 0,
             recurrence: 'ALL_WEEKS',
             startDate: null,
             endDate: null,
@@ -1666,6 +1675,8 @@ describe('ImportService', () => {
             coTeacherId: null,
             lessonsPerWeek: 4,
             minutesPerLesson: 60,
+            minutesBefore: 0,
+            minutesAfter: 0,
             recurrence: 'ALL_WEEKS',
             startDate: null,
             endDate: null,
@@ -1942,6 +1953,112 @@ describe('ImportService', () => {
             report.skipped +
             report.errors.length,
         ).toBe(rows.length);
+      });
+    });
+
+    /*
+     * Ombyte och dusch through the file.
+     *
+     * The two columns are the CSV round trip's own half of the pupil buffer, and
+     * they meet both silences the block above is about: a file that HAS the
+     * columns and leaves a cell blank says 0, and a file that never had them says
+     * nothing at all. The first is what makes an ombyte removable by editing the
+     * spreadsheet; the second is what keeps a four-column file from sending a
+     * class to matematik straight out of duschen.
+     */
+    describe('ombyte och dusch (minutesBefore / minutesAfter)', () => {
+      it('writes both buffers from a file that carries the columns', async () => {
+        const report = await run(row({ minutesBefore: 10, minutesAfter: 20 }));
+
+        expect(report).toMatchObject({ created: 1, errors: [] });
+        expect(tx.teachingRequirement.create.mock.calls[0][0].data).toMatchObject({
+          minutesBefore: 10,
+          minutesAfter: 20,
+        });
+      });
+
+      it('writes 0 on a create even when the file has neither column', async () => {
+        // The schema defaults both to 0, so this is belt and braces on purpose:
+        // the row the import creates is the row the method describes, and an
+        // omitted column must not leave the two numbers to be inferred.
+        const report = await runWithColumns([], row());
+
+        expect(report).toMatchObject({ created: 1, errors: [] });
+        expect(tx.teachingRequirement.create.mock.calls[0][0].data).toMatchObject({
+          minutesBefore: 0,
+          minutesAfter: 0,
+        });
+      });
+
+      it('reads an EMPTY cell in a column the file has as 0, and clears a stored buffer with it', async () => {
+        // Otherwise an ombyte entered by mistake could only be taken back in the
+        // app, and re-uploading a corrected timplan would be half a mechanism —
+        // the same argument the teacher and the period columns already make.
+        arrangeRows(tx.teachingRequirement.findMany, [
+          stored({ minutesBefore: 10, minutesAfter: 20 }),
+        ]);
+
+        // The browser spells an empty cell as an omitted key or a null; both
+        // arrive here as "no number in a column that exists".
+        const report = await run(row({ minutesBefore: undefined, minutesAfter: null }));
+
+        expect(report).toMatchObject({ updated: 1, errors: [] });
+        expect(tx.teachingRequirement.update.mock.calls[0][0].data).toMatchObject({
+          minutesBefore: 0,
+          minutesAfter: 0,
+        });
+      });
+
+      it('leaves a stored ombyte standing when the file had no ombyte columns', async () => {
+        // The silent loss this guard exists for: a school sets 20 minutes of
+        // dusch on idrotten in the app, then uploads its own four-column
+        // spreadsheet to fix one lesson count. Zeroing the buffer here would put
+        // the class in its next lesson while it is still in omklädningsrummet,
+        // under a report that says "updated" and lists no errors.
+        arrangeRows(tx.teachingRequirement.findMany, [
+          stored({ minutesBefore: 10, minutesAfter: 20 }),
+        ]);
+
+        const report = await runWithColumns([], row({ lessonsPerWeek: 4 }));
+
+        expect(report).toMatchObject({ updated: 1 });
+        const { data } = tx.teachingRequirement.update.mock.calls[0][0];
+        expect(data).toEqual({ lessonsPerWeek: 4, minutesPerLesson: 60 });
+      });
+
+      it.each<[string, Partial<ImportRequirementRowDto>]>([
+        ['ombyte before', { minutesBefore: 10 }],
+        ['dusch after', { minutesAfter: 20 }],
+      ])('a differing %s alone is enough to count as an update', async (_case, patch) => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored()]);
+
+        const report = await run(row(patch));
+
+        expect(report).toMatchObject({ created: 0, updated: 1, skipped: 0 });
+      });
+
+      it('an unchanged buffer is SKIPPED — a re-upload of an idrottstimplan reports 0 updated', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [
+          stored({ minutesBefore: 10, minutesAfter: 20 }),
+        ]);
+
+        const report = await run(row({ minutesBefore: 10, minutesAfter: 20 }));
+
+        expect(report).toMatchObject({ created: 0, updated: 0, skipped: 1, errors: [] });
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
+
+      it('reads the stored buffers, or every unchanged row would look changed', async () => {
+        // The select is what makes the comparison possible at all: a column the
+        // query does not ask for comes back undefined, which never equals the
+        // 0 the file states.
+        await run(row());
+
+        expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            select: expect.objectContaining({ minutesBefore: true, minutesAfter: true }),
+          }),
+        );
       });
     });
 

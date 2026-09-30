@@ -211,7 +211,7 @@ export class ImportRequirementRowDto {
   @MaxLength(120)
   subject!: string;
 
-  // The four numeric bounds are the ones CreateTeachingRequirementDto states,
+  // The numeric bounds are the ones CreateTeachingRequirementDto states,
   // repeated rather than shared: they are the DTO's contract with the CSV, and
   // a row that scrapes past them here would only fail deeper in with a message
   // about a column the school never typed.
@@ -224,6 +224,35 @@ export class ImportRequirementRowDto {
   @Min(15)
   @Max(240)
   minutesPerLesson!: number;
+
+  /**
+   * Minutes the PUPILS are occupied outside the lesson: ombyte before
+   * idrotten, dusch and ombyte after it. What they block, and what they
+   * deliberately leave alone, is argued on CreateTeachingRequirementDto.
+   *
+   * OPTIONAL where the two above are required, and an absent or empty cell is 0
+   * rather than a row error. Most subjects need no ombyte at all, so requiring
+   * the columns would make every school type two zeroes per row to say nothing
+   * — and a timplan a school wrote before these columns existed would stop
+   * importing. Whether a 0 that arrives this way is written is decided in
+   * `importRequirements`, not here: the file's column set travels separately
+   * (see `columns`), which is what keeps "the file has no such column" from
+   * reading as "set it to 0" on a requirement somebody gave a number in the app.
+   *
+   * 0..60 mirrors the CHECK constraints on the columns, like the create DTO, so
+   * a number the database would refuse is refused here with the field named.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(60)
+  minutesBefore?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(60)
+  minutesAfter?: number;
 
   /** Lead teacher by email; empty column = no teacher assigned yet. */
   @IsOptional()
@@ -268,15 +297,19 @@ export class ImportRequirementRowDto {
 }
 
 /**
- * Every column a timplan file may carry — all nine, not only the five that can
- * be left out.
+ * Every column a timplan file may carry — all eleven, not only the seven that
+ * can be left out.
  *
  * The field means "which columns the file had", so the client reports the whole
  * header and the server takes what it needs. Narrowing this to the optional
- * five was tried first and is wrong twice over: it makes an honest client
+ * ones was tried first and is wrong twice over: it makes an honest client
  * report a 400, and it puts the server's idea of which columns matter into the
  * wire format, so adding a writable column later would need the client to learn
  * about it before the server could use it.
+ *
+ * The two pupil buffers are the case that argument was written for. The header
+ * is validated with `forbidNonWhitelisted`, so until this list knows a column
+ * name the web cannot send it at all — the file round trip had to start here.
  *
  * Mirrors the keys of REQUIREMENT_COLUMNS in web/lib/csv.ts.
  */
@@ -285,6 +318,8 @@ export const REQUIREMENT_FILE_COLUMNS = [
   'subject',
   'lessonsPerWeek',
   'minutesPerLesson',
+  'minutesBefore',
+  'minutesAfter',
   'teacherEmail',
   'coTeacherEmail',
   'recurrence',
@@ -297,8 +332,17 @@ export type RequirementFileColumn = (typeof REQUIREMENT_FILE_COLUMNS)[number];
 /**
  * The subset an import may leave standing. The other four are required of every
  * file and always written, so naming them changes nothing.
+ *
+ * The two buffers belong here and not among the required four for the reason the
+ * teacher does: a school's own spreadsheet is usually just the four columns, and
+ * uploading it to correct one lesson count must not zero an ombyte somebody
+ * entered in the app. They are optional in the other direction too — a column
+ * the file HAS with an empty cell means 0 — which is `importRequirements`'
+ * business, not this list's.
  */
 export const OPTIONAL_REQUIREMENT_COLUMNS = [
+  'minutesBefore',
+  'minutesAfter',
   'teacherEmail',
   'coTeacherEmail',
   'recurrence',
@@ -328,7 +372,7 @@ export class ImportRequirementsDto {
    * Absent means the file had none of them, which is a legitimate four-column
    * file and writes only the lesson count and length. It is optional rather
    * than required so that a caller that is not the dialog cannot accidentally
-   * clear five fields by forgetting a key — the safe reading of silence is
+   * reset seven fields by forgetting a key — the safe reading of silence is
    * "change nothing else".
    */
   @IsOptional()
