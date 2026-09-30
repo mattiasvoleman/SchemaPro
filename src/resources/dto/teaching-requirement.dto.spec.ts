@@ -64,4 +64,44 @@ describe.each([
       ['endDate'],
     );
   });
+
+  it('accepts an omkläd-and-dusch buffer on either side of the lesson', async () => {
+    await expect(
+      failing(cls, { ...base, minutesBefore: 10, minutesAfter: 20 }),
+    ).resolves.toEqual([]);
+    // Omitting them is the school that has never asked for one; the columns
+    // default to 0 and the requirement occupies exactly its lesson.
+    await expect(failing(cls, { ...base })).resolves.toEqual([]);
+  });
+
+  it.each([0, 60])('accepts %s minutes, the bounds the CHECK allows', async (minutes) => {
+    await expect(
+      failing(cls, { ...base, minutesBefore: minutes, minutesAfter: minutes }),
+    ).resolves.toEqual([]);
+  });
+
+  it.each<[string, object, string[]]>([
+    ['past the hour the CHECK stops at', { minutesAfter: 61 }, ['minutesAfter']],
+    ['a negative buffer', { minutesBefore: -1 }, ['minutesBefore']],
+    ['half a minute', { minutesBefore: 10.5 }, ['minutesBefore']],
+    ['minutes as a string', { minutesAfter: '20' }, ['minutesAfter']],
+    // 1200 is the misreading the CHECK exists for — twenty hours entered as if
+    // the column took seconds. Refused here so the answer names the field
+    // rather than arriving as a raw constraint violation.
+    ['an hour of shower time in seconds', { minutesAfter: 1200 }, ['minutesAfter']],
+  ])('refuses %s', async (_case, patch, expected) => {
+    await expect(failing(cls, { ...base, ...patch })).resolves.toEqual(expected);
+  });
+
+  it('lets a null buffer through as @IsOptional reads it: absence', async () => {
+    // Not an endorsement, a record. `@IsOptional` skips every validator for
+    // null as well as undefined, so null passes the DTO here exactly as it
+    // already does on lessonsPerWeek and minutesPerLesson — the two fields
+    // these sit beside. The service is where that distinction is spent: it
+    // spreads on `!== undefined`, so null would reach a NOT NULL column, and
+    // its own spec pins the behaviour against those same neighbours rather
+    // than letting this pair drift away from them.
+    await expect(failing(cls, { ...base, minutesBefore: null })).resolves.toEqual([]);
+    await expect(failing(cls, { ...base, lessonsPerWeek: null })).resolves.toEqual([]);
+  });
 });
