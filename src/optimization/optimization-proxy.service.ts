@@ -34,6 +34,7 @@ import type {
   AnonymousRequirement,
   AnonymousRoom,
   AnonymousRoomPreference,
+  AnonymousTeacherWorkRule,
   ConstraintKind,
   DayOfWeek,
   ObjectiveWeights,
@@ -103,6 +104,18 @@ export interface AnonMaps {
   roomTypeAnonMap: Map<string, string>;
   /** And the reservation an engine refusal names. */
   constraintAnonMap: Map<string, string>;
+  /**
+   * And the teacher's arbetstid one names.
+   *
+   * REQUIRED, not optional like `lessonAnonMap` below, although the room route
+   * sends no work rules and passes an empty map. A refusal here says "this
+   * teacher's lunch has nowhere to go" and can name nobody — the teacher map is
+   * discarded on purpose, because no person's name may enter the stored
+   * conflicts — so the RULE's id is the only thing a school can look the refusal
+   * up by. Left optional, a route that forgot it would answer with a uuid that
+   * exists in no table and nothing would report it.
+   */
+  workRuleAnonMap: Map<string, string>;
   /** Real group id -> the school's own name, the last step out of id space. */
   nameById: Map<string, string>;
   /**
@@ -152,6 +165,7 @@ export class OptimizationProxyService {
       lunchPlacements,
       rasts,
       roomPreferences,
+      teacherWorkRules,
       fixedLessons,
       groups,
       previousLessons,
@@ -162,6 +176,7 @@ export class OptimizationProxyService {
       headcountByGroup,
       roomTypeAnonMap,
       constraintAnonMap,
+      workRuleAnonMap,
       nameById,
       storedRules,
     } = await this.prisma.withRls(user, (tx) =>
@@ -174,6 +189,7 @@ export class OptimizationProxyService {
       groupAnonMap,
       roomTypeAnonMap,
       constraintAnonMap,
+      workRuleAnonMap,
       nameById,
     };
 
@@ -193,6 +209,7 @@ export class OptimizationProxyService {
       lunchPlacements,
       rasts,
       roomPreferences,
+      teacherWorkRules,
       fixedLessons,
       groups,
       previousLessons,
@@ -279,6 +296,12 @@ export class OptimizationProxyService {
       maps.requirementAnonMap,
       maps.roomTypeAnonMap,
       maps.constraintAnonMap,
+      // The arbetstid a "teacher's lunch has nowhere to go" refusal names. It
+      // belongs in this list and not only in deanonymise's: the rule's id also
+      // travels in `resourceIds`, where an untranslated one is a uuid the school
+      // can look up in no table — and no NAME will ever fill that slot for it,
+      // since the teacher map is discarded by design.
+      maps.workRuleAnonMap,
     ]) {
       for (const [realId, anonId] of map) realByAnon.set(anonId, realId);
     }
@@ -390,6 +413,7 @@ export class OptimizationProxyService {
     lunchPlacements: AnonymousLunchPlacement[];
     rasts: AnonymousRast[];
     roomPreferences: AnonymousRoomPreference[];
+    teacherWorkRules: AnonymousTeacherWorkRule[];
     fixedLessons: AnonymousFixedLesson[];
     groups: AnonymousGroup[];
     previousLessons: AnonymousPreviousLesson[];
@@ -408,6 +432,8 @@ export class OptimizationProxyService {
     roomTypeAnonMap: Map<string, string>;
     /** And the reservation one names. */
     constraintAnonMap: Map<string, string>;
+    /** And the arbetstid one names, which is the ONLY way back to that row. */
+    workRuleAnonMap: Map<string, string>;
     /** Real group id → the school's name for it, for realiseConflicts. */
     nameById: Map<string, string>;
     storedRules: ScheduleRules | null;
@@ -424,6 +450,14 @@ export class OptimizationProxyService {
     // SAME token, never what the school calls it.
     const roomTypeAnonMap = new Map<string, string>();
     const constraintAnonMap = new Map<string, string>();
+    // The teacher's arbetstid. A map rather than a fresh uuid per row, and for
+    // the reason spelled out where the constraint map is used: the engine puts
+    // this id in the refusal it writes, and an id minted on the way out exists
+    // in no table in either id space — not lookupable by the school, by this
+    // gateway, or by a developer holding the database. It is the more important
+    // here than anywhere else, because the refusal is about a PERSON and the
+    // person's own map is deliberately thrown away.
+    const workRuleAnonMap = new Map<string, string>();
 
     const anonId = (map: Map<string, string>, realId: string): string => {
       const existing = map.get(realId);
@@ -1186,6 +1220,70 @@ export class OptimizationProxyService {
       requiresLessonBefore: rast.requiresLessonBefore,
     }));
 
+    /*
+     * Lärarnas arbetstid. School-scoped and read through the same year -> school
+     * hop as the frames, the sittings and the rasts above, so a request for
+     * another school's year cannot pull this school's rows.
+     *
+     * BOTH IDS ARE ANONYMISED, and they are anonymised differently on purpose.
+     * The teacher goes through `teacherAnonMap`, the same map the requirements
+     * and the fixed lessons use, so the engine can tell that this rule and that
+     * lesson concern one person — and that map is DISCARDED when the request
+     * ends, because a refusal about a teacher must never be able to name them.
+     * The rule's own id goes through `workRuleAnonMap`, which is kept and
+     * reversed on the way back, because the refusal has to name SOMETHING the
+     * school can open, and with the person unnameable the row is all there is.
+     *
+     * A rule whose teacher is not already in the map is LEFT OUT. That teacher
+     * appears in no requirement, no fixed lesson and no reservation this year, so
+     * the engine has no lesson of theirs to hang an assumption on — and minting a
+     * teacher token here would send a rule about somebody the payload never
+     * mentions, which is a fresh uuid the engine can match against nothing. Said
+     * in the log, because "my lunch rule did nothing" is otherwise invisible.
+     *
+     * No name, and nothing but numbers and clocks. The engine has nothing to say
+     * about what a teacher is called, and every field that reaches it is one more
+     * thing that could identify a school in a payload built to be anonymous.
+     */
+    const rawWorkRules = await tx.teacherWorkRule.findMany({
+      where: { school: { academicYears: { some: { id: academicYearId } } } },
+      select: {
+        id: true,
+        userId: true,
+        lunchMinutes: true,
+        lunchStartTime: true,
+        lunchEndTime: true,
+        minDailyRestMinutes: true,
+      },
+    });
+
+    const teacherWorkRules: AnonymousTeacherWorkRule[] = rawWorkRules.flatMap(
+      (rule): AnonymousTeacherWorkRule[] => {
+        const teacherId = teacherAnonMap.get(rule.userId);
+        if (teacherId === undefined) {
+          this.logger.warn(
+            `Skipping work rule ${rule.id}: its teacher has no lesson, reservation ` +
+              `or requirement in this year, so there is nothing to hold it against.`,
+          );
+          return [];
+        }
+        return [
+          {
+            id: anonId(workRuleAnonMap, rule.id),
+            teacherId,
+            lunchMinutes: rule.lunchMinutes,
+            lunchStartTime: rule.lunchStartTime
+              ? this.timeToString(rule.lunchStartTime)
+              : null,
+            lunchEndTime: rule.lunchEndTime
+              ? this.timeToString(rule.lunchEndTime)
+              : null,
+            minDailyRestMinutes: rule.minDailyRestMinutes,
+          },
+        ];
+      },
+    );
+
     // Anonymize the conflict pairs with the same group map the requirements
     // used, so the engine sees a consistent id space. Pairs whose groups never
     // reached the payload (no requirement and no fixed lesson references them)
@@ -1207,6 +1305,7 @@ export class OptimizationProxyService {
       lunchPlacements,
       rasts,
       roomPreferences,
+      teacherWorkRules,
       fixedLessons,
       groups,
       previousLessons,
@@ -1217,6 +1316,7 @@ export class OptimizationProxyService {
       headcountByGroup: homeCountByGroup,
       roomTypeAnonMap,
       constraintAnonMap,
+      workRuleAnonMap,
       nameById,
       // An empty object would send `rules: {}` and read as "rules were
       // considered and came to nothing", which the engine treats the same but
@@ -1251,6 +1351,7 @@ export class OptimizationProxyService {
       maps.groupAnonMap,
       maps.roomTypeAnonMap,
       maps.constraintAnonMap,
+      maps.workRuleAnonMap,
       maps.lessonAnonMap ?? new Map<string, string>(),
     ]) {
       for (const [realId, anonId] of map) real.set(anonId, realId);

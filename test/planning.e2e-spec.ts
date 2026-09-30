@@ -1056,6 +1056,155 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('lärarnas arbetstid', () => {
+    /*
+     * The one resource in this module a TEACHER may write, so the round trip is
+     * what covers it: an RBAC row stops at the guard and proves nothing about the
+     * handler, and the ownership rule lives in the handler.
+     */
+    const TEACHER_ID = '22222222-2222-4222-8222-222222222222';
+    const COLLEAGUE_ID = '77777777-7777-4777-8777-777777777777';
+    const teacher = () => asUser({ role: 'TEACHER' as never });
+
+    const storedRule = (userId: string) => ({
+      id: '10101010-1010-4010-8010-101010101010',
+      schoolId: SCHOOL_ID,
+      userId,
+      lunchMinutes: 30,
+      lunchStartTime: wallClock('10:30'),
+      lunchEndTime: wallClock('13:30'),
+      minDailyRestMinutes: 660,
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    });
+
+    beforeEach(() => {
+      // Whose rule may exist is a question about Users.role, asked inside the
+      // writing transaction because a CHECK cannot read another table.
+      harness.tx['user']!['findUnique']!.mockResolvedValue({ role: 'TEACHER' });
+    });
+
+    it('an admin writes any teacher’s row, and gets clocks back', async () => {
+      harness.tx['teacherWorkRule']!['upsert']!.mockResolvedValue(
+        storedRule(COLLEAGUE_ID),
+      );
+
+      const response = await request(http())
+        .put(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}`)
+        .set('x-test-user', admin())
+        .send({
+          lunchMinutes: 30,
+          lunchStartTime: '10:30',
+          lunchEndTime: '13:30',
+          minDailyRestMinutes: 660,
+        })
+        .expect(200);
+
+      // A timestamp here is what emptied the lunch card's time inputs; the form
+      // reads these into <input type="time">.
+      expect(response.body).toMatchObject({
+        userId: COLLEAGUE_ID,
+        lunchStartTime: '10:30',
+        lunchEndTime: '13:30',
+        minDailyRestMinutes: 660,
+      });
+      expect(JSON.stringify(response.body)).not.toContain('1970');
+    });
+
+    it('a teacher writes their own', async () => {
+      harness.tx['teacherWorkRule']!['upsert']!.mockResolvedValue(
+        storedRule(TEACHER_ID),
+      );
+
+      await request(http())
+        .put(`/api/v1/teacher-work-rules/${TEACHER_ID}`)
+        .set('x-test-user', teacher())
+        .send({ minDailyRestMinutes: 660 })
+        .expect(200);
+    });
+
+    it('403s a teacher writing a colleague’s, without touching the table', async () => {
+      await request(http())
+        .put(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}`)
+        .set('x-test-user', teacher())
+        .send({ minDailyRestMinutes: 660 })
+        .expect(403);
+
+      expect(harness.tx['teacherWorkRule']!['upsert']).not.toHaveBeenCalled();
+    });
+
+    it('403s a teacher deleting a colleague’s', async () => {
+      await request(http())
+        .delete(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}`)
+        .set('x-test-user', teacher())
+        .expect(403);
+
+      expect(harness.tx['teacherWorkRule']!['delete']).not.toHaveBeenCalled();
+    });
+
+    it('204s a delete of one’s own row', async () => {
+      await request(http())
+        .delete(`/api/v1/teacher-work-rules/${TEACHER_ID}`)
+        .set('x-test-user', teacher())
+        .expect(204);
+
+      expect(harness.tx['teacherWorkRule']!['delete']).toHaveBeenCalledWith({
+        where: { userId: TEACHER_ID },
+      });
+    });
+
+    it('400s half a lunch rule', async () => {
+      // A length with no window is a lunch the solver may place at 07:00. The
+      // table refuses it too; this is the route saying which field is missing.
+      await request(http())
+        .put(`/api/v1/teacher-work-rules/${TEACHER_ID}`)
+        .set('x-test-user', admin())
+        .send({ lunchMinutes: 30 })
+        .expect(400);
+    });
+
+    it('400s a length off the solver grid', async () => {
+      await request(http())
+        .put(`/api/v1/teacher-work-rules/${TEACHER_ID}`)
+        .set('x-test-user', admin())
+        .send({ lunchMinutes: 7, lunchStartTime: '10:30', lunchEndTime: '13:30' })
+        .expect(400);
+    });
+
+    it('400s a path that is not a uuid, before any of that', async () => {
+      await request(http())
+        .put('/api/v1/teacher-work-rules/anna')
+        .set('x-test-user', admin())
+        .send({ minDailyRestMinutes: 660 })
+        .expect(400);
+    });
+
+    it('lists the school’s rules for a teacher too', async () => {
+      // A refused week names the rule row that did not fit, and a teacher who
+      // cannot open it meets a refusal with no visible cause.
+      harness.tx['teacherWorkRule']!['findMany']!.mockResolvedValue([
+        storedRule(COLLEAGUE_ID),
+      ]);
+
+      const response = await request(http())
+        .get('/api/v1/teacher-work-rules')
+        .set('x-test-user', teacher())
+        .expect(200);
+
+      expect(response.body).toHaveLength(1);
+    });
+
+    it('404s a write against a row RLS hides', async () => {
+      harness.tx['user']!['findUnique']!.mockResolvedValue(null);
+
+      await request(http())
+        .put(`/api/v1/teacher-work-rules/${COLLEAGUE_ID}`)
+        .set('x-test-user', admin())
+        .send({ minDailyRestMinutes: 660 })
+        .expect(404);
+    });
+  });
+
   describe('RBAC', () => {
     const adminOnly = [
       ['POST', '/api/v1/academic-years'],

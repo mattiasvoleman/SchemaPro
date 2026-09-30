@@ -18,7 +18,10 @@ import type {
   AiEngineScheduleRequest,
   AiEngineScheduleResponse,
 } from './interfaces/ai-engine-payload.interface';
-import { OptimizationProxyService } from './optimization-proxy.service';
+import {
+  OptimizationProxyService,
+  type AnonMaps,
+} from './optimization-proxy.service';
 import * as eligibility from './room-eligibility';
 
 const ACADEMIC_YEAR = '44444444-4444-4444-8444-444444444444';
@@ -814,13 +817,22 @@ describe('OptimizationProxyService', () => {
   });
 
   describe('callAiEngine — failure mapping', () => {
-    /** Maps a refusal can name something through; empty unless a test fills one. */
-    const maps = () => ({
+    /**
+     * Maps a refusal can name something through; empty unless a test fills one.
+     *
+     * TYPED AS AnonMaps on purpose. Untyped, a map added to the interface was
+     * simply missing here — and `deanonymise` iterates the list, so the absent
+     * one was `undefined`, the loop threw, and every refusal in this block came
+     * back as "AI engine unavailable." Seven tests failed at once and none of
+     * them said which field was missing.
+     */
+    const maps = (): AnonMaps => ({
       requirementAnonMap: new Map<string, string>(),
       roomAnonMap: new Map<string, string>(),
       groupAnonMap: new Map<string, string>(),
       roomTypeAnonMap: new Map<string, string>(),
       constraintAnonMap: new Map<string, string>(),
+      workRuleAnonMap: new Map<string, string>(),
       nameById: new Map<string, string>(),
       lessonAnonMap: new Map<string, string>(),
     });
@@ -1213,6 +1225,8 @@ describe('OptimizationProxyService', () => {
       rasts?: unknown[];
       /** Meals the school placed by hand. */
       handSittings?: unknown[];
+      /** Lärarnas arbetstid, as stored. */
+      workRules?: unknown[];
     };
 
     const arrange = (overrides: Arrangement = {}) => {
@@ -1274,6 +1288,9 @@ describe('OptimizationProxyService', () => {
       tx.lunchServing.findMany.mockImplementation(table(overrides.servings ?? []));
       tx.rast.findMany.mockImplementation(table(overrides.rasts ?? []));
       tx.lunchSitting.findMany.mockImplementation(table(overrides.handSittings ?? []));
+      // Empty by default, which is every school today: nobody has been able to
+      // state a teacher's lunch or rest, so no week may change until they do.
+      tx.teacherWorkRule.findMany.mockImplementation(table(overrides.workRules ?? []));
       // One row per school, found by the school: a findUnique without that
       // key is one Prisma refuses.
       tx.lunchSetting.findUnique.mockImplementation(async ({ where, select }: Query = {}) => {
@@ -2851,6 +2868,149 @@ describe('OptimizationProxyService', () => {
         roomType: 'Slöjdsal',
       });
       expect(result.conflicts?.summary).toBe('No room fits requirement Matematik för 4A.');
+    });
+
+    describe('lärarnas arbetstid', () => {
+      /*
+       * The teacher's own lunch and rest, which nothing in this payload could
+       * express before: an AvailabilityConstraint with resourceKind TEACHER
+       * CLOSES hours, and there was no way to say a teacher is OWED anything.
+       */
+      const WORK_RULE_ID = '77777777-aaaa-4aaa-8aaa-777777777777';
+      const workRule = (overrides: Record<string, unknown> = {}) => ({
+        id: WORK_RULE_ID,
+        userId: TEACHER_ID,
+        lunchMinutes: 30,
+        lunchStartTime: new Date('1970-01-01T10:30:00.000Z'),
+        lunchEndTime: new Date('1970-01-01T13:30:00.000Z'),
+        minDailyRestMinutes: 660,
+        ...overrides,
+      });
+
+      it('forwards it with BOTH ids anonymised, the teacher through the teachers\u2019 own map', async () => {
+        /*
+         * The teacher id has to be the SAME token the requirement carries, or the
+         * engine cannot tell that this rule and that lesson concern one person —
+         * and it must not be the real one, because `Users` is the PII table and
+         * the whole point of this proxy is that no row of it crosses.
+         */
+        arrange({ workRules: [workRule()] });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const payload = http.post.mock.calls[0]![1] as any;
+
+        expect(payload.teacherWorkRules).toHaveLength(1);
+        expect(payload.teacherWorkRules[0]).toEqual({
+          id: expect.any(String),
+          teacherId: payload.requirements[0].teacherId,
+          lunchMinutes: 30,
+          lunchStartTime: '10:30:00',
+          lunchEndTime: '13:30:00',
+          minDailyRestMinutes: 660,
+        });
+        expect(payload.teacherWorkRules[0].id).not.toBe(WORK_RULE_ID);
+        expect(payload.teacherWorkRules[0].teacherId).not.toBe(TEACHER_ID);
+        // Belt and braces: neither real id appears anywhere in the payload.
+        expect(JSON.stringify(payload)).not.toContain(TEACHER_ID);
+        expect(JSON.stringify(payload)).not.toContain(WORK_RULE_ID);
+      });
+
+      it('sends a rule with no lunch as three nulls, not as zeroes', async () => {
+        // Null is "this rule does not apply". Zero minutes inside 00:00-00:00 is
+        // a lunch the engine would have to place, and place nowhere.
+        arrange({
+          workRules: [
+            workRule({ lunchMinutes: null, lunchStartTime: null, lunchEndTime: null }),
+          ],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const payload = http.post.mock.calls[0]![1] as any;
+
+        expect(payload.teacherWorkRules[0]).toMatchObject({
+          lunchMinutes: null,
+          lunchStartTime: null,
+          lunchEndTime: null,
+          minDailyRestMinutes: 660,
+        });
+      });
+
+      it('leaves out a rule whose teacher this year never mentions', async () => {
+        // No requirement, no fixed lesson and no reservation names them, so the
+        // engine has no lesson of theirs to hang an assumption on — and minting a
+        // teacher token here would send a rule about somebody the payload never
+        // mentions, matchable against nothing.
+        arrange({
+          workRules: [workRule({ id: 'orphan-rule', userId: 'teacher-who-teaches-nothing' })],
+        });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const payload = http.post.mock.calls[0]![1] as any;
+
+        expect(payload.teacherWorkRules).toEqual([]);
+      });
+
+      it('reads none of another school\u2019s, through the year -> school hop', async () => {
+        arrange({ workRules: [workRule({ schoolId: OTHER_SCHOOL })] });
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+        const payload = http.post.mock.calls[0]![1] as any;
+
+        expect(payload.teacherWorkRules).toEqual([]);
+      });
+
+      it('brings a refusal back naming the rule row, and naming no person', async () => {
+        /*
+         * The reason `workRuleAnonMap` is kept while the teacher map is thrown
+         * away. A refusal here is ABOUT a teacher, and no person's name may enter
+         * the stored conflicts — `OptimizationJobs.conflicts` is a denormalised
+         * copy no rename or deletion would ever reach. So the rule's id is the
+         * one thing the school can look the refusal up by, and forwarded
+         * unreversed it is a uuid that exists in no table in either id space.
+         */
+        arrange({ workRules: [workRule()] });
+        http.post.mockImplementation((_url: string, payload: any) =>
+          of({
+            data: {
+              requestId: payload.requestId,
+              status: 'INFEASIBLE',
+              lessons: [],
+              conflicts: {
+                summary: 'blocked',
+                summaryCode: 'CONFLICT_CORE_SUMMARY',
+                summaryParams: {},
+                conflicts: [
+                  {
+                    category: 'AVAILABILITY',
+                    code: 'TEACHER_LUNCH_HAS_NOWHERE_TO_GO',
+                    params: { rule: payload.teacherWorkRules[0].id, minutes: 30 },
+                    message: `Rule ${payload.teacherWorkRules[0].id} leaves no lunch.`,
+                    requirementIds: [],
+                    roomIds: [],
+                    constraintIds: [],
+                    resourceIds: [payload.teacherWorkRules[0].id],
+                  },
+                ],
+              },
+            },
+          }),
+        );
+
+        const detail = (await service.triggerScheduling(ACADEMIC_YEAR, testUser()))
+          .conflicts!.conflicts[0]!;
+
+        expect(detail.params.rule).toBe(WORK_RULE_ID);
+        expect(detail.message).toBe(`Rule ${WORK_RULE_ID} leaves no lunch.`);
+        expect(detail.resourceIds).toEqual([WORK_RULE_ID]);
+        // And nobody is named. A rule row has no name of its own and the teacher
+        // deliberately never reaches `nameById`, so the list stays empty rather
+        // than acquiring a person.
+        expect(detail.resourceNames).toEqual([]);
+      });
     });
 
     it('brings a refusal back naming a reservation and a room that are real rows', async () => {

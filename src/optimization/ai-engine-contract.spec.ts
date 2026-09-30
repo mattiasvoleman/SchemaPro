@@ -45,11 +45,28 @@ const PAYLOAD_FIELDS = [
   'roomPreferences',
   'rooms',
   'rules',
+  'teacherWorkRules',
 ];
 
 /** The group's years too: a sitting and a frame reach a stage, and a MEAL has
  *  no requirement to read a span off. */
 const GROUP_FIELDS = ['id', 'lunchHeadcount', 'maxGradeLevel', 'minGradeLevel'];
+
+/**
+ * A teacher's arbetstid. BOTH ids are here and both are anonymised, which is the
+ * one thing about this list worth pinning beyond the names: `teacherId` rides the
+ * same map the requirements use and is thrown away, and `id` rides a map the
+ * gateway KEEPS, because a refusal about a teacher may name no person and the
+ * rule row is then the only thing a school can open.
+ */
+const WORK_RULE_FIELDS = [
+  'id',
+  'lunchEndTime',
+  'lunchMinutes',
+  'lunchStartTime',
+  'minDailyRestMinutes',
+  'teacherId',
+];
 
 /** A sitting names a span of years, so there is nothing here to anonymise. */
 const SERVING_FIELDS = [
@@ -164,16 +181,34 @@ describe('AI engine wire contract', () => {
     tx['studentGroup']!['findMany']!.mockResolvedValue([
       { id: 'g1', gradeLevel: null, kind: 'CLASS' },
     ]);
+    // A named teacher, so `teacherAnonMap` holds somebody: a work rule whose
+    // teacher appears in no requirement, fixed lesson or reservation is dropped
+    // on purpose (the engine would have no lesson of theirs to bind it to), and
+    // with a teacherless requirement the rule assertion below would be measuring
+    // that drop instead of the contract.
     tx['teachingRequirement']!['findMany']!.mockResolvedValue([
       {
         id: 'r1',
         subjectId: 's1',
         studentGroupId: 'g1',
-        teacherId: null,
+        teacherId: 't1',
         coTeacherId: null,
         lessonsPerWeek: 1,
         minutesPerLesson: 60,
         subject: { requiredRoomTypeId: null },
+      },
+    ]);
+    // One teacher's arbetstid, with the lunch trio whole and the night set, so
+    // every field of the shape reaches the payload.
+    tx['teacherWorkRule']!['findMany']!.mockResolvedValue([
+      {
+        id: 'wr-1',
+        userId: 't1',
+        lunchMinutes: 30,
+        // 1970-anchored, exactly as Prisma reads a TIME column back.
+        lunchStartTime: new Date('1970-01-01T10:30:00.000Z'),
+        lunchEndTime: new Date('1970-01-01T13:30:00.000Z'),
+        minDailyRestMinutes: 660,
       },
     ]);
     tx['availabilityConstraint']!['findMany']!.mockResolvedValue([
@@ -343,6 +378,27 @@ describe('AI engine wire contract', () => {
     expect(servings).toHaveLength(1);
     expect(Object.keys(servings[0]!).sort()).toEqual(SERVING_FIELDS);
     expect(servings[0]!['startTime']).toBe('11:40:00');
+  });
+
+  it('sends exactly the arbetstid fields the engine declares', async () => {
+    const payload = await buildPayload();
+    const rules = payload['teacherWorkRules'] as Array<Record<string, unknown>>;
+    expect(rules).toHaveLength(1);
+    expect(Object.keys(rules[0]!).sort()).toEqual(WORK_RULE_FIELDS);
+
+    // The clock as HH:MM:SS, like every other time on this wire: Prisma reads a
+    // TIME column into a 1970 Date and the engine's pattern is
+    // ^\d{2}:\d{2}:\d{2}$, so an unconverted value is a 422 for the WHOLE
+    // optimize request rather than one bad-looking field.
+    expect(rules[0]!['lunchStartTime']).toBe('10:30:00');
+    expect(rules[0]!['lunchEndTime']).toBe('13:30:00');
+
+    // And NEITHER id is the real one. The teacher's map is discarded when the
+    // request ends, which is what keeps a person out of the stored conflicts; the
+    // rule's is kept and reversed, which is what leaves the school something to
+    // open. Both would be broken by forwarding the row's own ids.
+    expect(rules[0]!['id']).not.toBe('wr-1');
+    expect(rules[0]!['teacherId']).not.toBe('t1');
   });
 
   it('sends exactly the frame fields the engine declares', async () => {
