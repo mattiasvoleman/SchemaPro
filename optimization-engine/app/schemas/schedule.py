@@ -67,6 +67,29 @@ class AnonymousRequirement(CamelModel):
     teacher_id: UUID4 | None = Field(default=None, alias="teacherId")
     lessons_per_week: int = Field(alias="lessonsPerWeek", ge=1, le=40)
     minutes_per_lesson: int = Field(alias="minutesPerLesson", ge=15, le=240)
+    #: Minutes the PUPILS need on either side of the lesson and nobody else:
+    #: changing before idrotten, showering and changing after it.
+    #:
+    #: OUTSIDE THE LESSON. Teaching is still minutes_per_lesson — the hour the
+    #: timplan owes the subject is untouched, and the class is merely occupied
+    #: from start - minutesBefore to end + minutesAfter. Folding the time into
+    #: the lesson instead would have paid a school's idrott out of its own
+    #: hours, and the school's own screens would show a lesson it does not give.
+    #:
+    #: PER REQUIREMENT, not per subject, because the same subject is not the
+    #: same errand twice: a year-2 class changing its shoes needs five minutes
+    #: where a year-9 class that showers needs twenty, and one Idrott row
+    #: serves both.
+    #:
+    #: WHAT THEY BLOCK IS THE PUPILS: their own class, every group that shares
+    #: their pupils, and their lunch. Not the teacher, who walks in as the
+    #: lesson starts and may take another class the minute it ends, and not the
+    #: room, which the next class can be changing for while this one showers.
+    #: A margin that every body around a lesson needs is what a frame's
+    #: changeoverMinutes says, and it says it for all of them at once; this one
+    #: is asymmetric on purpose, because only one set of bodies is undressed.
+    minutes_before: int = Field(default=0, alias="minutesBefore", ge=0, le=60)
+    minutes_after: int = Field(default=0, alias="minutesAfter", ge=0, le=60)
     student_group_size: int = Field(
         default=1,
         alias="studentGroupSize",
