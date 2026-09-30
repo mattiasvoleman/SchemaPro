@@ -520,7 +520,7 @@ describe("buildPupilBufferMap", () => {
     expect(map.get("gB:idh")).toEqual({ minutesBefore: 0, minutesAfter: 15 });
   });
 
-  it("reads a lesson's buffer off its primary class, and answers nothing for a lesson that has none", () => {
+  it("reads a lesson's buffer off its class, and answers nothing for a lesson that has none", () => {
     const map = buildPupilBufferMap([requirement("gA", "idh", 10, 20)]);
 
     expect(pupilBufferOf(map, { studentGroupId: "gA", subjectId: "idh" })).toEqual({
@@ -533,6 +533,203 @@ describe("buildPupilBufferMap", () => {
     expect(pupilBufferOf(map, { studentGroupId: "gB", subjectId: "idh" })).toBeUndefined();
     // A caller with no timplan at all asks nothing of the map.
     expect(pupilBufferOf(undefined, { studentGroupId: "gA", subjectId: "idh" })).toBeUndefined();
+  });
+
+  describe("a lesson several classes attend", () => {
+    /*
+     * The WIDEST of the attending groups' rules, per side.
+     *
+     * The guest class's pupils change and shower too, and the lesson holds all
+     * of them — so the host's own row cannot be the whole answer. The cost is
+     * accepted deliberately and asserted below: a guest with a longer rule
+     * lengthens the block for the host as well.
+     *
+     * The gateway reads the same widest. If these two disagree the editor
+     * refuses what the API accepts, or offers what it will refuse.
+     */
+    it("takes the guest class's longer rule over the host's", () => {
+      const map = buildPupilBufferMap([
+        requirement("gHost", "idh", 5, 10),
+        requirement("gGuest", "idh", 15, 30),
+      ]);
+
+      expect(
+        pupilBufferOf(map, {
+          studentGroupId: "gHost",
+          extraGroupIds: ["gGuest"],
+          subjectId: "idh",
+        }),
+      ).toEqual({ minutesBefore: 15, minutesAfter: 30 });
+    });
+
+    it("takes each side from whichever class is widest on that side", () => {
+      // Not "the widest row wins": the two sides are two rules. The host needs
+      // the longer ombyte, the guest the longer dusch, and the lesson holds
+      // both classes on both sides.
+      const map = buildPupilBufferMap([
+        requirement("gHost", "idh", 20, 5),
+        requirement("gGuest", "idh", 5, 25),
+      ]);
+
+      expect(
+        pupilBufferOf(map, {
+          studentGroupId: "gHost",
+          extraGroupIds: ["gGuest"],
+          subjectId: "idh",
+        }),
+      ).toEqual({ minutesBefore: 20, minutesAfter: 25 });
+    });
+
+    it("does not let a guest class without a rule shrink the host's block", () => {
+      // A guest with no row is not a guest with zeroes. buildPupilBufferMap
+      // keeps only the rows carrying a number, so the miss must read as
+      // "nothing to say", not as a 0 that a Math.min would win with.
+      const map = buildPupilBufferMap([requirement("gHost", "idh", 10, 20)]);
+
+      expect(
+        pupilBufferOf(map, {
+          studentGroupId: "gHost",
+          extraGroupIds: ["gGuestA", "gGuestB"],
+          subjectId: "idh",
+        }),
+      ).toEqual({ minutesBefore: 10, minutesAfter: 20 });
+    });
+
+    it("gives the host class the guest's rule when the host has none at all", () => {
+      // The visiting class reads idrott; the host class is there for one lesson
+      // and has no row of its own. Its pupils still shower.
+      const map = buildPupilBufferMap([requirement("gGuest", "idh", 10, 20)]);
+
+      expect(
+        pupilBufferOf(map, {
+          studentGroupId: "gHost",
+          extraGroupIds: ["gGuest"],
+          subjectId: "idh",
+        }),
+      ).toEqual({ minutesBefore: 10, minutesAfter: 20 });
+    });
+
+    it("still answers nothing when no attending class has a rule for the subject", () => {
+      const map = buildPupilBufferMap([requirement("gA", "idh", 10, 20)]);
+
+      expect(
+        pupilBufferOf(map, {
+          studentGroupId: "gHost",
+          extraGroupIds: ["gGuest"],
+          subjectId: "idh",
+        }),
+      ).toBeUndefined();
+      // The same lesson in a subject nobody changes for.
+      expect(
+        pupilBufferOf(map, {
+          studentGroupId: "gA",
+          extraGroupIds: ["gGuest"],
+          subjectId: "ma",
+        }),
+      ).toBeUndefined();
+    });
+
+    it("blocks the host class for the guest's minutes, all the way to a refusal", () => {
+      // The whole point, through the engine rather than the lookup: the guest's
+      // 30 minutes of dusch is what makes the host class's own next lesson a
+      // clash. Neither class's row alone would have refused it — gHost asks for
+      // 10 — and the cost lands on the host, which is the trade the comment on
+      // pupilBufferOf argues for.
+      const map = buildPupilBufferMap([
+        requirement("gHost", "idh", 0, 10),
+        requirement("gGuest", "idh", 0, 30),
+      ]);
+      const lessons = [
+        makeLesson({
+          id: "L1",
+          studentGroupId: "gHost",
+          extraGroupIds: ["gGuest"],
+          subjectId: "idh",
+        }),
+        makeLesson({
+          id: "L2",
+          studentGroupId: "gHost",
+          subjectId: "ma",
+          startTime: "10:20",
+          endTime: "11:20",
+        }),
+      ];
+
+      // 10 minutes of dusch reaches 10:10 and the next lesson starts at 10:20:
+      // the host's own rule leaves this grid clean.
+      const hostOnly = buildPupilBufferMap([requirement("gHost", "idh", 0, 10)]);
+      expect(
+        detectConflicts(
+          lessons,
+          [],
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          hostOnly,
+        ).size,
+      ).toBe(0);
+
+      const flagged = detectConflicts(
+        lessons,
+        [],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        map,
+      );
+      expect(flagged.get("L1")).toEqual([
+        { kind: "GROUP", otherLessonId: "L2", pupilBufferOnly: true },
+      ]);
+      expect(flagged.get("L2")).toEqual([
+        { kind: "GROUP", otherLessonId: "L1", pupilBufferOnly: true },
+      ]);
+    });
+
+    it("leaves the guest class's teacher and room on the teaching span", () => {
+      // The widest rule widens the PUPIL window and nothing else. The
+      // idrottslärare may take the slot after the lesson and the hall stands
+      // empty in it, however long the visiting class showers.
+      const map = buildPupilBufferMap([requirement("gGuest", "idh", 0, 45)]);
+      const lessons = [
+        makeLesson({
+          id: "L1",
+          studentGroupId: "gHost",
+          extraGroupIds: ["gGuest"],
+          subjectId: "idh",
+          teacherId: "t1",
+          roomId: "r1",
+        }),
+        makeLesson({
+          id: "L2",
+          studentGroupId: "gOther",
+          subjectId: "ma",
+          teacherId: "t1",
+          roomId: "r1",
+          startTime: "10:00",
+          endTime: "11:00",
+        }),
+      ];
+
+      expect(
+        detectConflicts(
+          lessons,
+          [],
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          map,
+        ).size,
+      ).toBe(0);
+    });
   });
 
   it("carries the buffer onto the placement, and leaves one without it exactly as it was", () => {
