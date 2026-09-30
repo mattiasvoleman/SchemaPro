@@ -246,5 +246,25 @@ describe("People page", () => {
       await user.click(button);
       expect(nameButton("Alma Berg")).toHaveAttribute("aria-expanded", "true");
     });
+
+    it("stretches the panel across every column of the table", async () => {
+      // colSpan is the one thing about this panel that neither TypeScript nor
+      // the assertions above can catch: any number compiles, and a panel one
+      // column short still renders its content. Read the count off the header
+      // rather than writing it down, so an eighth column fails here instead of
+      // quietly leaving the panel short of the table's edge again.
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(nameButton("Alma Berg"));
+
+      const columns = within(screen.getAllByRole("row")[0]).getAllByRole(
+        "columnheader",
+      ).length;
+      const panelCell = document
+        .getElementById("person-detail-st-1")!
+        .querySelector("td")!;
+      expect(panelCell.colSpan).toBe(columns);
+    });
   });
 });
