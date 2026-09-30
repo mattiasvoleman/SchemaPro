@@ -105,6 +105,23 @@ def _locked(payload: dict, start: str, end: str) -> dict:
     }
 
 
+def _work_rule(payload: dict, **values: object) -> dict:
+    """One teacher's own lunch and rest, with the user's suggested values.
+
+    Every value is on the gate's own half hour, so a row built from the defaults
+    changes nothing and each SOURCES entry overrides exactly one of them.
+    """
+    return {
+        "id": str(uuid4()),
+        "teacherId": payload["requirements"][0]["teacherId"],
+        "lunchMinutes": 30,
+        "lunchStartTime": "10:30:00",
+        "lunchEndTime": "13:30:00",
+        "minDailyRestMinutes": 660,
+        **values,
+    }
+
+
 def _window(start: str, end: str) -> dict:
     """Every year, every day: the shape a frame, a rast and a sitting share."""
     return {
@@ -231,6 +248,17 @@ SOURCES: list[tuple[str, Callable[[dict], None], int]] = [
      lambda p: _append(p, "lunchPlacements", {
          "studentGroupId": p["groups"][0]["id"], "dayOfWeek": 1, "startTime": "11:15:00",
      }), 15),
+    # The teachers' own lunch and rest. The window's two ends and the break's
+    # length bound a lunch start exactly as the school's own three do, and each
+    # is the only thing that notices if its half stops feeding the gcd.
+    ("a teacher's lunch window from 10:20",
+     lambda p: _append(p, "teacherWorkRules", _work_rule(p, lunchStartTime="10:20:00")), 10),
+    ("a teacher's lunch window to 13:20",
+     lambda p: _append(p, "teacherWorkRules", _work_rule(p, lunchEndTime="13:20:00")), 10),
+    ("a teacher's twenty-minute lunch",
+     lambda p: _append(p, "teacherWorkRules", _work_rule(p, lunchMinutes=20)), 10),
+    ("a teacher's rest of 650 minutes",
+     lambda p: _append(p, "teacherWorkRules", _work_rule(p, minDailyRestMinutes=650)), 10),
     ("last term's lesson at 09:10",
      lambda p: _append(p, "previousLessons", {
          "requirementId": p["requirements"][0]["id"], "dayOfWeek": 1, "startTime": "09:10:00",
@@ -273,6 +301,53 @@ def test_a_time_the_grid_cannot_read_gives_a_step_of_one(change: Callable[[dict]
     change(payload)
 
     assert _step_minutes(payload) == 5
+
+
+def test_a_rule_on_the_gate_s_own_half_hour_costs_it_nothing() -> None:
+    """The control the four rows above need: the user's suggested values are all
+    multiples of the gate's thirty minutes, rest and night included, so a school
+    that takes them as they come is searched exactly as it was."""
+    payload = _gate_payload()
+    _append(payload, "teacherWorkRules", _work_rule(payload))
+
+    assert _step_minutes(payload) == 30
+
+
+def test_the_night_between_two_days_is_a_source_of_its_own() -> None:
+    """A rest compares a start with a constant of the GRID, not of any row.
+
+    `last(d) + rest <= first(d+1) + pad`, and the rounding-down argument needs
+    both added constants to be multiples of the step. `pad` is the closed part
+    of the night — 1440 minutes in slots, less the day the grid addresses — and
+    it is a multiple of nothing in particular: a week of 25-minute lessons on a
+    two-hour-and-five-minute day steps by 25 minutes, its night is 263 slots,
+    and no multiple of five reaches that. Left out of the gcd the inequality
+    would be shifted by a value no start could meet.
+
+    Not a SOURCES row because the gate's own week cannot isolate it: 288 slots
+    is a multiple of every step that week derives, so the pad only ever shows
+    where the step does not divide the day of the clock.
+    """
+    teacher, group = str(uuid4()), str(uuid4())
+    payload = {
+        "requestId": str(uuid4()), "academicYearId": str(uuid4()),
+        "requirements": [{
+            "id": str(uuid4()), "subjectId": str(uuid4()), "studentGroupId": group,
+            "teacherId": teacher, "lessonsPerWeek": 1, "minutesPerLesson": 25,
+            "studentGroupSize": 24,
+        }],
+        "rooms": [{"id": str(uuid4()), "capacity": 30}],
+    }
+    grid = {"SCHEDULE_DAYS": "1,2", "SCHEDULE_DAY_END_MINUTES": 605}
+
+    assert _step_minutes(payload, **grid) == 25
+
+    payload["teacherWorkRules"] = [{
+        "id": str(uuid4()), "teacherId": teacher, "lunchMinutes": None,
+        "lunchStartTime": None, "lunchEndTime": None, "minDailyRestMinutes": 75,
+    }]
+
+    assert _step_minutes(payload, **grid) == 5
 
 
 def test_a_previous_lesson_the_model_skips_is_skipped_here_too() -> None:
@@ -559,12 +634,36 @@ def _random_week(rng: random.Random) -> dict:
             row["minutesBefore"] = rng.choice((0, 0, 5, 10, 7))
             row["minutesAfter"] = rng.choice((0, 10, 20, 15))
 
+    # The teachers' own lunch and rest, drawn LAST for the reason the pupils'
+    # buffers above are: every week up to this line is the week this generator
+    # drew before either existed, so a redistribution of the verdicts below is
+    # something a reader can follow. A third of the teachers get a row, on the
+    # week's own unit so most of those weeks still step.
+    #
+    # THE REST IS DRAWN NEAR ITS CEILING OR NOT AT ALL, because a four-hour day
+    # leaves twenty hours of night: anything under that holds vacuously and
+    # would put the rule in the sweep without ever asking it a question.
+    work_rules = []
+    for teacher in teachers:
+        if rng.random() >= 0.34:
+            continue
+        window = at(30, 120)
+        has_lunch = rng.random() < 0.7
+        work_rules.append({
+            "id": str(uuid4()), "teacherId": teacher,
+            "lunchMinutes": rng.choice((20, 30)) if has_lunch else None,
+            "lunchStartTime": _clock(window) if has_lunch else None,
+            "lunchEndTime": _clock(window + 60) if has_lunch else None,
+            "minDailyRestMinutes": rng.choice((None, None, 1260, 1320)),
+        })
+
     return {
         "requestId": str(uuid4()), "academicYearId": str(uuid4()),
         "requirements": requirements, "groups": classes, "rooms": rooms,
         "constraints": constraints, "frameTimes": frames, "rasts": rasts,
         "lunchServings": servings, "lunchPlacements": placements, "fixedLessons": fixed,
         "groupConflicts": conflicts, "previousLessons": previous, "rules": rules or None,
+        "teacherWorkRules": work_rules,
     }
 
 
@@ -649,6 +748,9 @@ def test_a_step_never_changes_whether_a_week_has_a_timetable() -> None:
     # buffers joined the generator: the weeks themselves are unchanged — they are
     # drawn before the buffers are — but a buffer off the grid can take its own
     # week's step to 1, and a week the step does not touch is skipped above.
+    # 29 and 21 since the teachers' own lunch and rest joined it on the same
+    # terms; 27 of the 50 weeks compared carry a rule that asks for one of them,
+    # which is what makes this a sweep over the new rule and not around it.
     assert compared["FEASIBLE"] >= 25 and compared["INFEASIBLE"] >= 12, compared
 
 

@@ -26,6 +26,7 @@ from app.schemas.schedule import (
     AnonymousGroup,
     AnonymousRequirement,
     AnonymousRoom,
+    AnonymousTeacherWorkRule,
     FixedLesson,
     FrameTime,
     LunchPlacement,
@@ -340,6 +341,44 @@ class _LunchStage:
         return clone
 
 
+@dataclass(frozen=True)
+class _TeacherDay:
+    """One teacher's day, as the model addresses its two ends.
+
+    `first` is the start of their earliest lesson that day and `last` the end
+    of their latest, both in absolute slots; `works` is true exactly when they
+    have a lesson on the day at all; `on_day` is the literal per lesson that
+    decides it, and `taught` the slots those lessons occupy.
+
+    TWO-SIDED AND UNCONDITIONAL, which is the difference between this and the
+    pair _add_idle_time_objective used to build for itself. That one bounds
+    `first` only from above and `last` only from below and says so: the
+    objective minimises `last - first`, which drives each to the true extreme
+    on its own, and the other half of every equality would have been two
+    constraints bought for nothing.
+
+    A HARD RULE CANNOT LEAN ON AN OBJECTIVE. The rest rule reads `last` on one
+    day and `first` on the next, and the objective is not there to push them:
+    it is switched off by a weight of zero, it skips a teacher with a single
+    lesson, and on a day with no lesson at all nothing bounds either end. The
+    direction the rest inequality happens to lean is the safe one today — it
+    wants `last` small and `first` large, which are exactly the bounds the
+    one-sided pair already carries — but that is a property of one inequality's
+    shape and not of these variables, and the consecutive-teaching rule that is
+    already planned reads them the other way round. So both ends are pinned,
+    `works` is a variable rather than an assumption, and an empty day gives
+    `first` the day's close and `last` its open: a span of minus a whole day,
+    which the objective's floor at zero already handles and which no rest
+    constraint is enforced over.
+    """
+
+    first: cp_model.IntVar
+    last: cp_model.IntVar
+    works: cp_model.IntVar
+    on_day: tuple[cp_model.IntVar, ...]
+    taught: cp_model.LinearExpr
+
+
 class SchedulerSolver:
     """CP-SAT weekly master timetable optimizer."""
 
@@ -438,6 +477,24 @@ class SchedulerSolver:
         self._add_rast_ordering_constraints(
             model, registry, request, decisions, lunch_starts,
         )
+        # The teachers' own lunch and rest. BEFORE THE OBJECTIVE, and that is
+        # the only ordering this builder has: the idle term measures the same
+        # two ends the rest rule bounds, and reads the pair left here in
+        # `teacher_days` rather than building a second, weaker one of its own.
+        # See _TeacherDay. Nothing here touches a lunch or a rast variable, so
+        # its place among the other rule builders says nothing at all.
+        teacher_days: dict[tuple[UUID, int], _TeacherDay] = {}
+        self._add_teacher_work_constraints(
+            model,
+            registry,
+            decisions,
+            request.teacher_work_rules,
+            request.fixed_lessons,
+            request.constraints,
+            day_vars,
+            teacher_days,
+            step=step,
+        )
         if include_objective:
             weights = self._resolve_weights(request)
             objective_terms = [
@@ -451,6 +508,7 @@ class SchedulerSolver:
                 *self._add_spread_objective(model, decisions, weights, day_vars),
                 *self._add_idle_time_objective(
                     model, decisions, request.constraints, weights, day_vars,
+                    teacher_days,
                 ),
                 *self._add_room_preference_objective(
                     model, decisions, rooms, room_plan, request.room_preferences, weights,
@@ -1850,6 +1908,21 @@ class SchedulerSolver:
                                                literal is the whole cost
             pairs(req)      spread             one boolean per same-requirement
                                                lesson pair
+            TD(2)           teacher lunch      a movable start and the literal
+                            + TD(3L + 3)       its presence hangs on, per rule
+                            teacher rest       and day; and for the rest, per
+                                               day, a literal per lesson saying
+                                               whether it is here, the two
+                                               clamped ends it feeds a minimum
+                                               and a maximum, and the day's own
+                                               first, last and `works`, plus a
+                                               literal per pair of consecutive
+                                               days and, where the payload
+                                               holds locked lessons, two more
+                                               per day for folding one in. T
+                                               counts only the teachers the
+                                               timplan gives a lesson to, which
+                                               is the builder's own skip
             2 x pairs(t)    teacher gap        boolean + gap var per
                                                same-teacher pair, mirroring the
                                                builder's own skip of any teacher
@@ -1878,7 +1951,12 @@ class SchedulerSolver:
         owes this table a term.
 
         On the 2,000-student benchmark this predicts ~99.6K against a measured
-        92,546 — an upper bound within 8%. If a builder's encoding changes,
+        92,546 — an upper bound within 8%. It is LOOSER where the teachers' work
+        rules are filled in, and knowingly: on the 400-student gate week with
+        both halves given to all 33 teachers it predicts 22,642 against 17,732,
+        because the rest rule's day and the idle objective's are the same
+        variables charged twice. Still an upper bound, which is the contract. If
+        a builder's encoding changes,
         change its term here in the same commit; the benchmark check is
         `benchmarks/solve_2000_students.py --json | grep -i complexity`.
         """
@@ -2016,11 +2094,41 @@ class SchedulerSolver:
         # counting them would mean walking the constraints a second time to
         # learn which teacher each belongs to, for a term that is zero on almost
         # every payload. Stated rather than silently omitted.
+        # AND CHARGED IN FULL EVEN WHERE THE REST RULE PAID FOR IT. A teacher
+        # with a rest rule has their day built two-sided by
+        # _add_teacher_work_constraints, and this term then reuses that pair and
+        # adds one `idle` variable — so the two terms together over-count such a
+        # teacher by a day's worth of literals each. Deliberate: this function's
+        # contract is an upper bound, and the alternative is a term that has to
+        # know which of two builders ran first.
         idle_vars = 0
         if self._settings.weight_teacher_gap > 0:
             for teacher_lessons in lessons_by_teacher.values():
                 if teacher_lessons >= 2:
                     idle_vars += day_count * (teacher_lessons + 3)
+
+        # _add_teacher_work_constraints, one term per half. Only teachers the
+        # timplan actually gives a lesson to, which is the builder's own skip: a
+        # rule naming a teacher with nothing left to place builds nothing, and
+        # charging it would make this an over-estimate for every school that
+        # hand-places a teacher's whole week.
+        teacher_work_vars = 0
+        for rule in request.teacher_work_rules:
+            teacher_lessons = lessons_by_teacher.get(rule.teacher_id, 0)
+            if teacher_lessons == 0:
+                continue
+            if rule.has_lunch:
+                teacher_work_vars += 2 * day_count
+            if rule.min_daily_rest_minutes is not None:
+                teacher_work_vars += (
+                    day_count * (3 * teacher_lessons + 3)
+                    + max(0, day_count - 1)
+                    # The folded locked edge, at its worst case — which pair of
+                    # (teacher, day) a locked lesson reaches needs a
+                    # fixed-lessons x teachers scan, and the lunch-lock term
+                    # above settles for the same bound for the same reason.
+                    + (2 * day_count if request.fixed_lessons else 0)
+                )
 
         # _add_rast_ordering_constraints, and the only rast term there is: the
         # minutes a rast reserves cost no variables at all, while the demand for
@@ -2053,6 +2161,7 @@ class SchedulerSolver:
             + dining_vars
             + spread_pairs
             + idle_vars
+            + teacher_work_vars
             + rast_order_vars
             + 2 * len(request.previous_lessons)
         )
@@ -2285,6 +2394,18 @@ class SchedulerSolver:
         # school's own sentences, and every verdict that follows would be
         # measuring a week the solver is about to be told to empty.
         self._verify_rast_demands(request)
+
+        # THE TEACHERS' OWN LUNCH AND REST, whose refusals are arithmetic on
+        # constants and belong here for the reason every refusal below gives: a
+        # narrowed domain that turns out empty is a proof CP-SAT reaches without
+        # touching one assumption literal, and the empty conflict core that
+        # follows takes every other cause in the payload down with it.
+        #
+        # BEFORE THE LUNCH BLOCK BELOW, which returns early for a school that has
+        # not set a lunch window. A teacher's own break has nothing to do with
+        # the pupils' one, and behind that return a school with teacher rules and
+        # no school-wide lunch would never have been told a thing.
+        self._verify_teacher_work_rules(request)
 
         # THE WEEK, not the lesson. Every locked requirement above can have a
         # room and the set of them still not fit: three subjects locked into one
@@ -2603,6 +2724,174 @@ class SchedulerSolver:
                     "windowEnd": rules.lunch_end_time[:5],
                     "day": day_of_week,
                 })
+
+    def _verify_teacher_work_rules(self, request: OptimizeScheduleRequest) -> None:
+        """The three refusals a teacher's own lunch and rest can be arithmetic.
+
+        THE ORDER IS THE ROW'S OWN. The lunch window's arithmetic first, because
+        a window narrower than the break it has to hold is a number the school
+        typed and can read back on the same screen; then what the locked lessons
+        and reservations leave of that window, which sends the reader somewhere
+        else entirely; then the rest, which is a different field and the one a
+        school is least likely to have got wrong. A school whose window is too
+        narrow must not be handed a sentence about Tuesday's locked lessons
+        first, and change the wrong thing.
+
+        A RULE THAT REACHES NO LESSON IS SKIPPED WHOLE, matching
+        _add_teacher_work_constraints: a teacher with nothing left for the solver
+        to place has no variable either rule could bound, and refusing a week
+        over a row that could not have changed it is the one mistake a pre-flight
+        check must not make.
+
+        COUNTED GENEROUSLY, as _verify_rast_demands argues: every one of these
+        over-counts what the week offers, so a week that is merely tight goes to
+        the solver and is refused there by name. The rest check ignores the
+        teacher's locked lessons and every frame, both of which can only shorten
+        the night it measures; the lunch checks read the window through the same
+        grid the model does, because there the alternative to agreeing with the
+        model is not a refused week but an empty domain and a 500.
+        """
+        rules = request.teacher_work_rules
+        if not rules:
+            return
+
+        lessons_by_teacher: dict[UUID, int] = {}
+        shortest_by_teacher: dict[UUID, int] = {}
+        for requirement in request.requirements:
+            duration = self._grid.minutes_to_slots(requirement.minutes_per_lesson)
+            for teacher_id in _teachers_of(requirement):
+                lessons_by_teacher[teacher_id] = (
+                    lessons_by_teacher.get(teacher_id, 0) + requirement.lessons_per_week
+                )
+                shortest_by_teacher[teacher_id] = min(
+                    shortest_by_teacher.get(teacher_id, duration), duration,
+                )
+
+        slots_per_day = self._grid.slots_per_day
+        day_count = len(self._grid.schedule_days)
+        minutes = self._grid.slot_minutes
+        reaching = [
+            rule for rule in rules if lessons_by_teacher.get(rule.teacher_id, 0) > 0
+        ]
+
+        # The window against the break it has to hold.
+        for rule in reaching:
+            window = _teacher_lunch_slots(rule, self._grid)
+            if window is None:
+                continue
+            window_start, window_end, lunch_slots = window
+            if window_end - window_start < lunch_slots:
+                raise InvalidScheduleInputError.of("TEACHER_LUNCH_WINDOW_TOO_NARROW", {
+                    "rule": str(rule.id),
+                    "minutes": rule.lunch_minutes,
+                    "windowStart": rule.lunch_start_time[:5],
+                    "windowEnd": rule.lunch_end_time[:5],
+                    "remaining": max(0, window_end - window_start) * minutes,
+                })
+
+        # And what the locked lessons and the reservations leave of it, day by
+        # day. The same two readers and the same subtraction the builder makes —
+        # a second rounding rule here would eventually disagree with the model
+        # about when a teacher may eat.
+        if any(rule.has_lunch for rule in reaching):
+            locked_busy = self._teacher_busy_from_locks(request.fixed_lessons)
+            closed_busy = self._teacher_busy_from_constraints(request.constraints)
+            for rule in reaching:
+                window = _teacher_lunch_slots(rule, self._grid)
+                if window is None:
+                    continue
+                window_start, window_end, lunch_slots = window
+                for day_index, day_of_week in enumerate(self._grid.schedule_days):
+                    day_offset = day_index * slots_per_day
+                    key = (rule.teacher_id, day_index)
+                    closed = closed_busy.get(key, [])
+                    # A reservation over the whole window says the teacher is not
+                    # here; the builder grants no break on such a day, so nothing
+                    # can leave one too short.
+                    if _covers(
+                        closed, day_offset + window_start, day_offset + window_end,
+                    ):
+                        continue
+                    locked = locked_busy.get(key, [])
+                    forbidden = _forbidden_lunch_starts(
+                        locked + closed,
+                        day_offset + window_start,
+                        day_offset + window_end - lunch_slots,
+                        lunch_slots,
+                    )
+                    if not forbidden:
+                        continue
+                    allowed = self._admissible_lunch_starts(
+                        day_offset, window_start, window_end, lunch_slots, forbidden,
+                    )
+                    if not allowed.is_empty():
+                        continue
+                    # Which of the two it was, as ONE key rather than a joined
+                    # list: "locked lessons and reservations" is an English list,
+                    # and a language that inflects its members cannot be handed
+                    # one already punctuated. The sentence branches on the key.
+                    causes = [
+                        name
+                        for name, source in (("locked", locked), ("closed", closed))
+                        if source
+                    ]
+                    raise InvalidScheduleInputError.of("TEACHER_LUNCH_LEAVES_NO_START", {
+                        "causes": "_".join(causes),
+                        "rule": str(rule.id),
+                        "minutes": rule.lunch_minutes,
+                        "windowStart": rule.lunch_start_time[:5],
+                        "windowEnd": rule.lunch_end_time[:5],
+                        "day": day_of_week,
+                    })
+
+        # The rest against the longest night the week can offer.
+        #
+        # A week of one day has no pair of consecutive days and the builder adds
+        # no constraint, so there is nothing to refuse.
+        if day_count < 2:
+            return
+        for rule in reaching:
+            if rule.min_daily_rest_minutes is None:
+                continue
+            rest_slots = -(-rule.min_daily_rest_minutes // minutes)
+            shortest = shortest_by_teacher[rule.teacher_id]
+            # The most favourable placement there is: the last lesson of one day
+            # taken first thing in the morning, the first lesson of the next
+            # taken as late as the day allows, and the teacher's SHORTEST lesson
+            # in both places. Over the most favourable pair of days, which for a
+            # school teaching Monday, Wednesday and Friday is a pair with two
+            # nights in it.
+            #
+            # `pad + slots_per_day` is the whole distance between the same clock
+            # time on the two days, which is what the rest is measured against:
+            # the pad alone is the part of it the grid does not address, and
+            # taking it for the night would refuse a week for want of the hours
+            # the school teaches in.
+            widest_night = (
+                max(
+                    _night_pad_slots(self._grid, day_index)
+                    for day_index in range(day_count - 1)
+                )
+                + slots_per_day
+            )
+            longest_night = widest_night + (slots_per_day - shortest) - shortest
+            if rest_slots <= longest_night:
+                continue
+            # THE ESCAPE, before refusing: a teacher who never teaches two days
+            # in a row is never asked to rest between them. Whether their week
+            # fits on the days that are not next to each other is counted
+            # generously — every day filled to the brim with their shortest
+            # lesson, frames, rooms and other teachers ignored — so this refuses
+            # only a teacher whose lessons cannot possibly avoid a pair.
+            per_day = slots_per_day // shortest
+            if lessons_by_teacher[rule.teacher_id] <= -(-day_count // 2) * per_day:
+                continue
+            raise InvalidScheduleInputError.of("TEACHER_REST_LONGER_THAN_THE_NIGHT", {
+                "rule": str(rule.id),
+                "restMinutes": rule.min_daily_rest_minutes,
+                "nightMinutes": max(0, longest_night) * minutes,
+                "lessons": lessons_by_teacher[rule.teacher_id],
+            })
 
     def _locks_in_stretch(
         self,
@@ -3372,6 +3661,7 @@ class SchedulerSolver:
         translated into a language that inflects around it.
 
         Only what the payload carries, in the order the measurements rank them.
+        THE TEACHERS' OWN TIME IS TWO, on the same principle — see there.
         THE LUNCH IS THREE THINGS, NOT ONE: the school's sittings per stage, the
         dining hall's seats, and the guaranteed break itself. The first probe
         reported "with the guaranteed lunch break switched off, a timetable was
@@ -3410,6 +3700,47 @@ class SchedulerSolver:
                             update={"minutes_before": 0, "minutes_after": 0},
                         )
                         for requirement in request.requirements
+                    ],
+                }),
+            ))
+        # THE TEACHERS' OWN TIME IS TWO PROBES AND NEVER ONE, for the reason the
+        # lunch below is three: "with the teachers' working time switched off, a
+        # timetable was found" is true and useless, because a school cannot
+        # switch its teachers' working time off. A guaranteed lunch is widened or
+        # shortened; a night's rest is a different number on the same row; and
+        # which of the two it is decides what a rektor does next.
+        #
+        # HERE IN THE ORDER, and the place is measured rather than guessed. On
+        # the 400-student nightly gate week, 33 teachers and 576 lessons, with
+        # both halves given to every teacher: the lunch adds 330 variables of
+        # 8,465 and no measurable time (7.6s against 7.8s), while the rest adds
+        # 9,267 — it builds three per teacher, day and lesson where the lunch
+        # builds two per teacher and day — and takes the satisfaction solve from
+        # 7.8s to 11.1s. So the rest is probed first.
+        if any(
+            rule.min_daily_rest_minutes is not None
+            for rule in request.teacher_work_rules
+        ):
+            out.append((
+                "PROBE_SOLVED_WITHOUT_TEACHER_REST",
+                request.model_copy(update={
+                    "teacher_work_rules": [
+                        rule.model_copy(update={"min_daily_rest_minutes": None})
+                        for rule in request.teacher_work_rules
+                    ],
+                }),
+            ))
+        if any(rule.has_lunch for rule in request.teacher_work_rules):
+            out.append((
+                "PROBE_SOLVED_WITHOUT_TEACHER_LUNCH",
+                request.model_copy(update={
+                    "teacher_work_rules": [
+                        rule.model_copy(update={
+                            "lunch_minutes": None,
+                            "lunch_start_time": None,
+                            "lunch_end_time": None,
+                        })
+                        for rule in request.teacher_work_rules
                     ],
                 }),
             ))
@@ -3497,6 +3828,28 @@ class SchedulerSolver:
         # time somewhere off the week's coarser step — a lock at 08:05, a
         # 45-minute lesson among hours — put the whole school on every slot.
         step_minutes = _start_step(request, self._grid) * self._grid.slot_minutes
+        # THE RULES THE MODEL ACTUALLY BUILT, not the length of the list, for the
+        # reason the `eating` count above gives: a row naming a teacher the
+        # timplan gives no lesson builds nothing at all, and a line reporting it
+        # as in force would name as the week's shape a rule that never touched
+        # it. Counted here rather than off the builder because this line is
+        # written on a path where no model survives to be asked.
+        with_lessons = {
+            teacher_id
+            for requirement in request.requirements
+            for teacher_id in _teachers_of(requirement)
+        }
+        teacher_lunches = sum(
+            1
+            for rule in request.teacher_work_rules
+            if rule.has_lunch and rule.teacher_id in with_lessons
+        )
+        teacher_rests = sum(
+            1
+            for rule in request.teacher_work_rules
+            if rule.min_daily_rest_minutes is not None
+            and rule.teacher_id in with_lessons
+        )
         # One sentence per thing worth trying at zero, in the order the
         # measurements rank them, and none at all for a week that carries
         # neither — the line already says what was in force, and advice about a
@@ -3520,6 +3873,7 @@ class SchedulerSolver:
             f"pupilBufferMinutes={buffer_minutes}, rasts={len(request.rasts)}, "
             f"frameTimes={len(request.frame_times)}, diningSeats={seats}, "
             f"fixedLessons={len(request.fixed_lessons)}, "
+            f"teacherLunches={teacher_lunches}, teacherRests={teacher_rests}, "
             f"startStepMinutes={step_minutes}, "
             f"budget={self._settings.solver_max_time_seconds}s. "
             + " ".join(hints)
@@ -4496,6 +4850,7 @@ class SchedulerSolver:
         constraints: list[AnonymousConstraint],
         weights: ResolvedWeights,
         day_vars: dict[str, cp_model.IntVar],
+        teacher_days: dict[tuple[UUID, int], _TeacherDay] | None = None,
     ) -> list[cp_model.LinearExpr]:
         """Penalises a teacher's idle minutes, measured once per day.
 
@@ -4536,6 +4891,17 @@ class SchedulerSolver:
         another class — the very defect this codebase already documents
         elsewhere, recreated inside the CP model where it is far harder to see.
 
+        AND WHERE A HARD RULE HAS ALREADY BUILT THE DAY, THIS READS ITS PAIR.
+        The teachers' rest rule needs the same two ends and needs them
+        two-sided, so `teacher_days` carries a (teacher, day) it has already
+        encoded and this method takes it rather than adding a second, weaker
+        `first` and `last` beside it — which would be twice the literals for one
+        fact, and two answers to "when did Anna's Tuesday begin". A pinned pair
+        is what minimising `last - first` drives the one-sided pair to anyway,
+        so the term's value is unchanged; what changes is that it costs nothing
+        here. Teachers no work rule names keep the one-sided pair below, which
+        is why the paragraph about it is still true and still the common case.
+
         AND THERE IS NO PUPIL EQUIVALENT, deliberately. lib/gaps.ts opens by
         refusing the question — "'Where are 7A's håltimmar' cannot be asked that
         way" — because while Ma71 runs, sixteen of 7A are taught and fourteen
@@ -4567,32 +4933,38 @@ class SchedulerSolver:
 
             for day_index, day_of_week in enumerate(self._grid.schedule_days):
                 base = day_index * slots_per_day
-                on_day: list[cp_model.IntVar] = []
-                for k, decision in enumerate(group):
-                    literal = model.NewBoolVar(
-                        f"idle_on_{teacher_id}_{day_index}_{decision.lesson.key()}",
-                    )
-                    model.Add(days[k] == day_index).OnlyEnforceIf(literal)
-                    model.Add(days[k] != day_index).OnlyEnforceIf(literal.Not())
-                    on_day.append(literal)
-
                 tag = f"idle_{teacher_id}_{day_index}"
-                first = model.NewIntVar(base, base + slots_per_day, f"first_{tag}")
-                last = model.NewIntVar(base, base + slots_per_day, f"last_{tag}")
-                # ONE-SIDED ON PURPOSE. `first` is only bounded from above and
-                # `last` only from below, so nothing forces either to the true
-                # extreme — the OBJECTIVE does. Minimising `last - first` pushes
-                # first up to the earliest present start and last down to the
-                # latest present end, which is exactly the pair of equalities a
-                # two-sided encoding would cost twice as many constraints to
-                # state.
-                for k, decision in enumerate(group):
-                    model.Add(first <= decision.start).OnlyEnforceIf(on_day[k])
-                    model.Add(last >= decision.end).OnlyEnforceIf(on_day[k])
+                built = (teacher_days or {}).get((teacher_id, day_index))
+                if built is not None:
+                    first, last, taught = built.first, built.last, built.taught
+                else:
+                    on_day: list[cp_model.IntVar] = []
+                    for k, decision in enumerate(group):
+                        literal = model.NewBoolVar(
+                            f"idle_on_{teacher_id}_{day_index}_{decision.lesson.key()}",
+                        )
+                        model.Add(days[k] == day_index).OnlyEnforceIf(literal)
+                        model.Add(days[k] != day_index).OnlyEnforceIf(literal.Not())
+                        on_day.append(literal)
 
-                taught = sum(
-                    decision.duration * on_day[k] for k, decision in enumerate(group)
-                )
+                    first = model.NewIntVar(base, base + slots_per_day, f"first_{tag}")
+                    last = model.NewIntVar(base, base + slots_per_day, f"last_{tag}")
+                    # ONE-SIDED ON PURPOSE. `first` is only bounded from above and
+                    # `last` only from below, so nothing forces either to the true
+                    # extreme — the OBJECTIVE does. Minimising `last - first` pushes
+                    # first up to the earliest present start and last down to the
+                    # latest present end, which is exactly the pair of equalities a
+                    # two-sided encoding would cost twice as many constraints to
+                    # state. A HARD rule cannot lean on that, which is why
+                    # _TeacherDay is two-sided and why this branch is only for the
+                    # teachers no work rule has already built a day for.
+                    for k, decision in enumerate(group):
+                        model.Add(first <= decision.start).OnlyEnforceIf(on_day[k])
+                        model.Add(last >= decision.end).OnlyEnforceIf(on_day[k])
+
+                    taught = sum(
+                        decision.duration * on_day[k] for k, decision in enumerate(group)
+                    )
                 credit = self._protected_overlap(
                     model, protected.get((teacher_id, day_of_week), ()), first, last, tag,
                 )
@@ -4718,12 +5090,14 @@ class SchedulerSolver:
         lunch_slots: int,
         forbidden: list[tuple[int, int]],
     ) -> cp_model.Domain:
-        """What is left of one group's lunch window on one day, in absolute slots.
+        """What is left of one lunch window on one day, in absolute slots.
 
         A domain, not a NoOverlap against constant intervals: one variable's
         domain is the strongest and cheapest form the fact has. Shared with
         _validate_request, which asks the same question and only wants to know
-        whether the answer is empty.
+        whether the answer is empty — and with the TEACHERS' own break, which is
+        a window, a length and a list of what is taken exactly as a class's is.
+        Whose break it is changes what fills `forbidden`, and nothing here.
         """
         allowed = cp_model.Domain(
             day_offset + window_start,
@@ -5422,6 +5796,515 @@ class SchedulerSolver:
 
         return lunch_starts
 
+    def _teacher_day_bounds(
+        self,
+        model: cp_model.CpModel,
+        teacher_id: UUID,
+        group: list[LessonDecision],
+        day_index: int,
+        day_vars: dict[str, cp_model.IntVar],
+        cache: dict[tuple[UUID, int], _TeacherDay],
+    ) -> _TeacherDay:
+        """The two ends of one teacher's day, built once and handed out.
+
+        Shared with _add_idle_time_objective through `cache`, which is why it is
+        keyed on (teacher, day) and not on anything about the caller: the
+        objective measures the same span this rule bounds, and two encodings of
+        "when does Anna's Tuesday begin" would eventually disagree — and cost
+        twice the literals while doing it.
+
+        THE ABSENT LESSON IS GIVEN THE DAY'S OWN EDGE rather than left free.
+        `AddMinEquality` needs a value from every lesson, including the ones on
+        another day entirely, so each contributes its real start when it is here
+        and the day's CLOSE when it is not — the identity for a minimum — and
+        its real end or the day's OPEN for the maximum. Two IntVars per lesson
+        and day, which is the price of a pair that means what its name says;
+        the alternative, a literal per lesson saying "this one is the first",
+        costs the same and propagates worse.
+        """
+        key = (teacher_id, day_index)
+        existing = cache.get(key)
+        if existing is not None:
+            return existing
+
+        slots_per_day = self._grid.slots_per_day
+        base = day_index * slots_per_day
+        tag = f"{teacher_id}_{day_index}"
+        on_day: list[cp_model.IntVar] = []
+        starts: list[cp_model.IntVar] = []
+        ends: list[cp_model.IntVar] = []
+        for decision in group:
+            day_var = self._day_var(model, decision, day_vars)
+            literal = model.NewBoolVar(f"tworks_{tag}_{decision.lesson.key()}")
+            model.Add(day_var == day_index).OnlyEnforceIf(literal)
+            model.Add(day_var != day_index).OnlyEnforceIf(literal.Not())
+            on_day.append(literal)
+
+            eff_start = model.NewIntVar(
+                base, base + slots_per_day, f"tstart_{tag}_{decision.lesson.key()}",
+            )
+            model.Add(eff_start == decision.start).OnlyEnforceIf(literal)
+            model.Add(eff_start == base + slots_per_day).OnlyEnforceIf(literal.Not())
+            starts.append(eff_start)
+
+            eff_end = model.NewIntVar(
+                base, base + slots_per_day, f"tend_{tag}_{decision.lesson.key()}",
+            )
+            model.Add(eff_end == decision.end).OnlyEnforceIf(literal)
+            model.Add(eff_end == base).OnlyEnforceIf(literal.Not())
+            ends.append(eff_end)
+
+        first = model.NewIntVar(base, base + slots_per_day, f"tfirst_{tag}")
+        last = model.NewIntVar(base, base + slots_per_day, f"tlast_{tag}")
+        model.AddMinEquality(first, starts)
+        model.AddMaxEquality(last, ends)
+        # A maximum over booleans is their disjunction, and one constraint says
+        # it: `works` is true exactly when some lesson of this teacher is here.
+        works = model.NewBoolVar(f"tday_{tag}")
+        model.AddMaxEquality(works, on_day)
+
+        built = _TeacherDay(
+            first=first,
+            last=last,
+            works=works,
+            on_day=tuple(on_day),
+            taught=sum(
+                decision.duration * literal
+                for decision, literal in zip(group, on_day)
+            ),
+        )
+        cache[key] = built
+        return built
+
+    def _add_teacher_work_constraints(
+        self,
+        model: cp_model.CpModel,
+        registry: AssumptionRegistry,
+        decisions: list[LessonDecision],
+        work_rules: list[AnonymousTeacherWorkRule],
+        fixed_lessons: list[FixedLesson],
+        constraints: list[AnonymousConstraint],
+        day_vars: dict[str, cp_model.IntVar],
+        teacher_days: dict[tuple[UUID, int], _TeacherDay],
+        *,
+        step: int,
+    ) -> None:
+        """The two hours a teacher is owed: a lunch every day, a night's rest.
+
+        THE FIRST RULE IN THIS MODEL WRITTEN FOR THE ADULTS. The lunch beside it
+        is the PUPILS' — a window per class, a rast per stage — and the only
+        per-teacher row that existed was an UNAVAILABLE reservation, which is a
+        teacher CLOSING hours rather than being owed any. A teacher had no lunch
+        anywhere in the model, and the idle-time objective is an objective: it
+        prefers a compact day and will sell any hour of it for a placement.
+
+        EMPTY IS NOT A DEFAULT. A rule naming no lunch and no rest constrains
+        nothing, and a teacher no rule names is not reached at all, so a school
+        that has filled in nobody is refused nothing. That is the user's own
+        decision and it is also what lets the engine ship before the gateway
+        that fills the list.
+
+        A TEACHER WITH NO LESSON LEFT TO PLACE IS SKIPPED, and the line is
+        deliberate. Both rules constrain where the SOLVER may put a lesson; a
+        teacher whose whole week is hand-placed has no variable for either rule
+        to bound, and refusing that week would be refusing the school's own
+        arrangement in the name of a rule that could not have changed it. Their
+        locked lessons are still read, everywhere a teacher who does have
+        lessons meets them.
+
+        padded_of AND NOT pupil_padded_of, which is _add_teacher_no_overlap's
+        decision and its reason: the minutes around an idrottslektion are the
+        PUPILS' — changing and showering — and the teacher spends none of them
+        undressed. A lunch that read the pupils' interval would forbid what a
+        school does on purpose, idrottsläraren eating while the class showers.
+
+        TWO ROWS FOR ONE TEACHER ARE BUILT AS TWO, and the table's own unique
+        index on the teacher is what makes that unreachable. Read literally, two
+        rows are two breaks and two rests, which is what this builds; a silent
+        "the first one wins" would be the engine quietly deciding which half of a
+        payload it disagrees with, and that is worse than a week that is harder
+        than anybody asked for.
+        """
+        if not work_rules:
+            return
+
+        by_teacher: dict[UUID, list[LessonDecision]] = {}
+        for decision in decisions:
+            for teacher_id in _teachers_of(decision.lesson.requirement):
+                by_teacher.setdefault(teacher_id, []).append(decision)
+
+        locked_busy = self._teacher_busy_from_locks(fixed_lessons)
+        closed_busy = self._teacher_busy_from_constraints(constraints)
+        lattice = _start_lattice(step, self._grid.horizon)
+
+        for rule in work_rules:
+            group = by_teacher.get(rule.teacher_id)
+            if not group:
+                continue
+            window = _teacher_lunch_slots(rule, self._grid)
+            if window is not None:
+                self._add_teacher_lunch(
+                    model,
+                    registry,
+                    rule,
+                    group,
+                    window,
+                    locked_busy,
+                    closed_busy,
+                    lattice,
+                )
+            if rule.min_daily_rest_minutes is not None:
+                self._add_teacher_rest(
+                    model,
+                    registry,
+                    rule,
+                    group,
+                    locked_busy,
+                    day_vars,
+                    teacher_days,
+                )
+
+    def _add_teacher_lunch(
+        self,
+        model: cp_model.CpModel,
+        registry: AssumptionRegistry,
+        rule: AnonymousTeacherWorkRule,
+        group: list[LessonDecision],
+        window: tuple[int, int, int],
+        locked_busy: dict[tuple[UUID, int], list[tuple[int, int]]],
+        closed_busy: dict[tuple[UUID, int], list[tuple[int, int]]],
+        lattice: cp_model.Domain | None,
+    ) -> None:
+        """One movable break per day, kept clear of everything the teacher does.
+
+        THE SAME SHAPE THE GROUP LUNCH SETTLED ON, and for the same measured
+        reason: "there is a contiguous free window of `lunch_slots` inside the
+        window" is exactly "a task of that length can be placed among these
+        lessons", and one movable interval per (teacher, day) hands that to the
+        disjunctive propagator instead of an existential over every candidate
+        start. One IntVar per teacher and day, against three booleans per
+        candidate and lesson.
+
+        NO `len(group) < 2` SKIP, which _add_idle_time_objective does make: idle
+        time needs two lessons to exist between, and a lunch does not. A teacher
+        with one four-hour lesson across the whole window is exactly the teacher
+        this rule is for.
+
+        THE INTERVAL IS OPTIONAL AND ITS PRESENCE IS THE ASSUMPTION. A mandatory
+        interval in a NoOverlap takes no OnlyEnforceIf, so a week made
+        impossible by the break alone would be proved impossible without
+        touching a single assumption literal —
+        SufficientAssumptionsForInfeasibility then returns an EMPTY core, which
+        does not merely lose this cause but erases every other cause in the
+        payload and hands the school the INSUFFICIENT_RESOURCES fallback,
+        telling it to go and look at rooms and teacher time. Presence on a
+        literal is the same trick the dining hall's seats use, for the same
+        reason. In the fast build the literal is pinned by AddBoolAnd and
+        presolve folds the optionality away, so the encoding is unchanged there.
+
+        PER TEACHER AND DAY, like the group lunch's own literals and unlike the
+        one literal per teacher this could have been. Two reasons, and the
+        second is the load-bearing one. "Anna's Tuesday" is the whole content of
+        the answer, as "7A on Tuesday" is next door. And the reading order in
+        _how_far_it_narrows puts a line naming neither a day nor a resource
+        last, as a line about the whole week — which a teacher's own rule is
+        not; it cannot name a resource, because the only id it could put there
+        is the teacher's and the gateway discards that map on purpose, so the
+        DAY is the only thing that can lift this sentence out of the cellar.
+
+        ONE LITERAL FOR BOTH SUBTRACTIONS, where the group lunch uses two. It
+        can afford two because it has two sentences to say, one about a lesson
+        to move and one about a reservation to change. This rule has one, and a
+        second literal carrying the same code and the same values would be
+        merged back into a single line by build_conflict_analysis — a variable
+        for nothing. Which of the two it was is in the pre-flight refusal, which
+        has the `causes` the day needs.
+        """
+        window_start, window_end, lunch_slots = window
+        breaks: list[cp_model.IntervalVar] = []
+        for day_index, day_of_week in enumerate(self._grid.schedule_days):
+            day_offset = day_index * self._grid.slots_per_day
+            key = (rule.teacher_id, day_index)
+            closed = closed_busy.get(key, [])
+            # The school has closed the whole window for this teacher: they are
+            # not here, and a break they were never owed must not refuse the
+            # week. The same reading _lunch_starts_blocked_by_constraints makes
+            # of a class whose Tuesday is reserved end to end.
+            if _covers(closed, day_offset + window_start, day_offset + window_end):
+                continue
+
+            lunch_start = model.NewIntVarFromDomain(
+                _on_lattice(
+                    cp_model.Domain(
+                        day_offset + window_start,
+                        day_offset + window_end - lunch_slots,
+                    ),
+                    lattice,
+                ),
+                f"teacherlunch_{rule.teacher_id}_{day_index}",
+            )
+            literal = registry.register(
+                model,
+                name=f"teacherlunchstart_{rule.teacher_id}_{day_index}",
+                category="LUNCH_WINDOW",
+                code="TEACHER_LUNCH_HAS_NOWHERE_TO_GO",
+                params={
+                    "rule": str(rule.id),
+                    "minutes": rule.lunch_minutes,
+                    "windowStart": rule.lunch_start_time[:5],
+                    "windowEnd": rule.lunch_end_time[:5],
+                    "day": day_of_week,
+                },
+                # THE RULE'S ID AND NEVER THE TEACHER'S. The gateway keeps a map
+                # for the rule and reverses it here as well as in the sentence,
+                # so this is a row an administrator can open; the teacher map is
+                # discarded by design, so a teacher id put here would reach the
+                # school as a uuid in no table, and no name would ever fill the
+                # slot beside it. It also lifts this line to the top of the
+                # reading order in _how_far_it_narrows, which ranks a cause
+                # naming both a day and a something above one naming neither —
+                # and a teacher's own rule on a known day is the most checkable
+                # thing in the whole report.
+                resource_ids=[rule.id],
+            )
+            forbidden = _forbidden_lunch_starts(
+                locked_busy.get(key, []) + closed,
+                day_offset + window_start,
+                day_offset + window_end - lunch_slots,
+                lunch_slots,
+            )
+            if forbidden:
+                # UNDER THE LITERAL, never bare, for the reason the group
+                # lunch's own subtraction gives: a bare domain narrowing lets
+                # CP-SAT prove a week impossible without touching an assumption,
+                # and the empty core that follows takes every other cause in the
+                # payload down with it.
+                #
+                # Through the class lunch's own helper, which asks exactly this
+                # question of exactly this shape — the window less what is taken,
+                # in absolute slots — so a teacher's break and a class's are
+                # subtracted by one rule and not by two that could disagree.
+                model.AddLinearExpressionInDomain(
+                    lunch_start,
+                    self._admissible_lunch_starts(
+                        day_offset, window_start, window_end, lunch_slots, forbidden,
+                    ),
+                ).OnlyEnforceIf(literal)
+            breaks.append(
+                model.NewOptionalFixedSizeIntervalVar(
+                    lunch_start,
+                    lunch_slots,
+                    literal,
+                    f"teacherbreak_{rule.teacher_id}_{day_index}",
+                ),
+            )
+        if breaks:
+            # ONE NoOverlap FOR THE WEEK, as the group lunch builds one per
+            # class: every break's start is confined to its own day and ends
+            # inside the window, so two of them provably cannot overlap, and one
+            # constraint per day would only cost five times as much to say the
+            # same thing about the same lessons.
+            model.AddNoOverlap(
+                [padded_of(model, decision) for decision in group] + breaks,
+            )
+
+    def _add_teacher_rest(
+        self,
+        model: cp_model.CpModel,
+        registry: AssumptionRegistry,
+        rule: AnonymousTeacherWorkRule,
+        group: list[LessonDecision],
+        locked_busy: dict[tuple[UUID, int], list[tuple[int, int]]],
+        day_vars: dict[str, cp_model.IntVar],
+        teacher_days: dict[tuple[UUID, int], _TeacherDay],
+    ) -> None:
+        """Hours between the end of one teaching day and the start of the next.
+
+        ONE INEQUALITY PER PAIR OF CONSECUTIVE DAYS: `last(d) + rest <=
+        first(d+1) + pad`, where pad is the closed part of the night the grid
+        itself leaves (see _night_pad_slots — absolute slots count only the
+        hours the school teaches in, so the night has to be added back).
+
+        ENFORCED ONLY WHERE BOTH DAYS HOLD A LESSON. A day nobody works must not
+        refuse the week: without the guard a teacher with a free Wednesday would
+        be asked to rest between two days they did not work, and `first` and
+        `last` on an empty day are the day's own edges rather than any lesson's.
+        The guard is a variable and not an assumption, so relaxing the rule
+        cannot accidentally decide which days the teacher works.
+
+        THE TEACHER'S LOCKED LESSONS ARE FOLDED IN AS CONSTANTS, and leaving
+        them out was the one way this rule could have been quietly optional. A
+        locked lesson is real teaching — _add_fixed_lesson_constraints makes it
+        a hard blocker for the same teacher — and a school whose Monday evening
+        is hand-placed would otherwise have its Tuesday morning placed freely
+        against a rest rule that could not see the evening at all. Folding costs
+        two IntVars on a day that has one, no new literal, and it also closes
+        the case where BOTH ends are locked: the day is then certainly worked,
+        so its `works` guard is dropped and the inequality is left to compare
+        two constants — which is a refusal the literal can name, rather than one
+        nothing in the model would have made.
+
+        A WEEK THE GRID CANNOT BREAK. With the engine's own 08:00-18:00 day the
+        closed night is fourteen hours, so eleven hours of rest can never bind:
+        the rule bites exactly where a school's configured day runs longer than
+        the night the rest asks for, which is why 660 minutes is a safe
+        suggestion for a grundskola and a real constraint for a school teaching
+        into the evening. Stated here because a rule that holds vacuously is
+        worth knowing about before somebody measures its cost and finds none.
+
+        A WEEK OF ONE DAY HAS NO PAIR OF CONSECUTIVE DAYS, and nothing is built
+        for it — not the inequality, and not the day it would compare either,
+        which is several variables per lesson bought to be measured against
+        nothing.
+        """
+        if len(self._grid.schedule_days) < 2:
+            return
+        rest_slots = -(-rule.min_daily_rest_minutes // self._grid.slot_minutes)
+        bounds = [
+            self._teacher_day_bounds(
+                model, rule.teacher_id, group, day_index, day_vars, teacher_days,
+            )
+            for day_index in range(len(self._grid.schedule_days))
+        ]
+        for day_index, day_of_week in enumerate(self._grid.schedule_days[:-1]):
+            literal = registry.register(
+                model,
+                name=f"teacherrest_{rule.teacher_id}_{day_index}",
+                category="TEACHER_OVERLAP",
+                code="TEACHER_REST_CANNOT_BE_KEPT",
+                params={
+                    "rule": str(rule.id),
+                    "restMinutes": rule.min_daily_rest_minutes,
+                    "day": day_of_week,
+                },
+                # The rule and never the teacher — see the lunch literal above.
+                resource_ids=[rule.id],
+            )
+            enforce = [literal]
+            ends = self._teacher_locked_edge(
+                model, rule.teacher_id, day_index, bounds[day_index], locked_busy,
+                latest=True,
+            )
+            if ends is None:
+                ends = bounds[day_index].last
+                enforce.append(bounds[day_index].works)
+            starts = self._teacher_locked_edge(
+                model, rule.teacher_id, day_index + 1, bounds[day_index + 1],
+                locked_busy, latest=False,
+            )
+            if starts is None:
+                starts = bounds[day_index + 1].first
+                enforce.append(bounds[day_index + 1].works)
+            model.Add(
+                ends + rest_slots <= starts + _night_pad_slots(self._grid, day_index),
+            ).OnlyEnforceIf(enforce)
+
+    def _teacher_locked_edge(
+        self,
+        model: cp_model.CpModel,
+        teacher_id: UUID,
+        day_index: int,
+        bounds: _TeacherDay,
+        locked_busy: dict[tuple[UUID, int], list[tuple[int, int]]],
+        *,
+        latest: bool,
+    ) -> cp_model.IntVar | None:
+        """One end of a day that also holds locked lessons, or None if it has none.
+
+        The generated end folded with the hand-placed one: the latest end of the
+        two, or the earliest start. None where the teacher has no locked lesson
+        that day, which is the ordinary case and pays nothing — the caller then
+        uses the day's own end and guards it with `works`, since a day with
+        nothing locked may hold no lesson at all.
+        """
+        windows = locked_busy.get((teacher_id, day_index))
+        if not windows:
+            return None
+        slots_per_day = self._grid.slots_per_day
+        base = day_index * slots_per_day
+        folded = model.NewIntVar(
+            base,
+            base + slots_per_day,
+            f"tlocked{'end' if latest else 'start'}_{teacher_id}_{day_index}",
+        )
+        if latest:
+            model.AddMaxEquality(
+                folded, [bounds.last, max(end for _start, end in windows)],
+            )
+        else:
+            model.AddMinEquality(
+                folded, [bounds.first, min(start for start, _end in windows)],
+            )
+        return folded
+
+    def _teacher_busy_from_locks(
+        self, fixed_lessons: list[FixedLesson],
+    ) -> dict[tuple[UUID, int], list[tuple[int, int]]]:
+        """(teacher, day index) -> the absolute windows a hand-placed lesson takes.
+
+        The reach _add_fixed_lesson_constraints uses, which is the lesson's own
+        teacher and its co-teacher: a lesson two adults give occupies both of
+        them, and a rule that read the lead alone would let every co-taught
+        school out of both halves of this feature.
+
+        The window is _fixed_lesson_window's, rounded outward and clipped to the
+        day, so a lunch subtracted from it and a lesson blocked by it agree to
+        the slot.
+        """
+        busy: dict[tuple[UUID, int], list[tuple[int, int]]] = {}
+        for fixed in fixed_lessons:
+            window = self._fixed_window(fixed)
+            if window is None:
+                continue
+            day_index = window[0] // self._grid.slots_per_day
+            for teacher_id in (fixed.teacher_id, fixed.co_teacher_id):
+                if teacher_id is not None:
+                    busy.setdefault((teacher_id, day_index), []).append(window)
+        return busy
+
+    def _teacher_busy_from_constraints(
+        self, constraints: list[AnonymousConstraint],
+    ) -> dict[tuple[UUID, int], list[tuple[int, int]]]:
+        """(teacher, day index) -> the absolute windows the school has closed.
+
+        TEACHER rows only, and weekly ones only, matching
+        _add_availability_constraints: the model is one generic week and has
+        nowhere to put a single date. A dated absence is already a soft penalty
+        over there and must not become a hard hole in a break somebody is owed.
+
+        NOT the other kinds. A room being closed says nothing about where a
+        teacher eats, and a class's reservation is the class's own time — the
+        teacher is very often the person the class was reserved FOR.
+
+        These windows are read by the lunch and NOT by the rest, and the
+        asymmetry is the point: a reservation is time the teacher is NOT
+        teaching, so it can take a lunch start away, and it can never be the
+        late lesson that shortens a night.
+        """
+        busy: dict[tuple[UUID, int], list[tuple[int, int]]] = {}
+        for constraint in constraints:
+            if constraint.kind != "UNAVAILABLE" or constraint.date is not None:
+                continue
+            if constraint.resource_kind != "TEACHER" or constraint.resource_id is None:
+                continue
+            try:
+                windows = self._grid.window_to_absolute_range(
+                    constraint.day_of_week, constraint.start_time, constraint.end_time,
+                )
+            except ValueError as exc:
+                # The grid's own complaint names a time and not the row it came
+                # from, which leaves a school to find which reservation that was.
+                raise InvalidScheduleInputError.of("INPUT_CONSTRAINT_TIME_OFF_GRID", {
+                    **self._constraint_params(constraint),
+                    "slotMinutes": self._grid.slot_minutes,
+                }) from exc
+            for abs_start, abs_end in windows:
+                day_index = abs_start // self._grid.slots_per_day
+                busy.setdefault(
+                    (constraint.resource_id, day_index), [],
+                ).append((abs_start, abs_end))
+        return busy
+
     @staticmethod
     def _room_allowed(room: AnonymousRoom, requirement: AnonymousRequirement) -> bool:
         capacity_ok = room.capacity is None or room.capacity >= requirement.student_group_size
@@ -5707,7 +6590,9 @@ def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
 
     THE STEP IS THE GCD OF EVERY CONSTANT A START IS COMPARED WITH, after the
     model's own rounding: the day's length; each lesson's length and the
-    meal's; each requirement's two pupil buffers, rounded up; the lunch window;
+    meal's; each teacher's own lunch window, that break's length rounded up,
+    the rest they are owed rounded up and the night the grid leaves between two
+    days; each requirement's two pupil buffers, rounded up; the lunch window;
     each frame's open and close, rounded both ways, and its changeover, rounded
     up; each rast rounded outward and each sitting inward; every availability
     row of every kind, dated or not, folded onto the grid; each locked lesson's
@@ -5736,6 +6621,11 @@ def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
         holds, and every cumulative — rooms, seats — too: rounding can part
         two intervals and never join them, and intervals that pairwise meet
         share an instant, so no instant carries more than it did;
+      - a teacher's rest, `last(d) + rest <= first(d+1) + pad`, is that same
+        sentence with a constant added to each side: `last` is a start plus a
+        length and `first` is a start, so from `a + c <= b + c'` with c and c'
+        multiples of g it follows that floor(a) + c <= floor(b) + c'. Both
+        constants are in the gcd for exactly this step, `pad` included;
       - the day a start falls on, `start // slots_per_day`, does not move;
       - a pinned meal is a multiple already and stays where it was;
       - the rast rule's "taught before" flags are bounds as above, and its
@@ -5841,6 +6731,25 @@ def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
             -(-requirement.minutes_before // grid.slot_minutes),
             -(-requirement.minutes_after // grid.slot_minutes),
         ))
+    # The teachers' own lunch and rest. The window's two ends and the break's
+    # length bound a lunch start exactly as the school's own three do, through
+    # the same helper the builder reads them with — and the REST feeds two
+    # constants, not one. It is compared with a start as `last(d) + rest <=
+    # first(d+1) + pad`, and `pad` is a constant of the grid rather than of any
+    # row: without it in the gcd a week whose starts step by 25 minutes would
+    # have the inequality shifted by a number no multiple of 25 can reach, and
+    # the rounding-down argument above — which needs both added constants to be
+    # multiples of the step — would no longer hold. See _night_pad_slots.
+    for rule in request.teacher_work_rules:
+        window = _teacher_lunch_slots(rule, grid)
+        if window is not None:
+            values.extend(window)
+        if rule.min_daily_rest_minutes is not None:
+            values.append(-(-rule.min_daily_rest_minutes // grid.slot_minutes))
+            values.extend(
+                _night_pad_slots(grid, day_index)
+                for day_index in range(len(grid.schedule_days) - 1)
+            )
     for frame in request.frame_times:
         for value in (frame.start_time, frame.end_time):
             values.extend((folded(value, upward=False), folded(value, upward=True)))
@@ -5973,6 +6882,142 @@ def _lunch_window_is_set(rules: ScheduleRules) -> bool:
         rules.lunch_start_time is not None
         and rules.lunch_end_time is not None
         and rules.lunch_minutes is not None
+    )
+
+
+def _teacher_lunch_slots(
+    rule: AnonymousTeacherWorkRule, grid: TimeGrid,
+) -> tuple[int, int, int] | None:
+    """One teacher's lunch window and the break's length, in a day's own slots.
+
+    ONE ROUNDING RULE READ FROM THREE PLACES — the refusal in
+    _validate_request, the builder, and _start_step's gcd — for the reason
+    _lunch_window_slots gives about the school's own lunch: two copies of
+    "which slot is 10:30" would eventually disagree about a teacher's break,
+    and the copy that rounded outward would empty a variable's domain and reach
+    the school as CP-SAT's own `var #0 has no domain()`, which is a 500 with
+    nothing in it to act on.
+
+    INWARD, LIKE A SITTING AND UNLIKE A RAST. The window is a PERMISSION the
+    break has to sit inside, so its open rounds UP and its close rounds DOWN: a
+    window of 10:32-13:28 on a five-minute grid offers 10:35-13:25, where
+    rounding outward would let a lunch begin two minutes before the school said
+    it may. The LENGTH rounds up, the one direction that cannot shorten a break
+    somebody is owed — a 20-minute lunch on a 15-minute grid takes 30, which
+    protects the teacher rather than the search.
+
+    CLIPPED TO THE SCHOOL DAY, and never refused merely for reaching past it. A
+    school whose day ends at 13:00 and whose teachers may eat until 13:30 has
+    said two things, and the narrower one wins — exactly as a frame and a
+    sitting compose. A window entirely outside the day clips to nothing, and
+    nothing is too narrow to hold a lunch, which is refused by name with the
+    width it really offers quoted in the sentence.
+
+    None when the rule asks for no lunch at all. The trio is validated by the
+    schema, so one field present means all three are.
+    """
+    if not rule.has_lunch:
+        return None
+    assert rule.lunch_start_time is not None
+    assert rule.lunch_end_time is not None
+    assert rule.lunch_minutes is not None
+
+    def folded(value: str, *, upward: bool) -> int:
+        offset = _clock_minutes(value) - grid.day_start_minutes
+        slots = -(-offset // grid.slot_minutes) if upward else offset // grid.slot_minutes
+        return min(max(slots, 0), grid.slots_per_day)
+
+    return (
+        folded(rule.lunch_start_time, upward=True),
+        folded(rule.lunch_end_time, upward=False),
+        -(-rule.lunch_minutes // grid.slot_minutes),
+    )
+
+
+def _covers(ranges: list[tuple[int, int]], start: int, end: int) -> bool:
+    """Whether [start, end) is entirely inside the union of `ranges`.
+
+    Used to read a reservation that covers a whole lunch window as the school
+    saying the teacher is not there that day — the same reading
+    _lunch_starts_blocked_by_constraints makes of a class's reserved Tuesday,
+    and for the same reason: answering a correct statement with a refusal
+    nobody can act on is worse than granting no break at all. Merged first, so
+    two rows that between them cover the window are read as covering it.
+    """
+    cursor = start
+    for low, high in _merge_ranges(list(ranges)):
+        if low > cursor:
+            return False
+        cursor = max(cursor, high)
+        if cursor >= end:
+            return True
+    return cursor >= end
+
+
+def _forbidden_lunch_starts(
+    busy: list[tuple[int, int]],
+    earliest: int,
+    latest: int,
+    lunch_slots: int,
+) -> list[tuple[int, int]]:
+    """Lunch starts in [earliest, latest] that a busy window rules out.
+
+    The arithmetic _lunch_starts_blocked_by_fixed_lessons states for a class: a
+    break of `lunch_slots` starting at s clashes with a busy window [a, b)
+    exactly for s in [a - lunch_slots + 1, b - 1]. Everything here is a
+    constant, so the answer is a domain to subtract rather than a propagator —
+    no boolean, no interval, and quiet about two busy windows that overlap each
+    other, which is the school's own data and not a reason to refuse a week.
+
+    Absolute slots throughout, and windows that rule out no admissible start at
+    all are dropped rather than carried down to subtract nothing.
+    """
+    forbidden: list[tuple[int, int]] = []
+    for start, end in busy:
+        first_bad = start - lunch_slots + 1
+        last_bad = end - 1
+        if last_bad < earliest or first_bad > latest:
+            continue
+        forbidden.append((max(first_bad, earliest), min(last_bad, latest)))
+    return forbidden
+
+
+def _night_pad_slots(grid: TimeGrid, day_index: int) -> int:
+    """Slots to add to a start on day_index + 1 to compare it with day_index's end.
+
+    THE NIGHT IS NOT THE GRID. A start is an absolute slot and the grid
+    addresses day d as [d * slots_per_day, (d+1) * slots_per_day), so the
+    distance between two absolute slots on consecutive days counts only the
+    hours the school teaches in — 08:00 Tuesday is 120 slots after 08:00 Monday
+    on a ten-hour day, when the clock says 288. The difference, `slots in the
+    calendar days crossed` less `slots_per_day`, is exactly the closed part of
+    the night, and adding it to tomorrow's start turns a comparison of absolute
+    slots into a comparison of real elapsed time.
+
+    IT READS THE WEEKDAYS AND NOT THE INDICES, because SCHEDULE_DAYS need not
+    be contiguous: a school that teaches Monday, Wednesday and Friday has two
+    nights between index 0 and index 1, and a rest rule that counted one would
+    refuse a week for want of hours the teacher slept through.
+
+    1440 // slot_minutes is a whole number for every legal slot length — the
+    settings validator requires one that divides 60.
+    """
+    days_apart = grid.schedule_days[day_index + 1] - grid.schedule_days[day_index]
+    return days_apart * (1440 // grid.slot_minutes) - grid.slots_per_day
+
+
+def _teachers_of(requirement: AnonymousRequirement) -> tuple[UUID, ...]:
+    """Everyone who teaches this requirement: the lead and the co-teacher.
+
+    Its own reader because every teacher-keyed rule in this module has to make
+    the same union, and a rule that read `teacher_id` alone would let a
+    co-taught school out of it: a co-taught lesson is teaching for both of
+    them, and both are owed the lunch and the rest it takes away.
+    """
+    return tuple(
+        teacher_id
+        for teacher_id in (requirement.teacher_id, requirement.co_teacher_id)
+        if teacher_id is not None
     )
 
 

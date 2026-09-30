@@ -4064,6 +4064,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         AnonymousGroup,
         AnonymousRequirement,
         AnonymousRoomPreference,
+        AnonymousTeacherWorkRule,
         FrameTime,
         LunchPlacement,
         LunchServing,
@@ -4083,6 +4084,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "lunchServings",
         "lunchPlacements",
         "rasts",
+        "teacherWorkRules",
         "roomPreferences",
         "fixedLessons",
         "groupConflicts",
@@ -4099,6 +4101,22 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "startTime",
         "endTime",
         "requiresLessonBefore",
+    }
+    # One teacher's own lunch and rest. The ID IS THE RULE'S AND NOT THE
+    # TEACHER'S, and it is pinned here because it is the one id in this contract
+    # that has to survive the round trip: every refusal about this row names the
+    # rule, the gateway keeps a map to turn it back, and the teacher map is
+    # discarded on purpose so that no person's name can enter a stored conflict.
+    # Every value is optional because empty is the whole of "this rule does not
+    # apply to this teacher" — a school that has filled in nobody is refused
+    # nothing — and the lunch trio is all-or-nothing, which the model validates.
+    assert _field_names(AnonymousTeacherWorkRule) == {
+        "id",
+        "teacherId",
+        "lunchMinutes",
+        "lunchStartTime",
+        "lunchEndTime",
+        "minDailyRestMinutes",
     }
     # The group's years, so a serving and a frame can reach a MEAL — which has
     # no requirement to read a span off.

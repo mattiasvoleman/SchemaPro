@@ -313,6 +313,87 @@ class AnonymousConstraint(CamelModel):
         return self
 
 
+class AnonymousTeacherWorkRule(CamelModel):
+    """One teacher's own lunch and rest, as their school wrote them down.
+
+    THE FIRST ROW IN THIS MODEL THAT IS OWED TO A TEACHER. Everything else
+    about a teacher is a closure: an UNAVAILABLE AvailabilityConstraint says
+    the hours they are not there, and the model has never had a sentence for
+    the hours they are there and must not be teaching. A lunch window and a
+    night's rest are that sentence.
+
+    EVERY FIELD IS OPTIONAL AND EMPTY MEANS THE RULE DOES NOT APPLY, which is
+    the user's own decision and the only shape that lets this ship: a school
+    that has filled in nobody is refused nothing, and one that has filled in
+    two teachers is held to exactly those two. A default here would have
+    imposed a lunch on every teacher in the country the day the column
+    appeared.
+
+    THE LUNCH IS A TRIO AND IT IS ALL OR NOTHING. Two of the three is not a
+    weaker rule, it is an unanswerable one — thirty minutes inside no window,
+    or a window with no length to fill it — and the database refuses the shape
+    with a CHECK constraint. Refused here as well, as a shape and not as a
+    sentence a school reads, because a half-filled trio is a gateway that lost
+    a field rather than an administrator who typed something impossible.
+
+    THE WINDOW'S OWN ARITHMETIC IS NOT REFUSED HERE. A window narrower than
+    the lunch it has to hold, or one that closes before it opens, is a school's
+    own typo, and it reaches a school as a named sentence from
+    SchedulerSolver._validate_request — which reads the window through the same
+    grid the model does, so the refusal and the model agree to the minute. A
+    422 from this class would be the right verdict in the wrong language.
+
+    NO MAXIMUM CONSECUTIVE TEACHING AND NO DAILY CAP, deliberately, and they
+    are not forgotten: the one comparable chain rule in this repo six-folded
+    the variable count, so a consecutive-teaching rule waits for a per-teacher
+    flag of its own.
+    """
+
+    #: The RULE's id, not the teacher's, and it is the one thing in this model
+    #: that must survive the round trip: the gateway keeps a map for it and
+    #: reverses it in realiseConflicts. Every refusal below names the rule and
+    #: never the teacher — the teacher map is discarded on purpose, so a
+    #: sentence naming one would reach the school as a uuid resolving to
+    #: nobody, and no person's name may enter a stored conflict.
+    id: UUID4
+    teacher_id: UUID4 = Field(alias="teacherId")
+    lunch_minutes: int | None = Field(default=None, alias="lunchMinutes", ge=5, le=240)
+    lunch_start_time: str | None = Field(
+        default=None, alias="lunchStartTime", pattern=r"^\d{2}:\d{2}:\d{2}$",
+    )
+    lunch_end_time: str | None = Field(
+        default=None, alias="lunchEndTime", pattern=r"^\d{2}:\d{2}:\d{2}$",
+    )
+    #: Minutes between the end of one teaching day and the start of the next.
+    #: Bounded as the database bounds it: an hour is the least that means
+    #: anything, and 22 hours is the most a week of five days can be asked for
+    #: before it is really a day off.
+    min_daily_rest_minutes: int | None = Field(
+        default=None, alias="minDailyRestMinutes", ge=60, le=1320,
+    )
+
+    @model_validator(mode="after")
+    def validate_lunch_trio(self) -> AnonymousTeacherWorkRule:
+        """All three lunch fields or none of them — see the class docstring."""
+        present = [
+            self.lunch_minutes is not None,
+            self.lunch_start_time is not None,
+            self.lunch_end_time is not None,
+        ]
+        if any(present) and not all(present):
+            msg = (
+                "A teacher's lunch needs lunchMinutes, lunchStartTime and "
+                "lunchEndTime together, or none of them."
+            )
+            raise ValueError(msg)
+        return self
+
+    @property
+    def has_lunch(self) -> bool:
+        """Whether this rule asks for a lunch at all. Validated as a trio."""
+        return self.lunch_minutes is not None
+
+
 class FrameTime(CamelModel):
     """A ramtid: the hours one stage of the school may be taught in.
 
@@ -472,6 +553,19 @@ class OptimizeScheduleRequest(CamelModel):
     # reported as lessons placed edge to edge.
     rasts: list[Rast] = Field(
         default_factory=list, alias="rasts", max_length=500,
+    )
+    # The teachers' own lunch and rest, one row per teacher who has any. Empty
+    # means no teacher has been given either, which is the behaviour every
+    # school had before this field existed — and, since the engine ships before
+    # the gateway that fills it, the behaviour every school still has today. A
+    # teacher the list does not name is owed nothing, exactly as a teacher whose
+    # row leaves both halves empty is: see AnonymousTeacherWorkRule for why an
+    # empty value is the whole of "the rule does not apply here".
+    #
+    # The cap matches `requirements`: one row per teacher, and a payload naming
+    # more teachers than it has teaching requirements is not a school.
+    teacher_work_rules: list[AnonymousTeacherWorkRule] = Field(
+        default_factory=list, alias="teacherWorkRules", max_length=2000,
     )
     room_preferences: list[AnonymousRoomPreference] = Field(
         default_factory=list,
