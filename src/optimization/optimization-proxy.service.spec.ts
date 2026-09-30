@@ -1136,6 +1136,11 @@ describe('OptimizationProxyService', () => {
       coTeacherId: null,
       lessonsPerWeek: 3,
       minutesPerLesson: 60,
+      // As the columns default: no ombyte and no dusch. Spelled out for the same
+      // reason as the two below — the database cannot produce a row without
+      // them, and the map forwards them rather than defaulting them.
+      minutesBefore: 0,
+      minutesAfter: 0,
       // As the columns default: every week, all year. Spelled out because a row
       // that omits them is not a row the database can produce, and both the
       // subtraction and the lessons the run writes read them.
@@ -1638,6 +1643,57 @@ describe('OptimizationProxyService', () => {
       const posted = postedPayload().requirements[0].requiredRoomType;
       expect(posted).toEqual(expect.any(String));
       expect(posted).not.toBe('room-type-lab');
+    });
+
+    it('forwards the pupil buffers beside the lesson length, not folded into it', async () => {
+      // The engine has to be told both, separately: it still places 60 minutes
+      // of teaching and still owes the timplan 60, while keeping the CLASS clear
+      // for 90. A sum would place a 90-minute lesson and lose which part of it
+      // was ombyte — and the engine's own arm for these is the pupil arm alone,
+      // which it cannot find if the numbers arrive already added up.
+      arrange({
+        requirements: [requirement({ minutesBefore: 10, minutesAfter: 20 })],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().requirements[0]).toMatchObject({
+        minutesPerLesson: 60,
+        minutesBefore: 10,
+        minutesAfter: 20,
+      });
+    });
+
+    it('sends the zeroes of a requirement nobody wrote an ombyte on', async () => {
+      // Not omitted and not undefined: the engine's pydantic models forbid an
+      // unknown field and the gateway's own contract spec pins both names, so a
+      // requirement that simply drops them is a 422 for the whole run.
+      arrange();
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().requirements[0]).toMatchObject({
+        minutesBefore: 0,
+        minutesAfter: 0,
+      });
+    });
+
+    it('selects the two buffer columns from the requirement table', async () => {
+      arrange();
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({
+            minutesBefore: true,
+            minutesAfter: true,
+          }),
+        }),
+      );
     });
 
     it('maps each real resource to one stable anonymous id across the payload', async () => {
