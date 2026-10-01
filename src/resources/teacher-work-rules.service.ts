@@ -198,6 +198,21 @@ function assertLunchIsWhole(dto: UpsertTeacherWorkRuleDto): void {
  * regex admits both HH:MM and HH:MM:SS, and a lexical compare across the two
  * lengths reads "12:00" as before "12:00:30" — a thirty-second window, accepted.
  * Minutes are also the precision the solver schedules in.
+ *
+ * WHICH IS WHY A SECOND IS REFUSED BEFORE ANY OF THAT ARITHMETIC RUNS. The DTO
+ * admits HH:MM:SS on purpose — it is the shape PostgREST returns, so a row read
+ * from the database round-trips through this endpoint — and `parseTimeString`
+ * carries the seconds into the TIME(0) columns. `minutesOf` does not see them:
+ * it splits on ':' and reads two fields. So `10:30:30` measured here is 10:30,
+ * and a window of `10:30:30`-`11:00` passed as thirty minutes wide and on the
+ * grid, while the table's TeacherWorkRules_lunch_window_fits_break measures the
+ * same window with EXTRACT(EPOCH …) and sees 1770 seconds against the 1800 it
+ * needs. A CHECK violation is none of the codes rethrowPrismaError maps, so the
+ * caller met a bare 500 where every other refusal on this route is a 400 that
+ * names the field — and a window that did pass the CHECK was stored thirty
+ * seconds off the solver's own five-minute grid, to be read back on every run.
+ * Refusing the second is the fix rather than counting it, because a schedule
+ * laid in five-minute slots has nothing to do with one.
  */
 function assertLunchFits(dto: UpsertTeacherWorkRuleDto): void {
   const { lunchMinutes, lunchStartTime, lunchEndTime } = dto;
@@ -208,6 +223,18 @@ function assertLunchFits(dto: UpsertTeacherWorkRuleDto): void {
     !lunchEndTime
   ) {
     return;
+  }
+
+  for (const [label, value] of [
+    ['Fönstrets starttid', lunchStartTime],
+    ['Fönstrets sluttid', lunchEndTime],
+  ] as const) {
+    const [, , seconds = '0'] = value.split(':');
+    if (Number(seconds) !== 0) {
+      throw new BadRequestException(
+        `${label} anges i hela minuter — schemaläggaren räknar i ${SLOT_MINUTES}-minuterssteg, och sekunder går inte att lägga på det rutnätet.`,
+      );
+    }
   }
 
   const width = minutesOf(lunchEndTime) - minutesOf(lunchStartTime);
