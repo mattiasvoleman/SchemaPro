@@ -199,6 +199,25 @@ describe('RastsService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    it('refuses a second the ordering check would have let through', async () => {
+      /*
+       * The window below spans real minutes, so the ordering guard is happy
+       * with it and `Rasts_window_is_ordered` only says the window runs
+       * forwards — it is true of 09:00:30 to 15:00. Nothing refused this
+       * before: the row was stored thirty seconds off the solver's five-minute
+       * grid, to be read back on every run.
+       *
+       * Unlike the lunch window one table over, no CHECK here counts seconds,
+       * so this was never a 500. It is the smaller claim, and it is refused for
+       * the grid's sake rather than the constraint's.
+       */
+      await expect(
+        service.create(createDto({ startTime: '09:40:30', endTime: '10:00' }), testUser()),
+      ).rejects.toThrow(/must be whole minutes/);
+
+      expect(tx.rast.create).not.toHaveBeenCalled();
+    });
+
     it('accepts a three-minute rast', async () => {
       // No minimum length, deliberately: three minutes is what a changeover
       // between two rooms is, and the engine rounds it OUTWARD to a whole slot

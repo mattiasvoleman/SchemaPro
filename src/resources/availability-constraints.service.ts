@@ -6,7 +6,7 @@ import {
 } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
-import { minutesOf } from '../common/solver-grid';
+import { assertWholeMinutes, minutesOf } from '../common/solver-grid';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString, parseTimeString, toWallClock } from '../common/utils/time';
@@ -206,6 +206,9 @@ export class AvailabilityConstraintsService {
  * be expressed on the grid should not be storable either.
  */
 function assertWindow(startTime: string, endTime: string): void {
+  assertWholeMinutes('startTime', startTime);
+  assertWholeMinutes('endTime', endTime);
+
   if (minutesOf(startTime) >= minutesOf(endTime)) {
     throw new BadRequestException('startTime must be before endTime.');
   }
