@@ -364,12 +364,49 @@ describe('AvailabilityConstraintsService', () => {
       // "09:00:30" is lexically after "09:00", so a string compare calls this
       // window ordered. On the grid it is thirty seconds long, which is no
       // window at all.
+      //
+      // The seconds are now refused one check earlier, so the sentence names
+      // the second rather than the ordering — a narrower answer to the same
+      // request, and still the same 400. The ordering guard below still has
+      // its own rows; this window simply never reaches it.
       await expect(
         service.create(
           weeklyDto({ startTime: '09:00', endTime: '09:00:30' }),
           testUser(),
         ),
-      ).rejects.toThrow('startTime must be before endTime.');
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('refuses a second the ordering check would have let through', async () => {
+      /*
+       * 09:00:30 to 10:00 spans real minutes, so the ordering guard is happy
+       * with it — and this table has no CHECK on its window at all, not even
+       * the `"endTime" > "startTime"` its siblings carry. Nothing anywhere
+       * refused this: the block was stored thirty seconds off the solver's
+       * grid, and `toWallClock` then answered "09:00" for it, so the admin
+       * could not even see what had been saved.
+       */
+      await expect(
+        service.create(
+          weeklyDto({ startTime: '09:00:30', endTime: '10:00' }),
+          testUser(),
+        ),
+      ).rejects.toThrow(/must be whole minutes/);
+
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('still takes the zero seconds PostgREST sends, so a row round-trips', async () => {
+      // Why the DTO admits HH:MM:SS at all. Refusing the second must not refuse
+      // the round-trip it exists for.
+      tx.availabilityConstraint.create.mockResolvedValue({ id: CONSTRAINT_ID });
+
+      await service.create(
+        weeklyDto({ startTime: '09:00:00', endTime: '10:00:00' }),
+        testUser(),
+      );
+
+      expect(tx.availabilityConstraint.create).toHaveBeenCalled();
     });
 
     it('rejects a principal with no school before touching the database', async () => {
@@ -559,11 +596,15 @@ describe('AvailabilityConstraintsService', () => {
       // The stored start reads back as "09:00" and the DTO's regex admits
       // "09:00:30", which is lexically AFTER it — so a string compare calls
       // this window ordered and stores a thirty-second block.
+      //
+      // Refused on the second now, before the merge is measured at all. The
+      // stored side cannot carry seconds — `toWallClock` answers in HH:MM — so
+      // only the DTO's own value can trip this, which is the point.
       storeWindow('09:00', '10:00');
 
       await expect(
         service.update(CONSTRAINT_ID, { endTime: '09:00:30' }, testUser()),
-      ).rejects.toThrow('startTime must be before endTime.');
+      ).rejects.toBeInstanceOf(BadRequestException);
 
       expect(tx.availabilityConstraint.update).not.toHaveBeenCalled();
     });

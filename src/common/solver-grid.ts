@@ -1,3 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
+
 /**
  * The solver's time grid, as the API understands it.
  *
@@ -40,6 +42,66 @@ export const DAY_END_MINUTES = 18 * 60;
 export function minutesOf(time: string): number {
   const [hours = '0', minutes = '0'] = time.split(':');
   return Number(hours) * 60 + Number(minutes);
+}
+
+/**
+ * The seconds `minutesOf` is blind to, refused before it is asked anything.
+ *
+ * Every clock DTO in this app admits HH:MM:SS — `/^\d{2}:\d{2}(:\d{2})?$/` —
+ * on purpose: that is the shape PostgREST returns, so a row read out of the
+ * database round-trips through its own endpoint. `parseTimeString` then carries
+ * those seconds into the TIME(0) column. `minutesOf` does not see them: it
+ * splits on ':' and reads two fields. So every window measured with it is
+ * measured to the minute while the value stored is exact to the second, and the
+ * two disagree by up to 59 seconds per edge.
+ *
+ * ON TWO TABLES THAT DISAGREEMENT REACHES A CHECK. LunchSettings_window_fits_break
+ * and TeacherWorkRules_lunch_window_fits_break measure the same window with
+ * EXTRACT(EPOCH …), so `11:00:30`-`11:30` is thirty whole minutes here and 1770
+ * seconds against a required 1800 there. A CHECK violation is none of the codes
+ * `rethrowPrismaError` maps, so that one came back as a bare 500 where every
+ * other refusal on those routes is a 400 naming the field. Everywhere else the
+ * table carries only `"endTime" > "startTime"`, which can never refuse what a
+ * whole-minute compare accepted — if minutesOf(end) > minutesOf(start) then the
+ * end's HH:MM is strictly greater, and seconds under sixty cannot bridge a whole
+ * minute. There the cost is smaller and quieter: a boundary stored off the
+ * solver's own grid, read back on every run.
+ *
+ * REFUSED RATHER THAN COUNTED, on both, because a schedule laid in five-minute
+ * slots has nothing to do with a second — making the arithmetic seconds-aware
+ * would teach the app to measure a precision it can never place. Zero seconds
+ * stay acceptable, because `:00` is what PostgREST writes out and the web sends
+ * back, and these endpoints answer in HH:MM, so it is the only seconds a client
+ * has any way to produce.
+ *
+ * THE SENTENCE IS NOT DECIDED HERE, only the question. These routes do not
+ * speak one language: the lunch settings and the teacher work rules answer in
+ * Swedish because an admin reads them in a form, and the frame times, sittings,
+ * rasts, meals and constraints answer in English naming the wire field, as
+ * every other refusal on those five does. A single shared message would have
+ * put two languages on one route's error surface. So the detector is shared and
+ * the wording belongs to the caller; `assertWholeMinutes` below is the wording
+ * those five happen to agree on.
+ */
+export function carriesSeconds(time: string): boolean {
+  const [, , seconds = '0'] = time.split(':');
+  return Number(seconds) !== 0;
+}
+
+/**
+ * `carriesSeconds` with the sentence the five English routes share — the frame
+ * times, lunch servings, rasts, lunch sittings and availability constraints,
+ * whose every other refusal is an English clause naming the DTO field. The two
+ * Swedish routes throw their own.
+ *
+ * @param field the wire field, named as the rest of that route's messages name it.
+ */
+export function assertWholeMinutes(field: string, time: string): void {
+  if (carriesSeconds(time)) {
+    throw new BadRequestException(
+      `${field} must be whole minutes; seconds cannot be placed on the solver's ${SLOT_MINUTES}-minute grid.`,
+    );
+  }
 }
 
 /**

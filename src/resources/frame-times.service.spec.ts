@@ -348,6 +348,28 @@ describe('FrameTimesService', () => {
       expect(tx.frameTime.create).not.toHaveBeenCalled();
     });
 
+    it('refuses a second the ordering check would have let through', async () => {
+      /*
+       * The window below spans real minutes, so the ordering guard is happy
+       * with it and `FrameTimes_window_is_ordered` only says the window runs
+       * forwards — it is true of 09:00:30 to 15:00. Nothing refused this
+       * before: the row was stored thirty seconds off the solver's five-minute
+       * grid, to be read back on every run.
+       *
+       * Unlike the lunch window one table over, no CHECK here counts seconds,
+       * so this was never a 500. It is the smaller claim, and it is refused for
+       * the grid's sake rather than the constraint's.
+       */
+      await expect(
+        service.create(
+          { minGradeLevel: 4, maxGradeLevel: 6, startTime: '09:00:30', endTime: '15:00' },
+          user(),
+        ),
+      ).rejects.toThrow(/must be whole minutes/);
+
+      expect(tx.frameTime.create).not.toHaveBeenCalled();
+    });
+
     it('still accepts a seconds-bearing clock that spans real minutes', async () => {
       tx.frameTime.create.mockResolvedValue(storedFrame());
 

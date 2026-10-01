@@ -9,6 +9,7 @@ import {
   DAY_END_MINUTES,
   DAY_START_MINUTES,
   SLOT_MINUTES,
+  carriesSeconds,
   minutesOf,
 } from '../common/solver-grid';
 
@@ -108,33 +109,27 @@ export class LunchSettingsService {
    * where nobody can read it. The messages are Swedish because an admin reads
    * them in the lunch form.
    *
-   * THE SECONDS GO FIRST, BEFORE ANY OF THE ARITHMETIC BELOW. The DTO admits
-   * HH:MM:SS on purpose — it is the shape PostgREST returns, so a row read out
-   * of the database round-trips through this endpoint — and `parseTimeString`
-   * carries the seconds into the TIME(0) columns. `minutesOf` does not see
-   * them: it splits on ':' and reads two fields. So `11:00:30` measured here is
-   * 11:00, and `11:00:30`-`11:30` passed as a window a whole thirty minutes
-   * wide with both edges on the grid, while the table's
-   * LunchSettings_window_fits_break measures the same window with
-   * EXTRACT(EPOCH …) and sees 1770 seconds against the 1800 it needs. A CHECK
-   * violation is none of the codes `rethrowPrismaError` maps, so the admin met
-   * a bare 500 where every other refusal on this route is a 400 naming the
-   * field — the same defect TeacherWorkRulesService.assertLunchFits closes, and
-   * these are the only two tables in the schema whose CHECK counts seconds.
+   * THE SECONDS GO FIRST, BEFORE ANY OF THE ARITHMETIC BELOW — see
+   * `assertWholeMinutes` for why every clock DTO admits them at all. This is
+   * one of the only two routes in the app where they reach a CHECK rather than
+   * merely landing off the grid: `11:00:30`-`11:30` measured here is a window a
+   * whole thirty minutes wide with both edges on the grid, while
+   * LunchSettings_window_fits_break counts 1770 seconds against the 1800 it
+   * needs and answers with a bare 500.
    *
-   * Only the START can reach that CHECK: seconds on the end widen the window,
-   * so they pass it and are merely stored off the solver's five-minute grid, to
-   * be read back on every run. Both are refused anyway, because the grid is the
-   * reason for both. Refusing is the fix rather than counting, because a
-   * schedule laid in five-minute slots has nothing to do with a second.
+   * Only the START can reach that CHECK — seconds on the end widen the window,
+   * so they pass it and are stored off the grid instead. Both are refused, but
+   * they are not the same claim, and the spec rows say which is which.
    */
   private assertFitsTheSolverGrid(dto: UpsertLunchSettingsDto): void {
     for (const [label, value] of [
       ['Starttiden', dto.lunchStartTime],
       ['Sluttiden', dto.lunchEndTime],
     ] as const) {
-      const [, , seconds = '0'] = value.split(':');
-      if (Number(seconds) !== 0) {
+      // Swedish, and its own sentence rather than the shared English one, for
+      // the reason the rest of this function's messages are Swedish: an admin
+      // reads them in the lunch form. `carriesSeconds` carries the argument.
+      if (carriesSeconds(value)) {
         throw new BadRequestException(
           `${label} anges i hela minuter — schemaläggaren räknar i ${SLOT_MINUTES}-minuterssteg, och sekunder går inte att lägga på det rutnätet.`,
         );
