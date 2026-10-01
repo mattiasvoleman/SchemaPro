@@ -223,7 +223,8 @@ describe('TeacherWorkRulesService', () => {
        * lengths reads "12:00" as before "12:00:30" — a thirty-second window,
        * accepted as one. The table's own CHECK is weaker here for the same
        * reason: `"lunchEndTime" > "lunchStartTime"` on a TIME(0) column is true
-       * of it.
+       * of it. The seconds are now refused outright one check earlier (below),
+       * which is a narrower answer to the same request; it is still a 400.
        */
       await expect(
         service.upsert(
@@ -232,6 +233,42 @@ describe('TeacherWorkRulesService', () => {
           testUser(),
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it.each([
+      ['a second on the start', { lunchStartTime: '10:30:30', lunchEndTime: '11:00' }],
+      ['a second on the end', { lunchStartTime: '10:30', lunchEndTime: '11:00:30' }],
+    ])('refuses %s, where the width arithmetic cannot see it', async (_l, overrides) => {
+      /*
+       * The 500 this exists to stop. `minutesOf` splits on ':' and reads two
+       * fields, so 10:30:30 measures as 10:30: the width came out as a whole
+       * thirty minutes and both edges passed `% 5`. The table measures the same
+       * window with EXTRACT(EPOCH …) and sees 1770 seconds against 1800, and a
+       * CHECK violation is none of the codes rethrowPrismaError maps — so the
+       * admin met a bare 500 instead of a sentence naming the field.
+       */
+      await expect(
+        service.upsert(
+          ME,
+          dto({ ...overrides, lunchMinutes: 30 }),
+          testUser(),
+        ),
+      ).rejects.toThrow(/hela minuter/);
+      expect(tx.teacherWorkRule.upsert).not.toHaveBeenCalled();
+    });
+
+    it('still takes the zero seconds PostgREST sends, so a row round-trips', async () => {
+      // The reason the DTO admits HH:MM:SS at all: the web reads this row back
+      // from PostgREST, which writes the seconds out, and PUTs it again.
+      tx.teacherWorkRule.upsert.mockResolvedValue(storedRow());
+
+      await service.upsert(
+        ME,
+        dto({ lunchStartTime: '10:30:00', lunchEndTime: '13:30:00', lunchMinutes: 30 }),
+        testUser(),
+      );
+
+      expect(tx.teacherWorkRule.upsert).toHaveBeenCalled();
     });
 
     it.each([

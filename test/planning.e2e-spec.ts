@@ -1171,6 +1171,24 @@ describe('Planning surface (e2e)', () => {
         .expect(400);
     });
 
+    it('400s a window carrying a second, which the table would answer with a 500', async () => {
+      // The DTO takes HH:MM:SS, because that is what PostgREST hands back, and
+      // the service's width check reads only hours and minutes — so 10:30:30 to
+      // 11:00 measured as a whole thirty minutes and went to the database, whose
+      // CHECK counts seconds and refused it. That refusal is not a Prisma code
+      // this gateway maps, so the admin got a 500 with no field named. The
+      // status code is the contract here, not the sentence.
+      await request(http())
+        .put(`/api/v1/teacher-work-rules/${TEACHER_ID}`)
+        .set('x-test-user', admin())
+        .send({
+          lunchMinutes: 30,
+          lunchStartTime: '10:30:30',
+          lunchEndTime: '11:00:00',
+        })
+        .expect(400);
+    });
+
     it('400s a path that is not a uuid, before any of that', async () => {
       await request(http())
         .put('/api/v1/teacher-work-rules/anna')
