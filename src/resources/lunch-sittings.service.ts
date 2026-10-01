@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import type { LunchSitting } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { assertWholeMinutes } from '../common/solver-grid';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseTimeString, toWallClock } from '../common/utils/time';
@@ -188,8 +189,22 @@ function headcountOf(tx: Tx, studentGroupId: string): Promise<number> {
   return tx.user.count({ where: { role: 'STUDENT', isActive: true, studentGroupId } });
 }
 
-/** The meal's end, from its start and the school's one length. */
+/**
+ * The meal's end, from its start and the school's one length.
+ *
+ * The seconds go first, and this table is the one where dropping them is worse
+ * than an off-grid boundary. The body carries only a start — the length is the
+ * school's one `lunchMinutes` — and the arithmetic below reads two fields, so a
+ * start of `11:00:30` produced an end of `11:30`. The start keeps its seconds
+ * into the column and the end does not, and the row stored is a meal 1770
+ * seconds long against the thirty minutes the school actually set: a lunch half
+ * a minute short, with no CHECK on this table to notice. Only
+ * `LunchSittings_window_is_ordered` guards it, and `11:30` is still after
+ * `11:00:30`.
+ */
 function endOf(startTime: string, minutes: number): string {
+  assertWholeMinutes('startTime', startTime);
+
   const [hours, mins] = startTime.split(':').map(Number);
   const total = hours * 60 + mins + minutes;
   if (total >= 24 * 60) {

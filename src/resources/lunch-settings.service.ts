@@ -9,6 +9,7 @@ import {
   DAY_END_MINUTES,
   DAY_START_MINUTES,
   SLOT_MINUTES,
+  carriesSeconds,
   minutesOf,
 } from '../common/solver-grid';
 
@@ -107,8 +108,34 @@ export class LunchSettingsService {
    * Every rejection here is one the engine would otherwise raise mid-generation,
    * where nobody can read it. The messages are Swedish because an admin reads
    * them in the lunch form.
+   *
+   * THE SECONDS GO FIRST, BEFORE ANY OF THE ARITHMETIC BELOW — see
+   * `assertWholeMinutes` for why every clock DTO admits them at all. This is
+   * one of the only two routes in the app where they reach a CHECK rather than
+   * merely landing off the grid: `11:00:30`-`11:30` measured here is a window a
+   * whole thirty minutes wide with both edges on the grid, while
+   * LunchSettings_window_fits_break counts 1770 seconds against the 1800 it
+   * needs and answers with a bare 500.
+   *
+   * Only the START can reach that CHECK — seconds on the end widen the window,
+   * so they pass it and are stored off the grid instead. Both are refused, but
+   * they are not the same claim, and the spec rows say which is which.
    */
   private assertFitsTheSolverGrid(dto: UpsertLunchSettingsDto): void {
+    for (const [label, value] of [
+      ['Starttiden', dto.lunchStartTime],
+      ['Sluttiden', dto.lunchEndTime],
+    ] as const) {
+      // Swedish, and its own sentence rather than the shared English one, for
+      // the reason the rest of this function's messages are Swedish: an admin
+      // reads them in the lunch form. `carriesSeconds` carries the argument.
+      if (carriesSeconds(value)) {
+        throw new BadRequestException(
+          `${label} anges i hela minuter — schemaläggaren räknar i ${SLOT_MINUTES}-minuterssteg, och sekunder går inte att lägga på det rutnätet.`,
+        );
+      }
+    }
+
     const start = minutesOf(dto.lunchStartTime);
     const end = minutesOf(dto.lunchEndTime);
 

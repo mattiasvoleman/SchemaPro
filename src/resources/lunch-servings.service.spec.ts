@@ -316,12 +316,39 @@ describe('LunchServingsService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
+    it('refuses a second the ordering check would have let through', async () => {
+      /*
+       * The window below spans real minutes, so the ordering guard is happy
+       * with it and `LunchServings_window_is_ordered` only says the window runs
+       * forwards — it is true of 09:00:30 to 15:00. Nothing refused this
+       * before: the row was stored thirty seconds off the solver's five-minute
+       * grid, to be read back on every run.
+       *
+       * Unlike the lunch window one table over, no CHECK here counts seconds,
+       * so this was never a 500. It is the smaller claim, and it is refused for
+       * the grid's sake rather than the constraint's.
+       */
+      await expect(
+        service.create(
+          { minGradeLevel: 4, maxGradeLevel: 6, startTime: '10:00:30', endTime: '10:30' },
+          user(),
+        ),
+      ).rejects.toThrow(/must be whole minutes/);
+
+      expect(tx.lunchServing.create).not.toHaveBeenCalled();
+    });
+
     it('refuses a window that is only seconds long', async () => {
       /*
        * The case a lexical compare gets wrong. "09:00" sorts before "09:00:30"
        * because it is a prefix, so a string check reads this as a valid window
        * and stores a thirty-second sitting — a window no meal fits in.
        * The DTO's regex admits both lengths, so it is reachable from the wire.
+       *
+       * Refused one check earlier now: the seconds go before the ordering is
+       * measured at all, so the sentence names the second rather than the
+       * order. A narrower answer to the same request, and still the same 400 —
+       * the ordering guard keeps its own rows above.
        */
       await expect(
         service.create(
@@ -332,7 +359,15 @@ describe('LunchServingsService', () => {
       expect(tx.lunchServing.create).not.toHaveBeenCalled();
     });
 
-    it('still accepts a seconds-bearing clock that spans real minutes', async () => {
+    it('still takes the zero seconds PostgREST sends, so a row round-trips', async () => {
+      /*
+       * NOT because the window spans real minutes, which is what this row used
+       * to be named for — the span stopped being the reason when the seconds
+       * started being refused on their own. `11:00:00` is accepted because its
+       * seconds are zero, and that is the whole of it. It is the shape
+       * PostgREST writes out and the web sends back, so refusing the second
+       * must not refuse the round-trip.
+       */
       tx.lunchServing.create.mockResolvedValue(storedServing());
 
       await expect(

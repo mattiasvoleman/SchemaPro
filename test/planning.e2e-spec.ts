@@ -464,6 +464,51 @@ describe('Planning surface (e2e)', () => {
       expect(harness.tx['lunchSetting']!['upsert']).not.toHaveBeenCalled();
     });
 
+    it('400s a window carrying a second, which the table would answer with a 500', async () => {
+      // The same defect as on teacher-work-rules, on the one other table whose
+      // CHECK counts seconds. The DTO takes HH:MM:SS because that is what
+      // PostgREST hands back, and assertFitsTheSolverGrid reads only hours and
+      // minutes — so 11:00:30 to 11:30 measured as a whole thirty minutes, sat
+      // on the grid, and went to the database, whose
+      // LunchSettings_window_fits_break counts 1770 seconds against 1800 and
+      // refuses it. That refusal is not a Prisma code this gateway maps, so the
+      // admin got a 500 with no field named. The status code is the contract
+      // here, not the sentence.
+      await request(http())
+        .put('/api/v1/lunch-settings')
+        .set('x-test-user', admin())
+        .send({
+          lunchEnabled: true,
+          lunchStartTime: '11:00:30',
+          lunchEndTime: '11:30:00',
+          lunchMinutes: 30,
+        })
+        .expect(400);
+
+      expect(harness.tx['lunchSetting']!['upsert']).not.toHaveBeenCalled();
+    });
+
+    it('still takes the zero seconds PostgREST writes out', async () => {
+      // Why the DTO admits HH:MM:SS at all. Refusing the second must not refuse
+      // the round-trip it exists for.
+      harness.tx['lunchSetting']!['upsert']!.mockResolvedValue({
+        id: TYPE_ID,
+        lunchStartTime: new Date('1970-01-01T10:45:00.000Z'),
+        lunchEndTime: new Date('1970-01-01T12:30:00.000Z'),
+      });
+
+      await request(http())
+        .put('/api/v1/lunch-settings')
+        .set('x-test-user', admin())
+        .send({
+          lunchEnabled: true,
+          lunchStartTime: '10:45:00',
+          lunchEndTime: '12:30:00',
+          lunchMinutes: 30,
+        })
+        .expect(200);
+    });
+
     it('400s on a seat count sent as a string', async () => {
       // enableImplicitConversion is off, so "180" is not 180 anywhere.
       await request(http())

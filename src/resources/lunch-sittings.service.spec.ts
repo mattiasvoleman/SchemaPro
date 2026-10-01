@@ -102,6 +102,31 @@ describe('LunchSittingsService', () => {
         user,
       );
 
+    it('refuses a second on the start, which would shorten the meal itself', async () => {
+      /*
+       * The worst of the off-grid cases, because here the seconds do not
+       * survive the arithmetic. The body carries only a start — the length is
+       * the school's one lunchMinutes — and `endOf` reads two fields, so
+       * 13:00:30 produced an end of 13:30. The start keeps its seconds into the
+       * column and the end does not: the row stored is 1770 seconds, a lunch
+       * half a minute shorter than the thirty the school set, with no CHECK on
+       * this table to notice. `LunchSittings_window_is_ordered` is satisfied —
+       * 13:30 is after 13:00:30 — so nothing refused it.
+       */
+      await expect(place('13:00:30')).rejects.toThrow(/must be whole minutes/);
+
+      expect(tx.lunchSitting.upsert).not.toHaveBeenCalled();
+    });
+
+    it('still takes the zero seconds PostgREST sends, so a row round-trips', async () => {
+      // Why the DTO admits HH:MM:SS at all.
+      tx.lunchSitting.upsert.mockResolvedValue(storedSitting());
+
+      await place('13:00:00');
+
+      expect(tx.lunchSitting.upsert).toHaveBeenCalled();
+    });
+
     it('marks it as the school’s, so the next run keeps it', async () => {
       tx.lunchSitting.upsert.mockResolvedValue(storedSitting());
 
