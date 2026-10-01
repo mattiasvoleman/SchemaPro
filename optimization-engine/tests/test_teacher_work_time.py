@@ -228,6 +228,20 @@ def _refusal(payload: dict[str, object], **settings: object) -> str | None:
     return None
 
 
+def _refusal_params(
+    payload: dict[str, object], **settings: object,
+) -> dict[str, str | int]:
+    """The values the refusal substitutes, for the sentences that branch on one."""
+    solver = SchedulerSolver(_settings(**settings))
+    request = OptimizeScheduleRequest.model_validate(payload)
+    try:
+        solver._validate_request(request)
+    except InvalidScheduleInputError as error:
+        return error.params
+    msg = "the payload was not refused at all"
+    raise AssertionError(msg)
+
+
 def _conflict_codes(payload: dict[str, object], **settings: object) -> list[str]:
     """The codes a full solve puts in front of a school."""
     solver = SchedulerSolver(_settings(**settings))
@@ -480,6 +494,48 @@ class TestWhatIsRefusedBeforeAnySolve:
             rules=[_rule(**LUNCH)], fixed_lessons=[_locked("10:30:00", "12:30:00")],
         )
         assert _refusal(allowed, **SHORT_DAY) is None
+
+    def test_the_sentence_names_what_took_the_last_start_and_nothing_else(self) -> None:
+        """`causes` is the fix the school has to make, so it has to be the truth.
+
+        The sentence tells a rektor to move a locked lesson, shorten a
+        reservation, or widen the window, and the branch decides which of the
+        three it leads with. Read off "does this teacher have a lock somewhere
+        today" it blames an 08:00 lesson for a window that opens at 10:30 —
+        advice that cannot change the outcome, about the one screen the reader
+        is least able to change. Read off the forbidden starts it names what
+        actually left none.
+
+        All four cases on the same day, so only the cause differs.
+        """
+        lock_only = _payload(
+            rules=[_rule(**LUNCH)], fixed_lessons=[_locked("10:30:00", "13:00:00")],
+        )
+        assert _refusal_params(lock_only, **SHORT_DAY)["causes"] == "locked"
+
+        closure_only = _payload(
+            rules=[_rule(**LUNCH)], constraints=[_closure("10:40:00", "13:30:00")],
+        )
+        assert _refusal_params(closure_only, **SHORT_DAY)["causes"] == "closed"
+
+        # THE REGRESSION. The reservation is what empties the window; the lock
+        # is at breakfast and _forbidden_lunch_starts drops it. Before the fix
+        # this read "locked_closed" and sent the reader to the morning.
+        irrelevant_lock = _payload(
+            rules=[_rule(**LUNCH)],
+            constraints=[_closure("10:40:00", "13:30:00")],
+            fixed_lessons=[_locked("08:00:00", "09:00:00")],
+        )
+        assert _refusal_params(irrelevant_lock, **SHORT_DAY)["causes"] == "closed"
+
+        # And both, when both really do take starts away: the lock rules out
+        # 10:30-11:40 and the reservation 11:05-12:30, which is the lot.
+        both = _payload(
+            rules=[_rule(**LUNCH)],
+            fixed_lessons=[_locked("10:30:00", "11:45:00")],
+            constraints=[_closure("11:30:00", "13:00:00")],
+        )
+        assert _refusal_params(both, **SHORT_DAY)["causes"] == "locked_closed"
 
     def test_a_rest_longer_than_any_night_is_named(self) -> None:
         """Three-hour lessons on a three-hour day: one a day, and 21 hours apart.

@@ -2813,12 +2813,37 @@ class SchedulerSolver:
                     ):
                         continue
                     locked = locked_busy.get(key, [])
-                    forbidden = _forbidden_lunch_starts(
-                        locked + closed,
-                        day_offset + window_start,
-                        day_offset + window_end - lunch_slots,
-                        lunch_slots,
-                    )
+                    # PER SOURCE, and not from `locked + closed`, because the
+                    # `causes` key below names what the school has to go and
+                    # change. Asking only whether the teacher HAS a lock or a
+                    # reservation somewhere that day answers a different
+                    # question: a locked lesson at 08:00 cannot take a lunch
+                    # start away from a window that opens at 10:30, and naming
+                    # it sends the rektor to move a lesson whose removal changes
+                    # nothing. _forbidden_lunch_starts has already dropped the
+                    # rows that rule out no admissible start, so its OUTPUT is
+                    # the honest answer — which is what the group lunch's own
+                    # causes read, from blocked_starts and closed_starts.
+                    #
+                    # Splitting the call changes no outcome: the helper is per
+                    # interval and coalesces nothing, so two calls concatenated
+                    # are the one call's list in another order, and the domain
+                    # subtraction below is order-blind.
+                    forbidden_by_source = [
+                        (
+                            name,
+                            _forbidden_lunch_starts(
+                                rows,
+                                day_offset + window_start,
+                                day_offset + window_end - lunch_slots,
+                                lunch_slots,
+                            ),
+                        )
+                        for name, rows in (("locked", locked), ("closed", closed))
+                    ]
+                    forbidden = [
+                        band for _, bands in forbidden_by_source for band in bands
+                    ]
                     if not forbidden:
                         continue
                     allowed = self._admissible_lunch_starts(
@@ -2830,11 +2855,7 @@ class SchedulerSolver:
                     # list: "locked lessons and reservations" is an English list,
                     # and a language that inflects its members cannot be handed
                     # one already punctuated. The sentence branches on the key.
-                    causes = [
-                        name
-                        for name, source in (("locked", locked), ("closed", closed))
-                        if source
-                    ]
+                    causes = [name for name, bands in forbidden_by_source if bands]
                     raise InvalidScheduleInputError.of("TEACHER_LUNCH_LEAVES_NO_START", {
                         "causes": "_".join(causes),
                         "rule": str(rule.id),
