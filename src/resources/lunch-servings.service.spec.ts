@@ -344,6 +344,11 @@ describe('LunchServingsService', () => {
        * because it is a prefix, so a string check reads this as a valid window
        * and stores a thirty-second sitting — a window no meal fits in.
        * The DTO's regex admits both lengths, so it is reachable from the wire.
+       *
+       * Refused one check earlier now: the seconds go before the ordering is
+       * measured at all, so the sentence names the second rather than the
+       * order. A narrower answer to the same request, and still the same 400 —
+       * the ordering guard keeps its own rows above.
        */
       await expect(
         service.create(
@@ -354,7 +359,15 @@ describe('LunchServingsService', () => {
       expect(tx.lunchServing.create).not.toHaveBeenCalled();
     });
 
-    it('still accepts a seconds-bearing clock that spans real minutes', async () => {
+    it('still takes the zero seconds PostgREST sends, so a row round-trips', async () => {
+      /*
+       * NOT because the window spans real minutes, which is what this row used
+       * to be named for — the span stopped being the reason when the seconds
+       * started being refused on their own. `11:00:00` is accepted because its
+       * seconds are zero, and that is the whole of it. It is the shape
+       * PostgREST writes out and the web sends back, so refusing the second
+       * must not refuse the round-trip.
+       */
       tx.lunchServing.create.mockResolvedValue(storedServing());
 
       await expect(

@@ -194,6 +194,10 @@ describe('RastsService', () => {
     it('compares minutes, not strings', async () => {
       // The DTO's regex admits HH:MM:SS, and a lexical compare reads "09:40" as
       // before "09:40:30" — a thirty-second rast, accepted as a window.
+      //
+      // Refused one check earlier now: the seconds go before the minutes are
+      // compared at all, so the sentence names the second rather than the
+      // order. A narrower answer to the same request, and still the same 400.
       await expect(
         service.create(createDto({ startTime: '09:40', endTime: '09:40:30' }), testUser()),
       ).rejects.toThrow(BadRequestException);
