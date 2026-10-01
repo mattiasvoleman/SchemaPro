@@ -107,8 +107,40 @@ export class LunchSettingsService {
    * Every rejection here is one the engine would otherwise raise mid-generation,
    * where nobody can read it. The messages are Swedish because an admin reads
    * them in the lunch form.
+   *
+   * THE SECONDS GO FIRST, BEFORE ANY OF THE ARITHMETIC BELOW. The DTO admits
+   * HH:MM:SS on purpose — it is the shape PostgREST returns, so a row read out
+   * of the database round-trips through this endpoint — and `parseTimeString`
+   * carries the seconds into the TIME(0) columns. `minutesOf` does not see
+   * them: it splits on ':' and reads two fields. So `11:00:30` measured here is
+   * 11:00, and `11:00:30`-`11:30` passed as a window a whole thirty minutes
+   * wide with both edges on the grid, while the table's
+   * LunchSettings_window_fits_break measures the same window with
+   * EXTRACT(EPOCH …) and sees 1770 seconds against the 1800 it needs. A CHECK
+   * violation is none of the codes `rethrowPrismaError` maps, so the admin met
+   * a bare 500 where every other refusal on this route is a 400 naming the
+   * field — the same defect TeacherWorkRulesService.assertLunchFits closes, and
+   * these are the only two tables in the schema whose CHECK counts seconds.
+   *
+   * Only the START can reach that CHECK: seconds on the end widen the window,
+   * so they pass it and are merely stored off the solver's five-minute grid, to
+   * be read back on every run. Both are refused anyway, because the grid is the
+   * reason for both. Refusing is the fix rather than counting, because a
+   * schedule laid in five-minute slots has nothing to do with a second.
    */
   private assertFitsTheSolverGrid(dto: UpsertLunchSettingsDto): void {
+    for (const [label, value] of [
+      ['Starttiden', dto.lunchStartTime],
+      ['Sluttiden', dto.lunchEndTime],
+    ] as const) {
+      const [, , seconds = '0'] = value.split(':');
+      if (Number(seconds) !== 0) {
+        throw new BadRequestException(
+          `${label} anges i hela minuter — schemaläggaren räknar i ${SLOT_MINUTES}-minuterssteg, och sekunder går inte att lägga på det rutnätet.`,
+        );
+      }
+    }
+
     const start = minutesOf(dto.lunchStartTime);
     const end = minutesOf(dto.lunchEndTime);
 
