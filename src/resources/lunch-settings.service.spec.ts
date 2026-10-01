@@ -178,6 +178,49 @@ describe('LunchSettingsService', () => {
       });
     });
 
+    it.each([
+      ['a second on the start', { lunchStartTime: '11:00:30', lunchEndTime: '11:30' }],
+      ['a second on the end', { lunchStartTime: '11:00', lunchEndTime: '11:30:30' }],
+    ])('refuses %s, which the width arithmetic cannot see', async (_label, overrides) => {
+      /*
+       * The 500 this exists to stop, and the one sibling of
+       * TeacherWorkRules_lunch_window_fits_break that counts seconds the same
+       * way. `minutesOf` splits on ':' and reads two fields, so 11:00:30
+       * measures as 11:00: the width came out as a whole thirty minutes and
+       * both edges passed `% 5`. LunchSettings_window_fits_break measures the
+       * same window with EXTRACT(EPOCH …) and sees 1770 seconds against 1800,
+       * and a CHECK violation is none of the codes rethrowPrismaError maps — so
+       * the admin met a bare 500 instead of a sentence naming the field.
+       *
+       * The end row is the smaller claim: a second there widens the window, so
+       * it passes the CHECK and is merely stored off the five-minute grid. It
+       * is refused for the grid's sake, not the CHECK's.
+       */
+      await expect(
+        service.upsert(
+          dto({ ...overrides, lunchMinutes: 30 }),
+          testUser(),
+        ),
+      ).rejects.toThrow(/hela minuter/);
+
+      expect(tx.lunchSetting.upsert).not.toHaveBeenCalled();
+    });
+
+    it('still takes the zero seconds PostgREST sends, so a row round-trips', async () => {
+      // The reason the DTO admits HH:MM:SS at all: the web reads this row back
+      // from PostgREST, which writes the seconds out, and PUTs it again. This
+      // endpoint's own answer is HH:MM — `toWallClock` drops them — so :00 is
+      // the only seconds a client has any way to send.
+      tx.lunchSetting.upsert.mockResolvedValue(storedRow());
+
+      await service.upsert(
+        dto({ lunchStartTime: '11:00:00', lunchEndTime: '13:00:00' }),
+        testUser(),
+      );
+
+      expect(tx.lunchSetting.upsert).toHaveBeenCalled();
+    });
+
     it('accepts a window exactly as long as the break', async () => {
       tx.lunchSetting.upsert.mockResolvedValue(storedRow());
 
