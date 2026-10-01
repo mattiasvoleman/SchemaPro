@@ -338,6 +338,11 @@ describe('FrameTimesService', () => {
        * because it is a prefix, so a string check reads this as a valid window
        * and stores a thirty-second frame — a row no grid can place a lesson in.
        * The DTO's regex admits both lengths, so it is reachable from the wire.
+       *
+       * Refused one check earlier now: the seconds go before the ordering is
+       * measured at all, so the sentence names the second rather than the
+       * order. A narrower answer to the same request, and still the same 400 —
+       * the ordering guard keeps its own rows below.
        */
       await expect(
         service.create(
@@ -370,7 +375,17 @@ describe('FrameTimesService', () => {
       expect(tx.frameTime.create).not.toHaveBeenCalled();
     });
 
-    it('still accepts a seconds-bearing clock that spans real minutes', async () => {
+    it('still takes the zero seconds PostgREST sends, so a row round-trips', async () => {
+      /*
+       * NOT because the window spans real minutes, which is what this row used
+       * to be named for — the span stopped being the reason when the seconds
+       * started being refused on their own. `08:00:00` is accepted because its
+       * seconds are zero, and that is the whole of it.
+       *
+       * Which is the case the DTO's `HH:MM:SS` exists for: the web reads this
+       * row back from PostgREST, which writes the seconds out, and sends it
+       * again. Refusing the second must not refuse that round-trip.
+       */
       tx.frameTime.create.mockResolvedValue(storedFrame());
 
       await expect(
