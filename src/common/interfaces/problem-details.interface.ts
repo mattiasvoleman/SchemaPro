@@ -28,4 +28,10 @@ export interface ProblemDetails {
    * "compute again", a clash means "show this". A token, never free text.
    */
   code?: string;
+  /**
+   * The values the code's sentence substitutes, when the thrower gave them —
+   * a flat object of short scalars (STAFF_TEACHER_NOT_QUALIFIED: role,
+   * subject, grades). Present only beside `code`; see HttpExceptionFilter.
+   */
+  params?: Record<string, string | number>;
 }

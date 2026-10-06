@@ -106,6 +106,46 @@ describe('HttpExceptionFilter', () => {
     expect(body()).not.toHaveProperty('code');
   });
 
+  it('carries the params of a coded refusal, so the client renders the sentence itself', () => {
+    filter.catch(
+      new ConflictException({
+        message: 'Läraren saknar behörighet i Matematik för åk 7–9.',
+        code: 'STAFF_TEACHER_NOT_QUALIFIED',
+        params: { role: 'TEACHER', subject: 'Matematik', grades: '7–9' },
+      }),
+      host,
+    );
+
+    expect(body()).toMatchObject({
+      status: 409,
+      code: 'STAFF_TEACHER_NOT_QUALIFIED',
+      params: { role: 'TEACHER', subject: 'Matematik', grades: '7–9' },
+    });
+  });
+
+  it.each([
+    ['a nested object', { role: { name: 'Anna' } }],
+    ['an array', ['Matematik']],
+    ['a long text', { subject: 'x'.repeat(201) }],
+    ['a key that is not a name', { 'two words': 'x' }],
+    ['a number that is not finite', { minutes: Number.NaN }],
+    ['more than twenty values', Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`p${i}`, i]))],
+  ])('drops the whole params member when it holds %s', (_label, params) => {
+    filter.catch(
+      new ConflictException({ message: 'Nej.', code: 'STAFF_TEACHER_OVER_TARGET', params }),
+      host,
+    );
+
+    expect(body()).toMatchObject({ code: 'STAFF_TEACHER_OVER_TARGET' });
+    expect(body()).not.toHaveProperty('params');
+  });
+
+  it('drops params that come without a code: they name no sentence', () => {
+    filter.catch(new ConflictException({ message: 'Nej.', params: { minutes: 3 } }), host);
+
+    expect(body()).not.toHaveProperty('params');
+  });
+
   it('uses a string exception body directly and falls back to "Error" for unknown statuses', () => {
     filter.catch(new HttpException('I am a teapot', 418), host);
 
