@@ -1943,6 +1943,397 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('lokala timplaner', () => {
+    /*
+     * A school's own timplan and the decision that fixes it. TEACHER reads the
+     * three GETs; every write is the admin's and stops at the guard for anyone
+     * else — so each verb has an admin round trip that reaches its handler,
+     * and the decided-state rules (409 TIMPLAN_IS_DECIDED) are asserted over
+     * HTTP with the problem code a client acts on.
+     */
+    const PLAN_ID = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+    const COPY_ID = 'b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2';
+    const VERSION_ID = 'c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3';
+    const ADMIN_USER_ID = '22222222-2222-4222-8222-222222222222';
+    const teacher = () => asUser({ role: 'TEACHER' as never });
+    const student = () => asUser({ role: 'STUDENT' as never });
+
+    const MODELS = ['localTimplan', 'localTimplanEntry', 'nationalTimplanVersion', 'nationalSubject', 'subject'];
+    /**
+     * clearAllMocks keeps implementations, and a plan stubbed here must not
+     * answer a subjects test further down. Reset to the harness's defaults —
+     * every findMany an empty table — before and after each case.
+     */
+    const resetModels = () => {
+      for (const model of MODELS) {
+        for (const method of Object.values(harness.tx[model]!)) method.mockReset();
+        harness.tx[model]!['findMany']!.mockResolvedValue([]);
+      }
+    };
+    beforeEach(resetModels);
+    afterEach(resetModels);
+
+    const storedPlan = (overrides: Record<string, unknown> = {}) => ({
+      id: PLAN_ID,
+      schoolId: SCHOOL_ID,
+      name: 'Grundskolan 2024',
+      schoolForm: 'GRUNDSKOLA',
+      nationalTimplanVersionId: VERSION_ID,
+      planningWeeks: new Prisma.Decimal('35.6'),
+      status: 'DRAFT',
+      decidedAt: null,
+      decidedByUserId: null,
+      decisionNote: null,
+      copiedFromId: null,
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+      ...overrides,
+    });
+    const decidedPlan = () =>
+      storedPlan({
+        status: 'DECIDED',
+        decidedAt: new Date('2026-05-12T10:00:00.000Z'),
+        decidedByUserId: ADMIN_USER_ID,
+        decisionNote: 'Beslutat av huvudman 2026-05-12',
+      });
+    const maEntry = (gradeLevel: number, minutesPerWeek: number) => ({
+      id: `e0e0e0e0-e0e0-4e0e-8e0e-e0e0e0e0e0e${gradeLevel}`,
+      subjectId: SUBJECT_ID,
+      gradeLevel,
+      minutesPerWeek,
+      note: null,
+    });
+
+    /** Bilaga 1's matematik cells and the pool, as the check reads them. */
+    const givenTheStatute = () => {
+      harness.tx['nationalTimplanVersion']!['findUnique']!.mockImplementation(
+        (args: { select?: { entries?: unknown } }) =>
+          Promise.resolve(
+            args.select?.entries
+              ? {
+                  code: 'SFS2023:945/B1',
+                  schoolForm: 'GRUNDSKOLA',
+                  totalHours: 6890,
+                  skolansValHours: 600,
+                  reductionCapPercent: 20,
+                  appliesFromCohortTerm: 'HT2024',
+                  entries: [
+                    { subjectCode: 'MA', stage: 'LAG', hours: 420, minimumHoursPerChild: null, protectedFromReduction: true },
+                  ],
+                }
+              : { code: 'SFS2023:945/B1', schoolForm: 'GRUNDSKOLA' },
+          ),
+      );
+      harness.tx['nationalSubject']!['findMany']!.mockResolvedValue([
+        { code: 'MA', name: 'Matematik', parentCode: null },
+      ]);
+    };
+
+    /** The decided-plan trigger's refusal, as @prisma/adapter-pg delivers it. */
+    const triggerRefusal = () => {
+      const message = 'TIMPLAN_IS_DECIDED: lokal timplan "Grundskolan 2024" är beslutad och dess poster kan inte ändras';
+      return new Prisma.PrismaClientKnownRequestError(`Database error. Code: \`TP409\`. Message: \`${message}\``, {
+        code: 'P2039',
+        clientVersion: Prisma.prismaVersion.client,
+        meta: {
+          driverAdapterError: {
+            cause: { originalCode: 'TP409', originalMessage: message, detail: `localTimplanId=${PLAN_ID}` },
+          },
+        },
+      });
+    };
+
+    it('an admin creates a plan, and reads planningWeeks back as a number', async () => {
+      givenTheStatute();
+      harness.tx['localTimplan']!['create']!.mockResolvedValue(storedPlan());
+
+      const response = await request(http())
+        .post('/api/v1/local-timplans')
+        .set('x-test-user', admin())
+        .send({ name: 'Grundskolan 2024', schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: VERSION_ID })
+        .expect(201);
+
+      expect(response.body).toMatchObject({ id: PLAN_ID, planningWeeks: 35.6, status: 'DRAFT', entries: [] });
+      expect(harness.tx['localTimplan']!['create']).toHaveBeenCalledWith({
+        data: expect.objectContaining({ schoolId: SCHOOL_ID, planningWeeks: '35.6' }),
+      });
+    });
+
+    it('an admin lists, reads, renames and deletes a plan', async () => {
+      harness.tx['localTimplan']!['findMany']!.mockResolvedValueOnce([
+        { ...storedPlan(), _count: { entries: 3 } },
+      ]);
+      const list = await request(http()).get('/api/v1/local-timplans').set('x-test-user', admin()).expect(200);
+      expect(list.body).toEqual([expect.objectContaining({ id: PLAN_ID, entryCount: 3, planningWeeks: 35.6 })]);
+
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValueOnce({ ...storedPlan(), entries: [maEntry(4, 180)] });
+      const one = await request(http()).get(`/api/v1/local-timplans/${PLAN_ID}`).set('x-test-user', admin()).expect(200);
+      expect(one.body.entries).toEqual([expect.objectContaining({ gradeLevel: 4, minutesPerWeek: 180 })]);
+
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValueOnce(storedPlan());
+      harness.tx['localTimplan']!['update']!.mockResolvedValueOnce(storedPlan({ name: 'Grundskolan 2025' }));
+      await request(http())
+        .patch(`/api/v1/local-timplans/${PLAN_ID}`)
+        .set('x-test-user', admin())
+        .send({ name: 'Grundskolan 2025', planningWeeks: 36 })
+        .expect(200);
+      expect(harness.tx['localTimplan']!['update']).toHaveBeenCalledWith({
+        where: { id: PLAN_ID },
+        data: { name: 'Grundskolan 2025', planningWeeks: '36.0' },
+      });
+
+      harness.tx['localTimplan']!['delete']!.mockResolvedValueOnce(decidedPlan());
+      const gone = await request(http())
+        .delete(`/api/v1/local-timplans/${PLAN_ID}`)
+        .set('x-test-user', admin())
+        .expect(204);
+      expect(gone.body).toEqual({});
+    });
+
+    it('an admin replaces the entries and gets the verdicts back in the same answer', async () => {
+      givenTheStatute();
+      harness.tx['localTimplan']!['findUnique']!
+        .mockResolvedValueOnce(storedPlan())
+        .mockResolvedValueOnce({ ...storedPlan(), entries: [maEntry(1, 236), maEntry(2, 236), maEntry(3, 235)] });
+      harness.tx['subject']!['findMany']!
+        .mockResolvedValueOnce([{ id: SUBJECT_ID }])
+        .mockResolvedValueOnce([{ id: SUBJECT_ID, name: 'Matematik', nationalCode: 'MA', countsTowardTimplan: true }]);
+
+      const response = await request(http())
+        .put(`/api/v1/local-timplans/${PLAN_ID}/entries`)
+        .set('x-test-user', admin())
+        .send({
+          entries: [
+            { subjectId: SUBJECT_ID, gradeLevel: 1, minutesPerWeek: 236 },
+            { subjectId: SUBJECT_ID, gradeLevel: 2, minutesPerWeek: 236 },
+            { subjectId: SUBJECT_ID, gradeLevel: 3, minutesPerWeek: 235, note: 'skolans val' },
+          ],
+        })
+        .expect(200);
+
+      expect(response.body.plan.entries).toHaveLength(3);
+      expect(response.body.check.verdicts[0]).toMatchObject({
+        code: 'TIMPLAN_PROTECTED_SUBJECT_REDUCED',
+        severity: 'warning',
+        message: 'Matematik i lågstadiet: 419,5 h planerat, 0,6 h under målet 420 h. Ämnet får inte minskas för skolans val.',
+      });
+      expect(harness.tx['localTimplanEntry']!['createMany']).toHaveBeenCalledWith({
+        data: expect.arrayContaining([
+          expect.objectContaining({ schoolId: SCHOOL_ID, localTimplanId: PLAN_ID, gradeLevel: 3, note: 'skolans val' }),
+        ]),
+      });
+    });
+
+    it('an admin decides a draft, stamped with their own id', async () => {
+      harness.tx['localTimplan']!['findUnique']!
+        .mockResolvedValueOnce(storedPlan())
+        .mockResolvedValueOnce(decidedPlan());
+      harness.tx['localTimplan']!['updateMany']!.mockResolvedValueOnce({ count: 1 });
+
+      const response = await request(http())
+        .post(`/api/v1/local-timplans/${PLAN_ID}/decide`)
+        .set('x-test-user', admin())
+        .send({ decisionNote: 'Beslutat av huvudman 2026-05-12' })
+        .expect(200);
+
+      expect(response.body).toMatchObject({ status: 'DECIDED', decidedByUserId: ADMIN_USER_ID });
+      expect(harness.tx['localTimplan']!['updateMany']).toHaveBeenCalledWith({
+        where: { id: PLAN_ID, status: 'DRAFT' },
+        data: expect.objectContaining({ decidedByUserId: ADMIN_USER_ID, status: 'DECIDED' }),
+      });
+    });
+
+    it('an admin reopens a decided plan, and copies one, each into a new draft (201)', async () => {
+      for (const action of ['reopen', 'copy']) {
+        harness.tx['localTimplan']!['findUnique']!
+          .mockResolvedValueOnce({ ...decidedPlan(), entries: [maEntry(4, 180)] })
+          .mockResolvedValueOnce({ ...storedPlan({ id: COPY_ID, copiedFromId: PLAN_ID }), entries: [maEntry(4, 180)] });
+        harness.tx['localTimplan']!['create']!.mockResolvedValueOnce(storedPlan({ id: COPY_ID }));
+
+        const response = await request(http())
+          .post(`/api/v1/local-timplans/${PLAN_ID}/${action}`)
+          .set('x-test-user', admin())
+          .send({})
+          .expect(201);
+
+        expect(response.body).toMatchObject({ id: COPY_ID, copiedFromId: PLAN_ID, status: 'DRAFT' });
+      }
+      expect(harness.tx['localTimplan']!['create']!.mock.calls.map((call) => call[0].data.name)).toEqual([
+        'Grundskolan 2024 (utkast)',
+        'Grundskolan 2024 (kopia)',
+      ]);
+      expect(harness.tx['localTimplanEntry']!['createMany']).toHaveBeenCalledTimes(2);
+    });
+
+    it('a teacher reads the list, a plan and its check — and a pupil reads none of them here', async () => {
+      givenTheStatute();
+      await request(http()).get('/api/v1/local-timplans').set('x-test-user', teacher()).expect(200);
+
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValueOnce({ ...storedPlan(), entries: [] });
+      await request(http()).get(`/api/v1/local-timplans/${PLAN_ID}`).set('x-test-user', teacher()).expect(200);
+
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValueOnce({ ...storedPlan(), entries: [] });
+      const check = await request(http())
+        .get(`/api/v1/local-timplans/${PLAN_ID}/check`)
+        .set('x-test-user', teacher())
+        .expect(200);
+      expect(check.body).toMatchObject({ localTimplanId: PLAN_ID, total: { guaranteedHours: 6890 } });
+      // An empty plan is under mål everywhere; it is still a 200 with warnings, not a refusal.
+      expect(check.body.verdicts.map((v: { code: string }) => v.code)).toEqual([
+        'TIMPLAN_PROTECTED_SUBJECT_REDUCED',
+        'TIMPLAN_TOTAL_BELOW_GUARANTEE',
+      ]);
+
+      for (const role of [student(), asUser({ role: 'GUARDIAN' as never })]) {
+        await request(http()).get('/api/v1/local-timplans').set('x-test-user', role).expect(403);
+      }
+    });
+
+    it('403s every write for a teacher, before any table is touched', async () => {
+      const writes: [string, string, object][] = [
+        ['post', '/api/v1/local-timplans', { name: 'X', schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: VERSION_ID }],
+        ['patch', `/api/v1/local-timplans/${PLAN_ID}`, { name: 'X' }],
+        ['delete', `/api/v1/local-timplans/${PLAN_ID}`, {}],
+        ['put', `/api/v1/local-timplans/${PLAN_ID}/entries`, { entries: [] }],
+        ['post', `/api/v1/local-timplans/${PLAN_ID}/decide`, { decisionNote: 'x' }],
+        ['post', `/api/v1/local-timplans/${PLAN_ID}/reopen`, {}],
+        ['post', `/api/v1/local-timplans/${PLAN_ID}/copy`, {}],
+      ];
+      for (const [verb, path, body] of writes) {
+        const agent = request(http()) as unknown as Record<string, (p: string) => request.Test>;
+        await agent[verb]!(path).set('x-test-user', teacher()).send(body).expect(403);
+      }
+      for (const method of ['findUnique', 'create', 'update', 'updateMany', 'delete']) {
+        expect(harness.tx['localTimplan']![method]).not.toHaveBeenCalled();
+      }
+    });
+
+    it('400s a body the table would refuse, naming the field, before the database', async () => {
+      const weeks = await request(http())
+        .post('/api/v1/local-timplans')
+        .set('x-test-user', admin())
+        .send({ name: 'X', schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: VERSION_ID, planningWeeks: 41 })
+        .expect(400);
+      expect(JSON.stringify(weeks.body)).toContain('planningWeeks: högst 40,0 veckor.');
+
+      await request(http())
+        .post('/api/v1/local-timplans')
+        .set('x-test-user', admin())
+        .send({ name: '   ', schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: VERSION_ID })
+        .expect(400);
+
+      const grade = await request(http())
+        .put(`/api/v1/local-timplans/${PLAN_ID}/entries`)
+        .set('x-test-user', admin())
+        .send({ entries: [{ subjectId: SUBJECT_ID, gradeLevel: 11, minutesPerWeek: 60 }] })
+        .expect(400);
+      expect(JSON.stringify(grade.body)).toContain('gradeLevel: högsta årskurs är 10.');
+
+      await request(http())
+        .post(`/api/v1/local-timplans/${PLAN_ID}/decide`)
+        .set('x-test-user', admin())
+        .send({ decisionNote: '  ' })
+        .expect(400);
+
+      await request(http())
+        .patch(`/api/v1/local-timplans/${PLAN_ID}`)
+        .set('x-test-user', admin())
+        .send({ schoolForm: 'SAMESKOLA' })
+        .expect(400);
+
+      await request(http()).get('/api/v1/local-timplans/not-a-uuid').set('x-test-user', admin()).expect(400);
+
+      expect(harness.tx['localTimplan']!['findUnique']).not.toHaveBeenCalled();
+      expect(harness.tx['localTimplan']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('400s a version of another school form, naming both forms', async () => {
+      harness.tx['nationalTimplanVersion']!['findUnique']!.mockResolvedValueOnce({
+        code: 'SFS2023:945/B4',
+        schoolForm: 'SAMESKOLA',
+      });
+
+      const response = await request(http())
+        .post('/api/v1/local-timplans')
+        .set('x-test-user', admin())
+        .send({ name: 'X', schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: VERSION_ID })
+        .expect(400);
+      expect(response.body.detail).toContain('SFS2023:945/B4 är timplanen för sameskolan');
+    });
+
+    it('404s a plan RLS hides, on a read, an entries write and a delete', async () => {
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValue(null);
+      await request(http()).get(`/api/v1/local-timplans/${PLAN_ID}`).set('x-test-user', admin()).expect(404);
+      await request(http())
+        .put(`/api/v1/local-timplans/${PLAN_ID}/entries`)
+        .set('x-test-user', admin())
+        .send({ entries: [] })
+        .expect(404);
+
+      harness.tx['localTimplan']!['delete']!.mockRejectedValueOnce(notFound());
+      await request(http()).delete(`/api/v1/local-timplans/${PLAN_ID}`).set('x-test-user', admin()).expect(404);
+      expect(harness.tx['localTimplanEntry']!['deleteMany']).not.toHaveBeenCalled();
+    });
+
+    it('409s TIMPLAN_IS_DECIDED for a rename, an entries write and a second decide of a decided plan', async () => {
+      const calls: [string, string, object][] = [
+        ['patch', `/api/v1/local-timplans/${PLAN_ID}`, { name: 'X' }],
+        ['put', `/api/v1/local-timplans/${PLAN_ID}/entries`, { entries: [] }],
+        ['post', `/api/v1/local-timplans/${PLAN_ID}/decide`, { decisionNote: 'igen' }],
+      ];
+      for (const [verb, path, body] of calls) {
+        harness.tx['localTimplan']!['findUnique']!.mockResolvedValueOnce(decidedPlan());
+        const agent = request(http()) as unknown as Record<string, (p: string) => request.Test>;
+        const response = await agent[verb]!(path).set('x-test-user', admin()).send(body).expect(409);
+        expect(response.body).toMatchObject({ status: 409, code: 'TIMPLAN_IS_DECIDED' });
+        expect(response.body.detail).toContain('"Grundskolan 2024" är beslutad');
+      }
+      expect(harness.tx['localTimplan']!['update']).not.toHaveBeenCalled();
+      expect(harness.tx['localTimplan']!['updateMany']).not.toHaveBeenCalled();
+      expect(harness.tx['localTimplanEntry']!['deleteMany']).not.toHaveBeenCalled();
+    });
+
+    it('409s the trigger’s refusal — a plan decided mid-save — with the same code, never a 500', async () => {
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValueOnce(storedPlan());
+      harness.tx['subject']!['findMany']!.mockResolvedValueOnce([{ id: SUBJECT_ID }]);
+      harness.tx['localTimplanEntry']!['createMany']!.mockRejectedValueOnce(triggerRefusal());
+
+      const response = await request(http())
+        .put(`/api/v1/local-timplans/${PLAN_ID}/entries`)
+        .set('x-test-user', admin())
+        .send({ entries: [{ subjectId: SUBJECT_ID, gradeLevel: 4, minutesPerWeek: 180 }] })
+        .expect(409);
+      expect(response.body).toMatchObject({ code: 'TIMPLAN_IS_DECIDED' });
+      expect(response.body.detail).toContain('"Grundskolan 2024"');
+    });
+
+    it('409s reopening a draft, which is edited as it stands', async () => {
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValueOnce({ ...storedPlan(), entries: [] });
+
+      const response = await request(http())
+        .post(`/api/v1/local-timplans/${PLAN_ID}/reopen`)
+        .set('x-test-user', admin())
+        .send({})
+        .expect(409);
+      expect(response.body).toMatchObject({ code: 'TIMPLAN_IS_DRAFT' });
+      expect(harness.tx['localTimplan']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('409s a name the school already uses', async () => {
+      givenTheStatute();
+      harness.tx['localTimplan']!['create']!.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('dup', { code: 'P2002', clientVersion: Prisma.prismaVersion.client }),
+      );
+
+      const response = await request(http())
+        .post('/api/v1/local-timplans')
+        .set('x-test-user', admin())
+        .send({ name: 'Grundskolan 2024', schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: VERSION_ID })
+        .expect(409);
+      expect(response.body.detail).toContain('heter "Grundskolan 2024"');
+    });
+  });
+
   describe('RBAC', () => {
     const adminOnly = [
       ['POST', '/api/v1/academic-years'],
