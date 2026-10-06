@@ -4,15 +4,24 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { BookOpen, Pencil, Plus, Trash2, Upload } from "lucide-react";
-import { useCrudMutations, useSubjects , useRoomTypes, useRoomTypeActions } from "@/lib/queries";
-import type { RoomType, Subject } from "@/lib/types";
+import {
+  useCrudMutations,
+  useNationalTimplans,
+  useSubjects,
+  useRoomTypes,
+  useRoomTypeActions,
+} from "@/lib/queries";
+import type { NationalSubject, RoomType, Subject } from "@/lib/types";
+import { sectionNationalSubjects } from "@/lib/national-subjects";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import { subjectsToCsv } from "@/lib/csv";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -20,6 +29,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -45,17 +55,34 @@ interface SubjectForm {
   code: string;
   color: string;
   requiredRoomTypeId: string;
+  /** A NationalSubject.code, or OUTSIDE_TIMPLAN for null. */
+  nationalCode: string;
+  countsTowardTimplan: boolean;
 }
 
 const ANY_ROOM = "__any__";
 const ADD_NEW = "__add__";
+/**
+ * The null option of the national-code picker. A Radix Select cannot hold an
+ * empty string as a value, so "outside the timplan" needs a sentinel the same
+ * way "any room" does; it is turned back into null at the API boundary.
+ */
+const OUTSIDE_TIMPLAN = "__outside__";
 
 const EMPTY_FORM: SubjectForm = {
   name: "",
   code: "",
   color: "#6366f1",
   requiredRoomTypeId: ANY_ROOM,
+  nationalCode: OUTSIDE_TIMPLAN,
+  // On by default: the flag exists for the few subjects that are NOT teaching
+  // time (Mentorstid, Resurs), and a new subject is a taught one until said
+  // otherwise — which is also the column's own default.
+  countsTowardTimplan: true,
 };
+
+/** "Matematik (MA)" — the statute's name with the code the CSV column takes. */
+const nationalLabel = (subject: NationalSubject) => `${subject.name} (${subject.code})`;
 
 export default function SubjectsPage() {
   const t = useTranslations("subjects");
@@ -67,10 +94,17 @@ export default function SubjectsPage() {
     code?: string | null;
     color?: string | null;
     requiredRoomTypeId?: string | null;
+    nationalCode?: string | null;
+    countsTowardTimplan?: boolean;
   }>("/api/v1/subjects", [["subjects"]]);
 
   const { data: roomTypes } = useRoomTypes();
   const roomTypeActions = useRoomTypeActions();
+  const nationalTimplans = useNationalTimplans();
+  const nationalSections = sectionNationalSubjects(nationalTimplans.data?.subjects ?? []);
+  const nationalByCode = new Map(
+    (nationalTimplans.data?.subjects ?? []).map((subject) => [subject.code, subject]),
+  );
   /**
    * Exports what is on screen, in the importer's own format, so the file can
    * be edited and uploaded straight back.
@@ -103,6 +137,8 @@ export default function SubjectsPage() {
       code: subject.code ?? "",
       color: subject.color ?? "#6366f1",
       requiredRoomTypeId: subject.requiredRoomTypeId ?? ANY_ROOM,
+      nationalCode: subject.nationalCode ?? OUTSIDE_TIMPLAN,
+      countsTowardTimplan: subject.countsTowardTimplan,
     });
     setDialogOpen(true);
   };
@@ -114,6 +150,10 @@ export default function SubjectsPage() {
       color: form.color,
       requiredRoomTypeId:
         form.requiredRoomTypeId === ANY_ROOM ? null : form.requiredRoomTypeId,
+      // Sent on every save, null included: an absent key keeps the old
+      // mapping, and "Utanför timplanen" is a decision, not an omission.
+      nationalCode: form.nationalCode === OUTSIDE_TIMPLAN ? null : form.nationalCode,
+      countsTowardTimplan: form.countsTowardTimplan,
     };
     try {
       if (editing) {
@@ -193,6 +233,7 @@ export default function SubjectsPage() {
               <TableRow>
                 <TableHead>{tCommon("name")}</TableHead>
                 <TableHead>{tCommon("code")}</TableHead>
+                <TableHead>{t("nationalCode")}</TableHead>
                 <TableHead>{tCommon("color")}</TableHead>
                 <TableHead className="w-24 text-right">{tCommon("actions")}</TableHead>
               </TableRow>
@@ -203,6 +244,34 @@ export default function SubjectsPage() {
                   <TableCell className="font-medium">{subject.name}</TableCell>
                   <TableCell>
                     {subject.code ? <Badge variant="secondary">{subject.code}</Badge> : "—"}
+                  </TableCell>
+                  <TableCell>
+                    {/*
+                      The badge is the mitigation the design names for the
+                      one mapping mistake that looks like a deficit: a school
+                      that mapped Svenska and forgot SvA sees the gap here,
+                      on the row, before any coverage page says "under mål".
+                    */}
+                    <span className="inline-flex flex-wrap items-center gap-1">
+                      {subject.nationalCode ? (
+                        <Badge
+                          variant="outline"
+                          className="px-1.5 py-0 font-mono text-[11px]"
+                          title={
+                            nationalByCode.get(subject.nationalCode)?.name ?? undefined
+                          }
+                        >
+                          {subject.nationalCode}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                      {subject.countsTowardTimplan ? null : (
+                        <Badge variant="warning" className="px-1.5 py-0 text-[11px]">
+                          {t("notTeachingTime")}
+                        </Badge>
+                      )}
+                    </span>
                   </TableCell>
                   <TableCell>
                     <span
@@ -306,6 +375,70 @@ export default function SubjectsPage() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">{t("requiredRoomTypeHint")}</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="subject-national-code">{t("nationalCode")}</Label>
+              <Select
+                value={form.nationalCode}
+                onValueChange={(value) => setForm({ ...form, nationalCode: value })}
+              >
+                <SelectTrigger id="subject-national-code">
+                  {/*
+                    The shown value is computed here rather than left to the
+                    selected item's text: while the statute document is still
+                    loading (or failed to), no item matches a stored code, and
+                    Radix would then show an EMPTY trigger — which for a mapped
+                    subject reads as "Utanför timplanen". The bare code is the
+                    honest fallback until the names arrive.
+                  */}
+                  <SelectValue>
+                    {form.nationalCode === OUTSIDE_TIMPLAN
+                      ? t("nationalCodeNone")
+                      : (() => {
+                          const known = nationalByCode.get(form.nationalCode);
+                          return known ? nationalLabel(known) : form.nationalCode;
+                        })()}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={OUTSIDE_TIMPLAN}>{t("nationalCodeNone")}</SelectItem>
+                  {nationalSections.map((section) =>
+                    section.group === null ? (
+                      section.options.map((option) => (
+                        <SelectItem key={option.code} value={option.code}>
+                          {nationalLabel(option)}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      // One section per ämnesgrupp, the group itself first:
+                      // lågstadiet teaches NO as one subject and maps to the
+                      // group, högstadiet teaches Kemi and maps to the child.
+                      <SelectGroup key={section.group.code}>
+                        <SelectLabel>{section.group.name}</SelectLabel>
+                        {section.options.map((option) => (
+                          <SelectItem key={option.code} value={option.code}>
+                            {nationalLabel(option)}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ),
+                  )}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {nationalTimplans.isError ? t("nationalCodeUnavailable") : t("nationalCodeHint")}
+              </p>
+            </div>
+            <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+              <div className="space-y-1">
+                <Label htmlFor="subject-counts-toward-timplan">{t("countsTowardTimplan")}</Label>
+                <p className="text-xs text-muted-foreground">{t("countsTowardTimplanHint")}</p>
+              </div>
+              <Switch
+                id="subject-counts-toward-timplan"
+                checked={form.countsTowardTimplan}
+                onCheckedChange={(checked) => setForm({ ...form, countsTowardTimplan: checked })}
+              />
             </div>
           </div>
           <DialogFooter>
