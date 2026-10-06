@@ -148,10 +148,12 @@ interface CsvTemplate {
 export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
   subjects: {
     filename: "amnen.csv",
-    headers: ["namn", "kod", "farg", "salstyp"],
+    headers: ["namn", "kod", "farg", "salstyp", "nationell_kod", "undervisningstid"],
     exampleRows: [
-      ["Matematik", "MA", "#4f46e5", ""],
-      ["Textilslöjd", "SLTX", "#db2777", "Textilslöjd"],
+      ["Matematik", "MA", "#4f46e5", "", "MA", "ja"],
+      ["Textilslöjd", "SLTX", "#db2777", "Textilslöjd", "SL", "ja"],
+      // The row the flag exists for: no national code, and not teaching time.
+      ["Mentorstid", "MT", "#64748b", "", "", "nej"],
     ],
   },
   roomTypes: {
@@ -335,6 +337,13 @@ export interface RowError {
 interface MappedRows<T> {
   rows: T[];
   errors: RowError[];
+  /**
+   * The 1-based file row each entry of `rows` came from, aligned by index. A
+   * mapper that checks a cell AFTER this pass (a yes/no column, say) needs it
+   * to name the right line, and cannot recover it from `rows` once a required
+   * field has dropped a line in between.
+   */
+  rowNumbers: number[];
 }
 
 /**
@@ -367,10 +376,12 @@ function mapRows<T>(
             .join(", ")}. Ladda ner mallen och utgå från den.`,
         },
       ],
+      rowNumbers: [],
     };
   }
 
   const rows: Record<string, string>[] = [];
+  const rowNumbers: number[] = [];
   const errors: RowError[] = [];
   parsed.rows.forEach((raw, index) => {
     const row: Record<string, string> = {};
@@ -385,9 +396,12 @@ function mapRows<T>(
       }
       row[field] = value;
     }
-    if (valid) rows.push(row);
+    if (valid) {
+      rows.push(row);
+      rowNumbers.push(index + 1);
+    }
   });
-  return { rows, errors };
+  return { rows, errors, rowNumbers };
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -410,6 +424,8 @@ const FIELD_LABELS: Record<string, string> = {
   recurrence: "veckor",
   startDate: "fran",
   endDate: "till",
+  nationalCode: "nationell_kod",
+  countsTowardTimplan: "undervisningstid",
 };
 
 const requiredMessage = (field: string, row: number) =>
@@ -488,14 +504,62 @@ export function mapClassRows(parsed: ParsedCsv): {
 }
 
 /**
+ * One row of amnen.csv after mapping — the body ImportSubjectRowDto expects.
+ *
+ * A type alias, not an interface: the import dialog's mapper table wants rows
+ * as `Record<string, unknown>`, which an interface (no index signature) is not
+ * assignable to and an object type alias is.
+ */
+export type SubjectRow = {
+  name: string;
+  code: string;
+  color: string;
+  /** The room type's NAME, resolved server-side. */
+  roomType: string;
+  /**
+   * The Skolverket code exactly as written — the server trims and upper-cases
+   * it, and refuses the row if it is not a known code. Null for an empty cell:
+   * the subject is outside the national timplan.
+   */
+  nationalCode: string | null;
+  /**
+   * Null for an empty cell, which the server reads as its default (true). The
+   * DTO types this as a boolean, so a cell that is neither ja nor nej has to be
+   * refused HERE, per row — sent as text it would 400 the whole upload.
+   */
+  countsTowardTimplan: boolean | null;
+};
+
+const YES_CELLS = ["ja", "j", "true", "sant", "1", "x"];
+const NO_CELLS = ["nej", "n", "false", "falskt", "0"];
+
+/**
+ * Reads a yes/no cell the way a Swedish spreadsheet writes one.
+ *
+ * Empty is null (not decided here), ja/nej and their obvious spellings are the
+ * booleans, and anything else is `undefined` — a value the caller must turn
+ * into a row error rather than guess at. "kanske" is not false.
+ */
+export function parseYesNoCell(cell: string): boolean | null | undefined {
+  const value = cell.trim().toLowerCase();
+  if (value === "") return null;
+  if (YES_CELLS.includes(value)) return true;
+  if (NO_CELLS.includes(value)) return false;
+  return undefined;
+}
+
+/**
  * Subject rows. The room type is a NAME here, resolved server-side against the
  * school's own list — a CSV never carries uuids.
  *
- * Only the name is required: colour and code are cosmetic, and most subjects
- * need no particular kind of room.
+ * Only the name is required: colour and code are cosmetic, most subjects need
+ * no particular kind of room, and the two timplan columns are the defaults
+ * when absent — outside the timplan, counts as teaching time — which is what
+ * every subject was before the columns existed, so an old file imports as it
+ * always did.
  */
-export function mapSubjectRows(parsed: ParsedCsv) {
-  return mapRows(
+export function mapSubjectRows(parsed: ParsedCsv): { rows: SubjectRow[]; errors: RowError[] } {
+  const mapped = mapRows(
     parsed,
     [
       { field: "name", aliases: ["namn", "name", "amne"], required: true },
@@ -506,9 +570,59 @@ export function mapSubjectRows(parsed: ParsedCsv) {
         aliases: ["salstyp", "kraver_salstyp", "roomtype"],
         required: false,
       },
+      {
+        field: "nationalCode",
+        aliases: [
+          "nationellkod",
+          "nationellamneskod",
+          "nationalcode",
+          "skolverketskod",
+          "skolverketkod",
+        ],
+        required: false,
+      },
+      {
+        field: "countsTowardTimplan",
+        aliases: [
+          "undervisningstid",
+          "raknassomundervisningstid",
+          "countstowardtimplan",
+          "undervisningsamne",
+        ],
+        required: false,
+      },
     ],
     requiredMessage,
   );
+
+  const rows: SubjectRow[] = [];
+  const errors = [...mapped.errors];
+  mapped.rows.forEach((row, index) => {
+    const rowNumber = mapped.rowNumbers[index]!;
+    const rawFlag = row.countsTowardTimplan ?? "";
+    const countsTowardTimplan = parseYesNoCell(rawFlag);
+    if (countsTowardTimplan === undefined) {
+      errors.push({
+        row: rowNumber,
+        message:
+          `Rad ${rowNumber}: kolumnen "${FIELD_LABELS.countsTowardTimplan}" ska vara ` +
+          `ja eller nej, inte "${rawFlag}".`,
+      });
+      return;
+    }
+    const nationalCode = (row.nationalCode ?? "").trim();
+    rows.push({
+      name: row.name ?? "",
+      code: row.code ?? "",
+      color: row.color ?? "",
+      roomType: row.roomType ?? "",
+      nationalCode: nationalCode === "" ? null : nationalCode,
+      countsTowardTimplan,
+    });
+  });
+  // Two sources of row errors; the reader expects them in file order.
+  errors.sort((a, b) => a.row - b.row);
+  return { rows, errors };
 }
 
 export function mapRoomTypeRows(parsed: ParsedCsv) {
@@ -934,7 +1048,14 @@ export function mapRequirementRows(parsed: ParsedCsv): {
  * definition here rather than kept in step by hand.
  */
 export function subjectsToCsv(
-  subjects: { name: string; code: string | null; color: string | null; requiredRoomTypeId: string | null }[],
+  subjects: {
+    name: string;
+    code: string | null;
+    color: string | null;
+    requiredRoomTypeId: string | null;
+    nationalCode: string | null;
+    countsTowardTimplan: boolean;
+  }[],
   roomTypeName: (id: string | null) => string,
 ): string {
   return serializeCsv(
@@ -944,6 +1065,11 @@ export function subjectsToCsv(
       subject.code ?? "",
       subject.color ?? "",
       roomTypeName(subject.requiredRoomTypeId),
+      subject.nationalCode ?? "",
+      // Written as the words the importer reads back, never as true/false:
+      // the file is for an administrator in Excel, and the import DTO's
+      // boolean is the mapper's business on the way back in.
+      subject.countsTowardTimplan ? "ja" : "nej",
     ]),
   );
 }

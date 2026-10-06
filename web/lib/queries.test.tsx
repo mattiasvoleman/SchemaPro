@@ -21,6 +21,7 @@ import {
   useLessonRoster,
   useMasterLessons,
   useMyChildren,
+  useNationalTimplans,
   useOptimizationHistory,
   useOptimizationJob,
   usePeople,
@@ -178,7 +179,9 @@ describe("useSubjects", () => {
     expect(queryClient.getQueryData(["subjects"])).toEqual(rows);
     expect(supabaseMocks.from).toHaveBeenCalledWith("Subjects");
     expect(argsFor("Subjects", "select")).toEqual([
-      ["id, name, code, color, requiredRoomTypeId"],
+      // The two timplan columns are part of the row the subjects form writes
+      // back; missing here, the dialog would clear a mapping on every save.
+      ["id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan"],
     ]);
     // Paged reads sort by a tie-break column as well; see selectAll.
     expect(argsFor("Subjects", "order")).toEqual([["name"], ["id"]]);
@@ -192,6 +195,73 @@ describe("useSubjects", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.error?.message).toBe("permission denied for table Subjects");
     expect(result.current.data).toBeUndefined();
+  });
+});
+
+describe("useNationalTimplans", () => {
+  const document = {
+    versions: [
+      {
+        id: "v-1",
+        code: "SFS2023:945/B1",
+        sfs: "2023:945",
+        title: "Bilaga 1",
+        schoolForm: "GRUNDSKOLA",
+        totalHours: 6890,
+        skolansValHours: 600,
+        reductionCapPercent: 20,
+        appliesFromCohortTerm: "HT2024",
+        supersededByCode: "SFS2025:729",
+        entries: [
+          {
+            subjectCode: "MA",
+            stage: "LAG",
+            hours: 420,
+            minimumHoursPerChild: null,
+            protectedFromReduction: true,
+          },
+        ],
+      },
+    ],
+    subjects: [{ code: "MA", name: "Matematik", parentCode: null, isGroup: false }],
+  };
+
+  it("reads the statute as one document from the gateway, not from Supabase", async () => {
+    // The gateway serves the three reference tables as one ETagged document;
+    // three PostgREST reads would be three requests for a 30 KB payload and
+    // no single tag to revalidate.
+    mockApi.get.mockResolvedValue(document);
+    const { queryClient, wrapper } = createHarness();
+    const { result } = renderHook(() => useNationalTimplans(), { wrapper });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.get).toHaveBeenCalledWith("/api/v1/national-timplans");
+    expect(supabaseMocks.from).not.toHaveBeenCalled();
+    expect(result.current.data).toEqual(document);
+    expect(queryClient.getQueryData(["national-timplans"])).toEqual(document);
+  });
+
+  it("holds the document rather than refetching it on every mount", async () => {
+    // Statute text changes when the riksdag says so, not when a school saves
+    // something: a second reader within the hour reuses the cached document.
+    mockApi.get.mockResolvedValue(document);
+    const { wrapper } = createHarness();
+    const first = renderHook(() => useNationalTimplans(), { wrapper });
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+
+    const second = renderHook(() => useNationalTimplans(), { wrapper });
+    await waitFor(() => expect(second.result.current.isSuccess).toBe(true));
+
+    expect(mockApi.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces the gateway's refusal as the query error", async () => {
+    mockApi.get.mockRejectedValue(new Error("HTTP 403"));
+    const { wrapper } = createHarness();
+    const { result } = renderHook(() => useNationalTimplans(), { wrapper });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(result.current.error?.message).toBe("HTTP 403");
   });
 });
 

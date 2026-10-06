@@ -52,6 +52,68 @@ export interface Subject {
   color: string | null;
   /** When set, the optimizer only places this subject in rooms of this type. */
   requiredRoomTypeId: string | null;
+  /**
+   * The Skolverket ämneskod this school subject feeds (NationalSubject.code),
+   * or null for a subject outside the national timplan. A group code (NO, SO)
+   * is legal: lågstadiet teaches NO as one subject.
+   */
+  nationalCode: string | null;
+  /**
+   * False for Mentorstid, Resurs and the like — time that must not join any
+   * undervisningstid sum. The column is NOT NULL with default true.
+   */
+  countsTowardTimplan: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// The national timplan — reference data, no schoolId, read-only for every role.
+// Mirrors NationalTimplansResponse in src/resources/national-timplans.service.ts.
+// ---------------------------------------------------------------------------
+
+export type SchoolForm =
+  | "GRUNDSKOLA"
+  | "ANPASSAD_GRUNDSKOLA_AMNEN"
+  | "ANPASSAD_GRUNDSKOLA_AMNESOMRADEN"
+  | "SPECIALSKOLA"
+  | "SAMESKOLA";
+
+export type TimplanStage = "LAG" | "MELLAN" | "HOG" | "LAG_MELLAN";
+
+export interface NationalSubject {
+  code: string;
+  /** Swedish, as the statute spells it. */
+  name: string;
+  /** BI/FY/KE -> NO, GE/HI/RE/SH -> SO; null for a flat subject or a group. */
+  parentCode: string | null;
+  isGroup: boolean;
+}
+
+export interface NationalTimplanEntry {
+  subjectCode: string;
+  stage: TimplanStage;
+  hours: number;
+  minimumHoursPerChild: number | null;
+  protectedFromReduction: boolean;
+}
+
+export interface NationalTimplanVersion {
+  id: string;
+  code: string;
+  sfs: string;
+  title: string;
+  schoolForm: SchoolForm;
+  totalHours: number;
+  skolansValHours: number | null;
+  reductionCapPercent: number | null;
+  appliesFromCohortTerm: string;
+  supersededByCode: string | null;
+  /** Empty for a lydelse whose fördelning is not published yet (SFS 2025:729). */
+  entries: NationalTimplanEntry[];
+}
+
+export interface NationalTimplans {
+  versions: NationalTimplanVersion[];
+  subjects: NationalSubject[];
 }
 
 export interface Room {
