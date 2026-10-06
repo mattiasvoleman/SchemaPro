@@ -31,6 +31,7 @@ import { UsersModule } from './users/users.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { RoomBookingsModule } from './room-bookings/room-bookings.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { StaffingModule } from './staffing/staffing.module';
 import type { ThrottleConfig } from './config/configuration';
 
 /**
@@ -113,6 +114,7 @@ import type { ThrottleConfig } from './config/configuration';
     CalendarModule,
     RoomBookingsModule,
     RealtimeModule,
+    StaffingModule,
   ],
 
   providers: [
