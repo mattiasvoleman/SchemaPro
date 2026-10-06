@@ -37,6 +37,7 @@ import { strict as assert } from 'node:assert';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
@@ -48,6 +49,7 @@ import { PrismaService } from '../../src/database/prisma.service';
 import { NotificationsService } from '../../src/notifications/notifications.service';
 import { readYearBoundsForShare } from '../../src/resources/academic-year-bounds';
 import { AcademicYearsService } from '../../src/resources/academic-years.service';
+import { AvailabilityConstraintsService } from '../../src/resources/availability-constraints.service';
 import type { UpdateAcademicYearDto } from '../../src/resources/dto/academic-year.dto';
 import type {
   CreateFrameTimeDto,
@@ -63,7 +65,11 @@ import { RoomBookingsService } from '../../src/room-bookings/room-bookings.servi
 import { ImportService } from '../../src/import/import.service';
 import { SubjectsService } from '../../src/resources/subjects.service';
 import { LocalTimplansService } from '../../src/timplan/local-timplans.service';
-import { decidedTimplanRefusal, rethrowPrismaError } from '../../src/common/utils/prisma-errors';
+import {
+  decidedTimplanRefusal,
+  rethrowPrismaError,
+  teacherDutyBlockRefusal,
+} from '../../src/common/utils/prisma-errors';
 import type { UsersService } from '../../src/users/users.service';
 
 /** Marks every row the probe writes that has a text column to mark. */
@@ -889,6 +895,131 @@ async function runChecks(
     await timplans.remove(plan.id, admin);
   });
 
+  // ---- (o) a duty's slot link, guarded by the database, answers 4xx through the adapter
+  await check('(o) a duty slot the database refuses is a 409 or a 403 through the real adapter, and a duty CHECK a 400', async () => {
+    const constraints = new AvailabilityConstraintsService(api);
+    const teachers = (
+      await owner.query<{ id: string; authId: string }>(
+        `SELECT id, "authId" FROM "Users" WHERE "schoolId" = $1 AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL
+          ORDER BY "authId" LIMIT 2`,
+        [fixture.schoolId],
+      )
+    ).rows;
+    assert.equal(teachers.length, 2, 'the demo school needs two active teachers');
+    const [mine, colleague] = teachers;
+    const teacher: AuthenticatedUser = {
+      authId: mine.authId,
+      userId: mine.id,
+      schoolId: fixture.schoolId,
+      role: Role.TEACHER,
+    };
+    const isCode = (Type: typeof ConflictException | typeof ForbiddenException, code: string) => (error: unknown) => {
+      assert.ok(error instanceof Type, `expected ${Type.name}, got ${summarise(error)}`);
+      assert.equal((error.getResponse() as { code?: string }).code, code, summarise(error));
+      return true;
+    };
+    const isField = (field: string) => (error: unknown) => {
+      assert.ok(error instanceof BadRequestException, `expected BadRequestException, got ${summarise(error)}`);
+      assert.ok(error.message.startsWith(`${field}: `), `the 400 did not name ${field}: ${error.message}`);
+      return true;
+    };
+    /** A write past every service, as PostgREST would send it, mapped as a service maps it. */
+    const direct = async (principal: AuthenticatedUser, state: string, write: (tx: PrismaClient) => Promise<unknown>) => {
+      try {
+        await api.withRls(principal, write);
+      } catch (error) {
+        assert.equal(sqlStateOf(error), state, summarise(error));
+        rethrowPrismaError(error);
+      }
+      assert.fail('the write went through');
+    };
+
+    const slot = await constraints.create(
+      { resourceType: 'TEACHER', userId: mine.id, dayOfWeek: 2, startTime: '15:00', endTime: '17:00', reason: MARKER } as never,
+      admin,
+    );
+    const theirs = await constraints.create(
+      { resourceType: 'TEACHER', userId: colleague.id, dayOfWeek: 2, startTime: '15:00', endTime: '17:00', reason: MARKER } as never,
+      admin,
+    );
+    const dutyOf = (blockedConstraintId: string | null, label = MARKER) => ({
+      schoolId: fixture.schoolId,
+      userId: mine.id,
+      academicYearId: fixture.activeYearId,
+      kind: 'APT_KONFERENS' as const,
+      label,
+      minutesPerWeek: 120,
+      blockedConstraintId,
+    });
+
+    // The link the service will write: accepted, and read back in the model's types.
+    const duty = await api.withRls(admin, (tx) => tx.teacherDuty.create({ data: dutyOf(slot.id) }));
+    assert.equal(duty.blockedConstraintId, slot.id);
+    assert.equal(duty.countsAsTeaching, false);
+    assert.equal(duty.kind, 'APT_KONFERENS');
+
+    // A colleague's constraint as the slot: TD409 from the duty trigger, 409.
+    await assert.rejects(
+      direct(admin, 'TD409', (tx) => tx.teacherDuty.create({ data: dutyOf(theirs.id, `${MARKER} fel`) })),
+      isCode(ConflictException, 'TEACHER_DUTY_BLOCK_MISMATCH'),
+    );
+    // The admin's generic constraint PATCH moving the linked slot: the
+    // service's own rethrowPrismaError answers the constraint trigger's TD409.
+    await assert.rejects(
+      constraints.update(slot.id, { resourceType: 'TEACHER', userId: colleague.id } as never, admin),
+      isCode(ConflictException, 'TEACHER_DUTY_BLOCK_MISMATCH'),
+    );
+    // The teacher moving their own APT slot past every service: TD403, 403.
+    await assert.rejects(
+      direct(teacher, 'TD403', (tx) =>
+        tx.availabilityConstraint.update({ where: { id: slot.id }, data: { reason: `${MARKER} flyttad` } }),
+      ),
+      isCode(ForbiddenException, 'TEACHER_DUTY_BLOCK_IS_THE_ADMINS'),
+    );
+    assert.equal(
+      teacherDutyBlockRefusal(
+        await api.withRls(teacher, (tx) => tx.availabilityConstraint.delete({ where: { id: slot.id } })).then(
+          () => null,
+          (error: unknown) => error,
+        ),
+      )?.availabilityConstraintId,
+      slot.id,
+      'the TD403 on a delete did not carry the constraint id in DETAIL',
+    );
+
+    // The CHECKs a DTO bound did not foresee: a 400 naming the field.
+    await assert.rejects(
+      direct(admin, '23514', (tx) => tx.teacherDuty.create({ data: dutyOf(null, '\u00a0') })),
+      isField('label'),
+    );
+    await assert.rejects(
+      direct(admin, '23514', (tx) => tx.teacherDuty.update({ where: { id: duty.id }, data: { minutesPerWeek: 2401 } })),
+      isField('minutesPerWeek'),
+    );
+    const [requirement] = (
+      await owner.query<{ id: string }>(
+        `SELECT id FROM "TeachingRequirements" WHERE "schoolId" = $1 ORDER BY id LIMIT 1`,
+        [fixture.schoolId],
+      )
+    ).rows;
+    await assert.rejects(
+      direct(admin, '23514', (tx) =>
+        tx.teachingRequirement.update({ where: { id: requirement.id }, data: { teacherLoadPercent: 201 } }),
+      ),
+      isField('teacherLoadPercent'),
+    );
+
+    // The admin deletes the slot through the service: the duty keeps all but the pointer.
+    await constraints.remove(slot.id, admin);
+    const [after] = (
+      await owner.query<{ blockedConstraintId: string | null; schoolId: string; minutesPerWeek: number }>(
+        'SELECT "blockedConstraintId", "schoolId", "minutesPerWeek" FROM "TeacherDuties" WHERE id = $1',
+        [duty.id],
+      )
+    ).rows;
+    assert.deepEqual(after, { blockedConstraintId: null, schoolId: fixture.schoolId, minutesPerWeek: 120 });
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the
@@ -1021,6 +1152,10 @@ async function findFixture(owner: Client): Promise<Fixture> {
 /** Removes what the probe writes. Narrow enough to touch nothing else. */
 async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query('DELETE FROM "RoomBookings" WHERE title = $1', [MARKER]);
+  // Duties before their slots, though either order is safe: a slot's delete
+  // only clears the duty's pointer.
+  await owner.query(`DELETE FROM "TeacherDuties" WHERE "schoolId" = $1 AND label LIKE $2 || '%'`, [schoolId, MARKER]);
+  await owner.query(`DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1 AND reason LIKE $2 || '%'`, [schoolId, MARKER]);
   // Plans before the subject: a decided plan's entries refuse the subject's
   // cascade, and the plans' own cascade passes the trigger.
   await owner.query(`DELETE FROM "LocalTimplans" WHERE "schoolId" = $1 AND name LIKE $2 || '%'`, [schoolId, MARKER]);
