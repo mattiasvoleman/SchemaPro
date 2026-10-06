@@ -12,6 +12,7 @@ import {
   type UnstaffedRequirement,
 } from './teacher-load';
 import type { YearBounds } from './teaching-weeks';
+import { suggestTeachers, type TeacherSuggestions } from './suggest-teachers';
 
 /** The horizons the report can be asked for. Only the first exists in Fas 1. */
 export const LOAD_HORIZONS = ['planned'] as const;
@@ -99,6 +100,40 @@ export class StaffingLoadService {
       this.readInput(tx, academicYearId, user),
     );
     return buildTeacherLoadReport(input).unstaffedRequirements;
+  }
+
+  /**
+   * Who should take one timplanspost, ranked (suggest-teachers.ts), from the
+   * same rows the report reads and in the same single transaction — so the
+   * "kvar N min/v" on a candidate is the figure the matrix shows for them,
+   * minus this row.
+   *
+   * Candidates are the school's ACTIVE staff, TEACHER and SCHOOL_ADMIN alike:
+   * a teaching rektor is assigned rows here, as the requirement's teacherId
+   * already allows. The requirement is read first and answers 404 when RLS
+   * hides it, as every other route names a foreign id.
+   */
+  async suggestTeachers(requirementId: string, user: AuthenticatedUser): Promise<TeacherSuggestions> {
+    requireSchoolId(user);
+    const { input, staffIds } = await this.prisma.withRls(user, async (tx) => {
+      const requirement = await tx.teachingRequirement.findUnique({
+        where: { id: requirementId },
+        select: { academicYearId: true },
+      });
+      if (!requirement) {
+        throw new NotFoundException('The requested record does not exist.');
+      }
+      const [{ input: yearInput }, staff] = await Promise.all([
+        this.readInput(tx, requirement.academicYearId, user),
+        tx.user.findMany({
+          where: { role: { in: ['TEACHER', 'SCHOOL_ADMIN'] }, isActive: true },
+          select: { id: true },
+          orderBy: { id: 'asc' },
+        }),
+      ]);
+      return { input: yearInput, staffIds: staff.map((row) => row.id) };
+    });
+    return suggestTeachers(input, requirementId, staffIds);
   }
 
   private async readInput(

@@ -1,5 +1,10 @@
 import fixture from './__fixtures__/teacher-load-cases.json';
-import { buildTeacherLoadReport, type LoadInput, type TeacherLoadReport } from './teacher-load';
+import {
+  buildTeacherLoadReport,
+  countedMinutesByTeacher,
+  type LoadInput,
+  type TeacherLoadReport,
+} from './teacher-load';
 
 /**
  * One load report, implemented twice, checked against one list of cases.
@@ -58,4 +63,14 @@ describe('the load report agrees with the shared fixture', () => {
   it.each(cases.map((entry) => [entry.name, entry] as const))('%s', (_name, entry) => {
     expect(buildTeacherLoadReport(entry.input)).toEqual(entry.report);
   });
+
+  it.each(cases.map((entry) => [entry.name, entry] as const))(
+    'countedMinutesByTeacher is the report’s counted minutes, unrounded: %s',
+    (_name, entry) => {
+      const counted = countedMinutesByTeacher(entry.input);
+      for (const teacher of entry.report.teachers) {
+        expect(Math.round(counted.get(teacher.userId) ?? 0)).toBe(teacher.countedMinutesPerWeek);
+      }
+    },
+  );
 });
