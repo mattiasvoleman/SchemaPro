@@ -157,6 +157,8 @@ model School {
   staffingPolicy          StaffingPolicy?
   teacherEmployments      TeacherEmployment[]
   teacherQualifications   TeacherSubjectQualification[]
+  localTimplans           LocalTimplan[]
+  localTimplanEntries     LocalTimplanEntry[]
 
   @@map("Schools")
 }
@@ -217,6 +219,9 @@ model User {
   /// composite (userId, schoolId) key, like workRules.
   employments             TeacherEmployment[]           @relation("EmploymentTeacher")
   subjectQualifications   TeacherSubjectQualification[] @relation("QualificationTeacher")
+  /// Local timplans this person recorded as decided. Restrict on the other
+  /// side: a person who recorded a decision is deactivated, not deleted.
+  decidedLocalTimplans    LocalTimplan[]                @relation("LocalTimplanDecider")
 
   // Relations where this user is the student.
   attendanceRecords   AttendanceRecord[]      @relation("AttendanceStudent")
@@ -357,6 +362,7 @@ model Subject {
   calendarLessons      CalendarLesson[]
   roomPreferences      RoomPreference[]
   teacherQualifications TeacherSubjectQualification[]
+  localTimplanEntries   LocalTimplanEntry[]
 
   @@unique([schoolId, code])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -427,7 +433,12 @@ model NationalTimplanVersion {
   supersededBy NationalTimplanVersion?  @relation("TimplanSupersession", fields: [supersededByCode], references: [code], onDelete: Restrict)
   supersedes   NationalTimplanVersion[] @relation("TimplanSupersession")
   entries      NationalTimplanEntry[]
+  localTimplans LocalTimplan[]
 
+  /// The target LocalTimplan's (nationalTimplanVersionId, schoolForm) key
+  /// needs: redundant as an index, load-bearing as the rule that a local plan
+  /// is checked against a version of its own school form.
+  @@unique([id, schoolForm])
   @@map("NationalTimplanVersions")
 }
 
@@ -472,6 +483,95 @@ model NationalTimplanEntry {
 
   @@unique([versionId, subjectCode, stage])
   @@map("NationalTimplanEntries")
+}
+
+// -----------------------------------------------------------------------------
+// The local timplan — a school's own decision, checked against the statute
+//
+// The huvudman's fördelning mellan årskurserna (skolförordningen 9 kap. 4 §):
+// minutes per week per school subject per årskurs, in a named plan of one
+// school form, checked against one national version. DRAFT until a decision is
+// recorded; a DECIDED plan is a record — two triggers refuse any change to it
+// or its entries (SQLSTATE TP409, message TIMPLAN_IS_DECIDED), the one
+// exception being the copiedFromId pointer cleared when its source is deleted.
+// Deleting a decided plan is allowed; deleting a subject a decided plan
+// contains is refused by the same entries trigger. RLS: admin_all,
+// staff_select (all plans), family_select (STUDENT/GUARDIAN, DECIDED only).
+// See migration 20261006120000 for every argued decision, including how an
+// årskurs maps to a stadium per school form.
+// -----------------------------------------------------------------------------
+
+enum LocalTimplanStatus {
+  DRAFT
+  DECIDED
+}
+
+model LocalTimplan {
+  id                       String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId                 String             @db.Uuid
+  /// Unique per school; non-blank, at most 100 characters.
+  name                     String
+  /// Must equal the version's school form: the composite key
+  /// (nationalTimplanVersionId, schoolForm) -> NationalTimplanVersion(id, schoolForm).
+  schoolForm               SchoolForm
+  nationalTimplanVersionId String             @db.Uuid
+  /// Standardveckor used to turn min/vecka into stage hours before a läsår
+  /// exists. 20.0..40.0; 35.6 = 178 skoldagar / 5. A Decimal: read it with
+  /// Decimal arithmetic (tenths), never as a float, a string or 0.
+  planningWeeks            Decimal            @default(35.6) @db.Decimal(4, 1)
+  status                   LocalTimplanStatus @default(DRAFT)
+  /// The decision is whole: decidedAt, decidedByUserId and decisionNote are
+  /// all null on a DRAFT and all set on a DECIDED plan (DB CHECK).
+  decidedAt                DateTime?          @db.Timestamptz(6)
+  decidedByUserId          String?            @db.Uuid
+  /// Non-blank, at most 500 characters.
+  decisionNote             String?
+  /// The plan this one was reopened or copied from. Cleared (that column only,
+  /// ON DELETE SET NULL ("copiedFromId")) when the source is deleted; Prisma
+  /// cannot state the column list and the migration does.
+  copiedFromId             String?            @db.Uuid
+  createdAt                DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime           @updatedAt @db.Timestamptz(6)
+
+  school          School                 @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  nationalVersion NationalTimplanVersion @relation(fields: [nationalTimplanVersionId, schoolForm], references: [id, schoolForm], onDelete: Restrict, onUpdate: Restrict)
+  decidedBy       User?                  @relation("LocalTimplanDecider", fields: [decidedByUserId, schoolId], references: [id, schoolId], onDelete: Restrict, onUpdate: Restrict)
+  copiedFrom      LocalTimplan?          @relation("LocalTimplanCopy", fields: [copiedFromId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  copies          LocalTimplan[]         @relation("LocalTimplanCopy")
+  entries         LocalTimplanEntry[]
+
+  @@unique([schoolId, name])
+  /// The target of the composite keys entries and copies use; see User.
+  @@unique([id, schoolId])
+  @@map("LocalTimplans")
+}
+
+/// Minutes per week for one school subject in one årskurs of a plan. Keyed on
+/// the SCHOOL subject, not the national code: the national comparison rolls up
+/// through Subject.nationalCode. No timestamps — entries are replaced
+/// wholesale, and the plan's updatedAt is their time.
+model LocalTimplanEntry {
+  id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String  @db.Uuid
+  localTimplanId String  @db.Uuid
+  subjectId      String  @db.Uuid
+  /// 0..10. 0 = förskoleklass (in no stadium); 10 = specialskolan today, the
+  /// tioårig grundskola from 2028.
+  gradeLevel     Int
+  /// 0..1200, integer minutes, not on the 5-minute grid: a target, not a lesson.
+  minutesPerWeek Int
+  /// At most 500 characters.
+  note           String?
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  localTimplan LocalTimplan @relation(fields: [localTimplanId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  /// Cascades with the subject — unless the plan is DECIDED, when the entries
+  /// trigger refuses the cascade and with it the subject's deletion.
+  subject      Subject      @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@unique([localTimplanId, subjectId, gradeLevel])
+  @@index([schoolId, subjectId])
+  @@map("LocalTimplanEntries")
 }
 
 model AcademicYear {

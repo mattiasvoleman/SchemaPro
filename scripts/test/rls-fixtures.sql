@@ -212,6 +212,49 @@ JOIN "Subjects" sub ON sub."schoolId" = u."schoolId" AND sub.code = 'RLSFIX'
 WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
 ON CONFLICT ("schoolId", "userId", "subjectId") DO NOTHING;
 
+-- A SCHOOL_ADMIN in the SECOND school, and two local timplans there — a DRAFT
+-- and a DECIDED one, each with an entry — so section 16 can ask both halves of
+-- tenant isolation with rows that exist: school A's admin sees none of these,
+-- and this admin, acting in their own school, sees these and none of A's. An
+-- admin rather than the fixture teacher because admin_all is the widest arm on
+-- the two tables; a tenant predicate it lost is the one that would leak most.
+INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+SELECT s.id, 'rls-fixture-admin-b@example.invalid', 'Fixture', 'Admin B', 'SCHOOL_ADMIN',
+       '00000000-0000-4000-8000-000000000006', true, now()
+FROM "Schools" s
+WHERE s.slug = 'rls-fixture-school'
+  AND NOT EXISTS (
+    SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000006'
+  );
+
+INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+SELECT s.id, p.name, 'GRUNDSKOLA', v.id, now()
+FROM "Schools" s
+JOIN "NationalTimplanVersions" v ON v.code = 'SFS2023:945/B1'
+CROSS JOIN (VALUES ('RLS Fixture Utkast'), ('RLS Fixture Beslutad')) AS p(name)
+WHERE s.slug = 'rls-fixture-school'
+ON CONFLICT ("schoolId", name) DO NOTHING;
+
+-- Entries go in while the plan is a draft — the entries trigger refuses them
+-- once it is decided, so a re-run must not try (the BEFORE INSERT trigger
+-- fires before ON CONFLICT can skip the row).
+INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+SELECT p."schoolId", p.id, sub.id, 7, 120
+FROM "LocalTimplans" p
+JOIN "Schools" s ON s.id = p."schoolId"
+JOIN "Subjects" sub ON sub."schoolId" = p."schoolId" AND sub.code = 'RLSFIX'
+WHERE s.slug = 'rls-fixture-school' AND p.status = 'DRAFT'
+ON CONFLICT ("localTimplanId", "subjectId", "gradeLevel") DO NOTHING;
+
+UPDATE "LocalTimplans" p
+   SET status = 'DECIDED', "decidedAt" = now(), "decidedByUserId" = u.id,
+       "decisionNote" = 'RLS fixture: beslutad', "updatedAt" = now()
+  FROM "Users" u
+ WHERE u."authId" = '00000000-0000-4000-8000-000000000006'
+   AND p."schoolId" = u."schoolId"
+   AND p.name = 'RLS Fixture Beslutad'
+   AND p.status = 'DRAFT';
+
 -- What each school's lesson is made of, and the lessons themselves once they
 -- exist. A view rather than a CTE because every statement below reads it
 -- afresh, so the link rows find the lessons the statements before them
