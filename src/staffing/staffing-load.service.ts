@@ -4,7 +4,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
-import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
+import { readLoadInput } from './load-input';
 import {
   buildTeacherLoadReport,
   type LoadInput,
@@ -23,9 +23,6 @@ export interface TeacherLoadReportResponse extends TeacherLoadReport {
   horizon: LoadHorizon;
   year: YearBounds;
 }
-
-const asDay = (value: Date): string => value.toISOString().slice(0, 10);
-const asDayOrNull = (value: Date | null): string | null => (value === null ? null : asDay(value));
 
 /**
  * Reads the rows the report is computed from, in ONE RLS transaction, and hands
@@ -141,131 +138,10 @@ export class StaffingLoadService {
     academicYearId: string,
     user: AuthenticatedUser,
   ): Promise<{ year: YearBounds; input: LoadInput }> {
-    const schoolId = requireSchoolId(user);
-    const yearRow = await tx.academicYear.findUnique({
-      where: { id: academicYearId },
-      select: { startDate: true, endDate: true },
-    });
-    if (!yearRow) {
+    const read = await readLoadInput(tx, academicYearId, requireSchoolId(user));
+    if (!read) {
       throw new NotFoundException('Academic year not found.');
     }
-    const year: YearBounds = { startDate: asDay(yearRow.startDate), endDate: asDay(yearRow.endDate) };
-
-    const [requirements, employments, policy, breaks, qualifications, duties] = await Promise.all([
-      tx.teachingRequirement.findMany({
-        where: { academicYearId },
-        select: {
-          id: true,
-          subjectId: true,
-          studentGroupId: true,
-          teacherId: true,
-          coTeacherId: true,
-          lessonsPerWeek: true,
-          minutesPerLesson: true,
-          teacherLoadPercent: true,
-          coTeacherLoadPercent: true,
-          recurrence: true,
-          startDate: true,
-          endDate: true,
-          subject: { select: { name: true } },
-          studentGroup: { select: { name: true, gradeLevel: true } },
-        },
-      }),
-      tx.teacherEmployment.findMany({ where: { academicYearId } }),
-      tx.staffingPolicy.findUnique({ where: { schoolId } }),
-      tx.schoolBreak.findMany({
-        where: { academicYearId },
-        select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
-      }),
-      tx.teacherSubjectQualification.findMany({
-        select: {
-          userId: true,
-          subjectId: true,
-          minGradeLevel: true,
-          maxGradeLevel: true,
-          kind: true,
-          validFrom: true,
-          validTo: true,
-        },
-      }),
-      // The year's uppdrag. RLS hands a TEACHER only their own, which is all
-      // their row needs.
-      tx.teacherDuty.findMany({
-        where: { academicYearId },
-        select: { userId: true, minutesPerWeek: true, countsAsTeaching: true },
-      }),
-    ]);
-
-    // The group's years as the optimisation proxy derives them: members' home
-    // classes first, the group's own gradeLevel when no member carries one.
-    const groups = new Map<string, { id: string; gradeLevel: number | null }>();
-    for (const requirement of requirements) {
-      groups.set(requirement.studentGroupId, {
-        id: requirement.studentGroupId,
-        gradeLevel: requirement.studentGroup.gradeLevel,
-      });
-    }
-    const groupIds = [...groups.keys()];
-    const rosters =
-      groupIds.length > 0 ? await loadRosters(tx, groupIds, [...groups.values()]) : null;
-
-    const input: LoadInput = {
-      year,
-      policy: policy
-        ? {
-            fullTimeTeachingMinutesPerWeek: policy.fullTimeTeachingMinutesPerWeek,
-            overAllocationTolerancePercent: policy.overAllocationTolerancePercent,
-            fullTimeRegulatedHoursPerYear: policy.fullTimeRegulatedHoursPerYear,
-            workDaysPerYear: policy.workDaysPerYear,
-            qualificationMode: policy.qualificationMode,
-          }
-        : null,
-      employments: employments.map((row) => ({
-        userId: row.userId,
-        employmentPercent: Number(row.employmentPercent),
-        reductionPercent: Number(row.reductionPercent),
-        contractKind: row.contractKind,
-        teachingTargetMinutesPerWeek: row.teachingTargetMinutesPerWeek,
-        signature: row.signature,
-      })),
-      requirements: requirements.map((row) => ({
-        id: row.id,
-        subjectId: row.subjectId,
-        subjectName: row.subject.name,
-        studentGroupId: row.studentGroupId,
-        groupName: row.studentGroup.name,
-        teacherId: row.teacherId,
-        coTeacherId: row.coTeacherId,
-        lessonsPerWeek: row.lessonsPerWeek,
-        minutesPerLesson: row.minutesPerLesson,
-        teacherLoadPercent: row.teacherLoadPercent,
-        coTeacherLoadPercent: row.coTeacherLoadPercent,
-        recurrence: row.recurrence,
-        startDate: asDayOrNull(row.startDate),
-        endDate: asDayOrNull(row.endDate),
-        gradeSpan: rosters ? gradeSpanOf(rosters, [row.studentGroupId]) : null,
-      })),
-      qualifications: qualifications.map((row) => ({
-        userId: row.userId,
-        subjectId: row.subjectId,
-        minGradeLevel: row.minGradeLevel,
-        maxGradeLevel: row.maxGradeLevel,
-        kind: row.kind,
-        validFrom: asDayOrNull(row.validFrom),
-        validTo: asDayOrNull(row.validTo),
-      })),
-      closures: breaks.map((row) => ({
-        startDate: asDay(row.startDate),
-        endDate: asDay(row.endDate),
-        minGradeLevel: row.minGradeLevel,
-        maxGradeLevel: row.maxGradeLevel,
-      })),
-      duties: duties.map((row) => ({
-        userId: row.userId,
-        minutesPerWeek: row.minutesPerWeek,
-        countsAsTeaching: row.countsAsTeaching,
-      })),
-    };
-    return { year, input };
+    return { year: read.year, input: read.input };
   }
 }

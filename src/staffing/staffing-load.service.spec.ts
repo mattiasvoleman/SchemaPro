@@ -141,9 +141,9 @@ describe('StaffingLoadService', () => {
     );
     tx.studentGroup.findMany.mockResolvedValue([]);
     // The proxy's roster helper reads the groups' grades from the list it is
-    // handed; 8B is not among the requirement groups, so its grade is unknown
-    // and only 7A's pupils count — still 7-7. Give 8B's grade through a
-    // requirement of its own instead.
+    // handed. With no group list for the year (an empty mock), 8B is known
+    // only through a requirement of its own — given here; the next test
+    // gives it through the year's groups instead.
     tx.teachingRequirement.findMany.mockResolvedValue([
       requirementRow(),
       requirementRow({
@@ -156,6 +156,37 @@ describe('StaffingLoadService', () => {
     const withMembers = await service.load(YEAR_ID, undefined, testUser());
     expect(withMembers.unqualifiedAssignments).toEqual([
       expect.objectContaining({ requirementId: 'req-1', userId: ME, gradeSpan: { min: 7, max: 8 } }),
+    ]);
+  });
+
+  it('reads a pupil’s home class from every group of the year, not only the ones with a requirement', async () => {
+    // 7A's only pupil is a member whose home class is 8B, which has no
+    // requirement of its own. The proxy hands loadRosters every group of the
+    // year, so 8B's year counts and the span is 8; reading only the
+    // requirement groups used to know no year for the pupil and fall back to
+    // 7A's own 7 — and pass a 7-only behörighet for a class of åk 8 pupils.
+    const GROUP_8B = '77777777-7777-4777-8777-777777777777';
+    tx.teacherSubjectQualification.findMany.mockResolvedValue([
+      { userId: ME, subjectId: MA, minGradeLevel: 7, maxGradeLevel: 7, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+    ]);
+    tx.studentGroupMember.findMany.mockResolvedValue([{ studentId: 'pupil-1', studentGroupId: GROUP_7A }]);
+    tx.user.findMany.mockImplementation((query: { where: Record<string, unknown> }) =>
+      Promise.resolve('studentGroupId' in query.where ? [] : [{ id: 'pupil-1', studentGroupId: GROUP_8B }]),
+    );
+    tx.studentGroup.findMany.mockResolvedValue([
+      { id: GROUP_7A, name: '7A', gradeLevel: 7 },
+      { id: GROUP_8B, name: '8B', gradeLevel: 8 },
+    ]);
+    tx.teachingRequirement.findMany.mockResolvedValue([requirementRow()]);
+
+    const report = await service.load(YEAR_ID, undefined, testUser());
+
+    expect(tx.studentGroup.findMany).toHaveBeenCalledWith({
+      where: { academicYearId: YEAR_ID },
+      select: { id: true, gradeLevel: true, name: true },
+    });
+    expect(report.unqualifiedAssignments).toEqual([
+      expect.objectContaining({ requirementId: 'req-1', gradeSpan: { min: 8, max: 8 } }),
     ]);
   });
 
