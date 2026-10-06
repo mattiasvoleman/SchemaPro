@@ -154,6 +154,9 @@ model School {
   roomPreferences         RoomPreference[]
   teacherWorkRules        TeacherWorkRule[]
   lunchSetting            LunchSetting?
+  staffingPolicy          StaffingPolicy?
+  teacherEmployments      TeacherEmployment[]
+  teacherQualifications   TeacherSubjectQualification[]
 
   @@map("Schools")
 }
@@ -209,6 +212,11 @@ model User {
   /// and Prisma reads a one-to-one off the key's own uniqueness, which a unique
   /// on one of its two columns does not give it.
   workRules               TeacherWorkRule[]        @relation("WorkRuleTeacher")
+  /// The teacher's post, one row per läsår (TeacherEmployment), and what they
+  /// may teach (TeacherSubjectQualification). Both reach the user through the
+  /// composite (userId, schoolId) key, like workRules.
+  employments             TeacherEmployment[]           @relation("EmploymentTeacher")
+  subjectQualifications   TeacherSubjectQualification[] @relation("QualificationTeacher")
 
   // Relations where this user is the student.
   attendanceRecords   AttendanceRecord[]      @relation("AttendanceStudent")
@@ -348,6 +356,7 @@ model Subject {
   masterLessons        MasterLesson[]
   calendarLessons      CalendarLesson[]
   roomPreferences      RoomPreference[]
+  teacherQualifications TeacherSubjectQualification[]
 
   @@unique([schoolId, code])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -481,6 +490,7 @@ model AcademicYear {
   masterLessons        MasterLesson[]
   schoolBreaks         SchoolBreak[]
   lunchSittings        LunchSitting[]
+  teacherEmployments   TeacherEmployment[]
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -1296,6 +1306,167 @@ model TeacherWorkRule {
   @@unique([userId])
   @@index([schoolId])
   @@map("TeacherWorkRules")
+}
+
+// -----------------------------------------------------------------------------
+// Tjänstefördelning: the school's policy, a teacher's post, what they may teach
+// -----------------------------------------------------------------------------
+
+/// What happens when a staffing write breaks a rule: nothing, a warning in the
+/// response, or a 409 naming the rule. Both checks on StaffingPolicy default to
+/// WARN so that no existing school is refused anything on deploy.
+enum StaffingCheckMode {
+  OFF
+  WARN
+  REFUSE
+}
+
+/// MINUTES: a teacher's load is lesson minutes. FACTOR: Skola24's "Faktor
+/// ämne" / Untis' subject factor, weighting minutes per subject. The column
+/// FACTOR reads (Subject.loadFactor) arrives in Fas 3; until then both compute
+/// as MINUTES and the report header says so.
+enum StaffingLoadModel {
+  MINUTES
+  FACTOR
+}
+
+/// Ferietjänst (Bilaga M: 1 767 h a year, 1 360 reglerad on 194 A-dagar) or
+/// semestertjänst (an ordinary week with semester). The annual arithmetic
+/// differs between them.
+enum TeacherContractKind {
+  FERIE
+  SEMESTER
+}
+
+/// Legitimerad och behörig; behörig utan legitimation; får undervisa enligt
+/// rektors beslut (skollagen 2 kap. 18 §). Strongest first — the order the
+/// substitute picker ranks candidates in.
+enum TeacherQualificationKind {
+  LEGITIMATION
+  BEHORIG
+  TILLATEN
+}
+
+/// The school's tjänstefördelningsinställning: one row per school, like
+/// LunchSetting. See migration 20261006100000 for every bound.
+model StaffingPolicy {
+  id       String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId String @db.Uuid
+
+  /// Riktmärke undervisning för en heltid, in minutes per week. NULL, and NO
+  /// default: the central agreement fixes no weekly teaching measure, kommuner
+  /// differ (Vimmerby 1 080, national median 1 090), and a default would be a
+  /// number nobody at the school chose. Null = no load comparison: every
+  /// teacher reads NO_TARGET and the over-allocation check is inert. The form
+  /// suggests 1 080 with its source.
+  fullTimeTeachingMinutesPerWeek Int?
+  /// Bilaga M 6 b: reglerad arbetstid for a full ferietjänst. 1..fullTimeAnnualHours.
+  fullTimeRegulatedHoursPerYear  Int     @default(1360)
+  /// Bilaga M: the whole year of a full ferietjänst. 1..2500.
+  fullTimeAnnualHours            Int     @default(1767)
+  /// A-dagar. 1..260.
+  workDaysPerYear                Int     @default(194)
+  /// The week of a semestertjänst. (0, 60].
+  semesterHoursPerWeek           Decimal @default(40.0) @db.Decimal(4, 1)
+
+  qualificationMode              StaffingCheckMode @default(WARN)
+  overAllocationMode             StaffingCheckMode @default(WARN)
+  /// How far over target a teacher may be before overAllocationMode fires. 0..50.
+  overAllocationTolerancePercent Int               @default(10)
+  loadModel                      StaffingLoadModel @default(MINUTES)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  // One row per school; the unique index is the schoolId index.
+  @@unique([schoolId])
+  @@map("StaffingPolicies")
+}
+
+/// A teacher's post for one läsår. Per year, unlike TeacherWorkRule: a
+/// tjänstgöringsgrad is renegotiated every year and the load it bounds is the
+/// year's requirements. Its own table rather than columns on User because this
+/// is HR data with a narrower read arm than any scheduling table — a teacher
+/// reads their own row and no colleague's; see the migration's RLS section.
+model TeacherEmployment {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String @db.Uuid
+  /// Composite (userId, schoolId) key to Users, like TeacherWorkRule.
+  userId         String @db.Uuid
+  /// Composite (academicYearId, schoolId) key to AcademicYears.
+  academicYearId String @db.Uuid
+
+  /// Tjänstgöringsgrad. (0, 100]. Three decimals because SCB and IST report a
+  /// share of a post "upp till tre decimaler".
+  employmentPercent            Decimal             @db.Decimal(6, 3)
+  /// Nedsättning (partial leave). [0, employmentPercent].
+  reductionPercent             Decimal             @default(0) @db.Decimal(6, 3)
+  contractKind                 TeacherContractKind @default(FERIE)
+  /// Per-teacher override of the policy's riktmärke × (employment − reduction)
+  /// / 100. Null = derive. 0..2400.
+  teachingTargetMinutesPerWeek Int?
+  /// Lärarsignatur, 1..8 characters. Unique per school AND YEAR where set — not
+  /// per school: the same teacher carries the same signature next year, and a
+  /// per-school key would refuse the roll-forward. Prisma cannot state the
+  /// partial unique index TeacherEmployments_one_signature_per_year
+  /// (schoolId, academicYearId, signature) WHERE signature IS NOT NULL; it
+  /// lives in the migration alone, like AcademicYears_one_active_per_school.
+  signature                    String?
+  /// At most 500 characters.
+  note                         String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user         User         @relation("EmploymentTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  /// One post per teacher per year; schoolId leads so one school cannot fill
+  /// another's slot, and the key doubles as the per-year listing's index.
+  @@unique([schoolId, userId, academicYearId])
+  @@index([schoolId, academicYearId])
+  @@map("TeacherEmployments")
+}
+
+/// What a teacher may teach: one inclusive grade span per subject ("Ma 1-6"
+/// and "Ma 7-9" are written as 1-9). School-owned and not per year, because a
+/// legitimation belongs to the person. Readable by all staff (the substitute
+/// picker ranks colleagues by it), written by the administrator alone.
+model TeacherSubjectQualification {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String @db.Uuid
+  /// Composite (userId, schoolId) key to Users.
+  userId    String @db.Uuid
+  /// Composite (subjectId, schoolId) key to Subjects; cascades with the subject.
+  subjectId String @db.Uuid
+
+  /// 0..12, max >= min — the same inclusive-stage convention as Room,
+  /// FrameTime and Rast.
+  minGradeLevel Int
+  maxGradeLevel Int
+  /// No default: which of the three the teacher holds is stated, not presumed.
+  kind          TeacherQualificationKind
+  /// Tidsbegränsad legitimation. Either alone is legal; both set means
+  /// validTo >= validFrom.
+  validFrom     DateTime?                @db.Date
+  validTo       DateTime?                @db.Date
+  /// At most 500 characters.
+  note          String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school  School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user    User    @relation("QualificationTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  subject Subject @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@unique([schoolId, userId, subjectId])
+  /// The substitute picker asks the other way round: who may teach THIS subject.
+  @@index([schoolId, subjectId])
+  @@map("TeacherSubjectQualifications")
 }
 
 /// Ramtider: the hours of the day a stage of the school may be taught in.

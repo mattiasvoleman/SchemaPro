@@ -148,6 +148,23 @@ for link in MasterLessonGroups:MasterLessons:masterLessonId \
   fi
 done
 
+# The second school's tjänstefördelning rows. Section 7h asserts that an admin
+# and a teacher of the primary school see none of another school's policy,
+# posts or behörigheter, and with nothing planted over there each of those
+# three passes while proving nothing. Counted as the owner, like the room lock.
+for table in StaffingPolicies TeacherEmployments TeacherSubjectQualifications; do
+  foreign_rows="$(
+    compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+      -v ON_ERROR_STOP=1 -tAc \
+      "SELECT count(*) FROM \"${table}\" WHERE \"schoolId\" <> '${school_a}'" \
+    | tr -d '[:space:]'
+  )"
+  if [ "${foreign_rows:-0}" = "0" ]; then
+    echo "FAIL: no ${table} row in the second school; fixtures did not run." >&2
+    exit 1
+  fi
+done
+
 if [ -z "$admin_auth_id" ]; then
   echo "FAIL: no SCHOOL_ADMIN with an authId in the primary school." >&2
   exit 1
