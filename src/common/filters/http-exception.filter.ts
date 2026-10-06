@@ -17,10 +17,34 @@ interface NormalizedError {
   detail: string;
   errors?: Record<string, string[]>;
   code?: string;
+  params?: Record<string, string | number>;
 }
 
 /** What a problem `code` may look like: a name, not a sentence. */
 const SAFE_CODE = /^[A-Za-z0-9_.:-]{1,64}$/;
+
+/** What a key of a problem's `params` may look like: an argument name. */
+const SAFE_PARAM_KEY = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
+
+/**
+ * A thrower's `params`, when they are what a catalogue sentence substitutes:
+ * a flat object of at most twenty short names, each a finite number or a
+ * string of at most 200 characters. Anything else — a nested object, an
+ * array, a long text — drops the whole member rather than part of it, so a
+ * thrower cannot route a row, a stack or free text out through it by accident.
+ */
+function safeParams(value: unknown): Record<string, string | number> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0 || entries.length > 20) return undefined;
+  for (const [key, item] of entries) {
+    if (!SAFE_PARAM_KEY.test(key)) return undefined;
+    if (typeof item === 'number' ? !Number.isFinite(item) : typeof item !== 'string' || item.length > 200) {
+      return undefined;
+    }
+  }
+  return Object.fromEntries(entries) as Record<string, string | number>;
+}
 
 /**
  * Catches every unhandled error and renders an RFC-7807 `application/problem+json`
@@ -48,6 +72,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       traceId,
       ...(normalized.errors ? { errors: normalized.errors } : {}),
       ...(normalized.code ? { code: normalized.code } : {}),
+      ...(normalized.code && normalized.params ? { params: normalized.params } : {}),
     };
 
     this.logError(exception, normalized, traceId, request);
@@ -160,12 +185,20 @@ export class HttpExceptionFilter implements ExceptionFilter {
         ? record.code
         : undefined;
 
+    // And the values the code's sentence substitutes — STAFF_TEACHER_NOT_QUALIFIED
+    // with the subject and the span — so a client renders the refusal in its
+    // own language from the same catalogue the engine's refusals use, instead
+    // of parsing `detail`. Only beside a code: params name a sentence's slots,
+    // and without the sentence's name they mean nothing.
+    const params = code ? safeParams(record.params) : undefined;
+
     return {
       status,
       title,
       detail:
         typeof rawMessage === 'string' ? rawMessage : this.detailFor(status),
       ...(code ? { code } : {}),
+      ...(params ? { params } : {}),
     };
   }
 
