@@ -8,7 +8,12 @@
  * instead of trusting the file extension.
  */
 
-import type { LessonRecurrence } from "@/lib/types";
+import { parseDecimal } from "@/lib/staffing-forms";
+import type {
+  LessonRecurrence,
+  TeacherContractKind,
+  TeacherQualificationKind,
+} from "@/lib/types";
 
 const BOM = "﻿";
 
@@ -136,7 +141,8 @@ export type ImportKind =
   | "classes"
   | "teachingGroups"
   | "roomTypes"
-  | "requirements";
+  | "requirements"
+  | "teacherQualifications";
 
 interface CsvTemplate {
   filename: string;
@@ -171,8 +177,41 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
   },
   teachers: {
     filename: "larare.csv",
-    headers: ["fornamn", "efternamn", "epost"],
-    exampleRows: [["Karin", "Ek", "karin.ek@example.com"]],
+    // The last four are the teacher's post for the ACTIVE läsår and every one
+    // of them is optional: a staff list three columns wide imports exactly as
+    // it did before these existed, and a file that states a tjänst writes a
+    // TeacherEmployment for the active year — created, or updated when the
+    // file says something else. The two percentages take a decimal comma
+    // (66,667), avtal is "ferie" or "semester", and a signature is at most
+    // eight characters. The second example row has no post on purpose: it
+    // shows that the columns may stay empty row by row, not just be absent.
+    headers: [
+      "fornamn",
+      "efternamn",
+      "epost",
+      "tjanst_procent",
+      "nedsattning_procent",
+      "avtal",
+      "signatur",
+    ],
+    exampleRows: [
+      ["Karin", "Ek", "karin.ek@example.com", "100", "", "ferie", "KEK"],
+      ["Bo", "Alm", "bo.alm@example.com", "", "", "", ""],
+    ],
+  },
+  teacherQualifications: {
+    filename: "behorigheter.csv",
+    // One behörighet per row: the teacher by e-mail, the subject by code or
+    // name, an inclusive grade span, and which of the three kinds. The kind
+    // has no default anywhere — LEGITIMATION is a legal fact about a person
+    // and TILLÅTEN a rektor's decision — so the column is required and the
+    // template shows all three words.
+    headers: ["larare_epost", "amne", "fran_arskurs", "till_arskurs", "behorighet"],
+    exampleRows: [
+      ["karin.ek@example.com", "MA", "7", "9", "legitimation"],
+      ["karin.ek@example.com", "NO", "7", "9", "behörig"],
+      ["bo.alm@example.com", "SLTX", "1", "9", "tillåten"],
+    ],
   },
   students: {
     filename: "elever.csv",
@@ -444,16 +483,300 @@ export function mapStudentRows(parsed: ParsedCsv) {
   );
 }
 
-export function mapTeacherRows(parsed: ParsedCsv) {
-  return mapRows(
-    parsed,
-    [
-      { field: "firstName", aliases: ["fornamn", "firstname"], required: true },
-      { field: "lastName", aliases: ["efternamn", "lastname"], required: true },
-      { field: "email", aliases: ["epost", "email", "epostadress"], required: true },
-    ],
-    requiredMessage,
+/**
+ * One row of larare.csv after mapping — ImportTeacherRowDto's shape.
+ *
+ * The post fields are PRESENT ONLY WHEN THE CELL HAS SOMETHING IN IT. A file
+ * without the four columns, or a row leaving them blank, produces the same
+ * three-field row it always did, and the gateway then treats the person as a
+ * person and nothing more. Sending `employmentPercent: null` instead would
+ * state "no post" about every teacher in a plain staff list — which the
+ * gateway reads as a post being stated, and refuses when the other three
+ * columns say nothing either.
+ */
+export type TeacherRow = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  employmentPercent?: number;
+  reductionPercent?: number;
+  contractKind?: TeacherContractKind;
+  signature?: string;
+};
+
+const TEACHER_POST_COLUMNS = {
+  employmentPercent: [
+    "tjanstprocent",
+    "tjanst",
+    "tjanstgoringsgrad",
+    "tjanstgoringsgradprocent",
+    "employmentpercent",
+  ],
+  reductionPercent: ["nedsattningprocent", "nedsattning", "reductionpercent"],
+  contractKind: ["avtal", "avtalsform", "contractkind", "tjanstetyp"],
+  signature: ["signatur", "signature", "sign", "lararsignatur"],
+} satisfies Record<string, string[]>;
+
+/** "ferie", "semester", the enum names, and the two Swedish compounds. */
+const CONTRACT_BY_WORD: Record<string, TeacherContractKind> = {
+  ferie: "FERIE",
+  ferietjanst: "FERIE",
+  semester: "SEMESTER",
+  semestertjanst: "SEMESTER",
+};
+
+const CONTRACT_WORD: Record<TeacherContractKind, string> = {
+  FERIE: "ferie",
+  SEMESTER: "semester",
+};
+
+/**
+ * Teacher rows: name and e-mail, plus the optional post.
+ *
+ * The bounds are UpsertTeacherEmploymentDto's — (0, 100] with three decimals,
+ * nedsättning inside the post, a signature of one to eight visible characters
+ * — checked here so a cell the API would refuse becomes a row-numbered
+ * message instead of one 400 for the whole upload. The one rule the gateway
+ * has and this mapper repeats is that the other three columns mean nothing
+ * without tjanst_procent: half a post cannot be read.
+ */
+export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
+  const normalized = parsed.headers.map(normalizeHeader);
+  const find = (aliases: string[]) => normalized.findIndex((header) => aliases.includes(header));
+  const columns = {
+    firstName: find(["fornamn", "firstname"]),
+    lastName: find(["efternamn", "lastname"]),
+    email: find(["epost", "email", "epostadress"]),
+    employmentPercent: find(TEACHER_POST_COLUMNS.employmentPercent),
+    reductionPercent: find(TEACHER_POST_COLUMNS.reductionPercent),
+    contractKind: find(TEACHER_POST_COLUMNS.contractKind),
+    signature: find(TEACHER_POST_COLUMNS.signature),
+  };
+  const missing = (["firstName", "lastName", "email"] as const).filter(
+    (field) => columns[field] === -1,
   );
+  if (missing.length > 0) {
+    return {
+      rows: [],
+      errors: [
+        {
+          row: 0,
+          message: `Kolumner saknas: ${missing
+            .map((field) => FIELD_LABELS[field])
+            .join(", ")}. Ladda ner mallen och utgå från den.`,
+        },
+      ],
+    };
+  }
+
+  const rows: TeacherRow[] = [];
+  const errors: RowError[] = [];
+  parsed.rows.forEach((raw, index) => {
+    const rowNumber = index + 1;
+    const cell = (column: number) => (column === -1 ? "" : raw[column]);
+    const fail = (message: string) => {
+      errors.push({ row: rowNumber, message });
+    };
+
+    const row: TeacherRow = {
+      firstName: cell(columns.firstName),
+      lastName: cell(columns.lastName),
+      email: cell(columns.email),
+    };
+    for (const field of ["firstName", "lastName", "email"] as const) {
+      if (row[field] === "") return fail(requiredMessage(field, rowNumber));
+    }
+
+    const rawPercent = cell(columns.employmentPercent);
+    const rawReduction = cell(columns.reductionPercent);
+    const rawContract = cell(columns.contractKind);
+    const rawSignature = cell(columns.signature);
+    const statesPost = [rawPercent, rawReduction, rawContract, rawSignature].some(
+      (value) => value !== "",
+    );
+    if (!statesPost) return rows.push(row);
+
+    if (rawPercent === "") {
+      return fail(
+        `Rad ${rowNumber}: nedsättning, avtal eller signatur utan tjanst_procent. Ange tjänstgöringsgraden, eller lämna alla fyra tomma.`,
+      );
+    }
+    const percent = parseDecimal(rawPercent, 3);
+    if (percent === null || percent <= 0 || percent > 100) {
+      return fail(
+        `Rad ${rowNumber}: tjanst_procent "${rawPercent}" är inte ett tal över 0 och högst 100 med högst tre decimaler.`,
+      );
+    }
+    row.employmentPercent = percent;
+
+    if (rawReduction !== "") {
+      const reduction = parseDecimal(rawReduction, 3);
+      if (reduction === null || reduction > 100) {
+        return fail(
+          `Rad ${rowNumber}: nedsattning_procent "${rawReduction}" är inte ett tal mellan 0 och 100 med högst tre decimaler.`,
+        );
+      }
+      if (reduction > percent) {
+        return fail(
+          `Rad ${rowNumber}: nedsättningen (${rawReduction} %) är större än tjänsten (${rawPercent} %).`,
+        );
+      }
+      row.reductionPercent = reduction;
+    }
+
+    if (rawContract !== "") {
+      const contract = CONTRACT_BY_WORD[normalizeHeader(rawContract)];
+      if (contract === undefined) {
+        return fail(
+          `Rad ${rowNumber}: avtal "${rawContract}" känns inte igen. Skriv "ferie" eller "semester", eller lämna cellen tom.`,
+        );
+      }
+      row.contractKind = contract;
+    }
+
+    if (rawSignature !== "") {
+      if (rawSignature.length > 8) {
+        return fail(`Rad ${rowNumber}: signatur "${rawSignature}" är längre än åtta tecken.`);
+      }
+      row.signature = rawSignature;
+    }
+
+    rows.push(row);
+  });
+  return { rows, errors };
+}
+
+/**
+ * One row of behorigheter.csv after mapping — ImportTeacherQualificationRowDto.
+ * Minutes and dates are absent: a behörighet is a subject, a span and a kind.
+ */
+export type TeacherQualificationRow = {
+  teacherEmail: string;
+  /** Code or name, resolved server-side. */
+  subject: string;
+  minGrade: number;
+  maxGrade: number;
+  kind: TeacherQualificationKind;
+};
+
+const QUALIFICATION_COLUMNS = {
+  teacherEmail: ["larareepost", "larare", "epost", "email", "epostadress", "teacheremail"],
+  subject: ["amne", "amneskod", "subject", "subjectcode", "kod", "code"],
+  minGrade: ["franarskurs", "fran", "lagstaarskurs", "minarskurs", "mingrade", "from"],
+  maxGrade: ["tillarskurs", "till", "hogstaarskurs", "maxarskurs", "maxgrade", "to"],
+  kind: ["behorighet", "slag", "kind", "typ"],
+} satisfies Record<string, string[]>;
+
+type QualificationField = keyof typeof QUALIFICATION_COLUMNS;
+
+/**
+ * The kind, read for humans like `veckor`: case, spacing and diacritics
+ * dropped, so "Legitimation", "legitimerad", "behörig", "BEHORIG" and
+ * "tillåten" all land. No empty-cell default — see the template.
+ */
+const KIND_BY_WORD: Record<string, TeacherQualificationKind> = {
+  legitimation: "LEGITIMATION",
+  legitimerad: "LEGITIMATION",
+  behorig: "BEHORIG",
+  tillaten: "TILLATEN",
+};
+
+const KIND_WORD: Record<TeacherQualificationKind, string> = {
+  LEGITIMATION: "legitimation",
+  BEHORIG: "behörig",
+  TILLATEN: "tillåten",
+};
+
+/**
+ * Behörighet rows. Bounds are the DTO's (0..12, max ≥ min); the one check
+ * only the whole file can make — two rows for one teacher and subject — is
+ * here for the same reason the timplan's duplicate check is: the upload is
+ * cut into batches, and a pair straddling the cut would be two clean
+ * requests whose later row silently overwrote the earlier.
+ */
+export function mapTeacherQualificationRows(parsed: ParsedCsv): MappedRows<TeacherQualificationRow> {
+  const normalized = parsed.headers.map(normalizeHeader);
+  const columnOf = new Map<QualificationField, number>();
+  for (const [field, aliases] of Object.entries(QUALIFICATION_COLUMNS)) {
+    const index = normalized.findIndex((header) => aliases.includes(header));
+    if (index !== -1) columnOf.set(field as QualificationField, index);
+  }
+  const labels: Record<QualificationField, string> = {
+    teacherEmail: "larare_epost",
+    subject: "amne",
+    minGrade: "fran_arskurs",
+    maxGrade: "till_arskurs",
+    kind: "behorighet",
+  };
+  const missing = (Object.keys(QUALIFICATION_COLUMNS) as QualificationField[]).filter(
+    (field) => !columnOf.has(field),
+  );
+  if (missing.length > 0) {
+    return {
+      rows: [],
+      errors: [
+        {
+          row: 0,
+          message: `Kolumner saknas: ${missing.map((field) => labels[field]).join(", ")}. Ladda ner mallen och utgå från den.`,
+        },
+      ],
+    };
+  }
+
+  const rows: TeacherQualificationRow[] = [];
+  const errors: RowError[] = [];
+  const seenAtRow = new Map<string, number>();
+  parsed.rows.forEach((raw, index) => {
+    const rowNumber = index + 1;
+    const cell = (field: QualificationField) => raw[columnOf.get(field)!];
+    const fail = (message: string) => {
+      errors.push({ row: rowNumber, message });
+    };
+
+    const teacherEmail = cell("teacherEmail");
+    if (teacherEmail === "") return fail(`Rad ${rowNumber}: kolumnen "larare_epost" är tom.`);
+    const subject = cell("subject");
+    if (subject === "") return fail(`Rad ${rowNumber}: kolumnen "amne" är tom.`);
+
+    const grade = (field: "minGrade" | "maxGrade"): number | null => {
+      const value = cell(field);
+      const parsed = Number(value);
+      if (value === "" || !Number.isInteger(parsed) || parsed < 0 || parsed > 12) {
+        fail(`Rad ${rowNumber}: ${labels[field]} "${value}" är inte ett heltal mellan 0 och 12.`);
+        return null;
+      }
+      return parsed;
+    };
+    const minGrade = grade("minGrade");
+    if (minGrade === null) return;
+    const maxGrade = grade("maxGrade");
+    if (maxGrade === null) return;
+    if (maxGrade < minGrade) {
+      return fail(
+        `Rad ${rowNumber}: till_arskurs (${maxGrade}) är lägre än fran_arskurs (${minGrade}). Ett spann skrivs som 7–9, inte 9–7.`,
+      );
+    }
+
+    const rawKind = cell("kind");
+    const kind = KIND_BY_WORD[normalizeHeader(rawKind)];
+    if (kind === undefined) {
+      return fail(
+        `Rad ${rowNumber}: behorighet "${rawKind}" känns inte igen. Skriv "legitimation", "behörig" eller "tillåten".`,
+      );
+    }
+
+    const duplicateKey = `${teacherEmail.toLowerCase()}\u0000${subject.toLowerCase()}`;
+    const firstSeenAt = seenAtRow.get(duplicateKey);
+    if (firstSeenAt !== undefined) {
+      return fail(
+        `Rad ${rowNumber}: ${teacherEmail} och ${subject} står redan på rad ${firstSeenAt}. En behörighet per ämne — skriv spannet som ett.`,
+      );
+    }
+    seenAtRow.set(duplicateKey, rowNumber);
+
+    rows.push({ teacherEmail, subject, minGrade, maxGrade, kind });
+  });
+  return { rows, errors };
 }
 
 export function mapClassRows(parsed: ParsedCsv): {
@@ -1103,15 +1426,80 @@ export function classesToCsv(
   );
 }
 
+/**
+ * The teachers, with their post for the year the caller hands in.
+ *
+ * `employmentOf` is optional so a page that has not loaded the posts still
+ * exports a list — with the four post columns EMPTY, which the importer reads
+ * as "no post stated" and leaves alone. Never "0": a zero in tjanst_procent is
+ * a row the API refuses, and a file that cannot import back is not an export.
+ * The percentages are written with a point; the mapper takes both.
+ */
 export function teachersToCsv(
-  people: { role: string; firstName: string; lastName: string; email: string }[],
+  people: { id?: string; role: string; firstName: string; lastName: string; email: string }[],
+  employmentOf?: (userId: string) =>
+    | {
+        employmentPercent: number;
+        reductionPercent: number;
+        contractKind: TeacherContractKind;
+        signature: string | null;
+      }
+    | undefined,
 ): string {
   return serializeCsv(
     CSV_TEMPLATES.teachers.headers,
     people
       .filter((person) => person.role === "TEACHER")
-      .map((person) => [person.firstName, person.lastName, person.email]),
+      .map((person) => {
+        const post = person.id !== undefined ? employmentOf?.(person.id) : undefined;
+        return [
+          person.firstName,
+          person.lastName,
+          person.email,
+          post ? String(post.employmentPercent) : "",
+          post && post.reductionPercent > 0 ? String(post.reductionPercent) : "",
+          post ? CONTRACT_WORD[post.contractKind] : "",
+          post?.signature ?? "",
+        ];
+      }),
   );
+}
+
+/**
+ * Behörigheter as the file the importer reads: e-mail, subject code, span,
+ * kind as a word. A row whose teacher or subject the loaded lists cannot
+ * name is left out rather than written blank, for the reason requirementsToCsv
+ * gives: a blank is a row the importer rejects on the way back in.
+ */
+export function teacherQualificationsToCsv(
+  qualifications: {
+    userId: string;
+    subjectId: string;
+    minGradeLevel: number;
+    maxGradeLevel: number;
+    kind: TeacherQualificationKind;
+  }[],
+  people: { id: string; email: string }[],
+  subjects: { id: string; name: string; code: string | null }[],
+): string {
+  const email = new Map(people.map((person) => [person.id, person.email]));
+  const subjectLabel = new Map(
+    subjects.map((subject) => [subject.id, subject.code?.trim() || subject.name]),
+  );
+  const rows: string[][] = [];
+  for (const row of qualifications) {
+    const address = email.get(row.userId);
+    const subject = subjectLabel.get(row.subjectId);
+    if (!address || !subject) continue;
+    rows.push([
+      address,
+      subject,
+      String(row.minGradeLevel),
+      String(row.maxGradeLevel),
+      KIND_WORD[row.kind],
+    ]);
+  }
+  return serializeCsv(CSV_TEMPLATES.teacherQualifications.headers, rows);
 }
 
 export function studentsToCsv(

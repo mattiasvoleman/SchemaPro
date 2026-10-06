@@ -21,7 +21,9 @@ import {
   TeacherWorkTimeDialog,
   TeacherWorkTimeSummary,
 } from "@/components/schedule/teacher-work-time-dialog";
-import { studentsToCsv, teachersToCsv } from "@/lib/csv";
+import { EmploymentCard } from "@/components/staffing/employment-card";
+import { QualificationsCard } from "@/components/staffing/qualifications-card";
+import { studentsToCsv, teacherQualificationsToCsv, teachersToCsv } from "@/lib/csv";
 import {
   useCrudMutations,
   useAcademicYears,
@@ -31,11 +33,30 @@ import {
   useInvitations,
   usePeople,
   useRequirements,
+  useStaffingPolicy,
   useSubjects,
   useStudentGuardians,
+  useTeacherEmploymentActions,
+  useTeacherEmployments,
+  useTeacherQualifications,
   useTeacherWorkRules,
 } from "@/lib/queries";
-import type { Person, StudentGroup, TeacherWorkRule, UserRole } from "@/lib/types";
+import {
+  employmentDraftToBody,
+  employmentToDraft,
+  validateEmploymentDraft,
+  type EmploymentProblem,
+} from "@/lib/staffing-forms";
+import type {
+  Person,
+  StaffingPolicy,
+  StudentGroup,
+  Subject,
+  TeacherEmployment,
+  TeacherQualification,
+  TeacherWorkRule,
+  UserRole,
+} from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -101,6 +122,15 @@ interface PersonForm {
   phone: string;
   role: UserRole;
   studentGroupId: string;
+  /**
+   * The quick half of a teacher's post — tjänst and signatur — for the active
+   * läsår. Strings, like every number in a dialog: "" means "say nothing about
+   * the post", which leaves a stored one untouched and writes none for a new
+   * teacher. The full post (nedsättning, avtal, eget riktmärke) is edited on
+   * the Anställning card in the row below.
+   */
+  employmentPercent: string;
+  signature: string;
 }
 
 const EMPTY_FORM: PersonForm = {
@@ -110,7 +140,23 @@ const EMPTY_FORM: PersonForm = {
   phone: "",
   role: "STUDENT",
   studentGroupId: NO_GROUP,
+  employmentPercent: "",
+  signature: "",
 };
+
+/**
+ * What the two staffing cards on a staff row need, gathered once by the page.
+ * Null while the school has no läsår: a post is per year, so there is nothing
+ * to write it into.
+ */
+interface StaffingContext {
+  academicYearId: string;
+  academicYearName: string;
+  employment: TeacherEmployment | null;
+  qualifications: TeacherQualification[] | undefined;
+  policy: StaffingPolicy | null | undefined;
+  subjects: Subject[];
+}
 
 /**
  * What is only worth seeing for one person at a time.
@@ -127,6 +173,7 @@ function PersonDetail({
   teachingGroups,
   taught,
   workRule,
+  staffing,
   subjectName,
   t,
 }: {
@@ -136,6 +183,8 @@ function PersonDetail({
   taught: TaughtGroup[];
   /** Their stored working time, or undefined when they have none. */
   workRule: TeacherWorkRule | undefined;
+  /** The post and behörigheter, for a member of staff with a läsår to hold them. */
+  staffing: StaffingContext | null;
   subjectName: (id: string) => string;
   t: (key: string, values?: Record<string, string | number>) => string;
 }) {
@@ -182,6 +231,30 @@ function PersonDetail({
             <TeacherWorkTimeSummary rule={workRule} />
           </div>
         ) : null}
+        {/*
+          The same two cards the staffing drawer shows, because they are about
+          the same person and the same rows: an admin adding a new teacher in
+          August fills the post here without leaving the register, and the
+          matrix reads it the next time it is opened. Staff roles, as for the
+          working time — the gateway admits a SCHOOL_ADMIN's post for the same
+          undervisande rektor.
+        */}
+        {MAY_HAVE_WORK_TIME.includes(person.role) && staffing ? (
+          <div className="grid gap-3 lg:grid-cols-2">
+            <EmploymentCard
+              teacher={person}
+              academicYearId={staffing.academicYearId}
+              academicYearName={staffing.academicYearName}
+              employment={staffing.employment}
+              policy={staffing.policy}
+            />
+            <QualificationsCard
+              teacher={person}
+              qualifications={staffing.qualifications}
+              subjects={staffing.subjects}
+            />
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -217,6 +290,7 @@ function PersonDetail({
 export default function PeoplePage() {
   const t = useTranslations("people");
   const tWorkTime = useTranslations("teacherWorkTime");
+  const tStaffing = useTranslations("staffing");
   const tCommon = useTranslations("common");
   const tRoles = useTranslations("roles");
   const tCsvImport = useTranslations("csvImport");
@@ -225,8 +299,31 @@ export default function PeoplePage() {
   const { data: memberships } = useGroupMemberships();
   const { data: subjects } = useSubjects();
   const { data: years } = useAcademicYears();
-  const activeYearId = years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
+  const activeYear = years?.find((year) => year.isActive) ?? years?.[0] ?? null;
+  const activeYearId = activeYear?.id ?? null;
   const { data: requirements } = useRequirements(activeYearId);
+  /**
+   * The staff's posts for the active year, their behörigheter and the policy
+   * that turns a post into a target — read once for the whole list, like the
+   * working-time rules, and looked up per row.
+   */
+  const { data: employments } = useTeacherEmployments(activeYearId);
+  const { data: qualifications } = useTeacherQualifications();
+  const { data: policy } = useStaffingPolicy();
+  const employmentActions = useTeacherEmploymentActions();
+  const employmentOf = (userId: string) =>
+    employments?.find((row) => row.userId === userId) ?? null;
+  const staffingFor = (person: Person): StaffingContext | null =>
+    activeYear
+      ? {
+          academicYearId: activeYear.id,
+          academicYearName: activeYear.name,
+          employment: employmentOf(person.id),
+          qualifications: qualifications?.filter((row) => row.userId === person.id),
+          policy,
+          subjects: subjects ?? [],
+        }
+      : null;
   /**
    * The staff's working-time rules, read once for the whole list.
    *
@@ -313,6 +410,7 @@ export default function PeoplePage() {
 
   const openEdit = (person: Person) => {
     setEditing(person);
+    const post = employmentOf(person.id);
     setForm({
       firstName: person.firstName,
       lastName: person.lastName,
@@ -320,8 +418,31 @@ export default function PeoplePage() {
       phone: person.phone ?? "",
       role: person.role,
       studentGroupId: person.studentGroupId ?? NO_GROUP,
+      employmentPercent: post ? String(post.employmentPercent) : "",
+      signature: post?.signature ?? "",
     });
     setDialogOpen(true);
+  };
+
+  /** Whether the dialog shows the two post fields: a member of staff, and a year to write into. */
+  const showsPost = MAY_HAVE_WORK_TIME.includes(form.role) && activeYearId !== null;
+
+  /**
+   * The post the dialog would write: the stored row with the two fields
+   * replaced, or a fresh one from them. Built on the stored draft so a
+   * nedsättning or an own riktmärke set on the card survives a name change
+   * here — PUT replaces the row whole.
+   */
+  const postDraft = () => ({
+    ...employmentToDraft(editing ? employmentOf(editing.id) : null),
+    employmentPercent: form.employmentPercent,
+    signature: form.signature,
+  });
+  const postProblem: EmploymentProblem | null =
+    showsPost && form.employmentPercent.trim() !== "" ? validateEmploymentDraft(postDraft()) : null;
+  const postProblemText = (p: EmploymentProblem) => {
+    const { reason, ...values } = p;
+    return tStaffing(`problem_${reason}`, values as Record<string, number>);
   };
 
   const submit = async () => {
@@ -336,16 +457,36 @@ export default function PeoplePage() {
           : null,
     };
     try {
+      let userId = editing?.id ?? null;
       if (editing) {
         await mutations.update.mutateAsync({ id: editing.id, ...body });
         toast.success(tCommon("updated"));
       } else {
-        await mutations.create.mutateAsync({
+        const created = (await mutations.create.mutateAsync({
           ...body,
           email: form.email.trim(),
           sendInvitation,
-        });
+        })) as { id?: string } | undefined;
+        userId = created?.id ?? null;
         toast.success(sendInvitation ? t("createdAndInvited") : tCommon("created"));
+      }
+      /*
+       * The post, written only when the dialog SAYS something about it. An
+       * empty tjänst leaves a stored post alone rather than deleting it —
+       * the card is where a post is taken away, with its own button — and
+       * an unchanged pair sends nothing, so editing a phone number does not
+       * rewrite HR data.
+       */
+      if (showsPost && userId && activeYearId && form.employmentPercent.trim() !== "") {
+        const stored = editing ? employmentOf(editing.id) : null;
+        const next = employmentDraftToBody(postDraft());
+        const unchanged =
+          stored !== null &&
+          stored.employmentPercent === next.employmentPercent &&
+          (stored.signature ?? null) === next.signature;
+        if (!unchanged) {
+          await employmentActions.save.mutateAsync({ userId, academicYearId: activeYearId, ...next });
+        }
       }
       setDialogOpen(false);
     } catch (error) {
@@ -419,8 +560,18 @@ export default function PeoplePage() {
               exports={[
                 {
                   kind: "teachers",
-                  build: () => teachersToCsv(people ?? []),
+                  // With the active year's posts, so the file imports back
+                  // with the tjänst it showed; a teacher without one gets
+                  // empty post cells, which the importer leaves alone.
+                  build: () =>
+                    teachersToCsv(people ?? [], (userId) => employmentOf(userId) ?? undefined),
                   empty: !people?.some((person) => person.role === "TEACHER"),
+                },
+                {
+                  kind: "teacherQualifications",
+                  build: () =>
+                    teacherQualificationsToCsv(qualifications ?? [], people ?? [], subjects ?? []),
+                  empty: (qualifications ?? []).length === 0,
                 },
                 {
                   kind: "students",
@@ -621,6 +772,7 @@ export default function PeoplePage() {
                           groups ?? [],
                         )}
                         workRule={workRuleOf(person.id)}
+                        staffing={staffingFor(person)}
                         subjectName={subjectName}
                         t={t}
                       />
@@ -722,6 +874,44 @@ export default function PeoplePage() {
               </div>
             ) : null}
 
+            {showsPost ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="person-employment">
+                    {tStaffing("employmentPercent")}{" "}
+                    <span className="text-muted-foreground">({tCommon("optional")})</span>
+                  </Label>
+                  <Input
+                    id="person-employment"
+                    inputMode="decimal"
+                    value={form.employmentPercent}
+                    onChange={(e) => setForm({ ...form, employmentPercent: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {tStaffing("employmentHint", { year: activeYear?.name ?? "" })}
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="person-signature">
+                    {tStaffing("signature")}{" "}
+                    <span className="text-muted-foreground">({tCommon("optional")})</span>
+                  </Label>
+                  <Input
+                    id="person-signature"
+                    maxLength={8}
+                    value={form.signature}
+                    onChange={(e) => setForm({ ...form, signature: e.target.value })}
+                  />
+                  <p className="text-xs text-muted-foreground">{tStaffing("signatureHint")}</p>
+                </div>
+                {postProblem ? (
+                  <p role="alert" className="col-span-2 text-sm text-destructive">
+                    {postProblemText(postProblem)}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             {!editing ? (
               <div className="flex items-start justify-between gap-4 rounded-md border p-3">
                 <div className="space-y-1">
@@ -748,8 +938,10 @@ export default function PeoplePage() {
                 form.firstName.trim().length === 0 ||
                 form.lastName.trim().length === 0 ||
                 (!editing && form.email.trim().length === 0) ||
+                postProblem !== null ||
                 mutations.create.isPending ||
-                mutations.update.isPending
+                mutations.update.isPending ||
+                employmentActions.save.isPending
               }
             >
               {tCommon("save")}
@@ -861,7 +1053,7 @@ export default function PeoplePage() {
       ) : null}
 
       <CsvImportDialog
-        kinds={["students", "teachers"]}
+        kinds={["students", "teachers", "teacherQualifications"]}
         open={importOpen}
         onOpenChange={setImportOpen}
       />

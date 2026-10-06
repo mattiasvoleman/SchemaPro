@@ -24,8 +24,10 @@ import {
   serializeCsv,
   subjectsToCsv,
   mapStudentRows,
+  mapTeacherQualificationRows,
   mapTeacherRows,
   normalizeHeader,
+  teacherQualificationsToCsv,
   parseCsv,
   templateCsvContent,
   type ImportKind,
@@ -324,6 +326,7 @@ const ALL_KINDS: ImportKind[] = [
   "classes",
   "teachingGroups",
   "requirements",
+  "teacherQualifications",
 ];
 
 describe("templateCsvContent", () => {
@@ -370,8 +373,29 @@ describe("templateCsvContent", () => {
 
     const teachers = mapTeacherRows(parseCsv(templateCsvContent("teachers")));
     expect(teachers.errors).toEqual([]);
-    expect(teachers.rows).toEqual([
-      { firstName: "Karin", lastName: "Ek", email: "karin.ek@example.com" },
+    // Row one states a post; row two leaves the four columns blank and comes
+    // out as the three-field row the gateway has always taken — the post keys
+    // are ABSENT, not null, so a plain staff list says nothing about posts.
+    expect(teachers.rows).toStrictEqual([
+      {
+        firstName: "Karin",
+        lastName: "Ek",
+        email: "karin.ek@example.com",
+        employmentPercent: 100,
+        contractKind: "FERIE",
+        signature: "KEK",
+      },
+      { firstName: "Bo", lastName: "Alm", email: "bo.alm@example.com" },
+    ]);
+
+    const qualifications = mapTeacherQualificationRows(
+      parseCsv(templateCsvContent("teacherQualifications")),
+    );
+    expect(qualifications.errors).toEqual([]);
+    expect(qualifications.rows).toEqual([
+      { teacherEmail: "karin.ek@example.com", subject: "MA", minGrade: 7, maxGrade: 9, kind: "LEGITIMATION" },
+      { teacherEmail: "karin.ek@example.com", subject: "NO", minGrade: 7, maxGrade: 9, kind: "BEHORIG" },
+      { teacherEmail: "bo.alm@example.com", subject: "SLTX", minGrade: 1, maxGrade: 9, kind: "TILLATEN" },
     ]);
 
     const classes = mapClassRows(parseCsv(templateCsvContent("classes")));
@@ -2148,5 +2172,137 @@ describe("formula injection", () => {
   it("does not strip an apostrophe that belongs to the value", () => {
     const parsed = parseCsv(serializeCsv(["name"], [["'Anna'"]]));
     expect(parsed.rows[0]?.[0]).toBe("'Anna'");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tjänstefördelning: the post columns on the teachers file, and behörigheter
+// ---------------------------------------------------------------------------
+
+describe("mapTeacherRows: the optional post", () => {
+  const file = (rows: string) =>
+    parseCsv(`fornamn;efternamn;epost;tjanst_procent;nedsattning_procent;avtal;signatur\n${rows}`);
+
+  it("reads a decimal comma, an enum word in any case, and leaves blanks out", () => {
+    const { rows, errors } = mapTeacherRows(
+      file("Karin;Ek;k@s.se;66,667;;Semestertjänst;\nBo;Alm;b@s.se;80;20;FERIE;BAL"),
+    );
+    expect(errors).toEqual([]);
+    expect(rows).toStrictEqual([
+      { firstName: "Karin", lastName: "Ek", email: "k@s.se", employmentPercent: 66.667, contractKind: "SEMESTER" },
+      {
+        firstName: "Bo",
+        lastName: "Alm",
+        email: "b@s.se",
+        employmentPercent: 80,
+        reductionPercent: 20,
+        contractKind: "FERIE",
+        signature: "BAL",
+      },
+    ]);
+  });
+
+  it("refuses the DTO's bounds with the row named, one error per row", () => {
+    const { rows, errors } = mapTeacherRows(
+      file(
+        [
+          "A;A;a@s.se;0;;;",
+          "B;B;b@s.se;100.5;;;",
+          "C;C;c@s.se;80;90;;",
+          "D;D;d@s.se;80;;vikarie;",
+          "E;E;e@s.se;80;;;ANDERSSON",
+          "F;F;f@s.se;;;ferie;",
+          "G;G;g@s.se;80;;;",
+        ].join("\n"),
+      ),
+    );
+    expect(rows.map((row) => row.firstName)).toEqual(["G"]);
+    expect(errors.map((error) => error.row)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(errors[2]?.message).toContain("nedsättningen (90 %) är större än tjänsten (80 %)");
+    expect(errors[3]?.message).toContain('avtal "vikarie"');
+    expect(errors[5]?.message).toContain("utan tjanst_procent");
+  });
+
+  it("still takes a three-column staff list exactly as before", () => {
+    const { rows, errors } = mapTeacherRows(parseCsv("fornamn;efternamn;epost\nKarin;Ek;k@s.se"));
+    expect(errors).toEqual([]);
+    expect(rows).toStrictEqual([{ firstName: "Karin", lastName: "Ek", email: "k@s.se" }]);
+  });
+});
+
+describe("mapTeacherQualificationRows", () => {
+  const file = (rows: string) =>
+    parseCsv(`larare_epost;amne;fran_arskurs;till_arskurs;behorighet\n${rows}`);
+
+  it("refuses a reversed span, an unknown kind and a grade off the scale", () => {
+    const { rows, errors } = mapTeacherQualificationRows(
+      file("k@s.se;MA;9;7;legitimation\nk@s.se;NO;7;9;vikarie\nk@s.se;SV;7;13;behörig\nk@s.se;EN;1;9;Legitimerad"),
+    );
+    expect(rows).toEqual([
+      { teacherEmail: "k@s.se", subject: "EN", minGrade: 1, maxGrade: 9, kind: "LEGITIMATION" },
+    ]);
+    expect(errors.map((error) => error.row)).toEqual([1, 2, 3]);
+    expect(errors[0]?.message).toContain("7–9, inte 9–7");
+    expect(errors[1]?.message).toContain('behorighet "vikarie"');
+    expect(errors[2]?.message).toContain('till_arskurs "13"');
+  });
+
+  it("catches two rows for one teacher and subject, whichever case the file uses", () => {
+    const { rows, errors } = mapTeacherQualificationRows(
+      file("k@s.se;MA;1;6;behörig\nK@S.SE;ma;7;9;behörig"),
+    );
+    expect(rows).toHaveLength(1);
+    expect(errors).toEqual([
+      { row: 2, message: expect.stringContaining("står redan på rad 1") },
+    ]);
+  });
+
+  it("names the missing columns", () => {
+    const { errors } = mapTeacherQualificationRows(parseCsv("larare_epost;amne\nk@s.se;MA"));
+    expect(errors[0]?.message).toBe(
+      "Kolumner saknas: fran_arskurs, till_arskurs, behorighet. Ladda ner mallen och utgå från den.",
+    );
+  });
+});
+
+describe("staffing export round trips", () => {
+  it("teachers carry their post back in, and a teacher without one stays a plain row", () => {
+    const exported = teachersToCsv(
+      [
+        { id: "t-1", role: "TEACHER", firstName: "Karin", lastName: "Ek", email: "k@s.se" },
+        { id: "t-2", role: "TEACHER", firstName: "Bo", lastName: "Alm", email: "b@s.se" },
+      ],
+      (userId) =>
+        userId === "t-1"
+          ? { employmentPercent: 66.667, reductionPercent: 0, contractKind: "SEMESTER", signature: "KEK" }
+          : undefined,
+    );
+    const { rows, errors } = mapTeacherRows(parseCsv(exported));
+    expect(errors).toEqual([]);
+    expect(rows).toStrictEqual([
+      { firstName: "Karin", lastName: "Ek", email: "k@s.se", employmentPercent: 66.667, contractKind: "SEMESTER", signature: "KEK" },
+      { firstName: "Bo", lastName: "Alm", email: "b@s.se" },
+    ]);
+  });
+
+  it("behörigheter survive, subject as code, kind as a word, unknown references dropped", () => {
+    const exported = teacherQualificationsToCsv(
+      [
+        { userId: "t-1", subjectId: "s-ma", minGradeLevel: 7, maxGradeLevel: 9, kind: "LEGITIMATION" },
+        { userId: "t-1", subjectId: "s-no", minGradeLevel: 4, maxGradeLevel: 6, kind: "TILLATEN" },
+        { userId: "t-gone", subjectId: "s-ma", minGradeLevel: 1, maxGradeLevel: 3, kind: "BEHORIG" },
+      ],
+      [{ id: "t-1", email: "k@s.se" }],
+      [
+        { id: "s-ma", name: "Matematik", code: "MA" },
+        { id: "s-no", name: "Naturorientering", code: null },
+      ],
+    );
+    const { rows, errors } = mapTeacherQualificationRows(parseCsv(exported));
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      { teacherEmail: "k@s.se", subject: "MA", minGrade: 7, maxGrade: 9, kind: "LEGITIMATION" },
+      { teacherEmail: "k@s.se", subject: "Naturorientering", minGrade: 4, maxGrade: 6, kind: "TILLATEN" },
+    ]);
   });
 });
