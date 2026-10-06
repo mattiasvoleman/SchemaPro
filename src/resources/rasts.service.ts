@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import type { PrismaClient, Rast } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { assertWholeMinutes } from '../common/solver-grid';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseTimeString, toWallClock } from '../common/utils/time';
@@ -157,6 +158,9 @@ function toResponse(row: Rast): RastResponse {
  * to a whole slot rather than to nothing, so it is honoured rather than lost.
  */
 function assertWindow(startTime: string, endTime: string): void {
+  assertWholeMinutes('startTime', startTime);
+  assertWholeMinutes('endTime', endTime);
+
   if (minutesOf(startTime) >= minutesOf(endTime)) {
     throw new BadRequestException('startTime must be before endTime.');
   }
