@@ -186,6 +186,15 @@ export function useLocalTimplanActions() {
           path(id, "/entries"),
           { entries },
         ),
+      // A save is PATCH then PUT, and the PATCH's refetch of the plan and its
+      // check (the plan key is a prefix of the check key) reads the plan
+      // BEFORE this PUT commits. Answering after the PUT, it wrote the old
+      // cells over the ones the PUT seeds below — setQueryData does not stop
+      // a fetch in flight — and the next save sent that stale grid wholesale.
+      // Cancelled here, before the request, its answer is dropped.
+      onMutate: async ({ id }) => {
+        await queryClient.cancelQueries({ queryKey: TIMPLAN_KEYS.plan(id) });
+      },
       onSuccess: ({ plan, check }) => {
         queryClient.setQueryData(TIMPLAN_KEYS.plan(plan.id), plan);
         queryClient.setQueryData(TIMPLAN_KEYS.check(plan.id), check);
