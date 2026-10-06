@@ -8,12 +8,14 @@ import {
   ImportRequirementRowDto,
   ImportRequirementsDto,
   ImportSubjectRowDto,
+  ImportTeacherDutiesDto,
   ImportTeacherQualificationRowDto,
   ImportTeacherRowDto,
   ImportTimplanDto,
   ImportTimplanRowDto,
   OPTIONAL_REQUIREMENT_COLUMNS,
   REQUIREMENT_FILE_COLUMNS,
+  TEACHER_DUTY_FILE_COLUMNS,
 } from './import.dto';
 
 const YEAR_ID = '99999999-9999-4999-8999-999999999999';
@@ -154,6 +156,96 @@ describe('the timplan column lists', () => {
     );
 
     expect(errors.map((error) => error.property)).toEqual(['columns']);
+  });
+});
+
+describe('the two load-percent columns of a timplan file', () => {
+  it('are file columns a file may leave out, spelled as the API fields', () => {
+    for (const column of ['teacherLoadPercent', 'coTeacherLoadPercent'] as const) {
+      expect(REQUIREMENT_FILE_COLUMNS).toContain(column);
+      expect(OPTIONAL_REQUIREMENT_COLUMNS).toContain(column);
+    }
+  });
+
+  it('hold 0..200 whole percent, an empty cell posted as null passing as absence', async () => {
+    await expect(failing({ ...base, teacherLoadPercent: 0, coTeacherLoadPercent: 200 })).resolves.toEqual([]);
+    await expect(failing({ ...base, teacherLoadPercent: null })).resolves.toEqual([]);
+    await expect(failing({ ...base, teacherLoadPercent: 201 })).resolves.toEqual(['teacherLoadPercent']);
+    await expect(failing({ ...base, coTeacherLoadPercent: -1 })).resolves.toEqual(['coTeacherLoadPercent']);
+    await expect(failing({ ...base, coTeacherLoadPercent: 12.5 })).resolves.toEqual(['coTeacherLoadPercent']);
+  });
+});
+
+describe('ImportTeacherDutiesDto — an uppdrag file', () => {
+  const duty = {
+    teacherEmail: 'karin@example.com',
+    kind: 'RASTVAKT',
+    label: 'Rastvakt tisdag',
+    minutesPerWeek: 20,
+  };
+  const failingFile = async (body: object) => {
+    const errors = await validate(plainToInstance(ImportTeacherDutiesDto, body), {
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    });
+    const flatten = (list: typeof errors, prefix: string): string[] =>
+      list.flatMap((error) =>
+        error.children && error.children.length > 0 && !error.constraints
+          ? flatten(error.children, `${prefix}${error.property}.`)
+          : [`${prefix}${error.property}`],
+      );
+    return flatten(errors, '');
+  };
+
+  it('accepts the four required columns, and the whole header with every optional one', async () => {
+    await expect(failingFile({ academicYearId: YEAR_ID, rows: [duty] })).resolves.toEqual([]);
+    await expect(
+      failingFile({
+        academicYearId: YEAR_ID,
+        columns: [...TEACHER_DUTY_FILE_COLUMNS],
+        rows: [{ ...duty, countsAsTeaching: true, subject: 'MA', groupName: '7B', note: 'B-gården' }],
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it('holds the CHECKs: 1..2400 minutes, a non-blank label of 80, a note of 500', async () => {
+    await expect(
+      failingFile({
+        academicYearId: YEAR_ID,
+        rows: [
+          { ...duty, minutesPerWeek: 0 },
+          { ...duty, label: '  ' },
+          { ...duty, label: 'x'.repeat(81) },
+          { ...duty, note: 'x'.repeat(501) },
+          { ...duty, kind: 'MENTOR' },
+          { ...duty, countsAsTeaching: 'ja' },
+        ],
+      }),
+    ).resolves.toEqual([
+      'rows.0.minutesPerWeek',
+      'rows.1.label',
+      'rows.2.label',
+      'rows.3.note',
+      'rows.4.kind',
+      'rows.5.countsAsTeaching',
+    ]);
+  });
+
+  it('takes no blocked time, and no column the list does not know', async () => {
+    await expect(
+      failingFile({ academicYearId: YEAR_ID, rows: [{ ...duty, blockedSlot: { dayOfWeek: 2 } }] }),
+    ).resolves.toEqual(['rows.0.blockedSlot']);
+    await expect(
+      failingFile({ academicYearId: YEAR_ID, columns: ['dayOfWeek'], rows: [duty] }),
+    ).resolves.toEqual(['columns']);
+  });
+
+  it('wants a year and between 1 and 2000 rows', async () => {
+    await expect(failingFile({ rows: [duty] })).resolves.toEqual(['academicYearId']);
+    await expect(failingFile({ academicYearId: YEAR_ID, rows: [] })).resolves.toEqual(['rows']);
+    await expect(
+      failingFile({ academicYearId: YEAR_ID, rows: Array.from({ length: 2001 }, () => duty) }),
+    ).resolves.toEqual(['rows']);
   });
 });
 

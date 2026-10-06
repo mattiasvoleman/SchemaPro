@@ -6,7 +6,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { LOCAL_TIMPLAN_MAX_ENTRIES } from '../timplan/dto/local-timplan.dto';
-import { Prisma, type LessonRecurrence, type TeacherContractKind } from '@prisma/client';
+import {
+  Prisma,
+  type LessonRecurrence,
+  type TeacherContractKind,
+  type TeacherDutyKind,
+} from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -26,6 +31,7 @@ import type {
   ImportRoomTypesDto,
   ImportSubjectsDto,
   ImportStudentsDto,
+  ImportTeacherDutiesDto,
   ImportTeacherQualificationsDto,
   ImportTeacherRowDto,
   ImportTeachersDto,
@@ -42,12 +48,15 @@ import type {
  * What a timplan row is worth writing.
  *
  * The two sizing fields are always written — every file must carry them. The
- * other seven are written only when the FILE had that column, so the type makes
+ * other nine are written only when the FILE had that column, so the type makes
  * them optional and `requirementIsUnchanged` compares only what is there.
  */
 type RequirementValues = {
   teacherId?: string | null;
   coTeacherId?: string | null;
+  /** What each teacher is charged, 0..200 %; 100 when nobody wrote one. */
+  teacherLoadPercent?: number;
+  coTeacherLoadPercent?: number;
   lessonsPerWeek: number;
   minutesPerLesson: number;
   /** The pupils' ombyte and dusch, outside the lesson; 0 when nobody wrote one. */
@@ -58,7 +67,7 @@ type RequirementValues = {
   endDate?: Date | null;
 };
 
-/** A stored row, which always has all nine. */
+/** A stored row, which always has all eleven. */
 type StoredRequirementValues = Required<RequirementValues>;
 
 /**
@@ -397,6 +406,208 @@ export class ImportService {
           continue;
         }
         await tx.teacherSubjectQualification.update({ where: { id: current.id }, data: values });
+        report.updated += 1;
+      }
+
+      return report;
+    });
+  }
+
+  /**
+   * Uppdrag in bulk for one läsår: mentorskap, rastvakt, APT per teacher.
+   *
+   * AN UPPDRAG IS IDENTIFIED BY TEACHER, KIND AND LABEL (the label trimmed and
+   * case-folded), because the table has no other key and a school's list has
+   * no ids: "Mentor 7B" for Karin is the same uppdrag every time the file is
+   * uploaded. A row matching nothing is created; one matching a stored
+   * uppdrag that the file states as it is, `skipped`; one the file changes
+   * (minutes, counted or not, subject, class, note), `updated` — the
+   * behörigheter's reason: an uppdragslista is a document a school keeps
+   * editing. Two stored uppdrag with the same identity (possible through the
+   * API) make the row ambiguous, and it is a row error naming the count
+   * rather than a guess. A second row for the same identity in the file is a
+   * row error naming the first. It never deletes, and it never touches a
+   * blocked time: an uppdrag's slot is the API's, and an update here leaves
+   * the link and the constraint exactly as they are.
+   *
+   * The four optional columns are written only when the FILE had them (the
+   * `columns` header, as the requirements import carries it), so uploading a
+   * four-column list does not clear a class or a note set in the app. Within
+   * a column the file has, an empty cell means "none" — false for
+   * countsAsTeaching, null for the rest.
+   *
+   * The teachers are read FOR NO KEY UPDATE, the lock a role PATCH takes
+   * (staff-lock.ts), in the upload's own transaction — a person demoted to
+   * pupil while their file uploads would otherwise end up holding uppdrag the
+   * demotion guard counted as zero. One locking read for the whole file, not
+   * one per row.
+   */
+  async importTeacherDuties(
+    dto: ImportTeacherDutiesDto,
+    user: AuthenticatedUser,
+  ): Promise<ImportReport> {
+    const schoolId = requireSchoolId(user);
+    const writable = new Set(dto.columns ?? []);
+    return this.prisma.withRls(user, async (tx) => {
+      const report: ImportReport & { updated: number } = {
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        errors: [],
+      };
+
+      const emails = [...new Set(dto.rows.map((row) => row.teacherEmail.trim().toLowerCase()))];
+      const staff = await tx.user.findMany({
+        where: {
+          role: { in: ['TEACHER', 'SCHOOL_ADMIN'] },
+          isActive: true,
+          email: { in: emails, mode: 'insensitive' },
+        },
+        select: { id: true, email: true },
+      });
+      // Re-read under the role PATCH's lock; whoever stopped being staff in
+      // between is not anybody's teacher any more.
+      const locked =
+        staff.length === 0
+          ? []
+          : await tx.$queryRaw<{ id: string; role: string }[]>`
+              SELECT "id", "role"
+              FROM "Users"
+              WHERE "id" = ANY(${staff.map((person) => person.id)}::uuid[])
+              FOR NO KEY UPDATE
+            `;
+      const stillStaff = new Set(
+        locked
+          .filter((person) => person.role === 'TEACHER' || person.role === 'SCHOOL_ADMIN')
+          .map((person) => person.id),
+      );
+      const staffByEmail = new Map(
+        staff
+          .filter((person) => stillStaff.has(person.id))
+          .map((person) => [person.email.toLowerCase(), person.id]),
+      );
+
+      const subjects = await tx.subject.findMany({ select: { id: true, name: true, code: true } });
+      const groups = await tx.studentGroup.findMany({
+        where: { academicYearId: dto.academicYearId },
+        select: { id: true, name: true },
+      });
+      const groupByName = new Map(groups.map((group) => [this.normalizeName(group.name), group.id]));
+
+      const existing = await tx.teacherDuty.findMany({
+        where: { academicYearId: dto.academicYearId },
+        select: {
+          id: true,
+          userId: true,
+          kind: true,
+          label: true,
+          minutesPerWeek: true,
+          countsAsTeaching: true,
+          subjectId: true,
+          studentGroupId: true,
+          note: true,
+        },
+      });
+      const identity = (userId: string, kind: TeacherDutyKind, label: string) =>
+        `${userId}:${kind}:${this.normalizeName(label)}`;
+      const existingByKey = new Map<string, typeof existing>();
+      for (const duty of existing) {
+        const key = identity(duty.userId, duty.kind, duty.label);
+        existingByKey.set(key, [...(existingByKey.get(key) ?? []), duty]);
+      }
+
+      const seenAtRow = new Map<string, number>();
+      for (const [index, row] of dto.rows.entries()) {
+        const rowNumber = index + 1;
+
+        const userId = staffByEmail.get(row.teacherEmail.trim().toLowerCase());
+        if (!userId) {
+          report.errors.push({
+            row: rowNumber,
+            message: `Ingen aktiv lärare med e-postadressen "${row.teacherEmail.trim()}". Importera lärarna först.`,
+          });
+          continue;
+        }
+
+        const key = identity(userId, row.kind, row.label);
+        const firstRow = seenAtRow.get(key);
+        if (firstRow !== undefined) {
+          report.errors.push({
+            row: rowNumber,
+            message: `Samma lärare, typ och benämning står redan på rad ${firstRow}. Ett uppdrag skrivs en gång — ändra minuterna där.`,
+          });
+          continue;
+        }
+        seenAtRow.set(key, rowNumber);
+
+        let subjectId: string | null = null;
+        const subjectCell = row.subject?.trim();
+        if (writable.has('subject') && subjectCell) {
+          const subject = this.resolveSubject(subjects, subjectCell);
+          if ('message' in subject) {
+            report.errors.push({ row: rowNumber, message: subject.message });
+            continue;
+          }
+          subjectId = subject.id;
+        }
+
+        let studentGroupId: string | null = null;
+        const groupCell = row.groupName?.trim();
+        if (writable.has('groupName') && groupCell) {
+          studentGroupId = groupByName.get(this.normalizeName(groupCell)) ?? null;
+          if (!studentGroupId) {
+            report.errors.push({
+              row: rowNumber,
+              message: `Gruppen "${groupCell}" finns inte för det valda läsåret. Rätta stavningen eller lämna kolumnen tom.`,
+            });
+            continue;
+          }
+        }
+
+        const values = {
+          minutesPerWeek: row.minutesPerWeek,
+          ...(writable.has('countsAsTeaching') ? { countsAsTeaching: row.countsAsTeaching ?? false } : {}),
+          ...(writable.has('subject') ? { subjectId } : {}),
+          ...(writable.has('groupName') ? { studentGroupId } : {}),
+          ...(writable.has('note') ? { note: row.note?.trim() || null } : {}),
+        };
+
+        const matches = existingByKey.get(key) ?? [];
+        if (matches.length > 1) {
+          report.errors.push({
+            row: rowNumber,
+            message: `Läraren har redan ${matches.length} uppdrag av typen ${row.kind} med benämningen "${row.label.trim()}". Ge dem olika benämningar i appen innan filen laddas upp igen.`,
+          });
+          continue;
+        }
+        const current = matches[0];
+        if (!current) {
+          await tx.teacherDuty.create({
+            data: {
+              schoolId,
+              userId,
+              academicYearId: dto.academicYearId,
+              kind: row.kind,
+              label: row.label.trim(),
+              // Stated, so the row created is the row the file describes.
+              countsAsTeaching: false,
+              subjectId: null,
+              studentGroupId: null,
+              note: null,
+              ...values,
+            },
+          });
+          report.created += 1;
+          continue;
+        }
+        const unchanged = (Object.keys(values) as (keyof typeof values)[]).every(
+          (field) => current[field] === values[field],
+        );
+        if (unchanged) {
+          report.skipped += 1;
+          continue;
+        }
+        await tx.teacherDuty.update({ where: { id: current.id }, data: values });
         report.updated += 1;
       }
 
@@ -789,6 +1000,8 @@ export class ImportService {
           subjectId: true,
           teacherId: true,
           coTeacherId: true,
+          teacherLoadPercent: true,
+          coTeacherLoadPercent: true,
           lessonsPerWeek: true,
           minutesPerLesson: true,
           minutesBefore: true,
@@ -927,6 +1140,14 @@ export class ImportService {
             : {}),
           ...(writable.has('teacherEmail') ? { teacherId } : {}),
           ...(writable.has('coTeacherEmail') ? { coTeacherId } : {}),
+          // The buffers' two silences again, for a figure whose "none" is the
+          // whole row: an empty cell is 100, an absent column is untouched.
+          ...(writable.has('teacherLoadPercent')
+            ? { teacherLoadPercent: row.teacherLoadPercent ?? 100 }
+            : {}),
+          ...(writable.has('coTeacherLoadPercent')
+            ? { coTeacherLoadPercent: row.coTeacherLoadPercent ?? 100 }
+            : {}),
           ...(writable.has('recurrence') ? { recurrence: row.recurrence } : {}),
           ...(writable.has('startDate') ? { startDate } : {}),
           ...(writable.has('endDate') ? { endDate } : {}),
@@ -949,6 +1170,10 @@ export class ImportService {
               // this method describes, which is what the import report claims.
               minutesBefore: 0,
               minutesAfter: 0,
+              // Stated for the same reason as the buffers: both teachers
+              // charged the whole row unless the file said otherwise.
+              teacherLoadPercent: 100,
+              coTeacherLoadPercent: 100,
               ...values,
             },
           });
@@ -1300,6 +1525,18 @@ export class ImportService {
       return false;
     }
     if ('coTeacherId' in values && current.coTeacherId !== values.coTeacherId) {
+      return false;
+    }
+    if (
+      'teacherLoadPercent' in values &&
+      current.teacherLoadPercent !== values.teacherLoadPercent
+    ) {
+      return false;
+    }
+    if (
+      'coTeacherLoadPercent' in values &&
+      current.coTeacherLoadPercent !== values.coTeacherLoadPercent
+    ) {
       return false;
     }
     if ('recurrence' in values && current.recurrence !== values.recurrence) {

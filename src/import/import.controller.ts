@@ -14,6 +14,7 @@ import {
   ImportRoomTypesDto,
   ImportSubjectsDto,
   ImportStudentsDto,
+  ImportTeacherDutiesDto,
   ImportTeacherQualificationsDto,
   ImportTeachersDto,
   ImportTimplanDto,
@@ -79,6 +80,18 @@ export class ImportController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.imports.importTeacherQualifications(dto, user);
+  }
+
+  /**
+   * Uppdrag per teacher for one läsår. Updates a changed figure like the
+   * behörigheter; never a blocked time — see the service.
+   */
+  @Post('teacher-duties')
+  importTeacherDuties(
+    @Body() dto: ImportTeacherDutiesDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.imports.importTeacherDuties(dto, user);
   }
 
   /**

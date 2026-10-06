@@ -17,6 +17,7 @@ import { Prisma } from '@prisma/client';
 import type {
   ImportRequirementRowDto,
   ImportRequirementsDto,
+  ImportTeacherDutyRowDto,
   ImportTeacherRowDto,
 } from './dto/import.dto';
 import type { UsersService } from '../users/users.service';
@@ -1880,6 +1881,8 @@ describe('ImportService', () => {
       'minutesAfter',
       'teacherEmail',
       'coTeacherEmail',
+      'teacherLoadPercent',
+      'coTeacherLoadPercent',
       'recurrence',
       'startDate',
       'endDate',
@@ -1911,6 +1914,9 @@ describe('ImportService', () => {
       // through the select and make every unchanged row look changed.
       minutesBefore: 0,
       minutesAfter: 0,
+      // NOT NULL DEFAULT 100, like the buffers' 0.
+      teacherLoadPercent: 100,
+      coTeacherLoadPercent: 100,
       recurrence: 'ALL_WEEKS',
       startDate: null,
       endDate: null,
@@ -1967,6 +1973,9 @@ describe('ImportService', () => {
             subjectId: SUBJ_MA,
             teacherId: TEACHER_ID,
             coTeacherId: CO_TEACHER_ID,
+            // Empty cells in the two percentage columns: the whole row each.
+            teacherLoadPercent: 100,
+            coTeacherLoadPercent: 100,
             lessonsPerWeek: 3,
             minutesPerLesson: 60,
             minutesBefore: 0,
@@ -2300,6 +2309,8 @@ describe('ImportService', () => {
           data: {
             teacherId: TEACHER_ID,
             coTeacherId: null,
+            teacherLoadPercent: 100,
+            coTeacherLoadPercent: 100,
             lessonsPerWeek: 4,
             minutesPerLesson: 60,
             minutesBefore: 0,
@@ -2689,9 +2700,226 @@ describe('ImportService', () => {
       });
     });
 
+    describe('vad varje lärare belastas med (teacherLoadPercent / coTeacherLoadPercent)', () => {
+      it('writes both percentages from a file that carries the columns', async () => {
+        const report = await run(
+          row({ teacherEmail: 'karin@example.com', coTeacherEmail: 'bo@example.com', teacherLoadPercent: 200, coTeacherLoadPercent: 0 }),
+        );
+        expect(report).toMatchObject({ created: 1, errors: [] });
+        expect(tx.teachingRequirement.create.mock.calls[0][0].data).toMatchObject({
+          teacherLoadPercent: 200,
+          coTeacherLoadPercent: 0,
+        });
+      });
+
+      it('writes 100 on a create when the file has neither column', async () => {
+        await runWithColumns([], row());
+        expect(tx.teachingRequirement.create.mock.calls[0][0].data).toMatchObject({
+          teacherLoadPercent: 100,
+          coTeacherLoadPercent: 100,
+        });
+      });
+
+      it('reads an EMPTY cell in a column the file has as 100, and restores a stored 50 with it', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored({ coTeacherLoadPercent: 50 })]);
+        const report = await run(row({ coTeacherLoadPercent: null }));
+        expect(report).toMatchObject({ updated: 1, errors: [] });
+        expect(tx.teachingRequirement.update.mock.calls[0][0].data).toMatchObject({
+          teacherLoadPercent: 100,
+          coTeacherLoadPercent: 100,
+        });
+      });
+
+      it('leaves a stored percentage standing when the file had no such column', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored({ coTeacherLoadPercent: 50 })]);
+        const report = await runWithColumns([], row({ lessonsPerWeek: 4 }));
+        expect(report).toMatchObject({ updated: 1 });
+        expect(tx.teachingRequirement.update.mock.calls[0][0].data).toEqual({ lessonsPerWeek: 4, minutesPerLesson: 60 });
+      });
+
+      it('counts a changed percentage alone as an update, and an unchanged one as skipped', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored({ teacherLoadPercent: 50 })]);
+        await expect(run(row({ teacherLoadPercent: 75 }))).resolves.toMatchObject({ updated: 1, skipped: 0 });
+        tx.teachingRequirement.update.mockClear();
+        await expect(run(row({ teacherLoadPercent: 50 }))).resolves.toMatchObject({ updated: 0, skipped: 1 });
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
+
+      it('reads the stored percentages, or every unchanged row would look changed', async () => {
+        await run(row());
+        expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            select: expect.objectContaining({ teacherLoadPercent: true, coTeacherLoadPercent: true }),
+          }),
+        );
+      });
+    });
+
     it('403s a principal with no school before touching the database', async () => {
       await expect(
         service.importRequirements({ academicYearId: YEAR_ID, rows: [row()] }, schoolless()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('importTeacherDuties', () => {
+    const KARIN = 'ccccccc1-0000-4000-8000-000000000001';
+    const BO = 'ccccccc2-0000-4000-8000-000000000002';
+    const SUBJ_MA = 'bbbbbbb1-0000-4000-8000-000000000001';
+    const ALL = ['teacherEmail', 'kind', 'label', 'minutesPerWeek', 'countsAsTeaching', 'subject', 'groupName', 'note'] as const;
+
+    /** Users as the upload re-reads its teachers: by id list, FOR NO KEY UPDATE. */
+    let lockedRoles: Record<string, string>;
+    let queryRaw: jest.Mock;
+
+    const row = (overrides: Partial<ImportTeacherDutyRowDto> = {}): ImportTeacherDutyRowDto => ({
+      teacherEmail: 'karin@example.com',
+      kind: 'MENTORSKAP',
+      label: 'Mentor 7A',
+      minutesPerWeek: 60,
+      countsAsTeaching: null,
+      subject: null,
+      groupName: '7A',
+      note: null,
+      ...overrides,
+    });
+    const stored = (overrides: Record<string, unknown> = {}) => ({
+      id: 'duty-1',
+      userId: KARIN,
+      kind: 'MENTORSKAP',
+      label: 'Mentor 7A',
+      minutesPerWeek: 60,
+      countsAsTeaching: false,
+      subjectId: null,
+      studentGroupId: GROUP_7A,
+      note: null,
+      ...overrides,
+    });
+    const run = (rows: ImportTeacherDutyRowDto[], columns: readonly string[] = ALL) =>
+      service.importTeacherDuties(
+        { academicYearId: YEAR_ID, columns: [...columns] as never, rows },
+        testUser(),
+      );
+
+    beforeEach(() => {
+      tx.user.findMany.mockResolvedValue([
+        { id: KARIN, email: 'karin@example.com' },
+        { id: BO, email: 'Bo@Example.com' },
+      ]);
+      lockedRoles = { [KARIN]: 'TEACHER', [BO]: 'SCHOOL_ADMIN' };
+      queryRaw = jest.fn((...call: unknown[]) => {
+        const sql = rawSql(call).replace(/\s+/g, ' ').trim();
+        if (sql !== 'SELECT "id", "role" FROM "Users" WHERE "id" = ANY(?::uuid[]) FOR NO KEY UPDATE') {
+          throw new Error(`unexpected raw read: ${sql}`);
+        }
+        const ids = call[1] as string[];
+        return Promise.resolve(ids.filter((id) => id in lockedRoles).map((id) => ({ id, role: lockedRoles[id] })));
+      });
+      Object.assign(tx, { $queryRaw: queryRaw });
+      arrangeRows(tx.subject.findMany, [{ id: SUBJ_MA, name: 'Matematik', code: 'MA' }]);
+      arrangeRows(tx.studentGroup.findMany, [{ id: GROUP_7A, name: '7A' }]);
+      arrangeRows(tx.teacherDuty.findMany, []);
+      tx.teacherDuty.create.mockResolvedValue({});
+      tx.teacherDuty.update.mockResolvedValue({});
+    });
+
+    it('creates an uppdrag per row, stamped with the caller’s school and the dialog’s year, never with a slot', async () => {
+      const report = await run([
+        row(),
+        row({ teacherEmail: 'bo@example.com', kind: 'AMNESANSVAR', label: 'Ämnesansvar Ma', subject: 'MA', groupName: null, minutesPerWeek: 40, countsAsTeaching: true, note: ' Halvår ' }),
+      ]);
+      expect(report).toEqual({ created: 2, updated: 0, skipped: 0, errors: [] });
+      expect(tx.teacherDuty.create).toHaveBeenNthCalledWith(1, {
+        data: {
+          schoolId: testUser().schoolId,
+          userId: KARIN,
+          academicYearId: YEAR_ID,
+          kind: 'MENTORSKAP',
+          label: 'Mentor 7A',
+          minutesPerWeek: 60,
+          countsAsTeaching: false,
+          subjectId: null,
+          studentGroupId: GROUP_7A,
+          note: null,
+        },
+      });
+      expect(tx.teacherDuty.create.mock.calls[1][0].data).toMatchObject({
+        userId: BO,
+        subjectId: SUBJ_MA,
+        studentGroupId: null,
+        countsAsTeaching: true,
+        note: 'Halvår',
+      });
+      expect(tx.teacherDuty.create.mock.calls[0][0].data).not.toHaveProperty('blockedConstraintId');
+      expect(tx.availabilityConstraint.create).not.toHaveBeenCalled();
+    });
+
+    it('re-reads the teachers under the role PATCH’s lock, and drops one who stopped being staff', async () => {
+      lockedRoles = { [KARIN]: 'STUDENT', [BO]: 'TEACHER' };
+      const report = await run([row()]);
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+      expect(queryRaw.mock.calls[0][1]).toEqual([KARIN, BO]);
+      expect(report.errors).toEqual([
+        { row: 1, message: 'Ingen aktiv lärare med e-postadressen "karin@example.com". Importera lärarna först.' },
+      ]);
+      expect(tx.teacherDuty.create).not.toHaveBeenCalled();
+    });
+
+    it('is idempotent: the same file again is all skipped, matched on teacher, kind and label case-folded', async () => {
+      arrangeRows(tx.teacherDuty.findMany, [stored({ label: 'mentor 7a ' })]);
+      const report = await run([row()]);
+      expect(report).toEqual({ created: 0, updated: 0, skipped: 1, errors: [] });
+      expect(tx.teacherDuty.update).not.toHaveBeenCalled();
+    });
+
+    it('updates the figures a file changes and nothing it has no column for', async () => {
+      arrangeRows(tx.teacherDuty.findMany, [stored({ note: 'satt i appen', countsAsTeaching: true })]);
+      const report = await run([row({ minutesPerWeek: 90 })], ['teacherEmail', 'kind', 'label', 'minutesPerWeek']);
+      expect(report).toMatchObject({ updated: 1, skipped: 0 });
+      expect(tx.teacherDuty.update).toHaveBeenCalledWith({ where: { id: 'duty-1' }, data: { minutesPerWeek: 90 } });
+    });
+
+    it('reads an empty cell in a column the file has as none, and clears with it', async () => {
+      arrangeRows(tx.teacherDuty.findMany, [stored({ note: 'gammal', countsAsTeaching: true })]);
+      const report = await run([row({ note: '  ', countsAsTeaching: null })]);
+      expect(report).toMatchObject({ updated: 1 });
+      expect(tx.teacherDuty.update.mock.calls[0][0].data).toMatchObject({ note: null, countsAsTeaching: false });
+    });
+
+    it.each<[string, Partial<ImportTeacherDutyRowDto>, string]>([
+      ['an unknown teacher', { teacherEmail: 'okand@example.com' }, 'Ingen aktiv lärare med e-postadressen "okand@example.com"'],
+      ['an unknown subject', { subject: 'Fysik' }, 'Ämnet "Fysik" finns inte'],
+      ['an unknown group', { groupName: '9Z' }, 'Gruppen "9Z" finns inte för det valda läsåret'],
+    ])('reports %s as a row error and imports the rest', async (_case, patch, message) => {
+      const report = await run([row(patch), row({ label: 'Mentor 7A bis' })]);
+      expect(report.created).toBe(1);
+      expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining(message) }]);
+    });
+
+    it('refuses a second row for the same uppdrag in the file, naming the first', async () => {
+      const report = await run([row(), row({ label: ' MENTOR 7a', minutesPerWeek: 30 })]);
+      expect(report.created).toBe(1);
+      expect(report.errors).toEqual([{ row: 2, message: expect.stringContaining('rad 1') }]);
+    });
+
+    it('refuses to guess between two stored uppdrag with the same identity', async () => {
+      arrangeRows(tx.teacherDuty.findMany, [stored(), stored({ id: 'duty-2' })]);
+      const report = await run([row({ minutesPerWeek: 90 })]);
+      expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining('redan 2 uppdrag') }]);
+      expect(tx.teacherDuty.update).not.toHaveBeenCalled();
+    });
+
+    it('reads no lock at all for a file naming nobody it knows', async () => {
+      tx.user.findMany.mockResolvedValue([]);
+      const report = await run([row()]);
+      expect(queryRaw).not.toHaveBeenCalled();
+      expect(report.errors).toHaveLength(1);
+    });
+
+    it('403s a principal with no school before touching the database', async () => {
+      await expect(
+        service.importTeacherDuties({ academicYearId: YEAR_ID, rows: [row()] }, schoolless()),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.withRls).not.toHaveBeenCalled();
     });
