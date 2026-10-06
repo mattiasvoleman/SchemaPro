@@ -566,10 +566,12 @@ export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
             .join(", ")}. Ladda ner mallen och utgå från den.`,
         },
       ],
+      rowNumbers: [],
     };
   }
 
   const rows: TeacherRow[] = [];
+  const rowNumbers: number[] = [];
   const errors: RowError[] = [];
   parsed.rows.forEach((raw, index) => {
     const rowNumber = index + 1;
@@ -594,7 +596,11 @@ export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
     const statesPost = [rawPercent, rawReduction, rawContract, rawSignature].some(
       (value) => value !== "",
     );
-    if (!statesPost) return rows.push(row);
+    if (!statesPost) {
+      rows.push(row);
+      rowNumbers.push(rowNumber);
+      return;
+    }
 
     if (rawPercent === "") {
       return fail(
@@ -642,8 +648,9 @@ export function mapTeacherRows(parsed: ParsedCsv): MappedRows<TeacherRow> {
     }
 
     rows.push(row);
+    rowNumbers.push(rowNumber);
   });
-  return { rows, errors };
+  return { rows, errors, rowNumbers };
 }
 
 /**
@@ -720,10 +727,12 @@ export function mapTeacherQualificationRows(parsed: ParsedCsv): MappedRows<Teach
           message: `Kolumner saknas: ${missing.map((field) => labels[field]).join(", ")}. Ladda ner mallen och utgå från den.`,
         },
       ],
+      rowNumbers: [],
     };
   }
 
   const rows: TeacherQualificationRow[] = [];
+  const rowNumbers: number[] = [];
   const errors: RowError[] = [];
   const seenAtRow = new Map<string, number>();
   parsed.rows.forEach((raw, index) => {
@@ -775,8 +784,9 @@ export function mapTeacherQualificationRows(parsed: ParsedCsv): MappedRows<Teach
     seenAtRow.set(duplicateKey, rowNumber);
 
     rows.push({ teacherEmail, subject, minGrade, maxGrade, kind });
+    rowNumbers.push(rowNumber);
   });
-  return { rows, errors };
+  return { rows, errors, rowNumbers };
 }
 
 export function mapClassRows(parsed: ParsedCsv): {
