@@ -2483,3 +2483,366 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 15: the national timplan is read by every active user and written by
+-- nobody who connects as an API role.
+--
+-- NationalTimplanVersions, NationalSubjects and NationalTimplanEntries are the
+-- only tables here with no "schoolId" (20261006090000): they hold
+-- skolförordningen bilaga 1–4, identical for every tenant and written only by
+-- the migration that seeded them. So the question this file asks of every
+-- other table — does school A see school B? — has no meaning for them, and
+-- two others take its place. Can every signed-in role READ them, including a
+-- pupil and a guardian, whom the coverage pages will one day show "undervisningstid
+-- i år"? And can NO API principal WRITE them — not an admin, whose own
+-- Supabase key reaches the table through PostgREST, not the service principal,
+-- not a token with no principal at all? A statute an admin can edit is a
+-- coverage page that reports what the school wished the law said.
+--
+-- The refusal asserted for writes is the LOUD one, insufficient_privilege,
+-- because the migration revokes the write grants that 20260806000000's ALTER
+-- DEFAULT PRIVILEGES hands every new table. A policy alone would refuse an
+-- UPDATE by matching no row, which is silent, and silent is what let a
+-- regression here go unnoticed; section 14 asserts _prisma_migrations the same
+-- way for the same reason. The catalog half at the end names the grant and the
+-- policy shape directly, so the next `GRANT ... ON ALL TABLES` is caught even
+-- before a write is attempted.
+--
+-- The reads are asserted against FIGURES, not against "more than zero": the
+-- version row for bilaga 1 must say 6 890, and it must carry the 48 cells the
+-- bilaga prints. A seed that half-applied, or a policy that let the right role
+-- see the wrong subset, cannot pass that by accident.
+--
+-- Deactivation is section 9's, which sweeps every readable table and found
+-- these three the first time they were tried with USING (true): a revoked
+-- token kept reading them. The policy now asks for an active principal, and
+-- the no-principal block below is the same property from the other side.
+--
+-- Last, the foreign key the whole mapping rests on: Subject.nationalCode may
+-- name only a code the statute knows. Asserted as the admin, since that is
+-- the principal that writes subjects, with the positive half beside it — a
+-- key that refused every code would pass the refusal alone.
+-- ---------------------------------------------------------------------------
+
+-- No principal at all reads nothing, as everywhere else in this schema.
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "NationalTimplanVersions";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'national: no principal reads % timplan version(s)', n;
+  END IF;
+  SELECT count(*) INTO n FROM "NationalSubjects";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'national: no principal reads % national subject(s)', n;
+  END IF;
+  SELECT count(*) INTO n FROM "NationalTimplanEntries";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'national: no principal reads % timplan cell(s)', n;
+  END IF;
+END
+$$;
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint; total integer; row_count bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'national: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+
+  -- The statute is there, and it is the statute: the bilaga 1 row says 6 890
+  -- and carries its 48 printed cells; 28 ämnen are named across the four
+  -- bilagor; the 2028 law is a row with no cells.
+  SELECT count(*) INTO n FROM "NationalTimplanVersions";
+  IF n < 6 THEN
+    RAISE EXCEPTION 'national: an admin reads % timplan version(s), the migration seeds six', n;
+  END IF;
+  SELECT "totalHours" INTO total FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+  IF total IS DISTINCT FROM 6890 THEN
+    RAISE EXCEPTION 'national: bilaga 1 reads % h for an admin, the statute says 6 890', total;
+  END IF;
+  SELECT count(*) INTO n FROM "NationalTimplanEntries" e
+    JOIN "NationalTimplanVersions" v ON v.id = e."versionId"
+   WHERE v.code = 'SFS2023:945/B1';
+  IF n <> 48 THEN
+    RAISE EXCEPTION 'national: an admin reads % of bilaga 1''s 48 cells', n;
+  END IF;
+  SELECT count(*) INTO n FROM "NationalSubjects";
+  IF n <> 28 THEN
+    RAISE EXCEPTION 'national: an admin reads % of the 28 national subjects', n;
+  END IF;
+  SELECT count(*) INTO n FROM "NationalTimplanEntries" e
+    JOIN "NationalTimplanVersions" v ON v.id = e."versionId"
+   WHERE v.code = 'SFS2025:729';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'national: the 2028 law shows % cell(s); its fördelning is not published', n;
+  END IF;
+
+  -- Every write an admin's own key could attempt, each refused loudly.
+  BEGIN
+    UPDATE "NationalTimplanVersions" SET "totalHours" = 1 WHERE code = 'SFS2023:945/B1';
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE EXCEPTION 'national: an admin''s UPDATE of a timplan version was not refused (% row(s))', row_count;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "NationalTimplanVersions"
+      (code, sfs, title, "schoolForm", "totalHours", "appliesFromCohortTerm")
+    VALUES ('RLS-TEST', '0:0', 'RLS test', 'GRUNDSKOLA', 1, 'HT2099');
+    RAISE EXCEPTION 'national: an admin INSERTed a timplan version';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "NationalTimplanVersions" WHERE code = 'SFS2025:729';
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE EXCEPTION 'national: an admin''s DELETE of a timplan version was not refused (% row(s))', row_count;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "NationalSubjects" SET name = 'x' WHERE code = 'MA';
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE EXCEPTION 'national: an admin''s UPDATE of a national subject was not refused (% row(s))', row_count;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "NationalSubjects" (code, name) VALUES ('RLSTEST', 'RLS test');
+    RAISE EXCEPTION 'national: an admin INSERTed a national subject';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "NationalSubjects" WHERE code = 'ROD';
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE EXCEPTION 'national: an admin''s DELETE of a national subject was not refused (% row(s))', row_count;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "NationalTimplanEntries" SET hours = 0 WHERE "subjectCode" = 'MA';
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE EXCEPTION 'national: an admin''s UPDATE of a timplan cell was not refused (% row(s))', row_count;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "NationalTimplanEntries" ("versionId", "subjectCode", stage, hours)
+    SELECT id, 'TSP', 'LAG', 1 FROM "NationalTimplanVersions" WHERE code = 'SFS2025:729';
+    RAISE EXCEPTION 'national: an admin INSERTed a timplan cell';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "NationalTimplanEntries";
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE EXCEPTION 'national: an admin''s DELETE of timplan cells was not refused (% row(s))', row_count;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- Read back: nothing above moved anything.
+  SELECT "totalHours" INTO total FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+  IF total IS DISTINCT FROM 6890 THEN
+    RAISE EXCEPTION 'national: bilaga 1 reads % h after the refused writes', total;
+  END IF;
+
+  -- The mapping: a school subject may name a known national code and no other.
+  -- Case-exact as well — 'ma' is not 'MA', and a CSV that lower-cased a column
+  -- must be refused rather than silently unmapped.
+  INSERT INTO "Subjects" ("schoolId", name, code, "nationalCode", "updatedAt")
+  VALUES (app.current_school_id(), 'RLS-nationellt ämne', 'RLSNAT', 'MA', now());
+  SELECT count(*) INTO n FROM "Subjects"
+   WHERE code = 'RLSNAT' AND "nationalCode" = 'MA' AND "countsTowardTimplan";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'national: a subject mapped to a known code did not land with countsTowardTimplan true (% row(s))', n;
+  END IF;
+  BEGIN
+    INSERT INTO "Subjects" ("schoolId", name, code, "nationalCode", "updatedAt")
+    VALUES (app.current_school_id(), 'RLS-okänd kod', 'RLSBAD', 'XX', now());
+    RAISE EXCEPTION 'national: a subject with the unknown national code XX was accepted';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Subjects" SET "nationalCode" = 'ma' WHERE code = 'RLSNAT';
+    RAISE EXCEPTION 'national: a subject was remapped to the lower-case code ''ma''';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+END
+$$;
+
+-- A teacher reads the same statute.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint; total integer; row_count bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+    RAISE EXCEPTION 'national: expected to be acting as a TEACHER of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT "totalHours" INTO total FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+  IF total IS DISTINCT FROM 6890 THEN
+    RAISE EXCEPTION 'national: a teacher reads % for bilaga 1''s 6 890 h', coalesce(total::text, '<nothing>');
+  END IF;
+  SELECT count(*) INTO n FROM "NationalTimplanEntries";
+  IF n = 0 THEN
+    RAISE EXCEPTION 'national: a teacher reads no timplan cells';
+  END IF;
+  SELECT count(*) INTO n FROM "NationalSubjects";
+  IF n <> 28 THEN
+    RAISE EXCEPTION 'national: a teacher reads % of the 28 national subjects', n;
+  END IF;
+  BEGIN
+    UPDATE "NationalTimplanEntries" SET hours = 0 WHERE "subjectCode" = 'MA';
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE EXCEPTION 'national: a teacher''s UPDATE of a timplan cell was not refused (% row(s))', row_count;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$$;
+
+-- A pupil. Looked up while the teacher is still in force, for the reason 7g
+-- gives: a pupil can read only their own row.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint; total integer; row_count bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'national: expected to be acting as a STUDENT of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT "totalHours" INTO total FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+  IF total IS DISTINCT FROM 6890 THEN
+    RAISE EXCEPTION 'national: a pupil reads % for bilaga 1''s 6 890 h', coalesce(total::text, '<nothing>');
+  END IF;
+  SELECT count(*) INTO n FROM "NationalTimplanEntries";
+  IF n = 0 THEN
+    RAISE EXCEPTION 'national: a pupil reads no timplan cells';
+  END IF;
+  SELECT count(*) INTO n FROM "NationalSubjects";
+  IF n <> 28 THEN
+    RAISE EXCEPTION 'national: a pupil reads % of the 28 national subjects', n;
+  END IF;
+  BEGIN
+    DELETE FROM "NationalTimplanEntries";
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE EXCEPTION 'national: a pupil''s DELETE of timplan cells was not refused (% row(s))', row_count;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$$;
+
+-- And a guardian, by the fixture's literal authId.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'national: expected to be acting as a GUARDIAN of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "NationalTimplanVersions";
+  IF n < 6 THEN
+    RAISE EXCEPTION 'national: a guardian reads % timplan version(s), the migration seeds six', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- The service principal: a tenant-scoped reader with no Users row, which the
+-- active-principal predicate must leave with nothing, and whose writes are
+-- refused by the missing grant like everyone else's.
+BEGIN;
+SELECT set_config('app.service_school_id', :'school_a', true);
+DO $$
+DECLARE n bigint; row_count bigint;
+BEGIN
+  IF app.current_service_school_id() IS NULL THEN
+    RAISE EXCEPTION 'national: the service principal is not in effect';
+  END IF;
+  SELECT count(*) INTO n FROM "NationalTimplanVersions";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'national: the service principal reads % timplan version(s)', n;
+  END IF;
+  BEGIN
+    UPDATE "NationalTimplanVersions" SET "totalHours" = 1;
+    GET DIAGNOSTICS row_count = ROW_COUNT;
+    RAISE EXCEPTION 'national: the service principal''s UPDATE was not refused (% row(s))', row_count;
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$$;
+ROLLBACK;
+
+-- The catalog half: the grant that is missing and the policy that is there.
+DO $$
+DECLARE
+  tbl      text;
+  api_role text;
+  held     text;
+  n        integer;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY['NationalTimplanVersions', 'NationalSubjects', 'NationalTimplanEntries']
+  LOOP
+    IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('public.%I', tbl)::regclass) THEN
+      RAISE EXCEPTION 'national: row security is off on %', tbl;
+    END IF;
+
+    -- Exactly one policy, and it is FOR SELECT: a second policy on a table
+    -- nobody may write is a write policy by another name.
+    SELECT count(*) INTO n FROM pg_policy
+     WHERE polrelid = format('public.%I', tbl)::regclass;
+    IF n <> 1 THEN
+      RAISE EXCEPTION 'national: % has % policies, expected the one SELECT policy', tbl, n;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policy
+                    WHERE polrelid = format('public.%I', tbl)::regclass AND polcmd = 'r') THEN
+      RAISE EXCEPTION 'national: the one policy on % is not FOR SELECT', tbl;
+    END IF;
+
+    FOREACH api_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role', 'app_authenticated']
+    LOOP
+      SELECT string_agg(p, ', ') INTO held
+        FROM unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+       WHERE has_table_privilege(api_role, format('public.%I', tbl), p);
+      IF held IS NOT NULL THEN
+        RAISE EXCEPTION 'national: % holds % on %', api_role, held, tbl;
+      END IF;
+    END LOOP;
+
+    IF has_table_privilege('anon', format('public.%I', tbl), 'SELECT') THEN
+      RAISE EXCEPTION 'national: anon may SELECT %', tbl;
+    END IF;
+    IF NOT has_table_privilege('authenticated', format('public.%I', tbl), 'SELECT')
+       OR NOT has_table_privilege('app_authenticated', format('public.%I', tbl), 'SELECT') THEN
+      RAISE EXCEPTION 'national: the API role has lost SELECT on %', tbl;
+    END IF;
+  END LOOP;
+END $$;
