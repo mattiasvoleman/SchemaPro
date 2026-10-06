@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import request from 'supertest';
 import { lockingRead, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
+import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './utils/staffing-world';
 
 /**
  * The Kom igång → Planering surface over HTTP: läsår, salstyper, klasser and
@@ -334,6 +335,159 @@ describe('Planning surface (e2e)', () => {
           })
           .expect(400);
       }
+    });
+  });
+
+  /*
+   * The staffing policy at the timplan's two write points, over HTTP: WARN is
+   * the write with `warnings` in the body, REFUSE is a 409 problem carrying the
+   * code AND the params the web renders its sentence from, with the table not
+   * written, and OFF asks nothing. The questions themselves are pinned in
+   * src/staffing/staffing-checks.spec.ts.
+   */
+  describe('timplan under the staffing policy', () => {
+    const KARIN = '12121212-1212-4212-8212-121212121212';
+    const POST_KARIN = '13131313-1313-4313-8313-131313131313';
+    const REQUIREMENT_ID = '14141414-1414-4414-8414-141414141414';
+    const OTHER_SUBJECT = '15151515-1515-4515-8515-151515151515';
+
+    /** Karin carries 8 × 120 = 960 of a 1 000-minute target; behörig in neither subject. */
+    const world = (overrides: StaffingWorld = {}): StaffingWorld => ({
+      year: { id: YEAR_ID, startDate: new Date('2026-08-17'), endDate: new Date('2027-06-11') },
+      groups: [{ id: GROUP_ID, name: '7A', gradeLevel: 7 }],
+      subjects: [
+        { id: SUBJECT_ID, name: 'Matematik' },
+        { id: OTHER_SUBJECT, name: 'Fysik' },
+      ],
+      employments: [{ id: POST_KARIN, userId: KARIN }],
+      requirements: [
+        {
+          id: 'held',
+          subjectId: OTHER_SUBJECT,
+          studentGroupId: GROUP_ID,
+          teacherId: KARIN,
+          coTeacherId: null,
+          lessonsPerWeek: 8,
+          minutesPerLesson: 120,
+        },
+      ],
+      qualifications: [{ userId: STUDENT_ID, subjectId: SUBJECT_ID, minGradeLevel: 7, maxGradeLevel: 9 }],
+      ...overrides,
+    });
+
+    const create = (body: Record<string, unknown> = {}) =>
+      request(http())
+        .post('/api/v1/teaching-requirements')
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: YEAR_ID,
+          subjectId: SUBJECT_ID,
+          studentGroupId: GROUP_ID,
+          teacherId: KARIN,
+          lessonsPerWeek: 1,
+          minutesPerLesson: 60,
+          ...body,
+        });
+
+    beforeEach(() => {
+      harness.tx['teachingRequirement']!['create']!.mockResolvedValue({
+        id: REQUIREMENT_ID,
+        startDate: null,
+        endDate: null,
+      });
+      harness.tx['teachingRequirement']!['update']!.mockResolvedValue({
+        id: REQUIREMENT_ID,
+        startDate: null,
+        endDate: null,
+      });
+    });
+
+    afterEach(() => {
+      forgetStaffingWorld(harness.tx);
+      harness.tx['teachingRequirement']!['findUnique']!.mockReset();
+    });
+
+    it('WARN: 201, the row written, and the finding in `warnings`', async () => {
+      givenStaffingWorld(harness.tx, world());
+
+      const response = await create().expect(201);
+
+      expect(response.body.warnings).toEqual([
+        {
+          code: 'STAFF_TEACHER_NOT_QUALIFIED',
+          params: { role: 'TEACHER', subject: 'Matematik', grades: '7' },
+        },
+      ]);
+      expect(harness.tx['teachingRequirement']!['create']).toHaveBeenCalledTimes(1);
+    });
+
+    it('REFUSE: 409 with the code, the params and the Swedish — and the table untouched', async () => {
+      givenStaffingWorld(harness.tx, world({ policy: { qualificationMode: 'REFUSE' } }));
+
+      const response = await create().expect(409);
+
+      expect(response.body).toMatchObject({
+        status: 409,
+        code: 'STAFF_TEACHER_NOT_QUALIFIED',
+        params: { role: 'TEACHER', subject: 'Matematik', grades: '7' },
+        detail: 'Läraren saknar behörighet i Matematik för åk 7.',
+      });
+      expect(harness.tx['teachingRequirement']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('REFUSE over target on a PATCH: 409 naming minutes and limit, and the row untouched', async () => {
+      const handle = givenStaffingWorld(
+        harness.tx,
+        world({
+          policy: { overAllocationMode: 'REFUSE', qualificationMode: 'OFF' },
+          requirements: [
+            ...world().requirements!,
+            {
+              id: REQUIREMENT_ID,
+              subjectId: SUBJECT_ID,
+              studentGroupId: GROUP_ID,
+              teacherId: KARIN,
+              coTeacherId: null,
+              lessonsPerWeek: 1,
+              minutesPerLesson: 60,
+            },
+          ],
+        }),
+      );
+      harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: KARIN,
+        coTeacherId: null,
+      });
+
+      // 960 + 60 = 1 020 today; 4 × 60 makes it 1 200, past the 1 100 limit.
+      const response = await request(http())
+        .patch(`/api/v1/teaching-requirements/${REQUIREMENT_ID}`)
+        .set('x-test-user', admin())
+        .send({ lessonsPerWeek: 4 })
+        .expect(409);
+
+      expect(response.body).toMatchObject({
+        code: 'STAFF_TEACHER_OVER_TARGET',
+        params: { role: 'TEACHER', minutes: 1200, target: 1000, limit: 1100, tolerance: 10 },
+      });
+      expect(handle.locked).toEqual([[POST_KARIN]]);
+      expect(harness.tx['teachingRequirement']!['update']).not.toHaveBeenCalled();
+    });
+
+    it('OFF: 201 with no warnings, and no post locked', async () => {
+      const handle = givenStaffingWorld(
+        harness.tx,
+        world({ policy: { qualificationMode: 'OFF', overAllocationMode: 'OFF' } }),
+      );
+
+      const response = await create({ lessonsPerWeek: 10 }).expect(201);
+
+      expect(response.body.warnings).toEqual([]);
+      expect(handle.locked).toEqual([]);
+      expect(harness.tx['teachingRequirement']!['create']).toHaveBeenCalledTimes(1);
     });
   });
 

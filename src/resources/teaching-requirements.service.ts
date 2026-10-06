@@ -7,6 +7,8 @@ import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { SLOT_MINUTES, fitsTheGrid } from '../common/solver-grid';
 import { parseDateString } from '../common/utils/time';
 import { readYearBoundsForShare } from './academic-year-bounds';
+import { enforceRequirementWrite, touchesStaffing } from '../staffing/staffing-enforcement';
+import type { StaffingWarning } from '../staffing/staffing-checks';
 import type {
   CreateTeachingRequirementDto,
   UpdateTeachingRequirementDto,
@@ -48,6 +50,16 @@ export type TeachingRequirementResponse = Omit<
   endDate: string | null;
 };
 
+/**
+ * A create or PATCH answered back, with what the staffing policy's WARN mode
+ * had to say about it: STAFF_TEACHER_NOT_QUALIFIED / STAFF_TEACHER_OVER_TARGET
+ * with their params, empty when nothing was found or nothing was asked. A
+ * REFUSE never reaches here — it is the 409 the write answered instead.
+ */
+export type StaffedRequirementResponse = TeachingRequirementResponse & {
+  warnings: StaffingWarning[];
+};
+
 @Injectable()
 export class TeachingRequirementsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -77,7 +89,7 @@ export class TeachingRequirementsService {
   async create(
     dto: CreateTeachingRequirementDto,
     user: AuthenticatedUser,
-  ): Promise<TeachingRequirementResponse> {
+  ): Promise<StaffedRequirementResponse> {
     // Needs nothing from the database, so it answers before one is opened.
     this.assertLessonLengthFitsTheGrid(dto.minutesPerLesson);
     const schoolId = requireSchoolId(user);
@@ -92,6 +104,29 @@ export class TeachingRequirementsService {
           const year = await readYearBoundsForShare(tx, dto.academicYearId);
           this.assertPeriodFitsYear(year, startDate, endDate);
         }
+
+        // The staffing policy's two questions, asked of the row as it is about
+        // to be written and before it is — see staffing-enforcement.ts. A
+        // REFUSE throws here and nothing is written.
+        const warnings = await enforceRequirementWrite(tx, {
+          schoolId,
+          academicYearId: dto.academicYearId,
+          requirementId: null,
+          subjectId: dto.subjectId,
+          studentGroupId: dto.studentGroupId,
+          before: null,
+          patch: {
+            teacherId: dto.teacherId ?? null,
+            coTeacherId: dto.coTeacherId ?? null,
+            lessonsPerWeek: dto.lessonsPerWeek,
+            minutesPerLesson: dto.minutesPerLesson,
+            teacherLoadPercent: dto.teacherLoadPercent,
+            coTeacherLoadPercent: dto.coTeacherLoadPercent,
+            recurrence: dto.recurrence,
+            startDate: dto.startDate || null,
+            endDate: dto.endDate || null,
+          },
+        });
 
         const created = await tx.teachingRequirement.create({
           data: {
@@ -119,7 +154,7 @@ export class TeachingRequirementsService {
             endDate,
           },
         });
-        return this.toResponse(created);
+        return { ...this.toResponse(created), warnings };
       });
     } catch (error) {
       rethrowPrismaError(error);
@@ -130,7 +165,7 @@ export class TeachingRequirementsService {
     id: string,
     dto: UpdateTeachingRequirementDto,
     user: AuthenticatedUser,
-  ): Promise<TeachingRequirementResponse> {
+  ): Promise<StaffedRequirementResponse> {
     const startDate = dto.startDate ? parseDateString(dto.startDate) : null;
     const endDate = dto.endDate ? parseDateString(dto.endDate) : null;
     try {
@@ -161,6 +196,45 @@ export class TeachingRequirementsService {
               dto.startDate !== undefined ? startDate : existing.startDate,
               dto.endDate !== undefined ? endDate : existing.endDate,
             );
+          }
+        }
+
+        // The staffing policy's two questions, asked only of a PATCH that can
+        // change who teaches the row or what it charges them, and of the row as
+        // it will end up. The stored row is read for its year and its teachers;
+        // a row RLS hides is left to the update below, which answers 404.
+        let warnings: StaffingWarning[] = [];
+        if (touchesStaffing(dto)) {
+          const stored = await tx.teachingRequirement.findUnique({
+            where: { id },
+            select: {
+              academicYearId: true,
+              subjectId: true,
+              studentGroupId: true,
+              teacherId: true,
+              coTeacherId: true,
+            },
+          });
+          if (stored) {
+            warnings = await enforceRequirementWrite(tx, {
+              schoolId: requireSchoolId(user),
+              academicYearId: stored.academicYearId,
+              requirementId: id,
+              subjectId: stored.subjectId,
+              studentGroupId: stored.studentGroupId,
+              before: { teacherId: stored.teacherId, coTeacherId: stored.coTeacherId },
+              patch: {
+                teacherId: dto.teacherId,
+                coTeacherId: dto.coTeacherId,
+                lessonsPerWeek: dto.lessonsPerWeek,
+                minutesPerLesson: dto.minutesPerLesson,
+                teacherLoadPercent: dto.teacherLoadPercent,
+                coTeacherLoadPercent: dto.coTeacherLoadPercent,
+                recurrence: dto.recurrence,
+                ...(dto.startDate !== undefined ? { startDate: dto.startDate || null } : {}),
+                ...(dto.endDate !== undefined ? { endDate: dto.endDate || null } : {}),
+              },
+            });
           }
         }
 
@@ -196,7 +270,7 @@ export class TeachingRequirementsService {
             ...(dto.endDate !== undefined ? { endDate } : {}),
           },
         });
-        return this.toResponse(updated);
+        return { ...this.toResponse(updated), warnings };
       });
     } catch (error) {
       rethrowPrismaError(error);
