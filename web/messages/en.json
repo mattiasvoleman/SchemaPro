@@ -136,7 +136,8 @@
     "rooms": "Rooms",
     "groups": "Classes",
     "people": "People",
-    "requirements": "Curriculum",
+    "timplan": "Timplan",
+    "requirements": "Curriculum entries",
     "constraints": "Availability",
     "frameTimes": "Frame times",
     "lunchServings": "Lunch sittings",
@@ -158,7 +159,8 @@
     "myChildren": "My children",
     "integrations": "Integrations",
     "rasts": "Breaks",
-    "staffing": "Staffing"
+    "staffing": "Staffing",
+    "requirementsFormerly": "Formerly called Curriculum"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -174,7 +176,7 @@
     "quickActions": "Quick actions",
     "actionSetup": "Run school setup",
     "actionSetupHint": "Add subjects, rooms, classes and teachers",
-    "actionRequirements": "Define curriculum",
+    "actionRequirements": "Add curriculum entries",
     "actionRequirementsHint": "Who teaches what, how often",
     "actionGenerate": "Generate schedule",
     "actionGenerateHint": "Let the AI engine build the timetable",
@@ -208,8 +210,8 @@
     "gradeLevel": "Grade",
     "peopleTitle": "Invite teachers & students",
     "peopleHint": "People sign in with their email address. Students must be assigned to a class.",
-    "done": "Setup complete — continue to the curriculum",
-    "goToRequirements": "Define curriculum"
+    "done": "Setup complete — continue to the curriculum entries",
+    "goToRequirements": "Add curriculum entries"
   },
   "subjects": {
     "title": "Subjects",
@@ -333,7 +335,7 @@
     "workTimeLabel": "Working time"
   },
   "requirements": {
-    "title": "Curriculum",
+    "title": "Curriculum entries",
     "subtitle": "How many lessons each class needs per subject and week",
     "addRequirement": "Add entry",
     "editRequirement": "Edit entry",
@@ -361,7 +363,9 @@
     "memberCount": "{count} students",
     "cellLabel": "{subject} for {group}",
     "cellLabelSet": "{subject} for {group}: {lessons} lessons of {minutes} minutes",
-    "cellLabelPeriod": "{subject} for {group}: {lessons} lessons of {minutes} minutes, {note}"
+    "cellLabelPeriod": "{subject} for {group}: {lessons} lessons of {minutes} minutes, {note}",
+    "formerlyHint": "This page was formerly called Curriculum. Timplan is now the school's local timplan — the target in minutes per week and year that the entries here lay out.",
+    "formerlyLink": "Go to Timplan"
   },
   "timplan": {
     "title": "Timplan",
@@ -1090,7 +1094,7 @@
       "teachingGroups": "Teaching groups",
       "roomTypes": "Room types",
       "subjects": "Subjects",
-      "requirements": "Curriculum",
+      "requirements": "Curriculum entries",
       "teacherQualifications": "Teacher qualifications"
     },
     "downloadTemplate": "Download template",
@@ -1369,7 +1373,7 @@
     "unstaffedHint": "Curriculum entries without a teacher. The teacher is set in the curriculum cell — this list is read-only in this phase.",
     "unstaffedEmpty": "Every curriculum entry has a teacher.",
     "unstaffedRow": "{group} · {subject} · {minutes} min/wk",
-    "openRequirements": "Open the curriculum",
+    "openRequirements": "Open the curriculum entries",
     "policyTitle": "Staffing settings",
     "policyHint": "One row for the school. The target decides what every teacher is compared against; the rest is the collective agreement's frame and the checks that start to apply at assignment in a later phase.",
     "riktmarke": "Full-time teaching target (min/wk)",

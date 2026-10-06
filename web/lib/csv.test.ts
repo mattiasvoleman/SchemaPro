@@ -1270,7 +1270,7 @@ describe("teaching requirements", () => {
         endDate: null,
       },
     ]);
-    expect(CSV_TEMPLATES.requirements.filename).toBe("timplan.csv");
+    expect(CSV_TEMPLATES.requirements.filename).toBe("timplansposter.csv");
   });
 
   it("names every missing required column at row 0", () => {

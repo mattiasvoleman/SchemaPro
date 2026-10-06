@@ -24,6 +24,7 @@ import {
   Sparkles,
   GraduationCap,
   Scale,
+  Target,
   X,
   type LucideIcon,
   KeyRound,
@@ -41,6 +42,13 @@ interface NavItem {
   labelKey: string;
   href: string;
   icon: LucideIcon;
+  /**
+   * A second line under the label, for a page that has just been renamed.
+   * Shown as text rather than a tooltip, because a tooltip never appears on
+   * a touch screen, and the admin who learned the old name is the one who
+   * needs to see it. One release, then removed with its key.
+   */
+  hintKey?: string;
 }
 
 interface NavSection {
@@ -61,7 +69,19 @@ const ADMIN_NAV: NavSection[] = [
       { labelKey: "rooms", href: "/admin/rooms", icon: MapPin },
       { labelKey: "groups", href: "/admin/groups", icon: Users },
       { labelKey: "people", href: "/admin/people", icon: UserCheck },
-      { labelKey: "requirements", href: "/admin/requirements", icon: Grid3x3 },
+      // The school's own timplan — the target, in minutes per week and
+      // årskurs, held against the national hours per stadium. Before the
+      // timplansposter, because it is what they are written to meet.
+      { labelKey: "timplan", href: "/admin/timplan", icon: Target },
+      // Called "Timplan" until the lokal timplan took the name (2026-10-06);
+      // the route keeps its path so every bookmark and link still lands here,
+      // and the second line says where the old name went.
+      {
+        labelKey: "requirements",
+        href: "/admin/requirements",
+        icon: Grid3x3,
+        hintKey: "requirementsFormerly",
+      },
       // Directly after the timplan, because it is the timplan read from the
       // other side: that page says what each GROUP needs, this one says what
       // each TEACHER carries of it and against which post. Every leader
@@ -209,7 +229,16 @@ export function AppShell({ role, userName, email, schoolName, children }: AppShe
                       )}
                     >
                       <item.icon className="h-4 w-4 shrink-0" />
-                      {t(item.labelKey)}
+                      {item.hintKey ? (
+                        <span className="min-w-0">
+                          <span className="block">{t(item.labelKey)}</span>
+                          <span className="block text-xs font-normal text-muted-foreground">
+                            {t(item.hintKey)}
+                          </span>
+                        </span>
+                      ) : (
+                        t(item.labelKey)
+                      )}
                     </Link>
                   </li>
                 );

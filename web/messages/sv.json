@@ -136,7 +136,8 @@
     "rooms": "Salar",
     "groups": "Klasser",
     "people": "Personer",
-    "requirements": "Timplan",
+    "timplan": "Timplan",
+    "requirements": "Timplansposter",
     "constraints": "Tillgänglighet",
     "frameTimes": "Ramtider",
     "lunchServings": "Lunchsittningar",
@@ -158,7 +159,8 @@
     "myChildren": "Mina barn",
     "integrations": "Integrationer",
     "rasts": "Raster",
-    "staffing": "Tjänstefördelning"
+    "staffing": "Tjänstefördelning",
+    "requirementsFormerly": "Hette tidigare Timplan"
   },
   "dashboard": {
     "title": "Översikt",
@@ -174,7 +176,7 @@
     "quickActions": "Snabbåtgärder",
     "actionSetup": "Kör skolinställningar",
     "actionSetupHint": "Lägg till ämnen, salar, klasser och lärare",
-    "actionRequirements": "Definiera timplan",
+    "actionRequirements": "Lägg in timplansposter",
     "actionRequirementsHint": "Vem som undervisar vad, hur ofta",
     "actionGenerate": "Generera schema",
     "actionGenerateHint": "Låt AI-motorn bygga schemat",
@@ -208,8 +210,8 @@
     "gradeLevel": "Årskurs",
     "peopleTitle": "Bjud in lärare & elever",
     "peopleHint": "Personer loggar in med sin e-postadress. Elever måste tillhöra en klass.",
-    "done": "Klart — fortsätt till timplanen",
-    "goToRequirements": "Definiera timplan"
+    "done": "Klart — fortsätt till timplansposterna",
+    "goToRequirements": "Lägg in timplansposter"
   },
   "subjects": {
     "title": "Ämnen",
@@ -333,7 +335,7 @@
     "workTimeLabel": "Arbetstid"
   },
   "requirements": {
-    "title": "Timplan",
+    "title": "Timplansposter",
     "subtitle": "Hur många lektioner varje klass behöver per ämne och vecka",
     "addRequirement": "Lägg till post",
     "editRequirement": "Redigera post",
@@ -361,7 +363,9 @@
     "memberCount": "{count} elever",
     "cellLabel": "{subject} för {group}",
     "cellLabelSet": "{subject} för {group}: {lessons} lektioner à {minutes} minuter",
-    "cellLabelPeriod": "{subject} för {group}: {lessons} lektioner à {minutes} minuter, {note}"
+    "cellLabelPeriod": "{subject} för {group}: {lessons} lektioner à {minutes} minuter, {note}",
+    "formerlyHint": "Den här sidan hette tidigare Timplan. Timplan är nu skolans lokala timplan — målet i minuter per vecka och årskurs, som posterna här lägger ut.",
+    "formerlyLink": "Till Timplan"
   },
   "timplan": {
     "title": "Timplan",
@@ -1090,7 +1094,7 @@
       "teachingGroups": "Undervisningsgrupper",
       "roomTypes": "Salstyper",
       "subjects": "Ämnen",
-      "requirements": "Timplan",
+      "requirements": "Timplansposter",
       "teacherQualifications": "Behörigheter"
     },
     "downloadTemplate": "Ladda ner mall",
@@ -1369,7 +1373,7 @@
     "unstaffedHint": "Timplansposter utan lärare. Läraren sätts i timplanens ruta — den här listan är läsning i den här fasen.",
     "unstaffedEmpty": "Alla timplansrader har en lärare.",
     "unstaffedRow": "{group} · {subject} · {minutes} min/v",
-    "openRequirements": "Öppna timplanen",
+    "openRequirements": "Öppna timplansposterna",
     "policyTitle": "Inställningar för tjänstefördelning",
     "policyHint": "En rad för skolan. Riktmärket avgör vad varje lärare jämförs mot; resten är Bilaga M:s ram och de kontroller som börjar gälla vid tilldelningen i en senare fas.",
     "riktmarke": "Riktmärke undervisning för heltid (min/v)",

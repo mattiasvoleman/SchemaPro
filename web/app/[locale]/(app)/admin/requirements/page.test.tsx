@@ -360,6 +360,16 @@ vi.mock("@/lib/csv", async (importOriginal) => ({
 
 const mockDownloadCsv = downloadCsv as unknown as Mock;
 
+// The page links to /admin/timplan from its one-release "formerly Timplan"
+// hint. next-intl's real Link cannot load under vitest (next/navigation), so
+// it is a plain anchor here, as the staffing page's test has it.
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ href, children, className }: { href: string; children: React.ReactNode; className?: string }) => (
+    <a href={href} className={className}>
+      {children}
+    </a>
+  ),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock("next-intl", () => ({
@@ -390,6 +400,14 @@ beforeEach(() => {
   removeMock.mockReset().mockResolvedValue(undefined);
   importMock.mockReset().mockResolvedValue({ created: 0, skipped: 0, errors: [] });
   mockDownloadCsv.mockReset();
+});
+
+describe("Timplansposter after the rename", () => {
+  it("says the page was called Timplan and links to the page that took the name", () => {
+    render(<RequirementsPage />);
+    expect(screen.getByText(/formerlyHint/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "formerlyLink" })).toHaveAttribute("href", "/admin/timplan");
+  });
 });
 
 describe("Timplan matrix", () => {
@@ -1197,7 +1215,7 @@ describe("Timplan CSV", () => {
     // The active year first: 7A's two alternating requirements, no 8B.
     await user.click(exportButton());
     const [firstName, firstFile] = mockDownloadCsv.mock.calls[0] as [string, string];
-    expect(firstName).toBe("timplan.csv");
+    expect(firstName).toBe("timplansposter.csv");
     expect(firstFile).toContain("7A;SO;2;60;0;0;;;udda;;");
     expect(firstFile).toContain("7A;SL;2;60;0;0;;;jamna;;");
     expect(firstFile).not.toContain("8B");

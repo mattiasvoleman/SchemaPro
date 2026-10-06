@@ -473,7 +473,7 @@ describe("CsvImportDialog import", () => {
     await uploadCsv(
       user,
       BOM + "grupp;amne;lektioner_per_vecka;minuter_per_lektion\r\n7A;MA;3;60\r\n",
-      "timplan.csv",
+      "timplansposter.csv",
     );
     await waitFor(() => expect(importButton()).toBeEnabled());
     await user.click(importButton());
@@ -506,7 +506,7 @@ describe("CsvImportDialog import", () => {
     const user = userEvent.setup();
     renderDialog({ kinds: ["requirements"], academicYearId: NEXT_YEAR.id });
 
-    await uploadCsv(user, REQUIREMENTS_CSV, "timplan.csv");
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplansposter.csv");
     await waitFor(() => expect(importButton()).toBeEnabled());
     await user.click(importButton());
 
@@ -546,7 +546,7 @@ describe("CsvImportDialog import", () => {
     const user = userEvent.setup();
     renderDialog({ kinds: ["requirements"] });
 
-    await uploadCsv(user, REQUIREMENTS_CSV, "timplan.csv");
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplansposter.csv");
     await screen.findByText("rowsReady(count=1)");
     await waitFor(() => expect(importButton()).toBeEnabled());
     await user.click(importButton());
@@ -606,7 +606,7 @@ describe("CsvImportDialog for an import that updates", () => {
     const user = userEvent.setup();
     renderDialog({ kinds: ["requirements"] });
 
-    await uploadCsv(user, REQUIREMENTS_CSV, "timplan.csv");
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplansposter.csv");
     await screen.findByText("rowsReady(count=1)");
     await waitFor(() => expect(importButton()).toBeEnabled());
     await user.click(importButton());
@@ -626,7 +626,7 @@ describe("CsvImportDialog for an import that updates", () => {
     const user = userEvent.setup();
     renderDialog({ kinds: ["requirements"] });
 
-    await uploadCsv(user, REQUIREMENTS_CSV, "timplan.csv");
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplansposter.csv");
     await screen.findByText("rowsReady(count=1)");
     await waitFor(() => expect(importButton()).toBeEnabled());
     await user.click(importButton());
@@ -648,7 +648,7 @@ describe("CsvImportDialog for an import that updates", () => {
     expect(screen.getByText("updatesNotDeletes")).toBeInTheDocument();
 
     mockPost.mockResolvedValue({ created: 1, updated: 0, skipped: 0, errors: [] });
-    await uploadCsv(user, REQUIREMENTS_CSV, "timplan.csv");
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplansposter.csv");
     await screen.findByText("rowsReady(count=1)");
     await waitFor(() => expect(importButton()).toBeEnabled());
     await user.click(importButton());

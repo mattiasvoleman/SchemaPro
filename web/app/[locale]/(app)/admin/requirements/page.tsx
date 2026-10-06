@@ -144,6 +144,7 @@ import { candidateQualification, candidateRemaining } from "@/lib/staffing-candi
 import { CandidateBadge } from "@/components/staffing/candidate-badge";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
+import { Link } from "@/i18n/navigation";
 import {
   annualMinutes,
   formatHours,
@@ -784,6 +785,17 @@ export default function RequirementsPage() {
           </>
         }
       />
+      {/*
+        One release: the page was called Timplan until the lokal timplan took
+        the name (2026-10-06). An admin who comes here by the old habit reads
+        where the name went and can follow it; the route itself never moved.
+      */}
+      <p className="-mt-3 mb-4 text-sm text-muted-foreground">
+        {t("formerlyHint")}{" "}
+        <Link href="/admin/timplan" className="font-medium text-foreground underline underline-offset-4">
+          {t("formerlyLink")}
+        </Link>
+      </p>
 
       {loading ? (
         <Skeleton className="h-64 w-full" />
