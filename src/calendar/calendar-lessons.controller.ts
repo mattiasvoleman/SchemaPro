@@ -16,6 +16,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import {
   CalendarLessonsService,
   type LessonActionResult,
+  type SubstituteResult,
   type SubstituteSuggestion,
 } from './calendar-lessons.service';
 import {
@@ -56,7 +57,7 @@ export class CalendarLessonsController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: AssignSubstituteDto,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<LessonActionResult> {
+  ): Promise<SubstituteResult> {
     return this.lessons.assignSubstitute(id, dto, user);
   }
 

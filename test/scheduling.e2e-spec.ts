@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
+import { forgetStaffingWorld } from './utils/staffing-world';
 
 /**
  * Generation and day-to-day schedule editing over HTTP: optimization jobs,
@@ -235,6 +236,55 @@ describe('Scheduling surface (e2e)', () => {
         .set('x-test-user', admin())
         .send({ roomId: null })
         .expect(200);
+    });
+
+    it('assigns an obehörig vikarie under REFUSE and says so: the policy refuses the plan, never today’s cover', async () => {
+      const SUB_ID = '13131313-1313-4313-8313-131313131313';
+      harness.tx['calendarLesson']!['findUnique']!.mockResolvedValue(lessonRow());
+      harness.tx['user']!['findUnique']!.mockResolvedValue({ id: SUB_ID, role: 'TEACHER', isActive: true });
+      harness.tx['calendarLesson']!['findFirst']!.mockResolvedValue(null);
+      harness.tx['calendarLesson']!['update']!.mockResolvedValue({ id: LESSON_ID, status: 'SCHEDULED', note: null });
+      harness.tx['staffingPolicy']!['findUnique']!.mockResolvedValue({
+        qualificationMode: 'REFUSE',
+        overAllocationMode: 'REFUSE',
+        overAllocationTolerancePercent: 10,
+        fullTimeTeachingMinutesPerWeek: 1000,
+        unstaffedGeneration: 'ALLOW',
+      });
+      harness.tx['teacherSubjectQualification']!['findMany']!.mockResolvedValue([
+        { userId: TEACHER_ID, subjectId: SUBJECT_ID, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+      ]);
+      harness.tx['subject']!['findUnique']!.mockResolvedValue({ name: 'Matematik' });
+      harness.tx['studentGroup']!['findUnique']!.mockResolvedValue({ academicYearId: YEAR_ID });
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 8 }]);
+      harness.tx['studentGroupMember']!['findMany']!.mockResolvedValue([]);
+      harness.tx['guardianStudent']!['findMany']!.mockResolvedValue([]);
+      harness.tx['notification']!['createMany']!.mockResolvedValue({ count: 0 });
+
+      try {
+        const response = await request(http())
+          .patch(`/api/v1/calendar-lessons/${LESSON_ID}/substitute`)
+          .set('x-test-user', admin())
+          .send({ teacherId: SUB_ID })
+          .expect(200);
+
+        expect(response.body).toMatchObject({
+          id: LESSON_ID,
+          warnings: [
+            {
+              code: 'STAFF_TEACHER_NOT_QUALIFIED',
+              params: { role: 'SUBSTITUTE', subject: 'Matematik', grades: '8' },
+            },
+          ],
+        });
+        expect(harness.tx['calendarLessonTeacher']!['create']).toHaveBeenCalledWith({
+          data: expect.objectContaining({ teacherId: SUB_ID, role: 'SUBSTITUTE' }),
+        });
+      } finally {
+        forgetStaffingWorld(harness.tx);
+        harness.tx['user']!['findUnique']!.mockReset();
+        harness.tx['calendarLesson']!['findFirst']!.mockReset();
+      }
     });
 
     it('rejects a substitute that is not a teacher id', async () => {

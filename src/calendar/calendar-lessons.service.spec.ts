@@ -324,7 +324,7 @@ describe('CalendarLessonsService', () => {
 
       await expect(
         service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, user),
-      ).resolves.toEqual({ id: LESSON_ID, status: 'SCHEDULED', note: null });
+      ).resolves.toEqual({ id: LESSON_ID, status: 'SCHEDULED', note: null, warnings: [] });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.calendarLessonTeacher.deleteMany).toHaveBeenCalledWith({
@@ -337,6 +337,80 @@ describe('CalendarLessonsService', () => {
           teacherId: SUB_ID,
           role: 'SUBSTITUTE',
         },
+      });
+    });
+
+    /*
+     * A vikarie is asked the staffing policy's behörighet question for this
+     * class and subject on the lesson's own date — and is never refused: under
+     * REFUSE the finding comes back as a warning and the cover is assigned.
+     */
+    describe('the staffing policy', () => {
+      const arrangePolicy = (mode: 'OFF' | 'WARN' | 'REFUSE', held: Record<string, unknown>[]) => {
+        tx.staffingPolicy.findUnique.mockResolvedValue({
+          qualificationMode: mode,
+          overAllocationMode: 'REFUSE',
+          overAllocationTolerancePercent: 10,
+          fullTimeTeachingMinutesPerWeek: 1,
+          unstaffedGeneration: 'ALLOW',
+        });
+        tx.teacherSubjectQualification.findMany.mockResolvedValue(held);
+        tx.subject.findUnique.mockResolvedValue({ name: 'Engelska' });
+        tx.studentGroup.findUnique.mockResolvedValue({ academicYearId: 'year-1' });
+        tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 5 }]);
+      };
+      const held = (overrides: Record<string, unknown> = {}) => ({
+        userId: SUB_ID,
+        subjectId: SUBJECT_ID,
+        minGradeLevel: 4,
+        maxGradeLevel: 6,
+        kind: 'BEHORIG',
+        validFrom: null,
+        validTo: null,
+        ...overrides,
+      });
+
+      it('REFUSE warns and still assigns: an obehörig vikarie is the rektor’s call, not a refusal at 07:45', async () => {
+        arrangeAssign();
+        arrangePolicy('REFUSE', [held({ userId: 'someone-else' })]);
+
+        await expect(
+          service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser()),
+        ).resolves.toMatchObject({
+          warnings: [
+            { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: { role: 'SUBSTITUTE', subject: 'Engelska', grades: '5' } },
+          ],
+        });
+        expect(tx.calendarLessonTeacher.create).toHaveBeenCalledTimes(1);
+      });
+
+      it('reads validity on the lesson’s date, not over the year', async () => {
+        arrangeAssign();
+        // Valid from the day after the lesson (2026-08-10).
+        arrangePolicy('WARN', [held({ validFrom: new Date('2026-08-11T00:00:00.000Z') })]);
+
+        const result = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+        expect(result.warnings).toHaveLength(1);
+      });
+
+      it('a vikarie behörig for the class on the day has nothing said about them', async () => {
+        arrangeAssign();
+        arrangePolicy('REFUSE', [held()]);
+
+        await expect(
+          service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+      });
+
+      it('OFF asks nothing', async () => {
+        arrangeAssign();
+        arrangePolicy('OFF', [held({ userId: 'someone-else' })]);
+
+        await expect(
+          service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+        expect(tx.teacherSubjectQualification.findMany).not.toHaveBeenCalled();
       });
     });
 

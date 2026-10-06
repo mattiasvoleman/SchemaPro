@@ -14,6 +14,8 @@ import {
   NotificationsService,
   type NotificationKind,
 } from '../notifications/notifications.service';
+import { lessonQualificationFindings } from '../staffing/staffing-enforcement';
+import { settleFindings, type StaffingWarning } from '../staffing/staffing-checks';
 import type {
   AssignSubstituteDto,
   CancelLessonDto,
@@ -24,6 +26,15 @@ export interface LessonActionResult {
   id: string;
   status: 'SCHEDULED' | 'CANCELLED' | 'COMPLETED' | 'RESCHEDULED';
   note: string | null;
+}
+
+/**
+ * A vikarie assigned, with what the staffing policy says about their behörighet
+ * for this lesson (STAFF_TEACHER_NOT_QUALIFIED) — a warning even when the policy
+ * says REFUSE; see assignSubstitute.
+ */
+export interface SubstituteResult extends LessonActionResult {
+  warnings: StaffingWarning[];
 }
 
 /** A qualified, currently-free candidate to cover a lesson. */
@@ -139,12 +150,23 @@ export class CalendarLessonsService {
    * Replaces the lesson's teacher assignments with a single SUBSTITUTE
    * assignment. The substitute must be an active teacher in the same school
    * and free at the lesson's time.
+   *
+   * BEHÖRIGHET IS ASKED, AND NEVER REFUSES. The staffing policy's
+   * qualification question is asked of the vikarie for this lesson's class and
+   * subject on the lesson's own date (staffing-enforcement.ts), and a finding
+   * comes back in `warnings` — under WARN and under REFUSE alike. Skollagen
+   * lets a school put an obehörig vikarie in front of a class for a short time,
+   * and a refusal at 07:45 helps no pupil: it leaves the class with nobody. The
+   * policy's REFUSE governs the PLAN (the timplan and the grundschema); today's
+   * cover is the rektor's call, informed. A product decision, stated in the
+   * Fas 2 hand-over for the school to confirm. Never the load question: the
+   * load report is computed from the timplan, not from lessons.
    */
   async assignSubstitute(
     id: string,
     dto: AssignSubstituteDto,
     user: AuthenticatedUser,
-  ): Promise<LessonActionResult> {
+  ): Promise<SubstituteResult> {
     return this.prisma.withRls(user, async (tx) => {
       const lesson = await this.requireLesson(tx, id);
       if (lesson.status === 'COMPLETED') {
@@ -165,6 +187,25 @@ export class CalendarLessonsService {
           'The substitute already teaches another lesson at this time.',
         );
       }
+
+      const group = await tx.studentGroup.findUnique({
+        where: { id: lesson.studentGroupId },
+        select: { academicYearId: true },
+      });
+      const lessonDay = lesson.date.toISOString().slice(0, 10);
+      const warnings = group
+        ? settleFindings(
+            await lessonQualificationFindings(tx, {
+              schoolId: lesson.schoolId,
+              academicYearId: group.academicYearId,
+              subjectId: lesson.subjectId,
+              groupIds: [lesson.studentGroupId],
+              assignees: [{ userId: dto.teacherId, role: 'SUBSTITUTE' }],
+              window: { startDate: lessonDay, endDate: lessonDay },
+            }),
+            { downgrade: true },
+          )
+        : [];
 
       const outgoingTeacherIds = lesson.teachers.map((t) => t.teacherId);
       await tx.calendarLessonTeacher.deleteMany({ where: { calendarLessonId: id } });
@@ -195,7 +236,7 @@ export class CalendarLessonsService {
       });
       // Ids only in logs — never teacher names.
       this.logger.log(`Substitute assigned [lesson=${id}]`);
-      return updated;
+      return { ...updated, warnings };
     });
   }
 
