@@ -17,7 +17,7 @@
  *     stops working and the gate goes red again — suppression is a lease that
  *     forces re-review, never a permanent exemption.
  *
- * Usage:  node scripts/security/npm-audit-gate.mjs <package-dir>
+ * Usage:  node scripts/security/npm-audit-gate.mjs <api|web|mobile>
  * Allowlist: scripts/security/audit-allowlist.json, keyed by package dir.
  */
 
@@ -35,6 +35,12 @@ if (!packageDir) {
   process.exit(2);
 }
 
+// "api" names the gateway, whose package.json is the repository root. The
+// alias exists so an allowlist key never has to read "." — a reviewer scanning
+// the list should see which package an entry belongs to without decoding it.
+const dirOf = { api: "." };
+const packagePath = path.join(repoRoot, dirOf[packageDir] ?? packageDir);
+
 const allowlistPath = path.join(here, "audit-allowlist.json");
 const allowlist = JSON.parse(readFileSync(allowlistPath, "utf8"));
 const entries = allowlist[packageDir] ?? [];
@@ -44,7 +50,7 @@ const entries = allowlist[packageDir] ?? [];
 let raw;
 try {
   raw = execSync("npm audit --json", {
-    cwd: path.join(repoRoot, packageDir),
+    cwd: packagePath,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
   });
