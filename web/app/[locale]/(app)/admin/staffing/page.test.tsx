@@ -81,9 +81,6 @@ const state = vi.hoisted(() => ({
 
 vi.mock("@/lib/queries", () => ({
   useAcademicYears: () => ({ data: [year], isLoading: false, isError: false }),
-  useStaffingLoad: () => ({ data: state.report, isLoading: false, isError: false }),
-  useStaffingPolicy: () => ({ data: state.policy, isSuccess: true }),
-  useSaveStaffingPolicy: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSubjects: () => ({
     data: [{ id: "s-ma", name: "Matematik", code: "MA", color: null, requiredRoomTypeId: null }],
     isLoading: false,
@@ -96,6 +93,12 @@ vi.mock("@/lib/queries", () => ({
   }),
   useGroups: () => ({ data: [{ id: "g-7a", academicYearId: "y1", name: "7A", kind: "CLASS", gradeLevel: 7 }] }),
   useRequirements: () => ({ data: [] }),
+}));
+
+vi.mock("@/lib/staffing-queries", () => ({
+  useStaffingLoad: () => ({ data: state.report, isLoading: false, isError: false }),
+  useStaffingPolicy: () => ({ data: state.policy, isSuccess: true }),
+  useSaveStaffingPolicy: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useTeacherEmployments: () => ({ data: [] }),
   useTeacherQualifications: () => ({ data: [] }),
   useTeacherEmploymentActions: () => ({

@@ -9,6 +9,7 @@ import {
 import { createClient } from "@/utils/supabase/client";
 import { api } from "@/lib/api";
 import { sortByName, sortByPersonName } from "@/lib/sorting";
+import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import type {
   LessonRecurrence,
   LunchSettings,
@@ -37,18 +38,9 @@ import type {
   Rast,
   CalendarRast,
   TeacherWorkRule,
-  StaffingPolicy,
-  TeacherEmployment,
-  TeacherQualification,
   TeacherQualificationKind,
 } from "@/lib/types";
 import type { WorkRuleBody } from "@/lib/teacher-work-rules";
-import type {
-  EmploymentBody,
-  PolicyBody,
-  QualificationItemBody,
-} from "@/lib/staffing-forms";
-import type { TeacherLoadReport, UnstaffedRequirement } from "@/lib/teacher-load";
 
 // ---------------------------------------------------------------------------
 // Reads — straight from Supabase under RLS.
@@ -919,154 +911,6 @@ export function useLunchSittingMutations() {
     dayOfWeek: number;
     startTime: string;
   }>("/api/v1/lunch-sittings", [["lunch-sittings"]]);
-}
-
-// ---------------------------------------------------------------------------
-// Tjänstefördelning (src/staffing)
-//
-// Read through the API rather than Supabase, all of it. Three reasons, one per
-// table: the policy GET is SCHOOL_ADMIN-only on the gateway and its validation
-// (reglerad inside årsarbetstiden) lives on the endpoint that writes it; the
-// employments are HR data with a teacher_own RLS arm, and the gateway already
-// cuts a TEACHER's list down to their own row, so one door is enough; and the
-// load report is COMPUTED, in one RLS transaction over five tables, which is
-// not a thing PostgREST can answer. The qualifications could be read from
-// Supabase (staff_select), but a page that already holds the API client for
-// the other three gains nothing from a second door for the fourth.
-// ---------------------------------------------------------------------------
-
-export function useStaffingPolicy() {
-  return useQuery({
-    queryKey: ["staffingPolicy"],
-    queryFn: async () =>
-      (await api.get<StaffingPolicy | null>("/api/v1/staffing-policy")) ?? null,
-  });
-}
-
-/**
- * PUT replaces the row whole, so the body carries every field the card shows
- * and the report is refetched: a changed riktmärke moves every teacher's
- * status, and a matrix left on the old numbers would be the page lying
- * about the thing the admin just changed.
- */
-export function useSaveStaffingPolicy() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: PolicyBody) => api.put<StaffingPolicy>("/api/v1/staffing-policy", body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["staffingPolicy"] });
-      void queryClient.invalidateQueries({ queryKey: ["staffingLoad"] });
-    },
-  });
-}
-
-export function useTeacherEmployments(academicYearId: string | null) {
-  return useQuery({
-    queryKey: ["teacherEmployments", academicYearId],
-    enabled: academicYearId !== null,
-    queryFn: () =>
-      api.get<TeacherEmployment[]>(
-        `/api/v1/teacher-employments?academicYearId=${encodeURIComponent(academicYearId!)}`,
-      ),
-  });
-}
-
-/**
- * A post is written and taken away by TEACHER and YEAR, never by row id — the
- * gateway offers no collection to post into, like teacher-work-rules. The
- * teacher sits in the path and the year in the query string; the body is the
- * DTO's six fields and nothing else, because the ValidationPipe runs with
- * forbidNonWhitelisted and a stray userId is a 400 with nothing wrong in it.
- */
-export function useTeacherEmploymentActions() {
-  const queryClient = useQueryClient();
-  const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["teacherEmployments"] });
-    void queryClient.invalidateQueries({ queryKey: ["staffingLoad"] });
-  };
-  const save = useMutation({
-    mutationFn: ({
-      userId,
-      academicYearId,
-      ...body
-    }: { userId: string; academicYearId: string } & EmploymentBody) =>
-      api.put<TeacherEmployment>(
-        `/api/v1/teacher-employments/${userId}?academicYearId=${encodeURIComponent(academicYearId)}`,
-        body,
-      ),
-    onSuccess: invalidate,
-  });
-  const remove = useMutation({
-    mutationFn: ({ userId, academicYearId }: { userId: string; academicYearId: string }) =>
-      api.delete(
-        `/api/v1/teacher-employments/${userId}?academicYearId=${encodeURIComponent(academicYearId)}`,
-      ),
-    onSuccess: invalidate,
-  });
-  return { save, remove };
-}
-
-/** The school's qualifications, or one teacher's when a userId is given. */
-export function useTeacherQualifications(userId?: string | null) {
-  return useQuery({
-    queryKey: ["teacherQualifications", userId ?? "all"],
-    queryFn: () =>
-      api.get<TeacherQualification[]>(
-        userId
-          ? `/api/v1/teacher-qualifications?userId=${encodeURIComponent(userId)}`
-          : "/api/v1/teacher-qualifications",
-      ),
-  });
-}
-
-/**
- * Replaces the teacher's whole list — the pattern of PUT /student-groups/:id/
- * members. Every cache under the prefix is refetched, the school-wide one the
- * requirements dialog reads as well as the one teacher's.
- */
-export function useReplaceTeacherQualifications() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ userId, items }: { userId: string; items: QualificationItemBody[] }) =>
-      api.put<TeacherQualification[]>(`/api/v1/teacher-qualifications/${userId}`, { items }),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["teacherQualifications"] });
-      void queryClient.invalidateQueries({ queryKey: ["staffingLoad"] });
-    },
-  });
-}
-
-export interface TeacherLoadReportResponse extends TeacherLoadReport {
-  academicYearId: string;
-  horizon: "planned";
-  year: { startDate: string; endDate: string };
-}
-
-/**
- * The report for one läsår, computed by the gateway. Only the planned horizon
- * exists in Fas 1, so no parameter for it: the day a second one is added, the
- * key below gains it and nothing cached under the old shape survives.
- */
-export function useStaffingLoad(academicYearId: string | null) {
-  return useQuery({
-    queryKey: ["staffingLoad", academicYearId],
-    enabled: academicYearId !== null,
-    queryFn: () =>
-      api.get<TeacherLoadReportResponse>(
-        `/api/v1/staffing/load?academicYearId=${encodeURIComponent(academicYearId!)}&horizon=planned`,
-      ),
-  });
-}
-
-export function useUnstaffedRequirements(academicYearId: string | null) {
-  return useQuery({
-    queryKey: ["staffingUnstaffed", academicYearId],
-    enabled: academicYearId !== null,
-    queryFn: () =>
-      api.get<UnstaffedRequirement[]>(
-        `/api/v1/staffing/unstaffed?academicYearId=${encodeURIComponent(academicYearId!)}`,
-      ),
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2334,9 +2178,11 @@ export function useImportCsv() {
       void queryClient.invalidateQueries({ queryKey: ["requirements"] });
       // The staffing surfaces: a teachers file may carry posts, a behörighet
       // file changes the qualification list, and the load report reads both.
-      void queryClient.invalidateQueries({ queryKey: ["teacherEmployments"] });
-      void queryClient.invalidateQueries({ queryKey: ["teacherQualifications"] });
-      void queryClient.invalidateQueries({ queryKey: ["staffingLoad"] });
+      // Their hooks live in lib/staffing-queries.ts, which this module must
+      // not import — see lib/staffing-keys.ts for why only the keys are shared.
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.employments });
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.qualifications });
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
     },
   });
 }

@@ -108,6 +108,11 @@ vi.mock("@/lib/queries", () => ({
     update: { mutateAsync: vi.fn(), isPending: false },
     remove: { mutateAsync: vi.fn(), isPending: false },
   }),
+}));
+
+// The staffing hooks come from their own module, so the page's own chunk
+// does not carry them onto routes that never read them.
+vi.mock("@/lib/staffing-queries", () => ({
   useTeacherEmployments: () => ({ data: state.employments }),
   useTeacherQualifications: () => ({ data: state.qualifications }),
   useStaffingPolicy: () => ({ data: null, isSuccess: true }),
@@ -428,9 +433,12 @@ describe("People page", () => {
 
       await user.click(nameButton("Karin Ek"));
 
-      expect(screen.getByText("employmentTitle")).toBeInTheDocument();
-      expect(screen.getByText("qualificationsTitle")).toBeInTheDocument();
-      expect(screen.getByText("employmentSummarySignature(KEK)")).toBeInTheDocument();
+      // The cards are fetched when the row opens (next/dynamic), so the first
+      // look at each waits for it: a loader that never settled fails here,
+      // by name, rather than leaving the row drawn without them.
+      expect(await screen.findByText("employmentTitle")).toBeInTheDocument();
+      expect(await screen.findByText("qualificationsTitle")).toBeInTheDocument();
+      expect(await screen.findByText("employmentSummarySignature(KEK)")).toBeInTheDocument();
       expect(screen.queryByText("employmentSummarySignature(XXX)")).toBeNull();
     });
 
