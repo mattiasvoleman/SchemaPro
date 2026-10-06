@@ -227,7 +227,7 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
     ],
   },
   requirements: {
-    filename: "timplan.csv",
+    filename: "timplansposter.csv",
     // minutesBefore and minutesAfter are the API's own field names rather than
     // Swedish like their neighbours, because the two are read back by name in
     // the payload the dialog posts and one spelling of a rule is enough. The
@@ -989,7 +989,7 @@ export function mapMembershipRows(parsed: ParsedCsv) {
 // ---------------------------------------------------------------------------
 
 /**
- * One row of timplan.csv after mapping — the body the API's DTO expects.
+ * One row of timplansposter.csv after mapping — the body the API's DTO expects.
  *
  * A type alias and not an interface: the import dialog collects every mapper
  * into one `Record<ImportKind, (parsed) => { rows: Record<string, unknown>[] }>`

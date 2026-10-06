@@ -106,6 +106,33 @@ describe("AppShell navigation", () => {
     expect(link("nav.integrations")).toHaveAttribute("href", "/admin/integrations");
   });
 
+  it("gives the name Timplan to the lokal timplan and keeps the requirements route under its new label", () => {
+    renderShell();
+
+    // The target page first, then the posts that are written to meet it.
+    const timplan = link("nav.timplan");
+    expect(timplan).toHaveAttribute("href", "/admin/timplan");
+    const requirements = screen.getByRole("link", { name: /nav\.requirements/ });
+    expect(requirements).toHaveAttribute("href", "/admin/requirements");
+    expect(
+      timplan.compareDocumentPosition(requirements) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    // The one-release hint is TEXT under the renamed entry, part of its
+    // accessible name, not a tooltip a touch screen never shows.
+    expect(requirements).toHaveTextContent("nav.requirementsFormerly");
+    expect(timplan).not.toHaveTextContent("nav.requirementsFormerly");
+  });
+
+  it("names the two pages Timplan and Timplansposter in Swedish, with the old name stated", async () => {
+    const sv = (await import("@/messages/sv.json")).default as { nav: Record<string, string> };
+    const en = (await import("@/messages/en.json")).default as { nav: Record<string, string> };
+    expect(sv.nav.timplan).toBe("Timplan");
+    expect(sv.nav.requirements).toBe("Timplansposter");
+    expect(sv.nav.requirementsFormerly).toBe("Hette tidigare Timplan");
+    expect(en.nav.requirements).not.toBe(en.nav.timplan);
+  });
+
   it("teacher gets the teacher nav, without admin entries or section labels", () => {
     navState.pathname = "/teacher";
     renderShell({ role: "TEACHER" });
