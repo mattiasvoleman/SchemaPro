@@ -3,7 +3,7 @@ import {
   TeacherContractKind,
   TeacherQualificationKind,
 } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -520,6 +520,84 @@ export class ImportTeacherQualificationsDto {
   rows!: ImportTeacherQualificationRowDto[];
 }
 
+/**
+ * "F", "f" or a number 0..10, as a school writes an årskurs, made into the
+ * integer the table holds — or left as it came, for @IsInt to refuse with the
+ * sentence below. The browser may post either the cell's text or a number it
+ * already parsed; both arrive here.
+ */
+export function parseTimplanGrade(value: unknown): unknown {
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string') return value;
+  const text = value.trim();
+  if (/^f$/i.test(text)) return 0;
+  if (/^\d{1,2}$/.test(text)) return Number(text);
+  return value;
+}
+
+const GRADE_MESSAGE = 'årskurs: anges som F (förskoleklass) eller ett heltal 0–10.';
+
+/**
+ * One row of a lokal timplan file: ämne, årskurs, minuter per vecka, notering.
+ *
+ * The bounds are LocalTimplanEntryDto's — the table's CHECKs — repeated rather
+ * than shared, like the requirements row repeats its create DTO: they are this
+ * DTO's contract with the CSV. The subject is a CODE or NAME, resolved
+ * server-side like every other kind's.
+ */
+export class ImportTimplanRowDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  subject!: string;
+
+  @Transform(({ value }) => parseTimplanGrade(value))
+  @IsInt({ message: GRADE_MESSAGE })
+  @Min(0, { message: GRADE_MESSAGE })
+  @Max(10, { message: GRADE_MESSAGE })
+  gradeLevel!: number;
+
+  @IsInt({ message: 'minuterPerVecka: anges i hela minuter.' })
+  @Min(0, { message: 'minuterPerVecka: kan inte vara negativt.' })
+  @Max(1200, { message: 'minuterPerVecka: högst 1200 minuter (20 timmar) per vecka i ett ämne.' })
+  minutesPerWeek!: number;
+
+  @IsOptional()
+  @IsString({ message: 'notering: anges som text.' })
+  @MaxLength(500, { message: 'notering: högst 500 tecken.' })
+  note?: string | null;
+}
+
+/** Every column a timplan file may carry; see REQUIREMENT_FILE_COLUMNS for why the whole header. */
+export const TIMPLAN_FILE_COLUMNS = ['subject', 'gradeLevel', 'minutesPerWeek', 'note'] as const;
+
+export type TimplanFileColumn = (typeof TIMPLAN_FILE_COLUMNS)[number];
+
+export class ImportTimplanDto {
+  /** The DRAFT plan the rows go into, chosen in the dialog — never a column. */
+  @IsUUID('4')
+  localTimplanId!: string;
+
+  /**
+   * Which columns the FILE had. Only `note` is optional, and a file without
+   * the column leaves every stored note as it is — the reason the
+   * requirements import carries its header. Absent reads as "no note column".
+   */
+  @IsOptional()
+  @IsArray()
+  @IsIn(TIMPLAN_FILE_COLUMNS as unknown as string[], { each: true })
+  columns?: TimplanFileColumn[];
+
+  // Eleven årskurser × thirty-six subjects is 396; 400 is the entries PUT's
+  // cap, so a file and the grid can hold the same plan.
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(400)
+  @ValidateNested({ each: true })
+  @Type(() => ImportTimplanRowDto)
+  rows!: ImportTimplanRowDto[];
+}
+
 /** Uniform outcome: idempotent re-uploads land in `skipped`, never `errors`. */
 export interface ImportReport {
   created: number;
@@ -527,8 +605,9 @@ export interface ImportReport {
   /**
    * Rows that already existed and were CHANGED by the upload. Optional, and
    * left undefined by the create-only kinds, so none of them had to grow a
-   * field that would always read 0. The timplan import and the behörighet
-   * import update; the teachers import does when the file carries a post.
+   * field that would always read 0. The timplan import, the lokal timplan
+   * import and the behörighet import update; the teachers import does when
+   * the file carries a post.
    */
   updated?: number;
   /** 1-based DATA row numbers (the header row is not counted). */
