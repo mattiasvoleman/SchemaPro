@@ -226,6 +226,22 @@
     salstypens namn, till exempel <em>Textilslöjd</em> — aldrig med någon
     intern kod.
   </p>
+  <p>
+    Varje ämne kan också kopplas till den nationella timplanen. Fältet
+    <span class="ui">Nationell ämneskod</span> anger vilken rad i
+    skolförordningens timplan ämnets timmar räknas mot — <em>Matematik (MA)</em>,
+    <em>Svenska eller svenska som andraspråk (SV_SVA)</em>, och för NO och SO
+    antingen hela ämnesgruppen eller ett enskilt ämne som <em>Kemi (KE)</em>.
+    Skolans egna namn på ämnet spelar ingen roll, och flera ämnen får dela
+    samma kod: <em>Svenska</em> och <em>Svenska som andraspråk</em> kopplas
+    båda till SV_SVA. Ett ämne utanför timplanen — mentorstid, en lokal profil
+    — lämnas på <span class="ui">Utanför timplanen</span>. Omkopplaren
+    <span class="ui">Räknas som undervisningstid</span> är på för alla vanliga
+    ämnen och stängs av för sådant som schemaläggs utan att vara undervisning i
+    förordningens mening, till exempel <em>Resurs</em>; tiden hålls då utanför
+    varje timplansumma. Koden visas som en liten bricka i tabellen, så att ett
+    ämne som glömts bort syns på sin rad.
+  </p>
   <div class="note">
     <span class="label">Salstypen måste finnas först</span>
     <p>
@@ -422,7 +438,7 @@
   <table>
     <thead><tr><th style="width:30%">Mall</th><th style="width:34%">Kolumner</th><th>Att veta</th></tr></thead>
     <tbody>
-      <tr><td class="k">amnen.csv</td><td>namn; kod; farg; salstyp</td><td>Endast namnet krävs. Kan även exporteras — se 3.2.</td></tr>
+      <tr><td class="k">amnen.csv</td><td>namn; kod; farg; salstyp; nationell_kod; undervisningstid</td><td>Endast namnet krävs. <em>nationell_kod</em> är timplanens kod (MA, SV_SVA, KE …) eller tom för ett ämne utanför timplanen; en okänd kod avvisar raden. <em>undervisningstid</em> skrivs <em>ja</em> eller <em>nej</em>, tom betyder ja. Kan även exporteras — se 3.2.</td></tr>
       <tr><td class="k">salstyper.csv</td><td>namn</td><td>En typ per rad, t.ex. <em>Textilslöjd</em>. Gäller hela skolan, inte ett enskilt läsår.</td></tr>
       <tr><td class="k">klasser.csv</td><td>namn; arskurs</td><td>Importeras före eleverna — de hänvisar till klassnamnen.</td></tr>
       <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5.</td></tr>
