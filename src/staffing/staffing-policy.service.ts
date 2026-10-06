@@ -34,6 +34,7 @@ export const STAFFING_POLICY_DEFAULTS = {
   overAllocationMode: 'WARN',
   overAllocationTolerancePercent: 10,
   loadModel: 'MINUTES',
+  unstaffedGeneration: 'ALLOW',
 } as const;
 
 function toResponse(row: StaffingPolicy): StaffingPolicyResponse {
@@ -87,6 +88,8 @@ export class StaffingPolicyService {
         dto.overAllocationTolerancePercent ??
         STAFFING_POLICY_DEFAULTS.overAllocationTolerancePercent,
       loadModel: dto.loadModel ?? STAFFING_POLICY_DEFAULTS.loadModel,
+      unstaffedGeneration:
+        dto.unstaffedGeneration ?? STAFFING_POLICY_DEFAULTS.unstaffedGeneration,
     };
 
     // The table says the same with StaffingPolicies_regulatedHours_within_annual,
