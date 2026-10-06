@@ -11,7 +11,7 @@ import {
   useLeaveRequestActions,
   useLeaveRequests,
   useMyChildren,
-} from "@/lib/queries";
+} from "@/lib/guardian-queries";
 import type { AbsenceReportType } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";

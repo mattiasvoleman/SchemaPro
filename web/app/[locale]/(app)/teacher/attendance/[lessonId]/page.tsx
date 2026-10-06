@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { ArrowLeft, CheckCheck, Loader2 } from "lucide-react";
 import { Link } from "@/i18n/navigation";
 import {
-  useAbsenceReports,
   useLesson,
   useLessonRoster,
   useLessonAttendance,
@@ -14,6 +13,7 @@ import {
   useSubjects,
   type AttendanceEntryInput,
 } from "@/lib/queries";
+import { useAbsenceReports } from "@/lib/guardian-queries";
 import type { AttendanceStatus } from "@/lib/types";
 import { cn, formatTime } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
