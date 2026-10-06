@@ -264,6 +264,68 @@ describe('CSV import (e2e)', () => {
       expect(first.data.schoolId).toBe(SCHOOL_ID);
     });
 
+    it('imports a subject with its national code and its flag, through the pipe', async () => {
+      // The two timplan columns cross the whitelist here and nowhere else: a
+      // DTO spec validates the class, not the pipe that forbids unknown keys.
+      // The code is read against NationalSubjects once per file and folded to
+      // the table's case, so a hand-typed " ma " lands as MA.
+      harness.tx['subject']!['findMany']!.mockResolvedValue([]);
+      harness.tx['roomType']!['findMany']!.mockResolvedValue([]);
+      harness.tx['nationalSubject']!['findMany']!.mockResolvedValue([{ code: 'MA' }]);
+      harness.tx['subject']!['create']!.mockResolvedValue({ id: 'sub-1' });
+
+      const response = await post(harness, 'subjects')
+        .send({
+          rows: [
+            { name: 'Resurs matematik', nationalCode: ' ma ', countsTowardTimplan: false },
+            { name: 'Bild', nationalCode: null, countsTowardTimplan: null },
+          ],
+        })
+        .expect(201);
+
+      expect(response.body).toMatchObject({ created: 2, errors: [] });
+      const written = harness.tx['subject']!['create']!.mock.calls.map(
+        (call) =>
+          (call[0] as { data: { nationalCode: string | null; countsTowardTimplan: boolean } })
+            .data,
+      );
+      expect(written).toEqual([
+        expect.objectContaining({ nationalCode: 'MA', countsTowardTimplan: false }),
+        // An empty cell is the column default, written explicitly.
+        expect.objectContaining({ nationalCode: null, countsTowardTimplan: true }),
+      ]);
+      expect(harness.tx['nationalSubject']!['findMany']).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails the row of an unknown national code in Swedish, and creates nothing', async () => {
+      harness.tx['subject']!['findMany']!.mockResolvedValue([]);
+      harness.tx['roomType']!['findMany']!.mockResolvedValue([]);
+      harness.tx['nationalSubject']!['findMany']!.mockResolvedValue([{ code: 'MA' }]);
+
+      const response = await post(harness, 'subjects')
+        .send({ rows: [{ name: 'Matte', nationalCode: 'MATTE' }] })
+        .expect(201);
+
+      expect(response.body).toMatchObject({ created: 0 });
+      expect(response.body.errors).toEqual([
+        { row: 1, message: expect.stringMatching(/nationalCode.*"MATTE"/) },
+      ]);
+      // A subject created without the mapping it was given is one every
+      // timplan sum would silently miss.
+      expect(harness.tx['subject']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('400s a flag that is not a boolean, before the handler', async () => {
+      // The browser mapper turns ja/nej into booleans; a client that sends the
+      // word must be stopped at the pipe, or "nej" would land as truthy.
+      const response = await post(harness, 'subjects')
+        .send({ rows: [{ name: 'Resurs', countsTowardTimplan: 'nej' }] })
+        .expect(400);
+
+      expect(JSON.stringify(response.body)).toContain('countsTowardTimplan');
+      expect(harness.tx['subject']!['create']).not.toHaveBeenCalled();
+    });
+
     it('rejects a colour that is not a hex colour', async () => {
       const response = await post(harness, 'subjects')
         .send({ rows: [{ name: 'Bild', color: 'rosa' }] })
