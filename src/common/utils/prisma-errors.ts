@@ -1,4 +1,9 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 /**
@@ -16,18 +21,28 @@ import { Prisma } from '@prisma/client';
  * A deadlock or a serialization failure (P2034; 40P01 / 40001 underneath) is
  * a 409 WRITE_CONFLICT that says to try again, not a 500: the database
  * aborted one of two concurrent writes and nothing was written. And a CHECK
- * on the lokal timplan tables that a DTO bound failed to anticipate is a 400
- * naming the field, not a 500 — see timplanCheckViolation.
+ * on the lokal timplan or tjänstefördelning tables that a DTO bound failed to
+ * anticipate is a 400 naming the field, not a 500 — see namedCheckViolation.
+ *
+ * A duty's slot-link triggers (migration 20261007090000) answer SQLSTATE
+ * TD409 — a slot that is not the duty teacher's own weekly UNAVAILABLE time —
+ * and TD403 — a teacher writing the slot an uppdrag holds. The first is a 409
+ * TEACHER_DUTY_BLOCK_MISMATCH, met by an admin's constraint PATCH that would
+ * move a linked slot; the second a 403. See teacherDutyBlockRefusal.
  */
 export function rethrowPrismaError(error: unknown): never {
   const decided = decidedTimplanRefusal(error);
   if (decided) {
     throw decidedTimplanConflict(decided.planName === null ? [] : [decided.planName]);
   }
+  const dutyBlock = teacherDutyBlockRefusal(error);
+  if (dutyBlock) {
+    throw teacherDutyBlockException(dutyBlock);
+  }
   if (isWriteConflict(error)) {
     throw writeConflict();
   }
-  const check = timplanCheckViolation(error);
+  const check = namedCheckViolation(error);
   if (check) {
     throw new BadRequestException(check);
   }
@@ -152,13 +167,14 @@ export function writeConflict(): ConflictException {
 }
 
 /**
- * The lokal timplan CHECKs (migration 20261006120000) by constraint name, as
- * the field and the bound a 400 should state. The DTOs mirror each bound, so
- * this is the second line: a value a DTO counted differently from the column
- * (lengths are code points on both sides now, but the next difference will not
- * announce itself) answers 400 naming the field rather than 500.
+ * The lokal timplan CHECKs (migration 20261006120000) and the Fas 2
+ * tjänstefördelning CHECKs (20261007090000) by constraint name, as the field
+ * and the bound a 400 should state. The DTOs mirror each bound, so this is the
+ * second line: a value a DTO counted differently from the column (lengths are
+ * code points on both sides now, but the next difference will not announce
+ * itself) answers 400 naming the field rather than 500.
  */
-const TIMPLAN_CHECKS: Record<string, string> = {
+const NAMED_CHECKS: Record<string, string> = {
   LocalTimplans_name_is_sane: 'name: timplanen behöver ett namn på högst 100 tecken.',
   LocalTimplans_planningWeeks_is_sane: 'planningWeeks: mellan 20,0 och 40,0 veckor.',
   LocalTimplans_decisionNote_is_sane:
@@ -166,19 +182,80 @@ const TIMPLAN_CHECKS: Record<string, string> = {
   LocalTimplanEntries_gradeLevel_is_sane: 'gradeLevel: årskursen är 0 (förskoleklass) till 10.',
   LocalTimplanEntries_minutesPerWeek_is_sane: 'minutesPerWeek: 0 till 1200 minuter per vecka.',
   LocalTimplanEntries_note_is_sane: 'note: anteckningen kan vara högst 500 tecken.',
+  TeachingRequirements_teacher_load_percent_is_sane:
+    'teacherLoadPercent: andelen som räknas för läraren är 0 till 200 %.',
+  TeachingRequirements_co_teacher_load_percent_is_sane:
+    'coTeacherLoadPercent: andelen som räknas för medläraren är 0 till 200 %.',
+  TeacherDuties_label_is_sane: 'label: uppdraget behöver ett namn på högst 80 tecken.',
+  TeacherDuties_minutesPerWeek_is_sane: 'minutesPerWeek: ett uppdrag är 1 till 2400 minuter per vecka.',
+  TeacherDuties_note_is_sane: 'note: anteckningen kan vara högst 500 tecken.',
 };
 
 /**
- * The 400 sentence for a CHECK violation (23514) on a lokal timplan table, or
+ * The 400 sentence for a CHECK violation (23514) named in NAMED_CHECKS, or
  * null. The adapter maps no Prisma code to 23514, so it arrives as P2039 with
  * the constraint's name in the driver's message.
  */
-export function timplanCheckViolation(error: unknown): string | null {
+export function namedCheckViolation(error: unknown): string | null {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
   const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
     ?.driverAdapterError?.cause;
   const text = typeof cause?.originalMessage === 'string' ? cause.originalMessage : error.message;
   if (cause?.originalCode !== '23514' && !text.includes('violates check constraint')) return null;
   const constraint = /check constraint "([^"]+)"/.exec(text)?.[1];
-  return constraint ? (TIMPLAN_CHECKS[constraint] ?? null) : null;
+  return constraint ? (NAMED_CHECKS[constraint] ?? null) : null;
+}
+
+/** The problem `code` of a duty slot that is not the duty teacher's own weekly UNAVAILABLE time. */
+export const TEACHER_DUTY_BLOCK_MISMATCH = 'TEACHER_DUTY_BLOCK_MISMATCH';
+/** The problem `code` of a teacher writing the slot an uppdrag holds. */
+export const TEACHER_DUTY_BLOCK_IS_THE_ADMINS = 'TEACHER_DUTY_BLOCK_IS_THE_ADMINS';
+
+/** What the slot-link triggers (migration 20261007090000) report. */
+export interface TeacherDutyBlockRefusal {
+  sqlState: 'TD409' | 'TD403';
+  teacherDutyId: string | null;
+  availabilityConstraintId: string | null;
+}
+
+/**
+ * Recognises the slot-link triggers' refusal. Like TP409 it is a SQLSTATE
+ * class PostgreSQL does not define, so the adapter hands it over as P2039 with
+ * the driver's fields under meta.driverAdapterError.cause; the rendered
+ * message is the fallback. DETAIL carries the two ids, never a person.
+ */
+export function teacherDutyBlockRefusal(error: unknown): TeacherDutyBlockRefusal | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  const original = typeof cause?.originalCode === 'string' ? cause.originalCode : null;
+  const rendered =
+    error.code === 'P2039' ? (/Code: `(TD409|TD403)`/.exec(error.message)?.[1] ?? null) : null;
+  const sqlState = original === 'TD409' || original === 'TD403' ? original : rendered;
+  if (sqlState !== 'TD409' && sqlState !== 'TD403') return null;
+  const detail = typeof cause?.detail === 'string' ? cause.detail : '';
+  return {
+    sqlState,
+    teacherDutyId: /teacherDutyId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+    availabilityConstraintId: /availabilityConstraintId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+  };
+}
+
+/** The 409 or 403 for a write that would break a duty's slot link. */
+export function teacherDutyBlockException(
+  refusal: TeacherDutyBlockRefusal,
+): ConflictException | ForbiddenException {
+  if (refusal.sqlState === 'TD403') {
+    return new ForbiddenException({
+      message:
+        'Tiden är blockerad av ett uppdrag och ändras av en administratör, genom uppdraget.',
+      code: TEACHER_DUTY_BLOCK_IS_THE_ADMINS,
+    });
+  }
+  return new ConflictException({
+    message:
+      'Tiden är blockerad av ett uppdrag och måste förbli en återkommande otillgänglighet för uppdragets egen lärare. ' +
+      'Ändra eller ta bort den genom uppdraget.',
+    code: TEACHER_DUTY_BLOCK_MISMATCH,
+  });
 }

@@ -1,12 +1,20 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  TEACHER_DUTY_BLOCK_IS_THE_ADMINS,
+  TEACHER_DUTY_BLOCK_MISMATCH,
   TIMPLAN_IS_DECIDED,
   WRITE_CONFLICT,
   decidedTimplanConflict,
   decidedTimplanRefusal,
   listNames,
   rethrowPrismaError,
+  teacherDutyBlockRefusal,
 } from './prisma-errors';
 
 const knownError = (code: string): Prisma.PrismaClientKnownRequestError =>
@@ -231,5 +239,103 @@ describe('rethrowPrismaError and a lokal timplan CHECK', () => {
       'new row for relation "Lessons" violates check constraint "Lessons_time_is_sane"',
     );
     expect(() => rethrowPrismaError(other)).toThrow(other);
+  });
+});
+
+describe('rethrowPrismaError and a tjänstefördelning CHECK', () => {
+  it.each([
+    ['TeachingRequirements', 'TeachingRequirements_teacher_load_percent_is_sane', 'teacherLoadPercent'],
+    ['TeachingRequirements', 'TeachingRequirements_co_teacher_load_percent_is_sane', 'coTeacherLoadPercent'],
+    ['TeacherDuties', 'TeacherDuties_label_is_sane', 'label'],
+    ['TeacherDuties', 'TeacherDuties_minutesPerWeek_is_sane', 'minutesPerWeek'],
+    ['TeacherDuties', 'TeacherDuties_note_is_sane', 'note'],
+  ])('answers %s’s %s with a 400 naming %s', (table, constraint, field) => {
+    let thrown: unknown;
+    try {
+      rethrowPrismaError(
+        driverError('23514', `new row for relation "${table}" violates check constraint "${constraint}"`),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(BadRequestException);
+    expect((thrown as BadRequestException).message.startsWith(`${field}: `)).toBe(true);
+  });
+});
+
+/**
+ * The slot-link triggers' refusal as the adapter carries it: P2039, the
+ * driver's fields under meta, DETAIL with the two ids. The shape is the one
+ * scripts/test/prisma-adapter-probe.ts measures for (o).
+ */
+const DUTY_ID = '0b4c43a4-6f0e-4b8e-9f63-0d3d2b2a7c11';
+const CONSTRAINT_ID = '9d1f3d9e-3c3a-4a55-8c41-7a6b8f0e2d22';
+const dutyRefusal = (code: 'TD409' | 'TD403', options: { meta?: boolean } = {}) => {
+  const message =
+    code === 'TD409'
+      ? 'TEACHER_DUTY_BLOCK_MISMATCH: tiden är blockerad av ett uppdrag och förblir en återkommande otillgänglighet för uppdragets lärare'
+      : 'TEACHER_DUTY_BLOCK_IS_THE_ADMINS: tiden är blockerad av ett uppdrag och ändras genom uppdraget';
+  return new Prisma.PrismaClientKnownRequestError(
+    `Database error. Code: \`${code}\`. Message: \`${message}\``,
+    {
+      code: 'P2039',
+      clientVersion: Prisma.prismaVersion.client,
+      meta:
+        options.meta === false
+          ? { modelName: 'AvailabilityConstraint' }
+          : {
+              modelName: 'AvailabilityConstraint',
+              driverAdapterError: {
+                name: 'DriverAdapterError',
+                cause: {
+                  originalCode: code,
+                  originalMessage: message,
+                  kind: 'postgres',
+                  detail: `teacherDutyId=${DUTY_ID} availabilityConstraintId=${CONSTRAINT_ID}`,
+                },
+              },
+            },
+    },
+  );
+};
+
+describe('rethrowPrismaError and a duty’s slot link', () => {
+  const answer = (error: unknown) => {
+    try {
+      rethrowPrismaError(error);
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  };
+
+  it('reads the two ids off the driver cause, and the code alone when the meta is gone', () => {
+    expect(teacherDutyBlockRefusal(dutyRefusal('TD409'))).toEqual({
+      sqlState: 'TD409',
+      teacherDutyId: DUTY_ID,
+      availabilityConstraintId: CONSTRAINT_ID,
+    });
+    expect(teacherDutyBlockRefusal(dutyRefusal('TD403', { meta: false }))).toEqual({
+      sqlState: 'TD403',
+      teacherDutyId: null,
+      availabilityConstraintId: null,
+    });
+  });
+
+  it('answers TD409 with a 409 TEACHER_DUTY_BLOCK_MISMATCH and TD403 with a 403', () => {
+    const conflict = answer(dutyRefusal('TD409'));
+    expect(conflict).toBeInstanceOf(ConflictException);
+    expect((conflict as ConflictException).getResponse()).toMatchObject({ code: TEACHER_DUTY_BLOCK_MISMATCH });
+    const forbidden = answer(dutyRefusal('TD403'));
+    expect(forbidden).toBeInstanceOf(ForbiddenException);
+    expect((forbidden as ForbiddenException).getResponse()).toMatchObject({
+      code: TEACHER_DUTY_BLOCK_IS_THE_ADMINS,
+    });
+  });
+
+  it('is not fooled by another database error, nor by a lookalike', () => {
+    expect(teacherDutyBlockRefusal(knownError('P2039'))).toBeNull();
+    expect(teacherDutyBlockRefusal(driverError('TP409', 'TIMPLAN_IS_DECIDED'))).toBeNull();
+    expect(teacherDutyBlockRefusal(Object.assign(new Error('Code: `TD409`'), { code: 'P2039' }))).toBeNull();
   });
 });
