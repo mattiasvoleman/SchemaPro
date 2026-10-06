@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
-import dynamic from "next/dynamic";
+import { Suspense, lazy, useCallback, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
@@ -73,13 +72,23 @@ import { FilterPicker } from "@/components/schedule/filter-picker";
  * from 190.1KB to 191.9KB gzipped, past the 190KB admin budget — the same
  * reasoning lib/pdf.ts already applies to jspdf, which it imports inside the
  * export function rather than at the top of the module.
+ *
+ * React's own lazy(), not next/dynamic — here and for the two splits below.
+ * next/dynamic brings its loader runtime (BailoutToCSR, PreloadChunks,
+ * loadable) into the route, 1.4KB gzipped, most of what the splits save; and
+ * once the people page stopped sharing that runtime it sat in a chunk of its
+ * own here and compressed worse, 190.0 -> 190.1KB, past the budget by the
+ * decimal. With all three splits on lazy() the route measures 188.8KB
+ * (2026-10-06). React is in every route already, so lazy() costs nothing on
+ * top.
+ * No lazy component is reachable during SSR: editing, creating, publishOpen
+ * and roomsUsed are all falsy at first render, and Radix Dialog does not
+ * mount its content while closed.
  */
-const RoomOptimizationDialog = dynamic(
-  () =>
-    import("@/components/schedule/room-optimization-dialog").then(
-      (module) => module.RoomOptimizationDialog,
-    ),
-  { ssr: false },
+const RoomOptimizationDialog = lazy(() =>
+  import("@/components/schedule/room-optimization-dialog").then((module) => ({
+    default: module.RoomOptimizationDialog,
+  })),
 );
 import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
 /*
@@ -88,13 +97,20 @@ import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
  * Lägg till — and they carry components/ui/date-field.tsx, 546 lines of date
  * picker, which the page otherwise paid for to draw a week.
  */
-const RecurrenceFields = dynamic(
-  () =>
-    import("@/components/schedule/recurrence-fields").then(
-      (module) => module.RecurrenceFields,
-    ),
-  { ssr: false },
+const RecurrenceFields = lazy(() =>
+  import("@/components/schedule/recurrence-fields").then((module) => ({
+    default: module.RecurrenceFields,
+  })),
 );
+/** Holds the recurrence box's place in a dialog's grid while its code arrives. */
+function RecurrenceFieldsFallback() {
+  return (
+    <div className="col-span-2 space-y-3 rounded-md border p-3">
+      <Skeleton className="h-14" />
+      <Skeleton className="h-14" />
+    </div>
+  );
+}
 import type { LessonRecurrence, MasterLesson } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
 import { rastWindows } from "@/lib/rasts";
@@ -136,9 +152,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 // The page's own two date fields are the publishing dates, inside that dialog.
-const DateField = dynamic(
-  () => import("@/components/ui/date-field").then((module) => module.DateField),
-  { ssr: false },
+const DateField = lazy(() =>
+  import("@/components/ui/date-field").then((module) => ({
+    default: module.DateField,
+  })),
 );
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -2444,19 +2461,21 @@ export default function TimetablePage() {
                 </SelectContent>
               </Select>
             </div>
-            <RecurrenceFields
-              idPrefix="edit"
-              value={{
-                recurrence: editRecurrence,
-                startDate: editStartDate,
-                endDate: editEndDate,
-              }}
-              onChange={(next) => {
-                setEditRecurrence(next.recurrence);
-                setEditStartDate(next.startDate);
-                setEditEndDate(next.endDate);
-              }}
-            />
+            <Suspense fallback={<RecurrenceFieldsFallback />}>
+              <RecurrenceFields
+                idPrefix="edit"
+                value={{
+                  recurrence: editRecurrence,
+                  startDate: editStartDate,
+                  endDate: editEndDate,
+                }}
+                onChange={(next) => {
+                  setEditRecurrence(next.recurrence);
+                  setEditStartDate(next.startDate);
+                  setEditEndDate(next.endDate);
+                }}
+              />
+            </Suspense>
             <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
               <div className="flex items-center gap-2">
                 <Lock className="h-4 w-4 text-muted-foreground" />
@@ -2836,15 +2855,17 @@ export default function TimetablePage() {
                   </SelectContent>
                 </Select>
               </div>
-              <RecurrenceFields
-                idPrefix="create"
-                value={{
-                  recurrence: creating.recurrence,
-                  startDate: creating.startDate,
-                  endDate: creating.endDate,
-                }}
-                onChange={(next) => setCreating({ ...creating, ...next })}
-              />
+              <Suspense fallback={<RecurrenceFieldsFallback />}>
+                <RecurrenceFields
+                  idPrefix="create"
+                  value={{
+                    recurrence: creating.recurrence,
+                    startDate: creating.startDate,
+                    endDate: creating.endDate,
+                  }}
+                  onChange={(next) => setCreating({ ...creating, ...next })}
+                />
+              </Suspense>
               <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
                 <div className="flex items-center gap-2">
                   <Lock className="h-4 w-4 text-muted-foreground" />
@@ -3052,15 +3073,17 @@ export default function TimetablePage() {
         ref) — unmounting it would drop the guard the dialog documents.
       */}
       {roomsUsed && (
-        <RoomOptimizationDialog
-          open={roomsOpen}
-          onOpenChange={setRoomsOpen}
-          academicYearId={activeYear?.id ?? null}
-          rooms={rooms ?? []}
-          teachers={teachers}
-          groups={groups ?? []}
-          onApplied={afterRoomOptimization}
-        />
+        <Suspense fallback={null}>
+          <RoomOptimizationDialog
+            open={roomsOpen}
+            onOpenChange={setRoomsOpen}
+            academicYearId={activeYear?.id ?? null}
+            rooms={rooms ?? []}
+            teachers={teachers}
+            groups={groups ?? []}
+            onApplied={afterRoomOptimization}
+          />
+        </Suspense>
       )}
 
       {/* ---------------- Publish dialog ---------------- */}
@@ -3087,21 +3110,25 @@ export default function TimetablePage() {
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="publish-from">{t("publishFrom")}</Label>
-              <DateField
-                label={t("publishFrom")}
-                id="publish-from"
-                value={fromDate}
-                onChange={(value) => setFromDate(value)}
-              />
+              <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+                <DateField
+                  label={t("publishFrom")}
+                  id="publish-from"
+                  value={fromDate}
+                  onChange={(value) => setFromDate(value)}
+                />
+              </Suspense>
             </div>
             <div className="space-y-2">
               <Label htmlFor="publish-to">{t("publishTo")}</Label>
-              <DateField
-                label={t("publishTo")}
-                id="publish-to"
-                value={toDate}
-                onChange={(value) => setToDate(value)}
-              />
+              <Suspense fallback={<Skeleton className="h-10 w-full" />}>
+                <DateField
+                  label={t("publishTo")}
+                  id="publish-to"
+                  value={toDate}
+                  onChange={(value) => setToDate(value)}
+                />
+              </Suspense>
             </div>
           </div>
           <DialogFooter>
