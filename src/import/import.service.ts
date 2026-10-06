@@ -1,4 +1,11 @@
-import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { LOCAL_TIMPLAN_MAX_ENTRIES } from '../timplan/dto/local-timplan.dto';
 import { Prisma, type LessonRecurrence, type TeacherContractKind } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -1018,6 +1025,12 @@ export class ImportService {
         });
         const existingByKey = new Map(existing.map((row) => [`${row.subjectId}:${row.gradeLevel}`, row]));
 
+        // Resolve the whole file first and write after, so a file that would
+        // grow the plan past the cap is refused before any cell moves.
+        type Write =
+          | { kind: 'create'; subjectId: string; gradeLevel: number; minutesPerWeek: number; note: string | null }
+          | { kind: 'update'; id: string; data: { minutesPerWeek: number; note?: string | null } };
+        const writes: Write[] = [];
         const seenAtRow = new Map<string, number>();
         for (const [index, row] of dto.rows.entries()) {
           const rowNumber = index + 1;
@@ -1042,17 +1055,13 @@ export class ImportService {
           const note = row.note?.trim() || null;
           const current = existingByKey.get(key);
           if (!current) {
-            await tx.localTimplanEntry.create({
-              data: {
-                schoolId,
-                localTimplanId: plan.id,
-                subjectId: subject.id,
-                gradeLevel: row.gradeLevel,
-                minutesPerWeek: row.minutesPerWeek,
-                note: writesNote ? note : null,
-              },
+            writes.push({
+              kind: 'create',
+              subjectId: subject.id,
+              gradeLevel: row.gradeLevel,
+              minutesPerWeek: row.minutesPerWeek,
+              note: writesNote ? note : null,
             });
-            report.created += 1;
             continue;
           }
 
@@ -1067,8 +1076,38 @@ export class ImportService {
             report.skipped += 1;
             continue;
           }
-          await tx.localTimplanEntry.update({ where: { id: current.id }, data: values });
-          report.updated += 1;
+          writes.push({ kind: 'update', id: current.id, data: values });
+        }
+
+        // An import adds and updates and never deletes, so its 400-row cap
+        // per FILE did not bound the PLAN: two files of 300 and 150 new cells
+        // left a draft of 450, which the grid's wholesale save (PUT /entries,
+        // the same 400) then refused for good. The cap is the plan's.
+        const after = existing.length + writes.filter((write) => write.kind === 'create').length;
+        if (after > LOCAL_TIMPLAN_MAX_ENTRIES) {
+          throw new BadRequestException(
+            `Filen skulle ge timplanen "${plan.name}" ${after} poster, och en timplan rymmer högst ` +
+              `${LOCAL_TIMPLAN_MAX_ENTRIES}. Inget lästes in. Töm celler i planen eller ta bort rader ur filen.`,
+          );
+        }
+
+        for (const write of writes) {
+          if (write.kind === 'create') {
+            await tx.localTimplanEntry.create({
+              data: {
+                schoolId,
+                localTimplanId: plan.id,
+                subjectId: write.subjectId,
+                gradeLevel: write.gradeLevel,
+                minutesPerWeek: write.minutesPerWeek,
+                note: write.note,
+              },
+            });
+            report.created += 1;
+          } else {
+            await tx.localTimplanEntry.update({ where: { id: write.id }, data: write.data });
+            report.updated += 1;
+          }
         }
 
         return report;

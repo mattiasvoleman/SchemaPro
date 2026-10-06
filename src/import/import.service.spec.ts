@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   ServiceUnavailableException,
@@ -1582,6 +1583,43 @@ describe('ImportService', () => {
         where: { id: 'e-sv-4' },
         data: { minutesPerWeek: 200 },
       });
+    });
+
+    it('refuses a file that would grow the plan past the 400 cells the grid can save, and writes nothing', async () => {
+      // An import only adds and updates, so two files of 300 and 150 cells
+      // left a draft of 450 that PUT /entries (max 400) could never save again.
+      const stored = Array.from({ length: 399 }, (_, i) => ({
+        id: `e-${i}`,
+        subjectId: `stored-${i}`,
+        gradeLevel: 4,
+        minutesPerWeek: 60,
+        note: null,
+      }));
+      arrangeRows(tx.localTimplanEntry.findMany, stored);
+
+      const error = await service
+        .importTimplan(
+          {
+            localTimplanId: PLAN,
+            rows: [row({ gradeLevel: 1 }), row({ gradeLevel: 2 })],
+          },
+          testUser(),
+        )
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).message).toContain('401');
+      expect(tx.localTimplanEntry.create).not.toHaveBeenCalled();
+      expect(tx.localTimplanEntry.update).not.toHaveBeenCalled();
+
+      // Updating a stored cell adds none, so a file at the cap still goes in.
+      arrangeRows(tx.localTimplanEntry.findMany, [
+        ...stored,
+        { id: 'e-ma-4', subjectId: SUBJ_MA, gradeLevel: 4, minutesPerWeek: 180, note: null },
+      ]);
+      await expect(
+        service.importTimplan({ localTimplanId: PLAN, rows: [row({ minutesPerWeek: 200 })] }, testUser()),
+      ).resolves.toMatchObject({ created: 0, updated: 1 });
     });
 
     it('is idempotent: the same file uploaded twice reports nothing created or updated', async () => {
