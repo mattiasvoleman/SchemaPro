@@ -6,6 +6,7 @@ import { validate } from 'class-validator';
 import { UpsertStaffingPolicyDto } from './staffing-policy.dto';
 import { UpsertTeacherEmploymentDto } from './teacher-employment.dto';
 import { ReplaceTeacherQualificationsDto } from './teacher-qualification.dto';
+import { CreateTeacherDutyDto, UpdateTeacherDutyDto } from './teacher-duty.dto';
 
 const SUBJECT_ID = '99999999-9999-4999-8999-999999999999';
 
@@ -254,5 +255,87 @@ describe('ReplaceTeacherQualificationsDto', () => {
     await expect(
       failing(ReplaceTeacherQualificationsDto, { items: [item(), item({ subjectId: 'MA' })] }),
     ).resolves.toEqual(['items.1.subjectId']);
+  });
+});
+
+describe('CreateTeacherDutyDto and UpdateTeacherDutyDto mirror the TeacherDuties CHECKs', () => {
+  const USER_ID = '22222222-2222-4222-8222-222222222222';
+  const YEAR_ID = '44444444-4444-4444-8444-444444444444';
+  const base = { userId: USER_ID, academicYearId: YEAR_ID, kind: 'MENTORSKAP', label: 'Mentor 7B', minutesPerWeek: 60 };
+
+  it('accepts an uppdrag with a weekly slot, a class and a note', async () => {
+    await expect(
+      failing(CreateTeacherDutyDto, {
+        ...base,
+        countsAsTeaching: true,
+        studentGroupId: SUBJECT_ID,
+        subjectId: null,
+        blockedSlot: { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' },
+        note: 'Halva tiden med 7A',
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it.each([
+    ['minutesPerWeek', 0],
+    ['minutesPerWeek', 2401],
+    ['minutesPerWeek', 30.5],
+    ['label', ''],
+    ['label', '   '],
+    ['label', 'x'.repeat(81)],
+    ['note', 'x'.repeat(501)],
+    ['kind', 'KAFFEKOKARE'],
+    ['countsAsTeaching', 'ja'],
+    ['countsAsTeaching', null],
+  ] as const)('refuses %s = %j', async (field, value) => {
+    await expect(failing(CreateTeacherDutyDto, { ...base, [field]: value })).resolves.toEqual([field]);
+  });
+
+  it('accepts the edges the CHECKs allow: 1 and 2400 minutes, 80 and 500 characters', async () => {
+    await expect(
+      failing(CreateTeacherDutyDto, { ...base, minutesPerWeek: 1, label: 'x'.repeat(80), note: 'x'.repeat(500) }),
+    ).resolves.toEqual([]);
+    await expect(failing(CreateTeacherDutyDto, { ...base, minutesPerWeek: 2400 })).resolves.toEqual([]);
+  });
+
+  it('counts the label in code points, as char_length does', async () => {
+    // 80 "a" + U+FE0F is 160 code points; MaxLength would have passed it.
+    await expect(
+      failing(CreateTeacherDutyDto, { ...base, label: 'a\uFE0F'.repeat(80) }),
+    ).resolves.toEqual(['label']);
+  });
+
+  it('checks the slot’s shape, nested', async () => {
+    await expect(
+      failing(CreateTeacherDutyDto, { ...base, blockedSlot: { dayOfWeek: 8, startTime: '10', endTime: '10:20' } }),
+    ).resolves.toEqual(['blockedSlot.dayOfWeek', 'blockedSlot.startTime']);
+    await expect(failing(CreateTeacherDutyDto, { ...base, blockedSlot: {} })).resolves.toEqual(['blockedSlot']);
+  });
+
+  it('takes no constraint id and no other person in a PATCH', async () => {
+    const errors = await validate(
+      plainToInstance(UpdateTeacherDutyDto, { blockedConstraintId: SUBJECT_ID, userId: USER_ID }),
+      { whitelist: true, forbidNonWhitelisted: true },
+    );
+    expect(errors.map((error) => error.property).sort()).toEqual(['blockedConstraintId', 'userId']);
+  });
+
+  it('reads null on a PATCH as "remove" for the slot, and refuses it on the NOT NULL fields', async () => {
+    await expect(
+      failing(UpdateTeacherDutyDto, { blockedSlot: null, subjectId: null, studentGroupId: null, note: null }),
+    ).resolves.toEqual([]);
+    await expect(
+      failing(UpdateTeacherDutyDto, { kind: null, label: null, minutesPerWeek: null, countsAsTeaching: null }),
+    ).resolves.toEqual(['kind', 'label', 'minutesPerWeek', 'countsAsTeaching']);
+    await expect(failing(UpdateTeacherDutyDto, {})).resolves.toEqual([]);
+  });
+
+  it('names the field in Swedish', async () => {
+    await expect(messagesOf(CreateTeacherDutyDto, { ...base, minutesPerWeek: 2401 })).resolves.toContain(
+      'minutesPerWeek: högst 2400 minuter (40 timmar) per vecka.',
+    );
+    await expect(messagesOf(CreateTeacherDutyDto, { ...base, label: ' ' })).resolves.toContain(
+      'label: kan inte bestå av bara mellanslag.',
+    );
   });
 });

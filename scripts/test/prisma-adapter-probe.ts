@@ -70,7 +70,9 @@ import {
   rethrowPrismaError,
   teacherDutyBlockRefusal,
 } from '../../src/common/utils/prisma-errors';
-import type { UsersService } from '../../src/users/users.service';
+import { UsersService } from '../../src/users/users.service';
+import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
+import { TeacherDutiesService } from '../../src/staffing/teacher-duties.service';
 
 /** Marks every row the probe writes that has a text column to mark. */
 const MARKER = 'prisma-adapter-probe';
@@ -1020,6 +1022,168 @@ async function runChecks(
     assert.deepEqual(after, { blockedConstraintId: null, schoolId: fixture.schoolId, minutesPerWeek: 120 });
   });
 
+  await check('(p) the duties service keeps an uppdrag and its slot together through the real adapter, and a person goes with theirs', async () => {
+    const duties = new TeacherDutiesService(api);
+    // remove() calls the provider only for an invited person; this one never was.
+    const users = new UsersService(api, {} as SupabaseAdminService);
+    const teachers = (
+      await owner.query<{ id: string; authId: string }>(
+        `SELECT id, "authId" FROM "Users" WHERE "schoolId" = $1 AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL
+          ORDER BY "authId" LIMIT 2`,
+        [fixture.schoolId],
+      )
+    ).rows;
+    const [mine, colleague] = teachers;
+    const teacher: AuthenticatedUser = {
+      authId: mine.authId,
+      userId: mine.id,
+      schoolId: fixture.schoolId,
+      role: Role.TEACHER,
+    };
+    const slotOf = async (dutyId: string) =>
+      (
+        await owner.query<{ constraintId: string | null; userId: string | null; resourceType: string | null; type: string | null; dayOfWeek: number | null; date: string | null; startTime: string | null; endTime: string | null; reason: string | null }>(
+          `SELECT d."blockedConstraintId" AS "constraintId", c."userId", c."resourceType"::text, c.type::text,
+                  c."dayOfWeek", c.date::text, c."startTime"::text, c."endTime"::text, c.reason
+             FROM "TeacherDuties" d LEFT JOIN "AvailabilityConstraints" c ON c.id = d."blockedConstraintId"
+            WHERE d.id = $1`,
+          [dutyId],
+        )
+      ).rows[0];
+    const constraintExists = async (id: string) =>
+      (await owner.query('SELECT 1 FROM "AvailabilityConstraints" WHERE id = $1', [id])).rowCount === 1;
+
+    // Create with a slot: one TEACHER UNAVAILABLE weekly row, linked, in one go.
+    const created = await duties.create(
+      {
+        userId: mine.id,
+        academicYearId: fixture.activeYearId,
+        kind: 'RASTVAKT',
+        label: `${MARKER} rastvakt`,
+        minutesPerWeek: 20,
+        blockedSlot: { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' },
+      },
+      admin,
+    );
+    assert.deepEqual(created.blockedSlot, { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' });
+    const first = await slotOf(created.id);
+    assert.deepEqual(
+      { ...first, constraintId: undefined },
+      {
+        constraintId: undefined,
+        userId: mine.id,
+        resourceType: 'TEACHER',
+        type: 'UNAVAILABLE',
+        dayOfWeek: 2,
+        date: null,
+        startTime: '10:00:00',
+        endTime: '10:20:00',
+        reason: `Uppdrag: ${MARKER} rastvakt`,
+      },
+    );
+    const firstConstraint = first.constraintId!;
+
+    // Move it: the same constraint row, retimed — the BEFORE UPDATE trigger agrees.
+    const moved = await duties.update(
+      created.id,
+      { blockedSlot: { dayOfWeek: 3, startTime: '12:05', endTime: '12:30' } },
+      admin,
+    );
+    assert.deepEqual(moved.blockedSlot, { dayOfWeek: 3, startTime: '12:05', endTime: '12:30' });
+    assert.equal((await slotOf(created.id)).constraintId, firstConstraint);
+
+    // Take it away: unlinked, and the constraint is gone.
+    const unblocked = await duties.update(created.id, { blockedSlot: null }, admin);
+    assert.equal(unblocked.blockedSlot, null);
+    assert.equal(unblocked.blockedConstraintId, null);
+    assert.equal(await constraintExists(firstConstraint), false, 'the dropped slot was left behind');
+
+    // Give it one again: a new constraint, linked.
+    const reblocked = await duties.update(
+      created.id,
+      { blockedSlot: { dayOfWeek: 4, startTime: '08:00', endTime: '08:15' } },
+      admin,
+    );
+    assert.ok(reblocked.blockedConstraintId && reblocked.blockedConstraintId !== firstConstraint);
+
+    // A teacher reads their own through the service, and RLS alone hides the colleague's.
+    const theirs = await duties.create(
+      { userId: colleague.id, academicYearId: fixture.activeYearId, kind: 'MENTORSKAP', label: `${MARKER} mentor`, minutesPerWeek: 60 },
+      admin,
+    );
+    const ownList = await duties.list(fixture.activeYearId, undefined, teacher);
+    assert.ok(ownList.some((row) => row.id === created.id));
+    assert.ok(ownList.every((row) => row.userId === mine.id));
+    assert.deepEqual(ownList.find((row) => row.id === created.id)?.blockedSlot, {
+      dayOfWeek: 4,
+      startTime: '08:00',
+      endTime: '08:15',
+    });
+    const unfiltered = await api.withRls(teacher, (tx) => tx.teacherDuty.findMany({ where: { id: theirs.id } }));
+    assert.deepEqual(unfiltered, [], 'RLS handed a teacher a colleague’s uppdrag');
+    await assert.rejects(duties.list(fixture.activeYearId, colleague.id, teacher), ForbiddenException);
+
+    // Delete: the uppdrag and the time it blocked, both.
+    await duties.remove(created.id, admin);
+    assert.equal(await constraintExists(reblocked.blockedConstraintId!), false, 'the deleted duty left its slot');
+    await assert.rejects(duties.remove(created.id, admin), NotFoundException);
+
+    // A pupil holds no uppdrag: the Users lock answers 400 before a slot exists.
+    await assert.rejects(
+      duties.create(
+        {
+          userId: fixture.pupilId,
+          academicYearId: fixture.activeYearId,
+          kind: 'ANNAT',
+          label: `${MARKER} elev`,
+          minutesPerWeek: 10,
+          blockedSlot: { dayOfWeek: 1, startTime: '08:00', endTime: '08:10' },
+        },
+        admin,
+      ),
+      BadRequestException,
+    );
+
+    // A person with an uppdrag: not demoted while it stands, and deleted with it.
+    const [person] = (
+      await owner.query<{ id: string }>(
+        `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+         VALUES ($1, $2, 'Probe', 'Duty', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id`,
+        [fixture.schoolId, `${MARKER}-duty@example.invalid`],
+      )
+    ).rows;
+    const held = await duties.create(
+      {
+        userId: person.id,
+        academicYearId: fixture.activeYearId,
+        kind: 'APT_KONFERENS',
+        label: `${MARKER} apt`,
+        minutesPerWeek: 90,
+        blockedSlot: { dayOfWeek: 3, startTime: '15:00', endTime: '16:30' },
+      },
+      admin,
+    );
+    await assert.rejects(
+      users.update(person.id, { role: 'STUDENT' } as never, admin),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException, summarise(error));
+        assert.ok(error.message.includes('1 uppdrag'), error.message);
+        return true;
+      },
+    );
+    await users.remove(person.id, admin);
+    assert.equal(
+      (await owner.query('SELECT 1 FROM "TeacherDuties" WHERE id = $1', [held.id])).rowCount,
+      0,
+      'the person’s uppdrag outlived them',
+    );
+    assert.equal(
+      await constraintExists(held.blockedConstraintId!),
+      false,
+      'the person’s blocked time outlived them',
+    );
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the
@@ -1156,6 +1320,13 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // only clears the duty's pointer.
   await owner.query(`DELETE FROM "TeacherDuties" WHERE "schoolId" = $1 AND label LIKE $2 || '%'`, [schoolId, MARKER]);
   await owner.query(`DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1 AND reason LIKE $2 || '%'`, [schoolId, MARKER]);
+  // The duties service names a slot after its uppdrag: "Uppdrag: <label>".
+  await owner.query(
+    `DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1 AND reason LIKE 'Uppdrag: ' || $2 || '%'`,
+    [schoolId, MARKER],
+  );
+  // The throwaway person (p) deletes through the service; this is for a run that stopped first.
+  await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-duty@example.invalid'`, [schoolId, MARKER]);
   // Plans before the subject: a decided plan's entries refuse the subject's
   // cascade, and the plans' own cascade passes the trigger.
   await owner.query(`DELETE FROM "LocalTimplans" WHERE "schoolId" = $1 AND name LIKE $2 || '%'`, [schoolId, MARKER]);

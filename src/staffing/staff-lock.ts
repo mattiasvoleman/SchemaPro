@@ -2,7 +2,8 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { Prisma, UserRole } from '@prisma/client';
 
 /**
- * Whose post or behörighet may exist at all: a TEACHER's or a SCHOOL_ADMIN's.
+ * Whose post, behörighet or uppdrag may exist at all: a TEACHER's or a
+ * SCHOOL_ADMIN's.
  *
  * STAFF, not TEACHER, for the reason TeacherWorkRulesService gives: a teaching
  * rektor carries role SCHOOL_ADMIN here, and TeachingRequirements.teacherId will
@@ -29,10 +30,17 @@ import type { Prisma, UserRole } from '@prisma/client';
  * gets the same 404 a nonexistent id gets — and the composite (userId,
  * schoolId) foreign key is what makes that a guarantee rather than this read.
  */
+/** The sentence's subject, with the article Swedish gives each noun. */
+const WHAT: Record<'tjänst' | 'behörighet' | 'uppdrag', string> = {
+  tjänst: 'En tjänst',
+  behörighet: 'En behörighet',
+  uppdrag: 'Ett uppdrag',
+};
+
 export async function lockStaffRow(
   tx: Prisma.TransactionClient,
   userId: string,
-  what: 'tjänst' | 'behörighet',
+  what: 'tjänst' | 'behörighet' | 'uppdrag',
 ): Promise<void> {
   const [row] = await tx.$queryRaw<{ role: UserRole }[]>`
     SELECT "role"
@@ -45,7 +53,7 @@ export async function lockStaffRow(
   }
   if (row.role !== 'TEACHER' && row.role !== 'SCHOOL_ADMIN') {
     throw new BadRequestException(
-      `En ${what} hör till en lärare. Elever och vårdnadshavare undervisar inte.`,
+      `${WHAT[what]} hör till en lärare. Elever och vårdnadshavare undervisar inte.`,
     );
   }
 }

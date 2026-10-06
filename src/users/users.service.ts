@@ -22,7 +22,11 @@ import type { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 const isStaff = (role: UserRole): boolean => role === 'TEACHER' || role === 'SCHOOL_ADMIN';
 
 /** "1 tjänst och 3 behörigheter", naming only what is there. */
-function describeStaffingRows(employments: number, qualifications: number): string {
+function describeStaffingRows(
+  employments: number,
+  qualifications: number,
+  duties: number,
+): string {
   const parts: string[] = [];
   if (employments > 0) {
     parts.push(`${employments} ${employments === 1 ? 'tjänst' : 'tjänster'}`);
@@ -30,7 +34,12 @@ function describeStaffingRows(employments: number, qualifications: number): stri
   if (qualifications > 0) {
     parts.push(`${qualifications} ${qualifications === 1 ? 'behörighet' : 'behörigheter'}`);
   }
-  return parts.join(' och ');
+  if (duties > 0) {
+    // "uppdrag" is its own plural.
+    parts.push(`${duties} uppdrag`);
+  }
+  if (parts.length <= 1) return parts.join('');
+  return `${parts.slice(0, -1).join(', ')} och ${parts[parts.length - 1]}`;
 }
 
 /** Outcome of inviting one person. */
@@ -246,7 +255,9 @@ export class UsersService {
    * row FOR NO KEY UPDATE to make sure of it — which only settles the race. A
    * PATCH that makes a teacher a pupil AFTER their post was written would
    * leave a STUDENT holding a tjänstgöringsgrad and a legitimation, and the
-   * load report would list a pupil among the teachers. So a role change out
+   * load report would list a pupil among the teachers. Uppdrag (Fas 2) count
+   * the same way: a pupil who is still mentor for 7B would be a row in the
+   * matrix, and their rastvakt slot an UNAVAILABLE block on a pupil. So a role change out
    * of staff is refused while such rows exist, by count and in the same
    * transaction, and the sentence names what to remove first. No DB CHECK can
    * say this (cross-table), which is why it is said here.
@@ -281,13 +292,14 @@ export class UsersService {
         }
 
         if (isStaff(current.role) && !isStaff(role)) {
-          const [employments, qualifications] = await Promise.all([
+          const [employments, qualifications, duties] = await Promise.all([
             tx.teacherEmployment.count({ where: { userId: id } }),
             tx.teacherSubjectQualification.count({ where: { userId: id } }),
+            tx.teacherDuty.count({ where: { userId: id } }),
           ]);
-          if (employments > 0 || qualifications > 0) {
+          if (employments > 0 || qualifications > 0 || duties > 0) {
             throw new ConflictException(
-              `Personen kan inte bli ${role === 'STUDENT' ? 'elev' : 'vårdnadshavare'}: ${describeStaffingRows(employments, qualifications)} finns registrerade. Ta bort dem under Personer först.`,
+              `Personen kan inte bli ${role === 'STUDENT' ? 'elev' : 'vårdnadshavare'}: ${describeStaffingRows(employments, qualifications, duties)} finns registrerade. Ta bort dem under Personer först.`,
             );
           }
         }

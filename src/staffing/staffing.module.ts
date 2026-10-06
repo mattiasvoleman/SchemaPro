@@ -7,6 +7,8 @@ import { TeacherQualificationsController } from './teacher-qualifications.contro
 import { TeacherQualificationsService } from './teacher-qualifications.service';
 import { StaffingLoadController } from './staffing-load.controller';
 import { StaffingLoadService } from './staffing-load.service';
+import { TeacherDutiesController } from './teacher-duties.controller';
+import { TeacherDutiesService } from './teacher-duties.service';
 
 /**
  * Tjänstefördelning: the layer between the timplan and the solver that says
@@ -20,7 +22,11 @@ import { StaffingLoadService } from './staffing-load.service';
  * read arm than any scheduling table. Keeping that in one folder keeps the
  * argument in one place.
  *
- * Nothing here reaches the solver. Employment percentages, qualifications and
+ * Uppdrag (TeacherDuties) live here too: they are part of the tjänst, and the
+ * one thing of theirs the solver sees is the UNAVAILABLE constraint a fixed
+ * time becomes — an ordinary teacher block, with no label and no minutes.
+ *
+ * Nothing else here reaches the solver. Employment percentages, qualifications and
  * loads never cross the gateway boundary in this phase; the engine keeps
  * receiving requirements with opaque teacher ids and nothing else.
  */
@@ -30,12 +36,14 @@ import { StaffingLoadService } from './staffing-load.service';
     TeacherEmploymentsController,
     TeacherQualificationsController,
     StaffingLoadController,
+    TeacherDutiesController,
   ],
   providers: [
     StaffingPolicyService,
     TeacherEmploymentsService,
     TeacherQualificationsService,
     StaffingLoadService,
+    TeacherDutiesService,
   ],
 })
 export class StaffingModule {}
