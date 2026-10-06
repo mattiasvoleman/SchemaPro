@@ -60,6 +60,11 @@ import { LunchServingsService } from '../../src/resources/lunch-servings.service
 import { RastsService } from '../../src/resources/rasts.service';
 import type { CreateRoomBookingDto } from '../../src/room-bookings/dto/room-booking.dto';
 import { RoomBookingsService } from '../../src/room-bookings/room-bookings.service';
+import { ImportService } from '../../src/import/import.service';
+import { SubjectsService } from '../../src/resources/subjects.service';
+import { LocalTimplansService } from '../../src/timplan/local-timplans.service';
+import { decidedTimplanRefusal, rethrowPrismaError } from '../../src/common/utils/prisma-errors';
+import type { UsersService } from '../../src/users/users.service';
 
 /** Marks every row the probe writes that has a text column to mark. */
 const MARKER = 'prisma-adapter-probe';
@@ -93,6 +98,7 @@ interface Fixture {
   activeYearId: string;
   pupilId: string;
   foreignYearId: string;
+  grundskolaVersionId: string;
 }
 
 /** What a transaction can see of the settings PrismaService puts on it. */
@@ -679,6 +685,98 @@ async function runChecks(
   });
 
   // ---- (j) the other raw values the code compares
+  // ---- (l) a decided lokal timplan, through every door
+  await check('(l) a decided timplan refuses the service, the trigger and the subject cascade with 409 TIMPLAN_IS_DECIDED', async () => {
+    const timplans = new LocalTimplansService(api);
+    const subjects = new SubjectsService(api);
+    const imports = new ImportService(api, {} as UsersService);
+    const isDecided = (planName: string) => (error: unknown) => {
+      assert.ok(error instanceof ConflictException, `expected ConflictException, got ${summarise(error)}`);
+      const body = error.getResponse() as { code?: string; message?: string };
+      assert.equal(body.code, 'TIMPLAN_IS_DECIDED', summarise(error));
+      assert.ok(body.message?.includes(`"${planName}"`), `the 409 did not name the plan: ${body.message}`);
+      return true;
+    };
+    const entriesOf = async (planId: string) =>
+      (await owner.query<{ n: number }>('SELECT count(*)::int AS n FROM "LocalTimplanEntries" WHERE "localTimplanId" = $1', [planId])).rows[0].n;
+
+    const subject = await subjects.create({ name: MARKER, nationalCode: 'MA' } as never, admin);
+    const name = `${MARKER} beslutad`;
+    const plan = await timplans.create(
+      { name, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
+      admin,
+    );
+    assert.equal(plan.planningWeeks, 35.6, `planningWeeks came back as ${shapeOf(plan.planningWeeks)}`);
+
+    // The NUMERIC(4,1) default read back through the driver: 707 min/vecka of
+    // matematik over 35.6 weeks is 419.49 h, the protected cell half an hour short.
+    const saved = await timplans.replaceEntries(
+      plan.id,
+      { entries: [1, 2, 3].map((gradeLevel) => ({ subjectId: subject.id, gradeLevel, minutesPerWeek: gradeLevel === 3 ? 235 : 236 })) },
+      admin,
+    );
+    const ma = saved.check.verdicts.find(
+      (v) => v.code === 'TIMPLAN_PROTECTED_SUBJECT_REDUCED' && v.subjectCode === 'MA' && v.stage === 'LAG',
+    );
+    assert.deepEqual(ma?.params, { nationalHours: 420, plannedHours: 419.5, deficitHours: 0.6, reducedPercent: 0.2 });
+
+    const decided = await timplans.decide(plan.id, { decisionNote: MARKER }, admin);
+    assert.equal(decided.status, 'DECIDED');
+    assert.equal(decided.decidedByUserId, admin.userId);
+
+    // The service's own line.
+    await assert.rejects(timplans.replaceEntries(plan.id, { entries: [] }, admin), isDecided(name));
+    await assert.rejects(timplans.update(plan.id, { planningWeeks: 36 }, admin), isDecided(name));
+    await assert.rejects(
+      imports.importTimplan({ localTimplanId: plan.id, rows: [{ subject: MARKER, gradeLevel: 4, minutesPerWeek: 60 }] }, admin),
+      isDecided(name),
+    );
+
+    // The trigger's line, met by writes that skip the service, translated by the mapper.
+    const direct = async (write: (tx: PrismaClient) => Promise<unknown>) => {
+      try {
+        await api.withRls(admin, write);
+      } catch (error) {
+        assert.equal(sqlStateOf(error), 'TP409', summarise(error));
+        assert.equal(decidedTimplanRefusal(error)?.planId, plan.id);
+        rethrowPrismaError(error);
+      }
+      assert.fail('the write went through');
+    };
+    await assert.rejects(
+      direct((tx) =>
+        tx.localTimplanEntry.create({
+          data: { schoolId: fixture.schoolId, localTimplanId: plan.id, subjectId: subject.id, gradeLevel: 4, minutesPerWeek: 60 },
+        }),
+      ),
+      isDecided(name),
+    );
+    await assert.rejects(direct((tx) => tx.localTimplan.update({ where: { id: plan.id }, data: { name: MARKER } })), isDecided(name));
+    await assert.rejects(direct((tx) => tx.subject.delete({ where: { id: subject.id } })), isDecided(name));
+
+    // The subjects service asks first and names the plan; the subject stands.
+    await assert.rejects(subjects.remove(subject.id, admin), isDecided(name));
+    assert.equal((await owner.query('SELECT 1 FROM "Subjects" WHERE id = $1', [subject.id])).rowCount, 1);
+    assert.equal(await entriesOf(plan.id), 3, 'a refused write changed the decided plan');
+
+    // Reopen copies; deleting the decided source cascades its entries past the
+    // trigger and clears only the draft's pointer.
+    const draft = await timplans.reopen(plan.id, {}, admin);
+    assert.equal(draft.status, 'DRAFT');
+    assert.equal(draft.copiedFromId, plan.id);
+    assert.equal(draft.entries.length, 3);
+    await timplans.remove(plan.id, admin);
+    assert.equal(await entriesOf(plan.id), 0);
+    const [after] = (await owner.query<{ copiedFromId: string | null; schoolId: string }>(
+      'SELECT "copiedFromId", "schoolId" FROM "LocalTimplans" WHERE id = $1', [draft.id],
+    )).rows;
+    assert.deepEqual(after, { copiedFromId: null, schoolId: fixture.schoolId });
+
+    // A subject only a DRAFT holds is deleted, and its entries go with it.
+    await subjects.remove(subject.id, admin);
+    assert.equal(await entriesOf(draft.id), 0);
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the
@@ -784,7 +882,15 @@ async function findFixture(owner: Client): Promise<Fixture> {
     'the RLS fixture school’s year (run scripts/test/run-rls-tests.sh first)',
   );
 
+  const grundskola = await onlyRow<{ id: string }>(
+    owner,
+    `SELECT id FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1'`,
+    [],
+    'bilaga 1 of the national timplan (migration 20261006090000)',
+  );
+
   return {
+    grundskolaVersionId: grundskola.id,
     schoolId: school.id,
     admin: {
       authId: admin.authId,
@@ -803,6 +909,10 @@ async function findFixture(owner: Client): Promise<Fixture> {
 /** Removes what the probe writes. Narrow enough to touch nothing else. */
 async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query('DELETE FROM "RoomBookings" WHERE title = $1', [MARKER]);
+  // Plans before the subject: a decided plan's entries refuse the subject's
+  // cascade, and the plans' own cascade passes the trigger.
+  await owner.query(`DELETE FROM "LocalTimplans" WHERE "schoolId" = $1 AND name LIKE $2 || '%'`, [schoolId, MARKER]);
+  await owner.query('DELETE FROM "Subjects" WHERE "schoolId" = $1 AND name = $2', [schoolId, MARKER]);
   await owner.query('DELETE FROM "Rasts" WHERE "schoolId" = $1 AND name = $2', [schoolId, MARKER]);
   for (const table of ['FrameTimes', 'LunchServings']) {
     await owner.query(
