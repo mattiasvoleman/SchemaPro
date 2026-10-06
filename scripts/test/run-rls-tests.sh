@@ -165,6 +165,51 @@ for table in StaffingPolicies TeacherEmployments TeacherSubjectQualifications; d
   fi
 done
 
+# The second school's local timplans. Section 16 asserts that school A's admin
+# sees neither of them and that school B's admin sees both, and it needs one of
+# each status there: a family arm that ignored the tenant would show the
+# decided one, an admin arm that ignored it would show both. Also read as the
+# owner: the second school's DECIDED plan and its subject, which section 16
+# names in composite-key refusals that a policy alone cannot make.
+for status in DRAFT DECIDED; do
+  foreign_plans="$(
+    compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+      -v ON_ERROR_STOP=1 -tAc \
+      "SELECT count(*) FROM \"LocalTimplans\" p \
+         WHERE p.\"schoolId\" <> '${school_a}' AND p.status = '${status}' \
+           AND EXISTS (SELECT 1 FROM \"LocalTimplanEntries\" e WHERE e.\"localTimplanId\" = p.id)" \
+    | tr -d '[:space:]'
+  )"
+  if [ "${foreign_plans:-0}" = "0" ]; then
+    echo "FAIL: no ${status} local timplan with an entry in the second school; fixtures did not run." >&2
+    exit 1
+  fi
+done
+
+plan_b="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT id FROM \"LocalTimplans\" WHERE \"schoolId\" <> '${school_a}' AND status = 'DECIDED' \
+      ORDER BY \"createdAt\" LIMIT 1" \
+  | tr -d '[:space:]'
+)"
+subject_b="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT id FROM \"Subjects\" WHERE \"schoolId\" <> '${school_a}' AND code = 'RLSFIX' LIMIT 1" \
+  | tr -d '[:space:]'
+)"
+school_b="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT id FROM \"Schools\" WHERE slug = 'rls-fixture-school'" \
+  | tr -d '[:space:]'
+)"
+if [ -z "$plan_b" ] || [ -z "$subject_b" ] || [ -z "$school_b" ]; then
+  echo "FAIL: could not read the second school, its decided timplan or its subject; fixtures did not run." >&2
+  exit 1
+fi
+
 if [ -z "$admin_auth_id" ]; then
   echo "FAIL: no SCHOOL_ADMIN with an authId in the primary school." >&2
   exit 1
@@ -175,6 +220,7 @@ compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   psql -U "$APP_ROLE" -h localhost -d "$DB_NAME" \
   -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -v "admin_auth_id=${admin_auth_id}" \
   -v "student_b=${student_b}" -v "inactive_user_id=${inactive_user_id}" \
+  -v "plan_b=${plan_b}" -v "subject_b=${subject_b}" -v "school_b=${school_b}" \
   -v "inactive_auth_id=00000000-0000-4000-8000-000000000003" -tA -f /dev/stdin \
   < scripts/test/rls-policies.sql
 

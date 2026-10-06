@@ -3338,3 +3338,617 @@ BEGIN
     END IF;
   END LOOP;
 END $$;
+
+
+-- ---------------------------------------------------------------------------
+-- Section 16: a local timplan is the school's, a draft is the staff's, and a
+-- decided plan is a record nobody edits.
+--
+-- LocalTimplans and LocalTimplanEntries (20261006120000) carry three arms
+-- each: admin_all, staff_select (every plan, drafts included) and
+-- family_select (STUDENT and GUARDIAN read DECIDED plans and their entries,
+-- never a draft). The third arm is the one this section exists for: it widens
+-- a planning table to pupils, and the failure that matters is a draft leaking
+-- to them — so the admin plants one plan of each status, each with entries,
+-- and the pupil's and the guardian's reads are asserted as exact counts
+-- against both rows existing in the same transaction.
+--
+-- The second half is the record. Two triggers refuse, with SQLSTATE TP409,
+-- every UPDATE of a decided plan and every INSERT, UPDATE and DELETE of its
+-- entries — for the admin too, through the same SQL PostgREST would send. And
+-- the trigger's "the parent still exists" clause cuts both ways, which is why
+-- both are asserted here rather than trusted: deleting a DECIDED plan must
+-- cascade its entries cleanly (the parent is gone when the cascade arrives),
+-- and deleting a SUBJECT a decided plan contains must raise (the parent still
+-- stands). A subject only in a DRAFT plan cascades as it always has.
+--
+-- The copiedFromId pointer is the one column a decided plan may lose: when
+-- the plan it was copied from is deleted, ON DELETE SET NULL ("copiedFromId")
+-- must pass the update trigger, and clearing it by hand while the source
+-- still exists must not.
+--
+-- Composite keys: another school's subject in an entry, another school's
+-- plan as copiedFromId, another school's user as decidedByUserId — each a
+-- foreign_key_violation, since the row's own schoolId is honestly this
+-- school's and no policy can see the difference. And the school-form rule
+-- (the plan's form is its version's) is a foreign key too, asserted both on
+-- INSERT and on a draft changing one of the two columns alone.
+--
+-- The tenant half: school B's admin (fixture authId ...0006) acts last and
+-- sees its own two plans and none of A's; school A's admin, first, sees none
+-- of B's. The runner refuses to start without B's rows.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+SELECT set_config('app.test_plan_b', :'plan_b', true);
+SELECT set_config('app.test_subject_b', :'subject_b', true);
+SELECT set_config('app.test_school_b', :'school_b', true);
+SELECT set_config('app.test_student_b', :'student_b', true);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me     uuid := app.current_user_id();
+  b1     uuid;
+  b3     uuid;
+  s1 uuid; s2 uuid; s3 uuid;
+  draft uuid; decided uuid;
+  n bigint;
+  msg text; detail text;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'timplan: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+
+  -- Tenant half first, before this school has rows of its own (7d's reason).
+  SELECT count(*) INTO n FROM "LocalTimplans" WHERE "schoolId" <> school;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: % local timplan(s) from another school visible — tenant isolation is not enforced', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries" WHERE "schoolId" <> school;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: % timplan entr(y/ies) from another school visible — tenant isolation is not enforced', n;
+  END IF;
+
+  SELECT id INTO b1 FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+  SELECT id INTO b3 FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B3';
+
+  -- Three subjects of this transaction's own, so a subject delete below
+  -- cascades into nothing but the timplan rows under test.
+  INSERT INTO "Subjects" ("schoolId", name, code, "nationalCode", "updatedAt")
+  VALUES (school, 'RLS-tp-matematik', 'RLSTP1', 'MA', now()),
+         (school, 'RLS-tp-bild',      'RLSTP2', 'BL', now()),
+         (school, 'RLS-tp-utkast',    'RLSTP3', NULL, now());
+  SELECT id INTO s1 FROM "Subjects" WHERE "schoolId" = school AND code = 'RLSTP1';
+  SELECT id INTO s2 FROM "Subjects" WHERE "schoolId" = school AND code = 'RLSTP2';
+  SELECT id INTO s3 FROM "Subjects" WHERE "schoolId" = school AND code = 'RLSTP3';
+
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+  VALUES (school, 'RLS-tp utkast',   'GRUNDSKOLA', b1, now()),
+         (school, 'RLS-tp beslutad', 'GRUNDSKOLA', b1, now());
+  SELECT id INTO draft   FROM "LocalTimplans" WHERE name = 'RLS-tp utkast';
+  SELECT id INTO decided FROM "LocalTimplans" WHERE name = 'RLS-tp beslutad';
+
+  INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+  VALUES (school, draft,   s1, 4, 180),
+         (school, draft,   s3, 4,  40),
+         (school, decided, s1, 7, 120),
+         (school, decided, s2, 7,  60),
+         (school, decided, s2, 8,  60);
+
+  -- The decision: DRAFT -> DECIDED is the one transition the trigger admits.
+  UPDATE "LocalTimplans"
+     SET status = 'DECIDED', "decidedAt" = now(), "decidedByUserId" = me,
+         "decisionNote" = 'Beslutat av huvudman, dnr RLS-1', "updatedAt" = now()
+   WHERE id = decided;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: an admin could not decide their own draft (% row(s))', n;
+  END IF;
+
+  -- The draft stays editable, plan and entries alike.
+  UPDATE "LocalTimplans" SET "planningWeeks" = 36.0, "updatedAt" = now() WHERE id = draft;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: an admin could not edit a draft (% row(s))', n;
+  END IF;
+  UPDATE "LocalTimplanEntries" SET "minutesPerWeek" = 200 WHERE "localTimplanId" = draft AND "subjectId" = s1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: an admin could not edit a draft''s entry (% row(s))', n;
+  END IF;
+
+  -- The decided plan: every column refused, the status included.
+  BEGIN
+    UPDATE "LocalTimplans" SET name = 'omdöpt', "updatedAt" = now() WHERE id = decided;
+    RAISE EXCEPTION 'timplan: an admin renamed a decided plan';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplans" SET "planningWeeks" = 30.0 WHERE id = decided;
+    RAISE EXCEPTION 'timplan: an admin changed a decided plan''s planningWeeks';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplans"
+       SET status = 'DRAFT', "decidedAt" = NULL, "decidedByUserId" = NULL, "decisionNote" = NULL
+     WHERE id = decided;
+    RAISE EXCEPTION 'timplan: an admin turned a decided plan back into a draft';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplans" SET "decisionNote" = 'ändrad notering' WHERE id = decided;
+    RAISE EXCEPTION 'timplan: an admin rewrote a decided plan''s decision note';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+
+  -- Its entries: INSERT, UPDATE, DELETE, and moving a draft's entry into it.
+  BEGIN
+    INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+    VALUES (school, decided, s1, 9, 100);
+    RAISE EXCEPTION 'timplan: an admin added an entry to a decided plan';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplanEntries" SET "minutesPerWeek" = 1 WHERE "localTimplanId" = decided;
+    RAISE EXCEPTION 'timplan: an admin changed a decided plan''s entries';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "LocalTimplanEntries" WHERE "localTimplanId" = decided AND "gradeLevel" = 8;
+    RAISE EXCEPTION 'timplan: an admin deleted an entry of a decided plan';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplanEntries" SET "localTimplanId" = decided, "gradeLevel" = 9
+     WHERE "localTimplanId" = draft AND "subjectId" = s3;
+    RAISE EXCEPTION 'timplan: an admin moved a draft''s entry into a decided plan';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries"
+   WHERE "localTimplanId" = decided AND "minutesPerWeek" IN (120, 60);
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'timplan: the decided plan holds % of its 3 entries unchanged after the refused writes', n;
+  END IF;
+
+  -- A subject the decided plan contains cannot be deleted: the cascade meets
+  -- the trigger. The refusal is the gateway's to translate, so its words are
+  -- asserted too — the code first, and the plan in DETAIL.
+  BEGIN
+    DELETE FROM "Subjects" WHERE id = s2;
+    RAISE EXCEPTION 'timplan: a subject in a decided plan was deleted';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN
+    GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT, detail = PG_EXCEPTION_DETAIL;
+    IF msg NOT LIKE 'TIMPLAN_IS_DECIDED:%RLS-tp beslutad%' THEN
+      RAISE EXCEPTION 'timplan: the refused subject delete says "%", not TIMPLAN_IS_DECIDED naming the plan', msg;
+    END IF;
+    IF detail IS DISTINCT FROM 'localTimplanId=' || decided THEN
+      RAISE EXCEPTION 'timplan: the refused subject delete carries DETAIL "%", not the plan id', detail;
+    END IF;
+  END;
+  SELECT count(*) INTO n FROM "Subjects" WHERE id = s2;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: the subject a decided plan contains is gone after a refused delete';
+  END IF;
+  -- s1 is in BOTH plans: the decided one refuses for both.
+  BEGIN
+    DELETE FROM "Subjects" WHERE id = s1;
+    RAISE EXCEPTION 'timplan: a subject in a decided and a draft plan was deleted';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries" WHERE "subjectId" = s1;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'timplan: % of s1''s two entries survive its refused delete', n;
+  END IF;
+
+  -- A subject only in the draft cascades, as every subject always has.
+  DELETE FROM "Subjects" WHERE id = s3;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: a subject only in a draft could not be deleted (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries" WHERE "localTimplanId" = draft;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: the draft holds % entr(y/ies) after its subject was deleted, expected 1', n;
+  END IF;
+
+  -- Composite keys. Each row is stamped with this school's id; only the key
+  -- can tell that what it names is another school's.
+  BEGIN
+    INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+    VALUES (school, draft, current_setting('app.test_subject_b')::uuid, 5, 60);
+    RAISE EXCEPTION 'timplan: an admin put another school''s subject in their plan';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+    VALUES (school, current_setting('app.test_plan_b')::uuid, s1, 5, 60);
+    RAISE EXCEPTION 'timplan: an admin wrote an entry into another school''s plan';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- And a row STAMPED with school B and naming B's decided plan and subject.
+  -- RLS must answer it, with 42501 — not the decided-record trigger with
+  -- TP409, which would tell school A that B has a decided plan and its name.
+  -- Caught here only as insufficient_privilege; a TP409 fails the run.
+  BEGIN
+    UPDATE "LocalTimplanEntries"
+       SET "schoolId" = current_setting('app.test_school_b')::uuid,
+           "localTimplanId" = current_setting('app.test_plan_b')::uuid,
+           "subjectId" = current_setting('app.test_subject_b')::uuid
+     WHERE "localTimplanId" = draft AND "subjectId" = s1;
+    RAISE EXCEPTION 'timplan: an admin moved their entry into another school''s plan';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+    VALUES (current_setting('app.test_school_b')::uuid, current_setting('app.test_plan_b')::uuid,
+            current_setting('app.test_subject_b')::uuid, 5, 60);
+    RAISE EXCEPTION 'timplan: an admin wrote an entry stamped with another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplans" SET "copiedFromId" = current_setting('app.test_plan_b')::uuid WHERE id = draft;
+    RAISE EXCEPTION 'timplan: an admin marked their draft as copied from another school''s plan';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LocalTimplans"
+      ("schoolId", name, "schoolForm", "nationalTimplanVersionId", status,
+       "decidedAt", "decidedByUserId", "decisionNote", "updatedAt")
+    VALUES (school, 'RLS-tp främling', 'GRUNDSKOLA', b1, 'DECIDED',
+            now(), current_setting('app.test_student_b')::uuid, 'beslutad av en främling', now());
+    RAISE EXCEPTION 'timplan: an admin recorded another school''s user as the decider';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+    VALUES ('00000000-0000-4000-8000-0000000000ff', 'RLS-tp annan skola', 'GRUNDSKOLA', b1, now());
+    RAISE EXCEPTION 'timplan: an admin wrote a plan into another school';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+
+  -- The plan's school form is its version's.
+  BEGIN
+    INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+    VALUES (school, 'RLS-tp fel form', 'SAMESKOLA', b1, now());
+    RAISE EXCEPTION 'timplan: a sameskola plan was checked against bilaga 1';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplans" SET "schoolForm" = 'SPECIALSKOLA' WHERE id = draft;
+    RAISE EXCEPTION 'timplan: a draft changed its school form away from its version''s';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplans" SET "nationalTimplanVersionId" = b3 WHERE id = draft;
+    RAISE EXCEPTION 'timplan: a grundskola draft moved to the specialskola version';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- Both together is a legal change of a draft.
+  UPDATE "LocalTimplans" SET "schoolForm" = 'SPECIALSKOLA', "nationalTimplanVersionId" = b3 WHERE id = draft;
+  UPDATE "LocalTimplans" SET "schoolForm" = 'GRUNDSKOLA',   "nationalTimplanVersionId" = b1 WHERE id = draft;
+END
+$$;
+
+-- A teacher of the school reads both plans, drafts included, and writes
+-- nothing. Filtered writes raise nothing, so every refusal below is a
+-- ROW_COUNT; inserts meet WITH CHECK and raise.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint; draft uuid; decided uuid; s1 uuid;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+    RAISE EXCEPTION 'timplan: expected to be acting as a TEACHER of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT id INTO draft   FROM "LocalTimplans" WHERE name = 'RLS-tp utkast';
+  SELECT id INTO decided FROM "LocalTimplans" WHERE name = 'RLS-tp beslutad';
+  IF draft IS NULL OR decided IS NULL THEN
+    RAISE EXCEPTION 'timplan: a teacher cannot read the school''s plans (draft %, decided %)', draft, decided;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries" WHERE "localTimplanId" IN (draft, decided);
+  IF n <> 4 THEN
+    RAISE EXCEPTION 'timplan: a teacher reads % of the 4 entries of the school''s two plans', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: a teacher reads % plan(s) of another school', n;
+  END IF;
+  SELECT id INTO s1 FROM "Subjects" WHERE "schoolId" = app.current_school_id() AND code = 'RLSTP1';
+
+  BEGIN
+    INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+    SELECT app.current_school_id(), 'RLS-tp lärarens', 'GRUNDSKOLA', id, now()
+      FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+    RAISE EXCEPTION 'timplan: a teacher wrote a plan';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+    VALUES (app.current_school_id(), draft, s1, 6, 60);
+    RAISE EXCEPTION 'timplan: a teacher wrote an entry into a draft';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  UPDATE "LocalTimplans" SET name = 'lärarens namn', "updatedAt" = now() WHERE id = draft;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: a teacher renamed a draft (% row(s))', n;
+  END IF;
+  UPDATE "LocalTimplanEntries" SET "minutesPerWeek" = 1 WHERE "localTimplanId" = draft;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: a teacher changed a draft''s entries (% row(s))', n;
+  END IF;
+  DELETE FROM "LocalTimplanEntries" WHERE "localTimplanId" = draft;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: a teacher deleted a draft''s entries (% row(s))', n;
+  END IF;
+  DELETE FROM "LocalTimplans" WHERE id IN (draft, decided);
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: a teacher deleted a plan (% row(s))', n;
+  END IF;
+END
+$$;
+
+-- A pupil: the decided plan and its three entries, and nothing of the draft.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint; decided uuid;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'timplan: expected to be acting as a STUDENT of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans" WHERE name = 'RLS-tp utkast';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: a pupil reads a DRAFT plan — the family arm has lost its status test';
+  END IF;
+  SELECT id INTO decided FROM "LocalTimplans" WHERE name = 'RLS-tp beslutad';
+  IF decided IS NULL THEN
+    RAISE EXCEPTION 'timplan: a pupil cannot read the school''s decided plan';
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: a pupil reads % plans where only the one decided plan exists', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries";
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'timplan: a pupil reads % entries where the decided plan has 3 and the draft''s must not show', n;
+  END IF;
+  BEGIN
+    INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+    SELECT app.current_school_id(), 'RLS-tp elevens', 'GRUNDSKOLA', id, now()
+      FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+    RAISE EXCEPTION 'timplan: a pupil wrote a plan';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  DELETE FROM "LocalTimplans" WHERE id = decided;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: a pupil deleted the decided plan (% row(s))', n;
+  END IF;
+END
+$$;
+
+-- A guardian, by the fixture's literal authId: the same two reads.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'timplan: expected to be acting as a GUARDIAN of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: a guardian reads % plans where only the one decided plan may show', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans" WHERE status = 'DRAFT';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: a guardian reads a DRAFT plan';
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries";
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'timplan: a guardian reads % entries, expected the decided plan''s 3', n;
+  END IF;
+  UPDATE "LocalTimplanEntries" SET "minutesPerWeek" = 1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: a guardian changed % entr(y/ies)', n;
+  END IF;
+END
+$$;
+
+-- The other school's admin: their own two fixture plans, none of school A's.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'timplan: expected to be acting as school B''s SCHOOL_ADMIN, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans" WHERE name LIKE 'RLS-tp%';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: another school''s admin reads % of school A''s plans', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: another school''s admin reads % plan(s) outside their school', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: another school''s admin reads % entr(y/ies) outside their school', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans";
+  IF n < 2 THEN
+    RAISE EXCEPTION 'timplan: school B''s admin reads % of their own two fixture plans', n;
+  END IF;
+  -- And cannot reach A's rows by writing either.
+  UPDATE "LocalTimplans" SET "planningWeeks" = 21.0 WHERE name LIKE 'RLS-tp%';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: another school''s admin changed % of school A''s plans', n;
+  END IF;
+  DELETE FROM "LocalTimplanEntries" WHERE "schoolId" <> app.current_school_id();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: another school''s admin deleted % of school A''s entries', n;
+  END IF;
+END
+$$;
+
+-- Back as school A's admin: nothing above moved, and then the deletions the
+-- record still allows — the pointer cleared by a deleted source, and the
+-- decided plan itself.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me     uuid := app.current_user_id();
+  b1 uuid; draft uuid; decided uuid; reopened uuid; s2 uuid; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'timplan: expected to be back as the admin, am %', app.current_user_role();
+  END IF;
+  SELECT id INTO draft   FROM "LocalTimplans" WHERE name = 'RLS-tp utkast' AND "planningWeeks" = 36.0;
+  SELECT id INTO decided FROM "LocalTimplans" WHERE name = 'RLS-tp beslutad' AND "planningWeeks" = 35.6;
+  IF draft IS NULL OR decided IS NULL THEN
+    RAISE EXCEPTION 'timplan: a plan changed under writes that matched nothing (draft %, decided %)', draft, decided;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries" WHERE "localTimplanId" = draft AND "minutesPerWeek" = 200;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: the draft''s entry changed under writes that matched nothing';
+  END IF;
+  SELECT id INTO b1 FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+  SELECT id INTO s2 FROM "Subjects" WHERE "schoolId" = school AND code = 'RLSTP2';
+
+  -- Reopen: a copy of the decided plan, then decided in its turn — a decided
+  -- plan whose copiedFromId points at another decided plan.
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "copiedFromId", "updatedAt")
+  VALUES (school, 'RLS-tp återöppnad', 'GRUNDSKOLA', b1, decided, now());
+  SELECT id INTO reopened FROM "LocalTimplans" WHERE name = 'RLS-tp återöppnad';
+  INSERT INTO "LocalTimplanEntries" ("schoolId", "localTimplanId", "subjectId", "gradeLevel", "minutesPerWeek")
+  SELECT "schoolId", reopened, "subjectId", "gradeLevel", "minutesPerWeek"
+    FROM "LocalTimplanEntries" WHERE "localTimplanId" = decided;
+  UPDATE "LocalTimplans"
+     SET status = 'DECIDED', "decidedAt" = now(), "decidedByUserId" = me,
+         "decisionNote" = 'Beslutat igen, dnr RLS-2', "updatedAt" = now()
+   WHERE id = reopened;
+  -- The draft is a copy too, so the SET NULL has a DRAFT row to clear as well.
+  UPDATE "LocalTimplans" SET "copiedFromId" = decided WHERE id = draft;
+
+  -- Clearing the pointer by hand while its source stands is an edit.
+  BEGIN
+    UPDATE "LocalTimplans" SET "copiedFromId" = NULL WHERE id = reopened;
+    RAISE EXCEPTION 'timplan: a decided plan''s copiedFromId was cleared while its source exists';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+
+  -- Deleting the decided source: allowed, its entries cascade, and both
+  -- copies keep their school and lose only the pointer.
+  DELETE FROM "LocalTimplans" WHERE id = decided;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: an admin could not delete a decided plan (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplanEntries" WHERE "localTimplanId" = decided;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'timplan: % entr(y/ies) of a deleted decided plan survive its cascade', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans"
+   WHERE id IN (draft, reopened) AND "copiedFromId" IS NULL AND "schoolId" = school;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'timplan: % of the two copies lost only their pointer when the source was deleted', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans"
+   WHERE id = reopened AND status = 'DECIDED' AND "decisionNote" = 'Beslutat igen, dnr RLS-2';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: the decided copy is no longer the decision it was';
+  END IF;
+
+  -- s2 is now in the reopened decided plan only: still refused.
+  BEGIN
+    DELETE FROM "Subjects" WHERE id = s2;
+    RAISE EXCEPTION 'timplan: a subject in the reopened decided plan was deleted';
+  EXCEPTION WHEN SQLSTATE 'TP409' THEN NULL;
+  END;
+  -- Delete the decided copy too, and the subject is free to go.
+  DELETE FROM "LocalTimplans" WHERE id = reopened;
+  DELETE FROM "Subjects" WHERE id = s2;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'timplan: a subject in no decided plan any more could not be deleted (% row(s))', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- The catalog half: both tables carry exactly the three arms, both triggers
+-- are there and enabled, and their functions run as the owner.
+DO $$
+DECLARE tbl text; n integer;
+BEGIN
+  FOREACH tbl IN ARRAY ARRAY['LocalTimplans', 'LocalTimplanEntries']
+  LOOP
+    IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('public.%I', tbl)::regclass) THEN
+      RAISE EXCEPTION 'timplan: row security is off on %', tbl;
+    END IF;
+    SELECT count(*) INTO n FROM pg_policy WHERE polrelid = format('public.%I', tbl)::regclass;
+    IF n <> 3 THEN
+      RAISE EXCEPTION 'timplan: % has % policies, expected admin_all, staff_select and family_select', tbl, n;
+    END IF;
+  END LOOP;
+
+  SELECT count(*) INTO n
+    FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+   WHERE NOT t.tgisinternal AND t.tgenabled = 'O' AND p.prosecdef
+     AND (t.tgrelid, t.tgname) IN (
+       ('public."LocalTimplans"'::regclass,       'LocalTimplans_refuse_decided_update'),
+       ('public."LocalTimplanEntries"'::regclass, 'LocalTimplanEntries_refuse_decided'));
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'timplan: % of the two decided-record triggers are present, enabled and SECURITY DEFINER', n;
+  END IF;
+END $$;
