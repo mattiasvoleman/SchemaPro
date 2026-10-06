@@ -99,6 +99,85 @@ describe('CSV import (e2e)', () => {
       });
     });
 
+    it('imports uppdrag for the dialog’s year, resolving teacher by email, group by name and subject by code', async () => {
+      harness.tx['user']!['findMany']!.mockResolvedValue([{ id: 'u-karin', email: 'karin.ek@example.com' }]);
+      Object.assign(harness.tx, {
+        $queryRaw: jest.fn(() => Promise.resolve([{ id: 'u-karin', role: 'TEACHER' }])),
+      });
+      harness.tx['subject']!['findMany']!.mockResolvedValue([{ id: 'sub-ma', name: 'Matematik', code: 'MA' }]);
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([{ id: GROUP_ID, name: '7B' }]);
+      harness.tx['teacherDuty']!['findMany']!.mockResolvedValue([]);
+      harness.tx['teacherDuty']!['create']!.mockResolvedValue({ id: 'd-1' });
+
+      try {
+        const response = await post(harness, 'teacher-duties')
+          .send({
+            academicYearId: YEAR_ID,
+            columns: ['teacherEmail', 'kind', 'label', 'minutesPerWeek', 'countsAsTeaching', 'subject', 'groupName', 'note'],
+            rows: [
+              {
+                teacherEmail: 'karin.ek@example.com',
+                kind: 'MENTORSKAP',
+                label: 'Mentor 7B',
+                minutesPerWeek: 60,
+                countsAsTeaching: false,
+                subject: null,
+                groupName: '7B',
+                note: null,
+              },
+            ],
+          })
+          .expect(201);
+
+        expect(response.body).toEqual({ created: 1, updated: 0, skipped: 0, errors: [] });
+        const { data } = harness.tx['teacherDuty']!['create']!.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+        expect(data).toEqual({
+          schoolId: SCHOOL_ID,
+          userId: 'u-karin',
+          academicYearId: YEAR_ID,
+          kind: 'MENTORSKAP',
+          label: 'Mentor 7B',
+          minutesPerWeek: 60,
+          countsAsTeaching: false,
+          subjectId: null,
+          studentGroupId: GROUP_ID,
+          note: null,
+        });
+
+        // A slot is not something a file can say.
+        await post(harness, 'teacher-duties')
+          .send({
+            academicYearId: YEAR_ID,
+            rows: [{ teacherEmail: 'karin.ek@example.com', kind: 'RASTVAKT', label: 'R', minutesPerWeek: 20, blockedSlot: { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' } }],
+          })
+          .expect(400);
+      } finally {
+        delete (harness.tx as Record<string, unknown>)['$queryRaw'];
+      }
+    });
+
+    it('imports a timplan’s two load-percent columns', async () => {
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([{ id: GROUP_ID, name: '7A' }]);
+      harness.tx['subject']!['findMany']!.mockResolvedValue([{ id: 'sub-ma', name: 'Matematik', code: 'MA' }]);
+      harness.tx['user']!['findMany']!.mockResolvedValue([]);
+      harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([]);
+      harness.tx['teachingRequirement']!['create']!.mockResolvedValue({ id: 'r-1' });
+
+      const response = await post(harness, 'requirements')
+        .send({
+          academicYearId: YEAR_ID,
+          columns: ['groupName', 'subject', 'lessonsPerWeek', 'minutesPerLesson', 'teacherLoadPercent', 'coTeacherLoadPercent', 'recurrence'],
+          rows: [
+            { groupName: '7A', subject: 'MA', lessonsPerWeek: 3, minutesPerLesson: 60, teacherLoadPercent: 150, coTeacherLoadPercent: null, recurrence: 'ALL_WEEKS' },
+          ],
+        })
+        .expect(201);
+
+      expect(response.body).toMatchObject({ created: 1, errors: [] });
+      const { data } = harness.tx['teachingRequirement']!['create']!.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+      expect(data).toMatchObject({ teacherLoadPercent: 150, coTeacherLoadPercent: 100 });
+    });
+
     it('imports behörigheter, resolving teacher by email and subject by code', async () => {
       harness.tx['user']!['findMany']!.mockResolvedValue([
         { id: 'u-karin', email: 'karin.ek@example.com' },
@@ -729,6 +808,7 @@ describe('CSV import (e2e)', () => {
           'group-members',
           'requirements',
           'teacher-qualifications',
+          'teacher-duties',
           'timplan',
         ]) {
           await request(harness.app.getHttpServer())

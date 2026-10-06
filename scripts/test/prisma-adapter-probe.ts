@@ -1184,6 +1184,40 @@ async function runChecks(
     );
   });
 
+  await check('(q) the uppdrag import locks its teachers by an id array and is idempotent through the real adapter', async () => {
+    const imports = new ImportService(api, {} as UsersService);
+    const [person] = (
+      await owner.query<{ email: string; id: string }>(
+        `SELECT email, id FROM "Users" WHERE "schoolId" = $1 AND role = 'TEACHER' AND "isActive" ORDER BY email LIMIT 1`,
+        [fixture.schoolId],
+      )
+    ).rows;
+    const file = {
+      academicYearId: fixture.activeYearId,
+      columns: ['teacherEmail', 'kind', 'label', 'minutesPerWeek', 'countsAsTeaching', 'note'] as never,
+      rows: [
+        { teacherEmail: person.email.toUpperCase(), kind: 'RASTVAKT' as const, label: `${MARKER} import`, minutesPerWeek: 20, countsAsTeaching: true, note: null },
+        { teacherEmail: 'ingen@example.invalid', kind: 'ANNAT' as const, label: `${MARKER} okänd`, minutesPerWeek: 10, countsAsTeaching: null, note: null },
+      ],
+    };
+    const first = await imports.importTeacherDuties(file, admin);
+    assert.deepEqual({ ...first, errors: first.errors.map((e) => e.row) }, { created: 1, updated: 0, skipped: 0, errors: [2] });
+    const again = await imports.importTeacherDuties(file, admin);
+    assert.deepEqual({ ...again, errors: again.errors.length }, { created: 0, updated: 0, skipped: 1, errors: 1 });
+    const changed = await imports.importTeacherDuties(
+      { ...file, rows: [{ ...file.rows[0], minutesPerWeek: 25 }] },
+      admin,
+    );
+    assert.equal(changed.updated, 1);
+    const stored = (
+      await owner.query<{ userId: string; minutesPerWeek: number; countsAsTeaching: boolean; blockedConstraintId: string | null }>(
+        `SELECT "userId", "minutesPerWeek", "countsAsTeaching", "blockedConstraintId" FROM "TeacherDuties" WHERE label = $1`,
+        [`${MARKER} import`],
+      )
+    ).rows;
+    assert.deepEqual(stored, [{ userId: person.id, minutesPerWeek: 25, countsAsTeaching: true, blockedConstraintId: null }]);
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the

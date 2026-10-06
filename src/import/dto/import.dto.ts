@@ -1,6 +1,7 @@
 import {
   LessonRecurrence,
   TeacherContractKind,
+  TeacherDutyKind,
   TeacherQualificationKind,
 } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
@@ -349,6 +350,24 @@ export class ImportRequirementRowDto {
   coTeacherEmail?: string | null;
 
   /**
+   * What each teacher is charged in the tjänstefördelning, 0..200 % — the
+   * columns CreateTeachingRequirementDto states, with its messages. Optional
+   * like the buffers and for their reason: an absent column leaves the stored
+   * figure alone, an EMPTY cell in a column the file has is the default, 100.
+   */
+  @IsOptional()
+  @IsInt({ message: 'teacherLoadPercent: anges som ett heltal i procent.' })
+  @Min(0, { message: 'teacherLoadPercent: kan inte vara negativ.' })
+  @Max(200, { message: 'teacherLoadPercent: högst 200 %.' })
+  teacherLoadPercent?: number | null;
+
+  @IsOptional()
+  @IsInt({ message: 'coTeacherLoadPercent: anges som ett heltal i procent.' })
+  @Min(0, { message: 'coTeacherLoadPercent: kan inte vara negativ.' })
+  @Max(200, { message: 'coTeacherLoadPercent: högst 200 %.' })
+  coTeacherLoadPercent?: number | null;
+
+  /**
    * Already an enum here: the file says "alla"/"udda"/"jämna" for humans and
    * web/lib/csv.ts folds those (and their diacritic-free spellings) into the
    * enum while parsing. The API validates a value, not a vocabulary — the same
@@ -404,6 +423,8 @@ export const REQUIREMENT_FILE_COLUMNS = [
   'minutesAfter',
   'teacherEmail',
   'coTeacherEmail',
+  'teacherLoadPercent',
+  'coTeacherLoadPercent',
   'recurrence',
   'startDate',
   'endDate',
@@ -427,6 +448,8 @@ export const OPTIONAL_REQUIREMENT_COLUMNS = [
   'minutesAfter',
   'teacherEmail',
   'coTeacherEmail',
+  'teacherLoadPercent',
+  'coTeacherLoadPercent',
   'recurrence',
   'startDate',
   'endDate',
@@ -521,6 +544,109 @@ export class ImportTeacherQualificationsDto {
   @ValidateNested({ each: true })
   @Type(() => ImportTeacherQualificationRowDto)
   rows!: ImportTeacherQualificationRowDto[];
+}
+
+/**
+ * One uppdrag from a file: lärare (email), typ, benämning, minuter per vecka,
+ * and optionally whether it counts as teaching, its ämne (code or name), its
+ * grupp (by name, in the dialog's year) and a note.
+ *
+ * NO BLOCKED TIME. A fixed slot is a constraint the solver honours, created
+ * and moved with the uppdrag in one transaction by POST /teacher-duties; a
+ * spreadsheet of 300 rastvakter is not where a school places them on the
+ * week, and a file that silently moved them would move the timetable.
+ *
+ * The bounds are CreateTeacherDutyDto's — the table's CHECKs — with its
+ * messages, repeated rather than shared as the requirements row repeats its
+ * create DTO.
+ */
+export class ImportTeacherDutyRowDto {
+  @IsEmail({}, { message: 'teacherEmail: anges som lärarens e-postadress.' })
+  @MaxLength(254)
+  teacherEmail!: string;
+
+  /**
+   * Already an enum here: the browser folds "mentor", "rastvakt", "APT" and
+   * their spellings into it while parsing, as it does a recurrence.
+   */
+  @IsEnum(TeacherDutyKind, {
+    message:
+      'kind: MENTORSKAP, AMNESANSVAR, FORSTELARARE, RASTVAKT, PEDAGOGISK_LUNCH, APT_KONFERENS, VFU_HANDLEDNING, APL eller ANNAT.',
+  })
+  kind!: TeacherDutyKind;
+
+  @IsString({ message: 'label: anges som text.' })
+  @MinLength(1, { message: 'label: får inte vara tom.' })
+  @MaxCodePoints(80, { message: 'label: högst 80 tecken.' })
+  @Matches(/\S/, { message: 'label: kan inte bestå av bara mellanslag.' })
+  label!: string;
+
+  @IsInt({ message: 'minutesPerWeek: anges i hela minuter per vecka.' })
+  @Min(1, { message: 'minutesPerWeek: minst 1 minut per vecka.' })
+  @Max(2400, { message: 'minutesPerWeek: högst 2400 minuter (40 timmar) per vecka.' })
+  minutesPerWeek!: number;
+
+  /** Empty cell: false, the column's default. */
+  @IsOptional()
+  @IsBoolean({ message: 'countsAsTeaching: om uppdraget räknas som undervisning anges med true eller false.' })
+  countsAsTeaching?: boolean | null;
+
+  /** The subject's CODE or NAME, as on every other kind. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  subject?: string | null;
+
+  /** A group of the dialog's year, by name (Mentor 7B → 7B). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  groupName?: string | null;
+
+  @IsOptional()
+  @IsString({ message: 'note: anges som text.' })
+  @MaxCodePoints(500, { message: 'note: högst 500 tecken.' })
+  note?: string | null;
+}
+
+/** Every column an uppdrag file may carry; see REQUIREMENT_FILE_COLUMNS for why the whole header. */
+export const TEACHER_DUTY_FILE_COLUMNS = [
+  'teacherEmail',
+  'kind',
+  'label',
+  'minutesPerWeek',
+  'countsAsTeaching',
+  'subject',
+  'groupName',
+  'note',
+] as const;
+
+export type TeacherDutyFileColumn = (typeof TEACHER_DUTY_FILE_COLUMNS)[number];
+
+export class ImportTeacherDutiesDto {
+  /** The läsår the uppdrag belong to, from the dialog — never a column. */
+  @IsUUID('4')
+  academicYearId!: string;
+
+  /**
+   * Which columns the FILE had. The four optional ones are written only when
+   * present, so a re-upload of a four-column file does not clear the subject,
+   * class, note or countsAsTeaching somebody set in the app. Absent: none.
+   */
+  @IsOptional()
+  @IsArray()
+  @IsIn(TEACHER_DUTY_FILE_COLUMNS as unknown as string[], { each: true })
+  columns?: TeacherDutyFileColumn[];
+
+  // One row per teacher and uppdrag; a school of 80 teachers with five each
+  // is 400. 2000, as memberships and behörigheter.
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(2000)
+  @IsObject({ each: true, message: 'rows: varje rad anges som ett objekt.' })
+  @ValidateNested({ each: true })
+  @Type(() => ImportTeacherDutyRowDto)
+  rows!: ImportTeacherDutyRowDto[];
 }
 
 /**
