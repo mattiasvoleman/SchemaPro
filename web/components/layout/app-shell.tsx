@@ -23,6 +23,7 @@ import {
   UtensilsCrossed,
   Sparkles,
   GraduationCap,
+  Scale,
   X,
   type LucideIcon,
   KeyRound,
@@ -61,6 +62,12 @@ const ADMIN_NAV: NavSection[] = [
       { labelKey: "groups", href: "/admin/groups", icon: Users },
       { labelKey: "people", href: "/admin/people", icon: UserCheck },
       { labelKey: "requirements", href: "/admin/requirements", icon: Grid3x3 },
+      // Directly after the timplan, because it is the timplan read from the
+      // other side: that page says what each GROUP needs, this one says what
+      // each TEACHER carries of it and against which post. Every leader
+      // settles this before it timetables, so it sits in Planering and not
+      // under Schemaläggning.
+      { labelKey: "staffing", href: "/admin/staffing", icon: Scale },
       { labelKey: "constraints", href: "/admin/constraints", icon: SlidersHorizontal },
       // Directly after tillgänglighet, because it is the positive half of the
       // same question. That one says when a named teacher or room cannot be
