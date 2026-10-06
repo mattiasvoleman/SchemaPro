@@ -5,10 +5,11 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, TeacherQualificationKind } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import {
   NotificationsService,
   type NotificationKind,
@@ -30,7 +31,25 @@ export interface SubstituteSuggestion {
   teacherId: string;
   /** true = teaches this exact class+subject; false = teaches the subject elsewhere. */
   isPrimary: boolean;
+  /**
+   * The strongest behörighet the candidate holds for this subject over the
+   * lesson's grade span, valid on the lesson's date — or null: the school has
+   * recorded none for them, or none that reaches this class. The badge the
+   * picker shows, and the first key it sorts on.
+   */
+  qualificationKind: TeacherQualificationKind | null;
 }
+
+/**
+ * LEGITIMATION over BEHORIG over TILLATEN, as skollagen ranks them: the
+ * legitimerad teacher sets grades, the behörig one teaches, the one a rektor
+ * has allowed does so for this year only.
+ */
+const QUALIFICATION_RANK: Record<TeacherQualificationKind, number> = {
+  LEGITIMATION: 3,
+  BEHORIG: 2,
+  TILLATEN: 1,
+};
 
 interface LessonForAction {
   id: string;
@@ -265,12 +284,28 @@ export class CalendarLessonsService {
   }
 
   /**
-   * Suggests substitute teachers for a lesson: those who teach the subject and
-   * are free at the lesson's time. Mirrors the open-slot finder's "free +
-   * qualified" idea — teachers assigned to this exact class+subject rank first
-   * (isPrimary), other subject teachers follow as fallbacks. Freeness uses the
-   * same overlapping-lesson check `assignSubstitute` enforces, so every
-   * suggestion is guaranteed to be assignable.
+   * Suggests substitute teachers for a lesson: those who may teach the subject
+   * and are free at the lesson's time.
+   *
+   * RANKED BY BEHÖRIGHET FIRST, then by already teaching this class. A
+   * qualification for the subject whose grade span contains the class and is
+   * valid on the lesson's date puts a teacher ahead of everyone without one,
+   * LEGITIMATION before BEHORIG before TILLATEN; among equals, the teacher of
+   * this exact class+subject (isPrimary) comes first, as before.
+   *
+   * THE OLD HEURISTIC STAYS, AS THE FLOOR. "Has a TeachingRequirement in the
+   * subject" was the only notion of qualified this picker had, and it is still
+   * how a teacher the school has not written a behörighet for gets suggested at
+   * all: with zero qualification rows in the school the list is exactly what it
+   * was, so no existing school's suggestions get worse the day the table
+   * appears; with rows, a subject teacher nobody has recorded a behörighet for
+   * is still listed, after the ones somebody has. The grade span is derived as
+   * the optimisation proxy derives it for a group (members' home classes, else
+   * the group's own year), so "behörig för åk 7-9" means the same thing here as
+   * in the staffing report.
+   *
+   * Freeness uses the same overlapping-lesson check `assignSubstitute`
+   * enforces, so every suggestion is guaranteed to be assignable.
    */
   async suggestSubstitutes(
     id: string,
@@ -285,26 +320,57 @@ export class CalendarLessonsService {
       });
 
       const primaryIds = new Set<string>();
-      const qualifiedIds = new Set<string>();
+      const candidateIds = new Set<string>();
       for (const req of requirements) {
         const forThisClass = req.studentGroupId === lesson.studentGroupId;
         for (const teacherId of [req.teacherId, req.coTeacherId]) {
           if (!teacherId) continue;
-          qualifiedIds.add(teacherId);
+          candidateIds.add(teacherId);
           if (forThisClass) primaryIds.add(teacherId);
+        }
+      }
+
+      // Only a school that has recorded any behörighet at all is asked about
+      // them; an empty table is not the statement that nobody is qualified.
+      const qualificationOf = new Map<string, TeacherQualificationKind>();
+      const recorded = await tx.teacherSubjectQualification.count();
+      if (recorded > 0) {
+        const span = await this.gradeSpanOfLesson(tx, lesson.studentGroupId);
+        const held = await tx.teacherSubjectQualification.findMany({
+          where: { subjectId: lesson.subjectId },
+          select: {
+            userId: true,
+            minGradeLevel: true,
+            maxGradeLevel: true,
+            kind: true,
+            validFrom: true,
+            validTo: true,
+          },
+        });
+        for (const qualification of held) {
+          if (span && (qualification.minGradeLevel > span.min || qualification.maxGradeLevel < span.max)) {
+            continue;
+          }
+          if (qualification.validFrom && qualification.validFrom > lesson.date) continue;
+          if (qualification.validTo && qualification.validTo < lesson.date) continue;
+          const current = qualificationOf.get(qualification.userId);
+          if (!current || QUALIFICATION_RANK[qualification.kind] > QUALIFICATION_RANK[current]) {
+            qualificationOf.set(qualification.userId, qualification.kind);
+          }
+          candidateIds.add(qualification.userId);
         }
       }
 
       // Never suggest a teacher already assigned to this lesson.
       for (const assignment of lesson.teachers) {
-        qualifiedIds.delete(assignment.teacherId);
+        candidateIds.delete(assignment.teacherId);
         primaryIds.delete(assignment.teacherId);
       }
-      if (qualifiedIds.size === 0) return [];
+      if (candidateIds.size === 0) return [];
 
       const teachers = await tx.user.findMany({
         where: {
-          id: { in: [...qualifiedIds] },
+          id: { in: [...candidateIds] },
           role: 'TEACHER',
           isActive: true,
         },
@@ -314,14 +380,43 @@ export class CalendarLessonsService {
       const suggestions: SubstituteSuggestion[] = [];
       for (const teacher of teachers) {
         if (await this.teacherHasClash(tx, teacher.id, lesson)) continue;
-        suggestions.push({ teacherId: teacher.id, isPrimary: primaryIds.has(teacher.id) });
+        suggestions.push({
+          teacherId: teacher.id,
+          isPrimary: primaryIds.has(teacher.id),
+          qualificationKind: qualificationOf.get(teacher.id) ?? null,
+        });
       }
 
-      // Assigned-subject teachers first, then fallbacks.
+      // Strongest behörighet first, then the class's own teachers, then a
+      // stable order so two loads of the dialog agree.
+      const rank = (s: SubstituteSuggestion) =>
+        s.qualificationKind ? QUALIFICATION_RANK[s.qualificationKind] : 0;
       return suggestions.sort(
-        (a, b) => Number(b.isPrimary) - Number(a.isPrimary),
+        (a, b) =>
+          rank(b) - rank(a) ||
+          Number(b.isPrimary) - Number(a.isPrimary) ||
+          a.teacherId.localeCompare(b.teacherId),
       );
     });
+  }
+
+  /**
+   * The years the lesson's class holds, derived as the proxy derives them for a
+   * group. Null when nothing says — a memberless teaching group with no year —
+   * and then any behörighet in the subject counts, since the span cannot be
+   * judged and refusing all of them would list nobody.
+   */
+  private async gradeSpanOfLesson(
+    tx: PrismaClient,
+    studentGroupId: string,
+  ): Promise<{ min: number; max: number } | null> {
+    const group = await tx.studentGroup.findUnique({
+      where: { id: studentGroupId },
+      select: { id: true, gradeLevel: true },
+    });
+    if (!group) return null;
+    const rosters = await loadRosters(tx, [group.id], [group]);
+    return gradeSpanOf(rosters, [group.id]);
   }
 
   /** True when the teacher already teaches another scheduled lesson that overlaps. */
