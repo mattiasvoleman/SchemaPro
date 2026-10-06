@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Award, Plus, Trash2, TriangleAlert } from "lucide-react";
-import { useReplaceTeacherQualifications } from "@/lib/queries";
+import { useReplaceTeacherQualifications } from "@/lib/staffing-queries";
 import {
   QUALIFICATION_KINDS,
   newQualificationRow,

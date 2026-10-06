@@ -6,7 +6,7 @@ import { StaffingPolicyCard } from "./staffing-policy-card";
 const save = vi.hoisted(() => vi.fn());
 const state = vi.hoisted(() => ({ data: null as unknown, isSuccess: true }));
 
-vi.mock("@/lib/queries", () => ({
+vi.mock("@/lib/staffing-queries", () => ({
   useStaffingPolicy: () => state,
   useSaveStaffingPolicy: () => ({ mutateAsync: save, isPending: false }),
 }));

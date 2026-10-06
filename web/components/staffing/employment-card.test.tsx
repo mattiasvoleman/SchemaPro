@@ -7,7 +7,7 @@ import { EmploymentCard } from "./employment-card";
 const save = vi.hoisted(() => vi.fn());
 const remove = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/queries", () => ({
+vi.mock("@/lib/staffing-queries", () => ({
   useTeacherEmploymentActions: () => ({
     save: { mutateAsync: save, isPending: false },
     remove: { mutateAsync: remove, isPending: false },

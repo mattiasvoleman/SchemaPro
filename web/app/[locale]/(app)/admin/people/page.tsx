@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {
@@ -21,8 +22,34 @@ import {
   TeacherWorkTimeDialog,
   TeacherWorkTimeSummary,
 } from "@/components/schedule/teacher-work-time-dialog";
-import { EmploymentCard } from "@/components/staffing/employment-card";
-import { QualificationsCard } from "@/components/staffing/qualifications-card";
+/*
+ * Fetched when a staff row is opened, not when the register loads.
+ *
+ * The two cards are 680 lines between them — a post editor and a behörighet
+ * editor that carries the date picker, and lib/teacher-load behind it — and
+ * they draw nothing until an admin expands one member of staff. Imported
+ * statically they were the largest part of what took this route's own
+ * initial JS from 181.7KB to 191.9KB gzipped, past the 190KB admin budget;
+ * fetched here it measures 187.5KB (2026-10-06). The same reasoning the
+ * timetable page applies to its room-optimisation dialog. next/dynamic costs
+ * about 1.4KB of loader code of its own, which only pays for something this
+ * size — the working-time summary every staff row shows stays imported
+ * normally.
+ */
+const EmploymentCard = dynamic(
+  () =>
+    import("@/components/staffing/employment-card").then(
+      (module) => module.EmploymentCard,
+    ),
+  { ssr: false, loading: () => <Skeleton className="h-32 w-full" /> },
+);
+const QualificationsCard = dynamic(
+  () =>
+    import("@/components/staffing/qualifications-card").then(
+      (module) => module.QualificationsCard,
+    ),
+  { ssr: false, loading: () => <Skeleton className="h-32 w-full" /> },
+);
 import { studentsToCsv, teacherQualificationsToCsv, teachersToCsv } from "@/lib/csv";
 import {
   useCrudMutations,
@@ -33,14 +60,16 @@ import {
   useInvitations,
   usePeople,
   useRequirements,
-  useStaffingPolicy,
   useSubjects,
   useStudentGuardians,
+  useTeacherWorkRules,
+} from "@/lib/queries";
+import {
+  useStaffingPolicy,
   useTeacherEmploymentActions,
   useTeacherEmployments,
   useTeacherQualifications,
-  useTeacherWorkRules,
-} from "@/lib/queries";
+} from "@/lib/staffing-queries";
 import {
   employmentDraftToBody,
   employmentToDraft,

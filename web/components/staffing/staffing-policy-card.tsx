@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { SlidersHorizontal } from "lucide-react";
-import { useSaveStaffingPolicy, useStaffingPolicy } from "@/lib/queries";
+import { useSaveStaffingPolicy, useStaffingPolicy } from "@/lib/staffing-queries";
 import {
   CHECK_MODES,
   DEFAULT_POLICY_DRAFT,

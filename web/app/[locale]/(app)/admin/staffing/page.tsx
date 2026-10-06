@@ -39,12 +39,14 @@ import {
   useGroups,
   usePeople,
   useRequirements,
+  useSubjects,
+} from "@/lib/queries";
+import {
   useStaffingLoad,
   useStaffingPolicy,
-  useSubjects,
   useTeacherEmployments,
   useTeacherQualifications,
-} from "@/lib/queries";
+} from "@/lib/staffing-queries";
 import { kpis, type UnitView, type WeekView } from "@/lib/staffing-view";
 import { PageHeader } from "@/components/layout/page-header";
 import { StaffingMatrix } from "@/components/staffing/staffing-matrix";

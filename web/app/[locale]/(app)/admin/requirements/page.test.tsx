@@ -332,8 +332,6 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
       ? loaded(state.requirementsByYear[yearId ?? ""] ?? [])
       : state.requirements,
   useSchoolBreaks: () => state.breaks,
-  useStaffingLoad: () => state.load,
-  useTeacherQualifications: () => state.qualifications,
   useCrudMutations: () => ({
     create: { mutateAsync: createMock, isPending: false },
     update: { mutateAsync: updateMock, isPending: false },
@@ -343,6 +341,14 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
   // test does not set up. What it POSTs is csv-import-dialog.test.tsx's
   // subject; here the dialog only has to open.
   useImportCsv: () => ({ mutateAsync: importMock, isPending: false }),
+}));
+
+// The two staffing reads the teacher picker's badges need, from the module
+// the staffing surfaces share. Replaced whole: nothing else in it is mounted
+// by this page.
+vi.mock("@/lib/staffing-queries", () => ({
+  useStaffingLoad: () => state.load,
+  useTeacherQualifications: () => state.qualifications,
 }));
 
 // The real requirementsToCsv runs — the file's CONTENTS are what the export

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Briefcase } from "lucide-react";
-import { useTeacherEmploymentActions } from "@/lib/queries";
+import { useTeacherEmploymentActions } from "@/lib/staffing-queries";
 import {
   EMPTY_EMPLOYMENT_DRAFT,
   NOTE_MAX,

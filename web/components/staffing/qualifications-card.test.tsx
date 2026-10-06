@@ -12,7 +12,7 @@ globalThis.ResizeObserver ??= class ResizeObserverStub {
 
 const replace = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/queries", () => ({
+vi.mock("@/lib/staffing-queries", () => ({
   useReplaceTeacherQualifications: () => ({ mutateAsync: replace, isPending: false }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

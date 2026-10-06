@@ -135,10 +135,9 @@ import {
   usePeople,
   useRequirements,
   useSchoolBreaks,
-  useStaffingLoad,
   useSubjects,
-  useTeacherQualifications,
 } from "@/lib/queries";
+import { useStaffingLoad, useTeacherQualifications } from "@/lib/staffing-queries";
 import { requirementsToCsv } from "@/lib/csv";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { candidateQualification, candidateRemaining } from "@/lib/staffing-candidates";
