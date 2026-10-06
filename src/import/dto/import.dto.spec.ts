@@ -10,6 +10,8 @@ import {
   ImportSubjectRowDto,
   ImportTeacherQualificationRowDto,
   ImportTeacherRowDto,
+  ImportTimplanDto,
+  ImportTimplanRowDto,
   OPTIONAL_REQUIREMENT_COLUMNS,
   REQUIREMENT_FILE_COLUMNS,
 } from './import.dto';
@@ -288,3 +290,50 @@ describe('ImportTeacherQualificationRowDto', () => {
     await expect(failingRow({ ...row, minGrade: 9, maxGrade: 7 })).resolves.toEqual([]);
   });
 });
+
+describe('ImportTimplanRowDto — a lokal timplan file’s row', () => {
+  const PLAN = 'abababab-0000-4000-8000-000000000001';
+  const parse = (body: object) => plainToInstance(ImportTimplanRowDto, body);
+  const errorsOf = async (body: object) => (await validate(parse(body))).map((e) => e.property);
+  const row = (overrides: object = {}) => ({ subject: 'MA', gradeLevel: '4', minutesPerWeek: 180, ...overrides });
+
+  it('reads årskurs F as förskoleklass and a number as written, from the cell’s text or a parsed number', async () => {
+    expect(parse(row({ gradeLevel: 'F' })).gradeLevel).toBe(0);
+    expect(parse(row({ gradeLevel: ' f ' })).gradeLevel).toBe(0);
+    expect(parse(row({ gradeLevel: '10' })).gradeLevel).toBe(10);
+    expect(parse(row({ gradeLevel: 7 })).gradeLevel).toBe(7);
+    await expect(errorsOf(row({ gradeLevel: 'F' }))).resolves.toEqual([]);
+  });
+
+  it('refuses an årskurs outside F..10 with the one sentence that says what is allowed', async () => {
+    for (const bad of ['11', 'Fk', 'åk 4', '', '-1', 4.5]) {
+      await expect(errorsOf(row({ gradeLevel: bad }))).resolves.toEqual(['gradeLevel']);
+    }
+    expect(JSON.stringify(await validate(parse(row({ gradeLevel: 'åk 4' }))))).toContain(
+      'årskurs: anges som F (förskoleklass) eller ett heltal 0–10.',
+    );
+  });
+
+  it('holds minutes to 0..1200 whole minutes, and a note to 500 characters', async () => {
+    await expect(errorsOf(row({ minutesPerWeek: 0 }))).resolves.toEqual([]);
+    await expect(errorsOf(row({ minutesPerWeek: 177 }))).resolves.toEqual([]);
+    for (const bad of [-1, 1201, 12.5, '180']) {
+      await expect(errorsOf(row({ minutesPerWeek: bad }))).resolves.toEqual(['minutesPerWeek']);
+    }
+    await expect(errorsOf(row({ note: 'n'.repeat(501) }))).resolves.toEqual(['note']);
+  });
+
+  it('wants a plan id and between 1 and 400 rows, and knows the four columns only', async () => {
+    const file = (body: object) =>
+      validate(plainToInstance(ImportTimplanDto, { localTimplanId: PLAN, rows: [row()], ...body }));
+    await expect(file({})).resolves.toEqual([]);
+    await expect(file({ columns: ['subject', 'gradeLevel', 'minutesPerWeek', 'note'] })).resolves.toEqual([]);
+    expect((await file({ columns: ['teacherEmail'] })).map((e) => e.property)).toEqual(['columns']);
+    expect((await file({ localTimplanId: 'Grundskolan' })).map((e) => e.property)).toEqual(['localTimplanId']);
+    expect((await file({ rows: [] })).map((e) => e.property)).toEqual(['rows']);
+    expect(
+      (await file({ rows: Array.from({ length: 401 }, () => row()) })).map((e) => e.property),
+    ).toEqual(['rows']);
+  });
+});
+

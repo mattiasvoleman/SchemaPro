@@ -1,8 +1,9 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, type LessonRecurrence, type TeacherContractKind } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
+import { decidedTimplanConflict, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
 import { readYearBoundsForShare } from '../resources/academic-year-bounds';
 import {
@@ -21,6 +22,7 @@ import type {
   ImportTeacherQualificationsDto,
   ImportTeacherRowDto,
   ImportTeachersDto,
+  ImportTimplanDto,
 } from './dto/import.dto';
 
 /**
@@ -965,6 +967,115 @@ export class ImportService {
 
       return report;
     });
+  }
+
+  /**
+   * A lokal timplan from a file: ämne (code or name), årskurs (F or 0..10),
+   * minuter per vecka and an optional notering, into a DRAFT plan the dialog
+   * chose.
+   *
+   * UPDATES, like the requirements import and for its reason: a timplan is a
+   * document a school edits in a spreadsheet and uploads again, and a
+   * create-only second upload would discard every correction under a report
+   * saying "0 fel". A cell the file states as it is stored is `skipped`, so a
+   * re-upload of an untouched file reports 0 created and 0 updated. It never
+   * deletes: a subject left out of the file keeps its rows — emptying a plan
+   * is the grid's PUT, said on purpose. A note column the file does not have
+   * leaves every stored note alone; an empty cell in one it has clears it.
+   *
+   * A DECIDED plan refuses the whole upload with 409 TIMPLAN_IS_DECIDED,
+   * naming it, before a row is read — a decided plan is a record, and a file
+   * is not a way around that. The plan row is touched first, as the entries
+   * PUT touches it: the entries have no timestamps, the touch takes the
+   * plan's row lock so an upload and a decide cannot interleave, and a plan
+   * decided between the read and the touch is refused by the trigger with the
+   * same 409.
+   */
+  async importTimplan(dto: ImportTimplanDto, user: AuthenticatedUser): Promise<ImportReport> {
+    const schoolId = requireSchoolId(user);
+    try {
+      return await this.prisma.withRls(user, async (tx) => {
+        const report: ImportReport & { updated: number } = {
+          created: 0,
+          updated: 0,
+          skipped: 0,
+          errors: [],
+        };
+
+        const plan = await tx.localTimplan.findUnique({
+          where: { id: dto.localTimplanId },
+          select: { id: true, name: true, status: true },
+        });
+        if (!plan) throw new NotFoundException('Den lokala timplanen finns inte.');
+        if (plan.status === 'DECIDED') throw decidedTimplanConflict([plan.name]);
+        await tx.localTimplan.update({ where: { id: plan.id }, data: { updatedAt: new Date() } });
+
+        const writesNote = new Set(dto.columns ?? []).has('note');
+        const subjects = await tx.subject.findMany({ select: { id: true, name: true, code: true } });
+        const existing = await tx.localTimplanEntry.findMany({
+          where: { localTimplanId: plan.id },
+          select: { id: true, subjectId: true, gradeLevel: true, minutesPerWeek: true, note: true },
+        });
+        const existingByKey = new Map(existing.map((row) => [`${row.subjectId}:${row.gradeLevel}`, row]));
+
+        const seenAtRow = new Map<string, number>();
+        for (const [index, row] of dto.rows.entries()) {
+          const rowNumber = index + 1;
+
+          const subject = this.resolveSubject(subjects, row.subject);
+          if ('message' in subject) {
+            report.errors.push({ row: rowNumber, message: subject.message });
+            continue;
+          }
+
+          const key = `${subject.id}:${row.gradeLevel}`;
+          const firstRow = seenAtRow.get(key);
+          if (firstRow !== undefined) {
+            report.errors.push({
+              row: rowNumber,
+              message: `Samma ämne och årskurs står redan på rad ${firstRow}. Timplanen har en rad per ämne och årskurs — ta bort den ena raden.`,
+            });
+            continue;
+          }
+          seenAtRow.set(key, rowNumber);
+
+          const note = row.note?.trim() || null;
+          const current = existingByKey.get(key);
+          if (!current) {
+            await tx.localTimplanEntry.create({
+              data: {
+                schoolId,
+                localTimplanId: plan.id,
+                subjectId: subject.id,
+                gradeLevel: row.gradeLevel,
+                minutesPerWeek: row.minutesPerWeek,
+                note: writesNote ? note : null,
+              },
+            });
+            report.created += 1;
+            continue;
+          }
+
+          const values = {
+            minutesPerWeek: row.minutesPerWeek,
+            ...(writesNote ? { note } : {}),
+          };
+          if (
+            current.minutesPerWeek === values.minutesPerWeek &&
+            (!writesNote || current.note === note)
+          ) {
+            report.skipped += 1;
+            continue;
+          }
+          await tx.localTimplanEntry.update({ where: { id: current.id }, data: values });
+          report.updated += 1;
+        }
+
+        return report;
+      });
+    } catch (error) {
+      rethrowPrismaError(error);
+    }
   }
 
   // ---------------------------------------------------------------------------

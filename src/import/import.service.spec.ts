@@ -1525,6 +1525,171 @@ describe('ImportService', () => {
     });
   });
 
+  describe('importTimplan', () => {
+    const PLAN = 'abababab-0000-4000-8000-000000000001';
+    const SUBJ_MA = 'bbbbbbb1-0000-4000-8000-000000000001';
+    const SUBJ_SV = 'bbbbbbb2-0000-4000-8000-000000000002';
+    const draft = { id: PLAN, name: 'Grundskolan 2024', status: 'DRAFT' };
+
+    const row = (overrides: Record<string, unknown> = {}) => ({
+      subject: 'MA',
+      gradeLevel: 4,
+      minutesPerWeek: 180,
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      arrangeRows(tx.localTimplan.findUnique, draft);
+      tx.localTimplan.update.mockResolvedValue({});
+      arrangeRows(tx.subject.findMany, [
+        { id: SUBJ_MA, name: 'Matematik', code: 'MA' },
+        { id: SUBJ_SV, name: 'Svenska', code: 'SV' },
+      ]);
+      arrangeRows(tx.localTimplanEntry.findMany, [
+        { id: 'e-ma-4', subjectId: SUBJ_MA, gradeLevel: 4, minutesPerWeek: 180, note: 'skolans val' },
+        { id: 'e-sv-4', subjectId: SUBJ_SV, gradeLevel: 4, minutesPerWeek: 240, note: null },
+      ]);
+      tx.localTimplanEntry.create.mockResolvedValue({});
+      tx.localTimplanEntry.update.mockResolvedValue({});
+    });
+
+    it('creates a new cell, updates a changed one and skips one stated as stored', async () => {
+      const report = await service.importTimplan(
+        {
+          localTimplanId: PLAN,
+          rows: [
+            row(),
+            row({ subject: 'Svenska', minutesPerWeek: 200 }),
+            row({ subject: 'matematik', gradeLevel: 0, minutesPerWeek: 60 }),
+          ],
+        },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 1, updated: 1, skipped: 1, errors: [] });
+      expect(tx.localTimplanEntry.create).toHaveBeenCalledWith({
+        data: {
+          schoolId: testUser().schoolId,
+          localTimplanId: PLAN,
+          subjectId: SUBJ_MA,
+          gradeLevel: 0,
+          minutesPerWeek: 60,
+          note: null,
+        },
+      });
+      // No note column in the file: the stored notes are left alone.
+      expect(tx.localTimplanEntry.update).toHaveBeenCalledWith({
+        where: { id: 'e-sv-4' },
+        data: { minutesPerWeek: 200 },
+      });
+    });
+
+    it('is idempotent: the same file uploaded twice reports nothing created or updated', async () => {
+      const file = { localTimplanId: PLAN, rows: [row(), row({ subject: 'SV', minutesPerWeek: 240 })] };
+
+      await expect(service.importTimplan(file, testUser())).resolves.toEqual({
+        created: 0,
+        updated: 0,
+        skipped: 2,
+        errors: [],
+      });
+      expect(tx.localTimplanEntry.create).not.toHaveBeenCalled();
+      expect(tx.localTimplanEntry.update).not.toHaveBeenCalled();
+    });
+
+    it('writes the note only from a file that has the column, an empty cell clearing it', async () => {
+      const report = await service.importTimplan(
+        {
+          localTimplanId: PLAN,
+          columns: ['subject', 'gradeLevel', 'minutesPerWeek', 'note'],
+          rows: [row({ note: '  ' }), row({ subject: 'SV', minutesPerWeek: 240, note: 'SvA-grupp ingår' })],
+        },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 0, updated: 2, skipped: 0, errors: [] });
+      expect(tx.localTimplanEntry.update).toHaveBeenCalledWith({
+        where: { id: 'e-ma-4' },
+        data: { minutesPerWeek: 180, note: null },
+      });
+      expect(tx.localTimplanEntry.update).toHaveBeenCalledWith({
+        where: { id: 'e-sv-4' },
+        data: { minutesPerWeek: 240, note: 'SvA-grupp ingår' },
+      });
+    });
+
+    it('fails the row of an unknown subject and of a repeated cell, and imports the rest', async () => {
+      const report = await service.importTimplan(
+        {
+          localTimplanId: PLAN,
+          rows: [
+            row({ subject: 'Fysik' }),
+            row({ gradeLevel: 5 }),
+            row({ subject: 'Matematik', gradeLevel: 5, minutesPerWeek: 120 }),
+          ],
+        },
+        testUser(),
+      );
+
+      expect(report.created).toBe(1);
+      expect(report.errors).toEqual([
+        { row: 1, message: expect.stringContaining('Ämnet "Fysik" finns inte') },
+        { row: 3, message: expect.stringContaining('Samma ämne och årskurs står redan på rad 2') },
+      ]);
+    });
+
+    it('touches the plan before writing a cell — the entries have no timestamps of their own', async () => {
+      await service.importTimplan({ localTimplanId: PLAN, rows: [row({ gradeLevel: 6 })] }, testUser());
+
+      expect(tx.localTimplan.update).toHaveBeenCalledWith({
+        where: { id: PLAN },
+        data: { updatedAt: expect.any(Date) },
+      });
+      expect(tx.localTimplan.update.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.localTimplanEntry.create.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it('409s a decided plan, naming it, before a single row is read', async () => {
+      arrangeRows(tx.localTimplan.findUnique, { ...draft, status: 'DECIDED' });
+
+      const error = await service
+        .importTimplan({ localTimplanId: PLAN, rows: [row()] }, testUser())
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'TIMPLAN_IS_DECIDED',
+        message: expect.stringContaining('"Grundskolan 2024" är beslutad'),
+      });
+      expect(tx.localTimplan.update).not.toHaveBeenCalled();
+      expect(tx.subject.findMany).not.toHaveBeenCalled();
+    });
+
+    it('turns the trigger’s refusal — decided between the read and the touch — into the same 409', async () => {
+      const message = 'TIMPLAN_IS_DECIDED: lokal timplan "Grundskolan 2024" är beslutad och kan inte ändras; öppna den igen som ett nytt utkast';
+      tx.localTimplan.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Database error', {
+          code: 'P2039',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: { driverAdapterError: { cause: { originalCode: 'TP409', originalMessage: message } } },
+        }),
+      );
+
+      await expect(
+        service.importTimplan({ localTimplanId: PLAN, rows: [row()] }, testUser()),
+      ).rejects.toMatchObject({ response: { code: 'TIMPLAN_IS_DECIDED' } });
+    });
+
+    it('404s a plan RLS hides', async () => {
+      arrangeRows(tx.localTimplan.findUnique, null);
+
+      await expect(
+        service.importTimplan({ localTimplanId: PLAN, rows: [row()] }, testUser()),
+      ).rejects.toThrow('Den lokala timplanen finns inte.');
+    });
+  });
+
   describe('importTeacherQualifications', () => {
     const KARIN = 'ccccccc1-0000-4000-8000-000000000001';
     const SUBJ_MA = 'bbbbbbb1-0000-4000-8000-000000000001';

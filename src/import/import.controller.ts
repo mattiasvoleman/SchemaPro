@@ -16,6 +16,7 @@ import {
   ImportStudentsDto,
   ImportTeacherQualificationsDto,
   ImportTeachersDto,
+  ImportTimplanDto,
 } from './dto/import.dto';
 
 /**
@@ -78,6 +79,15 @@ export class ImportController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.imports.importTeacherQualifications(dto, user);
+  }
+
+  /**
+   * A lokal timplan's cells into a DRAFT plan; updates changed cells like the
+   * requirements import. 409 for a decided plan — see the service.
+   */
+  @Post('timplan')
+  importTimplan(@Body() dto: ImportTimplanDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.imports.importTimplan(dto, user);
   }
 
   /** The timplan also updates existing rows — see the service. */

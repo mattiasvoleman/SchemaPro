@@ -279,6 +279,97 @@ describe('CSV import (e2e)', () => {
       expect(created.data.subjectId).toBe('sub-sv');
     });
 
+    it('imports a lokal timplan into a draft, reading årskurs F and updating a changed cell', async () => {
+      const PLAN_ID = 'abababab-abab-4bab-8bab-abababababab';
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValueOnce({
+        id: PLAN_ID,
+        name: 'Grundskolan 2024',
+        status: 'DRAFT',
+      });
+      harness.tx['localTimplan']!['update']!.mockResolvedValueOnce({});
+      harness.tx['subject']!['findMany']!.mockResolvedValue([
+        { id: 'sub-ma', name: 'Matematik', code: 'MA' },
+        { id: 'sub-sv', name: 'Svenska', code: 'SV' },
+      ]);
+      harness.tx['localTimplanEntry']!['findMany']!.mockResolvedValueOnce([
+        { id: 'e-1', subjectId: 'sub-ma', gradeLevel: 4, minutesPerWeek: 180, note: null },
+      ]);
+      harness.tx['localTimplanEntry']!['create']!.mockResolvedValueOnce({});
+      harness.tx['localTimplanEntry']!['update']!.mockResolvedValueOnce({});
+
+      const response = await post(harness, 'timplan')
+        .send({
+          localTimplanId: PLAN_ID,
+          columns: ['subject', 'gradeLevel', 'minutesPerWeek', 'note'],
+          rows: [
+            { subject: 'MA', gradeLevel: '4', minutesPerWeek: 200, note: '' },
+            { subject: 'Svenska', gradeLevel: 'F', minutesPerWeek: 120, note: 'läsning' },
+            { subject: 'Fysik', gradeLevel: '7', minutesPerWeek: 60 },
+          ],
+        })
+        .expect(201);
+
+      expect(response.body).toEqual({
+        created: 1,
+        updated: 1,
+        skipped: 0,
+        errors: [{ row: 3, message: expect.stringContaining('Ämnet "Fysik" finns inte') }],
+      });
+      expect(harness.tx['localTimplanEntry']!['create']).toHaveBeenCalledWith({
+        data: {
+          schoolId: SCHOOL_ID,
+          localTimplanId: PLAN_ID,
+          subjectId: 'sub-sv',
+          gradeLevel: 0,
+          minutesPerWeek: 120,
+          note: 'läsning',
+        },
+      });
+    });
+
+    it('409s a lokal timplan import into a decided plan, naming it, and writes nothing', async () => {
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValueOnce({
+        id: 'abababab-abab-4bab-8bab-abababababab',
+        name: 'Grundskolan 2024',
+        status: 'DECIDED',
+      });
+
+      const response = await post(harness, 'timplan')
+        .send({
+          localTimplanId: 'abababab-abab-4bab-8bab-abababababab',
+          rows: [{ subject: 'MA', gradeLevel: 4, minutesPerWeek: 180 }],
+        })
+        .expect(409);
+
+      expect(response.body).toMatchObject({ code: 'TIMPLAN_IS_DECIDED' });
+      expect(response.body.detail).toContain('"Grundskolan 2024" är beslutad');
+      expect(harness.tx['localTimplanEntry']!['create']).not.toHaveBeenCalled();
+      expect(harness.tx['localTimplan']!['update']).not.toHaveBeenCalled();
+    });
+
+    it('404s a lokal timplan import into a plan RLS hides', async () => {
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValueOnce(null);
+
+      await post(harness, 'timplan')
+        .send({
+          localTimplanId: 'abababab-abab-4bab-8bab-abababababab',
+          rows: [{ subject: 'MA', gradeLevel: 4, minutesPerWeek: 180 }],
+        })
+        .expect(404);
+    });
+
+    it('400s a lokal timplan row with an årskurs outside F..10, before the handler', async () => {
+      const response = await post(harness, 'timplan')
+        .send({
+          localTimplanId: 'abababab-abab-4bab-8bab-abababababab',
+          rows: [{ subject: 'MA', gradeLevel: '11', minutesPerWeek: 180 }],
+        })
+        .expect(400);
+
+      expect(JSON.stringify(response.body)).toContain('årskurs: anges som F (förskoleklass) eller ett heltal 0–10.');
+      expect(harness.tx['localTimplan']!['findUnique']).not.toHaveBeenCalled();
+    });
+
     it('reports an unknown group as a row error and imports the rest of the file', async () => {
       harness.tx['studentGroup']!['findMany']!.mockResolvedValue([
         { id: GROUP_ID, name: '7A' },
@@ -624,6 +715,7 @@ describe('CSV import (e2e)', () => {
           'group-members',
           'requirements',
           'teacher-qualifications',
+          'timplan',
         ]) {
           await request(harness.app.getHttpServer())
             .post(`/api/v1/import/${path}`)
