@@ -19,7 +19,7 @@
 -- ## Transcribed from the primary source, and checked in this file
 --
 -- Every figure below was read off the consolidated förordning text (lagen.nu,
--- fetched 2026-10-03; authentic source beta.rkrattsbaser.gov.se) and
+-- fetched 2026-10-06; authentic source beta.rkrattsbaser.gov.se) and
 -- cross-checked against Skolverket's four timplan pages, which print the same
 -- tables. The lydelse is SFS 2023:945 for bilaga 1, 3 and 4 (i kraft
 -- 2024-07-01, "tillämpas första gången på utbildning som påbörjas höstterminen
