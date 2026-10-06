@@ -14,7 +14,7 @@ import {
  * round trip. The fixture was generated from the GATEWAY copy, so what this
  * test proves is that the web arrives at the same whole minutes, the same
  * one-decimal percentages, the same four-decimal shares and the same sort
- * order for fourteen inputs that between them reach every branch: odd/even
+ * order for nineteen inputs that between them reach every branch: odd/even
  * halves, a term course under jullov, the tolerance edge, a null policy, the
  * teacher's own target, unstaffed rows, behörighet by span and validity, and a
  * grade-spanned studiedag. `toEqual` and not `toBeCloseTo`, because every
@@ -38,6 +38,10 @@ describe("the load report agrees with the gateway's fixture", () => {
   it("has cases to replay", () => {
     expect(cases.length).toBeGreaterThan(10);
     expect(cases.some((entry) => entry.report.unqualifiedAssignments.length > 0)).toBe(true);
+    // Fas 2: a row charged off 100 %, an uppdrag, and a short subject.
+    expect(cases.some((entry) => entry.input.requirements.some((r) => r.coTeacherLoadPercent !== 100))).toBe(true);
+    expect(cases.some((entry) => entry.input.duties.length > 0)).toBe(true);
+    expect(cases.some((entry) => entry.report.subjectBottlenecks.some((b) => b.short))).toBe(true);
   });
 
   it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, entry) => {

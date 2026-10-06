@@ -31,6 +31,8 @@ describe('StaffingLoadService', () => {
     coTeacherId: null,
     lessonsPerWeek: 10,
     minutesPerLesson: 60,
+    teacherLoadPercent: 100,
+    coTeacherLoadPercent: 100,
     recurrence: 'ALL_WEEKS',
     startDate: null,
     endDate: null,
@@ -182,7 +184,44 @@ describe('StaffingLoadService', () => {
     expect(report.unqualifiedAssignments).toEqual([
       expect.objectContaining({ userId: ME, requirementId: 'req-1' }),
     ]);
-    expect(report.totals).toEqual({ teacherMinutesPerWeek: 0, lessonMinutesPerWeek: 0 });
+    expect(report.totals).toEqual({
+      teacherMinutesPerWeek: 0,
+      lessonMinutesPerWeek: 0,
+      dutyMinutesPerWeek: 0,
+    });
+    // Capacity is a sum over colleagues' posts, which RLS never handed them.
+    expect(report.subjectBottlenecks).toEqual([]);
+    expect(report.bottlenecksComputed).toBe(false);
+  });
+
+  it('reads the year’s uppdrag and the rows’ percentages into the report', async () => {
+    tx.teachingRequirement.findMany.mockResolvedValue([
+      requirementRow({ coTeacherId: COLLEAGUE, coTeacherLoadPercent: 50 }),
+    ]);
+    tx.teacherDuty.findMany.mockResolvedValue([
+      { userId: ME, minutesPerWeek: 120, countsAsTeaching: true },
+      { userId: ME, minutesPerWeek: 60, countsAsTeaching: false },
+    ]);
+
+    const report = await service.load(YEAR_ID, 'planned', testUser());
+
+    expect(tx.teacherDuty.findMany).toHaveBeenCalledWith({
+      where: { academicYearId: YEAR_ID },
+      select: { userId: true, minutesPerWeek: true, countsAsTeaching: true },
+    });
+    expect(report.teachers.find((row) => row.userId === ME)).toMatchObject({
+      assignedMinutesPerWeek: 600,
+      dutyMinutesPerWeek: 180,
+      countedMinutesPerWeek: 720,
+    });
+    expect(report.teachers.find((row) => row.userId === COLLEAGUE)).toMatchObject({
+      assignedMinutesPerWeek: 300,
+    });
+    expect(report.totals).toEqual({
+      teacherMinutesPerWeek: 900,
+      lessonMinutesPerWeek: 600,
+      dutyMinutesPerWeek: 180,
+    });
   });
 
   it('refuses a horizon that does not exist yet, before reading anything', async () => {

@@ -15,10 +15,14 @@ const teacher = (overrides: Partial<TeacherLoad> = {}): TeacherLoad => ({
   targetMinutesPerWeek: 1080,
   assignedMinutesPerWeek: 900,
   peakMinutesPerWeek: 960,
+  dutyMinutesPerWeek: 0,
+  countedDutyMinutesPerWeek: 0,
+  countedMinutesPerWeek: 900,
   balanceMinutesPerWeek: 180,
   percentOfTarget: 83.3,
   status: "UNDER",
   requirementCount: 2,
+  dutyCount: 0,
   subjects: [
     {
       subjectId: "s-ma",
@@ -145,12 +149,15 @@ describe("kpis", () => {
         studentGroupId: "g",
         groupName: "7A",
         minutesPerWeek: 180,
+        teacherMinutesPerWeek: 180,
         gradeSpan: null,
       },
     ],
     unqualifiedAssignments: [],
     qualificationsRecorded: false,
-    totals: { teacherMinutesPerWeek: 0, lessonMinutesPerWeek: 0 },
+    subjectBottlenecks: [],
+    bottlenecksComputed: false,
+    totals: { teacherMinutesPerWeek: 0, lessonMinutesPerWeek: 0, dutyMinutesPerWeek: 0 },
     ...overrides,
   });
 

@@ -1,11 +1,14 @@
 import {
   DEFAULT_LOAD_POLICY,
   buildTeacherLoadReport,
+  chargedMinutes,
   loadStatus,
   qualificationCovers,
   round5,
   standardWeekWeight,
+  strongestCoveringQualification,
   targetMinutesPerWeek,
+  type LoadDuty,
   type LoadEmployment,
   type LoadInput,
   type LoadPolicy,
@@ -50,6 +53,8 @@ const requirement = (overrides: Partial<LoadRequirement> = {}): LoadRequirement 
   coTeacherId: null,
   lessonsPerWeek: 3,
   minutesPerLesson: 60,
+  teacherLoadPercent: 100,
+  coTeacherLoadPercent: 100,
   recurrence: 'ALL_WEEKS',
   startDate: null,
   endDate: null,
@@ -76,8 +81,16 @@ const report = (overrides: Partial<LoadInput> = {}) =>
     requirements: [requirement()],
     qualifications: [],
     closures: [],
+    duties: [],
     ...overrides,
   });
+
+const duty = (overrides: Partial<LoadDuty> = {}): LoadDuty => ({
+  userId: ANNA,
+  minutesPerWeek: 60,
+  countsAsTeaching: false,
+  ...overrides,
+});
 
 const teacherRow = (input: Partial<LoadInput>, userId = ANNA) => {
   const row = report(input).teachers.find((teacher) => teacher.userId === userId);
@@ -235,7 +248,11 @@ describe('buildTeacherLoadReport', () => {
       const bo = result.teachers.find((t) => t.userId === BO)!;
       expect(anna.assignedMinutesPerWeek).toBe(120);
       expect(bo.assignedMinutesPerWeek).toBe(120);
-      expect(result.totals).toEqual({ teacherMinutesPerWeek: 240, lessonMinutesPerWeek: 120 });
+      expect(result.totals).toEqual({
+        teacherMinutesPerWeek: 240,
+        lessonMinutesPerWeek: 120,
+        dutyMinutesPerWeek: 0,
+      });
     });
 
     it('counts odd and even weeks at half each, so the pair makes a whole', () => {
@@ -502,6 +519,7 @@ describe('buildTeacherLoadReport', () => {
           studentGroupId: 'g-7a',
           groupName: '7A',
           minutesPerWeek: 60,
+          teacherMinutesPerWeek: 60,
           gradeSpan: { min: 7, max: 7 },
         },
       ]);
@@ -619,5 +637,303 @@ describe('qualificationCovers', () => {
         YEAR,
       ),
     ).toBe(true);
+  });
+});
+
+describe('Fas 2: each teacher is charged the row’s own percentage', () => {
+  const pair = (overrides: Partial<LoadRequirement>) =>
+    report({
+      employments: [employment(), employment({ userId: BO, signature: 'BO' })],
+      requirements: [requirement({ coTeacherId: BO, lessonsPerWeek: 4, ...overrides })],
+    });
+  const rowOf = (result: ReturnType<typeof report>, userId: string) =>
+    result.teachers.find((t) => t.userId === userId)!;
+
+  it('charges a co-teacher at 50 % half the row, and the lesson minutes stay whole', () => {
+    const result = pair({ coTeacherLoadPercent: 50 });
+    expect(rowOf(result, ANNA).assignedMinutesPerWeek).toBe(240);
+    expect(rowOf(result, BO).assignedMinutesPerWeek).toBe(120);
+    expect(rowOf(result, BO).peakMinutesPerWeek).toBe(120);
+    expect(result.totals).toMatchObject({ teacherMinutesPerWeek: 360, lessonMinutesPerWeek: 240 });
+  });
+
+  it('keeps a co-teacher at 0 % on the row — a resurslärare in the room — at zero minutes', () => {
+    const result = pair({ coTeacherLoadPercent: 0 });
+    const bo = rowOf(result, BO);
+    expect(bo.assignedMinutesPerWeek).toBe(0);
+    expect(bo.requirementCount).toBe(1);
+    expect(bo.subjects).toEqual([
+      expect.objectContaining({ subjectId: MA, minutesPerWeek: 0, shareOfTeaching: 0, percentOfEmployment: 0 }),
+    ]);
+    expect(bo.annual.assignedHoursPerYear).toBe(0);
+  });
+
+  it('charges a lead at 200 % double, in the standardvecka, the toppvecka and the year', () => {
+    const result = report({
+      requirements: [requirement({ lessonsPerWeek: 2, minutesPerLesson: 55, teacherLoadPercent: 200 })],
+    });
+    const anna = rowOf(result, ANNA);
+    expect(anna.assignedMinutesPerWeek).toBe(220);
+    expect(anna.peakMinutesPerWeek).toBe(220);
+    // 110 × 43 weeks × 2 / 60.
+    expect(anna.annual.assignedHoursPerYear).toBe(157.7);
+    expect(result.totals.lessonMinutesPerWeek).toBe(110);
+  });
+
+  it('applies the percentage on top of the odd/even half, and the peak at the charged share', () => {
+    const result = report({
+      requirements: [
+        requirement({ recurrence: 'ODD_WEEKS', lessonsPerWeek: 2, minutesPerLesson: 80, teacherLoadPercent: 50 }),
+        requirement({ recurrence: 'EVEN_WEEKS', lessonsPerWeek: 2, minutesPerLesson: 80, teacherLoadPercent: 75 }),
+      ],
+    });
+    const anna = rowOf(result, ANNA);
+    // 160 × ½ × 0.5 + 160 × ½ × 0.75.
+    expect(anna.assignedMinutesPerWeek).toBe(100);
+    // An odd week charges 80, an even week 120.
+    expect(anna.peakMinutesPerWeek).toBe(120);
+  });
+
+  it('reports what an unstaffed row would charge its lead beside its lesson minutes', () => {
+    const result = report({
+      requirements: [requirement({ teacherId: null, lessonsPerWeek: 4, teacherLoadPercent: 50 })],
+    });
+    expect(result.unstaffedRequirements[0]).toMatchObject({ minutesPerWeek: 240, teacherMinutesPerWeek: 120 });
+  });
+
+  it('is the Fas 1 report exactly when both percentages are 100', () => {
+    const base = pair({});
+    expect(rowOf(base, ANNA).assignedMinutesPerWeek).toBe(240);
+    expect(rowOf(base, BO).assignedMinutesPerWeek).toBe(240);
+  });
+
+  it('chargedMinutes states the three figures one row is worth', () => {
+    expect(
+      chargedMinutes(
+        requirement({ lessonsPerWeek: 3, recurrence: 'ODD_WEEKS', teacherLoadPercent: 150, coTeacherLoadPercent: 50 }),
+        YEAR,
+        [],
+      ),
+    ).toEqual({ lesson: 90, teacher: 135, coTeacher: 45 });
+  });
+});
+
+describe('Fas 2: uppdrag', () => {
+  it('adds a counted uppdrag to the minutes the target reads, and only draws an uncounted one', () => {
+    const row = teacherRow({
+      requirements: [requirement({ lessonsPerWeek: 15 })],
+      duties: [duty({ minutesPerWeek: 60 }), duty({ minutesPerWeek: 120, countsAsTeaching: true })],
+    });
+    expect(row).toMatchObject({
+      assignedMinutesPerWeek: 900,
+      dutyMinutesPerWeek: 180,
+      countedDutyMinutesPerWeek: 120,
+      countedMinutesPerWeek: 1020,
+      balanceMinutesPerWeek: 60,
+      percentOfTarget: 94.4,
+      status: 'OK',
+      dutyCount: 2,
+    });
+  });
+
+  it('can push a teacher OVER with a counted uppdrag, never with an uncounted one', () => {
+    const own = { employments: [employment({ teachingTargetMinutesPerWeek: 600 })] };
+    const requirements = [requirement({ lessonsPerWeek: 10 })];
+    expect(
+      teacherRow({ ...own, requirements, duties: [duty({ minutesPerWeek: 400 })] }).status,
+    ).toBe('OK');
+    expect(
+      teacherRow({
+        ...own,
+        requirements,
+        duties: [duty({ minutesPerWeek: 61, countsAsTeaching: true })],
+      }).status,
+    ).toBe('OVER');
+    // 600 + 60 is exactly the tolerance edge: still OK.
+    expect(
+      teacherRow({
+        ...own,
+        requirements,
+        duties: [duty({ minutesPerWeek: 60, countsAsTeaching: true })],
+      }).status,
+    ).toBe('OK');
+  });
+
+  it('keeps percentOfEmployment a share of the teaching, whatever the uppdrag', () => {
+    const row = teacherRow({
+      employments: [employment({ employmentPercent: 80 })],
+      requirements: [requirement({ lessonsPerWeek: 10 }), requirement({ subjectId: NO, subjectName: 'NO', lessonsPerWeek: 5 })],
+      duties: [duty({ minutesPerWeek: 300, countsAsTeaching: true })],
+    });
+    expect(row.subjects.map((s) => s.percentOfEmployment)).toEqual([53.3, 26.7]);
+  });
+
+  it('makes a teacher with only an uppdrag a row of their own, NO_TARGET without a post', () => {
+    const result = report({
+      employments: [],
+      requirements: [],
+      duties: [duty({ userId: BO, minutesPerWeek: 40 })],
+    });
+    expect(result.teachers).toEqual([
+      expect.objectContaining({
+        userId: BO,
+        status: 'NO_TARGET',
+        assignedMinutesPerWeek: 0,
+        dutyMinutesPerWeek: 40,
+        countedMinutesPerWeek: 0,
+        requirementCount: 0,
+        dutyCount: 1,
+      }),
+    ]);
+    expect(result.totals.dutyMinutesPerWeek).toBe(40);
+  });
+
+  it('leaves uppdrag out of the toppvecka and the annual hours: they carry no week pattern', () => {
+    const row = teacherRow({
+      requirements: [requirement({ lessonsPerWeek: 2 })],
+      duties: [duty({ minutesPerWeek: 120, countsAsTeaching: true })],
+    });
+    expect(row.peakMinutesPerWeek).toBe(120);
+    expect(row.annual.assignedHoursPerYear).toBe(86);
+  });
+});
+
+describe('Fas 2: ämnesflaskhalsar', () => {
+  const CY = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const unstaffed = (overrides: Partial<LoadRequirement> = {}) =>
+    requirement({ teacherId: null, studentGroupId: 'g-8a', groupName: '8A', lessonsPerWeek: 4, ...overrides });
+
+  it('is not computed at all when the school has recorded no behörighet', () => {
+    const result = report({ requirements: [unstaffed()], qualifications: [] });
+    expect(result.bottlenecksComputed).toBe(false);
+    expect(result.subjectBottlenecks).toEqual([]);
+  });
+
+  it('is computed whatever the qualificationMode — capacity is not a warning', () => {
+    const result = report({
+      policy: policy({ qualificationMode: 'OFF' }),
+      requirements: [unstaffed()],
+      qualifications: [qualification()],
+    });
+    expect(result.bottlenecksComputed).toBe(true);
+    expect(result.subjectBottlenecks).toHaveLength(1);
+  });
+
+  it('sums target − counted over the qualified, at the lead’s percentage, and is short past it', () => {
+    const result = report({
+      employments: [employment({ teachingTargetMinutesPerWeek: 600 })],
+      requirements: [
+        requirement({ lessonsPerWeek: 5 }),
+        unstaffed({ lessonsPerWeek: 4 }),
+        unstaffed({ id: 'half', studentGroupId: 'g-8b', groupName: '8B', lessonsPerWeek: 4, teacherLoadPercent: 50 }),
+      ],
+      qualifications: [qualification()],
+      duties: [duty({ minutesPerWeek: 60, countsAsTeaching: true }), duty({ minutesPerWeek: 500 })],
+    });
+    // Anna: 600 − (300 + 60 counted) = 240 left; the uncounted 500 consume nothing.
+    expect(result.subjectBottlenecks).toEqual([
+      {
+        subjectId: MA,
+        subjectName: 'Matematik',
+        unstaffedCount: 2,
+        demandedMinutesPerWeek: 360,
+        qualifiedRemainingMinutesPerWeek: 240,
+        qualifiedTeacherCount: 1,
+        qualifiedNoTargetCount: 0,
+        short: true,
+      },
+    ]);
+  });
+
+  it('counts a qualified teacher with no target apart, and adds nothing for them', () => {
+    const result = report({
+      employments: [],
+      requirements: [unstaffed()],
+      qualifications: [qualification(), qualification({ userId: BO, kind: 'TILLATEN' })],
+    });
+    expect(result.subjectBottlenecks[0]).toMatchObject({
+      qualifiedRemainingMinutesPerWeek: 0,
+      qualifiedTeacherCount: 0,
+      qualifiedNoTargetCount: 2,
+      short: true,
+    });
+  });
+
+  it('ignores an expired behörighet, and adds zero — never a negative — for an over-target teacher', () => {
+    const result = report({
+      employments: [
+        employment({ teachingTargetMinutesPerWeek: 300 }),
+        employment({ userId: BO, signature: 'BO' }),
+        employment({ userId: CY, signature: 'CY', teachingTargetMinutesPerWeek: 200 }),
+      ],
+      requirements: [requirement({ lessonsPerWeek: 10 }), unstaffed({ lessonsPerWeek: 1 })],
+      qualifications: [
+        qualification(),
+        qualification({ userId: BO, validTo: '2026-06-30' }),
+        qualification({ userId: CY }),
+      ],
+    });
+    // Anna 300 − 600 → 0, Bo's legitimation ended before the year, Cy 200.
+    expect(result.subjectBottlenecks[0]).toMatchObject({
+      demandedMinutesPerWeek: 60,
+      qualifiedRemainingMinutesPerWeek: 200,
+      qualifiedTeacherCount: 2,
+      short: false,
+    });
+  });
+
+  it('takes a behörighet in the subject at any span as capacity, and none in another subject', () => {
+    const result = report({
+      employments: [employment()],
+      requirements: [unstaffed({ gradeSpan: { min: 9, max: 9 } })],
+      qualifications: [
+        qualification({ minGradeLevel: 1, maxGradeLevel: 3 }),
+        qualification({ userId: BO, subjectId: NO }),
+      ],
+    });
+    expect(result.subjectBottlenecks[0]).toMatchObject({ qualifiedRemainingMinutesPerWeek: 1080, qualifiedTeacherCount: 1 });
+  });
+
+  it('lists only subjects with an unstaffed row, short ones first by deficit', () => {
+    const result = report({
+      employments: [employment()],
+      requirements: [
+        requirement({ subjectId: 'sv', subjectName: 'Svenska', lessonsPerWeek: 2 }),
+        unstaffed({ subjectId: 'bi', subjectName: 'Biologi', lessonsPerWeek: 2 }),
+        unstaffed({ subjectId: 'tk', subjectName: 'Teknik', lessonsPerWeek: 5 }),
+        unstaffed({ lessonsPerWeek: 1 }),
+      ],
+      qualifications: [qualification()],
+    });
+    expect(result.subjectBottlenecks.map((b) => [b.subjectId, b.short])).toEqual([
+      ['tk', true],
+      ['bi', true],
+      [MA, false],
+    ]);
+  });
+});
+
+describe('strongestCoveringQualification', () => {
+  it('picks LEGITIMATION over BEHORIG over TILLATEN among the ones that cover', () => {
+    const held = [
+      qualification({ kind: 'TILLATEN' }),
+      qualification({ kind: 'LEGITIMATION', minGradeLevel: 1, maxGradeLevel: 6 }),
+      qualification({ kind: 'BEHORIG' }),
+      qualification({ userId: BO, kind: 'LEGITIMATION' }),
+    ];
+    expect(
+      strongestCoveringQualification(held, ANNA, { subjectId: MA, gradeSpan: { min: 7, max: 9 } }, YEAR),
+    ).toBe('BEHORIG');
+  });
+
+  it('is null for nobody covering, including an expired row', () => {
+    expect(
+      strongestCoveringQualification(
+        [qualification({ validTo: '2026-08-16' })],
+        ANNA,
+        { subjectId: MA, gradeSpan: { min: 7, max: 7 } },
+        YEAR,
+      ),
+    ).toBeNull();
   });
 });

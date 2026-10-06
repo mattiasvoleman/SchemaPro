@@ -1839,6 +1839,8 @@ describe('Planning surface (e2e)', () => {
         coTeacherId: null,
         lessonsPerWeek: 10,
         minutesPerLesson: 60,
+        teacherLoadPercent: 100,
+        coTeacherLoadPercent: 100,
         recurrence: 'ALL_WEEKS',
         startDate: null,
         endDate: null,

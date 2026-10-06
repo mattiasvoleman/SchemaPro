@@ -42,11 +42,43 @@ import {
  * / 100), rounded to the solver's five-minute grid because a target of 863
  * minutes is a precision no timetable has.
  *
- * CO-TEACHING COUNTS FULLY FOR BOTH in this phase. Both teachers are in the
- * room, and the solver already holds both in NoOverlap. A school that counts the
- * co-teacher at 50 % will say so on the row (Fas 2, coTeacherLoadPercent); until
- * then the report keeps the two totals apart — minutes räknade för lärare and
- * lektionsminuter — so the inflation is visible rather than hidden.
+ * EACH TEACHER IS CHARGED THE ROW'S OWN PERCENTAGE. A requirement counts for
+ * its lead at lessons × minutes × teacherLoadPercent / 100 × the standardvecka
+ * weight, and for its co-teacher at × coTeacherLoadPercent / 100 — Skola24's
+ * "Justera längd för lärare (%)", per row and per role, 0..200. Both default to
+ * 100, so a school that never touches them reads the Fas 1 report unchanged:
+ * both teachers fully charged, because both are in the room and the solver
+ * holds both in NoOverlap. The percentage reaches every figure charged to a
+ * TEACHER — standardvecka, toppvecka, timmar per år, the subject split — and
+ * none charged to the LESSON: lektionsminuter stay what the pupils sit through,
+ * so the two totals still differ by exactly what the school chose to count.
+ * A 0 % row is still the teacher's row (requirementCount, the subject listed at
+ * 0 minutes): resurslärare who are in the room but not charged are a real case.
+ *
+ * UPPDRAG ARE PART OF THE TJÄNST, NOT OF THE TEACHING. Mentorskap, rastvakt,
+ * förstelärare — TeacherDuties — are reported per teacher as dutyMinutesPerWeek.
+ * Only the ones the school marked countsAsTeaching are compared with the target:
+ * they are added to the teaching minutes in countedMinutesPerWeek, which is what
+ * status, saldo and percentOfTarget read. The rest are drawn beside the
+ * teaching as "uppdrag" and consume nothing, because the riktmärke is a measure
+ * of undervisning and a school that counts mentorskap against it says so on the
+ * duty. percentOfEmployment per subject stays a share of the TEACHING minutes:
+ * SCB's tjänsteomfattning per ämne has no column for rastvakt. Duties carry no
+ * week pattern, so they enter neither the toppvecka nor the annual hours.
+ *
+ * ÄMNESFLASKHALSAR are the question the unstaffed list cannot answer on its
+ * own: is there anybody left to take these rows? Per subject with an unstaffed
+ * row, demanded = the minutes those rows would charge their lead, and
+ * qualifiedRemaining = Σ max(0, target − counted) over every teacher holding a
+ * qualification in the subject valid at some point of the year. A teacher with
+ * no target contributes nothing — their room is unknown, not infinite — and is
+ * counted separately so the page can say "plus 2 utan riktmärke". Short when
+ * demanded > remaining. A school with zero qualification rows gets no
+ * bottlenecks at all (`bottlenecksComputed: false`): with nobody recorded as
+ * qualified, every subject would read as fully short, which is the same noise
+ * the unqualified list refuses to make. The policy's qualificationMode does not
+ * switch this off: OFF says "do not warn about assignments", and capacity is a
+ * planning figure, not a warning.
  *
  * BEHÖRIGHET IS CHECKED ONLY WHEN THE SCHOOL HAS SAID SOMETHING. A school with
  * zero qualification rows has not recorded that nobody is qualified, it has
@@ -106,6 +138,10 @@ export interface LoadRequirement extends TeachingPeriod {
   coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** How much of the row the lead is charged, 0..200; 100 = all of it. */
+  teacherLoadPercent: number;
+  /** How much of the row the co-teacher is charged, 0..200. */
+  coTeacherLoadPercent: number;
   /**
    * The years the group actually holds, derived as the optimisation proxy
    * derives it (room-eligibility.ts gradeSpanOf): members' home classes, the
@@ -113,6 +149,13 @@ export interface LoadRequirement extends TeachingPeriod {
    * says anything.
    */
   gradeSpan: GradeSpan | null;
+}
+
+/** One uppdrag of the year: what it costs a week and whether it is teaching. */
+export interface LoadDuty {
+  userId: string;
+  minutesPerWeek: number;
+  countsAsTeaching: boolean;
 }
 
 export interface LoadQualification {
@@ -133,6 +176,7 @@ export interface LoadInput {
   requirements: LoadRequirement[];
   qualifications: LoadQualification[];
   closures: ClosedRange[];
+  duties: LoadDuty[];
 }
 
 export interface SubjectLoad {
@@ -152,15 +196,22 @@ export interface TeacherLoad {
   userId: string;
   employment: LoadEmployment | null;
   targetMinutesPerWeek: number | null;
-  /** Standardvecka, whole minutes. */
+  /** Teaching charged by the requirements, standardvecka, whole minutes. */
   assignedMinutesPerWeek: number;
-  /** Toppvecka, whole minutes. */
+  /** Toppvecka of the teaching, whole minutes. */
   peakMinutesPerWeek: number;
-  /** target − assigned: kvar till mål when positive, över mål when negative. */
+  /** Every uppdrag of the year, counted or not. */
+  dutyMinutesPerWeek: number;
+  /** The uppdrag marked countsAsTeaching — the part of dutyMinutes that meets the target. */
+  countedDutyMinutesPerWeek: number;
+  /** assigned + counted uppdrag: what the target is compared with. */
+  countedMinutesPerWeek: number;
+  /** target − counted: kvar till mål when positive, över mål when negative. */
   balanceMinutesPerWeek: number | null;
   percentOfTarget: number | null;
   status: LoadStatus;
   requirementCount: number;
+  dutyCount: number;
   subjects: SubjectLoad[];
   annual: {
     /** Σ lessons × minutes × teaching weeks (lov subtracted) / 60, one decimal. */
@@ -177,8 +228,27 @@ export interface UnstaffedRequirement {
   subjectName: string;
   studentGroupId: string;
   groupName: string;
+  /** Lektionsminuter, standardvecka: what the pupils sit through. */
   minutesPerWeek: number;
+  /** What the row would charge the teacher who takes it (× teacherLoadPercent). */
+  teacherMinutesPerWeek: number;
   gradeSpan: GradeSpan | null;
+}
+
+/** Per subject with an unstaffed row: is there anybody qualified left to take it? */
+export interface SubjectBottleneck {
+  subjectId: string;
+  subjectName: string;
+  unstaffedCount: number;
+  /** Σ teacherMinutesPerWeek of the subject's unstaffed rows. */
+  demandedMinutesPerWeek: number;
+  /** Σ max(0, target − counted) over qualified teachers with a target. */
+  qualifiedRemainingMinutesPerWeek: number;
+  /** Qualified teachers with a target, whether or not they have room left. */
+  qualifiedTeacherCount: number;
+  /** Qualified teachers with no target: room unknown, so not in the sum. */
+  qualifiedNoTargetCount: number;
+  short: boolean;
 }
 
 export interface UnqualifiedAssignment {
@@ -198,11 +268,17 @@ export interface TeacherLoadReport {
   unqualifiedAssignments: UnqualifiedAssignment[];
   /** False when the school has no qualification rows, so nothing was checked. */
   qualificationsRecorded: boolean;
+  /** Short first, then by deficit. Empty when bottlenecksComputed is false. */
+  subjectBottlenecks: SubjectBottleneck[];
+  /** False with zero qualification rows: capacity cannot be known. */
+  bottlenecksComputed: boolean;
   totals: {
-    /** Σ over teachers of assigned minutes: a co-taught row counts twice. */
+    /** Σ over teachers of assigned minutes, each at its row's percentage. */
     teacherMinutesPerWeek: number;
-    /** Σ over requirements of standardvecka minutes: every row once. */
+    /** Σ over requirements of standardvecka minutes: every row once, at 100 %. */
     lessonMinutesPerWeek: number;
+    /** Σ over teachers of every uppdrag. */
+    dutyMinutesPerWeek: number;
   };
 }
 
@@ -285,6 +361,16 @@ export function loadStatus(
   return 'OK';
 }
 
+/** Whether a qualification is valid at some point of the year. */
+export function qualificationValidInYear(
+  qualification: Pick<LoadQualification, 'validFrom' | 'validTo'>,
+  year: YearBounds,
+): boolean {
+  if (qualification.validFrom && qualification.validFrom > year.endDate) return false;
+  if (qualification.validTo && qualification.validTo < year.startDate) return false;
+  return true;
+}
+
 /**
  * Whether one qualification covers a requirement: same subject, the whole
  * grade span inside the qualification's, and valid at some point of the year.
@@ -298,17 +384,77 @@ export function qualificationCovers(
   year: YearBounds,
 ): boolean {
   if (qualification.subjectId !== requirement.subjectId) return false;
-  if (qualification.validFrom && qualification.validFrom > year.endDate) return false;
-  if (qualification.validTo && qualification.validTo < year.startDate) return false;
+  if (!qualificationValidInYear(qualification, year)) return false;
   const span = requirement.gradeSpan;
   if (span === null) return true;
   return qualification.minGradeLevel <= span.min && qualification.maxGradeLevel >= span.max;
+}
+
+/**
+ * LEGITIMATION over BEHORIG over TILLATEN, as skollagen ranks them — the same
+ * order the substitute picker sorts by (calendar-lessons.service.ts).
+ */
+export const QUALIFICATION_RANK: Record<LoadQualification['kind'], number> = {
+  LEGITIMATION: 3,
+  BEHORIG: 2,
+  TILLATEN: 1,
+};
+
+/**
+ * The strongest of `held` that covers the requirement, or null. `held` may
+ * carry anybody's rows; only `userId`'s are read.
+ */
+export function strongestCoveringQualification(
+  held: LoadQualification[],
+  userId: string,
+  requirement: Pick<LoadRequirement, 'subjectId' | 'gradeSpan'>,
+  year: YearBounds,
+): LoadQualification['kind'] | null {
+  let best: LoadQualification['kind'] | null = null;
+  for (const qualification of held) {
+    if (qualification.userId !== userId) continue;
+    if (!qualificationCovers(qualification, requirement, year)) continue;
+    if (best === null || QUALIFICATION_RANK[qualification.kind] > QUALIFICATION_RANK[best]) {
+      best = qualification.kind;
+    }
+  }
+  return best;
+}
+
+/** The minutes one requirement charges each role, before rounding. */
+export function chargedMinutes(
+  requirement: Pick<
+    LoadRequirement,
+    | 'lessonsPerWeek'
+    | 'minutesPerLesson'
+    | 'teacherLoadPercent'
+    | 'coTeacherLoadPercent'
+    | 'recurrence'
+    | 'startDate'
+    | 'endDate'
+    | 'gradeSpan'
+  >,
+  year: YearBounds,
+  closures: ClosedRange[],
+): { lesson: number; teacher: number; coTeacher: number } {
+  const lesson =
+    requirement.lessonsPerWeek *
+    requirement.minutesPerLesson *
+    standardWeekWeight(requirement, year, closures);
+  return {
+    lesson,
+    teacher: (lesson * requirement.teacherLoadPercent) / 100,
+    coTeacher: (lesson * requirement.coTeacherLoadPercent) / 100,
+  };
 }
 
 interface Accumulator {
   assigned: number;
   annualMinutes: number;
   requirementCount: number;
+  dutyMinutes: number;
+  countedDutyMinutes: number;
+  dutyCount: number;
   subjects: Map<string, { subjectName: string; minutes: number }>;
 }
 
@@ -323,7 +469,15 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   const accumulatorFor = (userId: string): Accumulator => {
     let acc = accumulators.get(userId);
     if (!acc) {
-      acc = { assigned: 0, annualMinutes: 0, requirementCount: 0, subjects: new Map() };
+      acc = {
+        assigned: 0,
+        annualMinutes: 0,
+        requirementCount: 0,
+        dutyMinutes: 0,
+        countedDutyMinutes: 0,
+        dutyCount: 0,
+        subjects: new Map(),
+      };
       accumulators.set(userId, acc);
     }
     return acc;
@@ -331,6 +485,15 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   // A teacher with a post and no requirement is still a row: their whole
   // target is unfilled, which is the thing the matrix exists to show.
   for (const employment of input.employments) accumulatorFor(employment.userId);
+
+  // Uppdrag before requirements, so a teacher whose only line is a mentorskap
+  // is a row in the matrix like one whose only line is a post.
+  for (const duty of input.duties) {
+    const acc = accumulatorFor(duty.userId);
+    acc.dutyMinutes += duty.minutesPerWeek;
+    acc.dutyCount += 1;
+    if (duty.countsAsTeaching) acc.countedDutyMinutes += duty.minutesPerWeek;
+  }
 
   const unstaffedRequirements: UnstaffedRequirement[] = [];
   const unqualifiedAssignments: UnqualifiedAssignment[] = [];
@@ -345,17 +508,18 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
 
   let lessonMinutesPerWeek = 0;
   // Per teacher so the peak sums only that teacher's rows; a co-taught row is
-  // handed in once per teacher, under each one's key.
+  // handed in once per teacher, under each one's key and at each one's share.
   const peakItems: (TeachingPeriod & { key: string; minutes: number })[] = [];
+  // Per subject, the demand the unstaffed rows put on whoever takes them.
+  const demand = new Map<string, { subjectName: string; minutes: number; count: number }>();
 
   for (const requirement of input.requirements) {
     const weeklyMinutes = requirement.lessonsPerWeek * requirement.minutesPerLesson;
-    const weight = standardWeekWeight(requirement, year, closures);
-    const standardMinutes = weeklyMinutes * weight;
-    const annualMinutes =
+    const charged = chargedMinutes(requirement, year, closures);
+    const yearMinutes =
       weeklyMinutes *
       teachingWeeks(requirement, year, closures, singleGrade(requirement.gradeSpan));
-    lessonMinutesPerWeek += standardMinutes;
+    lessonMinutesPerWeek += charged.lesson;
 
     if (requirement.teacherId === null) {
       unstaffedRequirements.push({
@@ -364,20 +528,31 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
         subjectName: requirement.subjectName,
         studentGroupId: requirement.studentGroupId,
         groupName: requirement.groupName,
-        minutesPerWeek: Math.round(standardMinutes),
+        minutesPerWeek: Math.round(charged.lesson),
+        teacherMinutesPerWeek: Math.round(charged.teacher),
         gradeSpan: requirement.gradeSpan,
       });
+      const subjectDemand = demand.get(requirement.subjectId) ?? {
+        subjectName: requirement.subjectName,
+        minutes: 0,
+        count: 0,
+      };
+      subjectDemand.minutes += charged.teacher;
+      subjectDemand.count += 1;
+      demand.set(requirement.subjectId, subjectDemand);
     }
 
-    const assignees: [string | null, UnqualifiedAssignment['role']][] = [
-      [requirement.teacherId, 'TEACHER'],
-      [requirement.coTeacherId, 'CO_TEACHER'],
+    const assignees: [string | null, UnqualifiedAssignment['role'], number][] = [
+      [requirement.teacherId, 'TEACHER', requirement.teacherLoadPercent],
+      [requirement.coTeacherId, 'CO_TEACHER', requirement.coTeacherLoadPercent],
     ];
-    for (const [userId, role] of assignees) {
+    for (const [userId, role, percent] of assignees) {
       if (userId === null) continue;
+      const share = percent / 100;
+      const standardMinutes = role === 'TEACHER' ? charged.teacher : charged.coTeacher;
       const acc = accumulatorFor(userId);
       acc.assigned += standardMinutes;
-      acc.annualMinutes += annualMinutes;
+      acc.annualMinutes += yearMinutes * share;
       acc.requirementCount += 1;
       const subject = acc.subjects.get(requirement.subjectId) ?? {
         subjectName: requirement.subjectName,
@@ -387,7 +562,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       acc.subjects.set(requirement.subjectId, subject);
       peakItems.push({
         key: userId,
-        minutes: weeklyMinutes,
+        minutes: weeklyMinutes * share,
         recurrence: requirement.recurrence,
         startDate: requirement.startDate,
         endDate: requirement.endDate,
@@ -419,18 +594,22 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   );
 
   let teacherMinutesPerWeek = 0;
+  let dutyMinutesPerWeek = 0;
   const teachers: TeacherLoad[] = [];
   for (const [userId, acc] of accumulators) {
     const employment = employmentByUser.get(userId) ?? null;
     const target = targetMinutesPerWeek(employment, policy);
     const assigned = Math.round(acc.assigned);
+    const counted = acc.assigned + acc.countedDutyMinutes;
     teacherMinutesPerWeek += acc.assigned;
+    dutyMinutesPerWeek += acc.dutyMinutes;
     const activePercent = employment
       ? employment.employmentPercent - employment.reductionPercent
       : null;
 
     // Shares are taken on the unrounded minutes, so 600 of 900 is exactly
-    // two thirds whatever the rounding did to either figure.
+    // two thirds whatever the rounding did to either figure. Teaching minutes
+    // only: an uppdrag is no subject's share.
     const subjects: SubjectLoad[] = [...acc.subjects.entries()]
       .map(([subjectId, subject]) => {
         const share = acc.assigned > 0 ? subject.minutes / acc.assigned : 0;
@@ -455,11 +634,15 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       targetMinutesPerWeek: target,
       assignedMinutesPerWeek: assigned,
       peakMinutesPerWeek: Math.round(peaks.get(userId) ?? 0),
-      balanceMinutesPerWeek: target === null ? null : target - assigned,
+      dutyMinutesPerWeek: acc.dutyMinutes,
+      countedDutyMinutesPerWeek: acc.countedDutyMinutes,
+      countedMinutesPerWeek: Math.round(counted),
+      balanceMinutesPerWeek: target === null ? null : target - Math.round(counted),
       percentOfTarget:
-        target === null || target === 0 ? null : round1((acc.assigned / target) * 100),
-      status: loadStatus(acc.assigned, target, policy.overAllocationTolerancePercent),
+        target === null || target === 0 ? null : round1((counted / target) * 100),
+      status: loadStatus(counted, target, policy.overAllocationTolerancePercent),
       requirementCount: acc.requirementCount,
+      dutyCount: acc.dutyCount,
       subjects,
       annual: {
         assignedHoursPerYear: round1(acc.annualMinutes / 60),
@@ -479,14 +662,67 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.userId.localeCompare(b.userId),
   );
 
+  const subjectBottlenecks: SubjectBottleneck[] = [];
+  if (qualificationsRecorded) {
+    // Who holds a qualification in which subject this year, any span: the
+    // question is whether the subject has teachers left, not who takes which row.
+    const holders = new Map<string, Set<string>>();
+    for (const qualification of input.qualifications) {
+      if (!qualificationValidInYear(qualification, year)) continue;
+      const set = holders.get(qualification.subjectId) ?? new Set<string>();
+      set.add(qualification.userId);
+      holders.set(qualification.subjectId, set);
+    }
+    for (const [subjectId, subjectDemand] of demand) {
+      let remaining = 0;
+      let withTarget = 0;
+      let noTarget = 0;
+      for (const userId of holders.get(subjectId) ?? []) {
+        const target = targetMinutesPerWeek(employmentByUser.get(userId) ?? null, policy);
+        if (target === null) {
+          noTarget += 1;
+          continue;
+        }
+        withTarget += 1;
+        const acc = accumulators.get(userId);
+        const counted = acc ? acc.assigned + acc.countedDutyMinutes : 0;
+        remaining += Math.max(0, target - counted);
+      }
+      const demanded = Math.round(subjectDemand.minutes);
+      const qualifiedRemaining = Math.round(remaining);
+      subjectBottlenecks.push({
+        subjectId,
+        subjectName: subjectDemand.subjectName,
+        unstaffedCount: subjectDemand.count,
+        demandedMinutesPerWeek: demanded,
+        qualifiedRemainingMinutesPerWeek: qualifiedRemaining,
+        qualifiedTeacherCount: withTarget,
+        qualifiedNoTargetCount: noTarget,
+        short: demanded > qualifiedRemaining,
+      });
+    }
+    // Short first, the deepest deficit first among them; then by id.
+    subjectBottlenecks.sort(
+      (a, b) =>
+        Number(b.short) - Number(a.short) ||
+        b.demandedMinutesPerWeek -
+          b.qualifiedRemainingMinutesPerWeek -
+          (a.demandedMinutesPerWeek - a.qualifiedRemainingMinutesPerWeek) ||
+        a.subjectId.localeCompare(b.subjectId),
+    );
+  }
+
   return {
     teachers,
     unstaffedRequirements,
     unqualifiedAssignments,
     qualificationsRecorded,
+    subjectBottlenecks,
+    bottlenecksComputed: qualificationsRecorded,
     totals: {
       teacherMinutesPerWeek: Math.round(teacherMinutesPerWeek),
       lessonMinutesPerWeek: Math.round(lessonMinutesPerWeek),
+      dutyMinutesPerWeek,
     },
   };
 }
