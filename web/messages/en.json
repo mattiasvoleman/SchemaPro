@@ -1437,7 +1437,7 @@
     "INPUT_LESSON_LONGER_THAN_DAY": "Requirement {requirement} asks for {minutes}-minute lessons, which are longer than the school day.",
     "INPUT_MODEL_TOO_LARGE": "This week is too large to build: about {variables} model variables against a limit of {limit}. The usual causes are rooms with many different capacities, constraints that each touch many lessons, and very high per-teacher lesson loads.",
     "ROOM_MODEL_TOO_LARGE": "There are too many rooms to re-deal in one go: about {variables} model variables against a limit of {limit}. The model grows with how many lessons may move and how many rooms each may use. Lock the lessons whose room is settled (a locked lesson keeps both its time and its room), or give subjects room rules that narrow where they may go, and try again.",
-    "INPUT_NO_REQUIREMENTS": "There are no curriculum entries to place. Add at least one under Curriculum entries.",
+    "INPUT_NO_REQUIREMENTS": "The timplan is empty: there is nothing to place. Add at least one row.",
     "INPUT_NO_ROOMS": "No rooms are registered, so no lesson can be given one.",
     "INPUT_TOO_MANY_LESSONS": "The week holds {lessons} lessons, more than the {limit} this engine will place in one run. Split the run, or reduce lessons per week.",
     "LUNCH_AVAILABILITY_LEAVES_NO_BREAK": "An availability constraint leaves student group {group} no {minutes}-minute lunch break inside {windowStart}-{windowEnd} on {day, select, 1 {Monday} 2 {Tuesday} 3 {Wednesday} 4 {Thursday} 5 {Friday} 6 {Saturday} 7 {Sunday} other {day {day}}}. Shorten the constraint, widen the lunch window, or shorten the break.",

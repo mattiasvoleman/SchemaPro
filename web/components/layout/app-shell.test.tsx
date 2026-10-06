@@ -149,7 +149,8 @@ describe("AppShell navigation", () => {
     expect(sv.engineMessages.INPUT_NO_REQUIREMENTS).toContain("timplansposter");
     expect(en.requirements.empty).toMatch(/^No curriculum entries/);
     expect(en.requirements.tableCaption).toMatch(/^Curriculum entries by group/);
-    expect(en.engineMessages.INPUT_NO_REQUIREMENTS).toContain("curriculum entries");
+    // The English is the engine's own sentence (i18n/engine-messages.test.ts
+    // holds the two identical), so it changes in optimization-engine, not here.
     // A copy keeps the school form (CopyLocalTimplanDto has only a name), so
     // the create dialog may not offer it as the way to another one.
     expect(sv.timplan.createBody).not.toMatch(/kopia/);
