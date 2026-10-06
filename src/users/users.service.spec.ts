@@ -703,6 +703,41 @@ describe('UsersService', () => {
       expect(tx.user.update).not.toHaveBeenCalled();
     });
 
+    it('counts uppdrag too, and lists all three kinds when all three stand', async () => {
+      // A pupil who is still mentor for 7B would be a row in the matrix, and
+      // their rastvakt slot an UNAVAILABLE block on a pupil.
+      storeUser({ role: UserRole.TEACHER, studentGroupId: null });
+      tx.teacherEmployment.count.mockResolvedValue(1);
+      tx.teacherSubjectQualification.count.mockResolvedValue(2);
+      tx.teacherDuty.count.mockResolvedValue(3);
+
+      await expect(
+        service.update(USER_ID, { role: UserRole.STUDENT }, testUser()),
+      ).rejects.toThrow(
+        new ConflictException(
+          'Personen kan inte bli elev: 1 tjänst, 2 behörigheter och 3 uppdrag finns registrerade. Ta bort dem under Personer först.',
+        ),
+      );
+      expect(tx.teacherDuty.count).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a demotion on uppdrag alone', async () => {
+      storeUser({ role: UserRole.TEACHER, studentGroupId: null });
+      tx.teacherEmployment.count.mockResolvedValue(0);
+      tx.teacherSubjectQualification.count.mockResolvedValue(0);
+      tx.teacherDuty.count.mockResolvedValue(1);
+
+      await expect(
+        service.update(USER_ID, { role: UserRole.GUARDIAN }, testUser()),
+      ).rejects.toThrow(
+        new ConflictException(
+          'Personen kan inte bli vårdnadshavare: 1 uppdrag finns registrerade. Ta bort dem under Personer först.',
+        ),
+      );
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
     it('names only the rows that exist when a rektor becomes a guardian', async () => {
       storeUser({ role: UserRole.SCHOOL_ADMIN, studentGroupId: null });
       tx.teacherEmployment.count.mockResolvedValue(0);

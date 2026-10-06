@@ -1943,6 +1943,198 @@ describe('Planning surface (e2e)', () => {
           .expect(403);
       });
     });
+
+    describe('uppdrag (teacher duties)', () => {
+      const DUTY_ID = '80808080-8080-4080-8080-808080808080';
+      const CONSTRAINT_ID = '90909090-9090-4090-8090-909090909090';
+      const DUTIES: LockedTable = {
+        name: 'TeacherDuties',
+        columns: ['id', 'schoolId', 'userId', 'academicYearId', 'label', 'blockedConstraintId'],
+        lock: 'FOR NO KEY UPDATE',
+      };
+      const storedDuty = (overrides: Record<string, unknown> = {}) => ({
+        id: DUTY_ID,
+        schoolId: SCHOOL_ID,
+        userId: COLLEAGUE_ID,
+        academicYearId: YEAR_ID,
+        kind: 'RASTVAKT',
+        label: 'Rastvakt tisdag',
+        minutesPerWeek: 20,
+        countsAsTeaching: false,
+        subjectId: null,
+        studentGroupId: null,
+        blockedConstraintId: CONSTRAINT_ID,
+        note: null,
+        createdAt: new Date('2026-09-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+        blockedConstraint: { dayOfWeek: 2, startTime: wallClock('10:00'), endTime: wallClock('10:20') },
+        ...overrides,
+      });
+      const body = {
+        userId: COLLEAGUE_ID,
+        academicYearId: YEAR_ID,
+        kind: 'RASTVAKT',
+        label: 'Rastvakt tisdag',
+        minutesPerWeek: 20,
+        blockedSlot: { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' },
+      };
+
+      it('an admin lists, creates with a slot, patches and deletes — every handler reached', async () => {
+        harness.tx['teacherDuty']!['findMany']!.mockResolvedValue([storedDuty()]);
+        const list = await request(http())
+          .get(`/api/v1/teacher-duties?academicYearId=${YEAR_ID}&userId=${COLLEAGUE_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(list.body).toEqual([
+          expect.objectContaining({
+            id: DUTY_ID,
+            blockedSlot: { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' },
+          }),
+        ]);
+        expect(harness.tx['teacherDuty']!['findMany']).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { academicYearId: YEAR_ID, userId: COLLEAGUE_ID } }),
+        );
+
+        givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        harness.tx['availabilityConstraint']!['create']!.mockResolvedValue({ id: CONSTRAINT_ID });
+        harness.tx['teacherDuty']!['create']!.mockResolvedValue(storedDuty());
+        const created = await request(http())
+          .post('/api/v1/teacher-duties')
+          .set('x-test-user', admin())
+          .send(body)
+          .expect(201);
+        expect(created.body).toMatchObject({ id: DUTY_ID, blockedConstraintId: CONSTRAINT_ID });
+        expect(harness.tx['availabilityConstraint']!['create']).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ resourceType: 'TEACHER', type: 'UNAVAILABLE', userId: COLLEAGUE_ID, dayOfWeek: 2 }),
+          }),
+        );
+
+        givenLockedRows(DUTIES, [storedDuty()]);
+        harness.tx['teacherDuty']!['update']!.mockResolvedValue(storedDuty({ minutesPerWeek: 30 }));
+        const patched = await request(http())
+          .patch(`/api/v1/teacher-duties/${DUTY_ID}`)
+          .set('x-test-user', admin())
+          .send({ minutesPerWeek: 30, countsAsTeaching: true })
+          .expect(200);
+        expect(patched.body).toMatchObject({ minutesPerWeek: 30 });
+
+        await request(http())
+          .delete(`/api/v1/teacher-duties/${DUTY_ID}`)
+          .set('x-test-user', admin())
+          .expect(204);
+        expect(harness.tx['teacherDuty']!['delete']).toHaveBeenCalledWith({ where: { id: DUTY_ID } });
+        expect(harness.tx['availabilityConstraint']!['deleteMany']).toHaveBeenCalledWith({
+          where: { id: CONSTRAINT_ID },
+        });
+      });
+
+      it('a teacher reads their own uppdrag, 403s on a colleague’s, and writes nothing', async () => {
+        harness.tx['teacherDuty']!['findMany']!.mockResolvedValue([storedDuty({ userId: TEACHER_ID })]);
+        await request(http())
+          .get(`/api/v1/teacher-duties?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', teacher())
+          .expect(200);
+        expect(harness.tx['teacherDuty']!['findMany']).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { academicYearId: YEAR_ID, userId: TEACHER_ID } }),
+        );
+
+        await request(http())
+          .get(`/api/v1/teacher-duties?academicYearId=${YEAR_ID}&userId=${COLLEAGUE_ID}`)
+          .set('x-test-user', teacher())
+          .expect(403);
+
+        await request(http()).post('/api/v1/teacher-duties').set('x-test-user', teacher()).send(body).expect(403);
+        await request(http())
+          .patch(`/api/v1/teacher-duties/${DUTY_ID}`)
+          .set('x-test-user', teacher())
+          .send({ minutesPerWeek: 30 })
+          .expect(403);
+        await request(http())
+          .delete(`/api/v1/teacher-duties/${DUTY_ID}`)
+          .set('x-test-user', teacher())
+          .expect(403);
+        expect(harness.tx['teacherDuty']!['create']).not.toHaveBeenCalled();
+        expect(harness.tx['teacherDuty']!['update']).not.toHaveBeenCalled();
+        expect(harness.tx['teacherDuty']!['delete']).not.toHaveBeenCalled();
+      });
+
+      it('400s what the table would refuse, a slot off the grid and a constraint id in the body', async () => {
+        const tooMuch = await request(http())
+          .post('/api/v1/teacher-duties')
+          .set('x-test-user', admin())
+          .send({ ...body, minutesPerWeek: 2401 })
+          .expect(400);
+        expect(JSON.stringify(tooMuch.body)).toContain('minutesPerWeek: högst 2400 minuter');
+
+        const offGrid = await request(http())
+          .post('/api/v1/teacher-duties')
+          .set('x-test-user', admin())
+          .send({ ...body, blockedSlot: { dayOfWeek: 2, startTime: '10:00', endTime: '10:22' } })
+          .expect(400);
+        expect(offGrid.body.detail).toContain('blockedSlot.endTime');
+
+        await request(http())
+          .patch(`/api/v1/teacher-duties/${DUTY_ID}`)
+          .set('x-test-user', admin())
+          .send({ blockedConstraintId: CONSTRAINT_ID })
+          .expect(400);
+        await request(http())
+          .get('/api/v1/teacher-duties?academicYearId=2026')
+          .set('x-test-user', admin())
+          .expect(400);
+        expect(harness.tx['teacherDuty']!['create']).not.toHaveBeenCalled();
+      });
+
+      it('404s a duty RLS hides, and 409s a slot the database refuses to link', async () => {
+        givenLockedRows(DUTIES, []);
+        await request(http())
+          .patch(`/api/v1/teacher-duties/${DUTY_ID}`)
+          .set('x-test-user', admin())
+          .send({ minutesPerWeek: 30 })
+          .expect(404);
+        await request(http())
+          .delete(`/api/v1/teacher-duties/${DUTY_ID}`)
+          .set('x-test-user', admin())
+          .expect(404);
+
+        givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        harness.tx['availabilityConstraint']!['create']!.mockResolvedValue({ id: CONSTRAINT_ID });
+        harness.tx['teacherDuty']!['create']!.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('TEACHER_DUTY_BLOCK_MISMATCH: x', {
+            code: 'P2010',
+            clientVersion: Prisma.prismaVersion.client,
+            meta: {
+              driverAdapterError: {
+                cause: {
+                  originalCode: 'TD409',
+                  originalMessage: 'TEACHER_DUTY_BLOCK_MISMATCH: x',
+                  detail: `teacherDutyId=${DUTY_ID} availabilityConstraintId=${CONSTRAINT_ID}`,
+                  kind: 'postgres',
+                },
+              },
+            },
+          }),
+        );
+        const refused = await request(http())
+          .post('/api/v1/teacher-duties')
+          .set('x-test-user', admin())
+          .send(body)
+          .expect(409);
+        expect(refused.body.code).toBe('TEACHER_DUTY_BLOCK_MISMATCH');
+        harness.tx['teacherDuty']!['create']!.mockReset();
+      });
+
+      it('400s an uppdrag for a pupil, naming why', async () => {
+        givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'STUDENT' }]);
+        const response = await request(http())
+          .post('/api/v1/teacher-duties')
+          .set('x-test-user', admin())
+          .send(body)
+          .expect(400);
+        expect(response.body.detail).toBe('Ett uppdrag hör till en lärare. Elever och vårdnadshavare undervisar inte.');
+      });
+    });
   });
 
   describe('lokala timplaner', () => {
