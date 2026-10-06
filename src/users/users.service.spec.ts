@@ -807,6 +807,46 @@ describe('UsersService', () => {
       expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
     });
 
+    it('409s removing the person a decided timplan names as its decider, naming the plan', async () => {
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null });
+      tx.localTimplan.findMany.mockResolvedValue([{ name: 'Grundskolan 2024' }]);
+
+      const error = await service.remove(USER_ID, testUser()).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).message).toContain(
+        'den beslutade lokala timplanen "Grundskolan 2024"',
+      );
+      expect((error as ConflictException).message).toContain('Inaktivera kontot i stället');
+      expect(tx.localTimplan.findMany).toHaveBeenCalledWith({
+        where: { decidedByUserId: USER_ID },
+        select: { name: true },
+        orderBy: { name: 'asc' },
+      });
+      expect(tx.user.delete).not.toHaveBeenCalled();
+      expect(supabaseAdmin.deleteUser).not.toHaveBeenCalled();
+    });
+
+    it('says the same when the restrict key refuses a decision recorded after the question', async () => {
+      tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID, invitedAt: null });
+      tx.user.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', {
+          code: 'P2003',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: {
+            modelName: 'User',
+            driverAdapterError: {
+              cause: { constraint: { index: 'LocalTimplans_decidedByUserId_schoolId_fkey' } },
+            },
+          },
+        }),
+      );
+
+      await expect(service.remove(USER_ID, testUser())).rejects.toThrow(
+        'Inaktivera kontot i stället',
+      );
+    });
+
     it('maps a P2025 race on the delete itself to 404', async () => {
       tx.user.findUnique.mockResolvedValue({ authId: AUTH_ID });
       tx.user.delete.mockRejectedValue(knownError('P2025'));

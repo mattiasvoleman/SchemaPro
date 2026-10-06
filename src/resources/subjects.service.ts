@@ -1,9 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import type { Subject } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
-import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import {
+  TIMPLAN_IS_DECIDED,
+  decidedTimplanRefusal,
+  listNames,
+  rethrowPrismaError,
+} from '../common/utils/prisma-errors';
 import { assertNationalCodeIsKnown, normalizeNationalCode } from './national-codes';
 import type { CreateSubjectDto, UpdateSubjectDto } from './dto/subject.dto';
 
@@ -85,11 +90,57 @@ export class SubjectsService {
     }
   }
 
+  /**
+   * Delete a subject — unless a DECIDED lokal timplan contains it.
+   *
+   * A decided plan is a record, and a subject vanishing out of it would
+   * rewrite the record by cascade. The database refuses that itself (the
+   * entries trigger raises TP409 when the cascade reaches a decided plan's
+   * entries); this service asks first, so the answer names EVERY such plan
+   * rather than the first one the cascade happened to reach, and says what to
+   * do. The trigger stays the second line: a plan decided between the question
+   * and the delete still refuses the delete, and its refusal is translated to
+   * the same 409 with the plan the trigger named. Subjects that only DRAFT
+   * plans contain are deleted and their entries cascade, as before.
+   */
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
     try {
-      await this.prisma.withRls(user, (tx) => tx.subject.delete({ where: { id } }));
+      await this.prisma.withRls(user, async (tx) => {
+        const decided = await tx.localTimplan.findMany({
+          where: { status: 'DECIDED', entries: { some: { subjectId: id } } },
+          select: { name: true },
+          orderBy: { name: 'asc' },
+        });
+        if (decided.length > 0) {
+          throw subjectInDecidedTimplan(decided.map((plan) => plan.name));
+        }
+        await tx.subject.delete({ where: { id } });
+      });
     } catch (error) {
+      if (error instanceof ConflictException) throw error;
+      const refusal = decidedTimplanRefusal(error);
+      if (refusal) {
+        throw subjectInDecidedTimplan(refusal.planName === null ? [] : [refusal.planName]);
+      }
       rethrowPrismaError(error);
     }
   }
+}
+
+/** The 409 for a subject a decided plan holds, naming the plan(s). */
+export function subjectInDecidedTimplan(planNames: string[]): ConflictException {
+  const where =
+    planNames.length === 0
+      ? 'en beslutad lokal timplan'
+      : planNames.length === 1
+        ? `den beslutade lokala timplanen ${listNames(planNames)}`
+        : `de beslutade lokala timplanerna ${listNames(planNames)}`;
+  const many = planNames.length > 1;
+  return new ConflictException({
+    message:
+      `Ämnet ingår i ${where} och kan inte tas bort: en beslutad timplan ändras inte. ` +
+      `Ta bort ${many ? 'de beslutade timplanerna' : 'den beslutade timplanen'} först om ämnet ska bort, ` +
+      `eller öppna ${many ? 'dem' : 'den'} igen som utkast och besluta en ny utan ämnet.`,
+    code: TIMPLAN_IS_DECIDED,
+  });
 }

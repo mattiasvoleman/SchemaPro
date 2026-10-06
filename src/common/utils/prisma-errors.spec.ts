@@ -1,6 +1,12 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { rethrowPrismaError } from './prisma-errors';
+import {
+  TIMPLAN_IS_DECIDED,
+  decidedTimplanConflict,
+  decidedTimplanRefusal,
+  listNames,
+  rethrowPrismaError,
+} from './prisma-errors';
 
 const knownError = (code: string): Prisma.PrismaClientKnownRequestError =>
   new Prisma.PrismaClientKnownRequestError(`Simulated ${code}`, {
@@ -63,5 +69,101 @@ describe('rethrowPrismaError', () => {
 
   it('rethrows non-Error values unchanged', () => {
     expect(() => rethrowPrismaError('plain string')).toThrow('plain string');
+  });
+});
+
+/**
+ * The decided-plan triggers' refusal exactly as @prisma/adapter-pg 7.10 hands
+ * it over — copied from a subject delete measured against PostgreSQL 16 on the
+ * throwaway compose database, meta and rendered message both.
+ */
+const PLAN_ID = '83156d11-df1b-4265-b05c-ac94bafe6428';
+const triggerRefusal = (
+  planName = 'RLS Fixture Beslutad',
+  options: { meta?: boolean } = {},
+): Prisma.PrismaClientKnownRequestError => {
+  const message = `TIMPLAN_IS_DECIDED: lokal timplan "${planName}" är beslutad och dess poster kan inte ändras`;
+  return new Prisma.PrismaClientKnownRequestError(
+    `\nInvalid \`tx.subject.delete()\` invocation:\n\nDatabase error. Code: \`TP409\`. Message: \`${message}\``,
+    {
+      code: 'P2039',
+      clientVersion: Prisma.prismaVersion.client,
+      meta:
+        options.meta === false
+          ? { modelName: 'Subject' }
+          : {
+              modelName: 'Subject',
+              driverAdapterError: {
+                name: 'DriverAdapterError',
+                cause: {
+                  originalCode: 'TP409',
+                  originalMessage: message,
+                  kind: 'postgres',
+                  code: 'TP409',
+                  severity: 'ERROR',
+                  message,
+                  detail: `localTimplanId=${PLAN_ID}`,
+                },
+              },
+            },
+    },
+  );
+};
+
+describe('decidedTimplanRefusal', () => {
+  it('reads the plan’s name and id off the driver cause the adapter carries', () => {
+    expect(decidedTimplanRefusal(triggerRefusal())).toEqual({
+      planName: 'RLS Fixture Beslutad',
+      planId: PLAN_ID,
+    });
+  });
+
+  it('keeps a quote inside the plan’s name', () => {
+    expect(decidedTimplanRefusal(triggerRefusal('Timplan "F–9" 2024'))?.planName).toBe(
+      'Timplan "F–9" 2024',
+    );
+  });
+
+  it('still recognises the refusal from the rendered message when the meta is gone', () => {
+    expect(decidedTimplanRefusal(triggerRefusal('Grundskolan', { meta: false }))).toEqual({
+      planName: 'Grundskolan',
+      planId: null,
+    });
+  });
+
+  it('is not fooled by another database error, nor by a lookalike', () => {
+    expect(decidedTimplanRefusal(knownError('P2039'))).toBeNull();
+    expect(decidedTimplanRefusal(knownError('P2003'))).toBeNull();
+    expect(
+      decidedTimplanRefusal(Object.assign(new Error('Code: `TP409`'), { code: 'P2039' })),
+    ).toBeNull();
+    expect(decidedTimplanRefusal(undefined)).toBeNull();
+  });
+});
+
+describe('rethrowPrismaError and a decided timplan', () => {
+  it('turns the trigger’s refusal into the 409 the services answer, never a 500', () => {
+    let thrown: unknown;
+    try {
+      rethrowPrismaError(triggerRefusal('Grundskolan 2024'));
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ConflictException);
+    expect((thrown as ConflictException).getResponse()).toEqual({
+      code: TIMPLAN_IS_DECIDED,
+      message:
+        'Den lokala timplanen "Grundskolan 2024" är beslutad och kan inte ändras. Öppna den igen som ett nytt utkast för att göra ändringar.',
+    });
+  });
+
+  it('names one, several or no plans in Swedish', () => {
+    expect(listNames(['A', 'B', 'C'])).toBe('"A", "B" och "C"');
+    expect((decidedTimplanConflict(['A', 'B']).getResponse() as { message: string }).message).toBe(
+      'De lokala timplanerna "A" och "B" är beslutade och kan inte ändras. Öppna dem igen som nya utkast för att göra ändringar.',
+    );
+    expect((decidedTimplanConflict([]).getResponse() as { message: string }).message).toMatch(
+      /^Den lokala timplanen är beslutad/,
+    );
   });
 });

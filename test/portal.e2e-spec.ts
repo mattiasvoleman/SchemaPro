@@ -187,6 +187,24 @@ describe('Portal and platform surfaces (e2e)', () => {
   });
 
   describe('user administration', () => {
+    it('409s deleting the person a decided timplan names as its decider, and keeps the identity', async () => {
+      harness.tx['user']!['findUnique']!.mockResolvedValueOnce({
+        authId: '11111111-1111-4111-8111-111111111111',
+        invitedAt: new Date('2026-08-01T00:00:00.000Z'),
+      });
+      harness.tx['localTimplan']!['findMany']!.mockResolvedValueOnce([{ name: 'Grundskolan 2024' }]);
+
+      const response = await request(http())
+        .delete(`/api/v1/users/${STUDENT_ID}`)
+        .set('x-test-user', admin())
+        .expect(409);
+
+      expect(response.body.detail).toContain('"Grundskolan 2024"');
+      expect(response.body.detail).toContain('Inaktivera kontot i stället');
+      expect(harness.tx['user']!['delete']).not.toHaveBeenCalled();
+      expect(harness.supabase.deleteUser).not.toHaveBeenCalled();
+    });
+
     it('creates a user quietly — no invitation unless one is asked for', async () => {
       harness.tx['user']!['create']!.mockResolvedValue({ id: STUDENT_ID });
 
