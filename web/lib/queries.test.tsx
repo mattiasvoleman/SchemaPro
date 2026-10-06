@@ -1625,13 +1625,20 @@ describe("useImportCsv", () => {
   // (classes + teaching groups created on the fly), both membership views, and
   // the timplan. ["requirements"] is a PREFIX — the real key carries the year
   // — so every year's matrix refetches rather than only the one the dialog
-  // happened to be opened from.
+  // happened to be opened from. The three staffing keys follow for EVERY kind,
+  // not only the two that write them: a teachers file may carry a post, a
+  // behörighet file rewrites the qualification list, and the load report reads
+  // both — and the hook does not know the kind at onSuccess, so it refetches
+  // the lot rather than guess which surface went stale.
   const importKeys = [
     ["people"],
     ["groups"],
     ["groupMemberships"],
     ["groupMembers"],
     ["requirements"],
+    ["teacherEmployments"],
+    ["teacherQualifications"],
+    ["staffingLoad"],
   ];
 
   it("students POST /import/students with the academic year in the body", async () => {
