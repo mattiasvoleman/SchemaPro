@@ -150,9 +150,10 @@ done
 
 # The second school's tjänstefördelning rows. Section 7h asserts that an admin
 # and a teacher of the primary school see none of another school's policy,
-# posts or behörigheter, and with nothing planted over there each of those
-# three passes while proving nothing. Counted as the owner, like the room lock.
-for table in StaffingPolicies TeacherEmployments TeacherSubjectQualifications; do
+# posts or behörigheter, and section 17 the same of its uppdrag; with nothing
+# planted over there each of those passes while proving nothing. Counted as
+# the owner, like the room lock.
+for table in StaffingPolicies TeacherEmployments TeacherSubjectQualifications TeacherDuties; do
   foreign_rows="$(
     compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
       -v ON_ERROR_STOP=1 -tAc \
@@ -210,6 +211,24 @@ if [ -z "$plan_b" ] || [ -z "$subject_b" ] || [ -z "$school_b" ]; then
   exit 1
 fi
 
+# The second school's duty slot: an UNAVAILABLE TEACHER constraint a duty there
+# links to. Section 17 has school A's admin point a duty at it, stamped with
+# school A, which only the composite (blockedConstraintId, schoolId) key can
+# refuse — and the link trigger must leave it to the key rather than describe
+# school B's row. Read as the owner, like the decided plan above.
+constraint_b="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT c.id FROM \"AvailabilityConstraints\" c \
+       JOIN \"TeacherDuties\" d ON d.\"blockedConstraintId\" = c.id \
+      WHERE c.\"schoolId\" <> '${school_a}' AND c.reason = 'RLS fixture: APT' LIMIT 1" \
+  | tr -d '[:space:]'
+)"
+if [ -z "$constraint_b" ]; then
+  echo "FAIL: no linked duty slot in the second school; fixtures did not run." >&2
+  exit 1
+fi
+
 if [ -z "$admin_auth_id" ]; then
   echo "FAIL: no SCHOOL_ADMIN with an authId in the primary school." >&2
   exit 1
@@ -221,6 +240,7 @@ compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -v "admin_auth_id=${admin_auth_id}" \
   -v "student_b=${student_b}" -v "inactive_user_id=${inactive_user_id}" \
   -v "plan_b=${plan_b}" -v "subject_b=${subject_b}" -v "school_b=${school_b}" \
+  -v "constraint_b=${constraint_b}" \
   -v "inactive_auth_id=00000000-0000-4000-8000-000000000003" -tA -f /dev/stdin \
   < scripts/test/rls-policies.sql
 

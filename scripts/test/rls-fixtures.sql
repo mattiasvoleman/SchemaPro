@@ -212,6 +212,37 @@ JOIN "Subjects" sub ON sub."schoolId" = u."schoolId" AND sub.code = 'RLSFIX'
 WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
 ON CONFLICT ("schoolId", "userId", "subjectId") DO NOTHING;
 
+-- An uppdrag in the SECOND school with its fixed slot: the fixture teacher's
+-- APT on Tuesdays, an UNAVAILABLE TEACHER constraint, and a duty linked to it.
+-- Section 17 needs both. The duty is what the tenant half counts (school A's
+-- admin, teacher and service principal see none of it; school B's admin sees
+-- it), and the constraint is what an admin of school A points a duty of their
+-- own at, stamped with their own school — the shape only the composite key
+-- refuses, and which the link trigger must leave to that key rather than
+-- answer about school B. AvailabilityConstraints has no unique key, so NOT
+-- EXISTS on the reason keeps this idempotent.
+INSERT INTO "AvailabilityConstraints"
+  ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+SELECT u."schoolId", 'TEACHER', u.id, 2, '15:00', '17:00', 'UNAVAILABLE', 'RLS fixture: APT', now()
+FROM "Users" u
+WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
+  AND NOT EXISTS (
+    SELECT 1 FROM "AvailabilityConstraints" c
+     WHERE c."schoolId" = u."schoolId" AND c.reason = 'RLS fixture: APT'
+  );
+
+INSERT INTO "TeacherDuties"
+  ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+SELECT u."schoolId", u.id, y.id, 'APT_KONFERENS', 'RLS fixture APT', 120, c.id, now()
+FROM "Users" u
+JOIN "AcademicYears" y ON y."schoolId" = u."schoolId" AND y.name = 'RLS Fixture Year'
+JOIN "AvailabilityConstraints" c ON c."schoolId" = u."schoolId" AND c.reason = 'RLS fixture: APT'
+WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
+  AND NOT EXISTS (
+    SELECT 1 FROM "TeacherDuties" d
+     WHERE d."schoolId" = u."schoolId" AND d.label = 'RLS fixture APT'
+  );
+
 -- A SCHOOL_ADMIN in the SECOND school, and two local timplans there — a DRAFT
 -- and a DECIDED one, each with an entry — so section 16 can ask both halves of
 -- tenant isolation with rows that exist: school A's admin sees none of these,
