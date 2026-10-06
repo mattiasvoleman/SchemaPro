@@ -73,9 +73,19 @@ import {
 import { UsersService } from '../../src/users/users.service';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { TeacherDutiesService } from '../../src/staffing/teacher-duties.service';
+import { lockEmploymentsOf } from '../../src/staffing/staffing-enforcement';
+import { TeachingRequirementsService } from '../../src/resources/teaching-requirements.service';
+import { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
 
 /** Marks every row the probe writes that has a text column to mark. */
 const MARKER = 'prisma-adapter-probe';
+
+/**
+ * StaffingPolicies has no text column to mark, so a policy row the probe
+ * creates carries a fullTimeAnnualHours no school states (2 077 of a 1..2500
+ * range; Bilaga M says 1 767), and the sweep removes exactly that row.
+ */
+const PROBE_ANNUAL_HOURS = 2077;
 
 /**
  * Grade 12 on a Sunday at 05:07: a window no seeded or fixture row holds, and
@@ -1218,6 +1228,163 @@ async function runChecks(
     assert.deepEqual(stored, [{ userId: person.id, minutesPerWeek: 25, countsAsTeaching: true, blockedConstraintId: null }]);
   });
 
+  // ---- (r) the staffing checks: a post locked through the real adapter
+  await check('(r) two admins staffing one teacher cannot both pass: the post lock binds an id array, waits, and the second is a 409', async () => {
+    const requirements = new TeachingRequirementsService(api);
+    const other = open(withConnectionLimit(appUrl, 1));
+    await other.onModuleInit();
+    const rivalRequirements = new TeachingRequirementsService(other);
+
+    const group = await onlyRow<{ id: string; name: string }>(
+      owner,
+      `SELECT id, name FROM "StudentGroups" WHERE "schoolId" = $1 AND "academicYearId" = $2 ORDER BY name LIMIT 1`,
+      [fixture.schoolId, fixture.activeYearId],
+      'a group of the demo school’s active year',
+    );
+    const [person] = (
+      await owner.query<{ id: string }>(
+        `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+         VALUES ($1, $2, 'Probe', 'Staff', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id`,
+        [fixture.schoolId, `${MARKER}-staff@example.invalid`],
+      )
+    ).rows;
+    // A 100-minute target, no tolerance: one 60-minute row fits, two do not.
+    await owner.query(
+      `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "teachingTargetMinutesPerWeek", "updatedAt")
+       VALUES ($1, $2, $3, 100, 100, now())`,
+      [fixture.schoolId, person.id, fixture.activeYearId],
+    );
+    const subjectIds: string[] = [];
+    for (const name of [`${MARKER} ma`, `${MARKER} fy`]) {
+      subjectIds.push(
+        (
+          await owner.query<{ id: string }>(
+            `INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES ($1, $2, now()) RETURNING id`,
+            [fixture.schoolId, name],
+          )
+        ).rows[0].id,
+      );
+    }
+
+    // The school's policy: kept and put back if it has one, created marked if not.
+    const kept = (
+      await owner.query<Record<string, unknown>>(
+        `SELECT "qualificationMode"::text, "overAllocationMode"::text, "overAllocationTolerancePercent",
+                "unstaffedGeneration"::text
+           FROM "StaffingPolicies" WHERE "schoolId" = $1`,
+        [fixture.schoolId],
+      )
+    ).rows[0];
+    if (kept) {
+      await owner.query(
+        `UPDATE "StaffingPolicies" SET "qualificationMode" = 'OFF', "overAllocationMode" = 'REFUSE',
+                "overAllocationTolerancePercent" = 0, "unstaffedGeneration" = 'REFUSE' WHERE "schoolId" = $1`,
+        [fixture.schoolId],
+      );
+    } else {
+      await owner.query(
+        `INSERT INTO "StaffingPolicies" ("schoolId", "fullTimeAnnualHours", "qualificationMode", "overAllocationMode",
+                "overAllocationTolerancePercent", "unstaffedGeneration", "updatedAt")
+         VALUES ($1, $2, 'OFF', 'REFUSE', 0, 'REFUSE', now())`,
+        [fixture.schoolId, PROBE_ANNUAL_HOURS],
+      );
+    }
+    const teacherOf = async (id: string) =>
+      (await owner.query<{ teacherId: string | null }>('SELECT "teacherId" FROM "TeachingRequirements" WHERE id = $1', [id]))
+        .rows[0].teacherId;
+    const isOverTarget = (minutes: number) => (error: unknown) => {
+      assert.ok(error instanceof ConflictException, summarise(error));
+      const body = error.getResponse() as { code?: string; params?: Record<string, unknown> };
+      assert.equal(body.code, 'STAFF_TEACHER_OVER_TARGET');
+      assert.deepEqual(body.params, { role: 'TEACHER', minutes, target: 100, limit: 100, tolerance: 0 });
+      return true;
+    };
+
+    try {
+      const [a, b] = await Promise.all(
+        subjectIds.map((subjectId) =>
+          requirements.create(
+            { academicYearId: fixture.activeYearId, subjectId, studentGroupId: group.id, lessonsPerWeek: 1, minutesPerLesson: 60 } as never,
+            admin,
+          ),
+        ),
+      );
+
+      // One after the other: the first fits, the second is refused and not written.
+      const first = await requirements.update(a.id, { teacherId: person.id } as never, admin);
+      assert.deepEqual(first.warnings, []);
+      await assert.rejects(requirements.update(b.id, { teacherId: person.id } as never, admin), isOverTarget(120));
+      assert.equal(await teacherOf(b.id), null, 'the refused PATCH wrote its teacher');
+
+      // Concurrently. The holder is the first admin's write parked mid-way —
+      // the service's own lock, then the assignment — and the rival is the
+      // second admin through the real service on its own connection. The
+      // rival must WAIT on the holder's lock (asked of the database, not of a
+      // clock), and once the holder commits, read its row and be refused.
+      await requirements.update(a.id, { teacherId: null } as never, admin);
+      const touched = deferred<number>();
+      const release = deferred<void>();
+      const holder = api.withRls(admin, async (tx) => {
+        assert.equal(await lockEmploymentsOf(tx, fixture.activeYearId, [person.id]), 1);
+        await tx.teachingRequirement.update({ where: { id: a.id }, data: { teacherId: person.id } });
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        touched.resolve(pid);
+        await release.promise;
+      });
+      const holderSettled = holder.then(() => null, (error: unknown) => error);
+      const pid = await Promise.race([
+        touched.promise,
+        holderSettled.then((error) => {
+          throw error ?? new Error('the holder committed before it parked');
+        }),
+      ]);
+      const rivalSettled = rivalRequirements
+        .update(b.id, { teacherId: person.id } as never, admin)
+        .then(() => null, (error: unknown) => error);
+      for (let tries = 0; ; tries++) {
+        const { rows } = await owner.query<{ n: number }>(
+          'SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))',
+          [pid],
+        );
+        if (rows[0].n > 0) break;
+        if (tries > 500) throw new Error('the second admin’s write never waited on the first one’s post lock');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      release.resolve();
+      const [holderError, rivalError] = await Promise.all([holderSettled, rivalSettled]);
+      assert.equal(holderError, null, `the holder failed: ${summarise(holderError)}`);
+      assert.notEqual(rivalError, null, 'both admins’ writes passed: the second was judged on a load read before the first committed');
+      isOverTarget(120)(rivalError);
+      assert.equal(await teacherOf(a.id), person.id);
+      assert.equal(await teacherOf(b.id), null, 'both admins’ writes committed: the teacher is over target');
+
+      // The generate pre-flight through the adapter: b has no teacher, and the
+      // policy refuses — no engine, and b named by subject and group.
+      const proxy = new OptimizationProxyService(
+        api,
+        { post: () => { throw new Error('the engine was called'); } } as never,
+        { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1 }) } as never,
+      );
+      const refused = await proxy.triggerScheduling(fixture.activeYearId, admin);
+      assert.equal(refused.status, 'INFEASIBLE');
+      assert.equal(refused.conflicts?.summaryCode, 'STAFF_UNSTAFFED_REQUIREMENTS');
+      const detail = refused.conflicts?.conflicts[0];
+      assert.ok(detail?.resourceIds.includes(b.id), 'the refusal does not name the unstaffed row by its real id');
+      assert.ok(
+        detail?.resourceNames?.includes(`${MARKER} fy för ${group.name}`),
+        `the refusal named ${JSON.stringify(detail?.resourceNames)}`,
+      );
+    } finally {
+      if (kept) {
+        await owner.query(
+          `UPDATE "StaffingPolicies" SET "qualificationMode" = $2::"StaffingCheckMode", "overAllocationMode" = $3::"StaffingCheckMode",
+                  "overAllocationTolerancePercent" = $4, "unstaffedGeneration" = $5::"UnstaffedGenerationMode" WHERE "schoolId" = $1`,
+          [fixture.schoolId, kept.qualificationMode, kept.overAllocationMode, kept.overAllocationTolerancePercent, kept.unstaffedGeneration],
+        );
+      }
+    }
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the
@@ -1361,6 +1528,14 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   );
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-duty@example.invalid'`, [schoolId, MARKER]);
+  // (r): the person (their post goes with them), the two subjects (their
+  // timplansposter go with them) and the policy row the probe created.
+  await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-staff@example.invalid'`, [schoolId, MARKER]);
+  await owner.query(`DELETE FROM "Subjects" WHERE "schoolId" = $1 AND name LIKE $2 || ' %'`, [schoolId, MARKER]);
+  await owner.query('DELETE FROM "StaffingPolicies" WHERE "schoolId" = $1 AND "fullTimeAnnualHours" = $2', [
+    schoolId,
+    PROBE_ANNUAL_HOURS,
+  ]);
   // Plans before the subject: a decided plan's entries refuse the subject's
   // cascade, and the plans' own cascade passes the trigger.
   await owner.query(`DELETE FROM "LocalTimplans" WHERE "schoolId" = $1 AND name LIKE $2 || '%'`, [schoolId, MARKER]);
