@@ -679,6 +679,70 @@ describe('UsersService', () => {
       });
     });
 
+    it('refuses to make a teacher a pupil while their post or behörighet stands, naming both', async () => {
+      // The other half of src/staffing/staff-lock.ts: the staffing writes
+      // check the role under the Users lock, and this is what stops the role
+      // from leaving afterwards with the rows still there.
+      storeUser({ role: UserRole.TEACHER, studentGroupId: null });
+      tx.teacherEmployment.count.mockResolvedValue(1);
+      tx.teacherSubjectQualification.count.mockResolvedValue(3);
+
+      await expect(
+        service.update(USER_ID, { role: UserRole.STUDENT }, testUser()),
+      ).rejects.toThrow(
+        new ConflictException(
+          'Personen kan inte bli elev: 1 tjänst och 3 behörigheter finns registrerade. Ta bort dem under Personer först.',
+        ),
+      );
+
+      // Counted in the transaction that holds the lock, by the row's own id.
+      expect(tx.teacherEmployment.count).toHaveBeenCalledWith({ where: { userId: USER_ID } });
+      expect(tx.teacherSubjectQualification.count).toHaveBeenCalledWith({
+        where: { userId: USER_ID },
+      });
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('names only the rows that exist when a rektor becomes a guardian', async () => {
+      storeUser({ role: UserRole.SCHOOL_ADMIN, studentGroupId: null });
+      tx.teacherEmployment.count.mockResolvedValue(0);
+      tx.teacherSubjectQualification.count.mockResolvedValue(1);
+
+      await expect(
+        service.update(USER_ID, { role: UserRole.GUARDIAN }, testUser()),
+      ).rejects.toThrow(
+        new ConflictException(
+          'Personen kan inte bli vårdnadshavare: 1 behörighet finns registrerade. Ta bort dem under Personer först.',
+        ),
+      );
+      expect(tx.user.update).not.toHaveBeenCalled();
+    });
+
+    it('lets a teacher become a pupil once nothing is registered, and staff stay staff unasked', async () => {
+      // The control: with no rows the demotion goes through; and a change
+      // between the two staff roles never counts anything, since a teaching
+      // rektor keeps their post.
+      storeUser({ role: UserRole.TEACHER, studentGroupId: null });
+      tx.teacherEmployment.count.mockResolvedValue(0);
+      tx.teacherSubjectQualification.count.mockResolvedValue(0);
+      tx.user.update.mockResolvedValue({ id: USER_ID });
+
+      await service.update(USER_ID, { role: UserRole.STUDENT }, testUser());
+      expect(tx.user.update).toHaveBeenCalledWith({
+        where: { id: USER_ID },
+        data: { role: UserRole.STUDENT },
+      });
+
+      tx.teacherEmployment.count.mockClear();
+      tx.teacherEmployment.count.mockResolvedValue(1);
+      await service.update(USER_ID, { role: UserRole.SCHOOL_ADMIN }, testUser());
+      expect(tx.teacherEmployment.count).not.toHaveBeenCalled();
+      expect(tx.user.update).toHaveBeenLastCalledWith({
+        where: { id: USER_ID },
+        data: { role: UserRole.SCHOOL_ADMIN },
+      });
+    });
+
     it('404s an id the caller cannot see before validating anything', async () => {
       storeUser(null);
 

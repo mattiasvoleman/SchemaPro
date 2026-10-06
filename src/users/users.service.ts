@@ -1,18 +1,37 @@
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import type { User } from '@prisma/client';
+import type { User, UserRole } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { SupabaseAdminService } from './supabase-admin.service';
 import type { CreateUserDto, UpdateUserDto } from './dto/user.dto';
+
+/**
+ * Whose post or behörighet may exist: the same two roles staff-lock.ts admits,
+ * because a teaching rektor carries SCHOOL_ADMIN and is named on requirements.
+ */
+const isStaff = (role: UserRole): boolean => role === 'TEACHER' || role === 'SCHOOL_ADMIN';
+
+/** "1 tjänst och 3 behörigheter", naming only what is there. */
+function describeStaffingRows(employments: number, qualifications: number): string {
+  const parts: string[] = [];
+  if (employments > 0) {
+    parts.push(`${employments} ${employments === 1 ? 'tjänst' : 'tjänster'}`);
+  }
+  if (qualifications > 0) {
+    parts.push(`${qualifications} ${qualifications === 1 ? 'behörighet' : 'behörigheter'}`);
+  }
+  return parts.join(' och ');
+}
 
 /** Outcome of inviting one person. */
 export interface InvitationResult {
@@ -221,6 +240,16 @@ export class UsersService {
    * lock also needs the UPDATE policy to admit the row, and `users_admin_all`
    * does for the admin the controller already requires, so a user in another
    * school still reads as missing and gets the same 404.
+   *
+   * The same lock is the other half of src/staffing/staff-lock.ts. A post and a
+   * behörighet belong to a member of staff, and the staffing writes read this
+   * row FOR NO KEY UPDATE to make sure of it — which only settles the race. A
+   * PATCH that makes a teacher a pupil AFTER their post was written would
+   * leave a STUDENT holding a tjänstgöringsgrad and a legitimation, and the
+   * load report would list a pupil among the teachers. So a role change out
+   * of staff is refused while such rows exist, by count and in the same
+   * transaction, and the sentence names what to remove first. No DB CHECK can
+   * say this (cross-table), which is why it is said here.
    */
   async update(id: string, dto: UpdateUserDto, user: AuthenticatedUser): Promise<User> {
     try {
@@ -249,6 +278,18 @@ export class UsersService {
           throw new BadRequestException(
             'Only students can be assigned to a student group.',
           );
+        }
+
+        if (isStaff(current.role) && !isStaff(role)) {
+          const [employments, qualifications] = await Promise.all([
+            tx.teacherEmployment.count({ where: { userId: id } }),
+            tx.teacherSubjectQualification.count({ where: { userId: id } }),
+          ]);
+          if (employments > 0 || qualifications > 0) {
+            throw new ConflictException(
+              `Personen kan inte bli ${role === 'STUDENT' ? 'elev' : 'vårdnadshavare'}: ${describeStaffingRows(employments, qualifications)} finns registrerade. Ta bort dem under Personer först.`,
+            );
+          }
         }
 
         return tx.user.update({

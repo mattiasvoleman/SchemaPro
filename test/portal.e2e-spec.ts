@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import request from 'supertest';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
+import { lockingRead, type LockedTable } from './utils/locking-read';
 
 /**
  * The surfaces outside the admin's planning work: the guardian portal, teacher
@@ -306,6 +307,42 @@ describe('Portal and platform surfaces (e2e)', () => {
           email: 'a@example.com',
         })
         .expect(403);
+    });
+
+    it('409s making a teacher a pupil while their tjänst stands, in Swedish', async () => {
+      // The locking read of the stored role (FOR NO KEY UPDATE, answered as
+      // the table would — the auto-vivifying tx hands back a proxy for
+      // `$queryRaw`, and a proxy is not callable), then the two staffing
+      // counts that answer whether the role may leave staff at all.
+      const USERS: LockedTable = {
+        name: 'Users',
+        columns: ['id', 'schoolId', 'role', 'firstName', 'lastName', 'email', 'isActive', 'studentGroupId'],
+        lock: 'FOR NO KEY UPDATE',
+      };
+      Object.assign(harness.tx, {
+        $queryRaw: jest.fn((...call: unknown[]) =>
+          Promise.resolve(
+            lockingRead(USERS, [{ id: GUARDIAN_ID, role: 'TEACHER', studentGroupId: null }], call),
+          ),
+        ),
+      });
+      harness.tx['teacherEmployment']!['count']!.mockResolvedValue(1);
+      harness.tx['teacherSubjectQualification']!['count']!.mockResolvedValue(0);
+
+      try {
+        const response = await request(http())
+          .patch(`/api/v1/users/${GUARDIAN_ID}`)
+          .set('x-test-user', admin())
+          .send({ role: 'STUDENT' })
+          .expect(409);
+
+        expect(response.body.detail).toContain('1 tjänst');
+        expect(harness.tx['user']!['update']).not.toHaveBeenCalled();
+      } finally {
+        // The harness outlives the test, and the table this row answered
+        // from is not the next one's.
+        delete (harness.tx as Record<string, unknown>)['$queryRaw'];
+      }
     });
   });
 
