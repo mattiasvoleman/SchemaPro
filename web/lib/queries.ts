@@ -20,6 +20,7 @@ import type {
   BreakKind,
   CalendarLessonRow,
   MasterLesson,
+  NationalTimplans,
   Person,
   Room,
   RoomBooking,
@@ -102,11 +103,34 @@ export function useSubjects() {
       sortByName(
         await selectAll<Subject>(
           "Subjects",
-          "id, name, code, color, requiredRoomTypeId",
+          // nationalCode and countsTowardTimplan are part of the row the
+          // subjects form writes back: left out of this list, the dialog would
+          // open on "Utanför timplanen" for every mapped subject and the next
+          // save would clear the mapping.
+          "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan",
           "name",
         ),
         (subject) => subject.name,
       ),
+  });
+}
+
+/**
+ * The national timplan: every seeded lydelse with its cells, and the national
+ * ämnen a Subject.nationalCode may name.
+ *
+ * Read through the gateway rather than Supabase, for the same reason room
+ * types are: the endpoint hands the three reference tables out as ONE document
+ * with an ETag, and the subjects dialog, a coverage page and a timplan grid all
+ * want the same document. It is statute text that changes when the riksdag
+ * says so, not when a school saves something, so it is held for an hour before
+ * refetching and never invalidated by a mutation.
+ */
+export function useNationalTimplans() {
+  return useQuery({
+    queryKey: ["national-timplans"],
+    queryFn: () => api.get<NationalTimplans>("/api/v1/national-timplans"),
+    staleTime: 60 * 60 * 1000,
   });
 }
 

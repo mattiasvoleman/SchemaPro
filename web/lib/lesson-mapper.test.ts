@@ -28,6 +28,8 @@ const subject: Subject = {
   code: "MA",
   color: "#123456",
   requiredRoomTypeId: null,
+  nationalCode: null,
+  countsTowardTimplan: true,
 };
 const group: StudentGroup = {
   id: "grp-1",

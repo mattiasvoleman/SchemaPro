@@ -467,7 +467,7 @@ describe("mapTeacherRows", () => {
 
   it("returns zero rows and zero errors for a header-only file", () => {
     const result = mapTeacherRows(parseCsv("fornamn;efternamn;epost\r\n"));
-    expect(result).toEqual({ rows: [], errors: [] });
+    expect(result).toEqual({ rows: [], errors: [], rowNumbers: [] });
   });
 
   it("blank lines do not advance the reported row number (row = data-row index, not file line)", () => {
@@ -788,7 +788,9 @@ describe("subjects", () => {
     code: string | null,
     color: string | null,
     requiredRoomTypeId: string | null,
-  ) => ({ name, code, color, requiredRoomTypeId });
+    nationalCode: string | null = null,
+    countsTowardTimplan = true,
+  ) => ({ name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan });
 
   const named = (id: string | null) =>
     id === "rt-tx" ? "Textilslöjd" : id === "rt-lab" ? "Laborationssal" : "";
@@ -798,14 +800,121 @@ describe("subjects", () => {
 
     expect(errors).toEqual([]);
     expect(rows).toEqual([
-      { name: "Matematik", code: "MA", color: "#4f46e5", roomType: "" },
+      {
+        name: "Matematik",
+        code: "MA",
+        color: "#4f46e5",
+        roomType: "",
+        nationalCode: "MA",
+        countsTowardTimplan: true,
+      },
       {
         name: "Textilslöjd",
         code: "SLTX",
         color: "#db2777",
         roomType: "Textilslöjd",
+        nationalCode: "SL",
+        countsTowardTimplan: true,
+      },
+      // The example that shows what the flag is for.
+      {
+        name: "Mentorstid",
+        code: "MT",
+        color: "#64748b",
+        roomType: "",
+        nationalCode: null,
+        countsTowardTimplan: false,
       },
     ]);
+  });
+
+  it("reads a file from before the timplan columns exactly as it always did", () => {
+    // Absent columns are the defaults the server applies: outside the national
+    // timplan, and counting as teaching time. Null, not false — the server's
+    // DTO lets null mean "default", and false would silently drop the subject
+    // from every undervisningstid sum.
+    const { rows, errors } = mapSubjectRows(parseCsv("namn;kod;farg;salstyp\nBild;BL;;\n"));
+
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      {
+        name: "Bild",
+        code: "BL",
+        color: "",
+        roomType: "",
+        nationalCode: null,
+        countsTowardTimplan: null,
+      },
+    ]);
+  });
+
+  it("reads ja and nej in the spellings a spreadsheet produces, and an empty cell as null", () => {
+    const csv =
+      "namn;undervisningstid\n" +
+      "A;ja\nB;Ja\nC;J\nD;true\nE;1\nF;x\n" +
+      "G;nej\nH;NEJ\nI;n\nJ;false\nK;0\n" +
+      "L;\nM;   \n";
+    const { rows, errors } = mapSubjectRows(parseCsv(csv));
+
+    expect(errors).toEqual([]);
+    expect(rows.map((row) => row.countsTowardTimplan)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      null,
+      null,
+    ]);
+  });
+
+  it("refuses a yes/no cell it cannot read, on that row alone, naming the column", () => {
+    // Sent as the text "kanske", the API's typed DTO would 400 the WHOLE
+    // upload with one message for the file. Here the row is named and the
+    // other rows still import.
+    const { rows, errors } = mapSubjectRows(
+      parseCsv("namn;undervisningstid\nMatematik;ja\nMentorstid;kanske\nBild;nej\n"),
+    );
+
+    expect(rows.map((row) => row.name)).toEqual(["Matematik", "Bild"]);
+    expect(errors).toEqual([
+      { row: 2, message: 'Rad 2: kolumnen "undervisningstid" ska vara ja eller nej, inte "kanske".' },
+    ]);
+  });
+
+  it("keeps file order when a missing name and a bad flag both fail rows", () => {
+    const { rows, errors } = mapSubjectRows(
+      parseCsv("namn;undervisningstid\nMatematik;kanske\n;ja\nBild;nej\n"),
+    );
+
+    expect(rows.map((row) => row.name)).toEqual(["Bild"]);
+    expect(errors.map((error) => error.row)).toEqual([1, 2]);
+    expect(errors[1]?.message).toContain("namn");
+  });
+
+  it("passes the national code through verbatim and an empty cell as null", () => {
+    // Case folding is the server's: it checks the code against the reference
+    // table inside the writing transaction, and its 400 names the field.
+    const { rows } = mapSubjectRows(
+      parseCsv("namn;nationell_kod\nMatematik; ma \nKemi;KE\nMentorstid;\n"),
+    );
+
+    expect(rows.map((row) => row.nationalCode)).toEqual(["ma", "KE", null]);
+  });
+
+  it("finds the timplan columns under their English and long Swedish headers too", () => {
+    const { rows, errors } = mapSubjectRows(
+      parseCsv("namn;nationalCode;Räknas som undervisningstid\nMatematik;MA;nej\n"),
+    );
+
+    expect(errors).toEqual([]);
+    expect(rows[0]).toMatchObject({ nationalCode: "MA", countsTowardTimplan: false });
   });
 
   it("requires only the name — colour and room type are optional", () => {
@@ -834,15 +943,24 @@ describe("subjects", () => {
   it("writes empty cells for a subject with no code, colour or room type", () => {
     const csv = subjectsToCsv([subject("Bild", null, null, null)], named);
 
-    expect(csv.trimEnd().split("\r\n").at(-1)).toBe("Bild;;;");
+    // The flag is NOT NULL in the database, so the export always has a word
+    // for it; the national code is nullable and exports as the empty cell.
+    expect(csv.trimEnd().split("\r\n").at(-1)).toBe("Bild;;;;;ja");
+  });
+
+  it("writes the flag as nej, in the word the importer reads back, never as false", () => {
+    const csv = subjectsToCsv([subject("Mentorstid", "MT", null, null, null, false)], named);
+
+    expect(csv.trimEnd().split("\r\n").at(-1)).toBe("Mentorstid;MT;;;;nej");
   });
 
   it("round-trips: an exported file imports back to what was exported", () => {
     const exported = subjectsToCsv(
       [
-        subject("Matematik", "MA", "#4f46e5", null),
-        subject("Slöjd", "SL", "#db2777", "rt-tx"),
-        subject("Kemi", null, null, "rt-lab"),
+        subject("Matematik", "MA", "#4f46e5", null, "MA"),
+        subject("Slöjd", "SL", "#db2777", "rt-tx", "SL"),
+        subject("Kemi", null, null, "rt-lab", "KE"),
+        subject("Mentorstid", "MT", null, null, null, false),
       ],
       named,
     );
@@ -851,9 +969,38 @@ describe("subjects", () => {
 
     expect(errors).toEqual([]);
     expect(rows).toEqual([
-      { name: "Matematik", code: "MA", color: "#4f46e5", roomType: "" },
-      { name: "Slöjd", code: "SL", color: "#db2777", roomType: "Textilslöjd" },
-      { name: "Kemi", code: "", color: "", roomType: "Laborationssal" },
+      {
+        name: "Matematik",
+        code: "MA",
+        color: "#4f46e5",
+        roomType: "",
+        nationalCode: "MA",
+        countsTowardTimplan: true,
+      },
+      {
+        name: "Slöjd",
+        code: "SL",
+        color: "#db2777",
+        roomType: "Textilslöjd",
+        nationalCode: "SL",
+        countsTowardTimplan: true,
+      },
+      {
+        name: "Kemi",
+        code: "",
+        color: "",
+        roomType: "Laborationssal",
+        nationalCode: "KE",
+        countsTowardTimplan: true,
+      },
+      {
+        name: "Mentorstid",
+        code: "MT",
+        color: "",
+        roomType: "",
+        nationalCode: null,
+        countsTowardTimplan: false,
+      },
     ]);
   });
 
