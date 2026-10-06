@@ -40,8 +40,9 @@
     <li><span>4 · Fas 2 — Planering</span><span class="dots"></span><span class="pg" data-pg="ch4"></span></li>
     <ol>
       <li><span>4.1 Timplan</span><span class="dots"></span><span class="pg" data-pg="s41"></span></li>
-      <li><span>4.2 Tillgänglighet</span><span class="dots"></span><span class="pg" data-pg="s42"></span></li>
-      <li><span>4.3 Raster</span><span class="dots"></span><span class="pg" data-pg="s43"></span></li>
+      <li><span>4.2 Timplansposter</span><span class="dots"></span><span class="pg" data-pg="s42"></span></li>
+      <li><span>4.3 Tillgänglighet</span><span class="dots"></span><span class="pg" data-pg="s43"></span></li>
+      <li><span>4.4 Raster</span><span class="dots"></span><span class="pg" data-pg="s44"></span></li>
     </ol>
     <li><span>5 · Fas 3 — Schemaläggning</span><span class="dots"></span><span class="pg" data-pg="ch5"></span></li>
     <ol>
@@ -82,7 +83,7 @@
   <table>
     <thead><tr><th style="width:34%">Skrivsätt</th><th>Betydelse</th></tr></thead>
     <tbody>
-      <tr><td class="k"><span class="path">Planering › Timplan</span></td><td>En sökväg i menyn till vänster. Klicka posterna i angiven ordning.</td></tr>
+      <tr><td class="k"><span class="path">Planering › Timplansposter</span></td><td>En sökväg i menyn till vänster. Klicka posterna i angiven ordning.</td></tr>
       <tr><td class="k"><span class="ui">Generera schema</span></td><td>Namnet på en knapp, ett fält eller en rubrik så som det står i gränssnittet.</td></tr>
       <tr><td class="k">Kontrollera</td><td>Ett kort test som visar om momentet lyckades. Hoppa inte över dem — de fångar fel medan de fortfarande är billiga att rätta.</td></tr>
     </tbody>
@@ -128,7 +129,7 @@
     <div class="phase">
       <div class="n">Fas 2</div>
       <div class="t">Planering</div>
-      <div class="d">Timplan och tillgänglighet. Här avgörs schemats kvalitet.</div>
+      <div class="d">Timplan, timplansposter och tillgänglighet. Här avgörs schemats kvalitet.</div>
     </div>
     <div class="phase">
       <div class="n">Fas 3</div>
@@ -499,7 +500,7 @@
   <div class="check">
     <span class="label">Kontrollera</span>
     <p>
-      Öppna <span class="path">Planering › Timplan</span>. Kan du välja klass,
+      Öppna <span class="path">Planering › Timplansposter</span>. Kan du välja klass,
       ämne och lärare i rullistorna är fas 1 klar. Saknas något i en lista är
       motsvarande steg i <span class="ui">Kom igång</span> ofullständigt.
     </p>
@@ -519,7 +520,113 @@
 
   <h3 id="s41"><span class="num">4.1</span>Timplan</h3>
   <p>
-    Gå till <span class="path">Planering › Timplan</span>. En post beskriver ett
+    Gå till <span class="path">Planering › Timplan</span>. Här lägger du in
+    skolans <strong>lokala timplan</strong>: hur många minuter per vecka varje
+    ämne får i varje årskurs. Det är huvudmannens beslut om fördelningen mellan
+    årskurserna, på rektors förslag — skolförordningens timplan anger bara
+    timmar per stadium, aldrig minuter per vecka. Sidan räknar om dina minuter
+    till stadietimmar och ställer dem bredvid förordningens siffror.
+  </p>
+  <div class="note">
+    <span class="label">Sidan hette tidigare något annat</span>
+    <p>
+      Det som tidigare hette <em>Timplan</em> i menyn heter nu
+      <span class="path">Planering › Timplansposter</span> (4.2) och ligger kvar
+      på samma adress. Namnet <em>Timplan</em> har gått till den här sidan,
+      eftersom det är målet som timplansposterna ska lägga ut.
+    </p>
+  </div>
+  <p>
+    Börja med <span class="ui">Ny timplan</span>. Ange ett namn, till exempel
+    <em>Grundskola 2026–</em>, välj <span class="ui">Skolform</span> och den
+    <span class="ui">Nationella timplan</span> planen ska jämföras med.
+    Skolformen avgör vilka årskurser rutnätet har — grundskolan F–9,
+    specialskolan F–10, sameskolan F–6 — och kan inte ändras efteråt; en plan
+    för en annan skolform är en kopia. Fältet
+    <span class="ui">Planeringsveckor</span> är förifyllt med 35,6: 178
+    skoldagar delat med fem. Minuter per vecka gånger veckorna, delat med 60,
+    blir stadiets timmar.
+  </p>
+  <p>
+    Rutnätet har en rad per ämne och en kolumn per årskurs. Skriv hela minuter
+    per vecka i rutorna; <em>0</em> betyder att ämnet inte läses den årskursen,
+    en tom ruta att inget är bestämt. Efter varje stadiums årskurser står
+    stadiets summa i timmar, med förordningens timmar under. Summan är färgad:
+  </p>
+  <table>
+    <thead><tr><th style="width:18%">Färg</th><th>Betyder</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Grön</td><td>Ämnet når förordningens timmar i stadiet.</td></tr>
+      <tr><td class="k">Gul</td><td>Under målet, men inom vad skolans val får ta: högst 20 % av ämnet i stadiet (15 % i sameskolan), och inte ett skyddat ämne. Tiden räknas mot skolans val.</td></tr>
+      <tr><td class="k">Röd</td><td>Under målet där förordningen inte medger det: svenska/svenska som andraspråk, engelska, matematik eller språkval minskat; ett ämne minskat med mer än taket; eller ett NO- eller SO-ämne under sin minsta tid.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Flera av skolans ämnen kan räknas mot samma rad: <em>Svenska</em> och
+    <em>Svenska som andraspråk</em> fyller tillsammans SV_SVA, och
+    <em>Biologi</em>, <em>Fysik</em> och <em>Kemi</em> fyller NO. Vilken rad ett
+    ämne räknas mot styrs av ämnets nationella kod (3.2). Ämnen som inte räknas
+    som undervisningstid, som mentorstid, ligger i ett eget avsnitt längst ned
+    och ingår inte i någon summa.
+  </p>
+  <p>
+    <strong>Skolans val</strong> är ingen egen rad. Det är tid skolan tar från
+    ämnena — summan av alla underskott — och lägger någon annanstans: i ett
+    ämne utan nationell kod, som <em>Programmering</em>, eller som extra tid i
+    ett annat ämne. Raderna längst ned visar <span class="ui">Totalt</span>
+    mot den garanterade undervisningstiden och hur mycket av skolans val som
+    tagits och lagts.
+  </p>
+  <p>
+    Till höger listas allt som ligger under målet. Klickar du på en rad
+    markeras rutorna den gäller i rutnätet. Medan du skriver räknas listan om
+    direkt i webbläsaren och märks <em>inte sparat ännu</em>; efter
+    <span class="ui">Spara</span> visas systemets egen kontroll.
+  </p>
+  <div class="note">
+    <span class="label">Under mål är inte ett fel</span>
+    <p>
+      Ingenting på sidan hindrar dig från att spara eller besluta en plan som
+      ligger under målet. Lagen tillåter avvikelser — anpassad studiegång,
+      prioriterad timplan — och listan finns för att avvikelsen ska synas, inte
+      för att stoppa den.
+    </p>
+  </div>
+  <p>
+    När planen är klar trycker du <span class="ui">Besluta</span> och skriver
+    en <span class="ui">Beslutsnotering</span> som identifierar beslutet, till
+    exempel <em>Beslutat av huvudman 2026-05-12, dnr 2026/14</em>. En beslutad
+    plan är ett dokument: rutnätet blir skrivskyddat och planen visar vem som
+    beslutade och när. Ska något ändras använder du
+    <span class="ui">Öppna igen</span>, som skapar ett nytt utkast med samma
+    rutor — den beslutade planen ligger kvar som den var.
+    <span class="ui">Kopiera</span> gör ett nytt utkast av vilken plan som
+    helst. En beslutad plan kan tas bort, men bara efter en bekräftelse som
+    säger att det är en beslutad plan.
+  </p>
+  <p>
+    Planen kan <span class="ui">Exporteras</span> och
+    <span class="ui">Importeras</span> som CSV med kolumnerna
+    <span class="k">amne</span> (ämnets kod eller namn),
+    <span class="k">arskurs</span> (<em>F</em> för förskoleklass, annars 1–10),
+    <span class="k">minuter_per_vecka</span> och en valfri
+    <span class="k">notering</span>. Importen lägger till och skriver över
+    rutor men tar inte bort några, och den går bara till ett utkast.
+  </p>
+  <div class="warn">
+    <span class="label">2028 års timplan</span>
+    <p>
+      Den tioåriga grundskolan (SFS 2025:729) gäller utbildning från höstterminen
+      2028, men fördelningen mellan ämnen och stadier är inte publicerad ännu.
+      En plan mot den visar <em>fördelning ej publicerad</em> och jämförs bara
+      mot den garanterade totalen, 7 424 timmar — inte ämne för ämne.
+    </p>
+  </div>
+
+  <h3 id="s42"><span class="num">4.2</span>Timplansposter</h3>
+  <p>
+    Gå till <span class="path">Planering › Timplansposter</span>. Sidan hette
+    tidigare <em>Timplan</em>. En post beskriver ett
     undervisningsbehov: <em>klass, ämne, lärare, antal lektioner per vecka och
     lektionslängd i minuter</em>. Lägg in en post för varje kombination av klass
     och ämne.
@@ -594,7 +701,7 @@
     </p>
   </div>
 
-  <h3 id="s42"><span class="num">4.2</span>Tillgänglighet</h3>
+  <h3 id="s43"><span class="num">4.3</span>Tillgänglighet</h3>
   <p>
     Gå till <span class="path">Planering › Tillgänglighet</span>. Här anges när
     en lärare, en sal eller en klass <strong>inte</strong> är tillgänglig — till
@@ -668,7 +775,7 @@
       ska vara uppfyllda innan du fortsätter.
     </p>
   </div>
-  <h3 id="s43"><span class="num">4.3</span>Raster</h3>
+  <h3 id="s44"><span class="num">4.4</span>Raster</h3>
   <p>
     Gå till <span class="path">Planering › Raster</span>. Här anger du de
     minuter av dagen ett stadium <strong>inte</strong> undervisas — förmiddagsrast,
@@ -1077,7 +1184,7 @@
     oftast runt tio sekunder. Optimeringen räknar varje gång någon byter sal
     mellan två lektioner i följd samma dag, och väger ett byte av hus tyngst,
     sedan ett byte av våning, sedan ett byte av sal. Har ämnet en mjuk regel
-    för salar (se 4.2) räknas det också när lektionen hamnar utanför den.
+    för salar (se 4.3) räknas det också när lektionen hamnar utanför den.
   </p>
   <h4>Det optimeringen aldrig ändrar</h4>
   <ul>
@@ -1095,7 +1202,7 @@
     <li>
       En lektion flyttas bara till en sal som genereringen själv hade fått
       lägga den i: rätt salstyp, tillräcklig kapacitet, rätt årskurser, de
-      begränsningar som gäller salen och ämnet (se 4.2) och ledig på den tiden. En sal som är markerad som otillgänglig
+      begränsningar som gäller salen och ämnet (se 4.3) och ledig på den tiden. En sal som är markerad som otillgänglig
       under <span class="path">Planering › Tillgänglighet</span> på den tiden
       väljs inte.
     </li>
@@ -1414,7 +1521,7 @@
       <tr><td class="k">3</td><td>Salar inlagda</td><td>Kapacitet och typ angivna för varje sal; specialsalarnas typer finns i listan.</td></tr>
       <tr><td class="k">4</td><td>Klasser skapade</td><td>Alla klasser med rätt årskurs.</td></tr>
       <tr><td class="k">5</td><td>Personer upplagda</td><td>Lärare och elever finns; elever tillhör en klass. Inbjudningarna kan skickas senare.</td></tr>
-      <tr><td class="k">6</td><td>Timplan ifylld</td><td>Veckosumman stämmer mot skolans timplan.</td></tr>
+      <tr><td class="k">6</td><td>Timplan beslutad och timplansposter ifyllda</td><td>Den lokala timplanen är beslutad, och timplansposternas veckosumma stämmer mot den.</td></tr>
       <tr><td class="k">7</td><td>Tillgänglighet inlagd</td><td>Endast verkliga hinder, inte önskemål.</td></tr>
       <tr><td class="k">8</td><td>Skolregler satta</td><td>Lunchfönster och max lektioner per dag angivna.</td></tr>
       <tr><td class="k">9</td><td>Schema genererat</td><td>Resultatet är Optimal eller Fungerande.</td></tr>
