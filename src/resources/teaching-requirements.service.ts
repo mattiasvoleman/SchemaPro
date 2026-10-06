@@ -101,6 +101,10 @@ export class TeachingRequirementsService {
             studentGroupId: dto.studentGroupId,
             teacherId: dto.teacherId ?? null,
             coTeacherId: dto.coTeacherId ?? null,
+            // Stated, like the buffers below, so the row answered back is the
+            // row the request described rather than what the default filled in.
+            teacherLoadPercent: dto.teacherLoadPercent ?? 100,
+            coTeacherLoadPercent: dto.coTeacherLoadPercent ?? 100,
             lessonsPerWeek: dto.lessonsPerWeek ?? 1,
             minutesPerLesson: dto.minutesPerLesson ?? 60,
             // The pupil buffers, stated here rather than left to the column
@@ -166,6 +170,12 @@ export class TeachingRequirementsService {
             ...(dto.teacherId !== undefined ? { teacherId: dto.teacherId } : {}),
             ...(dto.coTeacherId !== undefined
               ? { coTeacherId: dto.coTeacherId }
+              : {}),
+            ...(dto.teacherLoadPercent !== undefined
+              ? { teacherLoadPercent: dto.teacherLoadPercent }
+              : {}),
+            ...(dto.coTeacherLoadPercent !== undefined
+              ? { coTeacherLoadPercent: dto.coTeacherLoadPercent }
               : {}),
             ...(dto.lessonsPerWeek !== undefined
               ? { lessonsPerWeek: dto.lessonsPerWeek }
