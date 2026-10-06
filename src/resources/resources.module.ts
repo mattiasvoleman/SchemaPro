@@ -29,6 +29,8 @@ import { SchoolBreaksController } from './school-breaks.controller';
 import { SchoolBreaksService } from './school-breaks.service';
 import { TeacherWorkRulesController } from './teacher-work-rules.controller';
 import { TeacherWorkRulesService } from './teacher-work-rules.service';
+import { NationalTimplansController } from './national-timplans.controller';
+import { NationalTimplansService } from './national-timplans.service';
 
 /**
  * School catalog CRUD. Reads happen directly against Supabase under RLS from
@@ -41,6 +43,11 @@ import { TeacherWorkRulesService } from './teacher-work-rules.service';
  * service refuses any other row, and so does the table's own
  * `teacher_work_rules_teacher_own` policy — for the writers that never reach
  * this module at all.
+ *
+ * The second exception is a read, not a write: `NationalTimplansController`
+ * hands skolförordningens bilagor to every tenant role, because the statute is
+ * public information and its tables grant SELECT to any active signed-in user.
+ * Nothing in this module writes those tables — nothing in the API role can.
  */
 @Module({
   controllers: [
@@ -59,6 +66,7 @@ import { TeacherWorkRulesService } from './teacher-work-rules.service';
     LunchSittingsController,
     SchoolBreaksController,
     TeacherWorkRulesController,
+    NationalTimplansController,
   ],
   providers: [
     RoomTypesService,
@@ -76,6 +84,7 @@ import { TeacherWorkRulesService } from './teacher-work-rules.service';
     LunchSittingsService,
     SchoolBreaksService,
     TeacherWorkRulesService,
+    NationalTimplansService,
   ],
 })
 export class ResourcesModule {}
