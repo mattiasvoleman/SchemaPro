@@ -862,6 +862,33 @@ async function runChecks(
     await timplans.remove(plan.id, admin);
   });
 
+  // ---- (n) a CHECK a DTO bound did not foresee is a 400 naming the field
+  await check('(n) a lokal timplan CHECK reached past the DTO is a 400 naming the field, not a 500', async () => {
+    const timplans = new LocalTimplansService(api);
+    const isField = (field: string) => (error: unknown) => {
+      assert.ok(error instanceof BadRequestException, `expected BadRequestException, got ${summarise(error)}`);
+      assert.ok(error.message.startsWith(`${field}: `), `the 400 did not name ${field}: ${error.message}`);
+      return true;
+    };
+    // 100 × "a" + U+FE0F: what MaxLength counted as 100 characters, and
+    // char_length as 200 code points. The DTO counts code points now; this is
+    // the service called as the DTO's bound would not have stopped it.
+    const selected = (n: number) => 'a️'.repeat(n);
+    await assert.rejects(
+      timplans.create(
+        { name: selected(100), schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
+        admin,
+      ),
+      isField('name'),
+    );
+    const plan = await timplans.create(
+      { name: `${MARKER} n`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
+      admin,
+    );
+    await assert.rejects(timplans.decide(plan.id, { decisionNote: selected(300) }, admin), isField('decisionNote'));
+    await timplans.remove(plan.id, admin);
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the

@@ -370,6 +370,20 @@ describe('CSV import (e2e)', () => {
       expect(harness.tx['localTimplan']!['findUnique']).not.toHaveBeenCalled();
     });
 
+    it('400s a lokal timplan file whose rows are a list of lists, before the handler', async () => {
+      // ValidateNested descends into an inner list, so [[row]] passed the pipe
+      // and the service met a row with no subject (a TypeError, a 500).
+      const response = await post(harness, 'timplan')
+        .send({
+          localTimplanId: 'abababab-abab-4bab-8bab-abababababab',
+          rows: [[{ subject: 'MA', gradeLevel: 4, minutesPerWeek: 180 }]],
+        })
+        .expect(400);
+
+      expect(JSON.stringify(response.body)).toContain('rows: varje rad anges som ett objekt.');
+      expect(harness.tx['localTimplan']!['findUnique']).not.toHaveBeenCalled();
+    });
+
     it('reports an unknown group as a row error and imports the rest of the file', async () => {
       harness.tx['studentGroup']!['findMany']!.mockResolvedValue([
         { id: GROUP_ID, name: '7A' },

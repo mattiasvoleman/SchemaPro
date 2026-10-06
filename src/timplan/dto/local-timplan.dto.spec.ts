@@ -163,3 +163,39 @@ describe('DecideLocalTimplanDto and CopyLocalTimplanDto', () => {
     await expect(failing(CopyLocalTimplanDto, { name: ' ' })).resolves.toEqual(['name']);
   });
 });
+
+describe('the DTOs count what the CHECKs count, and refuse what the service cannot read', () => {
+  // U+FE0F after a letter: validator's isLength subtracts the selector,
+  // PostgreSQL's char_length counts it. 100 of them is 200 code points.
+  const selected = (n: number) => 'a\uFE0F'.repeat(n);
+
+  it('measures a name, a decision note and an entry note in code points, as char_length does', async () => {
+    await expect(failing(CreateLocalTimplanDto, plan({ name: selected(50) }))).resolves.toEqual([]);
+    await expect(failing(CreateLocalTimplanDto, plan({ name: selected(51) }))).resolves.toEqual(['name']);
+    await expect(failing(UpdateLocalTimplanDto, { name: selected(51) })).resolves.toEqual(['name']);
+    await expect(failing(CopyLocalTimplanDto, { name: selected(51) })).resolves.toEqual(['name']);
+    await expect(failing(DecideLocalTimplanDto, { decisionNote: selected(251) })).resolves.toEqual([
+      'decisionNote',
+    ]);
+    await expect(
+      failing(ReplaceLocalTimplanEntriesDto, { entries: [cell({ note: selected(251) })] }),
+    ).resolves.toEqual(['entries.0.note']);
+    // An astral character is one code point, as it is to the column.
+    await expect(failing(CreateLocalTimplanDto, plan({ name: '\u{1F4DA}'.repeat(100) }))).resolves.toEqual([]);
+  });
+
+  it('refuses a list of lists instead of descending into it', async () => {
+    await expect(failing(ReplaceLocalTimplanEntriesDto, { entries: [[cell()]] })).resolves.toEqual(['entries']);
+    const wrapped = [Array.from({ length: 401 }, (_, i) => cell({ gradeLevel: i % 11 }))];
+    await expect(failing(ReplaceLocalTimplanEntriesDto, { entries: wrapped })).resolves.toEqual(['entries']);
+  });
+
+  it('reads a subject id in capitals as the same id', async () => {
+    const lower = 'abcdef12-3456-4789-8abc-def012345678';
+    const dto = plainToInstance(ReplaceLocalTimplanEntriesDto, {
+      entries: [cell({ subjectId: lower.toUpperCase() })],
+    });
+    await expect(validate(dto)).resolves.toEqual([]);
+    expect(dto.entries[0]!.subjectId).toBe(lower);
+  });
+});

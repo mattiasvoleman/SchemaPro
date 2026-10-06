@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   TIMPLAN_IS_DECIDED,
@@ -205,5 +205,31 @@ describe('rethrowPrismaError and a concurrent write', () => {
     for (const code of ['40P01', '40001']) {
       expect(answer(driverError(code, 'deadlock detected'))).toBeInstanceOf(ConflictException);
     }
+  });
+});
+
+describe('rethrowPrismaError and a lokal timplan CHECK', () => {
+  it('answers a timplan CHECK the DTO let through with a 400 naming the field', () => {
+    let thrown: unknown;
+    try {
+      rethrowPrismaError(
+        driverError(
+          '23514',
+          'new row for relation "LocalTimplans" violates check constraint "LocalTimplans_name_is_sane"',
+        ),
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(BadRequestException);
+    expect((thrown as BadRequestException).message).toMatch(/^name: /);
+  });
+
+  it('leaves another table’s CHECK as it was', () => {
+    const other = driverError(
+      '23514',
+      'new row for relation "Lessons" violates check constraint "Lessons_time_is_sane"',
+    );
+    expect(() => rethrowPrismaError(other)).toThrow(other);
   });
 });

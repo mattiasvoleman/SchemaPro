@@ -1,4 +1,4 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 /**
@@ -15,7 +15,9 @@ import { Prisma } from '@prisma/client';
  *
  * A deadlock or a serialization failure (P2034; 40P01 / 40001 underneath) is
  * a 409 WRITE_CONFLICT that says to try again, not a 500: the database
- * aborted one of two concurrent writes and nothing was written.
+ * aborted one of two concurrent writes and nothing was written. And a CHECK
+ * on the lokal timplan tables that a DTO bound failed to anticipate is a 400
+ * naming the field, not a 500 — see timplanCheckViolation.
  */
 export function rethrowPrismaError(error: unknown): never {
   const decided = decidedTimplanRefusal(error);
@@ -24,6 +26,10 @@ export function rethrowPrismaError(error: unknown): never {
   }
   if (isWriteConflict(error)) {
     throw writeConflict();
+  }
+  const check = timplanCheckViolation(error);
+  if (check) {
+    throw new BadRequestException(check);
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2025') {
@@ -143,4 +149,36 @@ export function writeConflict(): ConflictException {
       'Inget sparades. Försök igen.',
     code: WRITE_CONFLICT,
   });
+}
+
+/**
+ * The lokal timplan CHECKs (migration 20261006120000) by constraint name, as
+ * the field and the bound a 400 should state. The DTOs mirror each bound, so
+ * this is the second line: a value a DTO counted differently from the column
+ * (lengths are code points on both sides now, but the next difference will not
+ * announce itself) answers 400 naming the field rather than 500.
+ */
+const TIMPLAN_CHECKS: Record<string, string> = {
+  LocalTimplans_name_is_sane: 'name: timplanen behöver ett namn på högst 100 tecken.',
+  LocalTimplans_planningWeeks_is_sane: 'planningWeeks: mellan 20,0 och 40,0 veckor.',
+  LocalTimplans_decisionNote_is_sane:
+    'decisionNote: beslutet behöver en anteckning på högst 500 tecken som identifierar det.',
+  LocalTimplanEntries_gradeLevel_is_sane: 'gradeLevel: årskursen är 0 (förskoleklass) till 10.',
+  LocalTimplanEntries_minutesPerWeek_is_sane: 'minutesPerWeek: 0 till 1200 minuter per vecka.',
+  LocalTimplanEntries_note_is_sane: 'note: anteckningen kan vara högst 500 tecken.',
+};
+
+/**
+ * The 400 sentence for a CHECK violation (23514) on a lokal timplan table, or
+ * null. The adapter maps no Prisma code to 23514, so it arrives as P2039 with
+ * the constraint's name in the driver's message.
+ */
+export function timplanCheckViolation(error: unknown): string | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  const text = typeof cause?.originalMessage === 'string' ? cause.originalMessage : error.message;
+  if (cause?.originalCode !== '23514' && !text.includes('violates check constraint')) return null;
+  const constraint = /check constraint "([^"]+)"/.exec(text)?.[1];
+  return constraint ? (TIMPLAN_CHECKS[constraint] ?? null) : null;
 }
