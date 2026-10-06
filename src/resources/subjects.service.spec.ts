@@ -269,6 +269,34 @@ describe('SubjectsService', () => {
   });
 
   describe('remove', () => {
+    // The auto-vivifying mock would hand back a model proxy for `$queryRaw`,
+    // which is not callable.
+    let queryRaw: jest.Mock;
+    beforeEach(() => {
+      queryRaw = jest.fn().mockResolvedValue([]);
+      Object.assign(tx, { $queryRaw: queryRaw });
+    });
+
+    it('locks the plans holding the subject, in id order, before the cascade can lock their entries', async () => {
+      tx.subject.delete.mockResolvedValue({ id: SUBJECT_ID });
+
+      await service.remove(SUBJECT_ID, testUser());
+
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = queryRaw.mock.calls[0] as [TemplateStringsArray, ...unknown[]];
+      const sql = strings.join('?').replace(/\s+/g, ' ');
+      expect(sql).toContain('FROM "LocalTimplans" p');
+      expect(sql).toContain('e."subjectId" = ?::uuid');
+      expect(sql).toMatch(/ORDER BY p\."id" FOR SHARE/);
+      expect(values).toEqual([SUBJECT_ID]);
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.localTimplan.findMany.mock.invocationCallOrder[0],
+      );
+      expect(queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.subject.delete.mock.invocationCallOrder[0],
+      );
+    });
+
     it('deletes by id under the caller’s RLS context', async () => {
       tx.subject.delete.mockResolvedValue({ id: SUBJECT_ID });
       const user = testUser();

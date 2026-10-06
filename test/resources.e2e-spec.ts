@@ -20,6 +20,16 @@ describe('Resource CRUD (e2e)', () => {
   });
 
   describe('subjects', () => {
+    // A subject delete locks the lokal timplans that hold it first, with a raw
+    // FOR SHARE read (subjects.service.ts); the auto-vivifying mock would hand
+    // back a model proxy for `$queryRaw`, which is not callable.
+    beforeEach(() => {
+      Object.assign(harness.tx, { $queryRaw: jest.fn().mockResolvedValue([]) });
+    });
+    afterEach(() => {
+      delete (harness.tx as Record<string, unknown>)['$queryRaw'];
+    });
+
     it('creates a subject for the caller school', async () => {
       harness.tx['subject']!['create']!.mockResolvedValue({
         id: SUBJECT_ID,
@@ -68,6 +78,11 @@ describe('Resource CRUD (e2e)', () => {
         .delete(`/api/v1/subjects/${SUBJECT_ID}`)
         .set('x-test-user', asUser({}))
         .expect(204);
+      const lock = harness.tx['$queryRaw'] as unknown as jest.Mock;
+      expect(lock).toHaveBeenCalledTimes(1);
+      expect(lock.mock.invocationCallOrder[0]).toBeLessThan(
+        harness.tx['subject']!['delete']!.mock.invocationCallOrder[0]!,
+      );
     });
 
     it('409s deleting a subject a decided lokal timplan holds, naming the plan, and deletes nothing', async () => {

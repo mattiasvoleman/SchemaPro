@@ -777,6 +777,91 @@ async function runChecks(
     assert.equal(await entriesOf(draft.id), 0);
   });
 
+  // ---- (m) a timplan save and a subject delete meeting in one draft
+  await check('(m) a subject delete waits for a draft’s save instead of deadlocking with it, and a deadlock is a 409', async () => {
+    const timplans = new LocalTimplansService(api);
+    const other = open(withConnectionLimit(appUrl, 1));
+    await other.onModuleInit();
+    const subjects = new SubjectsService(other);
+
+    const subject = await subjects.create({ name: MARKER, nationalCode: 'BL' } as never, admin);
+    const plan = await timplans.create(
+      { name: `${MARKER} utkast m`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
+      admin,
+    );
+    const seed = () =>
+      timplans.replaceEntries(plan.id, { entries: [{ subjectId: subject.id, gradeLevel: 4, minutesPerWeek: 60 }] }, admin);
+
+    /**
+     * The grid save's order (replaceEntries, importTimplan): touch the plan,
+     * then delete its entries. The holder parks between the two while `rival`
+     * runs, and the probe releases it once the rival is seen waiting on it.
+     */
+    const meet = async (rival: () => Promise<unknown>) => {
+      const touched = deferred<number>();
+      const release = deferred<void>();
+      const holder = api.withRls(admin, async (tx) => {
+        await tx.localTimplan.update({ where: { id: plan.id }, data: { updatedAt: new Date() } });
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+        touched.resolve(pid);
+        await release.promise;
+        await tx.localTimplanEntry.deleteMany({ where: { localTimplanId: plan.id } });
+      });
+      const holderSettled = holder.then(() => null, (error: unknown) => error);
+      const pid = await Promise.race([
+        touched.promise,
+        holderSettled.then((error) => {
+          throw error ?? new Error('the holder committed before it touched the plan');
+        }),
+      ]);
+      const rivalSettled = rival().then(() => null, (error: unknown) => error);
+      // Released only once the rival is blocked on the holder: a lock the
+      // database reports, not a clock.
+      for (let tries = 0; ; tries++) {
+        const { rows } = await owner.query<{ n: number }>(
+          'SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))',
+          [pid],
+        );
+        if (rows[0].n > 0) break;
+        if (tries > 500) throw new Error('the subject delete never waited on the draft’s save');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      release.resolve();
+      return Promise.all([holderSettled, rivalSettled]);
+    };
+
+    // The service: it locks the plan before its cascade locks an entry, so it
+    // waits for the save, and both commit.
+    await seed();
+    const [saveError, removeError] = await meet(() => subjects.remove(subject.id, admin));
+    assert.equal(saveError, null, `the save failed: ${summarise(saveError)}`);
+    assert.equal(removeError, null, `the subject delete failed: ${summarise(removeError)}`);
+    assert.equal((await owner.query('SELECT 1 FROM "Subjects" WHERE id = $1', [subject.id])).rowCount, 0);
+
+    // The order the service had before (the cascade first, the plan's lock
+    // from the trigger after): PostgreSQL detects the deadlock and aborts one
+    // of the two, and the error the adapter hands over must map to the 409.
+    const again = await subjects.create({ name: MARKER, nationalCode: 'BL' } as never, admin);
+    await timplans.replaceEntries(plan.id, { entries: [{ subjectId: again.id, gradeLevel: 4, minutesPerWeek: 60 }] }, admin);
+    const results = await meet(() => other.withRls(admin, (tx) => tx.subject.delete({ where: { id: again.id } })));
+    const aborted = results.filter((error) => error !== null);
+    assert.equal(aborted.length, 1, `expected exactly one side aborted, got ${aborted.map(summarise).join(' | ')}`);
+    const [deadlock] = aborted;
+    assert.ok(
+      deadlock instanceof Prisma.PrismaClientKnownRequestError && deadlock.code === 'P2034',
+      `the adapter reported the deadlock as ${summarise(deadlock)}, not P2034`,
+    );
+    assert.throws(
+      () => rethrowPrismaError(deadlock),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException, summarise(error));
+        assert.equal((error.getResponse() as { code?: string }).code, 'WRITE_CONFLICT');
+        return true;
+      },
+    );
+    await timplans.remove(plan.id, admin);
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the

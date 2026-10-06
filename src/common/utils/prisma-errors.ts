@@ -12,11 +12,18 @@ import { Prisma } from '@prisma/client';
  * into a decided plan's entries, an entry written while another request
  * decides the plan — then answers the same 409 and never a 500, whichever
  * service it went through. See decidedTimplanRefusal.
+ *
+ * A deadlock or a serialization failure (P2034; 40P01 / 40001 underneath) is
+ * a 409 WRITE_CONFLICT that says to try again, not a 500: the database
+ * aborted one of two concurrent writes and nothing was written.
  */
 export function rethrowPrismaError(error: unknown): never {
   const decided = decidedTimplanRefusal(error);
   if (decided) {
     throw decidedTimplanConflict(decided.planName === null ? [] : [decided.planName]);
+  }
+  if (isWriteConflict(error)) {
+    throw writeConflict();
   }
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     if (error.code === 'P2025') {
@@ -107,5 +114,33 @@ export function decidedTimplanConflict(planNames: string[]): ConflictException {
   return new ConflictException({
     message: `${which} och kan inte ändras. ${reopen}`,
     code: TIMPLAN_IS_DECIDED,
+  });
+}
+
+/** The problem `code` of a write the database aborted for a concurrent one. */
+export const WRITE_CONFLICT = 'WRITE_CONFLICT';
+
+/**
+ * A deadlock (40P01) or a serialization failure (40001). @prisma/adapter-pg
+ * reports both as the TransactionWriteConflict kind, which Prisma surfaces as
+ * P2034 — measured for a deadlock between a timplan save and a subject delete
+ * in scripts/test/prisma-adapter-probe.ts. The SQLSTATE under a P2039 is the
+ * fallback, for an adapter release that stops mapping them.
+ */
+export function isWriteConflict(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (error.code === 'P2034') return true;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  return cause?.originalCode === '40P01' || cause?.originalCode === '40001';
+}
+
+/** The 409 for a write the database aborted because another one ran at once. */
+export function writeConflict(): ConflictException {
+  return new ConflictException({
+    message:
+      'En annan ändring pågick samtidigt, och databasen avbröt den här för att de inte skulle skriva över varandra. ' +
+      'Inget sparades. Försök igen.',
+    code: WRITE_CONFLICT,
   });
 }
