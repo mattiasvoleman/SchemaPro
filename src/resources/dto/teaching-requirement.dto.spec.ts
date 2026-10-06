@@ -93,6 +93,26 @@ describe.each([
     await expect(failing(cls, { ...base, ...patch })).resolves.toEqual(expected);
   });
 
+  it.each([0, 100, 200])('accepts %s % for either teacher, the bounds the CHECK allows', async (percent) => {
+    await expect(
+      failing(cls, { ...base, teacherLoadPercent: percent, coTeacherLoadPercent: percent }),
+    ).resolves.toEqual([]);
+  });
+
+  it.each<[string, object, string[]]>([
+    ['past the 200 the CHECK stops at', { teacherLoadPercent: 201 }, ['teacherLoadPercent']],
+    ['a negative share', { coTeacherLoadPercent: -1 }, ['coTeacherLoadPercent']],
+    ['half a percent', { teacherLoadPercent: 50.5 }, ['teacherLoadPercent']],
+    ['a percentage as a string', { coTeacherLoadPercent: '50' }, ['coTeacherLoadPercent']],
+  ])('refuses a load percentage %s', async (_case, patch, expected) => {
+    await expect(failing(cls, { ...base, ...patch })).resolves.toEqual(expected);
+  });
+
+  it('names the field in Swedish when a load percentage is refused', async () => {
+    const errors = await validate(plainToInstance(cls, { ...base, teacherLoadPercent: 250 }));
+    expect(Object.values(errors[0]!.constraints ?? {})).toEqual(['teacherLoadPercent: högst 200 %.']);
+  });
+
   it('lets a null buffer through as @IsOptional reads it: absence', async () => {
     // Not an endorsement, a record. `@IsOptional` skips every validator for
     // null as well as undefined, so null passes the DTO here exactly as it

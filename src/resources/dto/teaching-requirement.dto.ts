@@ -28,6 +28,31 @@ export class CreateTeachingRequirementDto {
   @IsUUID('4')
   coTeacherId?: string | null;
 
+  /**
+   * How much of the row each teacher is CHARGED in the tjänstefördelning,
+   * 0..200 % — Skola24's "Justera längd för lärare (%)". 100 is the whole
+   * row; a co-teacher counted at half writes 50 here, a lab session that
+   * costs its teacher double writes 200. It moves no lesson: the solver never
+   * sees it (optimization-proxy.service.ts sends lessons × minutes, not
+   * what a teacher is charged for them), and lektionsminuter stay what the
+   * pupils sit through. Omitted is 100, the column's default, so a client
+   * that has never heard of the field writes the row it always wrote.
+   *
+   * 0..200 mirrors TeachingRequirements_*_load_percent_is_sane, so the
+   * number the table would refuse is refused here with the field named.
+   */
+  @IsOptional()
+  @IsInt({ message: 'teacherLoadPercent: anges som ett heltal i procent.' })
+  @Min(0, { message: 'teacherLoadPercent: kan inte vara negativ.' })
+  @Max(200, { message: 'teacherLoadPercent: högst 200 %.' })
+  teacherLoadPercent?: number;
+
+  @IsOptional()
+  @IsInt({ message: 'coTeacherLoadPercent: anges som ett heltal i procent.' })
+  @Min(0, { message: 'coTeacherLoadPercent: kan inte vara negativ.' })
+  @Max(200, { message: 'coTeacherLoadPercent: högst 200 %.' })
+  coTeacherLoadPercent?: number;
+
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -106,6 +131,19 @@ export class UpdateTeachingRequirementDto {
   @IsOptional()
   @IsUUID('4')
   coTeacherId?: string | null;
+
+  /** What each teacher is charged, 0..200 %; see the create DTO. */
+  @IsOptional()
+  @IsInt({ message: 'teacherLoadPercent: anges som ett heltal i procent.' })
+  @Min(0, { message: 'teacherLoadPercent: kan inte vara negativ.' })
+  @Max(200, { message: 'teacherLoadPercent: högst 200 %.' })
+  teacherLoadPercent?: number;
+
+  @IsOptional()
+  @IsInt({ message: 'coTeacherLoadPercent: anges som ett heltal i procent.' })
+  @Min(0, { message: 'coTeacherLoadPercent: kan inte vara negativ.' })
+  @Max(200, { message: 'coTeacherLoadPercent: högst 200 %.' })
+  coTeacherLoadPercent?: number;
 
   @IsOptional()
   @IsInt()

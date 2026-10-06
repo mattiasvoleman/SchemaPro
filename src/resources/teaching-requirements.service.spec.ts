@@ -150,6 +150,9 @@ describe('TeachingRequirementsService', () => {
           studentGroupId: GROUP_ID,
           teacherId: null,
           coTeacherId: null,
+          // Both teachers charged the whole row: the column default, stated.
+          teacherLoadPercent: 100,
+          coTeacherLoadPercent: 100,
           lessonsPerWeek: 1,
           minutesPerLesson: 60,
           // No ombyte and no dusch: the only answer that is true for a school
@@ -211,6 +214,21 @@ describe('TeachingRequirementsService', () => {
             minutesBefore: 10,
             minutesAfter: 20,
           }),
+        }),
+      );
+    });
+
+    it('persists what each teacher is charged, the edges included', async () => {
+      tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID });
+
+      await service.create(
+        dto({ teacherId: TEACHER_ID, coTeacherId: CO_TEACHER_ID, teacherLoadPercent: 200, coTeacherLoadPercent: 0 }),
+        testUser(),
+      );
+
+      expect(tx.teachingRequirement.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ teacherLoadPercent: 200, coTeacherLoadPercent: 0 }),
         }),
       );
     });
@@ -584,6 +602,9 @@ describe('TeachingRequirementsService', () => {
       ['the recurrence', { recurrence: 'EVEN_WEEKS' }],
       ['the ombyte before the lesson', { minutesBefore: 10 }],
       ['the dusch after it', { minutesAfter: 20 }],
+      ['the lead’s percentage', { teacherLoadPercent: 50 }],
+      // 0 is a value — the resurslärare charged nothing — not "leave it".
+      ['the co-teacher’s percentage at zero', { coTeacherLoadPercent: 0 }],
     ])('a PATCH naming only %s writes it', async (_field, patch) => {
       // A dropped field is an edit that answers 200 and changes nothing: the
       // odd/even split the admin just chose, still "every week" underneath.
