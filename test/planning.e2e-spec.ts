@@ -2115,7 +2115,7 @@ describe('Planning surface (e2e)', () => {
       expect(response.body.check.verdicts[0]).toMatchObject({
         code: 'TIMPLAN_PROTECTED_SUBJECT_REDUCED',
         severity: 'warning',
-        message: 'Matematik i lågstadiet: 419,5 h planerat, 0,6 h under målet 420 h. Ämnet får inte minskas för skolans val.',
+        message: 'Matematik i lågstadiet: 419,4 h planerat, 0,6 h under målet 420 h. Ämnet får inte minskas för skolans val.',
       });
       expect(harness.tx['localTimplanEntry']!['createMany']).toHaveBeenCalledWith({
         data: expect.arrayContaining([

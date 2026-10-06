@@ -718,7 +718,7 @@ async function runChecks(
     const ma = saved.check.verdicts.find(
       (v) => v.code === 'TIMPLAN_PROTECTED_SUBJECT_REDUCED' && v.subjectCode === 'MA' && v.stage === 'LAG',
     );
-    assert.deepEqual(ma?.params, { nationalHours: 420, plannedHours: 419.5, deficitHours: 0.6, reducedPercent: 0.2 });
+    assert.deepEqual(ma?.params, { nationalHours: 420, plannedHours: 419.4, deficitHours: 0.6, reducedPercent: 0.2 });
 
     const decided = await timplans.decide(plan.id, { decisionNote: MARKER }, admin);
     assert.equal(decided.status, 'DECIDED');

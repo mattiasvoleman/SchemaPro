@@ -6,7 +6,9 @@ import {
   cellFor,
   cellKey,
   formatH,
+  hasAlternatives,
   parseMinutes,
+  pupilGradeMinutes,
   rowTone,
   stageHours,
   type DraftCells,
@@ -100,11 +102,14 @@ export function TimplanGrid({
               </span>
             ) : null}
             {countsToward && !subject.nationalCode ? (
+              // Skolans val only where the bilaga prints a pool; ämnesområden
+              // and an unpublished lydelse print none, and the minutes are
+              // then the school's own time.
               <span
                 className="rounded bg-muted px-1 text-[10px] font-normal text-foreground"
-                title={t("skolansValBadgeHint")}
+                title={t(poolPrinted ? "skolansValBadgeHint" : "ownTimeBadgeHint")}
               >
-                {t("skolansValBadge")}
+                {t(poolPrinted ? "skolansValBadge" : "ownTimeBadge")}
               </span>
             ) : null}
           </span>
@@ -153,8 +158,8 @@ export function TimplanGrid({
 
           if (!countsToward) return <td key={`s${column.stage}`} className="px-2" />;
           const grades = stageGrades[column.stage];
-          const hours = stageHours(draft, subject.id, grades, weeksTenths);
           const tone = rowTone(check, subject.nationalCode, top, column.stage);
+          const hours = stageHours(draft, subject.id, grades, weeksTenths, tone === "below" || tone === "under");
           const cell = top ? cellFor(check, top, column.stage) : undefined;
           const child =
             cell && subject.nationalCode !== top
@@ -194,27 +199,16 @@ export function TimplanGrid({
     );
   };
 
-  // Column sums over the COUNTED subjects only, in minute-tenths so the stage
-  // figure is the same arithmetic as the check's.
-  const gradeSum = (grade: number) =>
-    counted.reduce(
-      (sum, subject) => sum + (parseMinutes(draft.get(cellKey(subject.id, grade)) ?? "") ?? 0),
-      0,
-    );
+  // Column sums over the COUNTED subjects only, as a pupil has them —
+  // alternatives (Svenska/SvA, språkval) once, at the longest — and in
+  // minute-tenths so the stage figure is the same arithmetic as the check's.
+  const gradeSum = (grade: number) => pupilGradeMinutes(draft, counted, grade, parentOf);
   const stageSum = (stage: BaseStage) =>
     Math.round(
-      counted.reduce(
-        (sum, subject) =>
-          sum +
-          stageGrades[stage].reduce(
-            (inner, grade) =>
-              inner +
-              (parseMinutes(draft.get(cellKey(subject.id, grade)) ?? "") ?? 0) * weeksTenths,
-            0,
-          ),
-        0,
-      ) / 60,
+      stageGrades[stage].reduce((sum, grade) => sum + gradeSum(grade) * weeksTenths, 0) / 60,
     ) / 10;
+  const alternatives = hasAlternatives(counted, parentOf);
+  const poolPrinted = check.skolansVal.availableHours !== null;
 
   const totalUnder = check.verdicts.some((v) => v.code === "TIMPLAN_TOTAL_BELOW_GUARANTEE");
   const poolOverspent = check.verdicts.some((v) => v.code === "TIMPLAN_SKOLANS_VAL_OVERSPENT");
@@ -283,6 +277,11 @@ export function TimplanGrid({
           <tr className="border-t-2">
             <th scope="row" className="sticky left-0 z-10 bg-card px-3 py-1.5 text-left font-medium">
               {t("footerColumnSum")}
+              {alternatives ? (
+                <span className="block text-[11px] font-normal text-muted-foreground">
+                  {t("footerColumnSumAlternatives")}
+                </span>
+              ) : null}
             </th>
             {columns.map((column) =>
               column.kind === "grade" ? (

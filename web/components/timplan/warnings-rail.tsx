@@ -43,6 +43,8 @@ export function WarningsRail({ verdicts, nationalNames, live, selected, onSelect
     values.subject = name(verdict.subjectCode);
     values.child = name(verdict.childCode);
     values.stage = verdict.stage ? t(`stagesInline.${verdict.stage}`) : "";
+    // A check from before the parameter existed meant the pool.
+    values.timeCountsAs = values.timeCountsAs ?? "skolansVal";
     return t(`verdicts.${verdict.code}`, values);
   };
 

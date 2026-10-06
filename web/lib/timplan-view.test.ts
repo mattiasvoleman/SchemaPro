@@ -10,6 +10,8 @@ import {
   rowTone,
   sameDraft,
   stageHours,
+  pupilGradeMinutes,
+  hasAlternatives,
   toCoverageVersion,
   verdictHighlight,
   type DraftCells,
@@ -209,5 +211,39 @@ describe("parseWeeksTenths reads the weeks a Swedish keyboard types", () => {
     expect(parseWeeksTenths("19,9")).toBeNull();
     expect(parseWeeksTenths("35,65")).toBeNull();
     expect(parseWeeksTenths("")).toBeNull();
+  });
+});
+
+describe("a pupil's minutes, with alternatives once", () => {
+  const parent = new Map<string, string | null>([["BI", "NO"], ["NO", null], ["M2", null], ["SV_SVA", null]]);
+  const subjects = [
+    { id: "s-sv", nationalCode: "SV_SVA" },
+    { id: "s-sva", nationalCode: "SV_SVA" },
+    { id: "s-es", nationalCode: "M2" },
+    { id: "s-de", nationalCode: "M2" },
+    { id: "s-bi", nationalCode: "BI" },
+    { id: "s-prog", nationalCode: null },
+  ];
+  const draft: DraftCells = new Map([
+    [cellKey("s-sv", 7), "200"],
+    [cellKey("s-sva", 7), "60"],
+    [cellKey("s-es", 7), "60"],
+    [cellKey("s-de", 7), "45"],
+    [cellKey("s-bi", 7), "80"],
+    [cellKey("s-prog", 7), "30"],
+  ]);
+
+  it("adds every subject, but Svenska/SvA and språkval once each, at the longest", () => {
+    expect(pupilGradeMinutes(draft, subjects, 7, parent)).toBe(200 + 60 + 80 + 30);
+  });
+
+  it("knows when a plan has alternatives at all", () => {
+    expect(hasAlternatives(subjects, parent)).toBe(true);
+    expect(hasAlternatives([{ nationalCode: "SV_SVA" }, { nationalCode: "BI" }], parent)).toBe(false);
+  });
+
+  it("rounds a short row down and a met one to the nearest tenth", () => {
+    expect(stageHours(DRAFT, "s-ma", [1, 2, 3], 356, true)).toBe(419.4);
+    expect(stageHours(DRAFT, "s-ma", [1, 2, 3], 356)).toBe(419.5);
   });
 });

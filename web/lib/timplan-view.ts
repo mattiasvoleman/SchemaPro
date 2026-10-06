@@ -21,19 +21,21 @@
  *          is not published
  *
  * A stage sum is shown per school subject, but judged per NATIONAL cell:
- * Svenska and Svenska som andraspråk share SV_SVA, Biologi rolls into NO, and
- * a row is coloured by the cell it feeds. A child of an ämnesgrupp is
+ * Svenska and Svenska som andraspråk share SV_SVA (as alternatives, the
+ * longer per årskurs), Biologi rolls into NO, and a row is coloured by the
+ * cell it feeds. A child of an ämnesgrupp is
  * coloured `under` when the check found that child under its own minimum, and
  * by its group's cell otherwise.
  */
 
-import type {
-  BaseStage,
-  CellCoverage,
-  CoverageVersion,
-  TimplanCheck,
-  TimplanStage,
-  TimplanVerdict,
+import {
+  TIMPLAN_ALTERNATIVE_CODES,
+  type BaseStage,
+  type CellCoverage,
+  type CoverageVersion,
+  type TimplanCheck,
+  type TimplanStage,
+  type TimplanVerdict,
 } from "@/lib/timplan-coverage";
 import type { NationalTimplanVersion } from "@/lib/types";
 import type { EntryBody } from "@/lib/timplan-queries";
@@ -314,20 +316,69 @@ export function toCoverageVersion(version: NationalTimplanVersion): CoverageVers
 
 /**
  * A school subject's hours in one stage: Σ minutesPerWeek × weeks / 60, in
- * minute-tenths as the check counts, rounded to the tenth only here.
+ * minute-tenths as the check counts, rounded to the tenth only here — to the
+ * nearest tenth, or DOWN when the row is short (`short`, its tone below or
+ * under), the check's own rule: a figure that is short never reads as its
+ * target ("410 h planerat, 0,1 h under målet 410 h").
  */
 export function stageHours(
   draft: DraftCells,
   subjectId: string,
   grades: number[],
   weeksTenths: number,
+  short = false,
 ): number {
   let minuteTenths = 0;
   for (const grade of grades) {
     const minutes = parseMinutes(draft.get(cellKey(subjectId, grade)) ?? "");
     if (minutes !== null) minuteTenths += minutes * weeksTenths;
   }
-  return Math.round(minuteTenths / 60) / 10;
+  return (short ? Math.floor(minuteTenths / 60) : Math.round(minuteTenths / 60)) / 10;
+}
+
+/**
+ * One årskurs's minutes per week as a PUPIL has them: every counted subject
+ * added, except the alternatives a pupil reads instead of each other
+ * (Svenska/SvA, the språkval languages — TIMPLAN_ALTERNATIVE_CODES), which
+ * count once, at the longest of them. The grid's column sums are this, so a
+ * column of three språkval languages does not read as three times the time,
+ * and the stage sums beneath agree with the check's cells and total.
+ */
+export function pupilGradeMinutes(
+  draft: DraftCells,
+  subjects: ReadonlyArray<{ id: string; nationalCode: string | null }>,
+  grade: number,
+  parentOf: ReadonlyMap<string, string | null>,
+): number {
+  let sum = 0;
+  const longest = new Map<string, number>();
+  for (const subject of subjects) {
+    const minutes = parseMinutes(draft.get(cellKey(subject.id, grade)) ?? "") ?? 0;
+    const top =
+      subject.nationalCode === null ? null : (parentOf.get(subject.nationalCode) ?? subject.nationalCode);
+    if (top !== null && TIMPLAN_ALTERNATIVE_CODES.includes(top)) {
+      longest.set(top, Math.max(longest.get(top) ?? 0, minutes));
+    } else {
+      sum += minutes;
+    }
+  }
+  for (const minutes of longest.values()) sum += minutes;
+  return sum;
+}
+
+/** Whether two or more counted subjects share one alternatives code (Svenska and SvA, two languages). */
+export function hasAlternatives(
+  subjects: ReadonlyArray<{ nationalCode: string | null }>,
+  parentOf: ReadonlyMap<string, string | null>,
+): boolean {
+  const seen = new Map<string, number>();
+  for (const subject of subjects) {
+    if (subject.nationalCode === null) continue;
+    const top = parentOf.get(subject.nationalCode) ?? subject.nationalCode;
+    if (!TIMPLAN_ALTERNATIVE_CODES.includes(top)) continue;
+    seen.set(top, (seen.get(top) ?? 0) + 1);
+  }
+  return [...seen.values()].some((count) => count > 1);
 }
 
 /**
