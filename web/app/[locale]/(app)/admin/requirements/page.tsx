@@ -135,9 +135,14 @@ import {
   usePeople,
   useRequirements,
   useSchoolBreaks,
+  useStaffingLoad,
   useSubjects,
+  useTeacherQualifications,
 } from "@/lib/queries";
 import { requirementsToCsv } from "@/lib/csv";
+import { buildGradeSpans } from "@/lib/grade-span";
+import { candidateQualification, candidateRemaining } from "@/lib/staffing-candidates";
+import { CandidateBadge } from "@/components/staffing/candidate-badge";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import {
@@ -217,6 +222,9 @@ export default function RequirementsPage() {
   // that means the same thing must not be given a second wording here.
   const tTimetable = useTranslations("timetable");
   const tCsvImport = useTranslations("csvImport");
+  // The candidate badge's words live with the tjänstefördelning that
+  // computes them, so the dialog and the matrix name a behörighet the same.
+  const tStaffing = useTranslations("staffing");
   const {
     data: years,
     isLoading: yearsLoading,
@@ -263,6 +271,18 @@ export default function RequirementsPage() {
     isLoading: breaksLoading,
     isError: breaksFailed,
   } = useSchoolBreaks(activeYearId);
+  /**
+   * What the cell dialog says beside each candidate: the behörighet they hold
+   * for the row and the minutes they have left to their mål, from the same
+   * report /admin/staffing draws its matrix from. NEITHER is in the loading
+   * gate below. A badge that arrives late is quiet, like a late teacher
+   * initial — the dialog says nothing about a candidate until it knows,
+   * and the matrix holds no number of its own that depends on them. And a
+   * school that has recorded no behörighet at all gets no badge rather than
+   * "saknar behörighet" on every name (lib/staffing-candidates.ts).
+   */
+  const { data: loadReport } = useStaffingLoad(activeYearId);
+  const { data: qualifications } = useTeacherQualifications();
 
   /**
    * One gate for every query this page prints a NUMBER from.
@@ -373,6 +393,31 @@ export default function RequirementsPage() {
     () => (groups ?? []).filter((group) => group.academicYearId === activeYearId),
     [groups, activeYearId],
   );
+
+  /**
+   * Group id → the årskurser its pupils sit in, for the behörighet badge.
+   *
+   * The same derivation the gateway's load report and the gaps page use
+   * (lib/grade-span.ts): members' home classes first, the group's own year
+   * second, no entry where neither is known — and a group with no entry is
+   * covered by any behörighet in the subject, which is the report's rule too,
+   * so the badge here and the matrix's unqualified list cannot disagree about
+   * a row. Built from `yearGroups` and not every group the school has, for the
+   * reason gradeLevelByGroup is: two läsår may both own a "7A".
+   */
+  const gradeSpanOf = useMemo(() => {
+    const homeClassOf = new Map<string, string | null>();
+    for (const person of people ?? []) {
+      if (person.role === "STUDENT") homeClassOf.set(person.id, person.studentGroupId);
+    }
+    const membersByGroup = new Map<string, string[]>();
+    for (const row of memberships ?? []) {
+      const list = membersByGroup.get(row.studentGroupId);
+      if (list) list.push(row.studentId);
+      else membersByGroup.set(row.studentGroupId, [row.studentId]);
+    }
+    return buildGradeSpans({ groups: yearGroups, membersByGroup, homeClassOf });
+  }, [yearGroups, memberships, people]);
 
   // Two sections rather than one alphabetical wall — see lib/group-sections.ts
   // for why, and for the tests that pin the ordering and the counts.
@@ -662,6 +707,37 @@ export default function RequirementsPage() {
     // finish loading.
     subjects === undefined ||
     groups === undefined;
+
+  /**
+   * One candidate as the picker shows them: the name, then the behörighet badge
+   * for THIS cell's subject and group and the minutes left to their mål.
+   *
+   * The same line in both pickers, because a medlärare is held to the same
+   * behörighet as the lärare and counts fully toward their own mål (the
+   * report's co-teacher rule). Inside SelectItemText, so the trigger repeats
+   * it for the chosen teacher and the option's accessible name carries the
+   * words — nothing is said by colour alone.
+   */
+  const candidateLine = (teacher: { id: string; firstName: string; lastName: string }) => {
+    if (!cell || !yearBounds) return `${teacher.firstName} ${teacher.lastName}`;
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2">
+        <span>
+          {teacher.firstName} {teacher.lastName}
+        </span>
+        <CandidateBadge
+          qualification={candidateQualification(
+            qualifications ?? [],
+            teacher.id,
+            cell.subjectId,
+            gradeSpanOf.get(cell.groupId) ?? null,
+            yearBounds,
+          )}
+          remaining={candidateRemaining(loadReport, teacher.id)}
+        />
+      </span>
+    );
+  };
 
   return (
     <div>
@@ -1128,11 +1204,12 @@ export default function RequirementsPage() {
                   <SelectItem value={NO_TEACHER}>{tCommon("notAssigned")}</SelectItem>
                   {teachers.map((teacher) => (
                     <SelectItem key={teacher.id} value={teacher.id}>
-                      {teacher.firstName} {teacher.lastName}
+                      {candidateLine(teacher)}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">{tStaffing("candidateHint")}</p>
             </div>
             <div className="space-y-2">
               <Label>{t("coTeacher")}</Label>
@@ -1149,7 +1226,7 @@ export default function RequirementsPage() {
                     .filter((teacher) => teacher.id !== form.teacherId)
                     .map((teacher) => (
                       <SelectItem key={teacher.id} value={teacher.id}>
-                        {teacher.firstName} {teacher.lastName}
+                        {candidateLine(teacher)}
                       </SelectItem>
                     ))}
                 </SelectContent>
