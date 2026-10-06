@@ -289,7 +289,94 @@ describe('ImportService', () => {
           // Matched case-insensitively: a school types the name as it reads,
           // not as it was stored.
           requiredRoomTypeId: 'rt-slojd',
+          // A file without the timplan columns: outside the national timplan,
+          // and undervisning — today's behaviour.
+          nationalCode: null,
+          countsTowardTimplan: true,
         },
+      });
+    });
+
+    describe('the national code', () => {
+      it('writes a known code, read once from the reference table, folded to the table’s case', async () => {
+        arrangeRows(tx.subject.findMany, []);
+        arrangeRows(tx.roomType.findMany, []);
+        arrangeRows(tx.nationalSubject.findMany, [{ code: 'SL' }, { code: 'MA' }]);
+        tx.subject.create.mockResolvedValue({ id: 'sub-1' });
+
+        const report = await service.importSubjects(
+          { rows: rows([{ name: 'Slöjd', nationalCode: ' sl ' }, { name: 'Matte', nationalCode: 'MA' }]) },
+          testUser(),
+        );
+
+        expect(report).toEqual({ created: 2, skipped: 0, errors: [] });
+        expect(tx.nationalSubject.findMany).toHaveBeenCalledTimes(1);
+        expect(tx.subject.create).toHaveBeenNthCalledWith(1, {
+          data: expect.objectContaining({ nationalCode: 'SL' }),
+        });
+        expect(tx.subject.create).toHaveBeenNthCalledWith(2, {
+          data: expect.objectContaining({ nationalCode: 'MA' }),
+        });
+      });
+
+      it('fails the row on an unknown code instead of creating the subject unmapped', async () => {
+        // A subject created without the mapping it was given is left out of
+        // every timplan sum, and the coverage page's warning is a longer way
+        // back to the typo than a row error naming it.
+        arrangeRows(tx.subject.findMany, []);
+        arrangeRows(tx.roomType.findMany, []);
+        arrangeRows(tx.nationalSubject.findMany, [{ code: 'MA' }]);
+
+        const report = await service.importSubjects(
+          { rows: rows([{ name: 'Matte', nationalCode: 'MATTE' }]) },
+          testUser(),
+        );
+
+        expect(report.created).toBe(0);
+        expect(tx.subject.create).not.toHaveBeenCalled();
+        expect(report.errors).toEqual([
+          { row: 1, message: expect.stringMatching(/nationalCode.*"MATTE"/) },
+        ]);
+      });
+
+      it('reads an empty or blank cell as no mapping', async () => {
+        arrangeRows(tx.subject.findMany, []);
+        arrangeRows(tx.roomType.findMany, []);
+        arrangeRows(tx.nationalSubject.findMany, []);
+        tx.subject.create.mockResolvedValue({ id: 'sub-1' });
+
+        const report = await service.importSubjects(
+          { rows: rows([{ name: 'Mentorstid', nationalCode: '  ' }, { name: 'Resurs', nationalCode: null }]) },
+          testUser(),
+        );
+
+        expect(report).toEqual({ created: 2, skipped: 0, errors: [] });
+        for (const call of tx.subject.create.mock.calls) {
+          const { data } = call[0] as { data: { nationalCode: string | null } };
+          expect(data.nationalCode).toBeNull();
+        }
+      });
+
+      it('writes countsTowardTimplan as given, and true for an empty cell', async () => {
+        arrangeRows(tx.subject.findMany, []);
+        arrangeRows(tx.roomType.findMany, []);
+        tx.subject.create.mockResolvedValue({ id: 'sub-1' });
+
+        await service.importSubjects(
+          {
+            rows: rows([
+              { name: 'Resurs', countsTowardTimplan: false },
+              { name: 'Bild', countsTowardTimplan: null },
+              { name: 'Musik' },
+            ]),
+          },
+          testUser(),
+        );
+
+        const flags = tx.subject.create.mock.calls.map(
+          (call) => (call[0] as { data: { countsTowardTimplan: boolean } }).data.countsTowardTimplan,
+        );
+        expect(flags).toEqual([false, true, true]);
       });
     });
 

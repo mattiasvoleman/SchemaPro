@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   NotFoundException,
@@ -51,8 +52,14 @@ describe('SubjectsService', () => {
           code: null,
           color: null,
           requiredRoomTypeId: null,
+          // A subject nobody mapped is outside the national timplan and still
+          // undervisning: today's behaviour for every existing school.
+          nationalCode: null,
+          countsTowardTimplan: true,
         },
       });
+      // No code given, so the reference table is not consulted at all.
+      expect(tx.nationalSubject.findUnique).not.toHaveBeenCalled();
     });
 
     it('keeps the code, the colour and the room type it was given', async () => {
@@ -81,7 +88,80 @@ describe('SubjectsService', () => {
           code: 'KE',
           color: '#aa3300',
           requiredRoomTypeId: ROOM_TYPE_ID,
+          nationalCode: null,
+          countsTowardTimplan: true,
         },
+      });
+    });
+
+    describe('the national code', () => {
+      it('looks the code up in the reference table inside the transaction, then writes it', async () => {
+        tx.nationalSubject.findUnique.mockResolvedValue({ code: 'KE' });
+        tx.subject.create.mockResolvedValue({ id: SUBJECT_ID });
+
+        await service.create({ name: 'Kemi', nationalCode: 'KE' }, testUser());
+
+        expect(tx.nationalSubject.findUnique).toHaveBeenCalledWith({
+          where: { code: 'KE' },
+          select: { code: true },
+        });
+        expect(tx.subject.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ nationalCode: 'KE' }),
+        });
+      });
+
+      it('refuses an unknown code with a 400 that names the field, before any write', async () => {
+        // The FK would refuse it too, as a 409 about "a record" — this is what
+        // gives the admin the field and the value instead.
+        tx.nationalSubject.findUnique.mockResolvedValue(null);
+
+        await expect(
+          service.create({ name: 'Kemi', nationalCode: 'KEMI' }, testUser()),
+        ).rejects.toMatchObject({
+          constructor: BadRequestException,
+          message: expect.stringMatching(/nationalCode.*"KEMI"/),
+        });
+        expect(tx.subject.create).not.toHaveBeenCalled();
+      });
+
+      it('folds case and whitespace into the code the table holds', async () => {
+        // NationalSubjects.code is ^[A-Z][A-Z0-9_]*$, so "ma" can only have
+        // meant MA; the FK is case-exact and would have refused it.
+        tx.nationalSubject.findUnique.mockResolvedValue({ code: 'MA' });
+        tx.subject.create.mockResolvedValue({ id: SUBJECT_ID });
+
+        await service.create({ name: 'Matte', nationalCode: ' ma ' }, testUser());
+
+        expect(tx.nationalSubject.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { code: 'MA' } }),
+        );
+        expect(tx.subject.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ nationalCode: 'MA' }),
+        });
+      });
+
+      it('reads an empty string as no mapping, not as a code to look up', async () => {
+        tx.subject.create.mockResolvedValue({ id: SUBJECT_ID });
+
+        await service.create({ name: 'Mentorstid', nationalCode: '' }, testUser());
+
+        expect(tx.nationalSubject.findUnique).not.toHaveBeenCalled();
+        expect(tx.subject.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ nationalCode: null }),
+        });
+      });
+
+      it('writes countsTowardTimplan false when told so', async () => {
+        tx.subject.create.mockResolvedValue({ id: SUBJECT_ID });
+
+        await service.create(
+          { name: 'Resurs', countsTowardTimplan: false },
+          testUser(),
+        );
+
+        expect(tx.subject.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ countsTowardTimplan: false }),
+        });
       });
     });
 
@@ -125,6 +205,7 @@ describe('SubjectsService', () => {
       ['code', { code: 'FY' }],
       ['color', { color: '#0055ff' }],
       ['requiredRoomTypeId', { requiredRoomTypeId: ROOM_TYPE_ID }],
+      ['countsTowardTimplan', { countsTowardTimplan: false }],
     ])('a PATCH naming only %s writes it', async (_field, patch) => {
       tx.subject.update.mockResolvedValue({ id: SUBJECT_ID });
 
@@ -134,6 +215,31 @@ describe('SubjectsService', () => {
         where: { id: SUBJECT_ID },
         data: patch,
       });
+      expect(tx.nationalSubject.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('a PATCH naming a national code looks it up and writes it', async () => {
+      tx.nationalSubject.findUnique.mockResolvedValue({ code: 'FY' });
+      tx.subject.update.mockResolvedValue({ id: SUBJECT_ID });
+
+      await service.update(SUBJECT_ID, { nationalCode: 'fy' }, testUser());
+
+      expect(tx.nationalSubject.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { code: 'FY' } }),
+      );
+      expect(tx.subject.update).toHaveBeenCalledWith({
+        where: { id: SUBJECT_ID },
+        data: { nationalCode: 'FY' },
+      });
+    });
+
+    it('refuses an unknown national code on a PATCH without touching the row', async () => {
+      tx.nationalSubject.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.update(SUBJECT_ID, { nationalCode: 'XX' }, testUser()),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(tx.subject.update).not.toHaveBeenCalled();
     });
 
     it('clears the optionals with an explicit null, which is not the same as leaving them out', async () => {
@@ -141,14 +247,16 @@ describe('SubjectsService', () => {
 
       await service.update(
         SUBJECT_ID,
-        { code: null, color: null, requiredRoomTypeId: null },
+        { code: null, color: null, requiredRoomTypeId: null, nationalCode: null },
         testUser(),
       );
 
       expect(tx.subject.update).toHaveBeenCalledWith({
         where: { id: SUBJECT_ID },
-        data: { code: null, color: null, requiredRoomTypeId: null },
+        data: { code: null, color: null, requiredRoomTypeId: null, nationalCode: null },
       });
+      // Clearing a mapping is not a code to look up.
+      expect(tx.nationalSubject.findUnique).not.toHaveBeenCalled();
     });
 
     it('maps P2025 (unknown or cross-tenant id) to 404', async () => {

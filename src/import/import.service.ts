@@ -5,6 +5,10 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { parseDateString } from '../common/utils/time';
 import { readYearBoundsForShare } from '../resources/academic-year-bounds';
+import {
+  normalizeNationalCode,
+  unknownNationalCodeMessage,
+} from '../resources/national-codes';
 import { UsersService } from '../users/users.service';
 import type {
   ImportGroupsDto,
@@ -168,6 +172,13 @@ export class ImportService {
    * subject schedulable in any room at all, which surfaces much later as
    * slöjden placed in a vanlig klassrum and is far harder to trace back to the
    * import than a line in the report.
+   *
+   * The national ämneskod gets the same treatment, for the same reason: a
+   * subject created without the mapping it was given is left out of every
+   * timplan sum, and the coverage page's "ämnen utan nationell kod" warning is
+   * a far longer way back to a typo than a row error naming it. Known codes are
+   * read once from NationalSubjects (28 rows), inside the transaction, so the
+   * check costs one query however many rows the file has.
    */
   async importSubjects(
     dto: ImportSubjectsDto,
@@ -182,6 +193,9 @@ export class ImportService {
       const roomTypeByName = new Map(
         roomTypes.map((type) => [this.normalizeName(type.name), type.id]),
       );
+
+      const nationalSubjects = await tx.nationalSubject.findMany({ select: { code: true } });
+      const knownNationalCodes = new Set(nationalSubjects.map((subject) => subject.code));
 
       const report: ImportReport = { created: 0, skipped: 0, errors: [] };
       for (const [index, row] of dto.rows.entries()) {
@@ -205,6 +219,15 @@ export class ImportService {
           requiredRoomTypeId = resolved;
         }
 
+        const nationalCode = normalizeNationalCode(row.nationalCode);
+        if (nationalCode !== null && !knownNationalCodes.has(nationalCode)) {
+          report.errors.push({
+            row: rowNumber,
+            message: unknownNationalCodeMessage(nationalCode),
+          });
+          continue;
+        }
+
         taken.add(key);
         await tx.subject.create({
           data: {
@@ -213,6 +236,8 @@ export class ImportService {
             code: row.code?.trim() || null,
             color: row.color?.trim() || null,
             requiredRoomTypeId,
+            nationalCode,
+            countsTowardTimplan: row.countsTowardTimplan ?? true,
           },
         });
         report.created += 1;

@@ -25,4 +25,45 @@ describe.each([
       'requiredRoomTypeId',
     ]);
   });
+
+  describe('the national code', () => {
+    it('accepts a code, a null and an absence alike — whether the code exists is the service’s question', async () => {
+      // The reference table is the only thing that knows which codes exist,
+      // so a shape-valid unknown passes here and is refused there in Swedish.
+      await expect(failing(cls, { ...base, nationalCode: 'SV_SVA' })).resolves.toEqual([]);
+      await expect(failing(cls, { ...base, nationalCode: 'NOTACODE' })).resolves.toEqual([]);
+      await expect(failing(cls, { ...base, nationalCode: null })).resolves.toEqual([]);
+    });
+
+    it('refuses a code longer than the column beside it allows, and one that is not a string', async () => {
+      await expect(
+        failing(cls, { ...base, nationalCode: 'X'.repeat(21) }),
+      ).resolves.toEqual(['nationalCode']);
+      await expect(failing(cls, { ...base, nationalCode: 42 })).resolves.toEqual([
+        'nationalCode',
+      ]);
+    });
+  });
+
+  describe('countsTowardTimplan', () => {
+    it('accepts true, false and an absence', async () => {
+      await expect(failing(cls, { ...base, countsTowardTimplan: true })).resolves.toEqual([]);
+      await expect(failing(cls, { ...base, countsTowardTimplan: false })).resolves.toEqual([]);
+      await expect(failing(cls, { ...base })).resolves.toEqual([]);
+    });
+
+    it('refuses null, which has no meaning for a NOT NULL flag with a default', async () => {
+      // On a PATCH null could be read as "back to true" or as "false", and the
+      // two readings differ for exactly the subjects the flag is for.
+      await expect(failing(cls, { ...base, countsTowardTimplan: null })).resolves.toEqual([
+        'countsTowardTimplan',
+      ]);
+    });
+
+    it('refuses a string, so a CSV "ja" cannot land as truthy', async () => {
+      await expect(failing(cls, { ...base, countsTowardTimplan: 'ja' })).resolves.toEqual([
+        'countsTowardTimplan',
+      ]);
+    });
+  });
 });

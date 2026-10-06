@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsHexColor,
@@ -138,6 +139,32 @@ export class ImportSubjectRowDto {
   @IsString()
   @MaxLength(60)
   roomType?: string | null;
+
+  /**
+   * The national ämneskod the subject feeds ('MA', 'SV_SVA', 'BI'), or empty
+   * for a subject outside the national timplan. Checked for SHAPE here and for
+   * EXISTENCE against NationalSubjects in the service, where an unknown code
+   * fails the row with the code named — like an unknown room type, and for the
+   * same reason: creating the subject without its mapping would leave every
+   * timplan sum silently short of it.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  nationalCode?: string | null;
+
+  /**
+   * Whether the subject is undervisningstid in the statute's sense. An empty
+   * cell is null here, unlike the API DTO's refusal of null: a CSV column is
+   * either filled or empty, and empty can only mean the default (true), which
+   * the service writes.
+   */
+  @IsOptional()
+  @IsBoolean({
+    message:
+      'countsTowardTimplan: om ämnet räknas som undervisningstid anges med true eller false.',
+  })
+  countsTowardTimplan?: boolean | null;
 }
 
 export class ImportSubjectsDto {
