@@ -23,10 +23,13 @@ import {
   unknownNationalCodeMessage,
 } from '../resources/national-codes';
 import { UsersService } from '../users/users.service';
+import { RequirementImportChecks } from '../staffing/staffing-enforcement';
+import { staffingSentence } from '../staffing/staffing-checks';
 import type {
   ImportGroupsDto,
   ImportMembershipsDto,
   ImportReport,
+  ImportWarning,
   ImportRequirementsDto,
   ImportRoomTypesDto,
   ImportSubjectsDto,
@@ -918,11 +921,12 @@ export class ImportService {
       // `updated` typed as present rather than optional: it is optional on
       // ImportReport so the six create-only kinds can leave it out, but this
       // method always reports it, including as 0.
-      const report: ImportReport & { updated: number } = {
+      const report: ImportReport & { updated: number; warnings: ImportWarning[] } = {
         created: 0,
         updated: 0,
         skipped: 0,
         errors: [],
+        warnings: [],
       };
 
       /*
@@ -1014,6 +1018,47 @@ export class ImportService {
       const existingByKey = new Map(
         existing.map((row) => [`${row.studentGroupId}:${row.subjectId}`, row]),
       );
+
+      /*
+       * The staffing policy's two questions, per row (staffing-enforcement.ts).
+       *
+       * Opened once for the file, after locking the posts of every teacher a
+       * row can end up with: the ones the file names, and the ones already on
+       * a stored row the file touches — a file that only raises Ma 7A from 3 to
+       * 4 lessons still adds load to whoever teaches it. The rows are judged in
+       * file order with the earlier rows counted, so three rows assigning Anna
+       * are judged on the third with the first two in her load.
+       *
+       * WARN saves the row and lists the finding in `warnings`; REFUSE reports
+       * the row as an error and writes nothing for it, and the rest of the file
+       * proceeds — the way an unknown teacher has always been one row's error
+       * and not the file's.
+       */
+      const fileKeys = new Set<string>();
+      const fileGroupIds = new Set<string>();
+      for (const row of dto.rows) {
+        const groupId = groupByName.get(this.normalizeName(row.groupName));
+        const subject = this.resolveSubject(subjects, row.subject);
+        if (!groupId || 'message' in subject) continue;
+        fileGroupIds.add(groupId);
+        fileKeys.add(`${groupId}:${subject.id}`);
+      }
+      const touchedTeacherIds = new Set<string>(teacherByEmail.values());
+      for (const key of fileKeys) {
+        const stored = existingByKey.get(key);
+        if (stored?.teacherId) touchedTeacherIds.add(stored.teacherId);
+        if (stored?.coTeacherId) touchedTeacherIds.add(stored.coTeacherId);
+      }
+      const checks = await RequirementImportChecks.open(tx, {
+        schoolId,
+        academicYearId: dto.academicYearId,
+        teacherIds: [...touchedTeacherIds],
+        groupIds: [...fileGroupIds],
+      });
+      const subjectNameById = new Map(subjects.map((subject) => [subject.id, subject.name]));
+      const groupNameById = new Map(groups.map((group) => [group.id, group.name]));
+      const asDay = (value: Date | null | undefined): string | null | undefined =>
+        value === undefined ? undefined : value === null ? null : value.toISOString().slice(0, 10);
 
       const seenAtRow = new Map<string, number>();
 
@@ -1154,8 +1199,48 @@ export class ImportService {
         };
 
         const current = existingByKey.get(key);
+        // An untouched row adds no teacher and no minute: nothing to ask.
+        const unchanged = current ? this.requirementIsUnchanged(current, values) : false;
+        const judged =
+          checks && !unchanged
+            ? checks.judge({
+                requirementId: current?.id ?? null,
+                rowNumber,
+                subjectId: subject.id,
+                subjectName: subjectNameById.get(subject.id) ?? '',
+                studentGroupId,
+                groupName: groupNameById.get(studentGroupId) ?? '',
+                patch: {
+                  teacherId: values.teacherId,
+                  coTeacherId: values.coTeacherId,
+                  lessonsPerWeek: values.lessonsPerWeek,
+                  minutesPerLesson: values.minutesPerLesson,
+                  teacherLoadPercent: values.teacherLoadPercent,
+                  coTeacherLoadPercent: values.coTeacherLoadPercent,
+                  recurrence: values.recurrence,
+                  startDate: asDay(values.startDate),
+                  endDate: asDay(values.endDate),
+                },
+              })
+            : null;
+        if (judged) {
+          const refusal = judged.findings.find((finding) => finding.mode === 'REFUSE');
+          if (refusal) {
+            report.errors.push({ row: rowNumber, message: staffingSentence(refusal) });
+            continue;
+          }
+          for (const { code, params } of judged.findings) {
+            report.warnings.push({
+              row: rowNumber,
+              code,
+              params,
+              message: staffingSentence({ code, params }),
+            });
+          }
+        }
+
         if (!current) {
-          await tx.teachingRequirement.create({
+          const created = await tx.teachingRequirement.create({
             data: {
               schoolId,
               academicYearId: dto.academicYearId,
@@ -1177,6 +1262,10 @@ export class ImportService {
               ...values,
             },
           });
+          if (judged) {
+            // Counted for the rows after it, under the id it was given.
+            checks?.apply({ ...judged.after, id: created?.id ?? judged.after.id });
+          }
           report.created += 1;
           continue;
         }
@@ -1186,7 +1275,7 @@ export class ImportService {
         // re-upload of an untouched file has to report 0 updated — an "updated
         // 312" for a file nobody edited makes the number worthless on the one
         // upload where it matters.
-        if (this.requirementIsUnchanged(current, values)) {
+        if (unchanged) {
           report.skipped += 1;
           continue;
         }
@@ -1194,6 +1283,7 @@ export class ImportService {
           where: { id: current.id },
           data: values,
         });
+        if (judged) checks?.apply(judged.after);
         report.updated += 1;
       }
 
