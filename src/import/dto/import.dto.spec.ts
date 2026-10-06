@@ -7,6 +7,7 @@ import { validate } from 'class-validator';
 import {
   ImportRequirementRowDto,
   ImportRequirementsDto,
+  ImportSubjectRowDto,
   OPTIONAL_REQUIREMENT_COLUMNS,
   REQUIREMENT_FILE_COLUMNS,
 } from './import.dto';
@@ -149,5 +150,50 @@ describe('the timplan column lists', () => {
     );
 
     expect(errors.map((error) => error.property)).toEqual(['columns']);
+  });
+});
+
+/**
+ * The subject row's two timplan columns, at the wire. Same reason as above:
+ * `forbidNonWhitelisted` makes a column this DTO does not know a 400 for the
+ * whole upload, so the columns the subjects CSV may carry are pinned here.
+ */
+describe('ImportSubjectRowDto', () => {
+  const failingSubject = async (body: object) =>
+    (await validate(plainToInstance(ImportSubjectRowDto, body))).map(
+      (error) => error.property,
+    );
+
+  it('accepts a row with both timplan columns, and one with neither', async () => {
+    await expect(
+      failingSubject({ name: 'Matematik', nationalCode: 'MA', countsTowardTimplan: true }),
+    ).resolves.toEqual([]);
+    await expect(failingSubject({ name: 'Matematik' })).resolves.toEqual([]);
+  });
+
+  it('accepts an empty cell in either column as null', async () => {
+    // A CSV column is filled or empty; the browser posts an empty cell as
+    // null, and the service writes the default for it.
+    await expect(
+      failingSubject({ name: 'Bild', nationalCode: null, countsTowardTimplan: null }),
+    ).resolves.toEqual([]);
+  });
+
+  it('passes an unknown code — the reference table, not this class, knows the codes', async () => {
+    await expect(failingSubject({ name: 'Bild', nationalCode: 'NOTACODE' })).resolves.toEqual(
+      [],
+    );
+  });
+
+  it('refuses a flag that is not a boolean, so "ja" cannot land as truthy', async () => {
+    await expect(
+      failingSubject({ name: 'Bild', countsTowardTimplan: 'ja' }),
+    ).resolves.toEqual(['countsTowardTimplan']);
+  });
+
+  it('refuses a code longer than the column allows', async () => {
+    await expect(
+      failingSubject({ name: 'Bild', nationalCode: 'X'.repeat(21) }),
+    ).resolves.toEqual(['nationalCode']);
   });
 });
