@@ -115,6 +115,79 @@ describe('Scheduling surface (e2e)', () => {
         .expect(404);
     });
 
+    /*
+     * The staffing pre-flight: with the policy's unstaffedGeneration REFUSE
+     * and a timplanspost without a teacher, a run is refused before the engine
+     * is woken, and the refusal is stored like an engine refusal — summary code
+     * STAFF_UNSTAFFED_REQUIREMENTS, the rows named by subject and group.
+     */
+    describe('the staffing pre-flight', () => {
+      const MA_7A = '12121212-1212-4212-8212-121212121212';
+
+      const givenRefusingSchool = () => {
+        harness.tx['staffingPolicy']!['findUnique']!.mockResolvedValue({ unstaffedGeneration: 'REFUSE' });
+        harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+          { id: MA_7A, subject: { name: 'Matematik' }, studentGroup: { name: '7A' } },
+        ]);
+      };
+
+      afterEach(() => {
+        forgetStaffingWorld(harness.tx);
+        harness.tx['optimizationJob']!['create']!.mockReset();
+        harness.tx['optimizationJob']!['update']!.mockReset();
+      });
+
+      it('refuses the synchronous trigger without calling the engine', async () => {
+        givenRefusingSchool();
+
+        const response = await request(http())
+          .post('/api/v1/optimization/trigger')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID })
+          .expect(202);
+
+        expect(response.body).toEqual({ status: 'INFEASIBLE', lessonsGenerated: 0 });
+        expect(harness.http.post).not.toHaveBeenCalled();
+        expect(harness.tx['masterLesson']!['deleteMany']).not.toHaveBeenCalled();
+      });
+
+      it('stores the refusal on the job the way an engine refusal is stored', async () => {
+        givenRefusingSchool();
+        harness.tx['optimizationJob']!['create']!.mockResolvedValue({ id: VERSION_ID });
+        harness.tx['optimizationJob']!['update']!.mockResolvedValue({ id: VERSION_ID });
+
+        await request(http())
+          .post('/api/v1/optimization/jobs')
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID })
+          .expect(202);
+
+        // The run is fire-and-forget: wait for it to write its outcome.
+        const update = harness.tx['optimizationJob']!['update']!;
+        for (let tries = 0; tries < 50 && update.mock.calls.length < 2; tries++) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        expect(update).toHaveBeenLastCalledWith({
+          where: { id: VERSION_ID },
+          data: expect.objectContaining({
+            status: 'SUCCEEDED',
+            solverStatus: 'INFEASIBLE',
+            lessonsGenerated: 0,
+            conflictSummaryCode: 'STAFF_UNSTAFFED_REQUIREMENTS',
+            conflictSummaryParams: { count: 1 },
+            conflicts: [
+              expect.objectContaining({
+                code: 'STAFF_UNSTAFFED_REQUIREMENTS',
+                params: { count: 1 },
+                resourceNames: ['Matematik för 7A'],
+              }),
+            ],
+          }),
+        });
+        expect(harness.http.post).not.toHaveBeenCalled();
+      });
+    });
+
     it('denies a teacher starting a run', async () => {
       await request(http())
         .post('/api/v1/optimization/jobs')

@@ -3656,4 +3656,117 @@ describe('OptimizationProxyService', () => {
   });
 
 
+
+  /*
+   * The generate pre-flight. A school whose staffing policy refuses to
+   * generate around a teacherless timplanspost is answered before the payload
+   * is built: the engine is not called, nothing is written, and the refusal
+   * comes back through realiseConflicts like an engine refusal, naming the
+   * rows by subject and group and never a person.
+   */
+  describe('triggerScheduling — the staffing pre-flight', () => {
+    let prisma: PrismaMock;
+    const MA_7A = '11111111-bbbb-4bbb-8bbb-111111111111';
+    const SV_7B = '11111111-bbbb-4bbb-8bbb-222222222222';
+
+    beforeEach(() => {
+      prisma = createPrismaMock(tx);
+      service = new OptimizationProxyService(
+        prisma as unknown as PrismaService,
+        http as unknown as HttpService,
+        makeConfigService(),
+      );
+    });
+
+    const policy = (unstaffedGeneration: 'ALLOW' | 'REFUSE' | null) =>
+      tx.staffingPolicy.findUnique.mockResolvedValue(
+        unstaffedGeneration === null ? null : { unstaffedGeneration },
+      );
+    const unstaffed = () =>
+      tx.teachingRequirement.findMany.mockImplementation((query: Query) =>
+        Promise.resolve(
+          query.where && 'teacherId' in query.where
+            ? [
+                { id: SV_7B, subject: { name: 'Svenska' }, studentGroup: { name: '7B' } },
+                { id: MA_7A, subject: { name: 'Matematik' }, studentGroup: { name: '7A' } },
+              ]
+            : [],
+        ),
+      );
+    const refusalOf = (schoolId = THIS_SCHOOL) =>
+      (
+        service as unknown as {
+          unstaffedRefusal: (
+            tx: PrismaClient,
+            academicYearId: string,
+            schoolId: string,
+            requestId: string,
+          ) => Promise<AiEngineScheduleResponse | null>;
+        }
+      ).unstaffedRefusal(tx as unknown as PrismaClient, ACADEMIC_YEAR, schoolId, 'req-1');
+
+    it('REFUSE with teacherless rows: no engine, no write, and the rows named by subject and group', async () => {
+      policy('REFUSE');
+      unstaffed();
+
+      const response = await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(http.post).not.toHaveBeenCalled();
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+      expect(tx.masterLesson.createMany).not.toHaveBeenCalled();
+      expect(response.status).toBe('INFEASIBLE');
+      expect(response.lessons).toEqual([]);
+      expect(response.conflicts).toMatchObject({
+        summaryCode: 'STAFF_UNSTAFFED_REQUIREMENTS',
+        summaryParams: { count: 2 },
+        conflicts: [
+          {
+            code: 'STAFF_UNSTAFFED_REQUIREMENTS',
+            params: { count: 2 },
+            // Back in real id space, in the order the names sort.
+            resourceIds: [MA_7A, SV_7B],
+            resourceNames: ['Matematik för 7A', 'Svenska för 7B'],
+          },
+        ],
+      });
+      expect(response.conflicts?.summary).toMatch(/^2 requirements have no teacher/);
+    });
+
+    it('asks only the policy when it allows generation without a teacher', async () => {
+      policy('ALLOW');
+      unstaffed();
+
+      await expect(refusalOf()).resolves.toBeNull();
+      expect(tx.teachingRequirement.findMany).not.toHaveBeenCalled();
+    });
+
+    it('a school with no policy row generates as it always has', async () => {
+      policy(null);
+      unstaffed();
+
+      await expect(refusalOf()).resolves.toBeNull();
+    });
+
+    it('REFUSE with every row staffed goes on to the engine', async () => {
+      policy('REFUSE');
+      tx.teachingRequirement.findMany.mockResolvedValue([]);
+
+      await expect(refusalOf()).resolves.toBeNull();
+      expect(tx.teachingRequirement.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { academicYearId: ACADEMIC_YEAR, teacherId: null } }),
+      );
+    });
+
+    it('reads the caller’s own school’s policy', async () => {
+      policy('ALLOW');
+
+      await refusalOf();
+
+      expect(tx.staffingPolicy.findUnique).toHaveBeenCalledWith({
+        where: { schoolId: THIS_SCHOOL },
+        select: { unstaffedGeneration: true },
+      });
+    });
+  });
 });

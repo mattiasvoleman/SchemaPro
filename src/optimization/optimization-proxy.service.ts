@@ -18,6 +18,7 @@ import type { RecurrenceWindow } from '../calendar/lesson-recurrence';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf } from './room-eligibility';
+import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import type {
   AiEngineConflictAnalysis,
   AiEngineScheduleRequest,
@@ -126,6 +127,16 @@ export interface AnonMaps {
   lessonAnonMap?: Map<string, string>;
 }
 
+/**
+ * A timplanspost by the name the Timplan page gives its cell
+ * (`requirements.cellLabel`, "{subject} för {group}"), or the subject alone
+ * when the group has none. One function for every refusal that names a row,
+ * the engine's and the staffing pre-flight's alike.
+ */
+function requirementName(subject: string, group: string | undefined | null): string {
+  return group ? `${subject} för ${group}` : subject;
+}
+
 @Injectable()
 export class OptimizationProxyService {
   private readonly logger = new Logger(OptimizationProxyService.name);
@@ -156,6 +167,25 @@ export class OptimizationProxyService {
     // needed here: the response names requirements, rooms and — since the
     // engine began returning sittings — student groups, so those three maps are
     // the ones that have to come back out.
+    //
+    // The staffing pre-flight runs first, in the same transaction: a school
+    // whose policy refuses to generate around a teacherless row is answered
+    // before the payload is built, the engine is never called, and nothing is
+    // written — see unstaffedRefusal.
+    const fetched = await this.prisma.withRls(user, async (tx) => {
+      const refusal = await this.unstaffedRefusal(tx, academicYearId, requireSchoolId(user), requestId);
+      if (refusal) return { refusal, data: null };
+      return {
+        refusal: null,
+        data: await this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user)),
+      };
+    });
+    if (fetched.refusal) {
+      this.logger.warn(
+        `Optimization refused before the engine: ${fetched.refusal.conflicts?.summaryParams?.count ?? 0} requirement(s) without a teacher [requestId=${requestId}, academicYearId=${academicYearId}]`,
+      );
+      return fetched.refusal;
+    }
     const {
       requirements,
       rooms,
@@ -179,9 +209,7 @@ export class OptimizationProxyService {
       workRuleAnonMap,
       nameById,
       storedRules,
-    } = await this.prisma.withRls(user, (tx) =>
-      this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user)),
-    );
+    } = fetched.data;
 
     const anonMaps: AnonMaps = {
       requirementAnonMap,
@@ -325,6 +353,103 @@ export class OptimizationProxyService {
             .map((realId) => maps.nameById.get(realId))
             .filter((name): name is string => name !== undefined),
         };
+      }),
+    };
+  }
+
+  /**
+   * The generate pre-flight: STAFF_UNSTAFFED_REQUIREMENTS, or null to go on.
+   *
+   * A week solved for a timplanspost with no teacher is a week nobody can
+   * teach: the engine places the row with no teacher constraint at all, and the
+   * school finds out on the first Monday. Whether to start anyway is the
+   * school's call — StaffingPolicy.unstaffedGeneration, ALLOW by default, which
+   * is today's behaviour — and REFUSE answers here, before the payload is built
+   * or the engine is woken.
+   *
+   * THROUGH realiseConflicts, AS AN ENGINE REFUSAL WOULD COME BACK. The rows
+   * get anonymous ids and the refusal names them by those, exactly as the
+   * engine's own refusals do, and the same path that turns an engine refusal
+   * into the school's words turns these into "Matematik för 7B" in
+   * resourceNames — the name the Timplan page gives the cell. So the job row,
+   * the generate page and the history read this refusal the way they read
+   * every other, with no second route for one code. Never a person: the
+   * sentence counts rows, and the names are a subject and a group.
+   *
+   * Status INFEASIBLE because that is what the reply means to everything
+   * downstream — no lessons came back, persistMasterLessons writes nothing and
+   * the school's grundschema stands — and the summaryCode says why it was not
+   * the solver that decided.
+   */
+  private async unstaffedRefusal(
+    tx: PrismaClient,
+    academicYearId: string,
+    schoolId: string,
+    requestId: string,
+  ): Promise<AiEngineScheduleResponse | null> {
+    const policy = await tx.staffingPolicy.findUnique({
+      where: { schoolId },
+      select: { unstaffedGeneration: true },
+    });
+    if (policy?.unstaffedGeneration !== 'REFUSE') return null;
+    const unstaffed = await tx.teachingRequirement.findMany({
+      where: { academicYearId, teacherId: null },
+      select: {
+        id: true,
+        subject: { select: { name: true } },
+        studentGroup: { select: { name: true } },
+      },
+    });
+    if (unstaffed.length === 0) return null;
+
+    const requirementAnonMap = new Map<string, string>();
+    const nameById = new Map<string, string>();
+    const named = unstaffed
+      .map((row) => ({ id: row.id, name: requirementName(row.subject.name, row.studentGroup.name) }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'sv') || a.id.localeCompare(b.id));
+    for (const row of named) {
+      requirementAnonMap.set(row.id, randomUUID());
+      nameById.set(row.id, row.name);
+    }
+    const anonIds = [...requirementAnonMap.values()];
+    const params = { count: named.length };
+    // The catalogue's English (optimization-engine/app/messages.py), rendered
+    // here because the engine never sees this refusal; the web renders the
+    // Swedish from the code and params.
+    const message =
+      `${named.length === 1 ? '1 requirement has' : `${named.length} requirements have`} no teacher, ` +
+      `and the school's staffing policy refuses to generate a timetable until every requirement has one. ` +
+      `Staff the requirements named here, or allow generation without a teacher in the staffing settings.`;
+    const conflicts: AiEngineConflictAnalysis = {
+      summary: message,
+      summaryCode: STAFF_UNSTAFFED_REQUIREMENTS,
+      summaryParams: params,
+      conflicts: [
+        {
+          category: 'INSUFFICIENT_RESOURCES',
+          code: STAFF_UNSTAFFED_REQUIREMENTS,
+          params,
+          message,
+          requirementIds: anonIds,
+          roomIds: [],
+          constraintIds: [],
+          resourceIds: anonIds,
+        },
+      ],
+    };
+    return {
+      requestId,
+      status: 'INFEASIBLE',
+      lessons: [],
+      lunches: [],
+      conflicts: this.realiseConflicts(conflicts, {
+        requirementAnonMap,
+        roomAnonMap: new Map(),
+        groupAnonMap: new Map(),
+        roomTypeAnonMap: new Map(),
+        constraintAnonMap: new Map(),
+        workRuleAnonMap: new Map(),
+        nameById,
       }),
     };
   }
@@ -607,8 +732,7 @@ export class OptimizationProxyService {
     for (const requirement of rawRequirements) {
       const subject = requirement.subject?.name;
       if (!subject) continue;
-      const group = nameById.get(requirement.studentGroupId);
-      nameById.set(requirement.id, group ? `${subject} för ${group}` : subject);
+      nameById.set(requirement.id, requirementName(subject, nameById.get(requirement.studentGroupId)));
       const roomTypeId = requirement.subject.requiredRoomTypeId;
       const roomType = requirement.subject.requiredRoomType?.name;
       if (roomTypeId && roomType) nameById.set(roomTypeId, roomType);
