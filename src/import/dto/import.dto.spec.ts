@@ -335,5 +335,16 @@ describe('ImportTimplanRowDto — a lokal timplan file’s row', () => {
       (await file({ rows: Array.from({ length: 401 }, () => row()) })).map((e) => e.property),
     ).toEqual(['rows']);
   });
+
+  it('refuses a list of lists, which the service would read as rows without a subject', async () => {
+    const file = (body: object) =>
+      validate(plainToInstance(ImportTimplanDto, { localTimplanId: PLAN, ...body }));
+    expect((await file({ rows: [[row()]] })).map((e) => e.property)).toEqual(['rows']);
+  });
+
+  it('measures a note in code points, as the column does', async () => {
+    await expect(errorsOf(row({ note: 'a\uFE0F'.repeat(250) }))).resolves.toEqual([]);
+    await expect(errorsOf(row({ note: 'a\uFE0F'.repeat(251) }))).resolves.toEqual(['note']);
+  });
 });
 

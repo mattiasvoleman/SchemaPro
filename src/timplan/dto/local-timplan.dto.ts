@@ -1,17 +1,18 @@
 import { SchoolForm } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import { MaxCodePoints } from '../../common/utils/max-code-points';
 import {
   ArrayMaxSize,
   IsArray,
   IsEnum,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   IsUUID,
   Matches,
   Max,
-  MaxLength,
   Min,
   ValidateIf,
   ValidateNested,
@@ -32,7 +33,10 @@ import {
  *
  * Non-blank is a pattern (`\S`) rather than IsNotEmpty, which lets "   "
  * through; the service trims what it stores, so a name is never saved with
- * the spaces a form left around it.
+ * the spaces a form left around it. The CHECK spells out the same class of
+ * blanks JavaScript's \s has. Lengths are code points (MaxCodePoints), as
+ * char_length counts them, not MaxLength's count, which drops variation
+ * selectors and let a 200-code-point name through to a 500.
  */
 
 const NAME_BLANK = 'name: timplanen behöver ett namn.';
@@ -45,7 +49,7 @@ const VERSION_ID = 'nationalTimplanVersionId: den nationella timplanen anges med
 export class CreateLocalTimplanDto {
   @IsString({ message: NAME_BLANK })
   @Matches(/\S/, { message: NAME_BLANK })
-  @MaxLength(100, { message: NAME_LONG })
+  @MaxCodePoints(100, { message: NAME_LONG })
   name!: string;
 
   @IsEnum(SchoolForm, {
@@ -83,7 +87,7 @@ export class UpdateLocalTimplanDto {
   @ValidateIf((_, value) => value !== undefined)
   @IsString({ message: NAME_BLANK })
   @Matches(/\S/, { message: NAME_BLANK })
-  @MaxLength(100, { message: NAME_LONG })
+  @MaxCodePoints(100, { message: NAME_LONG })
   name?: string;
 
   @ValidateIf((_, value) => value !== undefined)
@@ -103,6 +107,13 @@ export class UpdateLocalTimplanDto {
  * 0 is a value ("not taught this year"), not an absence.
  */
 export class LocalTimplanEntryDto {
+  /**
+   * Lower-cased: IsUUID and PostgreSQL accept capitals, but the service keys
+   * the subjects it found, and the cells it checks for duplicates, by the
+   * text — so "9E27…" was reported as not in the school, and the same cell in
+   * two cases escaped the duplicate check.
+   */
+  @Transform(({ value }) => (typeof value === 'string' ? value.toLowerCase() : value))
   @IsUUID('4', { message: 'subjectId: ämnet anges med sitt id.' })
   subjectId!: string;
 
@@ -118,9 +129,16 @@ export class LocalTimplanEntryDto {
 
   @IsOptional()
   @IsString({ message: 'note: anteckningen anges som text.' })
-  @MaxLength(500, { message: 'note: anteckningen kan vara högst 500 tecken.' })
+  @MaxCodePoints(500, { message: 'note: anteckningen kan vara högst 500 tecken.' })
   note?: string | null;
 }
+
+/**
+ * The most cells one plan holds: the entries PUT's cap, and the timplan
+ * import's per file AND per plan (an import adds without deleting, so it
+ * checks the plan's size after the file, not only the file's).
+ */
+export const LOCAL_TIMPLAN_MAX_ENTRIES = 400;
 
 /**
  * The plan's whole content, REPLACED wholesale — the shape of PUT
@@ -131,7 +149,12 @@ export class LocalTimplanEntryDto {
  */
 export class ReplaceLocalTimplanEntriesDto {
   @IsArray({ message: 'entries: posterna anges som en lista.' })
-  @ArrayMaxSize(400, { message: 'entries: högst 400 poster per timplan.' })
+  @ArrayMaxSize(LOCAL_TIMPLAN_MAX_ENTRIES, { message: `entries: högst ${LOCAL_TIMPLAN_MAX_ENTRIES} poster per timplan.` })
+  // ValidateNested descends into an inner array and validates ITS elements,
+  // so [[cell]] — or 401 cells wrapped in one list — passed the pipe and
+  // reached the service as entries without a subjectId (a 500). Each element
+  // must itself be an object.
+  @IsObject({ each: true, message: 'entries: varje post anges som ett objekt.' })
   @ValidateNested({ each: true })
   @Type(() => LocalTimplanEntryDto)
   entries!: LocalTimplanEntryDto[];
@@ -141,7 +164,7 @@ export class ReplaceLocalTimplanEntriesDto {
 export class DecideLocalTimplanDto {
   @IsString({ message: 'decisionNote: beslutet behöver en anteckning som identifierar det.' })
   @Matches(/\S/, { message: 'decisionNote: beslutet behöver en anteckning som identifierar det.' })
-  @MaxLength(500, { message: 'decisionNote: anteckningen kan vara högst 500 tecken.' })
+  @MaxCodePoints(500, { message: 'decisionNote: anteckningen kan vara högst 500 tecken.' })
   decisionNote!: string;
 }
 
@@ -150,6 +173,6 @@ export class CopyLocalTimplanDto {
   @IsOptional()
   @IsString({ message: NAME_BLANK })
   @Matches(/\S/, { message: NAME_BLANK })
-  @MaxLength(100, { message: NAME_LONG })
+  @MaxCodePoints(100, { message: NAME_LONG })
   name?: string;
 }

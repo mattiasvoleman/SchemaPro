@@ -2243,8 +2243,51 @@ describe('Planning surface (e2e)', () => {
 
       await request(http()).get('/api/v1/local-timplans/not-a-uuid').set('x-test-user', admin()).expect(400);
 
+      // A list of lists: ValidateNested used to descend into it, the pipe let
+      // it through, and the service read cells without a subject (a 500).
+      const nested = await request(http())
+        .put(`/api/v1/local-timplans/${PLAN_ID}/entries`)
+        .set('x-test-user', admin())
+        .send({ entries: [[{ subjectId: SUBJECT_ID, gradeLevel: 1, minutesPerWeek: 60 }]] })
+        .expect(400);
+      expect(JSON.stringify(nested.body)).toContain('entries: varje post anges som ett objekt.');
+
+      // 100 × "a" + U+FE0F is 200 code points: within MaxLength's count, past
+      // the CHECK's char_length, so it reached the database as a 500.
+      const selected = await request(http())
+        .post('/api/v1/local-timplans')
+        .set('x-test-user', admin())
+        .send({ name: 'a\uFE0F'.repeat(100), schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: VERSION_ID })
+        .expect(400);
+      expect(JSON.stringify(selected.body)).toContain('name: namnet kan vara högst 100 tecken.');
+
       expect(harness.tx['localTimplan']!['findUnique']).not.toHaveBeenCalled();
       expect(harness.tx['localTimplan']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('reads a subject id written in capitals as the same subject', async () => {
+      const lower = 'abcdef12-3456-4789-8abc-def012345678';
+      givenTheStatute();
+      harness.tx['localTimplan']!['findUnique']!
+        .mockResolvedValueOnce(storedPlan())
+        .mockResolvedValueOnce({ ...storedPlan(), entries: [{ ...maEntry(1, 236), subjectId: lower }] });
+      harness.tx['subject']!['findMany']!
+        .mockResolvedValueOnce([{ id: lower }])
+        .mockResolvedValueOnce([{ id: lower, name: 'Matematik', nationalCode: 'MA', countsTowardTimplan: true }]);
+
+      await request(http())
+        .put(`/api/v1/local-timplans/${PLAN_ID}/entries`)
+        .set('x-test-user', admin())
+        .send({ entries: [{ subjectId: lower.toUpperCase(), gradeLevel: 1, minutesPerWeek: 236 }] })
+        .expect(200);
+
+      expect(harness.tx['subject']!['findMany']).toHaveBeenNthCalledWith(1, {
+        where: { id: { in: [lower] } },
+        select: { id: true },
+      });
+      expect(harness.tx['localTimplanEntry']!['createMany']).toHaveBeenCalledWith({
+        data: [expect.objectContaining({ subjectId: lower })],
+      });
     });
 
     it('400s a version of another school form, naming both forms', async () => {

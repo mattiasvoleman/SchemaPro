@@ -16,6 +16,7 @@ import {
   IsInt,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsPositive,
   IsString,
@@ -27,6 +28,8 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { MaxCodePoints } from '../../common/utils/max-code-points';
+import { LOCAL_TIMPLAN_MAX_ENTRIES } from '../../timplan/dto/local-timplan.dto';
 import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
 
 /**
@@ -564,7 +567,8 @@ export class ImportTimplanRowDto {
 
   @IsOptional()
   @IsString({ message: 'notering: anges som text.' })
-  @MaxLength(500, { message: 'notering: högst 500 tecken.' })
+  // Code points, as the column's char_length counts (see MaxCodePoints).
+  @MaxCodePoints(500, { message: 'notering: högst 500 tecken.' })
   note?: string | null;
 }
 
@@ -592,7 +596,9 @@ export class ImportTimplanDto {
   // cap, so a file and the grid can hold the same plan.
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(400)
+  @ArrayMaxSize(LOCAL_TIMPLAN_MAX_ENTRIES)
+  // Without it [[row]] passes: ValidateNested descends into the inner list.
+  @IsObject({ each: true, message: 'rows: varje rad anges som ett objekt.' })
   @ValidateNested({ each: true })
   @Type(() => ImportTimplanRowDto)
   rows!: ImportTimplanRowDto[];
