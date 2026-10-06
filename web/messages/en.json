@@ -224,7 +224,14 @@
     "addRoomType": "+ Add room type…",
     "roomTypeName": "Room type name",
     "roomTypePlaceholder": "e.g. Home economics room",
-    "exportCsv": "Export CSV"
+    "exportCsv": "Export CSV",
+    "nationalCode": "National subject code",
+    "nationalCodeNone": "Outside the timplan",
+    "nationalCodeHint": "The mapping decides which row of the national timplan this subject's hours count against. NO and SO in the lower years may be mapped to the whole subject group.",
+    "nationalCodeUnavailable": "The list of national subject codes could not be loaded. The subject can be saved without a mapping and mapped later.",
+    "countsTowardTimplan": "Counts as teaching time",
+    "countsTowardTimplanHint": "Turn off for mentor time and resource time, so those minutes stay out of every timplan total.",
+    "notTeachingTime": "Not teaching time"
   },
   "rooms": {
     "title": "Rooms",
