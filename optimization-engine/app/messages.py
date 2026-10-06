@@ -556,4 +556,31 @@ MESSAGES: dict[str, str] = {
         "{neededMinutes} minutes a week and those rooms offer {offeredMinutes}. Name another "
         "room, or narrow which years the lock applies to."
     ),
+
+    # ---- Tjänstefördelning: sent by the GATEWAY, not by this engine ---------
+    # The staffing policy's refusals and warnings (src/staffing/staffing-checks.ts
+    # and the generate pre-flight in optimization-proxy.service.ts). They live
+    # here anyway because this is THE catalogue: the web renders every sentence
+    # a school is refused with from web/messages/*.json under engineMessages, and
+    # the parity fixture generated from this dict is what keeps that file whole.
+    # A second catalogue for three gateway codes would be two sources for one
+    # screen. Phase 4's staffing solver will send its own STAFF_* codes beside
+    # these. `role` is the row's lead, its co-teacher or a vikarie, never a name;
+    # `grades` is "7", "7–9" or "any", as _grade_span_text writes a span.
+    "STAFF_TEACHER_NOT_QUALIFIED": (
+        "{role, select, CO_TEACHER {The co-teacher} SUBSTITUTE {The substitute} "
+        "other {The teacher}} has no qualification in {subject}"
+        "{grades, select, any {} other { for years {grades}}}."
+    ),
+    "STAFF_TEACHER_OVER_TARGET": (
+        "{role, select, CO_TEACHER {The co-teacher} SUBSTITUTE {The substitute} "
+        "other {The teacher}} would carry {minutes} minutes a week against a target of "
+        "{target} (the limit is {limit} with the {tolerance} % tolerance)."
+    ),
+    "STAFF_UNSTAFFED_REQUIREMENTS": (
+        "{count, plural, one {# requirement has} other {# requirements have}} no teacher, and "
+        "the school's staffing policy refuses to generate a timetable until every requirement "
+        "has one. Staff the requirements named here, or allow generation without a teacher in "
+        "the staffing settings."
+    ),
 }
