@@ -603,6 +603,13 @@ describe('CalendarLessonsService', () => {
     const CO_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
     const OTHER_GROUP_ID = '12121212-1212-4212-8212-121212121212';
 
+    beforeEach(() => {
+      // A school that has recorded no behörighet at all: the picker runs on
+      // the requirement heuristic alone, exactly as it did before the table
+      // existed. The tests below that are about qualifications say so.
+      tx.teacherSubjectQualification.count.mockResolvedValue(0);
+    });
+
     it('ranks class-and-subject teachers first, drops assigned and busy ones', async () => {
       storeLesson();
       tx.teachingRequirement.findMany.mockImplementation(answerRows([
@@ -627,8 +634,8 @@ describe('CalendarLessonsService', () => {
       const user = testUser();
 
       await expect(service.suggestSubstitutes(LESSON_ID, user)).resolves.toEqual([
-        { teacherId: PRIMARY_ID, isPrimary: true },
-        { teacherId: OTHER_ID, isPrimary: false },
+        { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+        { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
       ]);
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
@@ -671,6 +678,119 @@ describe('CalendarLessonsService', () => {
       await expect(service.suggestSubstitutes(LESSON_ID, testUser())).rejects.toThrow(
         NotFoundException,
       );
+    });
+
+    it('reads no behörigheter and no roster when the school has recorded none', async () => {
+      storeLesson();
+      tx.teachingRequirement.findMany.mockResolvedValue([
+        { teacherId: OTHER_ID, coTeacherId: null, studentGroupId: OTHER_GROUP_ID },
+      ]);
+      tx.user.findMany.mockResolvedValue([{ id: OTHER_ID }]);
+      tx.calendarLesson.findFirst.mockImplementation(answerFirst(null));
+
+      await service.suggestSubstitutes(LESSON_ID, testUser());
+
+      expect(tx.teacherSubjectQualification.findMany).not.toHaveBeenCalled();
+      expect(tx.studentGroup.findUnique).not.toHaveBeenCalled();
+    });
+
+    describe('with behörigheter recorded', () => {
+      const LEGIT_ID = '13131313-1313-4313-8313-131313131313';
+      const TILLATEN_ID = '14141414-1414-4414-8414-141414141414';
+      const qualification = (overrides: Record<string, unknown> = {}) => ({
+        userId: LEGIT_ID,
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+        kind: 'LEGITIMATION',
+        validFrom: null,
+        validTo: null,
+        ...overrides,
+      });
+
+      beforeEach(() => {
+        storeLesson();
+        tx.teacherSubjectQualification.count.mockResolvedValue(3);
+        // The lesson's class is a plain åk 7 class with no roster rows, so its
+        // span is its own year, 7-7 — derived through the proxy's helper.
+        tx.studentGroup.findUnique.mockImplementation(answerById([{ id: GROUP_ID, gradeLevel: 7 }]));
+        tx.studentGroupMember.findMany.mockResolvedValue([]);
+        tx.teachingRequirement.findMany.mockResolvedValue([
+          // Teaches this class, no behörighet recorded.
+          { teacherId: PRIMARY_ID, coTeacherId: null, studentGroupId: GROUP_ID },
+          // Teaches the subject elsewhere, no behörighet recorded.
+          { teacherId: OTHER_ID, coTeacherId: null, studentGroupId: OTHER_GROUP_ID },
+        ]);
+        // The roster read asks about pupils; the candidate read asks by id.
+        tx.user.findMany.mockImplementation((query: Query) =>
+          Promise.resolve(
+            query.where?.role === 'TEACHER'
+              ? (query.where.id.in as string[]).map((id) => ({ id }))
+              : [],
+          ),
+        );
+        tx.calendarLesson.findFirst.mockImplementation(answerFirst(null));
+      });
+
+      it('puts a legitimerad teacher on no requirement ahead of the class’s own, and the tillåten one between', async () => {
+        tx.teacherSubjectQualification.findMany.mockImplementation(
+          answerRows([
+            qualification(),
+            qualification({ userId: TILLATEN_ID, kind: 'TILLATEN' }),
+          ]),
+        );
+
+        await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+          { teacherId: LEGIT_ID, isPrimary: false, qualificationKind: 'LEGITIMATION' },
+          { teacherId: TILLATEN_ID, isPrimary: false, qualificationKind: 'TILLATEN' },
+          { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+          { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
+        ]);
+        expect(tx.teacherSubjectQualification.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { subjectId: SUBJECT_ID } }),
+        );
+      });
+
+      it('badges the class’s own teacher when they hold a behörighet, and ranks them above an equal outsider', async () => {
+        tx.teacherSubjectQualification.findMany.mockImplementation(
+          answerRows([
+            qualification({ userId: PRIMARY_ID, kind: 'BEHORIG' }),
+            qualification({ userId: OTHER_ID, kind: 'BEHORIG' }),
+          ]),
+        );
+
+        await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+          { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: 'BEHORIG' },
+          { teacherId: OTHER_ID, isPrimary: false, qualificationKind: 'BEHORIG' },
+        ]);
+      });
+
+      it('ignores a behörighet whose span misses the class, and one not valid on the lesson’s date', async () => {
+        tx.teacherSubjectQualification.findMany.mockImplementation(
+          answerRows([
+            // Lågstadiet only: does not reach åk 7.
+            qualification({ userId: LEGIT_ID, minGradeLevel: 1, maxGradeLevel: 6 }),
+            // Expired before 2026-08-10.
+            qualification({ userId: TILLATEN_ID, kind: 'TILLATEN', validTo: new Date('2026-06-30T00:00:00.000Z') }),
+            // Subject teacher with a span that covers: badged.
+            qualification({ userId: OTHER_ID, kind: 'BEHORIG' }),
+          ]),
+        );
+
+        await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+          { teacherId: OTHER_ID, isPrimary: false, qualificationKind: 'BEHORIG' },
+          { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+        ]);
+      });
+
+      it('never suggests a teacher already on the lesson, however qualified', async () => {
+        tx.teacherSubjectQualification.findMany.mockImplementation(
+          answerRows([qualification({ userId: TEACHER_ID })]),
+        );
+
+        const answer = await service.suggestSubstitutes(LESSON_ID, testUser());
+
+        expect(answer.map((s) => s.teacherId)).not.toContain(TEACHER_ID);
+      });
     });
   });
 
