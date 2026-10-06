@@ -7,11 +7,11 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import type { User, UserRole } from '@prisma/client';
+import { Prisma, type User, type UserRole } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
-import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { listNames, rethrowPrismaError } from '../common/utils/prisma-errors';
 import { SupabaseAdminService } from './supabase-admin.service';
 import type { CreateUserDto, UpdateUserDto } from './dto/user.dto';
 
@@ -322,6 +322,18 @@ export class UsersService {
         if (!target) {
           throw new NotFoundException('The requested record does not exist.');
         }
+        // A decided lokal timplan names who recorded the decision, and the
+        // record keeps that name: LocalTimplans_decidedByUserId_schoolId_fkey
+        // is ON DELETE RESTRICT. Asked first so the answer names the plans
+        // and the way out, instead of the generic "references a record".
+        const decided = await tx.localTimplan.findMany({
+          where: { decidedByUserId: id },
+          select: { name: true },
+          orderBy: { name: 'asc' },
+        });
+        if (decided.length > 0) {
+          throw recordedATimplanDecision(decided.map((plan) => plan.name));
+        }
         await tx.user.delete({ where: { id } });
         // Somebody who was never contacted has no identity to delete: `authId`
         // is a placeholder uuid written at create time and matching nothing at
@@ -331,7 +343,9 @@ export class UsersService {
         return target.invitedAt === null ? null : target.authId;
       });
     } catch (error) {
-      if (error instanceof NotFoundException) throw error;
+      if (error instanceof NotFoundException || error instanceof ConflictException) throw error;
+      // A plan decided by this person between the question and the delete.
+      if (isDeciderReference(error)) throw recordedATimplanDecision([]);
       rethrowPrismaError(error);
     }
 
@@ -418,4 +432,31 @@ export class UsersService {
       this.logger.warn('Could not remove a user row after a failed invitation.');
     }
   }
+}
+
+/**
+ * The 409 for removing someone a decided timplan names as its decider. A
+ * decision's who is part of the record; the person is deactivated instead,
+ * which keeps the name on the plan and takes every access away.
+ */
+function recordedATimplanDecision(planNames: string[]): ConflictException {
+  const which =
+    planNames.length === 0
+      ? 'en beslutad lokal timplan'
+      : planNames.length === 1
+        ? `den beslutade lokala timplanen ${listNames(planNames)}`
+        : `de beslutade lokala timplanerna ${listNames(planNames)}`;
+  return new ConflictException(
+    `Personen står som den som registrerade beslutet om ${which} och kan inte tas bort. ` +
+      'Inaktivera kontot i stället; beslutet behåller sitt namn.',
+  );
+}
+
+/** The restrict foreign key from a decided plan to its decider, as the pg adapter reports it. */
+function isDeciderReference(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2003' &&
+    JSON.stringify(error.meta ?? {}).includes('LocalTimplans_decidedByUserId_schoolId_fkey')
+  );
 }

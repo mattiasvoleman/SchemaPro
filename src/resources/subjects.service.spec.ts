@@ -288,5 +288,59 @@ describe('SubjectsService', () => {
         NotFoundException,
       );
     });
+
+    it('asks which decided plans hold the subject before deleting it', async () => {
+      tx.subject.delete.mockResolvedValue({ id: SUBJECT_ID });
+
+      await service.remove(SUBJECT_ID, testUser());
+
+      expect(tx.localTimplan.findMany).toHaveBeenCalledWith({
+        where: { status: 'DECIDED', entries: { some: { subjectId: SUBJECT_ID } } },
+        select: { name: true },
+        orderBy: { name: 'asc' },
+      });
+    });
+
+    it('409s a subject that decided plans contain, naming every one, and deletes nothing', async () => {
+      tx.localTimplan.findMany.mockResolvedValue([
+        { name: 'Grundskolan 2024' },
+        { name: 'Anpassad 2023' },
+      ]);
+
+      const error = await service.remove(SUBJECT_ID, testUser()).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      const body = (error as ConflictException).getResponse() as { code: string; message: string };
+      expect(body.code).toBe('TIMPLAN_IS_DECIDED');
+      expect(body.message).toContain(
+        'de beslutade lokala timplanerna "Grundskolan 2024" och "Anpassad 2023"',
+      );
+      expect(body.message).toContain('Ta bort de beslutade timplanerna först');
+      expect(tx.subject.delete).not.toHaveBeenCalled();
+    });
+
+    it('turns the trigger’s refusal — a plan decided after the question — into the same 409', async () => {
+      const message =
+        'TIMPLAN_IS_DECIDED: lokal timplan "Grundskolan 2024" är beslutad och dess poster kan inte ändras';
+      tx.subject.delete.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError(`Database error. Code: \`TP409\`. Message: \`${message}\``, {
+          code: 'P2039',
+          clientVersion: Prisma.prismaVersion.client,
+          meta: {
+            driverAdapterError: {
+              cause: { originalCode: 'TP409', originalMessage: message, detail: 'localTimplanId=x' },
+            },
+          },
+        }),
+      );
+
+      const error = await service.remove(SUBJECT_ID, testUser()).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect((error as ConflictException).getResponse()).toMatchObject({
+        code: 'TIMPLAN_IS_DECIDED',
+        message: expect.stringContaining('den beslutade lokala timplanen "Grundskolan 2024"'),
+      });
+    });
   });
 });

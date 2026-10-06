@@ -70,6 +70,19 @@ describe('Resource CRUD (e2e)', () => {
         .expect(204);
     });
 
+    it('409s deleting a subject a decided lokal timplan holds, naming the plan, and deletes nothing', async () => {
+      harness.tx['localTimplan']!['findMany']!.mockResolvedValueOnce([{ name: 'Grundskolan 2024' }]);
+
+      const response = await request(harness.app.getHttpServer())
+        .delete(`/api/v1/subjects/${SUBJECT_ID}`)
+        .set('x-test-user', asUser({}))
+        .expect(409);
+
+      expect(response.body).toMatchObject({ status: 409, code: 'TIMPLAN_IS_DECIDED' });
+      expect(response.body.detail).toContain('den beslutade lokala timplanen "Grundskolan 2024"');
+      expect(harness.tx['subject']!['delete']).not.toHaveBeenCalled();
+    });
+
     it('denies teachers and students (RBAC)', async () => {
       for (const role of ['TEACHER', 'STUDENT']) {
         await request(harness.app.getHttpServer())
