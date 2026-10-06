@@ -13,6 +13,7 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
+import { givenStaffingWorld, type StaffingWorld } from '../../test/utils/staffing-world';
 import type { PrismaService } from '../database/prisma.service';
 import { TeachingRequirementsService } from './teaching-requirements.service';
 import type {
@@ -139,7 +140,7 @@ describe('TeachingRequirementsService', () => {
 
       // The row itself rather than a copy of it would be the simpler
       // assertion, but the dates leave as strings now — see toResponse.
-      await expect(service.create(dto(), user)).resolves.toEqual(row);
+      await expect(service.create(dto(), user)).resolves.toEqual({ ...row, warnings: [] });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.teachingRequirement.create).toHaveBeenCalledWith({
@@ -316,6 +317,7 @@ describe('TeachingRequirementsService', () => {
         id: REQUIREMENT_ID,
         startDate: '2027-01-11',
         endDate: '2027-06-11',
+        warnings: [],
       });
     });
 
@@ -332,6 +334,7 @@ describe('TeachingRequirementsService', () => {
         id: REQUIREMENT_ID,
         startDate: null,
         endDate: null,
+        warnings: [],
       });
     });
 
@@ -515,7 +518,7 @@ describe('TeachingRequirementsService', () => {
 
       await expect(
         service.update(REQUIREMENT_ID, { teacherId: null }, user),
-      ).resolves.toEqual(row);
+      ).resolves.toEqual({ ...row, warnings: [] });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
@@ -539,8 +542,12 @@ describe('TeachingRequirementsService', () => {
       });
       // Neither date was sent, so the row is not read to merge a period, and
       // the year is not locked: an edit that moves no date strands nothing, so
-      // it has no reason to wait for a year PATCH or to hold one up.
-      expect(tx.teachingRequirement.findUnique).not.toHaveBeenCalled();
+      // it has no reason to wait for a year PATCH or to hold one up. (The row
+      // IS read for its teachers — the staffing checks ask about a PATCH that
+      // changes what the row charges them — but never for its dates.)
+      for (const [query] of tx.teachingRequirement.findUnique.mock.calls as [{ select: Record<string, unknown> }][]) {
+        expect(query.select).not.toHaveProperty('startDate');
+      }
       expect(queryRaw).not.toHaveBeenCalled();
     });
 
@@ -726,6 +733,263 @@ describe('TeachingRequirementsService', () => {
       await expect(
         service.update(REQUIREMENT_ID, { lessonsPerWeek: 2 }, testUser()),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  /*
+   * The staffing policy at the two write points this service owns. The
+   * questions themselves are specified in staffing-checks.spec.ts; what is
+   * pinned here is that a create and a PATCH ask them of the row as it will
+   * end up, in the write's transaction, before writing — and that a REFUSE
+   * leaves nothing written.
+   */
+  describe('the staffing policy', () => {
+    const ANNA = TEACHER_ID;
+    const BO = CO_TEACHER_ID;
+    const POST_ANNA = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
+    const OTHER_SUBJECT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+
+    /** Anna holds 8 × 120 = 960 minutes of a 1 000-minute target (limit 1 100). */
+    const world = (overrides: StaffingWorld = {}): StaffingWorld => ({
+      groups: [{ id: GROUP_ID, name: '7A', gradeLevel: 7 }],
+      subjects: [
+        { id: SUBJECT_ID, name: 'Matematik' },
+        { id: OTHER_SUBJECT, name: 'Fysik' },
+      ],
+      employments: [{ id: POST_ANNA, userId: ANNA }],
+      requirements: [
+        {
+          id: 'req-held',
+          subjectId: OTHER_SUBJECT,
+          studentGroupId: GROUP_ID,
+          teacherId: ANNA,
+          coTeacherId: null,
+          lessonsPerWeek: 8,
+          minutesPerLesson: 120,
+        },
+      ],
+      qualifications: [
+        { userId: ANNA, subjectId: SUBJECT_ID, minGradeLevel: 7, maxGradeLevel: 9 },
+        { userId: ANNA, subjectId: OTHER_SUBJECT, minGradeLevel: 7, maxGradeLevel: 9 },
+      ],
+      ...overrides,
+    });
+
+    const arrange = (overrides: StaffingWorld = {}) =>
+      givenStaffingWorld(tx, world(overrides), (...call) =>
+        Promise.resolve(lockingRead(YEARS, years, call)),
+      );
+
+    beforeEach(() => {
+      tx.teachingRequirement.create.mockResolvedValue({ id: REQUIREMENT_ID, startDate: null, endDate: null });
+      tx.teachingRequirement.update.mockResolvedValue({ id: REQUIREMENT_ID, startDate: null, endDate: null });
+    });
+
+    describe('create', () => {
+      it('WARN: saves a teacher without behörighet and says so, by subject and span', async () => {
+        arrange();
+
+        const created = await service.create(dto({ teacherId: BO, lessonsPerWeek: 1 }), testUser());
+
+        expect(tx.teachingRequirement.create).toHaveBeenCalledTimes(1);
+        expect(created.warnings).toEqual([
+          {
+            code: 'STAFF_TEACHER_NOT_QUALIFIED',
+            params: { role: 'TEACHER', subject: 'Matematik', grades: '7' },
+          },
+        ]);
+      });
+
+      it('REFUSE: answers 409 with the code and params, and writes nothing', async () => {
+        arrange({ policy: { qualificationMode: 'REFUSE' } });
+
+        const refused = service.create(dto({ teacherId: BO, lessonsPerWeek: 1 }), testUser());
+
+        await expect(refused).rejects.toThrow(ConflictException);
+        await refused.catch((error: ConflictException) => {
+          expect(error.getResponse()).toEqual({
+            code: 'STAFF_TEACHER_NOT_QUALIFIED',
+            params: { role: 'TEACHER', subject: 'Matematik', grades: '7' },
+            message: 'Läraren saknar behörighet i Matematik för åk 7.',
+          });
+        });
+        expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+      });
+
+      it('OFF: asks nothing, reads no year and locks no post', async () => {
+        const handle = arrange({ policy: { qualificationMode: 'OFF', overAllocationMode: 'OFF' } });
+
+        const created = await service.create(dto({ teacherId: BO, lessonsPerWeek: 40 }), testUser());
+
+        expect(created.warnings).toEqual([]);
+        expect(handle.locked).toEqual([]);
+        expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('a row with no teacher asks nothing, not even the policy', async () => {
+        arrange({ policy: { qualificationMode: 'REFUSE', overAllocationMode: 'REFUSE' } });
+
+        await expect(service.create(dto({ lessonsPerWeek: 40 }), testUser())).resolves.toMatchObject({
+          warnings: [],
+        });
+        expect(tx.staffingPolicy.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('locks the post FOR NO KEY UPDATE before it reads the year it judges', async () => {
+        const handle = arrange({ policy: { overAllocationMode: 'REFUSE' } });
+
+        // 960 + 2 × 60 = 1 080: inside the 1 100 limit.
+        const created = await service.create(dto({ teacherId: ANNA, lessonsPerWeek: 2 }), testUser());
+
+        expect(created.warnings).toEqual([]);
+        expect(handle.locked).toEqual([[POST_ANNA]]);
+        expect(handle.order.indexOf('lock')).toBeLessThan(handle.order.indexOf('year'));
+      });
+
+      it('REFUSE over target: names the minutes and the limit, and writes nothing', async () => {
+        arrange({ policy: { overAllocationMode: 'REFUSE' } });
+
+        // 960 + 3 × 60 = 1 140 > 1 100.
+        const refused = service.create(dto({ teacherId: ANNA, lessonsPerWeek: 3 }), testUser());
+
+        await refused.catch(() => undefined);
+        await expect(refused).rejects.toMatchObject({
+          response: {
+            code: 'STAFF_TEACHER_OVER_TARGET',
+            params: { role: 'TEACHER', minutes: 1140, target: 1000, limit: 1100, tolerance: 10 },
+          },
+        });
+        expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+      });
+
+      it('WARN over target: saves, and the warning carries the same params', async () => {
+        arrange();
+
+        const created = await service.create(dto({ teacherId: ANNA, lessonsPerWeek: 3 }), testUser());
+
+        expect(tx.teachingRequirement.create).toHaveBeenCalledTimes(1);
+        expect(created.warnings).toEqual([
+          {
+            code: 'STAFF_TEACHER_OVER_TARGET',
+            params: { role: 'TEACHER', minutes: 1140, target: 1000, limit: 1100, tolerance: 10 },
+          },
+        ]);
+      });
+
+      it('a teacher with no post has no target, and nothing is locked', async () => {
+        const handle = arrange({ policy: { overAllocationMode: 'REFUSE' }, employments: [] });
+
+        const created = await service.create(dto({ teacherId: ANNA, lessonsPerWeek: 30 }), testUser());
+
+        expect(created.warnings).toEqual([]);
+        expect(handle.locked).toEqual([]);
+      });
+
+      it('charges the co-teacher at the co-teacher’s percentage', async () => {
+        arrange({
+          policy: { overAllocationMode: 'REFUSE' },
+          qualifications: [],
+          employments: [{ id: POST_ANNA, userId: ANNA }],
+        });
+
+        // Anna as CO-teacher at 0 %: nothing added, nothing over.
+        await expect(
+          service.create(
+            dto({ teacherId: BO, coTeacherId: ANNA, lessonsPerWeek: 5, coTeacherLoadPercent: 0 }),
+            testUser(),
+          ),
+        ).resolves.toMatchObject({ warnings: [] });
+      });
+    });
+
+    describe('update', () => {
+      /** The row being PATCHed: Ma 7A, 2 × 60, already Anna's. */
+      const target = {
+        id: REQUIREMENT_ID,
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: ANNA,
+        coTeacherId: null,
+        lessonsPerWeek: 2,
+        minutesPerLesson: 60,
+      };
+
+      const arrangeRow = (overrides: StaffingWorld = {}) => {
+        const handle = arrange({ requirements: [...(world().requirements ?? []), target], ...overrides });
+        tx.teachingRequirement.findUnique.mockImplementation(
+          ({ where, select }: { where: { id: string }; select?: Record<string, unknown> }) =>
+            Promise.resolve(
+              where.id === REQUIREMENT_ID
+                ? selected({ ...target, academicYearId: YEAR_ID, startDate: null, endDate: null }, select)
+                : null,
+            ),
+        );
+        return handle;
+      };
+
+      it('REFUSE: a PATCH adding lessons that take the teacher past the limit is 409, and nothing is written', async () => {
+        arrangeRow({ policy: { overAllocationMode: 'REFUSE' } });
+
+        // 960 + 120 = 1 080 now; 4 × 60 makes it 1 200.
+        await expect(
+          service.update(REQUIREMENT_ID, { lessonsPerWeek: 4 }, testUser()),
+        ).rejects.toMatchObject({ response: { code: 'STAFF_TEACHER_OVER_TARGET' } });
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
+
+      it('never refuses a PATCH that lightens the row, even for a teacher already over', async () => {
+        arrangeRow({
+          policy: { overAllocationMode: 'REFUSE' },
+          requirements: [
+            { ...world().requirements![0]!, lessonsPerWeek: 10 },
+            target,
+          ],
+        });
+
+        // Anna at 1 320; dropping to 1 lesson leaves her at 1 260 — still
+        // over, and the PATCH is the fix.
+        await expect(
+          service.update(REQUIREMENT_ID, { lessonsPerWeek: 1 }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+      });
+
+      it('does not ask behörighet again of the teacher the row already had', async () => {
+        // The school has recorded a behörighet — Bo's, not Anna's — so the
+        // question WOULD be asked of Anna if this were an assignment.
+        arrangeRow({
+          policy: { qualificationMode: 'REFUSE', overAllocationMode: 'OFF' },
+          qualifications: [{ userId: BO, subjectId: SUBJECT_ID, minGradeLevel: 7, maxGradeLevel: 9 }],
+        });
+
+        await expect(
+          service.update(REQUIREMENT_ID, { teacherId: ANNA, minutesPerLesson: 45 }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+      });
+
+      it('asks behörighet of a new teacher, and names the role', async () => {
+        arrangeRow({
+          qualifications: [{ userId: ANNA, subjectId: SUBJECT_ID, minGradeLevel: 7, maxGradeLevel: 9 }],
+        });
+
+        const updated = await service.update(REQUIREMENT_ID, { coTeacherId: BO }, testUser());
+
+        expect(updated.warnings).toEqual([
+          {
+            code: 'STAFF_TEACHER_NOT_QUALIFIED',
+            params: { role: 'CO_TEACHER', subject: 'Matematik', grades: '7' },
+          },
+        ]);
+        expect(tx.teachingRequirement.update).toHaveBeenCalledTimes(1);
+      });
+
+      it('asks nothing of a PATCH that changes nothing a load or a teacher is made of', async () => {
+        const handle = arrangeRow({ policy: { overAllocationMode: 'REFUSE' } });
+
+        await service.update(REQUIREMENT_ID, { minutesBefore: 10 }, testUser());
+
+        expect(handle.locked).toEqual([]);
+        expect(tx.staffingPolicy.findUnique).not.toHaveBeenCalled();
+      });
     });
   });
 
