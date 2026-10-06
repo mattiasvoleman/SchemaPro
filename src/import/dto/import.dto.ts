@@ -744,4 +744,19 @@ export interface ImportReport {
   updated?: number;
   /** 1-based DATA row numbers (the header row is not counted). */
   errors: { row: number; message: string }[];
+  /**
+   * Rows that WERE written but that the staffing policy's WARN mode has
+   * something to say about (STAFF_TEACHER_NOT_QUALIFIED,
+   * STAFF_TEACHER_OVER_TARGET). Only the requirements import reports them; the
+   * same finding under REFUSE is that row's entry in `errors` instead.
+   */
+  warnings?: ImportWarning[];
+}
+
+/** One staffing finding on a saved row: the code and params the web renders, and the Swedish. */
+export interface ImportWarning {
+  row: number;
+  code: string;
+  params: Record<string, string | number>;
+  message: string;
 }

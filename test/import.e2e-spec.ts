@@ -351,6 +351,8 @@ describe('CSV import (e2e)', () => {
         updated: 1,
         skipped: 0,
         errors: [],
+        // The staffing policy had nothing to say: no behörighet recorded, no post.
+        warnings: [],
       });
       const created = harness.tx['teachingRequirement']!['create']!.mock
         .calls[0]?.[0] as { data: { schoolId: string; subjectId: string } };

@@ -12,6 +12,7 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
+import { givenStaffingWorld, type StaffingWorld } from '../../test/utils/staffing-world';
 import type { PrismaService } from '../database/prisma.service';
 import { Prisma } from '@prisma/client';
 import type {
@@ -1964,7 +1965,7 @@ describe('ImportService', () => {
           row({ teacherEmail: 'karin@example.com', coTeacherEmail: 'bo@example.com' }),
         );
 
-        expect(report).toEqual({ created: 1, updated: 0, skipped: 0, errors: [] });
+        expect(report).toEqual({ created: 1, updated: 0, skipped: 0, errors: [], warnings: [] });
         expect(tx.teachingRequirement.create).toHaveBeenCalledWith({
           data: {
             schoolId: testUser().schoolId,
@@ -2025,6 +2026,7 @@ describe('ImportService', () => {
           updated: 0,
           skipped: 0,
           errors: [{ row: 1, message: expect.stringContaining('"7X"') }],
+          warnings: [],
         });
         expect(tx.studentGroup.create).not.toHaveBeenCalled();
         expect(tx.teachingRequirement.create).toHaveBeenCalledTimes(1);
@@ -2084,6 +2086,7 @@ describe('ImportService', () => {
           updated: 0,
           skipped: 0,
           errors: [{ row: 1, message: expect.stringContaining('ghost@example.com') }],
+          warnings: [],
         });
         expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
       });
@@ -2250,7 +2253,7 @@ describe('ImportService', () => {
           row({ subject: 'SV', endDate: '2027-01-15' }),
         );
 
-        expect(report).toEqual({ created: 1, updated: 1, skipped: 0, errors: [] });
+        expect(report).toEqual({ created: 1, updated: 1, skipped: 0, errors: [], warnings: [] });
         expect(readIn).toEqual([expect.stringMatching(/^withRls#\d+$/)]);
         expect(createdIn).toEqual(readIn);
         expect(updatedIn).toEqual(readIn);
@@ -2302,7 +2305,7 @@ describe('ImportService', () => {
           row({ lessonsPerWeek: 4, teacherEmail: 'karin@example.com' }),
         );
 
-        expect(report).toEqual({ created: 0, updated: 1, skipped: 0, errors: [] });
+        expect(report).toEqual({ created: 0, updated: 1, skipped: 0, errors: [], warnings: [] });
         expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
         expect(tx.teachingRequirement.update).toHaveBeenCalledWith({
           where: { id: 'req-1' },
@@ -2329,7 +2332,7 @@ describe('ImportService', () => {
 
         const report = await run(row({ teacherEmail: 'karin@example.com' }));
 
-        expect(report).toEqual({ created: 0, updated: 0, skipped: 1, errors: [] });
+        expect(report).toEqual({ created: 0, updated: 0, skipped: 1, errors: [], warnings: [] });
         expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
       });
 
@@ -2345,7 +2348,7 @@ describe('ImportService', () => {
           row({ startDate: '2026-09-01', endDate: '2026-12-20' }),
         );
 
-        expect(report).toEqual({ created: 0, updated: 0, skipped: 1, errors: [] });
+        expect(report).toEqual({ created: 0, updated: 0, skipped: 1, errors: [], warnings: [] });
         expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
       });
 
@@ -2557,7 +2560,7 @@ describe('ImportService', () => {
 
         const report = await run(row({ lessonsPerWeek: 4 }));
 
-        expect(report).toEqual({ created: 0, updated: 1, skipped: 0, errors: [] });
+        expect(report).toEqual({ created: 0, updated: 1, skipped: 0, errors: [], warnings: [] });
         expect(tx.teachingRequirement.delete).not.toHaveBeenCalled();
         expect(tx.teachingRequirement.deleteMany).not.toHaveBeenCalled();
         expect(tx.teachingRequirement.update).toHaveBeenCalledTimes(1);
@@ -2760,6 +2763,153 @@ describe('ImportService', () => {
         service.importRequirements({ academicYearId: YEAR_ID, rows: [row()] }, schoolless()),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    /*
+     * The staffing policy per row. WARN saves the row and lists the finding;
+     * REFUSE makes the row an error and the rest of the file proceeds; the rows
+     * are judged in file order with the earlier ones counted.
+     */
+    describe('the staffing policy, per row', () => {
+      const POST_KARIN = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
+      const POST_BO = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2';
+
+      const arrange = (world: StaffingWorld = {}) =>
+        givenStaffingWorld(
+          tx,
+          {
+            groups: [
+              { id: GROUP_7A, name: '7A', gradeLevel: 7 },
+              { id: GROUP_7B, name: '7B', gradeLevel: 7 },
+            ],
+            subjects: [
+              { id: SUBJ_MA, name: 'Matematik', code: 'MA' },
+              { id: SUBJ_SV, name: 'Svenska', code: 'SV' },
+            ],
+            employments: [
+              { id: POST_KARIN, userId: TEACHER_ID },
+              { id: POST_BO, userId: CO_TEACHER_ID },
+            ],
+            qualifications: [
+              { userId: TEACHER_ID, subjectId: SUBJ_MA, minGradeLevel: 7, maxGradeLevel: 9 },
+              { userId: TEACHER_ID, subjectId: SUBJ_SV, minGradeLevel: 7, maxGradeLevel: 9 },
+            ],
+            ...world,
+          },
+          (...call) => Promise.resolve(lockingRead(YEARS, years, call)),
+        );
+
+      it('WARN: saves the row and lists the finding with its code, params and Swedish', async () => {
+        arrange();
+
+        const report = await run(row({ teacherEmail: 'bo@example.com' }));
+
+        expect(report.created).toBe(1);
+        expect(report.errors).toEqual([]);
+        expect(report.warnings).toEqual([
+          {
+            row: 1,
+            code: 'STAFF_TEACHER_NOT_QUALIFIED',
+            params: { role: 'TEACHER', subject: 'Matematik', grades: '7' },
+            message: 'Läraren saknar behörighet i Matematik för åk 7.',
+          },
+        ]);
+      });
+
+      it('REFUSE: the row is an error, nothing is written for it, and the rest of the file proceeds', async () => {
+        arrange({ policy: { qualificationMode: 'REFUSE' } });
+
+        const report = await run(
+          row({ teacherEmail: 'bo@example.com' }),
+          row({ groupName: '7B', teacherEmail: 'karin@example.com' }),
+        );
+
+        expect(report).toMatchObject({
+          created: 1,
+          errors: [{ row: 1, message: 'Läraren saknar behörighet i Matematik för åk 7.' }],
+          warnings: [],
+        });
+        expect(tx.teachingRequirement.create).toHaveBeenCalledTimes(1);
+        expect(tx.teachingRequirement.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ studentGroupId: GROUP_7B, teacherId: TEACHER_ID }),
+        });
+      });
+
+      it('counts the earlier rows of the file: the row that takes the teacher past the limit is the one refused', async () => {
+        arrange({ policy: { overAllocationMode: 'REFUSE' } });
+        tx.teachingRequirement.create.mockImplementation(({ data }: { data: { studentGroupId: string; subjectId: string } }) =>
+          Promise.resolve({ id: `created-${data.studentGroupId}-${data.subjectId}` }),
+        );
+
+        // 4 × 120 = 480 a row against Karin's 1 000 (limit 1 100): 480, 960,
+        // then 1 440 on the third.
+        const report = await run(
+          row({ lessonsPerWeek: 4, minutesPerLesson: 120, teacherEmail: 'karin@example.com' }),
+          row({ subject: 'SV', lessonsPerWeek: 4, minutesPerLesson: 120, teacherEmail: 'karin@example.com' }),
+          row({ groupName: '7B', lessonsPerWeek: 4, minutesPerLesson: 120, teacherEmail: 'karin@example.com' }),
+        );
+
+        expect(report.created).toBe(2);
+        expect(report.errors).toEqual([
+          {
+            row: 3,
+            message:
+              'Läraren skulle få 1440 min/v mot riktmärket 1000 min/v (gränsen är 1100 min/v med 10 % tolerans).',
+          },
+        ]);
+      });
+
+      it('locks, once and before the year is read, the posts of every teacher a row can end up with', async () => {
+        const handle = arrange({
+          requirements: [
+            // Stored, Bo's: the file raises its lessons without naming a
+            // teacher, which still adds to Bo's load.
+            {
+              id: 'req-1',
+              subjectId: SUBJ_SV,
+              studentGroupId: GROUP_7A,
+              teacherId: CO_TEACHER_ID,
+              coTeacherId: null,
+              lessonsPerWeek: 3,
+              minutesPerLesson: 60,
+            },
+          ],
+          // Bo's behörighet is not the question here.
+          policy: { qualificationMode: 'OFF' },
+        });
+        tx.user.findMany.mockResolvedValue([]);
+
+        const report = await runWithColumns(
+          ['recurrence'],
+          row({ subject: 'SV', lessonsPerWeek: 5 }),
+        );
+
+        expect(report.updated).toBe(1);
+        expect(handle.locked).toEqual([[POST_BO]]);
+        expect(handle.order.indexOf('lock')).toBeLessThan(handle.order.indexOf('year'));
+      });
+
+      it('a file naming no teacher and touching no staffed row asks nothing', async () => {
+        const handle = arrange({ policy: { overAllocationMode: 'REFUSE', qualificationMode: 'REFUSE' } });
+        tx.user.findMany.mockResolvedValue([]);
+
+        const report = await run(row());
+
+        expect(report).toMatchObject({ created: 1, errors: [], warnings: [] });
+        expect(handle.locked).toEqual([]);
+        expect(tx.staffingPolicy.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('OFF: no row is judged, whatever it assigns', async () => {
+        arrange({ policy: { qualificationMode: 'OFF', overAllocationMode: 'OFF' } });
+
+        const report = await run(
+          row({ lessonsPerWeek: 20, minutesPerLesson: 120, teacherEmail: 'bo@example.com' }),
+        );
+
+        expect(report).toMatchObject({ created: 1, errors: [], warnings: [] });
+        expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+      });
     });
   });
 
