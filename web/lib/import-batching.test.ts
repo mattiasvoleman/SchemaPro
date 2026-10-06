@@ -79,6 +79,7 @@ describe("importCsvInBatches", () => {
       teachingGroups: 2000,
       roomTypes: 200,
       requirements: 1000,
+      teacherQualifications: 2000,
     });
   });
 

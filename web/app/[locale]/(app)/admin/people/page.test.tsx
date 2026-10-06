@@ -71,7 +71,16 @@ const requirements = [
  * Karin's working time, when a test gives her one. Held outside the factory
  * because `vi.mock` is hoisted above every `const` in this file.
  */
-const state = vi.hoisted(() => ({ workRules: [] as unknown[] }));
+const state = vi.hoisted(() => ({
+  workRules: [] as unknown[],
+  employments: [] as unknown[],
+  qualifications: [] as unknown[],
+}));
+
+const { saveEmployment, createPerson } = vi.hoisted(() => ({
+  saveEmployment: vi.fn(),
+  createPerson: vi.fn(),
+}));
 
 vi.mock("@/lib/queries", () => ({
   usePeople: () => ({ data: people, isLoading: false }),
@@ -95,10 +104,18 @@ vi.mock("@/lib/queries", () => ({
     inviteMany: { mutateAsync: vi.fn(), isPending: false },
   }),
   useCrudMutations: () => ({
-    create: { mutateAsync: vi.fn(), isPending: false },
+    create: { mutateAsync: createPerson, isPending: false },
     update: { mutateAsync: vi.fn(), isPending: false },
     remove: { mutateAsync: vi.fn(), isPending: false },
   }),
+  useTeacherEmployments: () => ({ data: state.employments }),
+  useTeacherQualifications: () => ({ data: state.qualifications }),
+  useStaffingPolicy: () => ({ data: null, isSuccess: true }),
+  useTeacherEmploymentActions: () => ({
+    save: { mutateAsync: saveEmployment, isPending: false },
+    remove: { mutateAsync: vi.fn(), isPending: false },
+  }),
+  useReplaceTeacherQualifications: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@/components/import/csv-import-dialog", () => ({
@@ -129,6 +146,10 @@ describe("People page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.workRules = [];
+    state.employments = [];
+    state.qualifications = [];
+    saveEmployment.mockResolvedValue(undefined);
+    createPerson.mockResolvedValue({ id: "t-new" });
   });
 
   it("renders without crashing and lists everybody", () => {
@@ -376,6 +397,134 @@ describe("People page", () => {
 
         expect(screen.getByLabelText("lunchMinutes")).toHaveValue(null);
         expect(screen.getByText("emptyMeansNoRule")).toBeInTheDocument();
+      });
+    });
+  });
+
+  /**
+   * The post and the behörigheter, on the teacher's own row and in the dialog.
+   * The cards' own behaviour is covered in components/staffing; what only this
+   * page can get wrong is the pairing by userId and the dialog's write.
+   */
+  describe("a teacher's post", () => {
+    const nameButton = (name: string) =>
+      screen.getByRole("button", { name: new RegExp(`^${name}$`) });
+    const employment = {
+      id: "e-1",
+      userId: "t-1",
+      academicYearId: "year-1",
+      employmentPercent: 80,
+      reductionPercent: 0,
+      contractKind: "FERIE",
+      teachingTargetMinutesPerWeek: null,
+      signature: "KEK",
+      note: null,
+    };
+
+    it("shows the two cards on a teacher's row, with her own post", async () => {
+      state.employments = [employment, { ...employment, id: "e-2", userId: "t-other", signature: "XXX" }];
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(nameButton("Karin Ek"));
+
+      expect(screen.getByText("employmentTitle")).toBeInTheDocument();
+      expect(screen.getByText("qualificationsTitle")).toBeInTheDocument();
+      expect(screen.getByText("employmentSummarySignature(KEK)")).toBeInTheDocument();
+      expect(screen.queryByText("employmentSummarySignature(XXX)")).toBeNull();
+    });
+
+    it("offers no post card to a pupil", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(nameButton("Alma Berg"));
+
+      expect(screen.queryByText("employmentTitle")).toBeNull();
+    });
+
+    it("shows tjänst and signatur in the dialog for a teacher only", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(screen.getAllByRole("button", { name: "edit" })[2]!); // Karin
+      expect(screen.getByLabelText(/^employmentPercent/)).toHaveValue("");
+      expect(screen.getByLabelText(/^signature/)).toBeInTheDocument();
+    });
+
+    it("prefills the dialog from the stored post and sends the whole row with the two fields replaced", async () => {
+      state.employments = [{ ...employment, reductionPercent: 20, note: "Mentor 7B" }];
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(screen.getAllByRole("button", { name: "edit" })[2]!);
+      const percent = screen.getByLabelText(/^employmentPercent/) as HTMLInputElement;
+      expect(percent.value).toBe("80");
+      await user.clear(percent);
+      await user.type(percent, "100");
+      await user.click(screen.getByRole("button", { name: "save" }));
+
+      // The nedsättning and the note set on the card survive a change made here.
+      expect(saveEmployment).toHaveBeenCalledWith({
+        userId: "t-1",
+        academicYearId: "year-1",
+        employmentPercent: 100,
+        reductionPercent: 20,
+        contractKind: "FERIE",
+        teachingTargetMinutesPerWeek: null,
+        signature: "KEK",
+        note: "Mentor 7B",
+      });
+    });
+
+    it("writes nothing about the post when the fields are untouched", async () => {
+      state.employments = [employment];
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(screen.getAllByRole("button", { name: "edit" })[2]!);
+      await user.click(screen.getByRole("button", { name: "save" }));
+
+      expect(saveEmployment).not.toHaveBeenCalled();
+    });
+
+    it("refuses a tjänst over 100 % in the dialog before anything is sent", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(screen.getAllByRole("button", { name: "edit" })[2]!);
+      await user.type(screen.getByLabelText(/^employmentPercent/), "101");
+
+      expect(screen.getByRole("alert")).toHaveTextContent("problem_percentOutOfRange(3)");
+      expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+    });
+
+    it("creates the post for a new teacher after the person, keyed on the new id", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(screen.getByRole("button", { name: "addPerson" }));
+      await user.type(screen.getByLabelText("firstName"), "Ny");
+      await user.type(screen.getByLabelText("lastName"), "Lärare");
+      await user.type(screen.getByLabelText("email"), "ny@skolan.se");
+      // The role select is the dialog's first combobox; the class select
+      // (second) exists only while the role is STUDENT.
+      await user.click(screen.getAllByRole("combobox")[0]!);
+      await user.click(screen.getByRole("option", { name: "TEACHER" }));
+      await user.type(screen.getByLabelText(/^employmentPercent/), "60");
+      await user.type(screen.getByLabelText(/^signature/), "NYL");
+      await user.click(screen.getByRole("button", { name: "save" }));
+
+      expect(createPerson).toHaveBeenCalled();
+      expect(saveEmployment).toHaveBeenCalledWith({
+        userId: "t-new",
+        academicYearId: "year-1",
+        employmentPercent: 60,
+        reductionPercent: 0,
+        contractKind: "FERIE",
+        teachingTargetMinutesPerWeek: null,
+        signature: "NYL",
+        note: null,
       });
     });
   });

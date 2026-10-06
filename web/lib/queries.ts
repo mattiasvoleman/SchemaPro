@@ -2024,6 +2024,7 @@ const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
   teachingGroups: "/api/v1/import/group-members",
   roomTypes: "/api/v1/import/room-types",
   requirements: "/api/v1/import/requirements",
+  teacherQualifications: "/api/v1/import/teacher-qualifications",
 };
 
 /** Kinds whose payload carries the academic year the rows belong to. */
@@ -2042,6 +2043,11 @@ export const IMPORT_NEEDS_YEAR: Record<ImportKind, boolean> = {
   // dialog, like teachingGroups — never from a column in the file, where it
   // would let one upload scatter rows across several years.
   requirements: true,
+  // A legitimation belongs to the person, not to a läsår: the same row is
+  // true in August and the next August. The teachers import's optional post
+  // columns DO land in a year — the active one, resolved on the gateway,
+  // because the people page has no year picker to hand over.
+  teacherQualifications: false,
 };
 
 /** Result of inviting one person. */
@@ -2209,6 +2215,9 @@ export const IMPORT_MAX_ROWS: Record<ImportKind, number> = {
   // suite enforces: a client value below the DTO's still works, which is
   // exactly why the drift is easy to miss.
   requirements: 1000,
+  // ImportTeacherQualificationsDto's @ArrayMaxSize: a school's whole table is
+  // teachers × subjects, a few hundred rows, so one request carries it.
+  teacherQualifications: 2000,
 };
 
 /**
@@ -2233,6 +2242,10 @@ export const IMPORT_UPDATES_ROWS: Record<ImportKind, boolean> = {
   teachingGroups: false,
   roomTypes: false,
   requirements: true,
+  // An existing (teacher, subject) row takes the file's span and kind: a
+  // behörighet is a document the school corrects, like the timplan, and a
+  // create-only import would skip every correction as "already exists".
+  teacherQualifications: true,
 };
 
 /**
@@ -2319,6 +2332,11 @@ export function useImportCsv() {
       // and an import that landed on the active year while the matrix showed
       // next autumn would otherwise leave the stale one on screen.
       void queryClient.invalidateQueries({ queryKey: ["requirements"] });
+      // The staffing surfaces: a teachers file may carry posts, a behörighet
+      // file changes the qualification list, and the load report reads both.
+      void queryClient.invalidateQueries({ queryKey: ["teacherEmployments"] });
+      void queryClient.invalidateQueries({ queryKey: ["teacherQualifications"] });
+      void queryClient.invalidateQueries({ queryKey: ["staffingLoad"] });
     },
   });
 }
