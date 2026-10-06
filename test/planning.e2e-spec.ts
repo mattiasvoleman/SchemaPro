@@ -1223,6 +1223,203 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('nationella timplanen och ämneskopplingen', () => {
+    /*
+     * Two things the subjects form could not say before: which cell of the
+     * statute a school subject feeds, and whether it is undervisning at all.
+     * The create round trip is what covers the handler — the known-code lookup
+     * and the Swedish refusal both live there, and the DTO alone cannot know a
+     * code from a typo.
+     */
+    const NATIONAL_SUBJECT_ID = 'abababab-abab-4bab-8bab-abababababab';
+    const teacher = () => asUser({ role: 'TEACHER' as never });
+    const student = () => asUser({ role: 'STUDENT' as never });
+
+    const storedSubject = (nationalCode: string | null, countsTowardTimplan = true) => ({
+      id: NATIONAL_SUBJECT_ID,
+      schoolId: SCHOOL_ID,
+      name: 'Matematik',
+      code: 'MA',
+      color: null,
+      requiredRoomTypeId: null,
+      nationalCode,
+      countsTowardTimplan,
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    });
+
+    const statute = () => {
+      harness.tx['nationalTimplanVersion']!['findMany']!.mockResolvedValue([
+        {
+          id: '0b1e0b1e-0b1e-40b1-80b1-0b1e0b1e0b1e',
+          code: 'SFS2023:945/B1',
+          sfs: 'SFS 2023:945',
+          title: 'Timplan för grundskolan',
+          schoolForm: 'GRUNDSKOLA',
+          totalHours: 6890,
+          skolansValHours: 600,
+          reductionCapPercent: 20,
+          appliesFromCohortTerm: 'HT2024',
+          supersededByCode: 'SFS2025:729',
+          entries: [
+            {
+              subjectCode: 'MA',
+              stage: 'LAG',
+              hours: 420,
+              minimumHoursPerChild: null,
+              protectedFromReduction: true,
+            },
+          ],
+        },
+      ]);
+      harness.tx['nationalSubject']!['findMany']!.mockResolvedValue([
+        { code: 'MA', name: 'Matematik', parentCode: null, isGroup: false },
+      ]);
+    };
+
+    it('an admin creates a subject with a national code, and reads both fields back', async () => {
+      harness.tx['nationalSubject']!['findUnique']!.mockResolvedValue({ code: 'MA' });
+      harness.tx['subject']!['create']!.mockResolvedValue(storedSubject('MA', true));
+
+      const response = await request(http())
+        .post('/api/v1/subjects')
+        .set('x-test-user', admin())
+        .send({ name: 'Matematik', code: 'MA', nationalCode: 'MA', countsTowardTimplan: true })
+        .expect(201);
+
+      expect(response.body).toMatchObject({
+        id: NATIONAL_SUBJECT_ID,
+        nationalCode: 'MA',
+        countsTowardTimplan: true,
+      });
+      const args = harness.tx['subject']!['create']!.mock.calls[0]?.[0] as {
+        data: { schoolId: string; nationalCode: string | null; countsTowardTimplan: boolean };
+      };
+      expect(args.data).toMatchObject({
+        schoolId: SCHOOL_ID,
+        nationalCode: 'MA',
+        countsTowardTimplan: true,
+      });
+    });
+
+    it('400s an unknown code in Swedish, naming the field, and writes nothing', async () => {
+      // The FK would refuse it too, as a 409 about "a record"; the status and
+      // the field name are the contract, the sentence is not.
+      harness.tx['nationalSubject']!['findUnique']!.mockResolvedValue(null);
+
+      const response = await request(http())
+        .post('/api/v1/subjects')
+        .set('x-test-user', admin())
+        .send({ name: 'Matte', nationalCode: 'MATTE' })
+        .expect(400);
+
+      expect(response.body.detail).toContain('nationalCode');
+      expect(response.body.detail).toContain('MATTE');
+      expect(harness.tx['subject']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('400s a flag that is not a boolean, before the handler', async () => {
+      await request(http())
+        .post('/api/v1/subjects')
+        .set('x-test-user', admin())
+        .send({ name: 'Resurs', countsTowardTimplan: 'nej' })
+        .expect(400);
+
+      expect(harness.tx['subject']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('a PATCH clears the mapping with null and flags a subject as not undervisning', async () => {
+      harness.tx['subject']!['update']!.mockResolvedValue(storedSubject(null, false));
+
+      const response = await request(http())
+        .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+        .set('x-test-user', admin())
+        .send({ nationalCode: null, countsTowardTimplan: false })
+        .expect(200);
+
+      expect(response.body).toMatchObject({ nationalCode: null, countsTowardTimplan: false });
+      expect(harness.tx['subject']!['update']).toHaveBeenCalledWith({
+        where: { id: NATIONAL_SUBJECT_ID },
+        data: { nationalCode: null, countsTowardTimplan: false },
+      });
+      // Clearing is not a code to look up.
+      expect(harness.tx['nationalSubject']!['findUnique']).not.toHaveBeenCalled();
+    });
+
+    it('404s a PATCH against a subject RLS hides', async () => {
+      harness.tx['nationalSubject']!['findUnique']!.mockResolvedValue({ code: 'MA' });
+      harness.tx['subject']!['update']!.mockRejectedValue(notFound());
+
+      await request(http())
+        .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+        .set('x-test-user', admin())
+        .send({ nationalCode: 'MA' })
+        .expect(404);
+    });
+
+    it.each([
+      ['TEACHER', teacher],
+      ['STUDENT', student],
+    ])('hands the statute to a %s', async (_role, principal) => {
+      // Public information: a pupil asking how many hours of matematik the
+      // law guarantees is asking the law, not the school.
+      statute();
+
+      const response = await request(http())
+        .get('/api/v1/national-timplans')
+        .set('x-test-user', principal())
+        .expect(200);
+
+      expect(response.body.versions).toHaveLength(1);
+      expect(response.body.versions[0]).toMatchObject({
+        code: 'SFS2023:945/B1',
+        totalHours: 6890,
+        entries: [{ subjectCode: 'MA', stage: 'LAG', hours: 420 }],
+      });
+      expect(response.body.subjects).toEqual([
+        { code: 'MA', name: 'Matematik', parentCode: null, isGroup: false },
+      ]);
+    });
+
+    it('is cacheable: Cache-Control, an ETag, and a 304 on If-None-Match', async () => {
+      // The figures change on a deploy and not before, so a client holding
+      // them costs nothing; the ETag is Express's own, computed from the body,
+      // and the service orders every list so the same data gives the same tag.
+      statute();
+
+      const first = await request(http())
+        .get('/api/v1/national-timplans')
+        .set('x-test-user', admin())
+        .expect(200);
+
+      expect(first.headers['cache-control']).toBe('private, max-age=3600');
+      const etag = first.headers['etag'];
+      expect(etag).toBeDefined();
+
+      await request(http())
+        .get('/api/v1/national-timplans')
+        .set('x-test-user', admin())
+        .set('If-None-Match', etag!)
+        .expect(304);
+    });
+
+    it('403s a principal with no school, rather than answering with six empty tables', async () => {
+      await request(http())
+        .get('/api/v1/national-timplans')
+        .set('x-test-user', asUser({ schoolId: undefined }))
+        .expect(403);
+
+      expect(harness.tx['nationalTimplanVersion']!['findMany']).not.toHaveBeenCalled();
+    });
+
+    it('403s SYSTEM_ADMIN, who has no Users row and would read nothing under RLS', async () => {
+      await request(http())
+        .get('/api/v1/national-timplans')
+        .set('x-test-user', asUser({ role: 'SYSTEM_ADMIN' as never, schoolId: undefined }))
+        .expect(403);
+    });
+  });
+
   describe('RBAC', () => {
     const adminOnly = [
       ['POST', '/api/v1/academic-years'],
