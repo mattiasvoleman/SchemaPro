@@ -41,7 +41,8 @@
 -- and "this entry's plan is decided" is a fact about another table — so it is
 -- two triggers, the first in this schema:
 --
---   * BEFORE UPDATE ON "LocalTimplans": raises when OLD.status = 'DECIDED'.
+--   * BEFORE INSERT OR UPDATE ON "LocalTimplans": raises when OLD.status =
+--     'DECIDED' (an UPDATE).
 --     The DRAFT -> DECIDED transition is an UPDATE of a DRAFT row and passes;
 --     DECIDED -> DRAFT does not, because "reopen" is a COPY (copiedFromId) and
 --     the decided plan stays what it was. One exception, and it is the foreign
@@ -63,6 +64,35 @@
 --     vanish out of a decided record. Subjects only in DRAFT plans cascade as
 --     before. Both directions are proven on a database, not assumed; see the
 --     RLS suite's section 16 and the commit message.
+--
+-- The same trigger guards how a decision is MADE, not only that it stays put.
+-- A record that says "decided by X on D" is only a record if X and D are
+-- facts, and the service's stamping (the caller, now()) is no guarantee to a
+-- PostgREST writer who never meets the service: before this, an admin could
+-- INSERT a plan straight into DECIDED naming a pupil as the decider and a date
+-- in 2019, or delete a decided plan and re-insert it with the same id, other
+-- minutes and the old stamps. So, whenever the transaction carries a JWT
+-- subject (auth.uid() is set — the gateway's withRls and PostgREST alike):
+--
+--   * an INSERT must be a DRAFT, and its createdAt is the database's now()
+--     (an UPDATE keeps the createdAt it had);
+--   * DRAFT -> DECIDED must name the signed-in user, app.current_user_id(), as
+--     decidedByUserId, and decidedAt is overwritten with now() — not
+--     compared with a tolerance, because the gateway's clock and the
+--     database's are two clocks, and the database's is the one a record
+--     should carry.
+--
+-- Both refusals raise SQLSTATE 'TP403' with a message starting
+-- TIMPLAN_DECISION_IS_THE_CALLERS. The gateway never meets them — it creates
+-- drafts and stamps the caller — so they are the PostgREST writer's answer.
+-- The owner with no subject (migrations, prisma/seed.ts, the RLS fixtures)
+-- is not asked: it is not a person who could be named by mistake, and the
+-- fixtures plant decided plans as it. The house precedent for binding an
+-- actor column to the caller is room bookings' WITH CHECK ("bookedById" =
+-- app.current_user_id()); a trigger is used here because the rule holds for
+-- one transition only, which a policy cannot see. A re-inserted copy of a
+-- deleted decision is still possible, but it now carries today's date and
+-- the name of whoever re-inserted it, which is what an audit asks for.
 --
 -- Deleting the plan ITSELF is allowed for a SCHOOL_ADMIN even when it is
 -- decided. That is an explicit act (the web asks, naming it a decided plan),
@@ -359,12 +389,41 @@ ALTER TABLE "LocalTimplanEntries"
 -- A decided plan is a record: the two triggers. See the preamble.
 -- ---------------------------------------------------------------------------
 
-CREATE FUNCTION app.local_timplans_refuse_decided_update() RETURNS trigger
+CREATE FUNCTION app.local_timplans_keep_the_record() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 DECLARE
   unpointed "LocalTimplans";
+  principal uuid;
 BEGIN
-  IF OLD."status" <> 'DECIDED' THEN
+  -- How a decision is MADE. A signed-in writer (a JWT subject on the
+  -- transaction: the gateway's withRls, or PostgREST) records a decision only
+  -- as the DRAFT -> DECIDED transition, only in their own name, and at the
+  -- database's now(). The owner with no subject (migrations, seed, the RLS
+  -- fixtures) is not asked: it is not a person, and it writes no decision a
+  -- person could be named in by mistake.
+  IF (select auth.uid()) IS NOT NULL THEN
+    principal := (select app.current_user_id());
+    IF TG_OP = 'INSERT' THEN
+      -- A plan is born a draft; createdAt is the database's.
+      NEW."createdAt" := now();
+      IF NEW."status" <> 'DRAFT' THEN
+        RAISE EXCEPTION 'TIMPLAN_DECISION_IS_THE_CALLERS: lokal timplan "%" skapas som utkast och beslutas sedan', NEW."name"
+          USING ERRCODE = 'TP403';
+      END IF;
+      RETURN NEW;
+    END IF;
+    NEW."createdAt" := OLD."createdAt";
+    IF OLD."status" = 'DRAFT' AND NEW."status" = 'DECIDED' THEN
+      IF principal IS NULL OR NEW."decidedByUserId" IS DISTINCT FROM principal THEN
+        RAISE EXCEPTION 'TIMPLAN_DECISION_IS_THE_CALLERS: beslutet om lokal timplan "%" registreras i den inloggades namn', OLD."name"
+          USING ERRCODE = 'TP403',
+                DETAIL  = format('localTimplanId=%s', OLD."id");
+      END IF;
+      NEW."decidedAt" := now();
+    END IF;
+  END IF;
+
+  IF TG_OP = 'INSERT' OR OLD."status" <> 'DECIDED' THEN
     RETURN NEW;
   END IF;
 
@@ -432,12 +491,12 @@ BEGIN
 END
 $$;
 
-REVOKE ALL ON FUNCTION app.local_timplans_refuse_decided_update() FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.local_timplans_keep_the_record() FROM PUBLIC;
 REVOKE ALL ON FUNCTION app.local_timplan_entries_refuse_decided() FROM PUBLIC;
 
-CREATE TRIGGER "LocalTimplans_refuse_decided_update"
-    BEFORE UPDATE ON "LocalTimplans"
-    FOR EACH ROW EXECUTE FUNCTION app.local_timplans_refuse_decided_update();
+CREATE TRIGGER "LocalTimplans_keep_the_record"
+    BEFORE INSERT OR UPDATE ON "LocalTimplans"
+    FOR EACH ROW EXECUTE FUNCTION app.local_timplans_keep_the_record();
 
 CREATE TRIGGER "LocalTimplanEntries_refuse_decided"
     AFTER INSERT OR UPDATE OR DELETE ON "LocalTimplanEntries"

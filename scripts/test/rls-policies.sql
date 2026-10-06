@@ -3451,6 +3451,50 @@ BEGIN
     RAISE EXCEPTION 'timplan: an admin could not decide their own draft (% row(s))', n;
   END IF;
 
+  -- How a decision is made: in the signed-in admin's own name, at the
+  -- database's now(), and only as DRAFT -> DECIDED. Each of these was accepted
+  -- before the record trigger took INSERT as well as UPDATE.
+  DECLARE
+    pupil  uuid;
+    probe  uuid;
+    stamped timestamptz;
+  BEGIN
+    SELECT id INTO pupil FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' LIMIT 1;
+    IF pupil IS NULL THEN
+      RAISE EXCEPTION 'timplan: the fixture school has no pupil to name as a decider';
+    END IF;
+    BEGIN
+      INSERT INTO "LocalTimplans"
+        ("schoolId", name, "schoolForm", "nationalTimplanVersionId", status,
+         "decidedAt", "decidedByUserId", "decisionNote", "updatedAt")
+      VALUES (school, 'RLS-tp född beslutad', 'GRUNDSKOLA', b1, 'DECIDED',
+              now(), me, 'beslutad vid födseln', now());
+      RAISE EXCEPTION 'timplan: an admin inserted a plan that was decided from the start';
+    EXCEPTION WHEN SQLSTATE 'TP403' THEN NULL;
+    END;
+    INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "createdAt", "updatedAt")
+    VALUES (school, 'RLS-tp stämpel', 'GRUNDSKOLA', b1, '2018-01-01', now())
+    RETURNING id, "createdAt" INTO probe, stamped;
+    IF stamped <> now() THEN
+      RAISE EXCEPTION 'timplan: an admin backdated a plan''s createdAt to %', stamped;
+    END IF;
+    BEGIN
+      UPDATE "LocalTimplans"
+         SET status = 'DECIDED', "decidedAt" = now(), "decidedByUserId" = pupil, "decisionNote" = 'x'
+       WHERE id = probe;
+      RAISE EXCEPTION 'timplan: an admin recorded a pupil as the person who decided a plan';
+    EXCEPTION WHEN SQLSTATE 'TP403' THEN NULL;
+    END;
+    UPDATE "LocalTimplans"
+       SET status = 'DECIDED', "decidedAt" = '2019-01-01', "decidedByUserId" = me, "decisionNote" = 'x'
+     WHERE id = probe
+    RETURNING "decidedAt" INTO stamped;
+    IF stamped <> now() THEN
+      RAISE EXCEPTION 'timplan: an admin backdated a decision to %', stamped;
+    END IF;
+    DELETE FROM "LocalTimplans" WHERE id = probe;
+  END;
+
   -- The draft stays editable, plan and entries alike.
   UPDATE "LocalTimplans" SET "planningWeeks" = 36.0, "updatedAt" = now() WHERE id = draft;
   GET DIAGNOSTICS n = ROW_COUNT;
@@ -3603,7 +3647,11 @@ BEGIN
     VALUES (school, 'RLS-tp främling', 'GRUNDSKOLA', b1, 'DECIDED',
             now(), current_setting('app.test_student_b')::uuid, 'beslutad av en främling', now());
     RAISE EXCEPTION 'timplan: an admin recorded another school''s user as the decider';
-  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  -- TP403 since the record trigger guards how a decision is made: a signed-in
+  -- writer cannot insert a decided plan at all, nor name anyone but
+  -- themselves. The composite key that refuses another school's user under
+  -- the owner (who is not asked) is asserted by the owner probe.
+  EXCEPTION WHEN SQLSTATE 'TP403' OR foreign_key_violation THEN NULL;
   END;
   BEGIN
     INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
@@ -3946,7 +3994,7 @@ BEGIN
     FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
    WHERE NOT t.tgisinternal AND t.tgenabled = 'O' AND p.prosecdef
      AND (t.tgrelid, t.tgname) IN (
-       ('public."LocalTimplans"'::regclass,       'LocalTimplans_refuse_decided_update'),
+       ('public."LocalTimplans"'::regclass,       'LocalTimplans_keep_the_record'),
        ('public."LocalTimplanEntries"'::regclass, 'LocalTimplanEntries_refuse_decided'));
   IF n <> 2 THEN
     RAISE EXCEPTION 'timplan: % of the two decided-record triggers are present, enabled and SECURITY DEFINER', n;
