@@ -354,20 +354,22 @@ jobs:
           python-version: '3.12'
 
       # §2 allows 0 Critical / High / Medium. npm audit's lowest failing level
-      # is `moderate`, which is npm's name for Medium.
+      # is `moderate`, which is npm's name for Medium. All three packages go
+      # through the same gate: the failing threshold of plain
+      # `npm audit --audit-level=moderate`, plus a documented, EXPIRING allowlist
+      # for advisories that have no patched release anywhere (npm audit itself
+      # cannot ignore a specific advisory, and dropping the level would hide
+      # future findings too). Suppressions are printed on every run and go red
+      # again at expiry — see scripts/security/audit-allowlist.json for the
+      # justifications. Until 2026-10-06 the API and web steps ran bare
+      # `npm audit`; the braces advisory, which no release fixes, made the
+      # bare form permanently red for every branch.
       - name: npm audit (API)
-        run: npm audit --audit-level=moderate
+        run: node scripts/security/npm-audit-gate.mjs api
 
       - name: npm audit (web)
-        run: npm audit --audit-level=moderate
-        working-directory: web
+        run: node scripts/security/npm-audit-gate.mjs web
 
-      # Same failing threshold as plain `npm audit --audit-level=moderate`,
-      # plus a documented, EXPIRING allowlist for advisories that have no
-      # patched release anywhere (npm audit itself cannot ignore a specific
-      # advisory, and dropping the level would hide future findings too).
-      # Suppressions are printed on every run and go red again at expiry —
-      # see scripts/security/audit-allowlist.json for the justifications.
       - name: npm audit (mobile)
         run: node scripts/security/npm-audit-gate.mjs mobile
 
