@@ -479,3 +479,70 @@ export interface LeaveRequest {
   decisionNote: string | null;
   createdAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// Tjänstefördelning (src/staffing). Three school-owned tables and the enums
+// they share; the computed report's shape lives in lib/teacher-load.ts, which
+// owns the arithmetic that produces it.
+// ---------------------------------------------------------------------------
+
+/** OFF says nothing, WARN flags, REFUSE is a 409 at the write — Fas 2 for the last. */
+export type StaffingCheckMode = "OFF" | "WARN" | "REFUSE";
+/** MINUTES is the base model; FACTOR enables per-subject weights in Fas 3. */
+export type StaffingLoadModel = "MINUTES" | "FACTOR";
+/** Ferietjänst (Bilaga M) or semestertjänst (40 h weeks all year). */
+export type TeacherContractKind = "FERIE" | "SEMESTER";
+/**
+ * Legitimerad och behörig, behörig utan legitimation, or får undervisa enligt
+ * rektors beslut. Never defaulted: which of the three a teacher holds is a fact
+ * about a person, stated by the school.
+ */
+export type TeacherQualificationKind = "LEGITIMATION" | "BEHORIG" | "TILLATEN";
+
+/**
+ * One row per school, like LunchSettings. The riktmärke is the one field with
+ * no default: null means the school has not chosen a weekly teaching measure
+ * and every teacher reads NO_TARGET.
+ */
+export interface StaffingPolicy {
+  id: string;
+  fullTimeTeachingMinutesPerWeek: number | null;
+  fullTimeRegulatedHoursPerYear: number;
+  fullTimeAnnualHours: number;
+  workDaysPerYear: number;
+  /** One decimal; the API sends it as a number. */
+  semesterHoursPerWeek: number;
+  qualificationMode: StaffingCheckMode;
+  overAllocationMode: StaffingCheckMode;
+  overAllocationTolerancePercent: number;
+  loadModel: StaffingLoadModel;
+}
+
+/** A teacher's post for ONE läsår; percentages carry up to three decimals. */
+export interface TeacherEmployment {
+  id: string;
+  userId: string;
+  academicYearId: string;
+  employmentPercent: number;
+  reductionPercent: number;
+  contractKind: TeacherContractKind;
+  /** The teacher's own riktmärke, overriding the policy's derivation. Null: derive. */
+  teachingTargetMinutesPerWeek: number | null;
+  /** Lärarsignatur, 1..8 characters, unique per school and year where set. */
+  signature: string | null;
+  note: string | null;
+}
+
+/** One behörighet per (teacher, subject): an inclusive grade span and a kind. */
+export interface TeacherQualification {
+  id: string;
+  userId: string;
+  subjectId: string;
+  minGradeLevel: number;
+  maxGradeLevel: number;
+  kind: TeacherQualificationKind;
+  /** yyyy-mm-dd or null — tidsbegränsad legitimation. */
+  validFrom: string | null;
+  validTo: string | null;
+  note: string | null;
+}

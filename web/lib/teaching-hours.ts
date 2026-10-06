@@ -527,6 +527,53 @@ export function peakLessonsPerWeek(reqs: RequirementLoad[], year: YearBounds): n
  * rendering a row per group gets a number for a group whose requirements all
  * fall outside the year rather than a hole.
  */
+/**
+ * The busiest week per key, summing an arbitrary load — minutes, here — over
+ * the items taught in each ISO week of the year.
+ *
+ * The generic sibling of peakLessonsPerWeekByKey, and a mirror of
+ * src/staffing/teaching-weeks.ts `peakPerWeekByKey` rather than a refactoring
+ * of its neighbour: the staffing report sums MINUTES per teacher, where the
+ * timplan page sums LESSONS per group, and the two differ in what they count
+ * and in nothing else. Kept as its own function so the lessons version keeps
+ * its NaN-to-zero reading of a half-typed form (`load()` above) while this one
+ * stays byte-for-byte the gateway's arithmetic, which the teacher-load contract
+ * test replays against it.
+ *
+ * Every key present appears, 0 included. Parities never add; non-overlapping
+ * terms never add; the same parity and overlapping terms do. Lov are NOT
+ * subtracted: the peak asks whether a week fits, and a lov week holds nothing
+ * to fit.
+ */
+export function peakPerWeekByKey<T extends TeachingPeriod>(
+  items: T[],
+  year: YearBounds,
+  keyOf: (item: T) => string,
+  loadOf: (item: T) => number,
+): Map<string, number> {
+  const windows = items.map((item) => ({
+    key: keyOf(item),
+    window: clampToYear(item, year),
+    load: loadOf(item),
+  }));
+
+  const peaks = new Map<string, number>();
+  for (const { key } of windows) if (!peaks.has(key)) peaks.set(key, 0);
+
+  for (const monday of mondaysBetween(year.startDate, year.endDate)) {
+    const week = new Map<string, number>();
+    for (const { key, window, load } of windows) {
+      if (window && teachesInWeek(window, monday)) {
+        week.set(key, (week.get(key) ?? 0) + load);
+      }
+    }
+    for (const [key, load] of week) {
+      if (load > (peaks.get(key) ?? 0)) peaks.set(key, load);
+    }
+  }
+  return peaks;
+}
+
 export function peakLessonsPerWeekByKey<T extends RequirementLoad>(
   reqs: T[],
   year: YearBounds,
