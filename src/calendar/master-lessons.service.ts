@@ -15,6 +15,12 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { parseTimeString, zonedTimeToUtc } from '../common/utils/time';
 import type { CreateMasterLessonDto } from './dto/create-master-lesson.dto';
 import type { UpdateMasterLessonDto } from './dto/update-master-lesson.dto';
+import { lessonQualificationFindings } from '../staffing/staffing-enforcement';
+import {
+  settleFindings,
+  type StaffingRole,
+  type StaffingWarning,
+} from '../staffing/staffing-checks';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -71,6 +77,12 @@ export interface UpdateMasterLessonResult extends MasterLessonResult {
    * new weeks no longer cover the date they sat on.
    */
   removedCalendarLessons: number;
+  /**
+   * What the staffing policy's WARN mode says about a teacher this PATCH put on
+   * the lesson (STAFF_TEACHER_NOT_QUALIFIED only — see update()). Empty when
+   * nothing was found or nobody new was assigned.
+   */
+  warnings: StaffingWarning[];
 }
 
 export interface DeleteMasterLessonResult {
@@ -325,6 +337,35 @@ export class MasterLessonsService {
         throw new ConflictException(unique.join(' '));
       }
 
+      /*
+       * Behörighet for whoever this PATCH puts on the lesson — the timplan's
+       * question, asked of the lesson's own attendance (its classes and named
+       * pupils) over the läsår. Only behörighet: the load report is computed
+       * from the timplan, not from lessons, so a lesson has no load to be over.
+       * Asked of a teacher the PATCH names anew; keeping the one it had is not
+       * an assignment. REFUSE is a 409 here, before anything is written.
+       */
+      const assignees: { userId: string; role: StaffingRole }[] = [];
+      if (dto.teacherId && dto.teacherId !== lesson.teacherId) {
+        assignees.push({ userId: dto.teacherId, role: 'TEACHER' });
+      }
+      if (dto.coTeacherId && dto.coTeacherId !== lesson.coTeacherId) {
+        assignees.push({ userId: dto.coTeacherId, role: 'CO_TEACHER' });
+      }
+      const warnings =
+        assignees.length > 0
+          ? settleFindings(
+              await lessonQualificationFindings(tx, {
+                schoolId: lesson.school.id,
+                academicYearId: lesson.academicYearId,
+                subjectId: lesson.subjectId,
+                groupIds: [lesson.studentGroupId, ...candidate.extraGroupIds],
+                studentIds: candidate.studentIds,
+                assignees,
+              }),
+            )
+          : [];
+
       const updated = await tx.masterLesson.update({
         where: { id },
         data: {
@@ -450,7 +491,7 @@ export class MasterLessonsService {
         });
       }
 
-      return { ...after, propagatedLessons, removedCalendarLessons };
+      return { ...after, propagatedLessons, removedCalendarLessons, warnings };
     });
   }
 

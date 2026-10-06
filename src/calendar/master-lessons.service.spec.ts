@@ -1558,6 +1558,8 @@ describe('MasterLessonsService', () => {
         propagatedLessons: 1,
         // The lesson still runs every week, so nothing is stranded.
         removedCalendarLessons: 0,
+        // Nobody new on the lesson, so nothing for the staffing policy to say.
+        warnings: [],
       });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
@@ -2025,6 +2027,80 @@ describe('MasterLessonsService', () => {
           teacherId: NEW_TEACHER_ID,
           role: 'LEAD',
         },
+      });
+    });
+
+    /*
+     * Re-teachering a lesson asks the staffing policy's behörighet question —
+     * only that one: the load report is computed from the timplan, so a lesson
+     * has no load to be over — of the lesson's own attendance over the läsår.
+     */
+    describe('the staffing policy', () => {
+      const arrangePolicy = (mode: 'OFF' | 'WARN' | 'REFUSE', held: Record<string, unknown>[]) => {
+        tx.staffingPolicy.findUnique.mockResolvedValue({
+          qualificationMode: mode,
+          overAllocationMode: 'REFUSE',
+          overAllocationTolerancePercent: 10,
+          fullTimeTeachingMinutesPerWeek: 1,
+          unstaffedGeneration: 'ALLOW',
+        });
+        tx.teacherSubjectQualification.findMany.mockResolvedValue(held);
+        tx.subject.findUnique.mockResolvedValue({ name: 'Matematik' });
+        tx.academicYear.findUnique.mockResolvedValue({ startDate: day('2026-08-17'), endDate: day('2027-06-11') });
+        tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 8 }]);
+      };
+      const someoneElses = [
+        { userId: TEACHER_ID, subjectId: SUBJECT_ID, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
+      ];
+
+      it('WARN: re-teachers to a teacher without behörighet, and says so', async () => {
+        arrangeUpdate({}, { teacherId: NEW_TEACHER_ID });
+        arrangePolicy('WARN', someoneElses);
+
+        const updated = await service.update(LESSON_ID, { teacherId: NEW_TEACHER_ID }, testUser());
+
+        expect(updated.warnings).toEqual([
+          { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: { role: 'TEACHER', subject: 'Matematik', grades: '8' } },
+        ]);
+        expect(tx.masterLesson.update).toHaveBeenCalledTimes(1);
+      });
+
+      it('REFUSE: 409 with the code and params, and the lesson is not touched', async () => {
+        arrangeUpdate({}, { teacherId: NEW_TEACHER_ID });
+        arrangePolicy('REFUSE', someoneElses);
+
+        await expect(
+          service.update(LESSON_ID, { coTeacherId: NEW_TEACHER_ID }, testUser()),
+        ).rejects.toMatchObject({
+          response: {
+            code: 'STAFF_TEACHER_NOT_QUALIFIED',
+            params: { role: 'CO_TEACHER', subject: 'Matematik', grades: '8' },
+          },
+        });
+        expect(tx.masterLesson.update).not.toHaveBeenCalled();
+      });
+
+      it('a qualified teacher passes, under REFUSE too', async () => {
+        arrangeUpdate({}, { teacherId: NEW_TEACHER_ID });
+        arrangePolicy('REFUSE', [{ ...someoneElses[0], userId: NEW_TEACHER_ID }]);
+
+        await expect(
+          service.update(LESSON_ID, { teacherId: NEW_TEACHER_ID }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+      });
+
+      it('asks nothing when the PATCH keeps the teacher, or the policy is OFF', async () => {
+        arrangeUpdate();
+        arrangePolicy('REFUSE', someoneElses);
+        await expect(
+          service.update(LESSON_ID, { teacherId: TEACHER_ID, dayOfWeek: 1 }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+
+        arrangePolicy('OFF', someoneElses);
+        await expect(
+          service.update(LESSON_ID, { teacherId: NEW_TEACHER_ID }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+        expect(tx.teacherSubjectQualification.findMany).not.toHaveBeenCalled();
       });
     });
 
