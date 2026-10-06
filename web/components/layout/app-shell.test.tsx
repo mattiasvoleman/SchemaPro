@@ -133,6 +133,30 @@ describe("AppShell navigation", () => {
     expect(en.nav.requirements).not.toBe(en.nav.timplan);
   });
 
+  it("calls the requirements matrix's contents Timplansposter where a user decides where to go", async () => {
+    // The nav moved the name Timplan to the lokal timplan, which the engine
+    // does not read; the empty state, the table caption and the engine's
+    // "nothing to place" still sent the admin to "the timplan".
+    type Messages = {
+      requirements: Record<string, string>;
+      engineMessages: Record<string, string>;
+      timplan: Record<string, string>;
+    };
+    const sv = (await import("@/messages/sv.json")).default as unknown as Messages;
+    const en = (await import("@/messages/en.json")).default as unknown as Messages;
+    expect(sv.requirements.empty).toMatch(/^Inga timplansposter/);
+    expect(sv.requirements.tableCaption).toMatch(/^Timplansposter per grupp/);
+    expect(sv.engineMessages.INPUT_NO_REQUIREMENTS).toContain("timplansposter");
+    expect(en.requirements.empty).toMatch(/^No curriculum entries/);
+    expect(en.requirements.tableCaption).toMatch(/^Curriculum entries by group/);
+    expect(en.engineMessages.INPUT_NO_REQUIREMENTS).toContain("curriculum entries");
+    // A copy keeps the school form (CopyLocalTimplanDto has only a name), so
+    // the create dialog may not offer it as the way to another one.
+    expect(sv.timplan.createBody).not.toMatch(/kopia/);
+    expect(sv.timplan.createBody).toContain("skapar du en ny timplan");
+    expect(en.timplan.createBody).not.toMatch(/copy/);
+  });
+
   it("teacher gets the teacher nav, without admin entries or section labels", () => {
     navState.pathname = "/teacher";
     renderShell({ role: "TEACHER" });

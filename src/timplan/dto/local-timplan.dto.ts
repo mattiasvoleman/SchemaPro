@@ -76,7 +76,9 @@ export class CreateLocalTimplanDto {
 /**
  * Name, weeks and version — while the plan is a DRAFT. The school form is not
  * here: changing it changes which bilaga every entry is read against, which is
- * a new plan (POST /:id/copy), not an edit.
+ * a new plan (POST /local-timplans), not an edit. Not a copy either: POST
+ * /:id/copy keeps the source's school form (CopyLocalTimplanDto has a name
+ * only).
  *
  * Null is refused on every field (ValidateIf on `!== undefined`, as the
  * subjects DTO does for countsTowardTimplan): the three columns are NOT NULL,
