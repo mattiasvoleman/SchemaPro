@@ -327,11 +327,23 @@ model Subject {
   color              String?
   /// When set, the optimizer only places this subject in rooms of this type.
   requiredRoomTypeId String?  @db.Uuid
+  /// Which cell of the national timplan this school subject feeds — 'MA',
+  /// 'SV_SVA' (one cell for Svenska and SvA alike), 'BI' under NO. Null means
+  /// "outside the national timplan": mentorstid, a local profile. A school
+  /// names its subjects freely ("Matte 7-9") and may split one national cell
+  /// across several rows, so the mapping is a column here and the DB enforces
+  /// only that the code is a known one (FK to NationalSubject).
+  nationalCode       String?
+  /// False for the subjects a school schedules that are not undervisning in
+  /// the statute's sense — Resurs, Studiehandledning — so they never pollute a
+  /// timplan sum. Default true: an existing school sees no change.
+  countsTowardTimplan Boolean @default(true)
   createdAt          DateTime @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 
   school               School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   requiredRoomType     RoomType?             @relation(fields: [requiredRoomTypeId], references: [id], onDelete: Restrict)
+  nationalSubject      NationalSubject?      @relation(fields: [nationalCode], references: [code], onDelete: Restrict)
   teachingRequirements TeachingRequirement[]
   masterLessons        MasterLesson[]
   calendarLessons      CalendarLesson[]
@@ -342,6 +354,115 @@ model Subject {
   @@unique([id, schoolId])
   @@index([schoolId])
   @@map("Subjects")
+}
+
+// -----------------------------------------------------------------------------
+// The national timplan — reference data, NO schoolId
+//
+// Skolförordningen (2011:185) bilaga 1–4 as rows: one version per bilaga per
+// lydelse, one subject per ämne the bilagor name, one entry per printed cell.
+// These are the only tables here without `schoolId`, and on purpose: the rows
+// belong to nobody, they are the law, identical for every tenant and written
+// only by a migration (which also re-adds the statute's printed totals and
+// refuses the deploy on a mismatch). RLS: SELECT for every authenticated role,
+// no write policy and no write grant for any API role — the posture of
+// `_prisma_migrations`, turned the other way. See the migration
+// 20261006090000 for the shape of a cell and every argued decision.
+// -----------------------------------------------------------------------------
+
+/// Which bilaga a version is. The statute keeps five timplaner: grundskolan
+/// (bilaga 1), anpassade grundskolan twice (bilaga 2: ämnen and ämnesområden),
+/// specialskolan (3) and sameskolan (4).
+enum SchoolForm {
+  GRUNDSKOLA
+  ANPASSAD_GRUNDSKOLA_AMNEN
+  ANPASSAD_GRUNDSKOLA_AMNESOMRADEN
+  SPECIALSKOLA
+  SAMESKOLA
+}
+
+/// The stadium a cell is printed under. LAG_MELLAN is the merged "Låg- och
+/// mellanstadiet" column hem- och konsumentkunskap is printed in: one cell in
+/// the statute, so one row here, and never beside a LAG or MELLAN row for the
+/// same ämne.
+enum TimplanStage {
+  LAG
+  MELLAN
+  HOG
+  LAG_MELLAN
+}
+
+model NationalTimplanVersion {
+  id                    String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// 'SFS2023:945/B1': the författning the figures are the lydelse of, and the
+  /// bilaga — three bilagor share SFS 2023:945, so the SFS alone is no key.
+  code                  String     @unique
+  sfs                   String
+  title                 String
+  schoolForm            SchoolForm
+  /// "Totalt garanterat antal timmar" — 6 890, 6 665, 8 070, 4 473; 7 424 for
+  /// the 2028 law.
+  totalHours            Int
+  /// "Därav skolans val". Null where the bilaga prints no such row.
+  skolansValHours       Int?
+  /// "minskas med högst 20 procent" — 15 in sameskolan; null where the
+  /// statute states no percentage (anpassade grundskolan, the 2028 law).
+  reductionCapPercent   Int?
+  /// 'HT2024': the term from which utbildning som påbörjas falls under this
+  /// lydelse. Cohort-scoped, not calendar-scoped: åk 7–9 in 2024/25 still read
+  /// the older bilaga 1.
+  appliesFromCohortTerm String
+  supersededByCode      String?
+  createdAt             DateTime   @default(now()) @db.Timestamptz(6)
+
+  supersededBy NationalTimplanVersion?  @relation("TimplanSupersession", fields: [supersededByCode], references: [code], onDelete: Restrict)
+  supersedes   NationalTimplanVersion[] @relation("TimplanSupersession")
+  entries      NationalTimplanEntry[]
+
+  @@map("NationalTimplanVersions")
+}
+
+/// An ämne the bilagor name. NO and SO are ämnesgrupper (`isGroup`) with
+/// biologi/fysik/kemi and geografi/historia/religionskunskap/samhällskunskap
+/// as children; "svenska eller svenska som andraspråk" is ONE row, SV_SVA,
+/// because it is one cell.
+model NationalSubject {
+  code       String  @id
+  name       String
+  parentCode String?
+  isGroup    Boolean @default(false)
+
+  parent   NationalSubject?  @relation("NationalSubjectGroup", fields: [parentCode], references: [code], onDelete: Restrict)
+  children NationalSubject[] @relation("NationalSubjectGroup")
+  entries  NationalTimplanEntry[]
+  subjects Subject[]
+
+  @@map("NationalSubjects")
+}
+
+/// One printed cell. On a top-level ämne `hours` is the guaranteed figure; on
+/// a child of an ämnesgrupp it is the minimum printed on that child's own line,
+/// and the group's hours minus its children's is the "resterande N timmar får
+/// fördelas fritt" — so children are never added to a total.
+model NationalTimplanEntry {
+  id                     String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  versionId              String       @db.Uuid
+  subjectCode            String
+  stage                  TimplanStage
+  hours                  Int
+  /// The uniform per-child minimum the prose states for an ämnesgrupp cell
+  /// ("en minsta undervisningstid om 60 timmar i respektive ämne"); null where
+  /// the minima differ per child (every SO cell) and on every leaf.
+  minimumHoursPerChild   Int?
+  /// "Antalet timmar för ... får dock inte minskas": svenska/SvA, engelska,
+  /// matematik and språkval, plus samiska in sameskolan.
+  protectedFromReduction Boolean      @default(false)
+
+  version NationalTimplanVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  subject NationalSubject        @relation(fields: [subjectCode], references: [code], onDelete: Restrict)
+
+  @@unique([versionId, subjectCode, stage])
+  @@map("NationalTimplanEntries")
 }
 
 model AcademicYear {
