@@ -789,9 +789,10 @@ describe("the edit dialog's width", () => {
 
 /*
  * The two controls the page fetches only when a dialog opens: the recurrence
- * fields in the edit dialog and the publish dates. Both are next/dynamic with
- * no loading fallback, so a loader that never settled would leave its dialog
- * drawn without them — and nothing else in this file looks there. Make either
+ * fields in the edit dialog and the publish dates. Both are React.lazy inside
+ * a Suspense boundary with a Skeleton, so a loader that never settled would
+ * leave its dialog drawn around the placeholder — and nothing else in this
+ * file looks there. Make either
  * import a promise that never resolves and exactly its test below fails, with
  * every other test in this file still green.
  *

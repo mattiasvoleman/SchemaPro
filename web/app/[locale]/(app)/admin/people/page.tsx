@@ -1,7 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
+import { Fragment, Suspense, lazy, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {
@@ -29,26 +28,28 @@ import {
  * editor that carries the date picker, and lib/teacher-load behind it — and
  * they draw nothing until an admin expands one member of staff. Imported
  * statically they were the largest part of what took this route's own
- * initial JS from 181.7KB to 191.9KB gzipped, past the 190KB admin budget;
- * fetched here it measures 187.5KB (2026-10-06). The same reasoning the
- * timetable page applies to its room-optimisation dialog. next/dynamic costs
- * about 1.4KB of loader code of its own, which only pays for something this
- * size — the working-time summary every staff row shows stays imported
+ * initial JS from 181.7KB to 191.9KB gzipped, past the 190KB admin budget.
+ * The same reasoning the timetable page applies to its room-optimisation
+ * dialog; the working-time summary every staff row shows stays imported
  * normally.
+ *
+ * React's own lazy(), not next/dynamic: next/dynamic brings its loader
+ * runtime (BailoutToCSR, PreloadChunks, loadable) into the route, measured
+ * at 1.4KB gzipped — on this page the difference between 187.5KB and
+ * 186.2KB own JS (2026-10-06). React is in every route already, so lazy()
+ * costs nothing on top. Nothing lazy is reachable during SSR: every row
+ * starts collapsed, so the first render never asks for either module — the
+ * condition the timetable page relies on as well.
  */
-const EmploymentCard = dynamic(
-  () =>
-    import("@/components/staffing/employment-card").then(
-      (module) => module.EmploymentCard,
-    ),
-  { ssr: false, loading: () => <Skeleton className="h-32 w-full" /> },
+const EmploymentCard = lazy(() =>
+  import("@/components/staffing/employment-card").then((module) => ({
+    default: module.EmploymentCard,
+  })),
 );
-const QualificationsCard = dynamic(
-  () =>
-    import("@/components/staffing/qualifications-card").then(
-      (module) => module.QualificationsCard,
-    ),
-  { ssr: false, loading: () => <Skeleton className="h-32 w-full" /> },
+const QualificationsCard = lazy(() =>
+  import("@/components/staffing/qualifications-card").then((module) => ({
+    default: module.QualificationsCard,
+  })),
 );
 import { studentsToCsv, teacherQualificationsToCsv, teachersToCsv } from "@/lib/csv";
 import {
@@ -270,18 +271,22 @@ function PersonDetail({
         */}
         {MAY_HAVE_WORK_TIME.includes(person.role) && staffing ? (
           <div className="grid gap-3 lg:grid-cols-2">
-            <EmploymentCard
-              teacher={person}
-              academicYearId={staffing.academicYearId}
-              academicYearName={staffing.academicYearName}
-              employment={staffing.employment}
-              policy={staffing.policy}
-            />
-            <QualificationsCard
-              teacher={person}
-              qualifications={staffing.qualifications}
-              subjects={staffing.subjects}
-            />
+            <Suspense fallback={<Skeleton className="h-32 w-full" />}>
+              <EmploymentCard
+                teacher={person}
+                academicYearId={staffing.academicYearId}
+                academicYearName={staffing.academicYearName}
+                employment={staffing.employment}
+                policy={staffing.policy}
+              />
+            </Suspense>
+            <Suspense fallback={<Skeleton className="h-32 w-full" />}>
+              <QualificationsCard
+                teacher={person}
+                qualifications={staffing.qualifications}
+                subjects={staffing.subjects}
+              />
+            </Suspense>
           </div>
         ) : null}
       </div>
