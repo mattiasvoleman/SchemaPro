@@ -189,6 +189,34 @@ const HOSTLOV: BreakFixture = {
 
 const SEVEN_A_HOURS_AFTER_HOSTLOV = "84 h";
 
+/** A roster row as the page reads it: role decides the picker, home class the span. */
+interface PersonFixture {
+  id: string;
+  role: "TEACHER" | "STUDENT" | "SCHOOL_ADMIN";
+  firstName: string;
+  lastName: string;
+  email: string;
+  isActive: boolean;
+  studentGroupId: string | null;
+}
+
+/** The slice of the load report the candidate line reads: one balance per teacher. */
+interface LoadFixture {
+  teachers: { userId: string; balanceMinutesPerWeek: number | null }[];
+}
+
+interface QualificationFixture {
+  id: string;
+  userId: string;
+  subjectId: string;
+  minGradeLevel: number;
+  maxGradeLevel: number;
+  kind: "LEGITIMATION" | "BEHORIG" | "TILLATEN";
+  validFrom: string | null;
+  validTo: string | null;
+  note: string | null;
+}
+
 interface QueryState<T> {
   data: T | undefined;
   isLoading: boolean;
@@ -250,7 +278,14 @@ const freshState = () => ({
    * shows when the query has answered and held nothing.
    */
   breaks: loaded([] as BreakFixture[]),
-  people: loaded([] as { id: string; email: string }[]),
+  people: loaded([] as PersonFixture[]),
+  /**
+   * The two reads the cell dialog's candidate badges hang on. Disabled rather
+   * than loaded-empty by default: a page with no läsår asks for no report, and
+   * no test above mentions a candidate. The candidate tests set both.
+   */
+  load: disabled<LoadFixture>(),
+  qualifications: loaded([] as QualificationFixture[]),
   /**
    * Set only by the export tests, which are the ones that care WHICH year the
    * page asked for. Left null everywhere else so `useRequirements` keeps
@@ -297,6 +332,8 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
       ? loaded(state.requirementsByYear[yearId ?? ""] ?? [])
       : state.requirements,
   useSchoolBreaks: () => state.breaks,
+  useStaffingLoad: () => state.load,
+  useTeacherQualifications: () => state.qualifications,
   useCrudMutations: () => ({
     create: { mutateAsync: createMock, isPending: false },
     update: { mutateAsync: updateMock, isPending: false },
@@ -1259,5 +1296,148 @@ describe("Timplan CSV", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("updatesNotDeletes")).toBeTruthy();
+  });
+});
+
+/**
+ * The behörighet badge and the "kvar" figure beside each candidate.
+ *
+ * Both are READ, not computed here: the kind comes from the school's
+ * qualification rows through the report's own cover rule, and the minutes are
+ * the balance the load report already states for that teacher. So the
+ * assertions are about which row's facts land beside which name, for THIS
+ * cell's subject and group — the failure this guards against is a badge that
+ * answers for the wrong subject, or a figure recomputed to a second answer.
+ */
+describe("Timplan cell dialog candidates", () => {
+  const anna: PersonFixture = {
+    id: "t-anna",
+    role: "TEACHER",
+    firstName: "Anna",
+    lastName: "Svensson",
+    email: "anna@example.test",
+    isActive: true,
+    studentGroupId: null,
+  };
+  const bo: PersonFixture = { ...anna, id: "t-bo", firstName: "Bo", lastName: "Lind", email: "bo@example.test" };
+  const cilla: PersonFixture = {
+    ...anna,
+    id: "t-cilla",
+    firstName: "Cilla",
+    lastName: "Ek",
+    email: "cilla@example.test",
+  };
+  /** A pupil in 7A: the member whose home class gives Ma71 its grade. */
+  const pupil: PersonFixture = {
+    id: "p-1",
+    role: "STUDENT",
+    firstName: "Pelle",
+    lastName: "Pupil",
+    email: "pelle@example.test",
+    isActive: true,
+    studentGroupId: "g-7a",
+  };
+
+  const qualification = (overrides: Partial<QualificationFixture>): QualificationFixture => ({
+    id: "q",
+    userId: "t-anna",
+    subjectId: "s-so",
+    minGradeLevel: 7,
+    maxGradeLevel: 9,
+    kind: "LEGITIMATION",
+    validFrom: null,
+    validTo: null,
+    note: null,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    state.people = loaded([anna, bo, cilla, pupil]);
+    state.memberships = loaded([{ studentGroupId: "g-ma71", studentId: "p-1" }] as never);
+    state.load = loaded({
+      teachers: [
+        { userId: "t-anna", balanceMinutesPerWeek: 120 },
+        { userId: "t-bo", balanceMinutesPerWeek: -30 },
+        { userId: "t-cilla", balanceMinutesPerWeek: null },
+      ],
+    });
+    state.qualifications = loaded([
+      // Anna: legitimerad i SO för 7–9 — covers 7A.
+      qualification({ id: "q-anna-so" }),
+      // Bo: behörig i SO men bara 1–6 — does NOT cover 7A.
+      qualification({ id: "q-bo-so", userId: "t-bo", kind: "BEHORIG", minGradeLevel: 1, maxGradeLevel: 6 }),
+      // Cilla: tillåten i Bild, nothing in SO.
+      qualification({ id: "q-cilla-bi", userId: "t-cilla", subjectId: "s-bi", kind: "TILLATEN" }),
+    ]);
+  });
+
+  const openTeacherPicker = async (cellLabel: string) => {
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(cellLabel));
+    const dialog = screen.getByRole("dialog");
+    // The first combobox in the dialog is the teacher's; the co-teacher's and
+    // the period's come after it.
+    await user.click(within(dialog).getAllByRole("combobox")[0]);
+    return user;
+  };
+
+  const optionNamed = (name: string) =>
+    screen.getAllByRole("option").find((option) => option.textContent?.includes(name));
+
+  it("names each candidate's behörighet for this cell's subject and span, and their minutes left", async () => {
+    await openTeacherPicker("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)");
+
+    const annaOption = optionNamed("Anna Svensson");
+    expect(annaOption?.textContent).toContain("kindLEGITIMATION");
+    expect(annaOption?.textContent).toContain("candidateRemaining(120)");
+
+    // Bo's 1–6 does not reach åk 7, so the row counts as unqualified here —
+    // and the report has him over his mål.
+    const boOption = optionNamed("Bo Lind");
+    expect(boOption?.textContent).toContain("candidateUnqualified");
+    expect(boOption?.textContent).not.toContain("kindBEHORIG");
+    expect(boOption?.textContent).toContain("candidateOver(30)");
+
+    // Cilla has a behörighet, in another subject: unqualified for SO, no mål.
+    const cillaOption = optionNamed("Cilla Ek");
+    expect(cillaOption?.textContent).toContain("candidateUnqualified");
+    expect(cillaOption?.textContent).toContain("candidateNoTarget");
+
+    // The unassigned option carries no badge at all.
+    expect(optionNamed("notAssigned")?.textContent).toBe("notAssigned");
+  });
+
+  it("answers for the cell's own subject: the same teacher reads differently under Bild", async () => {
+    await openTeacherPicker("cellLabel(7A|Bild)");
+
+    expect(optionNamed("Cilla Ek")?.textContent).toContain("kindTILLATEN");
+    expect(optionNamed("Anna Svensson")?.textContent).toContain("candidateUnqualified");
+  });
+
+  it("gives a teaching group the span of its members' home classes", async () => {
+    // Ma71 has no year of its own; its one member sits in 7A, so it is åk 7
+    // and Bo's 1–6 still falls short while Anna's 7–9 covers it.
+    await openTeacherPicker("cellLabel(Ma71|Samhällsorientering)");
+
+    expect(optionNamed("Anna Svensson")?.textContent).toContain("kindLEGITIMATION");
+    expect(optionNamed("Bo Lind")?.textContent).toContain("candidateUnqualified");
+  });
+
+  it("shows no behörighet badge at all for a school that has recorded none, but still the minutes", async () => {
+    state.qualifications = loaded([]);
+    await openTeacherPicker("cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)");
+
+    const annaOption = optionNamed("Anna Svensson");
+    expect(annaOption?.textContent).not.toContain("kind");
+    expect(annaOption?.textContent).not.toContain("candidateUnqualified");
+    expect(annaOption?.textContent).toContain("candidateRemaining(120)");
+  });
+
+  it("says the badge is a note and not a gate, in the dialog itself", async () => {
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
+    expect(within(screen.getByRole("dialog")).getByText("candidateHint")).toBeTruthy();
   });
 });
