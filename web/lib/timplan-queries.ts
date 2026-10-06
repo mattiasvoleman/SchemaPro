@@ -121,10 +121,20 @@ export function useLocalTimplans() {
   });
 }
 
+/*
+ * The plan and its check are read afresh every time the page mounts
+ * (refetchOnMount: "always"), whatever staleTime says. A subject deleted or
+ * recoded on Ämnen changes both on the server — the cascade empties a draft's
+ * cells, a new national code moves a row to another cell — and nothing on
+ * that page invalidates these keys: doing so from lib/queries.ts would put
+ * this module in every route's bundle. Coming back to Timplan within 30 s
+ * showed the old cells and the old tones until then.
+ */
 export function useLocalTimplan(id: string | null) {
   return useQuery({
     queryKey: TIMPLAN_KEYS.plan(id ?? ""),
     enabled: id !== null,
+    refetchOnMount: "always",
     queryFn: () => api.get<LocalTimplanDetail>(path(id!)),
   });
 }
@@ -138,6 +148,7 @@ export function useLocalTimplanCheck(id: string | null) {
   return useQuery({
     queryKey: TIMPLAN_KEYS.check(id ?? ""),
     enabled: id !== null,
+    refetchOnMount: "always",
     queryFn: () => api.get<LocalTimplanCheckResponse>(path(id!, "/check")),
   });
 }

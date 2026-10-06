@@ -256,18 +256,27 @@ export function parseMinutes(text: string): number | null {
 export function entriesFromDraft(
   draft: DraftCells,
   notes: ReadonlyMap<string, string | null>,
+  /**
+   * The school's subjects as the page has them. A cell of a subject not in it
+   * is left out: a subject deleted on Ämnen cascades its draft entries on the
+   * server, but a plan cached within staleTime still holds them, and sending
+   * the cell got a 400 naming an id the grid shows no row for, so no one
+   * could clear it. Absent: every cell is kept.
+   */
+  known?: ReadonlySet<string>,
 ): { entries: EntryBody[]; invalid: string[] } {
   const entries: EntryBody[] = [];
   const invalid: string[] = [];
   for (const [key, text] of draft) {
     if (text.trim() === "") continue;
+    const separator = key.lastIndexOf(":");
+    const subjectId = key.slice(0, separator);
+    if (known && !known.has(subjectId)) continue;
     const minutes = parseMinutes(text);
     if (minutes === null) {
       invalid.push(key);
       continue;
     }
-    const separator = key.lastIndexOf(":");
-    const subjectId = key.slice(0, separator);
     const gradeLevel = Number(key.slice(separator + 1));
     const note = notes.get(key);
     entries.push({ subjectId, gradeLevel, minutesPerWeek: minutes, ...(note ? { note } : {}) });

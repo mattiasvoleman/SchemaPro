@@ -190,6 +190,25 @@ describe("TimplanPage: the saved check, or the live one while editing", () => {
     });
   });
 
+  it("leaves out a cell whose subject is gone — deleted or not this school's — instead of sending it", async () => {
+    // A subject deleted on Ämnen cascades its draft entries on the server,
+    // but a plan cached within staleTime still holds them; sending the cell
+    // got a 400 naming an id the grid cannot show or clear.
+    const plan = planOf();
+    show({
+      ...plan,
+      entries: [...plan.entries, { id: "e-ghost", subjectId: "s-deleted", gradeLevel: 4, minutesPerWeek: 60, note: null }],
+    });
+    const user = userEvent.setup();
+    render(<TimplanPage />);
+    await user.type(input("s-bl", 4), "50");
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    const [[body]] = state.actions.replaceEntries.mutateAsync.mock.calls as [[{ entries: { subjectId: string }[] }]];
+    expect(body.entries.map((entry) => entry.subjectId)).not.toContain("s-deleted");
+    expect(body.entries).toHaveLength(4);
+  });
+
   it("a changed week count goes to PATCH as a number, read from a decimal comma", async () => {
     const user = userEvent.setup();
     render(<TimplanPage />);

@@ -163,6 +163,7 @@ export default function TimplanPage() {
   const current = edit && base && edit.planId === base.planId ? edit : base;
   const decided = shown?.status === "DECIDED";
 
+  const known = useMemo(() => new Set((subjects ?? []).map((subject) => subject.id)), [subjects]);
   const notes = useMemo(
     () =>
       new Map((shown?.entries ?? []).map((entry) => [cellKey(entry.subjectId, entry.gradeLevel), entry.note])),
@@ -181,7 +182,7 @@ export default function TimplanPage() {
       current.versionId !== shown.nationalTimplanVersionId)
   );
   const dirty = cellsChanged || planChanged;
-  const invalidCells = current ? entriesFromDraft(current.cells, notes).invalid : [];
+  const invalidCells = current ? entriesFromDraft(current.cells, notes, known).invalid : [];
   const nameProblem =
     current && current.name.trim() === ""
       ? t("nameRequired")
@@ -212,9 +213,9 @@ export default function TimplanPage() {
         nationalCode,
         countsTowardTimplan,
       })),
-      entries: entriesFromDraft(current.cells, notes).entries,
+      entries: entriesFromDraft(current.cells, notes, known).entries,
     });
-  }, [current, version, national, subjects, weeksTenths, notes]);
+  }, [current, version, national, subjects, weeksTenths, notes, known]);
 
   const serverCheck = savedCheck && savedCheck.localTimplanId === activeId ? savedCheck : null;
   const live = dirty || serverCheck === null;
@@ -253,7 +254,7 @@ export default function TimplanPage() {
 
   const save = async () => {
     if (!shown || !current || !base || decided) return;
-    const { entries, invalid } = entriesFromDraft(current.cells, notes);
+    const { entries, invalid } = entriesFromDraft(current.cells, notes, known);
     if (invalid.length > 0 || typedWeeksTenths === null || nameProblem) return;
     const patch: UpdatePlanBody = {};
     if (current.name.trim() !== shown.name) patch.name = current.name.trim();

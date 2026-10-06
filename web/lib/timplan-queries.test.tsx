@@ -63,6 +63,7 @@ vi.mock("@/lib/api", () => ({
   },
 }));
 
+import { api } from "@/lib/api";
 import { useLocalTimplan, useLocalTimplanActions, useLocalTimplanCheck } from "@/lib/timplan-queries";
 
 describe("saving a plan as PATCH then PUT, as the timplan page does", () => {
@@ -102,5 +103,24 @@ describe("saving a plan as PATCH then PUT, as the timplan page does", () => {
     expect(serverEntries).toBe(3);
     expect(result.current.plan.data?.entries).toHaveLength(3);
     expect((result.current.check.data as unknown as { entries: number }).entries).toBe(3);
+  });
+
+  it("reads the plan and its check afresh when the page mounts, however fresh the cache", async () => {
+    // A subject deleted or recoded on Ämnen changes both on the server, and
+    // nothing there invalidates these keys.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } });
+    client.setQueryData(["localTimplan", "p1"], planWith(2));
+    client.setQueryData(["localTimplan", "p1", "check"], checkWith(2));
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const get = vi.mocked(api.get);
+    get.mockClear();
+    const { result } = renderHook(() => ({ plan: useLocalTimplan("p1"), check: useLocalTimplanCheck("p1") }), {
+      wrapper,
+    });
+    await waitFor(() => expect(result.current.plan.data?.entries).toHaveLength(1));
+    expect(get).toHaveBeenCalledWith("/api/v1/local-timplans/p1");
+    expect(get).toHaveBeenCalledWith("/api/v1/local-timplans/p1/check");
   });
 });
