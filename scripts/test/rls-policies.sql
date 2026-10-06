@@ -1603,6 +1603,498 @@ $$;
 ROLLBACK;
 
 -- ---------------------------------------------------------------------------
+-- 7h. Tjänstefördelning: a post is HR data, a behörighet is not, and the policy
+-- is the school's.
+--
+-- Three tables from 20261006100000 with three DIFFERENT second arms, which is
+-- why this section is not a copy of 7g and must not become one. TeacherWorkRules
+-- has staff_select plus a teacher_own arm FOR ALL: a colleague's lunch is
+-- deliberately visible, and a teacher writes their own. TeacherEmployments has
+-- neither. A teacher reads their OWN tjänstgöringsgrad, reads nobody else's, and
+-- writes nothing — the employer sets a post, the employee is told. A colleague's
+-- deltid and nedsättning are personnel facts.
+--
+-- The failure this guards is the copy-paste one: a `_staff_select` pasted from
+-- 7g's table onto this one hands every teacher the whole staff's percentages,
+-- and nothing in the API would notice, because the API filters by userId anyway
+-- and the leak is through Supabase, where the table grant is the only other
+-- gate. So the admin plants a post for TWO teachers — the one who acts below
+-- and a colleague — and the teacher's read is asserted as a count of exactly
+-- one, their own, against two rows that exist in the same transaction.
+--
+-- TeacherSubjectQualifications goes the other way: every teacher reads a
+-- colleague's behörighet (the substitute picker lists colleagues by it) and no
+-- teacher writes one, their own included — a legitimation is recorded by the
+-- administrator against a document, not claimed by its holder. StaffingPolicies
+-- is read by all staff and written by the admin.
+--
+-- Writes a policy filters raise nothing, so every "cannot change" below is a
+-- ROW_COUNT and a read-back, never a statement trusted — and the rows the
+-- teacher tried to change are read back once more as the admin at the end,
+-- since the teacher cannot see the colleague's row to prove it unchanged.
+--
+-- The tenant half bites here, unlike 7g's: the fixtures plant a policy, a post
+-- and a behörighet in the second school and the runner refuses to start without
+-- them, so an admin counting another school's rows counts rows that are there.
+--
+-- The service principal closes the section, in the same transaction with the
+-- user principal cleared: it reads this school's posts (the SS12000 /duties
+-- feed, Fas 3), none of the other school's, and no qualification and no policy,
+-- which have no arm for it.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+-- psql does not expand :variables inside a dollar-quoted block, so the other
+-- school's pupil and this school's id are handed to the blocks through settings.
+SELECT set_config('app.test_student_b', :'student_b', true);
+SELECT set_config('app.test_school_a', :'school_a', true);
+
+DO $$
+DECLARE me uuid; colleague uuid; year uuid; subject uuid; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'staffing: expected to be acting as an admin, am %',
+      app.current_user_role();
+  END IF;
+
+  -- The FIRST teacher by authId is the one who acts further down; the second
+  -- is the colleague. The same ordering in every block, so they stay distinct.
+  SELECT id INTO me FROM "Users"
+   WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+   ORDER BY "authId" LIMIT 1;
+  SELECT id INTO colleague FROM "Users"
+   WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+   ORDER BY "authId" OFFSET 1 LIMIT 1;
+  SELECT id INTO year FROM "AcademicYears"
+   WHERE "schoolId" = app.current_school_id() AND "isActive" LIMIT 1;
+  SELECT id INTO subject FROM "Subjects"
+   WHERE "schoolId" = app.current_school_id() ORDER BY code LIMIT 1;
+  IF me IS NULL OR colleague IS NULL OR year IS NULL OR subject IS NULL THEN
+    RAISE EXCEPTION
+      'staffing: the seed lacks two teachers (%, %), an active year (%) or a subject (%)',
+      me, colleague, year, subject;
+  END IF;
+
+  -- The tenant half, asked BEFORE this school has rows of its own in the
+  -- transaction so a lost tenant predicate is named as one (7d's reason). What
+  -- it would find is the row the fixtures plant in the second school, and the
+  -- runner has already refused to start if that row is missing.
+  SELECT count(*) INTO n FROM "StaffingPolicies"
+   WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'staffing: % policy row(s) from another school visible — tenant isolation is not enforced', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments"
+   WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'staffing: % post(s) from another school visible — tenant isolation is not enforced', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherSubjectQualifications"
+   WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'staffing: % behörighet(er) from another school visible — tenant isolation is not enforced', n;
+  END IF;
+
+  -- The policy, with a riktmärke, which is the path a school turns the load
+  -- report on by.
+  INSERT INTO "StaffingPolicies" ("schoolId", "fullTimeTeachingMinutesPerWeek", "updatedAt")
+  VALUES (app.current_school_id(), 1080, now());
+  SELECT count(*) INTO n FROM "StaffingPolicies";
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'staffing: an admin cannot write their own school''s policy (% row(s))', n;
+  END IF;
+
+  -- Two posts: the acting teacher's and the colleague's.
+  INSERT INTO "TeacherEmployments"
+    ("schoolId", "userId", "academicYearId", "employmentPercent", "signature", "updatedAt")
+  VALUES (app.current_school_id(), me,        year, 100, 'ABC', now()),
+         (app.current_school_id(), colleague, year,  80, 'DEF', now());
+  SELECT count(*) INTO n FROM "TeacherEmployments";
+  IF n <> 2 THEN
+    RAISE EXCEPTION
+      'staffing: an admin cannot write their own school''s posts (% row(s))', n;
+  END IF;
+
+  -- A behörighet for the colleague, which the acting teacher must be able to
+  -- read and must not be able to touch.
+  INSERT INTO "TeacherSubjectQualifications"
+    ("schoolId", "userId", "subjectId", "minGradeLevel", "maxGradeLevel", kind, "updatedAt")
+  VALUES (app.current_school_id(), colleague, subject, 1, 9, 'LEGITIMATION', now());
+  SELECT count(*) INTO n FROM "TeacherSubjectQualifications";
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'staffing: an admin cannot write their own school''s behörigheter (% row(s))', n;
+  END IF;
+
+  -- Another school's USER, stamped with this school's id — the shape a policy
+  -- alone cannot refuse, since the row's schoolId is honestly this admin's. The
+  -- composite (userId, schoolId) key is what answers, for the reason 7g gives.
+  -- The pupil is the one foreign user the runner can hand in; the key knows
+  -- nothing about roles.
+  BEGIN
+    INSERT INTO "TeacherEmployments"
+      ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+    VALUES (app.current_school_id(), current_setting('app.test_student_b')::uuid,
+            year, 100, now());
+    RAISE EXCEPTION 'staffing: an admin wrote a post for another school''s user';
+  EXCEPTION
+    WHEN foreign_key_violation OR insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherSubjectQualifications"
+      ("schoolId", "userId", "subjectId", "minGradeLevel", "maxGradeLevel", kind, "updatedAt")
+    VALUES (app.current_school_id(), current_setting('app.test_student_b')::uuid,
+            subject, 1, 9, 'BEHORIG', now());
+    RAISE EXCEPTION 'staffing: an admin wrote a behörighet for another school''s user';
+  EXCEPTION
+    WHEN foreign_key_violation OR insufficient_privilege THEN NULL;
+  END;
+
+  -- And rows stamped with a school that is not this one. WITH CHECK and the
+  -- foreign key are both correct ways to refuse these; what matters is that
+  -- nothing lands.
+  BEGIN
+    INSERT INTO "StaffingPolicies" ("schoolId", "updatedAt")
+    VALUES ('00000000-0000-4000-8000-0000000000ff', now());
+    RAISE EXCEPTION 'staffing: an admin wrote a policy into another school';
+  EXCEPTION
+    WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherEmployments"
+      ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+    VALUES ('00000000-0000-4000-8000-0000000000ff', me, year, 100, now());
+    RAISE EXCEPTION 'staffing: an admin wrote a post into another school';
+  EXCEPTION
+    WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+END
+$$;
+
+-- Now as the first teacher of this school. The admin's rows are still in the
+-- open transaction: a post of their own to read, a colleague's to fail to
+-- read, and a colleague's behörighet to read and fail to rewrite.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE me uuid := app.current_user_id(); colleague uuid; year uuid; subject uuid; n bigint;
+BEGIN
+  IF me IS NULL OR app.current_user_role() <> 'TEACHER' THEN
+    RAISE EXCEPTION
+      'staffing: expected to be acting as a TEACHER of school A, am % (%)',
+      app.current_user_role(), me;
+  END IF;
+
+  SELECT id INTO colleague FROM "Users"
+   WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+   ORDER BY "authId" OFFSET 1 LIMIT 1;
+  SELECT id INTO year FROM "AcademicYears"
+   WHERE "schoolId" = app.current_school_id() AND "isActive" LIMIT 1;
+  SELECT id INTO subject FROM "Subjects"
+   WHERE "schoolId" = app.current_school_id() ORDER BY code LIMIT 1;
+  IF colleague IS NULL OR colleague = me THEN
+    RAISE EXCEPTION 'staffing: the two teachers this block needs are not distinct';
+  END IF;
+
+  -- The policy: readable, because the teacher's own load bar is drawn against
+  -- its riktmärke, and a refusal naming a mode is unreadable to somebody who
+  -- cannot open the setting.
+  SELECT count(*) INTO n FROM "StaffingPolicies";
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'staffing: a teacher cannot read the riktmärke their load is measured against (% row(s))', n;
+  END IF;
+  -- And not writable. No row is visible to the UPDATE, so it matches nothing
+  -- and raises nothing; the count is the assertion.
+  UPDATE "StaffingPolicies" SET "fullTimeTeachingMinutesPerWeek" = 1, "updatedAt" = now();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a teacher rewrote the school''s policy (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "StaffingPolicies" WHERE "fullTimeTeachingMinutesPerWeek" = 1080;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'staffing: the policy a teacher could not update has changed anyway';
+  END IF;
+
+  -- The posts. Two exist; exactly one is theirs; the count says which arm the
+  -- table actually carries.
+  SELECT count(*) INTO n FROM "TeacherEmployments";
+  IF n = 0 THEN
+    RAISE EXCEPTION
+      'staffing: a teacher cannot read their own tjänstgöringsgrad — the own-row arm is missing';
+  ELSIF n <> 1 THEN
+    RAISE EXCEPTION
+      'staffing: a teacher reads % posts where only their own may show — the HR arm has become a staff read', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "userId" = me;
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'staffing: the one post a teacher reads is not their own (% own row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "userId" = colleague;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a teacher reads a colleague''s tjänstgöringsgrad';
+  END IF;
+
+  -- No write of their own, not even a new one: a post is set by the employer.
+  -- The insert targets the same year as the row the admin planted, so the
+  -- unique key would also refuse it — but only AFTER the policy has had its
+  -- say, since WITH CHECK runs before constraints. Only insufficient_privilege
+  -- is caught; a unique_violation here would mean the policy let the row
+  -- through to the index, and must fail the run.
+  BEGIN
+    INSERT INTO "TeacherEmployments"
+      ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+    VALUES (app.current_school_id(), me, year, 100, now());
+    RAISE EXCEPTION 'staffing: a teacher authored their own post';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- Their OWN row, which they can see and must not be able to change. A
+  -- SELECT-only arm leaves the UPDATE with no visible row: ROW_COUNT 0, no
+  -- error. Read back as well, since "0 rows" is also what a wrong WHERE gives.
+  UPDATE "TeacherEmployments" SET "employmentPercent" = 50, "updatedAt" = now()
+   WHERE "userId" = me;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'staffing: a teacher changed their own tjänstgöringsgrad (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments"
+   WHERE "userId" = me AND "employmentPercent" = 100;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'staffing: a teacher''s own post changed under an update that matched nothing';
+  END IF;
+
+  DELETE FROM "TeacherEmployments" WHERE "userId" = me;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a teacher deleted their own post (% row(s))', n;
+  END IF;
+
+  -- The colleague's, which they cannot see; asserted anyway because USING on
+  -- the write path is a separate predicate from USING on the read path, and 7
+  -- found a table where they differed. The read-back is the admin's, below.
+  UPDATE "TeacherEmployments" SET "employmentPercent" = 1, "updatedAt" = now()
+   WHERE "userId" = colleague;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a teacher changed a colleague''s tjänstgöringsgrad (% row(s))', n;
+  END IF;
+  DELETE FROM "TeacherEmployments" WHERE "userId" = colleague;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a teacher deleted a colleague''s post (% row(s))', n;
+  END IF;
+
+  -- Behörigheter: a colleague's is readable. This is the one place the two HR
+  -- tables part ways, and a teacher_own arm pasted here by symmetry would blind
+  -- the substitute picker for every teacher.
+  SELECT count(*) INTO n FROM "TeacherSubjectQualifications" WHERE "userId" = colleague;
+  IF n <> 1 THEN
+    RAISE EXCEPTION
+      'staffing: a teacher cannot read a colleague''s behörighet (% row(s)); the substitute picker is blind', n;
+  END IF;
+
+  -- And no teacher writes one, their own included.
+  BEGIN
+    INSERT INTO "TeacherSubjectQualifications"
+      ("schoolId", "userId", "subjectId", "minGradeLevel", "maxGradeLevel", kind, "updatedAt")
+    VALUES (app.current_school_id(), me, subject, 1, 9, 'LEGITIMATION', now());
+    RAISE EXCEPTION 'staffing: a teacher granted themselves a legitimation';
+  EXCEPTION
+    WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- The colleague's row is visible to the SELECT arm and must be invisible to
+  -- the UPDATE and DELETE paths; it is read back as still LEGITIMATION, which
+  -- this teacher can see.
+  UPDATE "TeacherSubjectQualifications" SET kind = 'TILLATEN', "updatedAt" = now()
+   WHERE "userId" = colleague;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a teacher downgraded a colleague''s behörighet (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherSubjectQualifications"
+   WHERE "userId" = colleague AND kind = 'LEGITIMATION';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'staffing: a colleague''s behörighet changed under an update that matched nothing';
+  END IF;
+  DELETE FROM "TeacherSubjectQualifications" WHERE "userId" = colleague;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a teacher deleted a colleague''s behörighet (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherSubjectQualifications" WHERE "userId" = colleague;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'staffing: a colleague''s behörighet is gone after a delete that matched nothing';
+  END IF;
+END
+$$;
+
+-- A pupil of the same school. Looked up while the teacher is still in force, for
+-- the reason 7g gives. Four rows across three tables are in the transaction to
+-- be seen; a pupil sees none of them.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION
+      'staffing: expected to be acting as a STUDENT of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+
+  SELECT count(*) INTO n FROM "StaffingPolicies";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a pupil reads % policy row(s); the staff read has lost its role check', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a pupil reads % teacher post(s)', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherSubjectQualifications";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a pupil reads % behörighet(er); the staff read has lost its role check', n;
+  END IF;
+END
+$$;
+
+-- And a guardian, by the literal authId the fixtures plant, since the pupil in
+-- force cannot look up anyone else's row.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION
+      'staffing: expected to be acting as a GUARDIAN of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+
+  SELECT count(*) INTO n FROM "StaffingPolicies";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a guardian reads % policy row(s)', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a guardian reads % teacher post(s)', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherSubjectQualifications";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: a guardian reads % behörighet(er)', n;
+  END IF;
+END
+$$;
+
+-- Back as the admin: the rows the teacher tried to change are what they were.
+-- The teacher could not see the colleague's post to prove it unchanged, so the
+-- proof is read here, by the one principal who sees both.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'staffing: expected to be back as the admin, am %', app.current_user_role();
+  END IF;
+
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "employmentPercent" IN (100, 80);
+  IF n <> 2 THEN
+    RAISE EXCEPTION
+      'staffing: % of the two posts survive unchanged after the teacher''s writes', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherSubjectQualifications" WHERE kind = 'LEGITIMATION';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'staffing: the colleague''s behörighet did not survive the teacher''s writes';
+  END IF;
+END
+$$;
+
+-- The service principal, with the user principal CLEARED: an empty claims
+-- setting is no user (20260914230000), so only the service arms answer. It
+-- reads this school's posts for the /duties feed, none of the other school's,
+-- and has no arm at all on the two tables SS12000 has no field for.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', :'school_a', true);
+
+DO $$
+DECLARE n bigint; school_a uuid := app.current_service_school_id();
+BEGIN
+  IF app.current_user_id() IS NOT NULL OR app.current_user_role() IS NOT NULL THEN
+    RAISE EXCEPTION
+      'staffing: a user principal (%, %) is still in force; the service assertions would measure its arms',
+      app.current_user_id(), app.current_user_role();
+  END IF;
+  IF school_a IS NULL THEN
+    RAISE EXCEPTION 'staffing: the service principal is not in effect';
+  END IF;
+
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "schoolId" = school_a;
+  IF n <> 2 THEN
+    RAISE EXCEPTION
+      'staffing: the service principal reads % post(s) of its own school, expected 2 — the /duties feed would be empty or wrong', n;
+  END IF;
+  -- No WHERE on the school: the policy alone must confine this, and the
+  -- fixture row in the second school is there to be leaked.
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "schoolId" <> school_a;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: the service principal leaked % post(s) from another school', n;
+  END IF;
+
+  SELECT count(*) INTO n FROM "TeacherSubjectQualifications";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'staffing: the service principal reads % behörighet(er); it has no arm there', n;
+  END IF;
+  SELECT count(*) INTO n FROM "StaffingPolicies";
+  IF n <> 0 THEN
+    RAISE EXCEPTION
+      'staffing: the service principal reads % policy row(s); it has no arm there', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
 -- Section 8: a guardian link cannot reach across schools.
 --
 -- This was a live cross-tenant hole, reproduced end to end before it was fixed:

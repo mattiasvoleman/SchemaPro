@@ -183,6 +183,35 @@ JOIN "Users" p ON p."authId" = '00000000-0000-4000-8000-000000000002'
 WHERE g."authId" = '00000000-0000-4000-8000-000000000005'
 ON CONFLICT ("guardianId", "studentId") DO NOTHING;
 
+-- A policy, a post and a behörighet in the SECOND school, for its fixture
+-- teacher in its fixture year and subject, so the tenant half of section 7h
+-- counts rows that exist over there rather than a table that happens to be
+-- empty — the reason the room lock above exists for 7d. The post is the one
+-- that matters: TeacherEmployments is the first table whose teacher arm is
+-- narrower than the school, and a tenant predicate it lost would show here
+-- before anything the API renders would notice.
+INSERT INTO "StaffingPolicies" ("schoolId", "fullTimeTeachingMinutesPerWeek", "updatedAt")
+SELECT s.id, 1080, now()
+FROM "Schools" s
+WHERE s.slug = 'rls-fixture-school'
+ON CONFLICT ("schoolId") DO NOTHING;
+
+INSERT INTO "TeacherEmployments"
+  ("schoolId", "userId", "academicYearId", "employmentPercent", "signature", "updatedAt")
+SELECT u."schoolId", u.id, y.id, 80, 'RLS', now()
+FROM "Users" u
+JOIN "AcademicYears" y ON y."schoolId" = u."schoolId" AND y.name = 'RLS Fixture Year'
+WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
+ON CONFLICT ("schoolId", "userId", "academicYearId") DO NOTHING;
+
+INSERT INTO "TeacherSubjectQualifications"
+  ("schoolId", "userId", "subjectId", "minGradeLevel", "maxGradeLevel", kind, "updatedAt")
+SELECT u."schoolId", u.id, sub.id, 1, 9, 'LEGITIMATION', now()
+FROM "Users" u
+JOIN "Subjects" sub ON sub."schoolId" = u."schoolId" AND sub.code = 'RLSFIX'
+WHERE u."authId" = '00000000-0000-4000-8000-000000000001'
+ON CONFLICT ("schoolId", "userId", "subjectId") DO NOTHING;
+
 -- What each school's lesson is made of, and the lessons themselves once they
 -- exist. A view rather than a CTE because every statement below reads it
 -- afresh, so the link rows find the lessons the statements before them
