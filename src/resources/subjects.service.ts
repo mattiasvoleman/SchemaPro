@@ -102,10 +102,28 @@ export class SubjectsService {
    * and the delete still refuses the delete, and its refusal is translated to
    * the same 409 with the plan the trigger named. Subjects that only DRAFT
    * plans contain are deleted and their entries cascade, as before.
+   *
+   * The plans that hold the subject are locked FOR SHARE first, in id order,
+   * before anything is deleted. The cascade's entries trigger takes that same
+   * lock on each parent plan, but only AFTER the cascade has locked the entry
+   * rows — the opposite order to a grid save (PUT /local-timplans/:id/entries
+   * and the timplan import touch the plan row, then delete its entries). A
+   * save and a subject delete meeting in one draft therefore deadlocked
+   * (40P01, a 500), reproduced on PostgreSQL 16 with two sessions; with the
+   * plan locked first, the delete waits for the save to commit and then
+   * proceeds. FOR SHARE, not FOR UPDATE: two subject deletes in one plan do
+   * not conflict, since their cascades lock different entry rows.
    */
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
     try {
       await this.prisma.withRls(user, async (tx) => {
+        await tx.$queryRaw`
+          SELECT p."id" FROM "LocalTimplans" p
+           WHERE p."id" IN (
+             SELECT e."localTimplanId" FROM "LocalTimplanEntries" e WHERE e."subjectId" = ${id}::uuid
+           )
+           ORDER BY p."id"
+             FOR SHARE`;
         const decided = await tx.localTimplan.findMany({
           where: { status: 'DECIDED', entries: { some: { subjectId: id } } },
           select: { name: true },

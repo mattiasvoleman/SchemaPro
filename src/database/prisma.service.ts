@@ -66,10 +66,12 @@ interface ConnectionRole {
  *
  * It is not made so now either. At SERIALIZABLE, PostgreSQL aborts whichever
  * transaction a concurrent commit has made stale with SQLSTATE 40001, which
- * Prisma surfaces as P2034. Nothing here retries, and neither
- * `rethrowPrismaError` nor the exception filter knows the code, so a concurrent
- * edit READ COMMITTED lets through — two PATCHes to different fields of one
- * row, say — would come back as a 500 for whichever request lost. The code
+ * Prisma surfaces as P2034. Nothing here retries; `rethrowPrismaError` answers
+ * P2034 with a 409 WRITE_CONFLICT that says to try again (a deadlock is the
+ * same code), but a service that does not route its errors through it, and
+ * the exception filter, would hand a concurrent edit READ COMMITTED lets
+ * through — two PATCHes to different fields of one row, say — back as a 500
+ * for whichever request lost. The code
  * that does guard a race is written for READ COMMITTED too: room optimisation's
  * apply takes an advisory lock and then reads, and the availability-constraint,
  * frame-time, lunch-serving, rast, room-rule, user and academic-year PATCHes

@@ -2,6 +2,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   TIMPLAN_IS_DECIDED,
+  WRITE_CONFLICT,
   decidedTimplanConflict,
   decidedTimplanRefusal,
   listNames,
@@ -165,5 +166,44 @@ describe('rethrowPrismaError and a decided timplan', () => {
     expect((decidedTimplanConflict([]).getResponse() as { message: string }).message).toMatch(
       /^Den lokala timplanen är beslutad/,
     );
+  });
+});
+
+/** A driver error under P2039, as the adapter carries one it has no code for. */
+const driverError = (originalCode: string, originalMessage: string) =>
+  new Prisma.PrismaClientKnownRequestError(
+    `Database error. Code: \`${originalCode}\`. Message: \`${originalMessage}\``,
+    {
+      code: 'P2039',
+      clientVersion: Prisma.prismaVersion.client,
+      meta: { driverAdapterError: { cause: { originalCode, originalMessage, kind: 'postgres' } } },
+    },
+  );
+
+describe('rethrowPrismaError and a concurrent write', () => {
+  const answer = (error: unknown) => {
+    try {
+      rethrowPrismaError(error);
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  };
+
+  it('answers a deadlock (P2034) with a 409 that says to try again, not a 500', () => {
+    // A timplan save and a subject delete in one draft deadlocked before the
+    // subjects service locked the plan first; whatever still deadlocks is a retry.
+    const thrown = answer(knownError('P2034'));
+    expect(thrown).toBeInstanceOf(ConflictException);
+    expect((thrown as ConflictException).getResponse()).toMatchObject({
+      code: WRITE_CONFLICT,
+      message: expect.stringContaining('Försök igen.'),
+    });
+  });
+
+  it('reads 40P01 and 40001 under a P2039 the same way', () => {
+    for (const code of ['40P01', '40001']) {
+      expect(answer(driverError(code, 'deadlock detected'))).toBeInstanceOf(ConflictException);
+    }
   });
 });
