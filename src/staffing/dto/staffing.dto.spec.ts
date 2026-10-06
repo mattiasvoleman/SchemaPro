@@ -100,6 +100,15 @@ describe('UpsertStaffingPolicyDto mirrors the table CHECKs, bound for bound', ()
     ]);
   });
 
+  it('takes ALLOW or REFUSE for generation without teachers, and nothing in between', async () => {
+    await expect(failing(UpsertStaffingPolicyDto, { unstaffedGeneration: 'ALLOW' })).resolves.toEqual([]);
+    await expect(failing(UpsertStaffingPolicyDto, { unstaffedGeneration: 'REFUSE' })).resolves.toEqual([]);
+    // WARN is a check mode, not a generation mode.
+    await expect(failing(UpsertStaffingPolicyDto, { unstaffedGeneration: 'WARN' })).resolves.toEqual([
+      'unstaffedGeneration',
+    ]);
+  });
+
   it('says why in Swedish, because an admin reads these in the settings card', async () => {
     await expect(
       messagesOf(UpsertStaffingPolicyDto, { fullTimeTeachingMinutesPerWeek: 2401 }),

@@ -1668,7 +1668,7 @@ describe('Planning surface (e2e)', () => {
       updatedAt: new Date('2026-09-01T00:00:00.000Z'),
     });
 
-    const storedPolicy = () => ({
+    const storedPolicy = (overrides: Record<string, unknown> = {}) => ({
       id: '40404040-4040-4040-8040-404040404040',
       schoolId: SCHOOL_ID,
       fullTimeTeachingMinutesPerWeek: 1080,
@@ -1680,8 +1680,10 @@ describe('Planning surface (e2e)', () => {
       overAllocationMode: 'WARN',
       overAllocationTolerancePercent: 10,
       loadModel: 'MINUTES',
+      unstaffedGeneration: 'ALLOW',
       createdAt: new Date('2026-09-01T00:00:00.000Z'),
       updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+      ...overrides,
     });
 
     describe('inställningar (staffing policy)', () => {
@@ -1704,7 +1706,34 @@ describe('Planning surface (e2e)', () => {
         const args = harness.tx['staffingPolicy']!['upsert']!.mock.calls[0]?.[0] as {
           create: Record<string, unknown>;
         };
-        expect(args.create).toMatchObject({ schoolId: SCHOOL_ID, fullTimeRegulatedHoursPerYear: 1360 });
+        expect(args.create).toMatchObject({
+          schoolId: SCHOOL_ID,
+          fullTimeRegulatedHoursPerYear: 1360,
+          unstaffedGeneration: 'ALLOW',
+        });
+      });
+
+      it('writes the generation refusal through the handler, and 400s a mode it does not have', async () => {
+        harness.tx['staffingPolicy']!['upsert']!.mockResolvedValue(
+          storedPolicy({ unstaffedGeneration: 'REFUSE' }),
+        );
+        const written = await request(http())
+          .put('/api/v1/staffing-policy')
+          .set('x-test-user', admin())
+          .send({ fullTimeTeachingMinutesPerWeek: 1080, unstaffedGeneration: 'REFUSE' })
+          .expect(200);
+        expect(written.body).toMatchObject({ unstaffedGeneration: 'REFUSE' });
+        const args = harness.tx['staffingPolicy']!['upsert']!.mock.calls[0]?.[0] as {
+          update: Record<string, unknown>;
+        };
+        expect(args.update).toMatchObject({ unstaffedGeneration: 'REFUSE' });
+
+        await request(http())
+          .put('/api/v1/staffing-policy')
+          .set('x-test-user', admin())
+          .send({ unstaffedGeneration: 'WARN' })
+          .expect(400);
+        expect(harness.tx['staffingPolicy']!['upsert']).toHaveBeenCalledTimes(1);
       });
 
       it('400s a tolerance over 50 % and a reglerad arbetstid larger than the year, in Swedish', async () => {

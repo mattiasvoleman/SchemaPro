@@ -1,4 +1,4 @@
-import { StaffingCheckMode, StaffingLoadModel } from '@prisma/client';
+import { StaffingCheckMode, StaffingLoadModel, UnstaffedGenerationMode } from '@prisma/client';
 import { IsEnum, IsInt, IsNumber, IsOptional, IsPositive, Max, Min } from 'class-validator';
 
 /**
@@ -86,4 +86,16 @@ export class UpsertStaffingPolicyDto {
     message: 'Beräkningsmodellen är MINUTES eller FACTOR.',
   })
   loadModel?: StaffingLoadModel;
+
+  /**
+   * Whether a schema may be generated while a timplanspost has no teacher.
+   * Default ALLOW, today's behaviour. Two values, not the check modes' three:
+   * a generation either starts or it does not, and WARN has nothing to warn
+   * on that the generate page does not already say.
+   */
+  @IsOptional()
+  @IsEnum(UnstaffedGenerationMode, {
+    message: 'Generering utan lärare är ALLOW eller REFUSE.',
+  })
+  unstaffedGeneration?: UnstaffedGenerationMode;
 }

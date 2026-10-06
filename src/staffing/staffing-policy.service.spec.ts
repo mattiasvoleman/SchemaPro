@@ -29,6 +29,7 @@ describe('StaffingPolicyService', () => {
     overAllocationMode: 'WARN',
     overAllocationTolerancePercent: 10,
     loadModel: 'MINUTES',
+    unstaffedGeneration: 'ALLOW',
     createdAt: new Date('2026-09-01T00:00:00.000Z'),
     updatedAt: new Date('2026-09-01T00:00:00.000Z'),
     ...overrides,
@@ -84,6 +85,7 @@ describe('StaffingPolicyService', () => {
         overAllocationMode: 'WARN',
         overAllocationTolerancePercent: 10,
         loadModel: 'MINUTES',
+        unstaffedGeneration: 'ALLOW',
       };
       expect(tx.staffingPolicy.upsert).toHaveBeenCalledWith({
         where: { schoolId: SCHOOL_ID },
@@ -118,6 +120,27 @@ describe('StaffingPolicyService', () => {
         }),
       );
       expect(answer.semesterHoursPerWeek).toBe(37.5);
+    });
+
+    it('writes REFUSE for generation without teachers, and an omitted field back to ALLOW', async () => {
+      tx.staffingPolicy.upsert.mockResolvedValue(storedRow({ unstaffedGeneration: 'REFUSE' }));
+
+      const answer = await service.upsert({ unstaffedGeneration: 'REFUSE' }, testUser());
+      expect(tx.staffingPolicy.upsert).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ unstaffedGeneration: 'REFUSE' }),
+          update: expect.objectContaining({ unstaffedGeneration: 'REFUSE' }),
+        }),
+      );
+      expect(answer.unstaffedGeneration).toBe('REFUSE');
+
+      // PUT replaces the row: a body without the field is the default, so a
+      // form that forgot it would switch the refusal off — which is why the
+      // settings card always sends it.
+      await service.upsert({ fullTimeTeachingMinutesPerWeek: 1080 }, testUser());
+      expect(tx.staffingPolicy.upsert).toHaveBeenLastCalledWith(
+        expect.objectContaining({ update: expect.objectContaining({ unstaffedGeneration: 'ALLOW' }) }),
+      );
     });
 
     it('refuses a reglerad arbetstid larger than the year, naming both numbers', async () => {
