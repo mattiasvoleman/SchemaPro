@@ -4026,3 +4026,489 @@ BEGIN
     RAISE EXCEPTION 'timplan: % of the two decided-record triggers are present, enabled and SECURITY DEFINER', n;
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 17: an uppdrag is the teacher's to read and the admin's to write,
+-- and its fixed slot is the teacher's own weekly UNAVAILABLE time.
+--
+-- TeacherDuties (20261007090000) carries TeacherEmployments' three arms, not
+-- TeacherWorkRules': admin_all, teacher_own_select and service_select. The
+-- failure that matters is again the copy-paste one — a staff_select would hand
+-- every teacher the colleague's förstelärare minutes and mentorships — so the
+-- admin plants duties for TWO teachers and the teacher's read is an exact
+-- count of their own, against the colleague's existing in the transaction.
+--
+-- The second half is the link. blockedConstraintId must name a weekly
+-- UNAVAILABLE TEACHER constraint of the duty's own teacher, and the two
+-- triggers say so with SQLSTATE TD409 for every writer, the admin through
+-- PostgREST's SQL included: a colleague's constraint, a ROOM's, a wish
+-- (PREFERRED_FREE), a one-off date, a duty moved to another teacher with its
+-- slot, and the constraint itself moved or retyped under a linked duty. A
+-- constraint in ANOTHER school, under a row honestly stamped with this one,
+-- is the composite key's to refuse (23503), and the trigger must not answer
+-- it first — it would be describing school B's row to school A. A teacher
+-- may not change or delete the slot an uppdrag holds (TD403), while their
+-- other constraints stay theirs. An admin's delete of the slot clears the
+-- pointer and nothing else, and deleting a duty's subject or class clears
+-- that link alone, never the duty.
+--
+-- Every "cannot change" is a ROW_COUNT and a read-back, as in 7h. The tenant
+-- half: school A's admin, teacher and service principal see none of the
+-- fixture duty in school B, and school B's admin (fixture authId ...0006)
+-- sees that one and none of A's.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+SELECT set_config('app.test_student_b', :'student_b', true);
+SELECT set_config('app.test_school_b', :'school_b', true);
+SELECT set_config('app.test_constraint_b', :'constraint_b', true);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid; colleague uuid; year uuid; room_c uuid;
+  subj uuid; grp uuid;
+  c_me uuid; c_me2 uuid; c_col uuid; c_wish uuid; c_date uuid; c_spare uuid;
+  d_me uuid; d_me2 uuid; d_col uuid;
+  n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'duties: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+
+  -- 7h's two teachers, by the same ordering.
+  SELECT id INTO me FROM "Users"
+   WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO colleague FROM "Users"
+   WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" OFFSET 1 LIMIT 1;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school AND "isActive" LIMIT 1;
+  SELECT id INTO room_c FROM "AvailabilityConstraints"
+   WHERE "schoolId" = school AND "resourceType" = 'ROOM' LIMIT 1;
+  IF me IS NULL OR colleague IS NULL OR year IS NULL OR room_c IS NULL THEN
+    RAISE EXCEPTION 'duties: the seed lacks two teachers (%, %), an active year (%) or a ROOM constraint (%)',
+      me, colleague, year, room_c;
+  END IF;
+
+  -- The tenant half first, before this school has duties of its own.
+  SELECT count(*) INTO n FROM "TeacherDuties";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: % duty row(s) visible before any were written — the seed has none and school B''s must not show', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AvailabilityConstraints"
+   WHERE id = current_setting('app.test_constraint_b')::uuid;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: school B''s duty slot is visible to school A''s admin';
+  END IF;
+
+  -- A subject and a class of the transaction's own, so that deleting them
+  -- below touches nothing seeded.
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt")
+  VALUES (school, 'RLS17 Ämnesansvar', 'RLS17', now()) RETURNING id INTO subj;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "updatedAt")
+  VALUES (school, year, 'RLS17 Mentorsklass', now()) RETURNING id INTO grp;
+
+  -- The constraints a duty may and may not point at.
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 2, '15:00', '17:00', 'UNAVAILABLE', 'RLS17 APT', now()) RETURNING id INTO c_me;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 4, '12:00', '12:30', 'UNAVAILABLE', 'RLS17 rastvakt', now()) RETURNING id INTO c_me2;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', colleague, 2, '15:00', '17:00', 'UNAVAILABLE', 'RLS17 kollegans', now()) RETURNING id INTO c_col;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 3, '08:00', '09:00', 'PREFERRED_FREE', 'RLS17 önskemål', now()) RETURNING id INTO c_wish;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "date", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, DATE '2099-01-05', '08:00', '09:00', 'UNAVAILABLE', 'RLS17 en dag', now()) RETURNING id INTO c_date;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 5, '14:00', '15:00', 'UNAVAILABLE', 'RLS17 ledig', now()) RETURNING id INTO c_spare;
+
+  -- Three duties: two of the acting teacher's (one with the APT slot, the
+  -- mentor class and the subject), one of the colleague's.
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek",
+                               "studentGroupId", "blockedConstraintId", "updatedAt")
+  VALUES (school, me, year, 'APT_KONFERENS', 'APT', 120, grp, c_me, now()) RETURNING id INTO d_me;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek",
+                               "countsAsTeaching", "subjectId", "updatedAt")
+  VALUES (school, me, year, 'AMNESANSVAR', 'Ämnesansvar', 60, true, subj, now()) RETURNING id INTO d_me2;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, colleague, year, 'RASTVAKT', 'Rastvakt', 30, now()) RETURNING id INTO d_col;
+  SELECT count(*) INTO n FROM "TeacherDuties";
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'duties: an admin cannot write their own school''s duties (% row(s))', n;
+  END IF;
+
+  -- The link, refused for every wrong target. Only TD409 is caught: any
+  -- other error (a CHECK, a key) would mean the guard never got its say.
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+    VALUES (school, me, year, 'ANNAT', 'Fel lärare', 30, c_col, now());
+    RAISE EXCEPTION 'duties: a duty took a colleague''s constraint as its slot';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+    VALUES (school, me, year, 'ANNAT', 'Sal', 30, room_c, now());
+    RAISE EXCEPTION 'duties: a duty took a ROOM constraint as its slot';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+    VALUES (school, me, year, 'ANNAT', 'Önskemål', 30, c_wish, now());
+    RAISE EXCEPTION 'duties: a duty took a PREFERRED_FREE wish as its slot';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+    VALUES (school, me, year, 'ANNAT', 'En dag', 30, c_date, now());
+    RAISE EXCEPTION 'duties: a duty took a one-off dated constraint as its weekly slot';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  -- By UPDATE as well: the colleague's duty given the acting teacher's slot,
+  -- and the APT duty moved to the colleague with the acting teacher's slot.
+  BEGIN
+    UPDATE "TeacherDuties" SET "blockedConstraintId" = c_me2 WHERE id = d_col;
+    RAISE EXCEPTION 'duties: an UPDATE gave a colleague''s duty this teacher''s slot';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeacherDuties" SET "userId" = colleague WHERE id = d_me;
+    RAISE EXCEPTION 'duties: a duty moved to another teacher kept the first teacher''s slot';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  -- One duty per slot: the unique key, not the trigger.
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+    VALUES (school, me, year, 'ANNAT', 'Samma tid', 30, c_me, now());
+    RAISE EXCEPTION 'duties: two duties hold one slot';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+
+  -- Another school's slot, stamped with this school: the composite key's.
+  -- Caught as foreign_key_violation ONLY — a TD409 here would be the trigger
+  -- describing school B's row, which it must never reach.
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+    VALUES (school, me, year, 'ANNAT', 'Skola B', 30, current_setting('app.test_constraint_b')::uuid, now());
+    RAISE EXCEPTION 'duties: a duty in school A took school B''s constraint as its slot';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- Another school's person; and a row stamped with another school.
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+    VALUES (school, current_setting('app.test_student_b')::uuid, year, 'ANNAT', 'Skola B', 30, now());
+    RAISE EXCEPTION 'duties: an admin wrote a duty for another school''s user';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+    VALUES (current_setting('app.test_school_b')::uuid, me, year, 'ANNAT', 'Skola B', 30, now());
+    RAISE EXCEPTION 'duties: an admin wrote a duty into another school';
+  EXCEPTION WHEN insufficient_privilege OR foreign_key_violation THEN NULL;
+  END;
+
+  -- The constraint side: the slot under a linked duty keeps its shape.
+  BEGIN
+    UPDATE "AvailabilityConstraints" SET "userId" = colleague WHERE id = c_me;
+    RAISE EXCEPTION 'duties: a linked slot was moved to another teacher';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "AvailabilityConstraints" SET type = 'PREFERRED_FREE' WHERE id = c_me;
+    RAISE EXCEPTION 'duties: a linked slot became a wish';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "AvailabilityConstraints" SET "dayOfWeek" = NULL, "date" = DATE '2099-01-06' WHERE id = c_me;
+    RAISE EXCEPTION 'duties: a linked weekly slot became a one-off date';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  BEGIN
+    UPDATE "AvailabilityConstraints"
+       SET "resourceType" = 'ROOM', "userId" = NULL,
+           "roomId" = (SELECT "roomId" FROM "AvailabilityConstraints" WHERE id = room_c)
+     WHERE id = c_me;
+    RAISE EXCEPTION 'duties: a linked slot became a room''s';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  -- Retimed by the admin is the slot moving, which is legal.
+  UPDATE "AvailabilityConstraints" SET "startTime" = '15:30' WHERE id = c_me;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'duties: an admin could not retime a duty''s slot (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AvailabilityConstraints"
+   WHERE id = c_me AND "userId" = me AND type = 'UNAVAILABLE' AND "dayOfWeek" = 2 AND "startTime" = '15:30';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'duties: the linked slot is not what the refused updates left it';
+  END IF;
+END
+$$;
+
+-- As the first teacher: their own two duties, not the colleague's, no write;
+-- and the slot of their APT is not theirs to move, while their other
+-- constraints are.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE me uuid := app.current_user_id(); year uuid; c_me uuid; c_spare uuid; n bigint;
+BEGIN
+  IF me IS NULL OR app.current_user_role() <> 'TEACHER' THEN
+    RAISE EXCEPTION 'duties: expected to be acting as a TEACHER of school A, am % (%)',
+      app.current_user_role(), me;
+  END IF;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = app.current_school_id() AND "isActive" LIMIT 1;
+  SELECT id INTO c_me FROM "AvailabilityConstraints" WHERE reason = 'RLS17 APT';
+  SELECT id INTO c_spare FROM "AvailabilityConstraints" WHERE reason = 'RLS17 ledig';
+  IF c_me IS NULL OR c_spare IS NULL THEN
+    RAISE EXCEPTION 'duties: a teacher cannot read their own constraints (APT %, ledig %)', c_me, c_spare;
+  END IF;
+
+  SELECT count(*) INTO n FROM "TeacherDuties";
+  IF n = 0 THEN
+    RAISE EXCEPTION 'duties: a teacher cannot read their own uppdrag — the own-row arm is missing';
+  ELSIF n <> 2 THEN
+    RAISE EXCEPTION 'duties: a teacher reads % duties where only their own two may show — the HR arm has become a staff read', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "userId" <> me;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: a teacher reads % of a colleague''s uppdrag', n;
+  END IF;
+
+  -- No write: not a new one, not their own, not the colleague's.
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+    VALUES (app.current_school_id(), me, year, 'ANNAT', 'Eget', 30, now());
+    RAISE EXCEPTION 'duties: a teacher assigned themselves an uppdrag';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  UPDATE "TeacherDuties" SET "minutesPerWeek" = 1, "updatedAt" = now();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: a teacher rewrote % uppdrag', n;
+  END IF;
+  DELETE FROM "TeacherDuties";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: a teacher deleted % uppdrag', n;
+  END IF;
+
+  -- The APT slot: their own TEACHER row, which availability_teacher_modify
+  -- admits, and the trigger refuses because a duty holds it.
+  BEGIN
+    UPDATE "AvailabilityConstraints" SET "startTime" = '16:00' WHERE id = c_me;
+    RAISE EXCEPTION 'duties: a teacher moved the slot their APT holds';
+  EXCEPTION WHEN SQLSTATE 'TD403' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "AvailabilityConstraints" WHERE id = c_me;
+    RAISE EXCEPTION 'duties: a teacher deleted the slot their APT holds';
+  EXCEPTION WHEN SQLSTATE 'TD403' THEN NULL;
+  END;
+  -- A constraint no duty holds is still theirs, both ways.
+  UPDATE "AvailabilityConstraints" SET "startTime" = '14:15' WHERE id = c_spare;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'duties: the duty guard took a teacher''s own unlinked constraint from them (% row(s))', n;
+  END IF;
+  DELETE FROM "AvailabilityConstraints" WHERE id = c_spare;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'duties: a teacher could not delete their own unlinked constraint (% row(s))', n;
+  END IF;
+END
+$$;
+
+-- A pupil and a guardian of the same school read none of the three.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'duties: expected to be acting as a STUDENT of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: a pupil reads % teacher uppdrag', n;
+  END IF;
+END
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'duties: expected to be acting as a GUARDIAN of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: a guardian reads % teacher uppdrag', n;
+  END IF;
+END
+$$;
+
+-- School B's admin: their own fixture duty, none of the three A wrote.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN'
+     OR app.current_school_id() IS DISTINCT FROM current_setting('app.test_school_b')::uuid THEN
+    RAISE EXCEPTION 'duties: expected to be school B''s admin, am % of %',
+      app.current_user_role(), app.current_school_id();
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties";
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'duties: school B''s admin reads % duties, expected their one fixture duty and none of A''s', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: school B''s admin reads % of school A''s duties', n;
+  END IF;
+END
+$$;
+
+-- Back as school A's admin: the teacher's writes changed nothing; then the
+-- deletes that must clear one column and keep the duty.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  d_me uuid; d_me2 uuid; c_me uuid; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'duties: expected to be back as the admin, am %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "minutesPerWeek" IN (120, 60, 30);
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'duties: % of the three duties survive the teacher''s writes unchanged', n;
+  END IF;
+  SELECT id INTO c_me FROM "AvailabilityConstraints" WHERE reason = 'RLS17 APT' AND "startTime" = '15:30';
+  IF c_me IS NULL THEN
+    RAISE EXCEPTION 'duties: the APT slot moved or vanished under the teacher''s refused writes';
+  END IF;
+  SELECT id INTO d_me FROM "TeacherDuties" WHERE "blockedConstraintId" = c_me;
+  SELECT id INTO d_me2 FROM "TeacherDuties" WHERE kind = 'AMNESANSVAR';
+
+  -- The admin deletes the slot: the duty stays, in its school, with no slot.
+  DELETE FROM "AvailabilityConstraints" WHERE id = c_me;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'duties: an admin could not delete a duty''s slot (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties"
+   WHERE id = d_me AND "blockedConstraintId" IS NULL AND "schoolId" = school
+     AND "studentGroupId" IS NOT NULL AND "minutesPerWeek" = 120;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'duties: deleting the slot did more than clear blockedConstraintId';
+  END IF;
+
+  -- The mentor class and the ämnesansvar subject deleted: links cleared, duties kept.
+  DELETE FROM "StudentGroups" WHERE name = 'RLS17 Mentorsklass';
+  DELETE FROM "Subjects" WHERE code = 'RLS17';
+  SELECT count(*) INTO n FROM "TeacherDuties"
+   WHERE id IN (d_me, d_me2) AND "studentGroupId" IS NULL AND "subjectId" IS NULL AND "schoolId" = school;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'duties: % of two duties survive their class and subject being deleted with only the link cleared', n;
+  END IF;
+END
+$$;
+
+-- The service principal, user cleared: this school's three, none of B's.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', :'school_a', true);
+
+DO $$
+DECLARE n bigint; school_a uuid := app.current_service_school_id();
+BEGIN
+  IF app.current_user_id() IS NOT NULL OR school_a IS NULL THEN
+    RAISE EXCEPTION 'duties: the service principal is not alone in force (user %, school %)',
+      app.current_user_id(), school_a;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "schoolId" = school_a;
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'duties: the service principal reads % duties of its own school, expected 3', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "schoolId" <> school_a;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: the service principal leaked % duties from another school', n;
+  END IF;
+  -- And it writes nothing: its arm is FOR SELECT.
+  UPDATE "TeacherDuties" SET "minutesPerWeek" = 1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: the service principal rewrote % duties', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- The catalog half: three arms, both triggers enabled and SECURITY DEFINER,
+-- and the two new load-percent CHECKs on TeachingRequirements.
+DO $$
+DECLARE n integer;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."TeacherDuties"'::regclass) THEN
+    RAISE EXCEPTION 'duties: row security is off on TeacherDuties';
+  END IF;
+  SELECT count(*) INTO n FROM pg_policy WHERE polrelid = 'public."TeacherDuties"'::regclass;
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'duties: TeacherDuties has % policies, expected admin_all, teacher_own_select and service_select', n;
+  END IF;
+  SELECT count(*) INTO n
+    FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+   WHERE NOT t.tgisinternal AND t.tgenabled = 'O' AND p.prosecdef
+     AND (t.tgrelid, t.tgname) IN (
+       ('public."TeacherDuties"'::regclass,           'TeacherDuties_block_is_the_teachers'),
+       ('public."AvailabilityConstraints"'::regclass, 'AvailabilityConstraints_keep_duty_blocks'));
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'duties: % of the two slot-link triggers are present, enabled and SECURITY DEFINER', n;
+  END IF;
+  SELECT count(*) INTO n FROM pg_constraint
+   WHERE conrelid = 'public."TeachingRequirements"'::regclass AND contype = 'c'
+     AND conname IN ('TeachingRequirements_teacher_load_percent_is_sane',
+                     'TeachingRequirements_co_teacher_load_percent_is_sane');
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'duties: % of the two load-percent CHECKs on TeachingRequirements exist', n;
+  END IF;
+END $$;

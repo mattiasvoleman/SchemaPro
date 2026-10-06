@@ -157,6 +157,7 @@ model School {
   staffingPolicy          StaffingPolicy?
   teacherEmployments      TeacherEmployment[]
   teacherQualifications   TeacherSubjectQualification[]
+  teacherDuties           TeacherDuty[]
   localTimplans           LocalTimplan[]
   localTimplanEntries     LocalTimplanEntry[]
 
@@ -219,6 +220,8 @@ model User {
   /// composite (userId, schoolId) key, like workRules.
   employments             TeacherEmployment[]           @relation("EmploymentTeacher")
   subjectQualifications   TeacherSubjectQualification[] @relation("QualificationTeacher")
+  /// Uppdrag beside teaching, per läsår (TeacherDuty), by the same key.
+  duties                  TeacherDuty[]                 @relation("DutyTeacher")
   /// Local timplans this person recorded as decided. Restrict on the other
   /// side: a person who recorded a decision is deactivated, not deleted.
   decidedLocalTimplans    LocalTimplan[]                @relation("LocalTimplanDecider")
@@ -363,6 +366,7 @@ model Subject {
   roomPreferences      RoomPreference[]
   teacherQualifications TeacherSubjectQualification[]
   localTimplanEntries   LocalTimplanEntry[]
+  teacherDuties         TeacherDuty[]
 
   @@unique([schoolId, code])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -591,6 +595,7 @@ model AcademicYear {
   schoolBreaks         SchoolBreak[]
   lunchSittings        LunchSitting[]
   teacherEmployments   TeacherEmployment[]
+  teacherDuties        TeacherDuty[]
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -646,6 +651,8 @@ model StudentGroup {
   lunchSittings           LunchSitting[]
   calendarRasts           CalendarRast[]
   calendarLunches         CalendarLunch[]
+  /// Mentorskap for this class (TeacherDuty.studentGroupId).
+  teacherDuties           TeacherDuty[]
 
   @@unique([schoolId, academicYearId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -712,6 +719,16 @@ model TeachingRequirement {
   /// whole mechanism costs a school that never does exactly nothing.
   minutesBefore Int @default(0)
   minutesAfter  Int @default(0)
+
+  /// How much of this row counts toward each teacher's load: Skola24's
+  /// "Justera längd för lärare (%)". The row counts lessonsPerWeek ×
+  /// minutesPerLesson × percent / 100 for teacherId (teacherLoadPercent) and
+  /// for coTeacherId (coTeacherLoadPercent). 0..200 by CHECK, mirroring the
+  /// DTO; default 100, so a row counts in full for both, as before. Load
+  /// arithmetic only — the optimisation proxy never sends either column.
+  /// See migration 20261007090000.
+  teacherLoadPercent   Int @default(100)
+  coTeacherLoadPercent Int @default(100)
 
   /// Which weeks the requirement is read over, inherited by every lesson the
   /// optimizer generates for it. `lessonsPerWeek` counts weeks the requirement
@@ -1316,7 +1333,15 @@ model AvailabilityConstraint {
   user         User?         @relation("ConstraintTeacher", fields: [userId], references: [id], onDelete: Cascade)
   room         Room?         @relation(fields: [roomId], references: [id], onDelete: Cascade)
   studentGroup StudentGroup? @relation("ConstraintGroup", fields: [studentGroupId], references: [id], onDelete: Cascade)
+  /// The duty this constraint is the fixed slot of, when it is one: created
+  /// and deleted by the duties service in the duty's transaction. Two triggers
+  /// (migration 20261007090000) keep the pair a weekly UNAVAILABLE TEACHER row
+  /// for the duty's own teacher, and refuse a TEACHER writing it.
+  teacherDuty  TeacherDuty?  @relation("DutyBlockedSlot")
 
+  /// The target TeacherDuty's composite (blockedConstraintId, schoolId) key
+  /// needs; see User.
+  @@unique([id, schoolId])
   @@index([schoolId, dayOfWeek])
   @@index([userId, dayOfWeek])
   @@index([roomId, dayOfWeek])
@@ -1447,6 +1472,28 @@ enum TeacherQualificationKind {
   TILLATEN
 }
 
+/// Whether generation may start with teacherless requirements. Two values, not
+/// StaffingCheckMode: there is no meaningful WARN — the generate page shows the
+/// count either way.
+enum UnstaffedGenerationMode {
+  ALLOW
+  REFUSE
+}
+
+/// What an uppdrag beside teaching is: the Göteborg uppdragsbeskrivning's
+/// checkboxes plus what every school has. ANNAT for the rest, named by label.
+enum TeacherDutyKind {
+  MENTORSKAP
+  AMNESANSVAR
+  FORSTELARARE
+  RASTVAKT
+  PEDAGOGISK_LUNCH
+  APT_KONFERENS
+  VFU_HANDLEDNING
+  APL
+  ANNAT
+}
+
 /// The school's tjänstefördelningsinställning: one row per school, like
 /// LunchSetting. See migration 20261006100000 for every bound.
 model StaffingPolicy {
@@ -1474,6 +1521,10 @@ model StaffingPolicy {
   /// How far over target a teacher may be before overAllocationMode fires. 0..50.
   overAllocationTolerancePercent Int               @default(10)
   loadModel                      StaffingLoadModel @default(MINUTES)
+  /// Whether a timetable run may start while a requirement of the year has no
+  /// teacher. ALLOW is today's behaviour; REFUSE answers
+  /// STAFF_UNSTAFFED_REQUIREMENTS naming group · subject.
+  unstaffedGeneration            UnstaffedGenerationMode @default(ALLOW)
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
@@ -1567,6 +1618,52 @@ model TeacherSubjectQualification {
   /// The substitute picker asks the other way round: who may teach THIS subject.
   @@index([schoolId, subjectId])
   @@map("TeacherSubjectQualifications")
+}
+
+/// Ett uppdrag beside teaching — mentorskap, ämnesansvar, rastvakt, APT — for
+/// one teacher in one läsår. HR data: a teacher reads their own and no
+/// colleague's, the admin writes, the service principal reads by school. See
+/// migration 20261007090000 for every bound and the slot-link triggers.
+model TeacherDuty {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String          @db.Uuid
+  /// Composite (userId, schoolId) key to Users; cascades with the person.
+  userId         String          @db.Uuid
+  /// Composite (academicYearId, schoolId) key to AcademicYears.
+  academicYearId String          @db.Uuid
+  kind           TeacherDutyKind
+  /// "Mentor 7B". Non-blank (the DTO's /\S/, as a CHECK) and at most 80.
+  label          String
+  /// 1..2400.
+  minutesPerWeek Int
+  /// True: the minutes consume the teaching target (status, saldo, over
+  /// target). False: reported and drawn as uppdrag beside it.
+  countsAsTeaching Boolean       @default(false)
+  /// Ämnesansvar's subject. ON DELETE SET NULL of this column only.
+  subjectId      String?         @db.Uuid
+  /// Mentorskap's class. ON DELETE SET NULL of this column only.
+  studentGroupId String?         @db.Uuid
+  /// The UNAVAILABLE TEACHER constraint holding the duty's fixed weekly slot,
+  /// created by the service in the duty's transaction; never client-supplied.
+  /// ON DELETE SET NULL of this column only. Prisma's SetNull below cannot say
+  /// "this column only"; the migration's FK does.
+  blockedConstraintId String?    @db.Uuid
+  /// At most 500 characters.
+  note           String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  school            School                  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user              User                    @relation("DutyTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  academicYear      AcademicYear            @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  subject           Subject?                @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  studentGroup      StudentGroup?           @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  blockedConstraint AvailabilityConstraint? @relation("DutyBlockedSlot", fields: [blockedConstraintId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+
+  @@unique([blockedConstraintId, schoolId])
+  @@index([schoolId, academicYearId, userId])
+  @@map("TeacherDuties")
 }
 
 /// Ramtider: the hours of the day a stage of the school may be taught in.
