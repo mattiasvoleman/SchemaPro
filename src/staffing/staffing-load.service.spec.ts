@@ -248,4 +248,37 @@ describe('StaffingLoadService', () => {
     const rows = await service.unstaffed(YEAR_ID, testUser());
     expect(rows).toEqual([expect.objectContaining({ requirementId: 'req-2', subjectName: 'Matematik' })]);
   });
+
+  describe('suggestTeachers', () => {
+    it('reads the row’s year in the same transaction and ranks the school’s active staff', async () => {
+      tx.teachingRequirement.findUnique.mockResolvedValue({ academicYearId: YEAR_ID });
+      tx.user.findMany.mockResolvedValue([{ id: COLLEAGUE }, { id: ME }]);
+
+      const answer = await service.suggestTeachers('req-2', testUser());
+
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(tx.teachingRequirement.findUnique).toHaveBeenCalledWith({
+        where: { id: 'req-2' },
+        select: { academicYearId: true },
+      });
+      expect(tx.user.findMany).toHaveBeenCalledWith({
+        where: { role: { in: ['TEACHER', 'SCHOOL_ADMIN'] }, isActive: true },
+        select: { id: true },
+        orderBy: { id: 'asc' },
+      });
+      expect(answer).toMatchObject({ requirementId: 'req-2', teacherMinutesPerWeek: 120, qualificationsRecorded: false });
+      // ME teaches Ma already (req-1), so the fallback tier puts them first;
+      // 865 − 600 − 120 = 145 left. The colleague has no post: NO_TARGET.
+      expect(answer.candidates).toEqual([
+        expect.objectContaining({ userId: ME, teachesSubjectAlready: true, remainingMinutesPerWeek: 145, status: 'UNDER' }),
+        expect.objectContaining({ userId: COLLEAGUE, remainingMinutesPerWeek: null, status: 'NO_TARGET' }),
+      ]);
+    });
+
+    it('404s a row RLS hides, before reading the year', async () => {
+      tx.teachingRequirement.findUnique.mockResolvedValue(null);
+      await expect(service.suggestTeachers('req-x', testUser())).rejects.toBeInstanceOf(NotFoundException);
+      expect(tx.academicYear.findUnique).not.toHaveBeenCalled();
+    });
+  });
 });

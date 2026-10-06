@@ -1928,6 +1928,40 @@ describe('Planning surface (e2e)', () => {
           .expect(404);
       });
 
+      it('ranks the staff for one row for an admin; 403 for a teacher, 400 without an id, 404 for a hidden row', async () => {
+        harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({ academicYearId: YEAR_ID });
+        harness.tx['user']!['findMany']!.mockResolvedValue([{ id: COLLEAGUE_ID }, { id: TEACHER_ID }]);
+        const response = await request(http())
+          .get(`/api/v1/staffing/suggest-teachers?requirementId=70707070-7070-4070-8070-707070707070`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(response.body).toMatchObject({
+          requirementId: '70707070-7070-4070-8070-707070707070',
+          teacherMinutesPerWeek: 180,
+          qualificationsRecorded: false,
+        });
+        // Both teach 7A Ma already; the colleague has 865 − 600 − 180 = 85
+        // left, the teacher 1080 − 120 − 180 = 780, so the teacher first.
+        expect(response.body.candidates).toEqual([
+          expect.objectContaining({ userId: TEACHER_ID, remainingMinutesPerWeek: 780, wouldExceed: false }),
+          expect.objectContaining({ userId: COLLEAGUE_ID, remainingMinutesPerWeek: 85, teachesGroupAlready: true }),
+        ]);
+
+        await request(http())
+          .get(`/api/v1/staffing/suggest-teachers?requirementId=70707070-7070-4070-8070-707070707070`)
+          .set('x-test-user', teacher())
+          .expect(403);
+        await request(http())
+          .get('/api/v1/staffing/suggest-teachers')
+          .set('x-test-user', admin())
+          .expect(400);
+        harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue(null);
+        await request(http())
+          .get(`/api/v1/staffing/suggest-teachers?requirementId=70707070-7070-4070-8070-707070707070`)
+          .set('x-test-user', admin())
+          .expect(404);
+      });
+
       it('lists the unstaffed rows for an admin, and 403s a teacher', async () => {
         const response = await request(http())
           .get(`/api/v1/staffing/unstaffed?academicYearId=${YEAR_ID}`)
@@ -2594,6 +2628,8 @@ describe('Planning surface (e2e)', () => {
       // module's other GETs admit TEACHER on purpose and are covered above.
       ['GET', '/api/v1/staffing-policy'],
       ['GET', '/api/v1/staffing/unstaffed'],
+      ['GET', '/api/v1/staffing/suggest-teachers'],
+      ['POST', '/api/v1/teacher-duties'],
     ] as const;
 
     it.each(adminOnly)('denies a teacher on %s %s', async (method, path) => {

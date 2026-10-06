@@ -10,6 +10,7 @@ import {
   type TeacherLoadReportResponse,
 } from './staffing-load.service';
 import type { UnstaffedRequirement } from './teacher-load';
+import type { TeacherSuggestions } from './suggest-teachers';
 
 const uuid = () => new ParseUUIDPipe({ version: '4' });
 
@@ -45,5 +46,18 @@ export class StaffingLoadController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<UnstaffedRequirement[]> {
     return this.loads.unstaffed(academicYearId, user);
+  }
+
+  /**
+   * `?requirementId=` — every active member of staff ranked for one row:
+   * behörighet, already teaching the group, room left after taking it. The
+   * admin's, like the unstaffed list it is opened from.
+   */
+  @Get('suggest-teachers')
+  suggestTeachers(
+    @Query('requirementId', uuid()) requirementId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<TeacherSuggestions> {
+    return this.loads.suggestTeachers(requirementId, user);
   }
 }

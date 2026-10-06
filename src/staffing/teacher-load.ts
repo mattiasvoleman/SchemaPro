@@ -726,3 +726,36 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     },
   };
 }
+
+/**
+ * Per teacher, the minutes the target is compared with — teaching at each
+ * row's percentage plus the uppdrag marked countsAsTeaching — UNROUNDED.
+ *
+ * The report's countedMinutesPerWeek is this, rounded; its status is
+ * loadStatus over this. Exposed on its own for the two questions asked about
+ * one hypothetical write rather than about the year: "how much room would
+ * this teacher have left after taking that row" (suggest-teachers) and "would
+ * this write put them over" (STAFF_TEACHER_OVER_TARGET). Both add one row's
+ * charge to this figure and ask loadStatus, so a candidate the picker calls
+ * OVER is exactly the one the write would refuse — no rounding in between.
+ * No peaks and no subjects, so it is cheap enough to ask per request.
+ *
+ * Gateway-only: the browser reads these answers from the endpoints, so the
+ * web mirror has no copy (the contract test ties this to the report instead).
+ */
+export function countedMinutesByTeacher(
+  input: Pick<LoadInput, 'year' | 'closures' | 'requirements' | 'duties'>,
+): Map<string, number> {
+  const counted = new Map<string, number>();
+  const add = (userId: string, minutes: number) =>
+    counted.set(userId, (counted.get(userId) ?? 0) + minutes);
+  for (const duty of input.duties) {
+    add(duty.userId, duty.countsAsTeaching ? duty.minutesPerWeek : 0);
+  }
+  for (const requirement of input.requirements) {
+    const charged = chargedMinutes(requirement, input.year, input.closures);
+    if (requirement.teacherId !== null) add(requirement.teacherId, charged.teacher);
+    if (requirement.coTeacherId !== null) add(requirement.coTeacherId, charged.coTeacher);
+  }
+  return counted;
+}
