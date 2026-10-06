@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { NATIONAL } from "@/lib/__fixtures__/timplan-statute";
-import { CopyDialog } from "./copy-dialog";
+import { CopyDialog, gatewayDraftName } from "./copy-dialog";
 import { CreateDialog, defaultVersionFor } from "./create-dialog";
 import { DecideDialog } from "./decide-dialog";
 
@@ -65,10 +65,29 @@ describe("CopyDialog", () => {
     const onConfirm = vi.fn(async () => {});
     render(<CopyDialog mode="reopen" open onOpenChange={() => {}} planName="Beslutad 2026" pending={false} onConfirm={onConfirm} />);
     expect(screen.getByText("reopenBody(Beslutad 2026)")).toBeInTheDocument();
-    expect(screen.getByText("copyNameHint(reopenDefaultName(Beslutad 2026))")).toBeInTheDocument();
+    expect(screen.getByText("copyNameHint(Beslutad 2026 (utkast))")).toBeInTheDocument();
     await user.type(screen.getByLabelText("copyNameLabel"), " Utkast HT2027 ");
     await user.click(screen.getByRole("button", { name: "reopenConfirm" }));
     expect(onConfirm).toHaveBeenCalledWith("Utkast HT2027");
+  });
+
+  it("announces the very name the gateway will give: its Swedish suffix, numbered when taken", () => {
+    // The English hint said "P (draft)" and neither locale knew the number,
+    // so the toast landed on a draft named otherwise than announced.
+    render(
+      <CopyDialog
+        mode="copy"
+        open
+        onOpenChange={() => {}}
+        planName="P"
+        takenNames={["P", "P (kopia)", "P (kopia 2)"]}
+        pending={false}
+        onConfirm={async () => {}}
+      />,
+    );
+    expect(screen.getByText("copyNameHint(P (kopia 3))")).toBeInTheDocument();
+    expect(gatewayDraftName("x".repeat(100), "utkast", [])).toBe(`${"x".repeat(91)} (utkast)`);
+    expect(gatewayDraftName("x".repeat(100), "utkast", []).length).toBe(100);
   });
 
   it("leaves the name to the gateway when the field is empty", async () => {
