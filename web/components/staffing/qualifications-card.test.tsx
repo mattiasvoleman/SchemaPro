@@ -24,8 +24,8 @@ vi.mock("next-intl", () => ({
 
 const teacher = { id: "t-anna", firstName: "Anna", lastName: "Ek" };
 const subjects: Subject[] = [
-  { id: "s-ma", name: "Matematik", code: "MA", color: null, requiredRoomTypeId: null },
-  { id: "s-no", name: "NO", code: "NO", color: null, requiredRoomTypeId: null },
+  { id: "s-ma", name: "Matematik", code: "MA", color: null, requiredRoomTypeId: null, nationalCode: "MA", countsTowardTimplan: true },
+  { id: "s-no", name: "NO", code: "NO", color: null, requiredRoomTypeId: null, nationalCode: "NO", countsTowardTimplan: true },
 ];
 const stored: TeacherQualification[] = [
   {
