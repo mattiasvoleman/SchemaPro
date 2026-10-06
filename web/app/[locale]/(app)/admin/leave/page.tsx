@@ -4,11 +4,8 @@ import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Check, ClipboardCheck, Loader2, X } from "lucide-react";
-import {
-  useLeaveRequestActions,
-  useLeaveRequests,
-  usePeople,
-} from "@/lib/queries";
+import { usePeople } from "@/lib/queries";
+import { useLeaveRequestActions, useLeaveRequests } from "@/lib/guardian-queries";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

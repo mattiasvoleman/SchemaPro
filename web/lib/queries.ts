@@ -10,11 +10,11 @@ import { createClient } from "@/utils/supabase/client";
 import { api } from "@/lib/api";
 import { sortByName, sortByPersonName } from "@/lib/sorting";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
+import { GUARDIAN_KEYS } from "@/lib/guardian-keys";
 import type {
   LessonRecurrence,
   LunchSettings,
   RoomType,
-  AbsenceReport,
   AcademicYear,
   AttendanceRecordRow,
   AvailabilityConstraint,
@@ -26,7 +26,6 @@ import type {
   Room,
   RoomBooking,
   RoomBookingStatus,
-  LeaveRequest,
   SchoolBreak,
   StudentGroup,
   Subject,
@@ -1504,32 +1503,9 @@ export function useReportAttendance() {
 }
 
 // ---------------------------------------------------------------------------
-// Guardians, absence reporting, leave requests
+// Guardian links (admin). The guardian dashboard's own reads and writes —
+// children, absence reports, leave requests — live in lib/guardian-queries.ts.
 // ---------------------------------------------------------------------------
-
-/** The signed-in guardian's children (via GuardianStudents, RLS-scoped). */
-export function useMyChildren(guardianUserId: string | null) {
-  return useQuery({
-    queryKey: ["myChildren", guardianUserId],
-    enabled: guardianUserId !== null,
-    queryFn: async () => {
-      const supabase = createClient();
-      const { data, error } = await supabase
-        .from("GuardianStudents")
-        .select(
-          "id, studentId, student:Users!GuardianStudents_studentId_fkey(id, role, firstName, lastName, email, phone, isActive, studentGroupId)",
-        )
-        .eq("guardianId", guardianUserId!);
-      if (error) throw new Error(error.message);
-      const rows = (data ?? []) as unknown as Array<{
-        id: string;
-        studentId: string;
-        student: Person;
-      }>;
-      return rows.map((row) => ({ linkId: row.id, ...row.student }));
-    },
-  });
-}
 
 /** Guardians linked to one student (admin management view). */
 export function useStudentGuardians(studentId: string | null) {
@@ -1558,7 +1534,7 @@ export function useGuardianLinkActions() {
   const queryClient = useQueryClient();
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["studentGuardians"] });
-    void queryClient.invalidateQueries({ queryKey: ["myChildren"] });
+    void queryClient.invalidateQueries({ queryKey: GUARDIAN_KEYS.myChildren });
   };
   const link = useMutation({
     mutationFn: (body: { guardianId: string; studentId: string }) =>
@@ -1570,95 +1546,6 @@ export function useGuardianLinkActions() {
     onSuccess: invalidate,
   });
   return { link, unlink };
-}
-
-/** Absence reports visible to the caller (RLS: own children / own / staff). */
-export function useAbsenceReports(options?: { date?: string; studentId?: string }) {
-  return useQuery({
-    queryKey: ["absenceReports", options?.date ?? null, options?.studentId ?? null],
-    queryFn: async () => {
-      const supabase = createClient();
-      let query = supabase
-        .from("AbsenceReports")
-        .select(
-          "id, studentId, reportedById, date, startTime, endTime, type, note, createdAt",
-        )
-        .order("date", { ascending: false })
-        .limit(200);
-      if (options?.date) query = query.eq("date", options.date);
-      if (options?.studentId) query = query.eq("studentId", options.studentId);
-      const { data, error } = await query;
-      if (error) throw new Error(error.message);
-      return (data ?? []) as AbsenceReport[];
-    },
-  });
-}
-
-export function useAbsenceReportActions() {
-  const queryClient = useQueryClient();
-  const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["absenceReports"] });
-  };
-  const report = useMutation({
-    mutationFn: (body: {
-      studentId: string;
-      date: string;
-      startTime?: string;
-      endTime?: string;
-      type: "SICK" | "APPOINTMENT" | "OTHER";
-      note?: string;
-    }) => api.post("/api/v1/absence-reports", body),
-    onSuccess: invalidate,
-  });
-  const remove = useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/absence-reports/${id}`),
-    onSuccess: invalidate,
-  });
-  return { report, remove };
-}
-
-/** Leave requests visible to the caller (guardian: children; admin: all). */
-export function useLeaveRequests(status?: "PENDING" | "APPROVED" | "REJECTED") {
-  return useQuery({
-    queryKey: ["leaveRequests", status ?? null],
-    queryFn: async () => {
-      const supabase = createClient();
-      let query = supabase
-        .from("LeaveRequests")
-        .select(
-          "id, studentId, requestedById, startDate, endDate, reason, status, decidedById, decidedAt, decisionNote, createdAt",
-        )
-        .order("createdAt", { ascending: false })
-        .limit(200);
-      if (status) query = query.eq("status", status);
-      const { data, error } = await query;
-      if (error) throw new Error(error.message);
-      return (data ?? []) as LeaveRequest[];
-    },
-  });
-}
-
-export function useLeaveRequestActions() {
-  const queryClient = useQueryClient();
-  const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["leaveRequests"] });
-    void queryClient.invalidateQueries({ queryKey: ["absenceReports"] });
-  };
-  const request = useMutation({
-    mutationFn: (body: {
-      studentId: string;
-      startDate: string;
-      endDate: string;
-      reason: string;
-    }) => api.post("/api/v1/leave-requests", body),
-    onSuccess: invalidate,
-  });
-  const decide = useMutation({
-    mutationFn: ({ id, status, note }: { id: string; status: "APPROVED" | "REJECTED"; note?: string }) =>
-      api.patch(`/api/v1/leave-requests/${id}/decide`, { status, ...(note ? { note } : {}) }),
-    onSuccess: invalidate,
-  });
-  return { request, decide };
 }
 
 // ---------------------------------------------------------------------------

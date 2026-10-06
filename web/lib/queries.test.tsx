@@ -4,8 +4,6 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { api } from "@/lib/api";
 import {
-  useAbsenceReportActions,
-  useAbsenceReports,
   useActiveYear,
   useCreateMasterLesson,
   useCrudMutations,
@@ -16,11 +14,9 @@ import {
   useGuardianLinkActions,
   useImportCsv,
   useInvitations,
-  useLeaveRequestActions,
   useLessonActions,
   useLessonRoster,
   useMasterLessons,
-  useMyChildren,
   useNationalTimplans,
   useOptimizationHistory,
   useOptimizationJob,
@@ -48,6 +44,12 @@ import {
   type ImportReport,
   type OptimizationJob,
 } from "./queries";
+import {
+  useAbsenceReportActions,
+  useAbsenceReports,
+  useLeaveRequestActions,
+  useMyChildren,
+} from "./guardian-queries";
 
 // ---------------------------------------------------------------------------
 // Module mocks. Reads go through the Supabase browser client, mutations through
