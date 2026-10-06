@@ -1,4 +1,8 @@
-import { LessonRecurrence } from '@prisma/client';
+import {
+  LessonRecurrence,
+  TeacherContractKind,
+  TeacherQualificationKind,
+} from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -11,12 +15,16 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
+  IsPositive,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { IsCalendarDate } from '../../resources/dto/is-calendar-date';
@@ -76,6 +84,50 @@ export class ImportTeacherRowDto {
   @IsEmail()
   @MaxLength(254)
   email!: string;
+
+  /**
+   * The teacher's post for the ACTIVE läsår, optional column by column.
+   *
+   * A staff list is usually three columns wide and stays importable as such;
+   * a file that also carries tjänstgöringsgrad writes a TeacherEmployment for
+   * the active year — created when none exists, updated when the file says
+   * something else — which is why this is the second import kind that updates
+   * (see importTeachers). The other three columns mean nothing without
+   * employmentPercent and are a row error with it absent: half a post cannot
+   * be read.
+   *
+   * The bounds mirror UpsertTeacherEmploymentDto and the table's CHECKs, with
+   * the same Swedish messages, so a cell the database would refuse is refused
+   * here with the column named.
+   */
+  @IsOptional()
+  @IsNumber(
+    { maxDecimalPlaces: 3 },
+    { message: 'Tjänstgöringsgraden anges i procent med högst tre decimaler.' },
+  )
+  @IsPositive({ message: 'En tjänstgöringsgrad på 0 % är ingen tjänst — lämna cellen tom.' })
+  @Max(100, { message: 'En tjänstgöringsgrad över 100 % är inte en tjänst.' })
+  employmentPercent?: number | null;
+
+  @IsOptional()
+  @IsNumber(
+    { maxDecimalPlaces: 3 },
+    { message: 'Nedsättningen anges i procent med högst tre decimaler.' },
+  )
+  @Min(0, { message: 'Nedsättningen kan inte vara negativ.' })
+  @Max(100, { message: 'En nedsättning över 100 % är mer än hela tjänsten.' })
+  reductionPercent?: number | null;
+
+  @IsOptional()
+  @IsEnum(TeacherContractKind, { message: 'Avtalsformen är FERIE eller SEMESTER.' })
+  contractKind?: TeacherContractKind | null;
+
+  @IsOptional()
+  @IsString({ message: 'Signaturen anges som text.' })
+  @MinLength(1, { message: 'Signaturen måste vara minst ett tecken.' })
+  @MaxLength(8, { message: 'Signaturen kan vara högst åtta tecken.' })
+  @Matches(/\S/, { message: 'Signaturen kan inte bestå av bara mellanslag.' })
+  signature?: string | null;
 }
 
 export class ImportTeachersDto {
@@ -419,14 +471,64 @@ export class ImportRequirementsDto {
   rows!: ImportRequirementRowDto[];
 }
 
+export class ImportTeacherQualificationRowDto {
+  /** The teacher's email — the id a school actually has in its lists. */
+  @IsEmail()
+  @MaxLength(254)
+  teacherEmail!: string;
+
+  /** The subject's CODE or NAME, whichever the school wrote; see the timplan row. */
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  subject!: string;
+
+  /** Inclusive span, 0..12, as the table CHECKs it; max ≥ min is the service's. */
+  @IsInt({ message: 'Lägsta årskurs anges som ett heltal.' })
+  @Min(0, { message: 'Lägsta årskurs är 0 (förskoleklass).' })
+  @Max(12, { message: 'Högsta möjliga årskurs är 12.' })
+  minGrade!: number;
+
+  @IsInt({ message: 'Högsta årskurs anges som ett heltal.' })
+  @Min(0, { message: 'Lägsta årskurs är 0 (förskoleklass).' })
+  @Max(12, { message: 'Högsta möjliga årskurs är 12.' })
+  maxGrade!: number;
+
+  /**
+   * Already an enum here, like a timplan row's recurrence: the file says
+   * "legitimation"/"behörig"/"tillåten" for humans and the browser folds those
+   * into the enum while parsing. No default — which of the three a teacher
+   * holds is stated, never presumed.
+   */
+  @IsEnum(TeacherQualificationKind, {
+    message: 'Behörigheten är LEGITIMATION, BEHORIG eller TILLATEN.',
+  })
+  kind!: TeacherQualificationKind;
+}
+
+/**
+ * Behörigheter in bulk. No academicYearId: a legitimation belongs to the
+ * person, not to a year. Capped like memberships — one row per teacher and
+ * subject, so even a large school runs to a few hundred.
+ */
+export class ImportTeacherQualificationsDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(2000)
+  @ValidateNested({ each: true })
+  @Type(() => ImportTeacherQualificationRowDto)
+  rows!: ImportTeacherQualificationRowDto[];
+}
+
 /** Uniform outcome: idempotent re-uploads land in `skipped`, never `errors`. */
 export interface ImportReport {
   created: number;
   skipped: number;
   /**
    * Rows that already existed and were CHANGED by the upload. Optional, and
-   * left undefined by the six create-only kinds, so none of them had to grow a
-   * field that would always read 0 — only the timplan import updates.
+   * left undefined by the create-only kinds, so none of them had to grow a
+   * field that would always read 0. The timplan import and the behörighet
+   * import update; the teachers import does when the file carries a post.
    */
   updated?: number;
   /** 1-based DATA row numbers (the header row is not counted). */

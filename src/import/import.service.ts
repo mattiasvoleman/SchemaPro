@@ -1,5 +1,5 @@
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
-import type { LessonRecurrence } from '@prisma/client';
+import { Prisma, type LessonRecurrence, type TeacherContractKind } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -18,6 +18,8 @@ import type {
   ImportRoomTypesDto,
   ImportSubjectsDto,
   ImportStudentsDto,
+  ImportTeacherQualificationsDto,
+  ImportTeacherRowDto,
   ImportTeachersDto,
 } from './dto/import.dto';
 
@@ -78,16 +80,319 @@ export class ImportService {
     private readonly users: UsersService,
   ) {}
 
+  /**
+   * Teachers, and — when the file carries the columns — their posts for the
+   * active läsår.
+   *
+   * THE PEOPLE HALF IS WHAT IT WAS: every row goes through UsersService.create,
+   * a known email is `skipped`, nobody is emailed. THE POST HALF UPDATES, like
+   * the timplan import and for the same reason: tjänstgöringsgrad is a figure a
+   * school corrects in the spreadsheet and uploads again, and a create-only
+   * second upload would discard every correction under a report saying "0
+   * fel". A row whose person already existed and whose post the file changes
+   * therefore moves from `skipped` to `updated`; a row whose post the file
+   * states as it already is stays `skipped`. created + skipped + updated +
+   * errors still accounts for every row.
+   *
+   * THE ACTIVE YEAR, not a posted one: the staff dialog has no year picker and
+   * a staff list is not a year's document — the year is the one the school is
+   * planning. No active year is a row error on every row that states a post,
+   * and those rows are then NOT imported as people either: a row half written
+   * cannot be finished by uploading the same file again, which is the one
+   * repair this import promises.
+   *
+   * The post rows are validated BEFORE anybody is created — nedsättning inside
+   * tjänsten, a post stated at all when any of its columns is, the signature
+   * free in the year and in the file — so a bad cell never leaves a person
+   * behind with no post. The one check that cannot run first is the race on the
+   * signature index itself; a P2002 at the write is reported on the row, with
+   * the person standing.
+   */
   async importTeachers(
     dto: ImportTeachersDto,
     user: AuthenticatedUser,
   ): Promise<ImportReport> {
-    requireSchoolId(user); // 403 up front, same contract as the sibling methods
-    return this.importPeople(
-      dto.rows.map((row) => ({ ...row, studentGroupId: undefined })),
-      'TEACHER',
-      user,
-    );
+    const schoolId = requireSchoolId(user); // 403 up front, same contract as the sibling methods
+
+    const posts = dto.rows
+      .map((row, index) => ({ row, index }))
+      .filter(({ row }) => statesAPost(row));
+    if (posts.length === 0) {
+      return this.importPeople(
+        dto.rows.map((row) => ({ ...row, studentGroupId: undefined })),
+        'TEACHER',
+        user,
+      );
+    }
+
+    const errors: ImportReport['errors'] = [];
+    const refused = new Set<number>();
+    const refuse = (index: number, message: string) => {
+      refused.add(index);
+      errors.push({ row: index + 1, message });
+    };
+
+    for (const { row, index } of posts) {
+      const problem = describePostProblem(row);
+      if (problem) refuse(index, problem);
+    }
+
+    // What the year and the table already hold, read once before anybody is
+    // created. The staff read is also what tells created from skipped below.
+    const emails = [...new Set(dto.rows.map((row) => row.email.trim().toLowerCase()))];
+    const { year, staffByEmail, signatureOwner } = await this.prisma.withRls(user, async (tx) => {
+      const activeYear = await tx.academicYear.findFirst({
+        where: { isActive: true },
+        select: { id: true, name: true },
+      });
+      const staff = await tx.user.findMany({
+        where: { role: { in: ['TEACHER', 'SCHOOL_ADMIN'] }, email: { in: emails, mode: 'insensitive' } },
+        select: { id: true, email: true },
+      });
+      const held = activeYear
+        ? await tx.teacherEmployment.findMany({
+            where: { academicYearId: activeYear.id, signature: { not: null } },
+            select: { userId: true, signature: true },
+          })
+        : [];
+      return {
+        year: activeYear,
+        staffByEmail: new Map(staff.map((person) => [person.email.toLowerCase(), person.id])),
+        signatureOwner: new Map(held.map((post) => [post.signature as string, post.userId])),
+      };
+    });
+
+    if (!year) {
+      for (const { index } of posts) {
+        if (!refused.has(index)) {
+          refuse(
+            index,
+            'Inget läsår är aktivt. Aktivera ett läsår under Läsår innan tjänster importeras, eller ta bort tjänstekolumnerna.',
+          );
+        }
+      }
+    } else {
+      // A signature held by somebody else this year, in the table or earlier
+      // in the file, is a clash the index would refuse as an unreadable 500.
+      const signatureInFile = new Map<string, { email: string; row: number }>();
+      for (const { row, index } of posts) {
+        if (refused.has(index)) continue;
+        const signature = row.signature?.trim();
+        if (!signature) continue;
+        const email = row.email.trim().toLowerCase();
+        const owner = signatureOwner.get(signature);
+        if (owner !== undefined && owner !== staffByEmail.get(email)) {
+          refuse(
+            index,
+            `Signaturen "${signature}" används redan av en annan lärare läsåret ${year.name}. Välj en annan signatur.`,
+          );
+          continue;
+        }
+        const earlier = signatureInFile.get(signature);
+        if (earlier && earlier.email !== email) {
+          refuse(
+            index,
+            `Signaturen "${signature}" står redan på rad ${earlier.row} för en annan lärare. En signatur är unik inom läsåret.`,
+          );
+          continue;
+        }
+        signatureInFile.set(signature, { email, row: index + 1 });
+      }
+    }
+
+    const people = dto.rows
+      .map((row, index) => ({ ...row, index, studentGroupId: undefined }))
+      .filter((row) => !refused.has(row.index));
+    // Which rows the people half CREATED, as opposed to skipped as known. The
+    // report's counts cannot say per row, and the post half needs to know
+    // which bucket a row sits in to move it.
+    const createdRows = new Set<number>();
+    const report = await this.importPeople(people, 'TEACHER', user, createdRows);
+    report.updated = 0;
+    const failedRows = new Set(report.errors.map((error) => error.row - 1));
+
+    // The posts, for the rows that survived both halves. Resolved by email
+    // again, because the people half has just created some of them. One
+    // transaction per row rather than one for all: a unique violation inside a
+    // Postgres transaction aborts it, and a race on one signature must not take
+    // the other 300 posts with it.
+    const written = new Set<string>();
+    for (const { row, index } of posts) {
+      if (refused.has(index) || failedRows.has(index)) continue;
+      const email = row.email.trim().toLowerCase();
+      if (written.has(email)) continue; // the in-file duplicate importPeople skipped
+      written.add(email);
+      const personCreated = createdRows.has(index);
+
+      try {
+        const outcome = await this.prisma.withRls(user, async (tx) => {
+          const person = await tx.user.findFirst({
+            where: { role: { in: ['TEACHER', 'SCHOOL_ADMIN'] }, email: { equals: email, mode: 'insensitive' } },
+            select: { id: true },
+          });
+          if (!person) return 'missing' as const;
+          const key = {
+            schoolId_userId_academicYearId: {
+              schoolId,
+              userId: person.id,
+              academicYearId: (year as { id: string }).id,
+            },
+          };
+          const values = postValues(row);
+          const current = await tx.teacherEmployment.findUnique({ where: key });
+          if (!current) {
+            await tx.teacherEmployment.create({
+              data: { schoolId, userId: person.id, academicYearId: (year as { id: string }).id, ...values },
+            });
+            return 'created' as const;
+          }
+          if (postIsUnchanged(current, values)) return 'unchanged' as const;
+          await tx.teacherEmployment.update({ where: key, data: values });
+          return 'updated' as const;
+        });
+
+        if (outcome === 'missing') {
+          // The person was neither found nor created — a SCHOOL_ADMIN with
+          // this address would have been skipped by the people half as a
+          // conflict and is staff; a STUDENT with it is not. The row leaves
+          // whichever count the people half put it in.
+          if (personCreated) report.created -= 1;
+          else report.skipped -= 1;
+          errors.push({
+            row: index + 1,
+            message: `E-postadressen "${row.email}" tillhör ingen lärare. En tjänst kan bara skrivas för en lärare.`,
+          });
+        } else if (!personCreated && outcome !== 'unchanged') {
+          report.skipped -= 1;
+          report.updated += 1;
+        }
+      } catch (error) {
+        if (personCreated) report.created -= 1;
+        else report.skipped -= 1;
+        errors.push({
+          row: index + 1,
+          message:
+            error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'
+              ? `Signaturen "${row.signature?.trim() ?? ''}" används redan av en annan lärare läsåret ${(year as { name: string }).name}. Välj en annan signatur.`
+              : error instanceof Error
+                ? error.message
+                : 'Tjänsten kunde inte sparas.',
+        });
+      }
+    }
+
+    report.errors = [...report.errors, ...errors].sort((a, b) => a.row - b.row);
+    return report;
+  }
+
+  /**
+   * Behörigheter: one row per teacher and subject, matched by email and by
+   * the subject's code or name, with the inclusive årskursspann and the kind.
+   *
+   * UPDATES a changed span or kind, like the timplan: a behörighetslista is a
+   * document a school keeps editing. It never deletes — a teacher left out of
+   * the file keeps their rows — and it leaves the columns the file does not
+   * carry (validity dates, note) exactly as they are. One row per (teacher,
+   * subject) is the table's unique key; a second row in the file for the same
+   * pair is a row error naming the first, because Ma 1-6 plus Ma 7-9 is written
+   * as 1-9.
+   */
+  async importTeacherQualifications(
+    dto: ImportTeacherQualificationsDto,
+    user: AuthenticatedUser,
+  ): Promise<ImportReport> {
+    const schoolId = requireSchoolId(user);
+    return this.prisma.withRls(user, async (tx) => {
+      const report: ImportReport & { updated: number } = {
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        errors: [],
+      };
+
+      const emails = [...new Set(dto.rows.map((row) => row.teacherEmail.trim().toLowerCase()))];
+      const staff = await tx.user.findMany({
+        where: {
+          role: { in: ['TEACHER', 'SCHOOL_ADMIN'] },
+          isActive: true,
+          email: { in: emails, mode: 'insensitive' },
+        },
+        select: { id: true, email: true },
+      });
+      const staffByEmail = new Map(staff.map((person) => [person.email.toLowerCase(), person.id]));
+
+      const subjects = await tx.subject.findMany({
+        select: { id: true, name: true, code: true },
+      });
+
+      const existing = await tx.teacherSubjectQualification.findMany({
+        select: { id: true, userId: true, subjectId: true, minGradeLevel: true, maxGradeLevel: true, kind: true },
+      });
+      const existingByKey = new Map(
+        existing.map((row) => [`${row.userId}:${row.subjectId}`, row]),
+      );
+
+      const seenAtRow = new Map<string, number>();
+      for (const [index, row] of dto.rows.entries()) {
+        const rowNumber = index + 1;
+
+        const userId = staffByEmail.get(row.teacherEmail.trim().toLowerCase());
+        if (!userId) {
+          report.errors.push({
+            row: rowNumber,
+            message: `Ingen aktiv lärare med e-postadressen "${row.teacherEmail.trim()}". Importera lärarna först.`,
+          });
+          continue;
+        }
+
+        const subject = this.resolveSubject(subjects, row.subject);
+        if ('message' in subject) {
+          report.errors.push({ row: rowNumber, message: subject.message });
+          continue;
+        }
+
+        if (row.maxGrade < row.minGrade) {
+          report.errors.push({
+            row: rowNumber,
+            message: `Högsta årskurs (${row.maxGrade}) kan inte vara lägre än lägsta (${row.minGrade}). Ett spann skrivs som 7–9, inte 9–7.`,
+          });
+          continue;
+        }
+
+        const key = `${userId}:${subject.id}`;
+        const firstRow = seenAtRow.get(key);
+        if (firstRow !== undefined) {
+          report.errors.push({
+            row: rowNumber,
+            message: `Samma lärare och ämne står redan på rad ${firstRow}. En lärare har ett årskursspann per ämne — skriv 1–9 i stället för två rader.`,
+          });
+          continue;
+        }
+        seenAtRow.set(key, rowNumber);
+
+        const values = { minGradeLevel: row.minGrade, maxGradeLevel: row.maxGrade, kind: row.kind };
+        const current = existingByKey.get(key);
+        if (!current) {
+          await tx.teacherSubjectQualification.create({
+            data: { schoolId, userId, subjectId: subject.id, ...values },
+          });
+          report.created += 1;
+          continue;
+        }
+        if (
+          current.minGradeLevel === values.minGradeLevel &&
+          current.maxGradeLevel === values.maxGradeLevel &&
+          current.kind === values.kind
+        ) {
+          report.skipped += 1;
+          continue;
+        }
+        await tx.teacherSubjectQualification.update({ where: { id: current.id }, data: values });
+        report.updated += 1;
+      }
+
+      return report;
+    });
   }
 
   async importStudents(
@@ -674,6 +979,8 @@ export class ImportService {
     }>,
     role: 'TEACHER' | 'STUDENT',
     user: AuthenticatedUser,
+    /** Filled with the index of every row this call created, for a caller that writes more per row. */
+    createdRows?: Set<number>,
   ): Promise<ImportReport> {
     const report: ImportReport = { created: 0, skipped: 0, errors: [] };
     const seenEmails = new Set<string>();
@@ -704,6 +1011,7 @@ export class ImportService {
           user,
         );
         report.created += 1;
+        createdRows?.add(row.index ?? position);
       } catch (error) {
         if (error instanceof ConflictException) {
           report.skipped += 1; // already registered — idempotent re-upload
@@ -860,4 +1168,69 @@ export class ImportService {
   private normalizeName(name: string): string {
     return name.trim().toLowerCase();
   }
+}
+
+// ---------------------------------------------------------------------------
+// The post half of a teachers file.
+// ---------------------------------------------------------------------------
+
+/** Whether the row says anything at all about a post. */
+function statesAPost(row: ImportTeacherRowDto): boolean {
+  return (
+    (row.employmentPercent !== undefined && row.employmentPercent !== null) ||
+    (row.reductionPercent !== undefined && row.reductionPercent !== null) ||
+    (row.contractKind !== undefined && row.contractKind !== null) ||
+    (row.signature !== undefined && row.signature !== null && row.signature.trim() !== '')
+  );
+}
+
+/**
+ * The two rules the post columns have among themselves, as a message: a post
+ * is stated by its percentage or not at all, and the nedsättning sits inside
+ * it (TeacherEmployments_reduction_within_employment, which the table can only
+ * say as a 500).
+ */
+function describePostProblem(row: ImportTeacherRowDto): string | null {
+  if (row.employmentPercent === undefined || row.employmentPercent === null) {
+    return 'Raden anger nedsättning, avtalsform eller signatur men ingen tjänstgöringsgrad. Fyll i tjänstgöringsgraden eller lämna alla fyra kolumner tomma.';
+  }
+  const reduction = row.reductionPercent ?? 0;
+  if (reduction > row.employmentPercent) {
+    return `Nedsättningen (${reduction} %) kan inte vara större än tjänstgöringsgraden (${row.employmentPercent} %).`;
+  }
+  return null;
+}
+
+interface PostValues {
+  employmentPercent: number;
+  reductionPercent: number;
+  contractKind: TeacherContractKind;
+  signature: string | null;
+}
+
+/** The columns the file carries. The own target and the note are the dialog's. */
+function postValues(row: ImportTeacherRowDto): PostValues {
+  return {
+    employmentPercent: row.employmentPercent as number,
+    reductionPercent: row.reductionPercent ?? 0,
+    contractKind: row.contractKind ?? 'FERIE',
+    signature: row.signature?.trim() || null,
+  };
+}
+
+/**
+ * Whether writing the file's values over the stored post changes anything.
+ * Decimals compare as numbers: Prisma hands back a Decimal object, and a
+ * Decimal is never `===` to the number the file said.
+ */
+function postIsUnchanged(
+  current: { employmentPercent: unknown; reductionPercent: unknown; contractKind: TeacherContractKind; signature: string | null },
+  values: PostValues,
+): boolean {
+  return (
+    Number(current.employmentPercent) === values.employmentPercent &&
+    Number(current.reductionPercent) === values.reductionPercent &&
+    current.contractKind === values.contractKind &&
+    current.signature === values.signature
+  );
 }

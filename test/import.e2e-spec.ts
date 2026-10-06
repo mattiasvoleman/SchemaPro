@@ -59,6 +59,83 @@ describe('CSV import (e2e)', () => {
       expect(data.invitedAt).toBeNull();
     });
 
+    it('imports a teacher together with their post for the active year', async () => {
+      // The post half reads the person back after the people half created them.
+      harness.tx['user']!['findFirst']!.mockResolvedValue({ id: 'u-karin' });
+      harness.tx['user']!['create']!.mockResolvedValue({ id: 'u-karin' });
+      harness.tx['user']!['findMany']!.mockResolvedValue([]);
+      harness.tx['academicYear']!['findFirst']!.mockResolvedValue({ id: YEAR_ID, name: '2026/2027' });
+      harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([]);
+      harness.tx['teacherEmployment']!['findUnique']!.mockResolvedValue(null);
+      harness.tx['teacherEmployment']!['create']!.mockResolvedValue({ id: 'emp-1' });
+
+      const response = await post(harness, 'teachers')
+        .send({
+          rows: [
+            {
+              firstName: 'Karin',
+              lastName: 'Ek',
+              email: 'karin.ek@example.com',
+              employmentPercent: 80,
+              reductionPercent: 20,
+              contractKind: 'FERIE',
+              signature: 'KE',
+            },
+          ],
+        })
+        .expect(201);
+
+      expect(response.body).toEqual({ created: 1, updated: 0, skipped: 0, errors: [] });
+      const { data } = harness.tx['teacherEmployment']!['create']!.mock.calls[0]?.[0] as {
+        data: Record<string, unknown>;
+      };
+      expect(data).toMatchObject({
+        schoolId: SCHOOL_ID,
+        userId: 'u-karin',
+        academicYearId: YEAR_ID,
+        employmentPercent: 80,
+        reductionPercent: 20,
+        signature: 'KE',
+      });
+    });
+
+    it('imports behörigheter, resolving teacher by email and subject by code', async () => {
+      harness.tx['user']!['findMany']!.mockResolvedValue([
+        { id: 'u-karin', email: 'karin.ek@example.com' },
+      ]);
+      harness.tx['subject']!['findMany']!.mockResolvedValue([
+        { id: 'sub-ma', name: 'Matematik', code: 'MA' },
+      ]);
+      harness.tx['teacherSubjectQualification']!['findMany']!.mockResolvedValue([]);
+      harness.tx['teacherSubjectQualification']!['create']!.mockResolvedValue({ id: 'q-1' });
+
+      const response = await post(harness, 'teacher-qualifications')
+        .send({
+          rows: [
+            {
+              teacherEmail: 'karin.ek@example.com',
+              subject: 'MA',
+              minGrade: 7,
+              maxGrade: 9,
+              kind: 'LEGITIMATION',
+            },
+          ],
+        })
+        .expect(201);
+
+      expect(response.body).toEqual({ created: 1, updated: 0, skipped: 0, errors: [] });
+      const { data } = harness.tx['teacherSubjectQualification']!['create']!.mock
+        .calls[0]?.[0] as { data: Record<string, unknown> };
+      expect(data).toEqual({
+        schoolId: SCHOOL_ID,
+        userId: 'u-karin',
+        subjectId: 'sub-ma',
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+        kind: 'LEGITIMATION',
+      });
+    });
+
     it('imports students, resolving the class by name for the posted year', async () => {
       harness.tx['studentGroup']!['findMany']!.mockResolvedValue([
         { id: GROUP_ID, name: '7A' },
@@ -389,6 +466,21 @@ describe('CSV import (e2e)', () => {
       expect(JSON.stringify(response.body)).toContain('email');
     });
 
+    it('rejects a post over 100 % and a behörighet with no kind, naming the field', async () => {
+      const post100 = await post(harness, 'teachers')
+        .send({
+          rows: [{ firstName: 'A', lastName: 'B', email: 'a@example.com', employmentPercent: 110 }],
+        })
+        .expect(400);
+      expect(JSON.stringify(post100.body)).toContain('över 100 %');
+
+      const noKind = await post(harness, 'teacher-qualifications')
+        .send({ rows: [{ teacherEmail: 'a@example.com', subject: 'MA', minGrade: 7, maxGrade: 9 }] })
+        .expect(400);
+      // The message is the DTO's own sentence, prefixed with the row it is about.
+      expect(JSON.stringify(noKind.body)).toContain('rows.0.Behörigheten är LEGITIMATION');
+    });
+
     it('rejects a student row missing its class', async () => {
       await post(harness, 'students')
         .send({
@@ -531,6 +623,7 @@ describe('CSV import (e2e)', () => {
           'room-types',
           'group-members',
           'requirements',
+          'teacher-qualifications',
         ]) {
           await request(harness.app.getHttpServer())
             .post(`/api/v1/import/${path}`)

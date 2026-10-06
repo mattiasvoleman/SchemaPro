@@ -8,6 +8,8 @@ import {
   ImportRequirementRowDto,
   ImportRequirementsDto,
   ImportSubjectRowDto,
+  ImportTeacherQualificationRowDto,
+  ImportTeacherRowDto,
   OPTIONAL_REQUIREMENT_COLUMNS,
   REQUIREMENT_FILE_COLUMNS,
 } from './import.dto';
@@ -195,5 +197,94 @@ describe('ImportSubjectRowDto', () => {
     await expect(
       failingSubject({ name: 'Bild', nationalCode: 'X'.repeat(21) }),
     ).resolves.toEqual(['nationalCode']);
+  });
+});
+
+describe('ImportTeacherRowDto with the post columns', () => {
+  const teacher = { firstName: 'Karin', lastName: 'Ek', email: 'karin@example.com' };
+  const failingTeacher = async (body: object) =>
+    (await validate(plainToInstance(ImportTeacherRowDto, body))).map((error) => error.property);
+
+  it('accepts the three-column row a staff list has always been', async () => {
+    await expect(failingTeacher(teacher)).resolves.toEqual([]);
+  });
+
+  it('accepts a post with three decimals, a nedsättning, an avtalsform and a signature', async () => {
+    await expect(
+      failingTeacher({
+        ...teacher,
+        employmentPercent: 66.667,
+        reductionPercent: 16.667,
+        contractKind: 'SEMESTER',
+        signature: 'KE',
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it('mirrors UpsertTeacherEmploymentDto bound for bound', async () => {
+    await expect(failingTeacher({ ...teacher, employmentPercent: 0 })).resolves.toEqual([
+      'employmentPercent',
+    ]);
+    await expect(failingTeacher({ ...teacher, employmentPercent: 100.001 })).resolves.toEqual([
+      'employmentPercent',
+    ]);
+    await expect(failingTeacher({ ...teacher, employmentPercent: 66.6667 })).resolves.toEqual([
+      'employmentPercent',
+    ]);
+    await expect(failingTeacher({ ...teacher, reductionPercent: -1 })).resolves.toEqual([
+      'reductionPercent',
+    ]);
+    await expect(failingTeacher({ ...teacher, contractKind: 'TIMLÄRARE' })).resolves.toEqual([
+      'contractKind',
+    ]);
+    await expect(failingTeacher({ ...teacher, signature: 'ABCDEFGHI' })).resolves.toEqual([
+      'signature',
+    ]);
+    await expect(failingTeacher({ ...teacher, signature: '  ' })).resolves.toEqual(['signature']);
+  });
+
+  it('reads an empty cell posted as null as absence', async () => {
+    await expect(
+      failingTeacher({
+        ...teacher,
+        employmentPercent: null,
+        reductionPercent: null,
+        contractKind: null,
+        signature: null,
+      }),
+    ).resolves.toEqual([]);
+  });
+});
+
+describe('ImportTeacherQualificationRowDto', () => {
+  const failingRow = async (body: object) =>
+    (await validate(plainToInstance(ImportTeacherQualificationRowDto, body))).map(
+      (error) => error.property,
+    );
+  const row = {
+    teacherEmail: 'karin@example.com',
+    subject: 'MA',
+    minGrade: 7,
+    maxGrade: 9,
+    kind: 'LEGITIMATION',
+  };
+
+  it('accepts a row, with the kind spelled as the enum', async () => {
+    await expect(failingRow(row)).resolves.toEqual([]);
+    await expect(failingRow({ ...row, kind: 'TILLATEN' })).resolves.toEqual([]);
+  });
+
+  it('requires every column — a kind is stated, never presumed', async () => {
+    await expect(failingRow({ ...row, kind: undefined })).resolves.toEqual(['kind']);
+    await expect(failingRow({ ...row, kind: 'legitimation' })).resolves.toEqual(['kind']);
+    await expect(failingRow({ ...row, teacherEmail: 'karin' })).resolves.toEqual(['teacherEmail']);
+    await expect(failingRow({ ...row, subject: '' })).resolves.toEqual(['subject']);
+  });
+
+  it('holds both grades to 0..12 and leaves the order to the service', async () => {
+    await expect(failingRow({ ...row, minGrade: -1 })).resolves.toEqual(['minGrade']);
+    await expect(failingRow({ ...row, maxGrade: 13 })).resolves.toEqual(['maxGrade']);
+    await expect(failingRow({ ...row, minGrade: 7.5 })).resolves.toEqual(['minGrade']);
+    await expect(failingRow({ ...row, minGrade: 9, maxGrade: 7 })).resolves.toEqual([]);
   });
 });

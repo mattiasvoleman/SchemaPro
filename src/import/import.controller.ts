@@ -14,6 +14,7 @@ import {
   ImportRoomTypesDto,
   ImportSubjectsDto,
   ImportStudentsDto,
+  ImportTeacherQualificationsDto,
   ImportTeachersDto,
 } from './dto/import.dto';
 
@@ -66,7 +67,20 @@ export class ImportController {
     return this.imports.importMemberships(dto, user);
   }
 
-  /** The only route here that also updates existing rows — see the service. */
+  /**
+   * Behörigheter per teacher and subject. Updates a changed span or kind like
+   * the timplan import, for the same reason: a behörighetslista is a document
+   * a school keeps editing, not a set of things that exist or do not.
+   */
+  @Post('teacher-qualifications')
+  importTeacherQualifications(
+    @Body() dto: ImportTeacherQualificationsDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.imports.importTeacherQualifications(dto, user);
+  }
+
+  /** The timplan also updates existing rows — see the service. */
   @Post('requirements')
   importRequirements(
     @Body() dto: ImportRequirementsDto,

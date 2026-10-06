@@ -12,9 +12,11 @@ import {
 } from '../../test/utils/prisma-mock';
 import { lockingRead, rawSql, transactionsOf, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
+import { Prisma } from '@prisma/client';
 import type {
   ImportRequirementRowDto,
   ImportRequirementsDto,
+  ImportTeacherRowDto,
 } from './dto/import.dto';
 import type { UsersService } from '../users/users.service';
 import { ImportService } from './import.service';
@@ -1287,6 +1289,341 @@ describe('ImportService', () => {
    * row against the school's own catalogue, and deciding whether the row is new,
    * changed, or already exactly what is stored.
    */
+  describe('importTeachers with a post in the file', () => {
+    const KARIN = 'ccccccc1-0000-4000-8000-000000000001';
+    const BO = 'ccccccc2-0000-4000-8000-000000000002';
+    const ACTIVE_YEAR = { id: YEAR_ID, name: '2026/2027' };
+
+    const row = (overrides: Partial<ImportTeacherRowDto> = {}): ImportTeacherRowDto => ({
+      firstName: 'Karin',
+      lastName: 'Ek',
+      email: 'karin@example.com',
+      employmentPercent: 80,
+      ...overrides,
+    });
+
+    /**
+     * The staff the school already has, by email. The first read (before the
+     * people half) sees exactly these; the second read, per post, also finds
+     * whoever the people half has just created, as the table would. A test
+     * about an address that is NOT staff pins findFirst to null itself.
+     */
+    const staff = (people: { id: string; email: string }[]) => {
+      tx.user.findMany.mockResolvedValue(people);
+      tx.user.findFirst.mockImplementation((query: { where: { email: { equals: string } } }) =>
+        Promise.resolve(
+          people.find((person) => person.email === query.where.email.equals) ?? {
+            id: `created:${query.where.email.equals}`,
+          },
+        ),
+      );
+    };
+
+    beforeEach(() => {
+      tx.academicYear.findFirst.mockResolvedValue(ACTIVE_YEAR);
+      tx.teacherEmployment.findMany.mockResolvedValue([]);
+      tx.teacherEmployment.findUnique.mockResolvedValue(null);
+      tx.teacherEmployment.create.mockResolvedValue({});
+      tx.teacherEmployment.update.mockResolvedValue({});
+      staff([]);
+    });
+
+    it('leaves a three-column file exactly as it was: no year read, no post written, no updated count', async () => {
+      const report = await service.importTeachers(
+        { rows: [{ firstName: 'Karin', lastName: 'Ek', email: 'karin@example.com' }] },
+        testUser(),
+      );
+      expect(report).toEqual({ created: 1, skipped: 0, errors: [] });
+      expect(tx.academicYear.findFirst).not.toHaveBeenCalled();
+      expect(tx.teacherEmployment.create).not.toHaveBeenCalled();
+    });
+
+    it('creates the person and their post for the active year, defaults filled in', async () => {
+      // Created by the people half, so the second read finds them.
+      tx.user.findFirst.mockResolvedValue({ id: KARIN });
+
+      const report = await service.importTeachers(
+        { rows: [row({ signature: ' KE ', reductionPercent: 20 })] },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 1, updated: 0, skipped: 0, errors: [] });
+      expect(tx.academicYear.findFirst).toHaveBeenCalledWith({
+        where: { isActive: true },
+        select: { id: true, name: true },
+      });
+      expect(tx.teacherEmployment.create).toHaveBeenCalledWith({
+        data: {
+          schoolId: testUser().schoolId,
+          userId: KARIN,
+          academicYearId: YEAR_ID,
+          employmentPercent: 80,
+          reductionPercent: 20,
+          contractKind: 'FERIE',
+          signature: 'KE',
+        },
+      });
+    });
+
+    it('moves an existing person from skipped to updated when the file changes their post', async () => {
+      staff([{ id: KARIN, email: 'karin@example.com' }]);
+      users.create.mockRejectedValue(new ConflictException('exists'));
+      tx.teacherEmployment.findUnique.mockResolvedValue({
+        employmentPercent: new Prisma.Decimal('100.000'),
+        reductionPercent: new Prisma.Decimal('0.000'),
+        contractKind: 'FERIE',
+        signature: 'KE',
+      });
+
+      const report = await service.importTeachers({ rows: [row({ signature: 'KE' })] }, testUser());
+
+      expect(report).toEqual({ created: 0, updated: 1, skipped: 0, errors: [] });
+      expect(tx.teacherEmployment.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { employmentPercent: 80, reductionPercent: 0, contractKind: 'FERIE', signature: 'KE' },
+        }),
+      );
+    });
+
+    it('keeps an existing person skipped when the file states the post as it already is', async () => {
+      staff([{ id: KARIN, email: 'karin@example.com' }]);
+      users.create.mockRejectedValue(new ConflictException('exists'));
+      tx.teacherEmployment.findUnique.mockResolvedValue({
+        employmentPercent: new Prisma.Decimal('80.000'),
+        reductionPercent: new Prisma.Decimal('0.000'),
+        contractKind: 'FERIE',
+        signature: null,
+      });
+
+      const report = await service.importTeachers({ rows: [row()] }, testUser());
+
+      expect(report).toEqual({ created: 0, updated: 0, skipped: 1, errors: [] });
+      expect(tx.teacherEmployment.update).not.toHaveBeenCalled();
+      expect(tx.teacherEmployment.create).not.toHaveBeenCalled();
+    });
+
+    it('writes the post for an existing person with none, counting the row as updated', async () => {
+      staff([{ id: KARIN, email: 'karin@example.com' }]);
+      users.create.mockRejectedValue(new ConflictException('exists'));
+
+      const report = await service.importTeachers({ rows: [row()] }, testUser());
+
+      expect(report).toEqual({ created: 0, updated: 1, skipped: 0, errors: [] });
+      expect(tx.teacherEmployment.create).toHaveBeenCalled();
+    });
+
+    it('refuses a nedsättning outside the post before creating the person', async () => {
+      const report = await service.importTeachers(
+        { rows: [row({ reductionPercent: 90 }), row({ email: 'bo@example.com' })] },
+        testUser(),
+      );
+
+      expect(report.errors).toEqual([{ row: 1, message: expect.stringMatching(/90 %.*80 %/) }]);
+      expect(report.created).toBe(1);
+      expect(users.create).toHaveBeenCalledTimes(1);
+      expect(users.create).toHaveBeenCalledWith(
+        expect.objectContaining({ email: 'bo@example.com' }),
+        expect.anything(),
+      );
+    });
+
+    it('refuses a signature or an avtalsform with no tjänstgöringsgrad', async () => {
+      const report = await service.importTeachers(
+        { rows: [row({ employmentPercent: null, signature: 'KE' })] },
+        testUser(),
+      );
+      expect(report.errors).toEqual([
+        { row: 1, message: expect.stringContaining('ingen tjänstgöringsgrad') },
+      ]);
+      expect(users.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses every post row when no year is active, and imports the plain rows', async () => {
+      tx.academicYear.findFirst.mockResolvedValue(null);
+
+      const report = await service.importTeachers(
+        {
+          rows: [
+            row(),
+            { firstName: 'Bo', lastName: 'Alm', email: 'bo@example.com' },
+          ],
+        },
+        testUser(),
+      );
+
+      expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining('Inget läsår är aktivt') }]);
+      expect(report.created).toBe(1);
+      expect(tx.teacherEmployment.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses a signature another teacher holds this year, and one repeated in the file for someone else', async () => {
+      staff([{ id: BO, email: 'bo@example.com' }]);
+      tx.teacherEmployment.findMany.mockResolvedValue([{ userId: BO, signature: 'XY' }]);
+
+      const report = await service.importTeachers(
+        {
+          rows: [
+            row({ signature: 'XY' }), // Bo's
+            row({ email: 'cilla@example.com', signature: 'ZZ' }),
+            row({ email: 'dan@example.com', signature: 'ZZ' }), // Cilla's, two rows up
+            row({ email: 'bo@example.com', firstName: 'Bo', signature: 'XY' }), // Bo keeping his own
+          ],
+        },
+        testUser(),
+      );
+
+      expect(report.errors).toEqual([
+        { row: 1, message: expect.stringContaining('"XY" används redan av en annan lärare läsåret 2026/2027') },
+        { row: 3, message: expect.stringContaining('står redan på rad 2') },
+      ]);
+      expect(users.create).toHaveBeenCalledTimes(2);
+      expect(report.created + report.skipped + (report.updated ?? 0) + report.errors.length).toBe(4);
+    });
+
+    it('reports a race on the signature index on the row, with the person standing', async () => {
+      tx.user.findFirst.mockResolvedValue({ id: KARIN });
+      tx.teacherEmployment.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('dup', {
+          code: 'P2002',
+          clientVersion: Prisma.prismaVersion.client,
+        }),
+      );
+
+      const report = await service.importTeachers({ rows: [row({ signature: 'KE' })] }, testUser());
+
+      expect(report.errors).toEqual([{ row: 1, message: expect.stringContaining('"KE" används redan') }]);
+      expect(report.created).toBe(0);
+      expect(report.created + report.skipped + (report.updated ?? 0) + report.errors.length).toBe(1);
+    });
+
+    it('refuses a post for an address that is a pupil’s', async () => {
+      // The people half skipped the row as a conflict; the staff read finds
+      // no teacher or admin behind the address.
+      users.create.mockRejectedValue(new ConflictException('exists'));
+      tx.user.findFirst.mockResolvedValue(null);
+
+      const report = await service.importTeachers({ rows: [row()] }, testUser());
+
+      expect(report).toEqual({
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        errors: [{ row: 1, message: expect.stringContaining('tillhör ingen lärare') }],
+      });
+    });
+
+    it('writes the post once for an email duplicated in the file', async () => {
+      tx.user.findFirst.mockResolvedValue({ id: KARIN });
+
+      const report = await service.importTeachers(
+        { rows: [row(), row({ email: 'KARIN@example.com', employmentPercent: 50 })] },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 1, updated: 0, skipped: 1, errors: [] });
+      expect(tx.teacherEmployment.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('importTeacherQualifications', () => {
+    const KARIN = 'ccccccc1-0000-4000-8000-000000000001';
+    const SUBJ_MA = 'bbbbbbb1-0000-4000-8000-000000000001';
+    const SUBJ_SV = 'bbbbbbb2-0000-4000-8000-000000000002';
+
+    const row = (overrides: Record<string, unknown> = {}) => ({
+      teacherEmail: 'karin@example.com',
+      subject: 'MA',
+      minGrade: 7,
+      maxGrade: 9,
+      kind: 'LEGITIMATION' as const,
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      tx.user.findMany.mockResolvedValue([{ id: KARIN, email: 'karin@example.com' }]);
+      arrangeRows(tx.subject.findMany, [
+        { id: SUBJ_MA, name: 'Matematik', code: 'MA' },
+        { id: SUBJ_SV, name: 'Svenska', code: 'SV' },
+      ]);
+      arrangeRows(tx.teacherSubjectQualification.findMany, []);
+      tx.teacherSubjectQualification.create.mockResolvedValue({});
+      tx.teacherSubjectQualification.update.mockResolvedValue({});
+    });
+
+    it('creates a row per teacher and subject, stamped with the caller’s school', async () => {
+      const report = await service.importTeacherQualifications(
+        { rows: [row(), row({ subject: 'Svenska', kind: 'BEHORIG', minGrade: 4, maxGrade: 6 })] },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 2, updated: 0, skipped: 0, errors: [] });
+      expect(tx.teacherSubjectQualification.create).toHaveBeenCalledWith({
+        data: {
+          schoolId: testUser().schoolId,
+          userId: KARIN,
+          subjectId: SUBJ_SV,
+          minGradeLevel: 4,
+          maxGradeLevel: 6,
+          kind: 'BEHORIG',
+        },
+      });
+      expect(tx.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ email: { in: ['karin@example.com'], mode: 'insensitive' } }),
+        }),
+      );
+    });
+
+    it('skips an unchanged row and updates a changed span or kind, touching no other column', async () => {
+      arrangeRows(tx.teacherSubjectQualification.findMany, [
+        { id: 'q-ma', userId: KARIN, subjectId: SUBJ_MA, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION' },
+        { id: 'q-sv', userId: KARIN, subjectId: SUBJ_SV, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION' },
+      ]);
+
+      const report = await service.importTeacherQualifications(
+        { rows: [row(), row({ subject: 'SV', minGrade: 4 })] },
+        testUser(),
+      );
+
+      expect(report).toEqual({ created: 0, updated: 1, skipped: 1, errors: [] });
+      expect(tx.teacherSubjectQualification.update).toHaveBeenCalledWith({
+        where: { id: 'q-sv' },
+        data: { minGradeLevel: 4, maxGradeLevel: 9, kind: 'LEGITIMATION' },
+      });
+    });
+
+    it('reports an unknown teacher, an unknown subject, a reversed span and an in-file duplicate, and keeps going', async () => {
+      const report = await service.importTeacherQualifications(
+        {
+          rows: [
+            row({ teacherEmail: 'nobody@example.com' }),
+            row({ subject: 'Fysik' }),
+            row({ minGrade: 9, maxGrade: 7 }),
+            row(),
+            row({ kind: 'BEHORIG' }), // same teacher and subject as row 4
+          ],
+        },
+        testUser(),
+      );
+
+      expect(report.created).toBe(1);
+      expect(report.errors).toEqual([
+        { row: 1, message: expect.stringContaining('nobody@example.com') },
+        { row: 2, message: expect.stringContaining('"Fysik" finns inte') },
+        { row: 3, message: expect.stringMatching(/\(7\).*\(9\)/) },
+        { row: 5, message: expect.stringContaining('rad 4') },
+      ]);
+      expect(report.created + report.skipped + (report.updated ?? 0) + report.errors.length).toBe(5);
+    });
+
+    it('rejects a school-less principal before reading anything', async () => {
+      await expect(
+        service.importTeacherQualifications({ rows: [row()] }, schoolless()),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+  });
+
   describe('importRequirements', () => {
     const GROUP_7B = '66666666-6666-4666-8666-666666666667';
     const SUBJ_MA = 'bbbbbbb1-0000-4000-8000-000000000001';

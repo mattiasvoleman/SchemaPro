@@ -12,6 +12,7 @@ import type {
   ImportReport,
   ImportRequirementsDto,
   ImportStudentsDto,
+  ImportTeacherQualificationsDto,
   ImportTeachersDto,
 } from './dto/import.dto';
 
@@ -25,6 +26,7 @@ describe('ImportController', () => {
     importGroups: jest.Mock;
     importMemberships: jest.Mock;
     importRequirements: jest.Mock;
+    importTeacherQualifications: jest.Mock;
   };
   let controller: ImportController;
   const user = testUser();
@@ -36,6 +38,7 @@ describe('ImportController', () => {
       importGroups: jest.fn().mockResolvedValue(REPORT),
       importMemberships: jest.fn().mockResolvedValue(REPORT),
       importRequirements: jest.fn().mockResolvedValue(REPORT),
+      importTeacherQualifications: jest.fn().mockResolvedValue(REPORT),
     };
     controller = new ImportController(imports as unknown as ImportService);
   });
@@ -48,6 +51,17 @@ describe('ImportController', () => {
 
       await expect(controller.importTeachers(dto, user)).resolves.toEqual(REPORT);
       expect(imports.importTeachers).toHaveBeenCalledWith(dto, user);
+    });
+
+    it('importTeacherQualifications passes the DTO and the principal through unchanged', async () => {
+      const dto: ImportTeacherQualificationsDto = {
+        rows: [
+          { teacherEmail: 'karin@example.com', subject: 'MA', minGrade: 7, maxGrade: 9, kind: 'LEGITIMATION' },
+        ],
+      };
+
+      await expect(controller.importTeacherQualifications(dto, user)).resolves.toEqual(REPORT);
+      expect(imports.importTeacherQualifications).toHaveBeenCalledWith(dto, user);
     });
 
     it('importStudents passes the DTO and the principal through unchanged', async () => {
@@ -134,6 +148,7 @@ describe('ImportController', () => {
       ImportController.prototype.importGroups,
       ImportController.prototype.importMemberships,
       ImportController.prototype.importRequirements,
+      ImportController.prototype.importTeacherQualifications,
     ];
 
     it('guards the whole controller with JwtAuthGuard + RolesGuard', () => {
