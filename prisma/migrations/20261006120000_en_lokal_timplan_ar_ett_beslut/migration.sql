@@ -233,7 +233,13 @@
 --     exists). NUMERIC, not a float, so 35.6 is 35.6: the coverage module
 --     multiplies in tenths of a week and never meets binary drift.
 --   * name non-blank, at most 100 characters; decisionNote non-blank, at most
---     500; entry note at most 500.
+--     500; entry note at most 500. "Non-blank" is the DTO's /\S/ written out:
+--     the regex class lists exactly the characters JavaScript's \s matches
+--     (tab, newline, VT, FF, CR, space, NBSP, U+1680, U+2000-U+200A, U+2028,
+--     U+2029, U+202F, U+205F, U+3000, U+FEFF), not btrim(), which strips
+--     spaces only and let a name or decision note of one tab or one NBSP
+--     through. A decision note blank to every reader identifies nothing.
+--     Lengths are char_length, code points; the DTO counts code points too.
 --   * gradeLevel 0..10; minutesPerWeek 0..1200. 0 is legal (the subject is not
 --     taught that year, said out loud); 1200 is twenty hours a week of one
 --     subject, a typo guard. Integer minutes and NOT on the 5-minute grid: a
@@ -292,7 +298,7 @@ CREATE TABLE "LocalTimplans" (
     CONSTRAINT "LocalTimplans_pkey" PRIMARY KEY ("id"),
 
     CONSTRAINT "LocalTimplans_name_is_sane" CHECK (
-        btrim("name") <> '' AND char_length("name") <= 100
+        "name" ~ '[^\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]' AND char_length("name") <= 100
     ),
     CONSTRAINT "LocalTimplans_planningWeeks_is_sane" CHECK (
         "planningWeeks" >= 20.0 AND "planningWeeks" <= 40.0
@@ -306,7 +312,7 @@ CREATE TABLE "LocalTimplans" (
     ),
     CONSTRAINT "LocalTimplans_decisionNote_is_sane" CHECK (
         "decisionNote" IS NULL
-        OR (btrim("decisionNote") <> '' AND char_length("decisionNote") <= 500)
+        OR ("decisionNote" ~ '[^\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]' AND char_length("decisionNote") <= 500)
     ),
     CONSTRAINT "LocalTimplans_is_not_copied_from_itself" CHECK (
         "copiedFromId" IS NULL OR "copiedFromId" <> "id"

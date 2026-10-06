@@ -3495,6 +3495,32 @@ BEGIN
     DELETE FROM "LocalTimplans" WHERE id = probe;
   END;
 
+  -- Blank is what the DTO's /\S/ calls blank: a tab, a newline or an NBSP is
+  -- no name and no decision note.
+  BEGIN
+    INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+    VALUES (school, E'\t', 'GRUNDSKOLA', b1, now());
+    RAISE EXCEPTION 'timplan: a plan was named with a tab';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+    VALUES (school, chr(160) || chr(12288), 'GRUNDSKOLA', b1, now());
+    RAISE EXCEPTION 'timplan: a plan was named with an NBSP and an ideographic space';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "LocalTimplans" SET name = 'RLS-tp utkast ' || chr(160) WHERE id = draft;
+    UPDATE "LocalTimplans" SET name = 'RLS-tp utkast' WHERE id = draft;
+  END;
+  BEGIN
+    UPDATE "LocalTimplans"
+       SET status = 'DECIDED', "decidedAt" = now(), "decidedByUserId" = me, "decisionNote" = E'\t\n'
+     WHERE id = draft;
+    RAISE EXCEPTION 'timplan: a plan was decided with a blank decision note';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
   -- The draft stays editable, plan and entries alike.
   UPDATE "LocalTimplans" SET "planningWeeks" = 36.0, "updatedAt" = now() WHERE id = draft;
   GET DIAGNOSTICS n = ROW_COUNT;
