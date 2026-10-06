@@ -1420,6 +1420,484 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('tjänstefördelning', () => {
+    /*
+     * The module whose role lists differ per verb: a TEACHER reads their own
+     * post, every behörighet and their own load, and writes nothing. The
+     * writes stop at the guard with a 403 — so each controller also needs an
+     * ADMIN round trip here, or no handler is covered at all.
+     */
+    const TEACHER_ID = '22222222-2222-4222-8222-222222222222';
+    const COLLEAGUE_ID = '77777777-7777-4777-8777-777777777777';
+    const teacher = () => asUser({ role: 'TEACHER' as never });
+
+    /** Users as the post and behörighet writes lock the teacher's row: FOR NO KEY UPDATE. */
+    const USERS: LockedTable = {
+      name: 'Users',
+      columns: ['id', 'schoolId', 'role', 'firstName', 'lastName', 'email', 'isActive', 'studentGroupId'],
+      lock: 'FOR NO KEY UPDATE',
+    };
+
+    const storedEmployment = (userId: string, overrides: Record<string, unknown> = {}) => ({
+      id: '20202020-2020-4020-8020-202020202020',
+      schoolId: SCHOOL_ID,
+      userId,
+      academicYearId: YEAR_ID,
+      employmentPercent: new Prisma.Decimal('80.000'),
+      reductionPercent: new Prisma.Decimal('0.000'),
+      contractKind: 'FERIE',
+      teachingTargetMinutesPerWeek: null,
+      signature: 'KOL',
+      note: null,
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+      ...overrides,
+    });
+
+    const storedQualification = (userId: string) => ({
+      id: '30303030-3030-4030-8030-303030303030',
+      schoolId: SCHOOL_ID,
+      userId,
+      subjectId: SUBJECT_ID,
+      minGradeLevel: 7,
+      maxGradeLevel: 9,
+      kind: 'LEGITIMATION',
+      validFrom: null,
+      validTo: new Date('2030-06-30T00:00:00.000Z'),
+      note: null,
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    });
+
+    const storedPolicy = () => ({
+      id: '40404040-4040-4040-8040-404040404040',
+      schoolId: SCHOOL_ID,
+      fullTimeTeachingMinutesPerWeek: 1080,
+      fullTimeRegulatedHoursPerYear: 1360,
+      fullTimeAnnualHours: 1767,
+      workDaysPerYear: 194,
+      semesterHoursPerWeek: new Prisma.Decimal('40.0'),
+      qualificationMode: 'WARN',
+      overAllocationMode: 'WARN',
+      overAllocationTolerancePercent: 10,
+      loadModel: 'MINUTES',
+      createdAt: new Date('2026-09-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+    });
+
+    describe('inställningar (staffing policy)', () => {
+      it('an admin reads and writes the school’s row, and gets numbers back', async () => {
+        harness.tx['staffingPolicy']!['findUnique']!.mockResolvedValue(storedPolicy());
+        harness.tx['staffingPolicy']!['upsert']!.mockResolvedValue(storedPolicy());
+
+        const read = await request(http())
+          .get('/api/v1/staffing-policy')
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(read.body).toMatchObject({ fullTimeTeachingMinutesPerWeek: 1080, semesterHoursPerWeek: 40 });
+
+        const written = await request(http())
+          .put('/api/v1/staffing-policy')
+          .set('x-test-user', admin())
+          .send({ fullTimeTeachingMinutesPerWeek: 1080, overAllocationTolerancePercent: 10 })
+          .expect(200);
+        expect(written.body).toMatchObject({ semesterHoursPerWeek: 40 });
+        const args = harness.tx['staffingPolicy']!['upsert']!.mock.calls[0]?.[0] as {
+          create: Record<string, unknown>;
+        };
+        expect(args.create).toMatchObject({ schoolId: SCHOOL_ID, fullTimeRegulatedHoursPerYear: 1360 });
+      });
+
+      it('400s a tolerance over 50 % and a reglerad arbetstid larger than the year, in Swedish', async () => {
+        await request(http())
+          .put('/api/v1/staffing-policy')
+          .set('x-test-user', admin())
+          .send({ overAllocationTolerancePercent: 51 })
+          .expect(400);
+
+        const response = await request(http())
+          .put('/api/v1/staffing-policy')
+          .set('x-test-user', admin())
+          .send({ fullTimeRegulatedHoursPerYear: 1800, fullTimeAnnualHours: 1767 })
+          .expect(400);
+        expect(JSON.stringify(response.body)).toContain('1800 h');
+        expect(harness.tx['staffingPolicy']!['upsert']).not.toHaveBeenCalled();
+      });
+
+      it('403s a teacher on both verbs', async () => {
+        await request(http()).get('/api/v1/staffing-policy').set('x-test-user', teacher()).expect(403);
+        await request(http())
+          .put('/api/v1/staffing-policy')
+          .set('x-test-user', teacher())
+          .send({})
+          .expect(403);
+      });
+    });
+
+    describe('tjänster (teacher employments)', () => {
+      it('an admin lists the year and writes a colleague’s post, locking the Users row', async () => {
+        harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([
+          storedEmployment(COLLEAGUE_ID),
+          storedEmployment(TEACHER_ID, { signature: 'ME' }),
+        ]);
+        const list = await request(http())
+          .get(`/api/v1/teacher-employments?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(list.body).toHaveLength(2);
+        expect(list.body[0]).toMatchObject({ employmentPercent: 80, reductionPercent: 0 });
+        expect(harness.tx['teacherEmployment']!['findMany']).toHaveBeenCalledWith({
+          where: { academicYearId: YEAR_ID },
+          orderBy: { userId: 'asc' },
+        });
+
+        const queryRaw = givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        harness.tx['teacherEmployment']!['upsert']!.mockResolvedValue(
+          storedEmployment(COLLEAGUE_ID, { reductionPercent: new Prisma.Decimal('20.000') }),
+        );
+
+        const response = await request(http())
+          .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .send({ employmentPercent: 80, reductionPercent: 20, signature: 'KOL' })
+          .expect(200);
+
+        expect(response.body).toMatchObject({ userId: COLLEAGUE_ID, employmentPercent: 80, reductionPercent: 20 });
+        expect(queryRaw).toHaveBeenCalledTimes(1);
+        expect(harness.tx['teacherEmployment']!['upsert']).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              schoolId_userId_academicYearId: {
+                schoolId: SCHOOL_ID,
+                userId: COLLEAGUE_ID,
+                academicYearId: YEAR_ID,
+              },
+            },
+          }),
+        );
+      });
+
+      it('a teacher reads their own post only — the service narrows, not RLS alone', async () => {
+        harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([storedEmployment(TEACHER_ID)]);
+
+        const response = await request(http())
+          .get(`/api/v1/teacher-employments?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', teacher())
+          .expect(200);
+
+        expect(response.body).toHaveLength(1);
+        expect(harness.tx['teacherEmployment']!['findMany']).toHaveBeenCalledWith({
+          where: { academicYearId: YEAR_ID, userId: TEACHER_ID },
+          orderBy: { userId: 'asc' },
+        });
+      });
+
+      it('403s a teacher writing a colleague’s post — or their own — without touching the table', async () => {
+        const queryRaw = givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+
+        for (const target of [COLLEAGUE_ID, TEACHER_ID]) {
+          await request(http())
+            .put(`/api/v1/teacher-employments/${target}?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', teacher())
+            .send({ employmentPercent: 100 })
+            .expect(403);
+          await request(http())
+            .delete(`/api/v1/teacher-employments/${target}?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', teacher())
+            .expect(403);
+        }
+
+        expect(queryRaw).not.toHaveBeenCalled();
+        expect(harness.tx['teacherEmployment']!['upsert']).not.toHaveBeenCalled();
+        expect(harness.tx['teacherEmployment']!['delete']).not.toHaveBeenCalled();
+      });
+
+      it('400s a post over 100 %, and a nedsättning larger than the post, naming both', async () => {
+        const queryRaw = givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+
+        const over = await request(http())
+          .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .send({ employmentPercent: 100.5 })
+          .expect(400);
+        expect(JSON.stringify(over.body)).toContain('över 100 %');
+
+        const reduction = await request(http())
+          .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .send({ employmentPercent: 80, reductionPercent: 90 })
+          .expect(400);
+        expect(JSON.stringify(reduction.body)).toContain('90 %');
+
+        expect(queryRaw).not.toHaveBeenCalled();
+        expect(harness.tx['teacherEmployment']!['upsert']).not.toHaveBeenCalled();
+      });
+
+      it('400s a missing or malformed academicYearId before anything else', async () => {
+        await request(http())
+          .get('/api/v1/teacher-employments')
+          .set('x-test-user', admin())
+          .expect(400);
+        await request(http())
+          .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=2026`)
+          .set('x-test-user', admin())
+          .send({ employmentPercent: 80 })
+          .expect(400);
+      });
+
+      it('404s a write against a user RLS hides', async () => {
+        givenLockedRows(USERS, []);
+
+        await request(http())
+          .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .send({ employmentPercent: 80 })
+          .expect(404);
+        expect(harness.tx['teacherEmployment']!['upsert']).not.toHaveBeenCalled();
+      });
+
+      it('409s a signature another teacher holds this year, naming it', async () => {
+        givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        harness.tx['teacherEmployment']!['upsert']!.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('dup', {
+            code: 'P2002',
+            clientVersion: Prisma.prismaVersion.client,
+          }),
+        );
+
+        const response = await request(http())
+          .put(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .send({ employmentPercent: 80, signature: 'ABC' })
+          .expect(409);
+        expect(response.body.detail).toContain('Signaturen "ABC"');
+      });
+
+      it('204s an admin’s delete, keyed on teacher and year', async () => {
+        harness.tx['teacherEmployment']!['delete']!.mockResolvedValue(storedEmployment(COLLEAGUE_ID));
+
+        await request(http())
+          .delete(`/api/v1/teacher-employments/${COLLEAGUE_ID}?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .expect(204);
+
+        expect(harness.tx['teacherEmployment']!['delete']).toHaveBeenCalledWith({
+          where: {
+            schoolId_userId_academicYearId: {
+              schoolId: SCHOOL_ID,
+              userId: COLLEAGUE_ID,
+              academicYearId: YEAR_ID,
+            },
+          },
+        });
+      });
+    });
+
+    describe('behörigheter (teacher qualifications)', () => {
+      it('a teacher reads the school’s list, a colleague’s rows included', async () => {
+        harness.tx['teacherSubjectQualification']!['findMany']!.mockResolvedValue([
+          storedQualification(COLLEAGUE_ID),
+        ]);
+
+        const response = await request(http())
+          .get(`/api/v1/teacher-qualifications?userId=${COLLEAGUE_ID}`)
+          .set('x-test-user', teacher())
+          .expect(200);
+
+        expect(response.body).toEqual([
+          expect.objectContaining({ userId: COLLEAGUE_ID, kind: 'LEGITIMATION', validTo: '2030-06-30' }),
+        ]);
+      });
+
+      it('an admin replaces a teacher’s list wholesale', async () => {
+        givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        harness.tx['subject']!['findMany']!.mockResolvedValue([{ id: SUBJECT_ID }]);
+        harness.tx['teacherSubjectQualification']!['findMany']!.mockResolvedValue([
+          storedQualification(COLLEAGUE_ID),
+        ]);
+
+        const response = await request(http())
+          .put(`/api/v1/teacher-qualifications/${COLLEAGUE_ID}`)
+          .set('x-test-user', admin())
+          .send({
+            items: [
+              { subjectId: SUBJECT_ID, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validTo: '2030-06-30' },
+            ],
+          })
+          .expect(200);
+
+        expect(response.body).toHaveLength(1);
+        expect(harness.tx['teacherSubjectQualification']!['deleteMany']).toHaveBeenCalledWith({
+          where: { userId: COLLEAGUE_ID },
+        });
+        expect(harness.tx['teacherSubjectQualification']!['createMany']).toHaveBeenCalledWith({
+          data: [
+            expect.objectContaining({
+              schoolId: SCHOOL_ID,
+              userId: COLLEAGUE_ID,
+              subjectId: SUBJECT_ID,
+              kind: 'LEGITIMATION',
+              validTo: new Date('2030-06-30T00:00:00.000Z'),
+            }),
+          ],
+        });
+      });
+
+      it('403s a teacher writing any list, their own included', async () => {
+        await request(http())
+          .put(`/api/v1/teacher-qualifications/${TEACHER_ID}`)
+          .set('x-test-user', teacher())
+          .send({ items: [] })
+          .expect(403);
+        expect(harness.tx['teacherSubjectQualification']!['deleteMany']).not.toHaveBeenCalled();
+      });
+
+      it('400s a reversed grade span and a subject outside the school, naming them', async () => {
+        const reversed = await request(http())
+          .put(`/api/v1/teacher-qualifications/${COLLEAGUE_ID}`)
+          .set('x-test-user', admin())
+          .send({ items: [{ subjectId: SUBJECT_ID, minGradeLevel: 9, maxGradeLevel: 7, kind: 'BEHORIG' }] })
+          .expect(400);
+        expect(JSON.stringify(reversed.body)).toContain('7–9, inte 9–7');
+
+        givenLockedRows(USERS, [{ id: COLLEAGUE_ID, role: 'TEACHER' }]);
+        harness.tx['subject']!['findMany']!.mockResolvedValue([]);
+        const foreign = await request(http())
+          .put(`/api/v1/teacher-qualifications/${COLLEAGUE_ID}`)
+          .set('x-test-user', admin())
+          .send({ items: [{ subjectId: SUBJECT_ID, minGradeLevel: 7, maxGradeLevel: 9, kind: 'BEHORIG' }] })
+          .expect(400);
+        expect(JSON.stringify(foreign.body)).toContain(SUBJECT_ID);
+        expect(harness.tx['teacherSubjectQualification']!['deleteMany']).not.toHaveBeenCalled();
+      });
+
+      it('404s a write against a user RLS hides', async () => {
+        givenLockedRows(USERS, []);
+        await request(http())
+          .put(`/api/v1/teacher-qualifications/${COLLEAGUE_ID}`)
+          .set('x-test-user', admin())
+          .send({ items: [] })
+          .expect(404);
+      });
+    });
+
+    describe('belastning (staffing load)', () => {
+      const yearRow = () => ({
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+      });
+      const requirementRow = (overrides: Record<string, unknown> = {}) => ({
+        id: '50505050-5050-4050-8050-505050505050',
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: COLLEAGUE_ID,
+        coTeacherId: null,
+        lessonsPerWeek: 10,
+        minutesPerLesson: 60,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        subject: { name: 'Matematik' },
+        studentGroup: { name: '7A', gradeLevel: 7 },
+        ...overrides,
+      });
+
+      beforeEach(() => {
+        // clearAllMocks keeps implementations, so the behörighet list and the
+        // roster reads an earlier test stubbed would reach the report here.
+        harness.tx['teacherSubjectQualification']!['findMany']!.mockResolvedValue([]);
+        harness.tx['schoolBreak']!['findMany']!.mockResolvedValue([]);
+        harness.tx['user']!['findMany']!.mockResolvedValue([]);
+        harness.tx['studentGroupMember']!['findMany']!.mockResolvedValue([]);
+        harness.tx['academicYear']!['findUnique']!.mockResolvedValue(yearRow());
+        harness.tx['staffingPolicy']!['findUnique']!.mockResolvedValue(storedPolicy());
+        harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([
+          storedEmployment(COLLEAGUE_ID),
+          storedEmployment(TEACHER_ID, { signature: 'ME', employmentPercent: new Prisma.Decimal('100.000') }),
+        ]);
+        harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+          requirementRow(),
+          requirementRow({ id: '60606060-6060-4060-8060-606060606060', teacherId: TEACHER_ID, lessonsPerWeek: 2 }),
+          requirementRow({ id: '70707070-7070-4070-8070-707070707070', teacherId: null, lessonsPerWeek: 3 }),
+        ]);
+      });
+
+      it('an admin reads the whole school’s report', async () => {
+        const response = await request(http())
+          .get(`/api/v1/staffing/load?academicYearId=${YEAR_ID}&horizon=planned`)
+          .set('x-test-user', admin())
+          .expect(200);
+
+        expect(response.body).toMatchObject({
+          academicYearId: YEAR_ID,
+          horizon: 'planned',
+          year: { startDate: '2026-08-17', endDate: '2027-06-11' },
+          qualificationsRecorded: false,
+          totals: { teacherMinutesPerWeek: 720, lessonMinutesPerWeek: 900 },
+        });
+        expect(response.body.teachers).toHaveLength(2);
+        expect(response.body.teachers).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              userId: COLLEAGUE_ID,
+              targetMinutesPerWeek: 865,
+              assignedMinutesPerWeek: 600,
+              status: 'UNDER',
+              subjects: [expect.objectContaining({ subjectName: 'Matematik', percentOfEmployment: 80 })],
+            }),
+          ]),
+        );
+        expect(response.body.unstaffedRequirements).toEqual([
+          expect.objectContaining({ groupName: '7A', minutesPerWeek: 180, gradeSpan: { min: 7, max: 7 } }),
+        ]);
+      });
+
+      it('a teacher reads their own row and none of the admin’s lists', async () => {
+        const response = await request(http())
+          .get(`/api/v1/staffing/load?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', teacher())
+          .expect(200);
+
+        expect(response.body.teachers).toEqual([
+          expect.objectContaining({ userId: TEACHER_ID, assignedMinutesPerWeek: 120 }),
+        ]);
+        expect(response.body.unstaffedRequirements).toEqual([]);
+      });
+
+      it('400s a horizon that does not exist yet, and a missing year', async () => {
+        const response = await request(http())
+          .get(`/api/v1/staffing/load?academicYearId=${YEAR_ID}&horizon=scheduled`)
+          .set('x-test-user', admin())
+          .expect(400);
+        expect(response.body.detail).toContain('"scheduled"');
+        await request(http()).get('/api/v1/staffing/load').set('x-test-user', admin()).expect(400);
+      });
+
+      it('404s a year RLS hides', async () => {
+        harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+        await request(http())
+          .get(`/api/v1/staffing/load?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .expect(404);
+      });
+
+      it('lists the unstaffed rows for an admin, and 403s a teacher', async () => {
+        const response = await request(http())
+          .get(`/api/v1/staffing/unstaffed?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(response.body).toEqual([
+          expect.objectContaining({ subjectName: 'Matematik', groupName: '7A', minutesPerWeek: 180 }),
+        ]);
+
+        await request(http())
+          .get(`/api/v1/staffing/unstaffed?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', teacher())
+          .expect(403);
+      });
+    });
+  });
+
   describe('RBAC', () => {
     const adminOnly = [
       ['POST', '/api/v1/academic-years'],
@@ -1439,6 +1917,10 @@ describe('Planning surface (e2e)', () => {
       ['POST', '/api/v1/rasts'],
       ['GET', '/api/v1/rasts'],
       ['POST', '/api/v1/lunch-sittings'],
+      // The staffing settings and the unstaffed list are the admin's. The
+      // module's other GETs admit TEACHER on purpose and are covered above.
+      ['GET', '/api/v1/staffing-policy'],
+      ['GET', '/api/v1/staffing/unstaffed'],
     ] as const;
 
     it.each(adminOnly)('denies a teacher on %s %s', async (method, path) => {
