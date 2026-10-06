@@ -162,7 +162,7 @@ describe('LocalTimplansService', () => {
         'TIMPLAN_TOTAL_BELOW_GUARANTEE',
       ]);
       expect(result.verdicts[1]!.message).toBe(
-        'Matematik i lågstadiet: 419,5 h planerat, 0,6 h under målet 420 h. Ämnet får inte minskas för skolans val.',
+        'Matematik i lågstadiet: 419,4 h planerat, 0,6 h under målet 420 h. Ämnet får inte minskas för skolans val.',
       );
       expect(result.verdicts[0]!.message).toContain('Programmering har ingen nationell ämneskod');
       expect(tx.subject.findMany).toHaveBeenCalledWith({

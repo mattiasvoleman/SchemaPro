@@ -90,4 +90,42 @@ describe("the Swedish copy says under mål, never fel", () => {
     expect(everything).not.toMatch(/\bfel\b/i);
     expect(everything).not.toMatch(/\bfelaktig/i);
   });
+
+  it("passes what the time counts as to the sentence, the pool when a check predates the parameter", () => {
+    const below = (timeCountsAs?: string): TimplanVerdict => ({
+      ...VERDICTS[1]!,
+      params: { ...VERDICTS[1]!.params, ...(timeCountsAs ? { timeCountsAs } : {}) },
+    });
+    const { rerender } = render(
+      <WarningsRail verdicts={[below("none")]} nationalNames={names} live={false} selected={null} onSelect={() => {}} />,
+    );
+    expect(screen.getByRole("button", { name: /STAGE_BELOW_NATIONAL/ })).toHaveTextContent("timeCountsAs=none");
+    rerender(<WarningsRail verdicts={[below()]} nationalNames={names} live={false} selected={null} onSelect={() => {}} />);
+    expect(screen.getByRole("button", { name: /STAGE_BELOW_NATIONAL/ })).toHaveTextContent("timeCountsAs=skolansVal");
+  });
+
+  it("claims skolans val in Swedish only for a bilaga that prints one", async () => {
+    const { IntlMessageFormat } = await import("intl-messageformat");
+    const say = (key: "TIMPLAN_STAGE_BELOW_NATIONAL" | "TIMPLAN_SUBJECT_UNMAPPED", timeCountsAs: string) =>
+      String(
+        new IntlMessageFormat(sv.timplan.verdicts[key], "sv").format({
+          subject: "Kommunikation",
+          stage: "lågstadiet",
+          subjectName: "Sinnesträning",
+          plannedHours: "30",
+          deficitHours: "32",
+          reducedPercent: "10,2",
+          nationalHours: "315",
+          timeCountsAs,
+        }),
+      );
+    expect(say("TIMPLAN_STAGE_BELOW_NATIONAL", "skolansVal")).toMatch(/Tiden räknas mot skolans val\.$/);
+    expect(say("TIMPLAN_STAGE_BELOW_NATIONAL", "none")).toBe("Kommunikation i lågstadiet: 32 h (10,2 %) under målet 315 h.");
+    expect(say("TIMPLAN_SUBJECT_UNMAPPED", "skolansVal")).toContain("räknas som skolans val.");
+    for (const value of ["fordelningsbar", "own"]) {
+      expect(say("TIMPLAN_SUBJECT_UNMAPPED", value)).toContain("räknas som skolans egen tid.");
+      expect(say("TIMPLAN_SUBJECT_UNMAPPED", value)).not.toContain("skolans val");
+    }
+    expect(say("TIMPLAN_SUBJECT_UNMAPPED", "fordelningsbar")).toContain("Fördelningsbar undervisningstid");
+  });
 });

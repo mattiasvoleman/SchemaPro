@@ -44,9 +44,21 @@ export function describeVerdict(
         `Fördelningen mellan ämnen och stadier för ${p.versionCode} är inte publicerad ännu. ` +
         `Planen jämförs bara mot den garanterade totalen ${h(p.totalHours)}, inte ämne för ämne.`
       );
+    // `timeCountsAs` (timplan-coverage.ts): only a bilaga that prints a
+    // skolans val pool lets a sentence say the time counts against it.
+    // Absent reads as the pool, which is what every check before the
+    // parameter existed meant.
     case 'TIMPLAN_SUBJECT_UNMAPPED':
+      if (p.timeCountsAs === 'fordelningsbar') {
+        return (
+          `${p.subjectName} har ingen nationell ämneskod, och dess ${h(p.plannedHours)} räknas som skolans egen tid. ` +
+          'Hör ämnet till den fördelningsbara undervisningstiden, ange koden för Fördelningsbar undervisningstid; ' +
+          'annars en ämneskod, eller markera att det inte räknas som undervisningstid.'
+        );
+      }
       return (
-        `${p.subjectName} har ingen nationell ämneskod, och dess ${h(p.plannedHours)} räknas som skolans val. ` +
+        `${p.subjectName} har ingen nationell ämneskod, och dess ${h(p.plannedHours)} räknas som ` +
+        `${p.timeCountsAs === undefined || p.timeCountsAs === 'skolansVal' ? 'skolans val' : 'skolans egen tid'}. ` +
         'Ange en ämneskod om ämnet hör till timplanen, eller markera att det inte räknas som undervisningstid.'
       );
     case 'TIMPLAN_PROTECTED_SUBJECT_REDUCED':
@@ -67,7 +79,7 @@ export function describeVerdict(
     case 'TIMPLAN_STAGE_BELOW_NATIONAL':
       return (
         `${where}: ${h(p.plannedHours)} planerat, ${h(p.deficitHours)} (${pct(p.reducedPercent)}) under målet ` +
-        `${h(p.nationalHours)}. Tiden räknas mot skolans val.`
+        `${h(p.nationalHours)}.${p.timeCountsAs === undefined || p.timeCountsAs === 'skolansVal' ? ' Tiden räknas mot skolans val.' : ''}`
       );
     case 'TIMPLAN_SKOLANS_VAL_OVERSPENT':
       return (

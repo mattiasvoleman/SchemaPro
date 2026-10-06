@@ -130,9 +130,12 @@ describe("TimplanGrid", () => {
   it("sums a stadium as minutes × 35,6 weeks / 60 beside the national hours", () => {
     render(<Harness />);
     const ma = stageCell("s-ma", "LAG");
-    // 236 + 236 + 235 = 707 min/vecka → 419,5 h, half an hour under 420.
-    expect(ma).toHaveTextContent("419,5");
-    expect(ma).toHaveTextContent("stageCellNational(419,5|420)");
+    // 236 + 236 + 235 = 707 min/vecka → 419,49 h, half an hour under 420 —
+    // shown rounded DOWN, as the check shows a short figure, so 419,4 and the
+    // 0,6 h deficit make the 420 a reader sees.
+    expect(ma).toHaveTextContent("419,4");
+    expect(ma).not.toHaveTextContent("419,5");
+    expect(ma).toHaveTextContent("stageCellNational(419,4|420)");
     expect(stageCell("s-bl", "MELLAN")).toHaveTextContent("89");
   });
 
@@ -229,5 +232,51 @@ describe("TimplanGrid", () => {
   it("shows a stored note on its cell", () => {
     render(<Harness notes={new Map([[cellKey("s-prog", 8), "Skolans val"]])} />);
     expect(input("s-prog", 8)).toHaveAttribute("title", "cellNote(Skolans val)");
+  });
+
+  it("sums a column of alternatives once, at the longest: three språkval languages are not three times the time", () => {
+    const languages = [subject("s-es", "Spanska", "M2"), subject("s-de", "Tyska", "M2"), subject("s-fr", "Franska", "M2")];
+    const subjects = [...SUBJECTS, ...languages];
+    const draft: DraftCells = new Map([
+      [cellKey("s-ma", 7), "120"],
+      [cellKey("s-es", 7), "60"],
+      [cellKey("s-de", 7), "60"],
+      [cellKey("s-fr", 7), "45"],
+    ]);
+    const check = checkLocalTimplan({
+      planningWeeksTenths: 356,
+      version: toCoverageVersion(B1),
+      nationalSubjects: NATIONAL.subjects,
+      subjects,
+      entries: entriesFromDraft(draft, new Map()).entries,
+    });
+    render(
+      <TimplanGrid
+        subjects={subjects}
+        parentOf={parentOf}
+        columns={gridColumns(check.stageGrades)}
+        stageGrades={check.stageGrades}
+        draft={draft}
+        notes={new Map()}
+        check={check}
+        weeksTenths={356}
+        readOnly={false}
+        highlight={null}
+        onCellChange={() => {}}
+      />,
+    );
+    const footer = document.querySelector("tfoot tr")!;
+    const cells = footer.querySelectorAll("td");
+    // F, 1, 2, 3, LAG, 4, 5, 6, MELLAN, then åk 7: 120 + the longest language (60), not 285.
+    expect(cells[9]).toHaveTextContent("180");
+    // 180 min × 35,6 weeks / 60 = 106,8 h, which is also the check's figure.
+    expect(cells[12]).toHaveTextContent("106,8");
+    expect(check.cells.find((c) => c.subjectCode === "M2" && c.stage === "HOG")!.plannedHours).toBe(35.6);
+    expect(footer).toHaveTextContent("footerColumnSumAlternatives");
+  });
+
+  it("calls an uncoded subject skolans val only where the bilaga prints a pool", () => {
+    render(<Harness />);
+    expect(row("s-prog")).toHaveTextContent("skolansValBadge");
   });
 });

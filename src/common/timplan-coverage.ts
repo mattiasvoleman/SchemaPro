@@ -35,7 +35,11 @@
  * Display rounding: planned hours to the nearest tenth; a DEFICIT rounded UP
  * to the tenth (and its percentage likewise), so a cell that is short at all
  * never reads "0,0 h under". The verdict was decided on the exact integers
- * before any of that.
+ * before any of that. And a figure that IS short is shown rounded DOWN, so
+ * planned + deficit is the target the reader sees: 231 + 230 + 230 min of
+ * matematik over 35.6 weeks is 409,99 h, which to the nearest tenth read
+ * "410 h planerat, 0,1 h under målet 410 h". The same holds for a NO/SO
+ * child under its minimum and for a total under the guarantee.
  *
  * ## Rolling school subjects into national cells
  *
@@ -47,7 +51,20 @@
  *     the stage the årskurs belongs to. A child of an ämnesgrupp (BI under NO,
  *     GE under SO) rolls into the group's cell — the statute's group hours
  *     already hold the children's — and is ALSO counted against its own
- *     per-child minimum. Svenska and SvA are both SV_SVA and simply add up.
+ *     per-child minimum.
+ *   * ALTERNATIVES. Two cells name subjects a pupil reads INSTEAD of each
+ *     other: SV_SVA ("svenska eller svenska som andraspråk") and M2
+ *     (språkval: one modern language, modersmål, teckenspråk … per pupil).
+ *     Their school subjects are not added; per årskurs the cell takes the
+ *     LONGEST of them, and the stage sum is taken over those. Adding them up
+ *     reported three språkval languages at 30 + 60 min as 53,4 h of a 48 h
+ *     mellanstadium cell — met, with no verdict anywhere — when each pupil got
+ *     17,8 h, and lifted a plan's total past a guarantee it was short of. The
+ *     longest and not the shortest, because this is the PLAN's check: it says
+ *     whether the plan offers the time, and an SvA group planned beside a full
+ *     Svenska ("Svenska 200 + SvA-grupp 60") offers it. That a pupil placed in
+ *     the shorter alternative gets less is a per-pupil verdict (P2), and the
+ *     grid shows each alternative's own row hours.
  *     A subject whose code has a merged "låg- och mellanstadiet" cell in this
  *     version (hem- och konsumentkunskap) rolls årskurs 1–6 (1–7 in
  *     specialskolan) into that one cell.
@@ -76,6 +93,16 @@
  * and uncoded subjects) against totalHours. Time taken and not placed shows up
  * there as TIMPLAN_TOTAL_BELOW_GUARANTEE, which is what "the hours went
  * nowhere" means in the statute's terms.
+ *
+ * Only where the bilaga prints a pool. Ämnesområden (B2B) prints none — its
+ * free time is the cell "Fördelningsbar undervisningstid" (FORDELNINGSBAR) —
+ * and the 2028 law has published no distribution yet. The arithmetic above is
+ * the same everywhere (taken and placed are still reported, against no pool);
+ * what changes is what a sentence may claim, so TIMPLAN_STAGE_BELOW_NATIONAL
+ * and TIMPLAN_SUBJECT_UNMAPPED carry `timeCountsAs`: 'skolansVal' where the
+ * version prints a pool; otherwise 'none' for a reduced cell (the bilaga says
+ * nothing of where it goes) and, for an uncoded subject, 'fordelningsbar'
+ * when the version prints that cell (map the subject to it) or 'own'.
  *
  * An uncoded counted subject still gets TIMPLAN_SUBJECT_UNMAPPED — as a
  * NOTICE, saying its hours are counted as skolans val. The module cannot tell
@@ -264,6 +291,19 @@ const VERDICT_ORDER: Record<TimplanVerdictCode, number> = {
 const HOUR = 600;
 
 /**
+ * National codes whose school subjects a pupil reads INSTEAD of each other,
+ * so a cell takes the longest of them per årskurs rather than their sum. See
+ * "Rolling school subjects into national cells".
+ */
+export const TIMPLAN_ALTERNATIVE_CODES: readonly string[] = ['SV_SVA', 'M2'];
+
+/** The ämnesområden bilaga's free-time cell, where an uncoded subject belongs. */
+const FREE_TIME_CODE = 'FORDELNINGSBAR';
+
+/** What a reduced cell's or an uncoded subject's time counts as, by the bilaga. */
+export type TimplanTimeCountsAs = 'skolansVal' | 'fordelningsbar' | 'own' | 'none';
+
+/**
  * Code-unit order for codes and ids, Swedish collation for names: the same on
  * every runtime, so the gateway and the web sort a report identically.
  */
@@ -332,6 +372,9 @@ export function stageGradesFor(
 /** Minute-tenths → hours to the nearest tenth. */
 const hours = (minuteTenths: number): number => Math.round(minuteTenths / 60) / 10;
 
+/** Minute-tenths → hours rounded DOWN to the tenth: a figure that is short reads short. */
+const hoursDown = (minuteTenths: number): number => Math.floor(minuteTenths / 60) / 10;
+
 /** Minute-tenths → hours rounded UP to the tenth: a shortfall never reads 0,0. */
 const hoursUp = (minuteTenths: number): number => Math.ceil(minuteTenths / 60) / 10;
 
@@ -349,6 +392,8 @@ interface CellAccumulator {
   minima: Map<string, number>;
   /** child code → planned minute-tenths. */
   childPlanned: Map<string, number>;
+  /** årskurs → the longest alternative's minute-tenths (alternative codes only). */
+  longestByGrade: Map<number, number>;
   subjectIds: Set<string>;
 }
 
@@ -382,6 +427,7 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
       protectedFromReduction: prot,
       minima: new Map(),
       childPlanned: new Map(),
+      longestByGrade: new Map(),
       subjectIds: new Set(),
     };
     cells.set(cellKey(code, stage), cell);
@@ -432,15 +478,30 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
     const stage: TimplanStage =
       baseStage !== 'HOG' && hasMergedCell.has(top) ? 'LAG_MELLAN' : baseStage;
     const cell = cells.get(cellKey(top, stage)) ?? newCell(top, stage, 0, false);
-    cell.planned += minuteTenths;
     cell.subjectIds.add(subject.id);
+    if (TIMPLAN_ALTERNATIVE_CODES.includes(top)) {
+      const longest = cell.longestByGrade.get(entry.gradeLevel) ?? 0;
+      cell.longestByGrade.set(entry.gradeLevel, Math.max(longest, minuteTenths));
+      continue;
+    }
+    cell.planned += minuteTenths;
     if (code !== top) {
       cell.childPlanned.set(code, (cell.childPlanned.get(code) ?? 0) + minuteTenths);
       childMapped.add(cellKey(top, stage));
     }
   }
 
+  for (const cell of cells.values()) {
+    for (const minuteTenths of cell.longestByGrade.values()) cell.planned += minuteTenths;
+  }
+
   const published = version.entries.length > 0;
+  const poolPrinted = published && version.skolansValHours !== null;
+  const unmappedCountsAs: TimplanTimeCountsAs = poolPrinted
+    ? 'skolansVal'
+    : version.entries.some((e) => e.subjectCode === FREE_TIME_CODE)
+      ? 'fordelningsbar'
+      : 'own';
   const verdicts: TimplanVerdict[] = [];
   const sortedCells = [...cells.values()].sort(
     (a, b) =>
@@ -463,7 +524,12 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
       code: 'TIMPLAN_SUBJECT_UNMAPPED',
       severity: 'notice',
       subjectIds: [subject.id],
-      params: { subjectId: subject.id, subjectName: subject.name, plannedHours: hours(planned) },
+      params: {
+        subjectId: subject.id,
+        subjectName: subject.name,
+        plannedHours: hours(planned),
+        timeCountsAs: unmappedCountsAs,
+      },
     });
   }
 
@@ -481,10 +547,13 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
     const subjectIds = [...cell.subjectIds].sort(byCode);
     const where = { subjectCode: cell.subjectCode, stage: cell.stage, subjectIds };
 
+    // A cell that is short shows its planned figure rounded down, so planned
+    // + deficit reads as the target (see "Display rounding").
+    const plannedShown = deficit > 0 ? hoursDown(cell.planned) : hours(cell.planned);
     if (deficit > 0) {
       const figures = {
         nationalHours: cell.national / HOUR,
-        plannedHours: hours(cell.planned),
+        plannedHours: plannedShown,
         deficitHours: hoursUp(deficit),
         reducedPercent: percentUp(deficit, cell.national),
       };
@@ -498,7 +567,12 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
           params: { ...figures, capPercent: cap },
         });
       } else {
-        verdicts.push({ code: 'TIMPLAN_STAGE_BELOW_NATIONAL', severity: 'notice', ...where, params: figures });
+        verdicts.push({
+          code: 'TIMPLAN_STAGE_BELOW_NATIONAL',
+          severity: 'notice',
+          ...where,
+          params: { ...figures, timeCountsAs: poolPrinted ? 'skolansVal' : 'none' },
+        });
       }
     }
 
@@ -509,6 +583,7 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
         .sort(([a], [b]) => byCode(a, b))
         .map(([childCode, minimum]) => {
           const childPlanned = cell.childPlanned.get(childCode) ?? 0;
+          const childShown = childPlanned < minimum ? hoursDown(childPlanned) : hours(childPlanned);
           if (judged && childPlanned < minimum) {
             verdicts.push({
               code: 'TIMPLAN_GROUP_MINIMUM_UNMET',
@@ -518,12 +593,12 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
               params: {
                 childCode,
                 minimumHours: minimum / HOUR,
-                plannedHours: hours(childPlanned),
+                plannedHours: childShown,
                 deficitHours: hoursUp(minimum - childPlanned),
               },
             });
           }
-          return { subjectCode: childCode, minimumHours: minimum / HOUR, plannedHours: hours(childPlanned) };
+          return { subjectCode: childCode, minimumHours: minimum / HOUR, plannedHours: childShown };
         });
     }
 
@@ -531,7 +606,7 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
       subjectCode: cell.subjectCode,
       stage: cell.stage,
       nationalHours: cell.national / HOUR,
-      plannedHours: hours(cell.planned),
+      plannedHours: plannedShown,
       deficitHours: hoursUp(deficit),
       surplusHours: hours(surplus),
       reducedPercent: percentUp(deficit, cell.national),
@@ -560,12 +635,13 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
   }
 
   const guaranteed = version.totalHours * HOUR;
+  const totalShown = plannedTotal < guaranteed ? hoursDown(plannedTotal) : hours(plannedTotal);
   if (plannedTotal < guaranteed) {
     verdicts.push({
       code: 'TIMPLAN_TOTAL_BELOW_GUARANTEE',
       severity: 'warning',
       params: {
-        plannedHours: hours(plannedTotal),
+        plannedHours: totalShown,
         guaranteedHours: version.totalHours,
         deficitHours: hoursUp(guaranteed - plannedTotal),
       },
@@ -599,7 +675,7 @@ export function checkLocalTimplan(input: CoverageInput): TimplanCheck {
       ? { availableHours: pool, takenHours: hoursUp(taken), placedHours: hours(placed) }
       : { availableHours: null, takenHours: 0, placedHours: 0 },
     total: {
-      plannedHours: hours(plannedTotal),
+      plannedHours: totalShown,
       guaranteedHours: version.totalHours,
       deficitHours: hoursUp(Math.max(0, guaranteed - plannedTotal)),
     },

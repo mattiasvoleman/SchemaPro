@@ -736,7 +736,7 @@
           { "subjectCode": "IDH", "stage": "HOG", "nationalHours": 280, "plannedHours": 280.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-IDH"] },
           { "subjectCode": "M2", "stage": "MELLAN", "nationalHours": 48, "plannedHours": 48.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-M2"] },
           { "subjectCode": "M2", "stage": "HOG", "nationalHours": 272, "plannedHours": 272.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-M2"] },
-          { "subjectCode": "MA", "stage": "LAG", "nationalHours": 420, "plannedHours": 419.5, "deficitHours": 0.6, "surplusHours": 0, "reducedPercent": 0.2, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
+          { "subjectCode": "MA", "stage": "LAG", "nationalHours": 420, "plannedHours": 419.4, "deficitHours": 0.6, "surplusHours": 0, "reducedPercent": 0.2, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
           { "subjectCode": "MA", "stage": "MELLAN", "nationalHours": 410, "plannedHours": 410.6, "deficitHours": 0, "surplusHours": 0.6, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
           { "subjectCode": "MA", "stage": "HOG", "nationalHours": 400, "plannedHours": 400.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
           { "subjectCode": "MU", "stage": "LAG", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MU"] },
@@ -851,7 +851,7 @@
             "subjectIds": [
               "s-MA"
             ],
-            "params": { "nationalHours": 420, "plannedHours": 419.5, "deficitHours": 0.6, "reducedPercent": 0.2 }
+            "params": { "nationalHours": 420, "plannedHours": 419.4, "deficitHours": 0.6, "reducedPercent": 0.2 }
           }
         ]
       }
@@ -1152,7 +1152,7 @@
             "subjectIds": [
               "s-BL"
             ],
-            "params": { "nationalHours": 60, "plannedHours": 48, "deficitHours": 12, "reducedPercent": 20 }
+            "params": { "nationalHours": 60, "plannedHours": 48, "deficitHours": 12, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_TOTAL_BELOW_GUARANTEE",
@@ -1768,7 +1768,7 @@
             "subjectIds": [
               "s-SVA"
             ],
-            "params": { "subjectId": "s-SVA", "subjectName": "Svenska som andraspråk", "plannedHours": 80 }
+            "params": { "subjectId": "s-SVA", "subjectName": "Svenska som andraspråk", "plannedHours": 80, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_PROTECTED_SUBJECT_REDUCED",
@@ -2398,7 +2398,7 @@
             "subjectIds": [
               "s-PROG"
             ],
-            "params": { "subjectId": "s-PROG", "subjectName": "Programmering", "plannedHours": 45 }
+            "params": { "subjectId": "s-PROG", "subjectName": "Programmering", "plannedHours": 45, "timeCountsAs": "skolansVal" }
           }
         ]
       }
@@ -2656,7 +2656,7 @@
             "subjectIds": [
               "s-PROG"
             ],
-            "params": { "subjectId": "s-PROG", "subjectName": "Programmering", "plannedHours": 600 }
+            "params": { "subjectId": "s-PROG", "subjectName": "Programmering", "plannedHours": 600, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2666,7 +2666,7 @@
             "subjectIds": [
               "s-BL"
             ],
-            "params": { "nationalHours": 60, "plannedHours": 48, "deficitHours": 12, "reducedPercent": 20 }
+            "params": { "nationalHours": 60, "plannedHours": 48, "deficitHours": 12, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2676,7 +2676,7 @@
             "subjectIds": [
               "s-IDH"
             ],
-            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20 }
+            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2686,7 +2686,7 @@
             "subjectIds": [
               "s-MU"
             ],
-            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20 }
+            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2696,7 +2696,7 @@
             "subjectIds": [
               "s-NO"
             ],
-            "params": { "nationalHours": 145, "plannedHours": 116, "deficitHours": 29, "reducedPercent": 20 }
+            "params": { "nationalHours": 145, "plannedHours": 116, "deficitHours": 29, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2706,7 +2706,7 @@
             "subjectIds": [
               "s-SL"
             ],
-            "params": { "nationalHours": 50, "plannedHours": 40, "deficitHours": 10, "reducedPercent": 20 }
+            "params": { "nationalHours": 50, "plannedHours": 40, "deficitHours": 10, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2716,7 +2716,7 @@
             "subjectIds": [
               "s-SO"
             ],
-            "params": { "nationalHours": 200, "plannedHours": 160, "deficitHours": 40, "reducedPercent": 20 }
+            "params": { "nationalHours": 200, "plannedHours": 160, "deficitHours": 40, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2726,7 +2726,7 @@
             "subjectIds": [
               "s-BL"
             ],
-            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20 }
+            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2736,7 +2736,7 @@
             "subjectIds": [
               "s-IDH"
             ],
-            "params": { "nationalHours": 180, "plannedHours": 144, "deficitHours": 36, "reducedPercent": 20 }
+            "params": { "nationalHours": 180, "plannedHours": 144, "deficitHours": 36, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2746,7 +2746,7 @@
             "subjectIds": [
               "s-MU"
             ],
-            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20 }
+            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2756,7 +2756,7 @@
             "subjectIds": [
               "s-NO"
             ],
-            "params": { "nationalHours": 216, "plannedHours": 173, "deficitHours": 43, "reducedPercent": 20 }
+            "params": { "nationalHours": 216, "plannedHours": 173, "deficitHours": 43, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2766,7 +2766,7 @@
             "subjectIds": [
               "s-SL"
             ],
-            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20 }
+            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2776,7 +2776,7 @@
             "subjectIds": [
               "s-SO"
             ],
-            "params": { "nationalHours": 375, "plannedHours": 300, "deficitHours": 75, "reducedPercent": 20 }
+            "params": { "nationalHours": 375, "plannedHours": 300, "deficitHours": 75, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2786,7 +2786,7 @@
             "subjectIds": [
               "s-BL"
             ],
-            "params": { "nationalHours": 100, "plannedHours": 80, "deficitHours": 20, "reducedPercent": 20 }
+            "params": { "nationalHours": 100, "plannedHours": 80, "deficitHours": 20, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2796,7 +2796,7 @@
             "subjectIds": [
               "s-IDH"
             ],
-            "params": { "nationalHours": 280, "plannedHours": 224, "deficitHours": 56, "reducedPercent": 20 }
+            "params": { "nationalHours": 280, "plannedHours": 224, "deficitHours": 56, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2806,7 +2806,7 @@
             "subjectIds": [
               "s-MU"
             ],
-            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20 }
+            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2816,7 +2816,7 @@
             "subjectIds": [
               "s-NO"
             ],
-            "params": { "nationalHours": 289, "plannedHours": 239, "deficitHours": 50, "reducedPercent": 17.4 }
+            "params": { "nationalHours": 289, "plannedHours": 239, "deficitHours": 50, "reducedPercent": 17.4, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2826,7 +2826,7 @@
             "subjectIds": [
               "s-SL"
             ],
-            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20 }
+            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -2836,7 +2836,7 @@
             "subjectIds": [
               "s-SO"
             ],
-            "params": { "nationalHours": 405, "plannedHours": 324, "deficitHours": 81, "reducedPercent": 20 }
+            "params": { "nationalHours": 405, "plannedHours": 324, "deficitHours": 81, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           }
         ]
       }
@@ -3094,7 +3094,7 @@
             "subjectIds": [
               "s-PROG"
             ],
-            "params": { "subjectId": "s-PROG", "subjectName": "Programmering", "plannedHours": 600 }
+            "params": { "subjectId": "s-PROG", "subjectName": "Programmering", "plannedHours": 600, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3104,7 +3104,7 @@
             "subjectIds": [
               "s-BL"
             ],
-            "params": { "nationalHours": 60, "plannedHours": 48, "deficitHours": 12, "reducedPercent": 20 }
+            "params": { "nationalHours": 60, "plannedHours": 48, "deficitHours": 12, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3114,7 +3114,7 @@
             "subjectIds": [
               "s-IDH"
             ],
-            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20 }
+            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3124,7 +3124,7 @@
             "subjectIds": [
               "s-MU"
             ],
-            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20 }
+            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3134,7 +3134,7 @@
             "subjectIds": [
               "s-NO"
             ],
-            "params": { "nationalHours": 145, "plannedHours": 116, "deficitHours": 29, "reducedPercent": 20 }
+            "params": { "nationalHours": 145, "plannedHours": 116, "deficitHours": 29, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3144,7 +3144,7 @@
             "subjectIds": [
               "s-SL"
             ],
-            "params": { "nationalHours": 50, "plannedHours": 40, "deficitHours": 10, "reducedPercent": 20 }
+            "params": { "nationalHours": 50, "plannedHours": 40, "deficitHours": 10, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3154,7 +3154,7 @@
             "subjectIds": [
               "s-SO"
             ],
-            "params": { "nationalHours": 200, "plannedHours": 160, "deficitHours": 40, "reducedPercent": 20 }
+            "params": { "nationalHours": 200, "plannedHours": 160, "deficitHours": 40, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3164,7 +3164,7 @@
             "subjectIds": [
               "s-TK"
             ],
-            "params": { "nationalHours": 47, "plannedHours": 46.5, "deficitHours": 0.5, "reducedPercent": 1.1 }
+            "params": { "nationalHours": 47, "plannedHours": 46.5, "deficitHours": 0.5, "reducedPercent": 1.1, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3174,7 +3174,7 @@
             "subjectIds": [
               "s-BL"
             ],
-            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20 }
+            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3184,7 +3184,7 @@
             "subjectIds": [
               "s-IDH"
             ],
-            "params": { "nationalHours": 180, "plannedHours": 144, "deficitHours": 36, "reducedPercent": 20 }
+            "params": { "nationalHours": 180, "plannedHours": 144, "deficitHours": 36, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3194,7 +3194,7 @@
             "subjectIds": [
               "s-MU"
             ],
-            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20 }
+            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3204,7 +3204,7 @@
             "subjectIds": [
               "s-NO"
             ],
-            "params": { "nationalHours": 216, "plannedHours": 173, "deficitHours": 43, "reducedPercent": 20 }
+            "params": { "nationalHours": 216, "plannedHours": 173, "deficitHours": 43, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3214,7 +3214,7 @@
             "subjectIds": [
               "s-SL"
             ],
-            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20 }
+            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3224,7 +3224,7 @@
             "subjectIds": [
               "s-SO"
             ],
-            "params": { "nationalHours": 375, "plannedHours": 300, "deficitHours": 75, "reducedPercent": 20 }
+            "params": { "nationalHours": 375, "plannedHours": 300, "deficitHours": 75, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3234,7 +3234,7 @@
             "subjectIds": [
               "s-BL"
             ],
-            "params": { "nationalHours": 100, "plannedHours": 80, "deficitHours": 20, "reducedPercent": 20 }
+            "params": { "nationalHours": 100, "plannedHours": 80, "deficitHours": 20, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3244,7 +3244,7 @@
             "subjectIds": [
               "s-IDH"
             ],
-            "params": { "nationalHours": 280, "plannedHours": 224, "deficitHours": 56, "reducedPercent": 20 }
+            "params": { "nationalHours": 280, "plannedHours": 224, "deficitHours": 56, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3254,7 +3254,7 @@
             "subjectIds": [
               "s-MU"
             ],
-            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20 }
+            "params": { "nationalHours": 80, "plannedHours": 64, "deficitHours": 16, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3264,7 +3264,7 @@
             "subjectIds": [
               "s-NO"
             ],
-            "params": { "nationalHours": 289, "plannedHours": 239, "deficitHours": 50, "reducedPercent": 17.4 }
+            "params": { "nationalHours": 289, "plannedHours": 239, "deficitHours": 50, "reducedPercent": 17.4, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3274,7 +3274,7 @@
             "subjectIds": [
               "s-SL"
             ],
-            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20 }
+            "params": { "nationalHours": 140, "plannedHours": 112, "deficitHours": 28, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
@@ -3284,7 +3284,7 @@
             "subjectIds": [
               "s-SO"
             ],
-            "params": { "nationalHours": 405, "plannedHours": 324, "deficitHours": 81, "reducedPercent": 20 }
+            "params": { "nationalHours": 405, "plannedHours": 324, "deficitHours": 81, "reducedPercent": 20, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_SKOLANS_VAL_OVERSPENT",
@@ -3824,7 +3824,7 @@
         "unmapped": [],
         "gradesOutsideStages": [],
         "skolansVal": { "availableHours": 600, "takenHours": 133, "placedHours": 11.9 },
-        "total": { "plannedHours": 7948.9, "guaranteedHours": 8070, "deficitHours": 121.2 },
+        "total": { "plannedHours": 7948.8, "guaranteedHours": 8070, "deficitHours": 121.2 },
         "verdicts": [
           {
             "code": "TIMPLAN_PROTECTED_SUBJECT_REDUCED",
@@ -3839,7 +3839,7 @@
           {
             "code": "TIMPLAN_TOTAL_BELOW_GUARANTEE",
             "severity": "warning",
-            "params": { "plannedHours": 7948.9, "guaranteedHours": 8070, "deficitHours": 121.2 }
+            "params": { "plannedHours": 7948.8, "guaranteedHours": 8070, "deficitHours": 121.2 }
           }
         ]
       }
@@ -4014,7 +4014,7 @@
             "subjectIds": [
               "s-MA"
             ],
-            "params": { "nationalHours": 400, "plannedHours": 300, "deficitHours": 100, "reducedPercent": 25 }
+            "params": { "nationalHours": 400, "plannedHours": 300, "deficitHours": 100, "reducedPercent": 25, "timeCountsAs": "skolansVal" }
           },
           {
             "code": "TIMPLAN_TOTAL_BELOW_GUARANTEE",
@@ -4742,6 +4742,1063 @@
             "code": "TIMPLAN_TOTAL_BELOW_GUARANTEE",
             "severity": "warning",
             "params": { "plannedHours": 0, "guaranteedHours": 6890, "deficitHours": 6890 }
+          }
+        ]
+      }
+    },
+    {
+      "name": "three språkval languages at 30 + 60 min: each pupil short of both cells",
+      "versionCode": "SFS2023:945/B1",
+      "planningWeeksTenths": 356,
+      "subjects": [
+        { "id": "s-BL", "name": "BL", "nationalCode": "BL", "countsTowardTimplan": true },
+        { "id": "s-EN", "name": "EN", "nationalCode": "EN", "countsTowardTimplan": true },
+        { "id": "s-HKK", "name": "HKK", "nationalCode": "HKK", "countsTowardTimplan": true },
+        { "id": "s-IDH", "name": "IDH", "nationalCode": "IDH", "countsTowardTimplan": true },
+        { "id": "s-MA", "name": "MA", "nationalCode": "MA", "countsTowardTimplan": true },
+        { "id": "s-MU", "name": "MU", "nationalCode": "MU", "countsTowardTimplan": true },
+        { "id": "s-NO", "name": "NO", "nationalCode": "NO", "countsTowardTimplan": true },
+        { "id": "s-BI", "name": "BI", "nationalCode": "BI", "countsTowardTimplan": true },
+        { "id": "s-FY", "name": "FY", "nationalCode": "FY", "countsTowardTimplan": true },
+        { "id": "s-KE", "name": "KE", "nationalCode": "KE", "countsTowardTimplan": true },
+        { "id": "s-SO", "name": "SO", "nationalCode": "SO", "countsTowardTimplan": true },
+        { "id": "s-GE", "name": "GE", "nationalCode": "GE", "countsTowardTimplan": true },
+        { "id": "s-HI", "name": "HI", "nationalCode": "HI", "countsTowardTimplan": true },
+        { "id": "s-RE", "name": "RE", "nationalCode": "RE", "countsTowardTimplan": true },
+        { "id": "s-SH", "name": "SH", "nationalCode": "SH", "countsTowardTimplan": true },
+        { "id": "s-SL", "name": "SL", "nationalCode": "SL", "countsTowardTimplan": true },
+        { "id": "s-SV_SVA", "name": "SV_SVA", "nationalCode": "SV_SVA", "countsTowardTimplan": true },
+        { "id": "s-TK", "name": "TK", "nationalCode": "TK", "countsTowardTimplan": true },
+        { "id": "s-Spanska", "name": "Spanska", "nationalCode": "M2", "countsTowardTimplan": true },
+        { "id": "s-Tyska", "name": "Tyska", "nationalCode": "M2", "countsTowardTimplan": true },
+        { "id": "s-Franska", "name": "Franska", "nationalCode": "M2", "countsTowardTimplan": true }
+      ],
+      "entries": [
+        { "subjectId": "s-BL", "gradeLevel": 1, "minutesPerWeek": 34 },
+        { "subjectId": "s-BL", "gradeLevel": 2, "minutesPerWeek": 34 },
+        { "subjectId": "s-BL", "gradeLevel": 3, "minutesPerWeek": 34 },
+        { "subjectId": "s-BL", "gradeLevel": 4, "minutesPerWeek": 45 },
+        { "subjectId": "s-BL", "gradeLevel": 5, "minutesPerWeek": 45 },
+        { "subjectId": "s-BL", "gradeLevel": 6, "minutesPerWeek": 45 },
+        { "subjectId": "s-BL", "gradeLevel": 7, "minutesPerWeek": 57 },
+        { "subjectId": "s-BL", "gradeLevel": 8, "minutesPerWeek": 56 },
+        { "subjectId": "s-BL", "gradeLevel": 9, "minutesPerWeek": 56 },
+        { "subjectId": "s-EN", "gradeLevel": 1, "minutesPerWeek": 34 },
+        { "subjectId": "s-EN", "gradeLevel": 2, "minutesPerWeek": 34 },
+        { "subjectId": "s-EN", "gradeLevel": 3, "minutesPerWeek": 34 },
+        { "subjectId": "s-EN", "gradeLevel": 4, "minutesPerWeek": 124 },
+        { "subjectId": "s-EN", "gradeLevel": 5, "minutesPerWeek": 124 },
+        { "subjectId": "s-EN", "gradeLevel": 6, "minutesPerWeek": 123 },
+        { "subjectId": "s-EN", "gradeLevel": 7, "minutesPerWeek": 113 },
+        { "subjectId": "s-EN", "gradeLevel": 8, "minutesPerWeek": 113 },
+        { "subjectId": "s-EN", "gradeLevel": 9, "minutesPerWeek": 112 },
+        { "subjectId": "s-HKK", "gradeLevel": 1, "minutesPerWeek": 12 },
+        { "subjectId": "s-HKK", "gradeLevel": 2, "minutesPerWeek": 12 },
+        { "subjectId": "s-HKK", "gradeLevel": 3, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 4, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 5, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 6, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 7, "minutesPerWeek": 51 },
+        { "subjectId": "s-HKK", "gradeLevel": 8, "minutesPerWeek": 51 },
+        { "subjectId": "s-HKK", "gradeLevel": 9, "minutesPerWeek": 50 },
+        { "subjectId": "s-IDH", "gradeLevel": 1, "minutesPerWeek": 79 },
+        { "subjectId": "s-IDH", "gradeLevel": 2, "minutesPerWeek": 79 },
+        { "subjectId": "s-IDH", "gradeLevel": 3, "minutesPerWeek": 78 },
+        { "subjectId": "s-IDH", "gradeLevel": 4, "minutesPerWeek": 102 },
+        { "subjectId": "s-IDH", "gradeLevel": 5, "minutesPerWeek": 101 },
+        { "subjectId": "s-IDH", "gradeLevel": 6, "minutesPerWeek": 101 },
+        { "subjectId": "s-IDH", "gradeLevel": 7, "minutesPerWeek": 158 },
+        { "subjectId": "s-IDH", "gradeLevel": 8, "minutesPerWeek": 157 },
+        { "subjectId": "s-IDH", "gradeLevel": 9, "minutesPerWeek": 157 },
+        { "subjectId": "s-MA", "gradeLevel": 1, "minutesPerWeek": 236 },
+        { "subjectId": "s-MA", "gradeLevel": 2, "minutesPerWeek": 236 },
+        { "subjectId": "s-MA", "gradeLevel": 3, "minutesPerWeek": 236 },
+        { "subjectId": "s-MA", "gradeLevel": 4, "minutesPerWeek": 231 },
+        { "subjectId": "s-MA", "gradeLevel": 5, "minutesPerWeek": 231 },
+        { "subjectId": "s-MA", "gradeLevel": 6, "minutesPerWeek": 230 },
+        { "subjectId": "s-MA", "gradeLevel": 7, "minutesPerWeek": 225 },
+        { "subjectId": "s-MA", "gradeLevel": 8, "minutesPerWeek": 225 },
+        { "subjectId": "s-MA", "gradeLevel": 9, "minutesPerWeek": 225 },
+        { "subjectId": "s-MU", "gradeLevel": 1, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 2, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 3, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 4, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 5, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 6, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 7, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 8, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 9, "minutesPerWeek": 45 },
+        { "subjectId": "s-NO", "gradeLevel": 1, "minutesPerWeek": 82 },
+        { "subjectId": "s-NO", "gradeLevel": 2, "minutesPerWeek": 82 },
+        { "subjectId": "s-NO", "gradeLevel": 3, "minutesPerWeek": 81 },
+        { "subjectId": "s-BI", "gradeLevel": 4, "minutesPerWeek": 41 },
+        { "subjectId": "s-BI", "gradeLevel": 5, "minutesPerWeek": 41 },
+        { "subjectId": "s-BI", "gradeLevel": 6, "minutesPerWeek": 40 },
+        { "subjectId": "s-FY", "gradeLevel": 4, "minutesPerWeek": 41 },
+        { "subjectId": "s-FY", "gradeLevel": 5, "minutesPerWeek": 41 },
+        { "subjectId": "s-FY", "gradeLevel": 6, "minutesPerWeek": 40 },
+        { "subjectId": "s-KE", "gradeLevel": 4, "minutesPerWeek": 41 },
+        { "subjectId": "s-KE", "gradeLevel": 5, "minutesPerWeek": 41 },
+        { "subjectId": "s-KE", "gradeLevel": 6, "minutesPerWeek": 40 },
+        { "subjectId": "s-BI", "gradeLevel": 7, "minutesPerWeek": 55 },
+        { "subjectId": "s-BI", "gradeLevel": 8, "minutesPerWeek": 55 },
+        { "subjectId": "s-BI", "gradeLevel": 9, "minutesPerWeek": 54 },
+        { "subjectId": "s-FY", "gradeLevel": 7, "minutesPerWeek": 54 },
+        { "subjectId": "s-FY", "gradeLevel": 8, "minutesPerWeek": 54 },
+        { "subjectId": "s-FY", "gradeLevel": 9, "minutesPerWeek": 54 },
+        { "subjectId": "s-KE", "gradeLevel": 7, "minutesPerWeek": 54 },
+        { "subjectId": "s-KE", "gradeLevel": 8, "minutesPerWeek": 54 },
+        { "subjectId": "s-KE", "gradeLevel": 9, "minutesPerWeek": 54 },
+        { "subjectId": "s-SO", "gradeLevel": 1, "minutesPerWeek": 113 },
+        { "subjectId": "s-SO", "gradeLevel": 2, "minutesPerWeek": 113 },
+        { "subjectId": "s-SO", "gradeLevel": 3, "minutesPerWeek": 112 },
+        { "subjectId": "s-GE", "gradeLevel": 4, "minutesPerWeek": 51 },
+        { "subjectId": "s-GE", "gradeLevel": 5, "minutesPerWeek": 51 },
+        { "subjectId": "s-GE", "gradeLevel": 6, "minutesPerWeek": 50 },
+        { "subjectId": "s-HI", "gradeLevel": 4, "minutesPerWeek": 59 },
+        { "subjectId": "s-HI", "gradeLevel": 5, "minutesPerWeek": 59 },
+        { "subjectId": "s-HI", "gradeLevel": 6, "minutesPerWeek": 59 },
+        { "subjectId": "s-RE", "gradeLevel": 4, "minutesPerWeek": 51 },
+        { "subjectId": "s-RE", "gradeLevel": 5, "minutesPerWeek": 51 },
+        { "subjectId": "s-RE", "gradeLevel": 6, "minutesPerWeek": 50 },
+        { "subjectId": "s-SH", "gradeLevel": 4, "minutesPerWeek": 51 },
+        { "subjectId": "s-SH", "gradeLevel": 5, "minutesPerWeek": 51 },
+        { "subjectId": "s-SH", "gradeLevel": 6, "minutesPerWeek": 50 },
+        { "subjectId": "s-GE", "gradeLevel": 7, "minutesPerWeek": 53 },
+        { "subjectId": "s-GE", "gradeLevel": 8, "minutesPerWeek": 53 },
+        { "subjectId": "s-GE", "gradeLevel": 9, "minutesPerWeek": 53 },
+        { "subjectId": "s-HI", "gradeLevel": 7, "minutesPerWeek": 65 },
+        { "subjectId": "s-HI", "gradeLevel": 8, "minutesPerWeek": 64 },
+        { "subjectId": "s-HI", "gradeLevel": 9, "minutesPerWeek": 64 },
+        { "subjectId": "s-RE", "gradeLevel": 7, "minutesPerWeek": 53 },
+        { "subjectId": "s-RE", "gradeLevel": 8, "minutesPerWeek": 53 },
+        { "subjectId": "s-RE", "gradeLevel": 9, "minutesPerWeek": 53 },
+        { "subjectId": "s-SH", "gradeLevel": 7, "minutesPerWeek": 58 },
+        { "subjectId": "s-SH", "gradeLevel": 8, "minutesPerWeek": 58 },
+        { "subjectId": "s-SH", "gradeLevel": 9, "minutesPerWeek": 58 },
+        { "subjectId": "s-SL", "gradeLevel": 1, "minutesPerWeek": 29 },
+        { "subjectId": "s-SL", "gradeLevel": 2, "minutesPerWeek": 28 },
+        { "subjectId": "s-SL", "gradeLevel": 3, "minutesPerWeek": 28 },
+        { "subjectId": "s-SL", "gradeLevel": 4, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 5, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 6, "minutesPerWeek": 78 },
+        { "subjectId": "s-SL", "gradeLevel": 7, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 8, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 9, "minutesPerWeek": 78 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 1, "minutesPerWeek": 383 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 2, "minutesPerWeek": 382 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 3, "minutesPerWeek": 382 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 4, "minutesPerWeek": 293 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 5, "minutesPerWeek": 292 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 6, "minutesPerWeek": 292 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 7, "minutesPerWeek": 163 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 8, "minutesPerWeek": 163 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 9, "minutesPerWeek": 163 },
+        { "subjectId": "s-TK", "gradeLevel": 1, "minutesPerWeek": 27 },
+        { "subjectId": "s-TK", "gradeLevel": 2, "minutesPerWeek": 27 },
+        { "subjectId": "s-TK", "gradeLevel": 3, "minutesPerWeek": 26 },
+        { "subjectId": "s-TK", "gradeLevel": 4, "minutesPerWeek": 37 },
+        { "subjectId": "s-TK", "gradeLevel": 5, "minutesPerWeek": 37 },
+        { "subjectId": "s-TK", "gradeLevel": 6, "minutesPerWeek": 36 },
+        { "subjectId": "s-TK", "gradeLevel": 7, "minutesPerWeek": 50 },
+        { "subjectId": "s-TK", "gradeLevel": 8, "minutesPerWeek": 50 },
+        { "subjectId": "s-TK", "gradeLevel": 9, "minutesPerWeek": 49 },
+        { "subjectId": "s-Spanska", "gradeLevel": 6, "minutesPerWeek": 30 },
+        { "subjectId": "s-Spanska", "gradeLevel": 7, "minutesPerWeek": 60 },
+        { "subjectId": "s-Spanska", "gradeLevel": 8, "minutesPerWeek": 60 },
+        { "subjectId": "s-Spanska", "gradeLevel": 9, "minutesPerWeek": 60 },
+        { "subjectId": "s-Tyska", "gradeLevel": 6, "minutesPerWeek": 30 },
+        { "subjectId": "s-Tyska", "gradeLevel": 7, "minutesPerWeek": 60 },
+        { "subjectId": "s-Tyska", "gradeLevel": 8, "minutesPerWeek": 60 },
+        { "subjectId": "s-Tyska", "gradeLevel": 9, "minutesPerWeek": 60 },
+        { "subjectId": "s-Franska", "gradeLevel": 6, "minutesPerWeek": 30 },
+        { "subjectId": "s-Franska", "gradeLevel": 7, "minutesPerWeek": 60 },
+        { "subjectId": "s-Franska", "gradeLevel": 8, "minutesPerWeek": 60 },
+        { "subjectId": "s-Franska", "gradeLevel": 9, "minutesPerWeek": 60 }
+      ],
+      "check": {
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "planningWeeks": 35.6,
+        "stageGrades": { "LAG": [1,2,3], "MELLAN": [4,5,6], "HOG": [7,8,9] },
+        "cells": [
+          { "subjectCode": "BL", "stage": "LAG", "nationalHours": 60, "plannedHours": 60.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-BL"] },
+          { "subjectCode": "BL", "stage": "MELLAN", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-BL"] },
+          { "subjectCode": "BL", "stage": "HOG", "nationalHours": 100, "plannedHours": 100.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-BL"] },
+          { "subjectCode": "EN", "stage": "LAG", "nationalHours": 60, "plannedHours": 60.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-EN"] },
+          { "subjectCode": "EN", "stage": "MELLAN", "nationalHours": 220, "plannedHours": 220.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-EN"] },
+          { "subjectCode": "EN", "stage": "HOG", "nationalHours": 200, "plannedHours": 200.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-EN"] },
+          { "subjectCode": "HKK", "stage": "LAG_MELLAN", "nationalHours": 40, "plannedHours": 40.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-HKK"] },
+          { "subjectCode": "HKK", "stage": "HOG", "nationalHours": 90, "plannedHours": 90.2, "deficitHours": 0, "surplusHours": 0.2, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-HKK"] },
+          { "subjectCode": "IDH", "stage": "LAG", "nationalHours": 140, "plannedHours": 140, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-IDH"] },
+          { "subjectCode": "IDH", "stage": "MELLAN", "nationalHours": 180, "plannedHours": 180.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-IDH"] },
+          { "subjectCode": "IDH", "stage": "HOG", "nationalHours": 280, "plannedHours": 280.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-IDH"] },
+          { "subjectCode": "M2", "stage": "MELLAN", "nationalHours": 48, "plannedHours": 17.8, "deficitHours": 30.2, "surplusHours": 0, "reducedPercent": 63, "protectedFromReduction": true, "subjectIds": ["s-Franska", "s-Spanska", "s-Tyska"] },
+          { "subjectCode": "M2", "stage": "HOG", "nationalHours": 272, "plannedHours": 106.8, "deficitHours": 165.2, "surplusHours": 0, "reducedPercent": 60.8, "protectedFromReduction": true, "subjectIds": ["s-Franska", "s-Spanska", "s-Tyska"] },
+          { "subjectCode": "MA", "stage": "LAG", "nationalHours": 420, "plannedHours": 420.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
+          { "subjectCode": "MA", "stage": "MELLAN", "nationalHours": 410, "plannedHours": 410.6, "deficitHours": 0, "surplusHours": 0.6, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
+          { "subjectCode": "MA", "stage": "HOG", "nationalHours": 400, "plannedHours": 400.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
+          { "subjectCode": "MU", "stage": "LAG", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MU"] },
+          { "subjectCode": "MU", "stage": "MELLAN", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MU"] },
+          { "subjectCode": "MU", "stage": "HOG", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MU"] },
+          { "subjectCode": "NO", "stage": "LAG", "nationalHours": 145, "plannedHours": 145.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-NO"] },
+          {
+            "subjectCode": "NO",
+            "stage": "MELLAN",
+            "nationalHours": 216,
+            "plannedHours": 217.2,
+            "deficitHours": 0,
+            "surplusHours": 1.2,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "BI", "minimumHours": 60, "plannedHours": 72.4 },
+              { "subjectCode": "FY", "minimumHours": 60, "plannedHours": 72.4 },
+              { "subjectCode": "KE", "minimumHours": 60, "plannedHours": 72.4 }
+            ],
+            "subjectIds": [
+              "s-BI",
+              "s-FY",
+              "s-KE"
+            ]
+          },
+          {
+            "subjectCode": "NO",
+            "stage": "HOG",
+            "nationalHours": 289,
+            "plannedHours": 289.5,
+            "deficitHours": 0,
+            "surplusHours": 0.5,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "BI", "minimumHours": 80, "plannedHours": 97.3 },
+              { "subjectCode": "FY", "minimumHours": 80, "plannedHours": 96.1 },
+              { "subjectCode": "KE", "minimumHours": 80, "plannedHours": 96.1 }
+            ],
+            "subjectIds": [
+              "s-BI",
+              "s-FY",
+              "s-KE"
+            ]
+          },
+          { "subjectCode": "SL", "stage": "LAG", "nationalHours": 50, "plannedHours": 50.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SL"] },
+          { "subjectCode": "SL", "stage": "MELLAN", "nationalHours": 140, "plannedHours": 140, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SL"] },
+          { "subjectCode": "SL", "stage": "HOG", "nationalHours": 140, "plannedHours": 140, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SL"] },
+          { "subjectCode": "SO", "stage": "LAG", "nationalHours": 200, "plannedHours": 200.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SO"] },
+          {
+            "subjectCode": "SO",
+            "stage": "MELLAN",
+            "nationalHours": 375,
+            "plannedHours": 375.6,
+            "deficitHours": 0,
+            "surplusHours": 0.6,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "GE", "minimumHours": 75, "plannedHours": 90.2 },
+              { "subjectCode": "HI", "minimumHours": 90, "plannedHours": 105 },
+              { "subjectCode": "RE", "minimumHours": 75, "plannedHours": 90.2 },
+              { "subjectCode": "SH", "minimumHours": 75, "plannedHours": 90.2 }
+            ],
+            "subjectIds": [
+              "s-GE",
+              "s-HI",
+              "s-RE",
+              "s-SH"
+            ]
+          },
+          {
+            "subjectCode": "SO",
+            "stage": "HOG",
+            "nationalHours": 405,
+            "plannedHours": 406.4,
+            "deficitHours": 0,
+            "surplusHours": 1.4,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "GE", "minimumHours": 80, "plannedHours": 94.3 },
+              { "subjectCode": "HI", "minimumHours": 100, "plannedHours": 114.5 },
+              { "subjectCode": "RE", "minimumHours": 80, "plannedHours": 94.3 },
+              { "subjectCode": "SH", "minimumHours": 90, "plannedHours": 103.2 }
+            ],
+            "subjectIds": [
+              "s-GE",
+              "s-HI",
+              "s-RE",
+              "s-SH"
+            ]
+          },
+          { "subjectCode": "SV_SVA", "stage": "LAG", "nationalHours": 680, "plannedHours": 680.6, "deficitHours": 0, "surplusHours": 0.6, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-SV_SVA"] },
+          { "subjectCode": "SV_SVA", "stage": "MELLAN", "nationalHours": 520, "plannedHours": 520.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-SV_SVA"] },
+          { "subjectCode": "SV_SVA", "stage": "HOG", "nationalHours": 290, "plannedHours": 290.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-SV_SVA"] },
+          { "subjectCode": "TK", "stage": "LAG", "nationalHours": 47, "plannedHours": 47.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-TK"] },
+          { "subjectCode": "TK", "stage": "MELLAN", "nationalHours": 65, "plannedHours": 65.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-TK"] },
+          { "subjectCode": "TK", "stage": "HOG", "nationalHours": 88, "plannedHours": 88.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-TK"] }
+        ],
+        "unmapped": [],
+        "gradesOutsideStages": [],
+        "skolansVal": { "availableHours": 600, "takenHours": 195.4, "placedHours": 11.8 },
+        "total": { "plannedHours": 6706.4, "guaranteedHours": 6890, "deficitHours": 183.6 },
+        "verdicts": [
+          {
+            "code": "TIMPLAN_PROTECTED_SUBJECT_REDUCED",
+            "severity": "warning",
+            "subjectCode": "M2",
+            "stage": "MELLAN",
+            "subjectIds": [
+              "s-Franska",
+              "s-Spanska",
+              "s-Tyska"
+            ],
+            "params": { "nationalHours": 48, "plannedHours": 17.8, "deficitHours": 30.2, "reducedPercent": 63 }
+          },
+          {
+            "code": "TIMPLAN_PROTECTED_SUBJECT_REDUCED",
+            "severity": "warning",
+            "subjectCode": "M2",
+            "stage": "HOG",
+            "subjectIds": [
+              "s-Franska",
+              "s-Spanska",
+              "s-Tyska"
+            ],
+            "params": { "nationalHours": 272, "plannedHours": 106.8, "deficitHours": 165.2, "reducedPercent": 60.8 }
+          },
+          {
+            "code": "TIMPLAN_TOTAL_BELOW_GUARANTEE",
+            "severity": "warning",
+            "params": { "plannedHours": 6706.4, "guaranteedHours": 6890, "deficitHours": 183.6 }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Svenska and SvA both planned at full length: one cell, not two",
+      "versionCode": "SFS2023:945/B1",
+      "planningWeeksTenths": 356,
+      "subjects": [
+        { "id": "s-BL", "name": "BL", "nationalCode": "BL", "countsTowardTimplan": true },
+        { "id": "s-EN", "name": "EN", "nationalCode": "EN", "countsTowardTimplan": true },
+        { "id": "s-HKK", "name": "HKK", "nationalCode": "HKK", "countsTowardTimplan": true },
+        { "id": "s-IDH", "name": "IDH", "nationalCode": "IDH", "countsTowardTimplan": true },
+        { "id": "s-MA", "name": "MA", "nationalCode": "MA", "countsTowardTimplan": true },
+        { "id": "s-MU", "name": "MU", "nationalCode": "MU", "countsTowardTimplan": true },
+        { "id": "s-NO", "name": "NO", "nationalCode": "NO", "countsTowardTimplan": true },
+        { "id": "s-BI", "name": "BI", "nationalCode": "BI", "countsTowardTimplan": true },
+        { "id": "s-FY", "name": "FY", "nationalCode": "FY", "countsTowardTimplan": true },
+        { "id": "s-KE", "name": "KE", "nationalCode": "KE", "countsTowardTimplan": true },
+        { "id": "s-SO", "name": "SO", "nationalCode": "SO", "countsTowardTimplan": true },
+        { "id": "s-GE", "name": "GE", "nationalCode": "GE", "countsTowardTimplan": true },
+        { "id": "s-HI", "name": "HI", "nationalCode": "HI", "countsTowardTimplan": true },
+        { "id": "s-RE", "name": "RE", "nationalCode": "RE", "countsTowardTimplan": true },
+        { "id": "s-SH", "name": "SH", "nationalCode": "SH", "countsTowardTimplan": true },
+        { "id": "s-SL", "name": "SL", "nationalCode": "SL", "countsTowardTimplan": true },
+        { "id": "s-SV_SVA", "name": "SV_SVA", "nationalCode": "SV_SVA", "countsTowardTimplan": true },
+        { "id": "s-TK", "name": "TK", "nationalCode": "TK", "countsTowardTimplan": true },
+        { "id": "s-M2", "name": "M2", "nationalCode": "M2", "countsTowardTimplan": true },
+        { "id": "s-SVA", "name": "Svenska som andraspråk", "nationalCode": "SV_SVA", "countsTowardTimplan": true }
+      ],
+      "entries": [
+        { "subjectId": "s-BL", "gradeLevel": 1, "minutesPerWeek": 34 },
+        { "subjectId": "s-BL", "gradeLevel": 2, "minutesPerWeek": 34 },
+        { "subjectId": "s-BL", "gradeLevel": 3, "minutesPerWeek": 34 },
+        { "subjectId": "s-BL", "gradeLevel": 4, "minutesPerWeek": 45 },
+        { "subjectId": "s-BL", "gradeLevel": 5, "minutesPerWeek": 45 },
+        { "subjectId": "s-BL", "gradeLevel": 6, "minutesPerWeek": 45 },
+        { "subjectId": "s-BL", "gradeLevel": 7, "minutesPerWeek": 57 },
+        { "subjectId": "s-BL", "gradeLevel": 8, "minutesPerWeek": 56 },
+        { "subjectId": "s-BL", "gradeLevel": 9, "minutesPerWeek": 56 },
+        { "subjectId": "s-EN", "gradeLevel": 1, "minutesPerWeek": 34 },
+        { "subjectId": "s-EN", "gradeLevel": 2, "minutesPerWeek": 34 },
+        { "subjectId": "s-EN", "gradeLevel": 3, "minutesPerWeek": 34 },
+        { "subjectId": "s-EN", "gradeLevel": 4, "minutesPerWeek": 124 },
+        { "subjectId": "s-EN", "gradeLevel": 5, "minutesPerWeek": 124 },
+        { "subjectId": "s-EN", "gradeLevel": 6, "minutesPerWeek": 123 },
+        { "subjectId": "s-EN", "gradeLevel": 7, "minutesPerWeek": 113 },
+        { "subjectId": "s-EN", "gradeLevel": 8, "minutesPerWeek": 113 },
+        { "subjectId": "s-EN", "gradeLevel": 9, "minutesPerWeek": 112 },
+        { "subjectId": "s-HKK", "gradeLevel": 1, "minutesPerWeek": 12 },
+        { "subjectId": "s-HKK", "gradeLevel": 2, "minutesPerWeek": 12 },
+        { "subjectId": "s-HKK", "gradeLevel": 3, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 4, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 5, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 6, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 7, "minutesPerWeek": 51 },
+        { "subjectId": "s-HKK", "gradeLevel": 8, "minutesPerWeek": 51 },
+        { "subjectId": "s-HKK", "gradeLevel": 9, "minutesPerWeek": 50 },
+        { "subjectId": "s-IDH", "gradeLevel": 1, "minutesPerWeek": 79 },
+        { "subjectId": "s-IDH", "gradeLevel": 2, "minutesPerWeek": 79 },
+        { "subjectId": "s-IDH", "gradeLevel": 3, "minutesPerWeek": 78 },
+        { "subjectId": "s-IDH", "gradeLevel": 4, "minutesPerWeek": 102 },
+        { "subjectId": "s-IDH", "gradeLevel": 5, "minutesPerWeek": 101 },
+        { "subjectId": "s-IDH", "gradeLevel": 6, "minutesPerWeek": 101 },
+        { "subjectId": "s-IDH", "gradeLevel": 7, "minutesPerWeek": 158 },
+        { "subjectId": "s-IDH", "gradeLevel": 8, "minutesPerWeek": 157 },
+        { "subjectId": "s-IDH", "gradeLevel": 9, "minutesPerWeek": 157 },
+        { "subjectId": "s-MA", "gradeLevel": 1, "minutesPerWeek": 236 },
+        { "subjectId": "s-MA", "gradeLevel": 2, "minutesPerWeek": 236 },
+        { "subjectId": "s-MA", "gradeLevel": 3, "minutesPerWeek": 236 },
+        { "subjectId": "s-MA", "gradeLevel": 4, "minutesPerWeek": 231 },
+        { "subjectId": "s-MA", "gradeLevel": 5, "minutesPerWeek": 231 },
+        { "subjectId": "s-MA", "gradeLevel": 6, "minutesPerWeek": 230 },
+        { "subjectId": "s-MA", "gradeLevel": 7, "minutesPerWeek": 225 },
+        { "subjectId": "s-MA", "gradeLevel": 8, "minutesPerWeek": 225 },
+        { "subjectId": "s-MA", "gradeLevel": 9, "minutesPerWeek": 225 },
+        { "subjectId": "s-MU", "gradeLevel": 1, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 2, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 3, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 4, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 5, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 6, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 7, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 8, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 9, "minutesPerWeek": 45 },
+        { "subjectId": "s-NO", "gradeLevel": 1, "minutesPerWeek": 82 },
+        { "subjectId": "s-NO", "gradeLevel": 2, "minutesPerWeek": 82 },
+        { "subjectId": "s-NO", "gradeLevel": 3, "minutesPerWeek": 81 },
+        { "subjectId": "s-BI", "gradeLevel": 4, "minutesPerWeek": 41 },
+        { "subjectId": "s-BI", "gradeLevel": 5, "minutesPerWeek": 41 },
+        { "subjectId": "s-BI", "gradeLevel": 6, "minutesPerWeek": 40 },
+        { "subjectId": "s-FY", "gradeLevel": 4, "minutesPerWeek": 41 },
+        { "subjectId": "s-FY", "gradeLevel": 5, "minutesPerWeek": 41 },
+        { "subjectId": "s-FY", "gradeLevel": 6, "minutesPerWeek": 40 },
+        { "subjectId": "s-KE", "gradeLevel": 4, "minutesPerWeek": 41 },
+        { "subjectId": "s-KE", "gradeLevel": 5, "minutesPerWeek": 41 },
+        { "subjectId": "s-KE", "gradeLevel": 6, "minutesPerWeek": 40 },
+        { "subjectId": "s-BI", "gradeLevel": 7, "minutesPerWeek": 55 },
+        { "subjectId": "s-BI", "gradeLevel": 8, "minutesPerWeek": 55 },
+        { "subjectId": "s-BI", "gradeLevel": 9, "minutesPerWeek": 54 },
+        { "subjectId": "s-FY", "gradeLevel": 7, "minutesPerWeek": 54 },
+        { "subjectId": "s-FY", "gradeLevel": 8, "minutesPerWeek": 54 },
+        { "subjectId": "s-FY", "gradeLevel": 9, "minutesPerWeek": 54 },
+        { "subjectId": "s-KE", "gradeLevel": 7, "minutesPerWeek": 54 },
+        { "subjectId": "s-KE", "gradeLevel": 8, "minutesPerWeek": 54 },
+        { "subjectId": "s-KE", "gradeLevel": 9, "minutesPerWeek": 54 },
+        { "subjectId": "s-SO", "gradeLevel": 1, "minutesPerWeek": 113 },
+        { "subjectId": "s-SO", "gradeLevel": 2, "minutesPerWeek": 113 },
+        { "subjectId": "s-SO", "gradeLevel": 3, "minutesPerWeek": 112 },
+        { "subjectId": "s-GE", "gradeLevel": 4, "minutesPerWeek": 51 },
+        { "subjectId": "s-GE", "gradeLevel": 5, "minutesPerWeek": 51 },
+        { "subjectId": "s-GE", "gradeLevel": 6, "minutesPerWeek": 50 },
+        { "subjectId": "s-HI", "gradeLevel": 4, "minutesPerWeek": 59 },
+        { "subjectId": "s-HI", "gradeLevel": 5, "minutesPerWeek": 59 },
+        { "subjectId": "s-HI", "gradeLevel": 6, "minutesPerWeek": 59 },
+        { "subjectId": "s-RE", "gradeLevel": 4, "minutesPerWeek": 51 },
+        { "subjectId": "s-RE", "gradeLevel": 5, "minutesPerWeek": 51 },
+        { "subjectId": "s-RE", "gradeLevel": 6, "minutesPerWeek": 50 },
+        { "subjectId": "s-SH", "gradeLevel": 4, "minutesPerWeek": 51 },
+        { "subjectId": "s-SH", "gradeLevel": 5, "minutesPerWeek": 51 },
+        { "subjectId": "s-SH", "gradeLevel": 6, "minutesPerWeek": 50 },
+        { "subjectId": "s-GE", "gradeLevel": 7, "minutesPerWeek": 53 },
+        { "subjectId": "s-GE", "gradeLevel": 8, "minutesPerWeek": 53 },
+        { "subjectId": "s-GE", "gradeLevel": 9, "minutesPerWeek": 53 },
+        { "subjectId": "s-HI", "gradeLevel": 7, "minutesPerWeek": 65 },
+        { "subjectId": "s-HI", "gradeLevel": 8, "minutesPerWeek": 64 },
+        { "subjectId": "s-HI", "gradeLevel": 9, "minutesPerWeek": 64 },
+        { "subjectId": "s-RE", "gradeLevel": 7, "minutesPerWeek": 53 },
+        { "subjectId": "s-RE", "gradeLevel": 8, "minutesPerWeek": 53 },
+        { "subjectId": "s-RE", "gradeLevel": 9, "minutesPerWeek": 53 },
+        { "subjectId": "s-SH", "gradeLevel": 7, "minutesPerWeek": 58 },
+        { "subjectId": "s-SH", "gradeLevel": 8, "minutesPerWeek": 58 },
+        { "subjectId": "s-SH", "gradeLevel": 9, "minutesPerWeek": 58 },
+        { "subjectId": "s-SL", "gradeLevel": 1, "minutesPerWeek": 29 },
+        { "subjectId": "s-SL", "gradeLevel": 2, "minutesPerWeek": 28 },
+        { "subjectId": "s-SL", "gradeLevel": 3, "minutesPerWeek": 28 },
+        { "subjectId": "s-SL", "gradeLevel": 4, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 5, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 6, "minutesPerWeek": 78 },
+        { "subjectId": "s-SL", "gradeLevel": 7, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 8, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 9, "minutesPerWeek": 78 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 1, "minutesPerWeek": 383 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 2, "minutesPerWeek": 382 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 3, "minutesPerWeek": 382 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 4, "minutesPerWeek": 293 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 5, "minutesPerWeek": 292 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 6, "minutesPerWeek": 292 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 7, "minutesPerWeek": 163 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 8, "minutesPerWeek": 163 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 9, "minutesPerWeek": 163 },
+        { "subjectId": "s-TK", "gradeLevel": 1, "minutesPerWeek": 27 },
+        { "subjectId": "s-TK", "gradeLevel": 2, "minutesPerWeek": 27 },
+        { "subjectId": "s-TK", "gradeLevel": 3, "minutesPerWeek": 26 },
+        { "subjectId": "s-TK", "gradeLevel": 4, "minutesPerWeek": 37 },
+        { "subjectId": "s-TK", "gradeLevel": 5, "minutesPerWeek": 37 },
+        { "subjectId": "s-TK", "gradeLevel": 6, "minutesPerWeek": 36 },
+        { "subjectId": "s-TK", "gradeLevel": 7, "minutesPerWeek": 50 },
+        { "subjectId": "s-TK", "gradeLevel": 8, "minutesPerWeek": 50 },
+        { "subjectId": "s-TK", "gradeLevel": 9, "minutesPerWeek": 49 },
+        { "subjectId": "s-M2", "gradeLevel": 4, "minutesPerWeek": 27 },
+        { "subjectId": "s-M2", "gradeLevel": 5, "minutesPerWeek": 27 },
+        { "subjectId": "s-M2", "gradeLevel": 6, "minutesPerWeek": 27 },
+        { "subjectId": "s-M2", "gradeLevel": 7, "minutesPerWeek": 153 },
+        { "subjectId": "s-M2", "gradeLevel": 8, "minutesPerWeek": 153 },
+        { "subjectId": "s-M2", "gradeLevel": 9, "minutesPerWeek": 153 },
+        { "subjectId": "s-SVA", "gradeLevel": 1, "minutesPerWeek": 383 },
+        { "subjectId": "s-SVA", "gradeLevel": 2, "minutesPerWeek": 382 },
+        { "subjectId": "s-SVA", "gradeLevel": 3, "minutesPerWeek": 382 },
+        { "subjectId": "s-SVA", "gradeLevel": 4, "minutesPerWeek": 293 },
+        { "subjectId": "s-SVA", "gradeLevel": 5, "minutesPerWeek": 292 },
+        { "subjectId": "s-SVA", "gradeLevel": 6, "minutesPerWeek": 292 },
+        { "subjectId": "s-SVA", "gradeLevel": 7, "minutesPerWeek": 163 },
+        { "subjectId": "s-SVA", "gradeLevel": 8, "minutesPerWeek": 163 },
+        { "subjectId": "s-SVA", "gradeLevel": 9, "minutesPerWeek": 163 }
+      ],
+      "check": {
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "planningWeeks": 35.6,
+        "stageGrades": { "LAG": [1,2,3], "MELLAN": [4,5,6], "HOG": [7,8,9] },
+        "cells": [
+          { "subjectCode": "BL", "stage": "LAG", "nationalHours": 60, "plannedHours": 60.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-BL"] },
+          { "subjectCode": "BL", "stage": "MELLAN", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-BL"] },
+          { "subjectCode": "BL", "stage": "HOG", "nationalHours": 100, "plannedHours": 100.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-BL"] },
+          { "subjectCode": "EN", "stage": "LAG", "nationalHours": 60, "plannedHours": 60.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-EN"] },
+          { "subjectCode": "EN", "stage": "MELLAN", "nationalHours": 220, "plannedHours": 220.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-EN"] },
+          { "subjectCode": "EN", "stage": "HOG", "nationalHours": 200, "plannedHours": 200.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-EN"] },
+          { "subjectCode": "HKK", "stage": "LAG_MELLAN", "nationalHours": 40, "plannedHours": 40.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-HKK"] },
+          { "subjectCode": "HKK", "stage": "HOG", "nationalHours": 90, "plannedHours": 90.2, "deficitHours": 0, "surplusHours": 0.2, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-HKK"] },
+          { "subjectCode": "IDH", "stage": "LAG", "nationalHours": 140, "plannedHours": 140, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-IDH"] },
+          { "subjectCode": "IDH", "stage": "MELLAN", "nationalHours": 180, "plannedHours": 180.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-IDH"] },
+          { "subjectCode": "IDH", "stage": "HOG", "nationalHours": 280, "plannedHours": 280.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-IDH"] },
+          { "subjectCode": "M2", "stage": "MELLAN", "nationalHours": 48, "plannedHours": 48.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-M2"] },
+          { "subjectCode": "M2", "stage": "HOG", "nationalHours": 272, "plannedHours": 272.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-M2"] },
+          { "subjectCode": "MA", "stage": "LAG", "nationalHours": 420, "plannedHours": 420.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
+          { "subjectCode": "MA", "stage": "MELLAN", "nationalHours": 410, "plannedHours": 410.6, "deficitHours": 0, "surplusHours": 0.6, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
+          { "subjectCode": "MA", "stage": "HOG", "nationalHours": 400, "plannedHours": 400.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
+          { "subjectCode": "MU", "stage": "LAG", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MU"] },
+          { "subjectCode": "MU", "stage": "MELLAN", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MU"] },
+          { "subjectCode": "MU", "stage": "HOG", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MU"] },
+          { "subjectCode": "NO", "stage": "LAG", "nationalHours": 145, "plannedHours": 145.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-NO"] },
+          {
+            "subjectCode": "NO",
+            "stage": "MELLAN",
+            "nationalHours": 216,
+            "plannedHours": 217.2,
+            "deficitHours": 0,
+            "surplusHours": 1.2,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "BI", "minimumHours": 60, "plannedHours": 72.4 },
+              { "subjectCode": "FY", "minimumHours": 60, "plannedHours": 72.4 },
+              { "subjectCode": "KE", "minimumHours": 60, "plannedHours": 72.4 }
+            ],
+            "subjectIds": [
+              "s-BI",
+              "s-FY",
+              "s-KE"
+            ]
+          },
+          {
+            "subjectCode": "NO",
+            "stage": "HOG",
+            "nationalHours": 289,
+            "plannedHours": 289.5,
+            "deficitHours": 0,
+            "surplusHours": 0.5,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "BI", "minimumHours": 80, "plannedHours": 97.3 },
+              { "subjectCode": "FY", "minimumHours": 80, "plannedHours": 96.1 },
+              { "subjectCode": "KE", "minimumHours": 80, "plannedHours": 96.1 }
+            ],
+            "subjectIds": [
+              "s-BI",
+              "s-FY",
+              "s-KE"
+            ]
+          },
+          { "subjectCode": "SL", "stage": "LAG", "nationalHours": 50, "plannedHours": 50.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SL"] },
+          { "subjectCode": "SL", "stage": "MELLAN", "nationalHours": 140, "plannedHours": 140, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SL"] },
+          { "subjectCode": "SL", "stage": "HOG", "nationalHours": 140, "plannedHours": 140, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SL"] },
+          { "subjectCode": "SO", "stage": "LAG", "nationalHours": 200, "plannedHours": 200.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SO"] },
+          {
+            "subjectCode": "SO",
+            "stage": "MELLAN",
+            "nationalHours": 375,
+            "plannedHours": 375.6,
+            "deficitHours": 0,
+            "surplusHours": 0.6,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "GE", "minimumHours": 75, "plannedHours": 90.2 },
+              { "subjectCode": "HI", "minimumHours": 90, "plannedHours": 105 },
+              { "subjectCode": "RE", "minimumHours": 75, "plannedHours": 90.2 },
+              { "subjectCode": "SH", "minimumHours": 75, "plannedHours": 90.2 }
+            ],
+            "subjectIds": [
+              "s-GE",
+              "s-HI",
+              "s-RE",
+              "s-SH"
+            ]
+          },
+          {
+            "subjectCode": "SO",
+            "stage": "HOG",
+            "nationalHours": 405,
+            "plannedHours": 406.4,
+            "deficitHours": 0,
+            "surplusHours": 1.4,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "GE", "minimumHours": 80, "plannedHours": 94.3 },
+              { "subjectCode": "HI", "minimumHours": 100, "plannedHours": 114.5 },
+              { "subjectCode": "RE", "minimumHours": 80, "plannedHours": 94.3 },
+              { "subjectCode": "SH", "minimumHours": 90, "plannedHours": 103.2 }
+            ],
+            "subjectIds": [
+              "s-GE",
+              "s-HI",
+              "s-RE",
+              "s-SH"
+            ]
+          },
+          { "subjectCode": "SV_SVA", "stage": "LAG", "nationalHours": 680, "plannedHours": 680.6, "deficitHours": 0, "surplusHours": 0.6, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-SVA", "s-SV_SVA"] },
+          { "subjectCode": "SV_SVA", "stage": "MELLAN", "nationalHours": 520, "plannedHours": 520.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-SVA", "s-SV_SVA"] },
+          { "subjectCode": "SV_SVA", "stage": "HOG", "nationalHours": 290, "plannedHours": 290.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-SVA", "s-SV_SVA"] },
+          { "subjectCode": "TK", "stage": "LAG", "nationalHours": 47, "plannedHours": 47.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-TK"] },
+          { "subjectCode": "TK", "stage": "MELLAN", "nationalHours": 65, "plannedHours": 65.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-TK"] },
+          { "subjectCode": "TK", "stage": "HOG", "nationalHours": 88, "plannedHours": 88.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-TK"] }
+        ],
+        "unmapped": [],
+        "gradesOutsideStages": [],
+        "skolansVal": { "availableHours": 600, "takenHours": 0, "placedHours": 12.2 },
+        "total": { "plannedHours": 6902.2, "guaranteedHours": 6890, "deficitHours": 0 },
+        "verdicts": []
+      }
+    },
+    {
+      "name": "matematik mellanstadiet 409,99 h: shown 409,9 and 0,1 under 410",
+      "versionCode": "SFS2023:945/B1",
+      "planningWeeksTenths": 356,
+      "subjects": [
+        { "id": "s-BL", "name": "BL", "nationalCode": "BL", "countsTowardTimplan": true },
+        { "id": "s-EN", "name": "EN", "nationalCode": "EN", "countsTowardTimplan": true },
+        { "id": "s-HKK", "name": "HKK", "nationalCode": "HKK", "countsTowardTimplan": true },
+        { "id": "s-IDH", "name": "IDH", "nationalCode": "IDH", "countsTowardTimplan": true },
+        { "id": "s-MA", "name": "MA", "nationalCode": "MA", "countsTowardTimplan": true },
+        { "id": "s-MU", "name": "MU", "nationalCode": "MU", "countsTowardTimplan": true },
+        { "id": "s-NO", "name": "NO", "nationalCode": "NO", "countsTowardTimplan": true },
+        { "id": "s-BI", "name": "BI", "nationalCode": "BI", "countsTowardTimplan": true },
+        { "id": "s-FY", "name": "FY", "nationalCode": "FY", "countsTowardTimplan": true },
+        { "id": "s-KE", "name": "KE", "nationalCode": "KE", "countsTowardTimplan": true },
+        { "id": "s-SO", "name": "SO", "nationalCode": "SO", "countsTowardTimplan": true },
+        { "id": "s-GE", "name": "GE", "nationalCode": "GE", "countsTowardTimplan": true },
+        { "id": "s-HI", "name": "HI", "nationalCode": "HI", "countsTowardTimplan": true },
+        { "id": "s-RE", "name": "RE", "nationalCode": "RE", "countsTowardTimplan": true },
+        { "id": "s-SH", "name": "SH", "nationalCode": "SH", "countsTowardTimplan": true },
+        { "id": "s-SL", "name": "SL", "nationalCode": "SL", "countsTowardTimplan": true },
+        { "id": "s-SV_SVA", "name": "SV_SVA", "nationalCode": "SV_SVA", "countsTowardTimplan": true },
+        { "id": "s-TK", "name": "TK", "nationalCode": "TK", "countsTowardTimplan": true },
+        { "id": "s-M2", "name": "M2", "nationalCode": "M2", "countsTowardTimplan": true }
+      ],
+      "entries": [
+        { "subjectId": "s-BL", "gradeLevel": 1, "minutesPerWeek": 34 },
+        { "subjectId": "s-BL", "gradeLevel": 2, "minutesPerWeek": 34 },
+        { "subjectId": "s-BL", "gradeLevel": 3, "minutesPerWeek": 34 },
+        { "subjectId": "s-BL", "gradeLevel": 4, "minutesPerWeek": 45 },
+        { "subjectId": "s-BL", "gradeLevel": 5, "minutesPerWeek": 45 },
+        { "subjectId": "s-BL", "gradeLevel": 6, "minutesPerWeek": 45 },
+        { "subjectId": "s-BL", "gradeLevel": 7, "minutesPerWeek": 57 },
+        { "subjectId": "s-BL", "gradeLevel": 8, "minutesPerWeek": 56 },
+        { "subjectId": "s-BL", "gradeLevel": 9, "minutesPerWeek": 56 },
+        { "subjectId": "s-EN", "gradeLevel": 1, "minutesPerWeek": 34 },
+        { "subjectId": "s-EN", "gradeLevel": 2, "minutesPerWeek": 34 },
+        { "subjectId": "s-EN", "gradeLevel": 3, "minutesPerWeek": 34 },
+        { "subjectId": "s-EN", "gradeLevel": 4, "minutesPerWeek": 124 },
+        { "subjectId": "s-EN", "gradeLevel": 5, "minutesPerWeek": 124 },
+        { "subjectId": "s-EN", "gradeLevel": 6, "minutesPerWeek": 123 },
+        { "subjectId": "s-EN", "gradeLevel": 7, "minutesPerWeek": 113 },
+        { "subjectId": "s-EN", "gradeLevel": 8, "minutesPerWeek": 113 },
+        { "subjectId": "s-EN", "gradeLevel": 9, "minutesPerWeek": 112 },
+        { "subjectId": "s-HKK", "gradeLevel": 1, "minutesPerWeek": 12 },
+        { "subjectId": "s-HKK", "gradeLevel": 2, "minutesPerWeek": 12 },
+        { "subjectId": "s-HKK", "gradeLevel": 3, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 4, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 5, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 6, "minutesPerWeek": 11 },
+        { "subjectId": "s-HKK", "gradeLevel": 7, "minutesPerWeek": 51 },
+        { "subjectId": "s-HKK", "gradeLevel": 8, "minutesPerWeek": 51 },
+        { "subjectId": "s-HKK", "gradeLevel": 9, "minutesPerWeek": 50 },
+        { "subjectId": "s-IDH", "gradeLevel": 1, "minutesPerWeek": 79 },
+        { "subjectId": "s-IDH", "gradeLevel": 2, "minutesPerWeek": 79 },
+        { "subjectId": "s-IDH", "gradeLevel": 3, "minutesPerWeek": 78 },
+        { "subjectId": "s-IDH", "gradeLevel": 4, "minutesPerWeek": 102 },
+        { "subjectId": "s-IDH", "gradeLevel": 5, "minutesPerWeek": 101 },
+        { "subjectId": "s-IDH", "gradeLevel": 6, "minutesPerWeek": 101 },
+        { "subjectId": "s-IDH", "gradeLevel": 7, "minutesPerWeek": 158 },
+        { "subjectId": "s-IDH", "gradeLevel": 8, "minutesPerWeek": 157 },
+        { "subjectId": "s-IDH", "gradeLevel": 9, "minutesPerWeek": 157 },
+        { "subjectId": "s-MA", "gradeLevel": 1, "minutesPerWeek": 236 },
+        { "subjectId": "s-MA", "gradeLevel": 2, "minutesPerWeek": 236 },
+        { "subjectId": "s-MA", "gradeLevel": 3, "minutesPerWeek": 236 },
+        { "subjectId": "s-MA", "gradeLevel": 7, "minutesPerWeek": 225 },
+        { "subjectId": "s-MA", "gradeLevel": 8, "minutesPerWeek": 225 },
+        { "subjectId": "s-MA", "gradeLevel": 9, "minutesPerWeek": 225 },
+        { "subjectId": "s-MU", "gradeLevel": 1, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 2, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 3, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 4, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 5, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 6, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 7, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 8, "minutesPerWeek": 45 },
+        { "subjectId": "s-MU", "gradeLevel": 9, "minutesPerWeek": 45 },
+        { "subjectId": "s-NO", "gradeLevel": 1, "minutesPerWeek": 82 },
+        { "subjectId": "s-NO", "gradeLevel": 2, "minutesPerWeek": 82 },
+        { "subjectId": "s-NO", "gradeLevel": 3, "minutesPerWeek": 81 },
+        { "subjectId": "s-BI", "gradeLevel": 4, "minutesPerWeek": 41 },
+        { "subjectId": "s-BI", "gradeLevel": 5, "minutesPerWeek": 41 },
+        { "subjectId": "s-BI", "gradeLevel": 6, "minutesPerWeek": 40 },
+        { "subjectId": "s-FY", "gradeLevel": 4, "minutesPerWeek": 41 },
+        { "subjectId": "s-FY", "gradeLevel": 5, "minutesPerWeek": 41 },
+        { "subjectId": "s-FY", "gradeLevel": 6, "minutesPerWeek": 40 },
+        { "subjectId": "s-KE", "gradeLevel": 4, "minutesPerWeek": 41 },
+        { "subjectId": "s-KE", "gradeLevel": 5, "minutesPerWeek": 41 },
+        { "subjectId": "s-KE", "gradeLevel": 6, "minutesPerWeek": 40 },
+        { "subjectId": "s-BI", "gradeLevel": 7, "minutesPerWeek": 55 },
+        { "subjectId": "s-BI", "gradeLevel": 8, "minutesPerWeek": 55 },
+        { "subjectId": "s-BI", "gradeLevel": 9, "minutesPerWeek": 54 },
+        { "subjectId": "s-FY", "gradeLevel": 7, "minutesPerWeek": 54 },
+        { "subjectId": "s-FY", "gradeLevel": 8, "minutesPerWeek": 54 },
+        { "subjectId": "s-FY", "gradeLevel": 9, "minutesPerWeek": 54 },
+        { "subjectId": "s-KE", "gradeLevel": 7, "minutesPerWeek": 54 },
+        { "subjectId": "s-KE", "gradeLevel": 8, "minutesPerWeek": 54 },
+        { "subjectId": "s-KE", "gradeLevel": 9, "minutesPerWeek": 54 },
+        { "subjectId": "s-SO", "gradeLevel": 1, "minutesPerWeek": 113 },
+        { "subjectId": "s-SO", "gradeLevel": 2, "minutesPerWeek": 113 },
+        { "subjectId": "s-SO", "gradeLevel": 3, "minutesPerWeek": 112 },
+        { "subjectId": "s-GE", "gradeLevel": 4, "minutesPerWeek": 51 },
+        { "subjectId": "s-GE", "gradeLevel": 5, "minutesPerWeek": 51 },
+        { "subjectId": "s-GE", "gradeLevel": 6, "minutesPerWeek": 50 },
+        { "subjectId": "s-HI", "gradeLevel": 4, "minutesPerWeek": 59 },
+        { "subjectId": "s-HI", "gradeLevel": 5, "minutesPerWeek": 59 },
+        { "subjectId": "s-HI", "gradeLevel": 6, "minutesPerWeek": 59 },
+        { "subjectId": "s-RE", "gradeLevel": 4, "minutesPerWeek": 51 },
+        { "subjectId": "s-RE", "gradeLevel": 5, "minutesPerWeek": 51 },
+        { "subjectId": "s-RE", "gradeLevel": 6, "minutesPerWeek": 50 },
+        { "subjectId": "s-SH", "gradeLevel": 4, "minutesPerWeek": 51 },
+        { "subjectId": "s-SH", "gradeLevel": 5, "minutesPerWeek": 51 },
+        { "subjectId": "s-SH", "gradeLevel": 6, "minutesPerWeek": 50 },
+        { "subjectId": "s-GE", "gradeLevel": 7, "minutesPerWeek": 53 },
+        { "subjectId": "s-GE", "gradeLevel": 8, "minutesPerWeek": 53 },
+        { "subjectId": "s-GE", "gradeLevel": 9, "minutesPerWeek": 53 },
+        { "subjectId": "s-HI", "gradeLevel": 7, "minutesPerWeek": 65 },
+        { "subjectId": "s-HI", "gradeLevel": 8, "minutesPerWeek": 64 },
+        { "subjectId": "s-HI", "gradeLevel": 9, "minutesPerWeek": 64 },
+        { "subjectId": "s-RE", "gradeLevel": 7, "minutesPerWeek": 53 },
+        { "subjectId": "s-RE", "gradeLevel": 8, "minutesPerWeek": 53 },
+        { "subjectId": "s-RE", "gradeLevel": 9, "minutesPerWeek": 53 },
+        { "subjectId": "s-SH", "gradeLevel": 7, "minutesPerWeek": 58 },
+        { "subjectId": "s-SH", "gradeLevel": 8, "minutesPerWeek": 58 },
+        { "subjectId": "s-SH", "gradeLevel": 9, "minutesPerWeek": 58 },
+        { "subjectId": "s-SL", "gradeLevel": 1, "minutesPerWeek": 29 },
+        { "subjectId": "s-SL", "gradeLevel": 2, "minutesPerWeek": 28 },
+        { "subjectId": "s-SL", "gradeLevel": 3, "minutesPerWeek": 28 },
+        { "subjectId": "s-SL", "gradeLevel": 4, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 5, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 6, "minutesPerWeek": 78 },
+        { "subjectId": "s-SL", "gradeLevel": 7, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 8, "minutesPerWeek": 79 },
+        { "subjectId": "s-SL", "gradeLevel": 9, "minutesPerWeek": 78 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 1, "minutesPerWeek": 383 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 2, "minutesPerWeek": 382 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 3, "minutesPerWeek": 382 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 4, "minutesPerWeek": 293 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 5, "minutesPerWeek": 292 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 6, "minutesPerWeek": 292 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 7, "minutesPerWeek": 163 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 8, "minutesPerWeek": 163 },
+        { "subjectId": "s-SV_SVA", "gradeLevel": 9, "minutesPerWeek": 163 },
+        { "subjectId": "s-TK", "gradeLevel": 1, "minutesPerWeek": 27 },
+        { "subjectId": "s-TK", "gradeLevel": 2, "minutesPerWeek": 27 },
+        { "subjectId": "s-TK", "gradeLevel": 3, "minutesPerWeek": 26 },
+        { "subjectId": "s-TK", "gradeLevel": 4, "minutesPerWeek": 37 },
+        { "subjectId": "s-TK", "gradeLevel": 5, "minutesPerWeek": 37 },
+        { "subjectId": "s-TK", "gradeLevel": 6, "minutesPerWeek": 36 },
+        { "subjectId": "s-TK", "gradeLevel": 7, "minutesPerWeek": 50 },
+        { "subjectId": "s-TK", "gradeLevel": 8, "minutesPerWeek": 50 },
+        { "subjectId": "s-TK", "gradeLevel": 9, "minutesPerWeek": 49 },
+        { "subjectId": "s-M2", "gradeLevel": 4, "minutesPerWeek": 27 },
+        { "subjectId": "s-M2", "gradeLevel": 5, "minutesPerWeek": 27 },
+        { "subjectId": "s-M2", "gradeLevel": 6, "minutesPerWeek": 27 },
+        { "subjectId": "s-M2", "gradeLevel": 7, "minutesPerWeek": 153 },
+        { "subjectId": "s-M2", "gradeLevel": 8, "minutesPerWeek": 153 },
+        { "subjectId": "s-M2", "gradeLevel": 9, "minutesPerWeek": 153 },
+        { "subjectId": "s-MA", "gradeLevel": 4, "minutesPerWeek": 231 },
+        { "subjectId": "s-MA", "gradeLevel": 5, "minutesPerWeek": 230 },
+        { "subjectId": "s-MA", "gradeLevel": 6, "minutesPerWeek": 230 }
+      ],
+      "check": {
+        "versionCode": "SFS2023:945/B1",
+        "distributionPublished": true,
+        "planningWeeks": 35.6,
+        "stageGrades": { "LAG": [1,2,3], "MELLAN": [4,5,6], "HOG": [7,8,9] },
+        "cells": [
+          { "subjectCode": "BL", "stage": "LAG", "nationalHours": 60, "plannedHours": 60.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-BL"] },
+          { "subjectCode": "BL", "stage": "MELLAN", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-BL"] },
+          { "subjectCode": "BL", "stage": "HOG", "nationalHours": 100, "plannedHours": 100.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-BL"] },
+          { "subjectCode": "EN", "stage": "LAG", "nationalHours": 60, "plannedHours": 60.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-EN"] },
+          { "subjectCode": "EN", "stage": "MELLAN", "nationalHours": 220, "plannedHours": 220.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-EN"] },
+          { "subjectCode": "EN", "stage": "HOG", "nationalHours": 200, "plannedHours": 200.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-EN"] },
+          { "subjectCode": "HKK", "stage": "LAG_MELLAN", "nationalHours": 40, "plannedHours": 40.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-HKK"] },
+          { "subjectCode": "HKK", "stage": "HOG", "nationalHours": 90, "plannedHours": 90.2, "deficitHours": 0, "surplusHours": 0.2, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-HKK"] },
+          { "subjectCode": "IDH", "stage": "LAG", "nationalHours": 140, "plannedHours": 140, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-IDH"] },
+          { "subjectCode": "IDH", "stage": "MELLAN", "nationalHours": 180, "plannedHours": 180.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-IDH"] },
+          { "subjectCode": "IDH", "stage": "HOG", "nationalHours": 280, "plannedHours": 280.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-IDH"] },
+          { "subjectCode": "M2", "stage": "MELLAN", "nationalHours": 48, "plannedHours": 48.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-M2"] },
+          { "subjectCode": "M2", "stage": "HOG", "nationalHours": 272, "plannedHours": 272.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-M2"] },
+          { "subjectCode": "MA", "stage": "LAG", "nationalHours": 420, "plannedHours": 420.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
+          { "subjectCode": "MA", "stage": "MELLAN", "nationalHours": 410, "plannedHours": 409.9, "deficitHours": 0.1, "surplusHours": 0, "reducedPercent": 0.1, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
+          { "subjectCode": "MA", "stage": "HOG", "nationalHours": 400, "plannedHours": 400.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-MA"] },
+          { "subjectCode": "MU", "stage": "LAG", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MU"] },
+          { "subjectCode": "MU", "stage": "MELLAN", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MU"] },
+          { "subjectCode": "MU", "stage": "HOG", "nationalHours": 80, "plannedHours": 80.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MU"] },
+          { "subjectCode": "NO", "stage": "LAG", "nationalHours": 145, "plannedHours": 145.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-NO"] },
+          {
+            "subjectCode": "NO",
+            "stage": "MELLAN",
+            "nationalHours": 216,
+            "plannedHours": 217.2,
+            "deficitHours": 0,
+            "surplusHours": 1.2,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "BI", "minimumHours": 60, "plannedHours": 72.4 },
+              { "subjectCode": "FY", "minimumHours": 60, "plannedHours": 72.4 },
+              { "subjectCode": "KE", "minimumHours": 60, "plannedHours": 72.4 }
+            ],
+            "subjectIds": [
+              "s-BI",
+              "s-FY",
+              "s-KE"
+            ]
+          },
+          {
+            "subjectCode": "NO",
+            "stage": "HOG",
+            "nationalHours": 289,
+            "plannedHours": 289.5,
+            "deficitHours": 0,
+            "surplusHours": 0.5,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "BI", "minimumHours": 80, "plannedHours": 97.3 },
+              { "subjectCode": "FY", "minimumHours": 80, "plannedHours": 96.1 },
+              { "subjectCode": "KE", "minimumHours": 80, "plannedHours": 96.1 }
+            ],
+            "subjectIds": [
+              "s-BI",
+              "s-FY",
+              "s-KE"
+            ]
+          },
+          { "subjectCode": "SL", "stage": "LAG", "nationalHours": 50, "plannedHours": 50.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SL"] },
+          { "subjectCode": "SL", "stage": "MELLAN", "nationalHours": 140, "plannedHours": 140, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SL"] },
+          { "subjectCode": "SL", "stage": "HOG", "nationalHours": 140, "plannedHours": 140, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SL"] },
+          { "subjectCode": "SO", "stage": "LAG", "nationalHours": 200, "plannedHours": 200.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-SO"] },
+          {
+            "subjectCode": "SO",
+            "stage": "MELLAN",
+            "nationalHours": 375,
+            "plannedHours": 375.6,
+            "deficitHours": 0,
+            "surplusHours": 0.6,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "GE", "minimumHours": 75, "plannedHours": 90.2 },
+              { "subjectCode": "HI", "minimumHours": 90, "plannedHours": 105 },
+              { "subjectCode": "RE", "minimumHours": 75, "plannedHours": 90.2 },
+              { "subjectCode": "SH", "minimumHours": 75, "plannedHours": 90.2 }
+            ],
+            "subjectIds": [
+              "s-GE",
+              "s-HI",
+              "s-RE",
+              "s-SH"
+            ]
+          },
+          {
+            "subjectCode": "SO",
+            "stage": "HOG",
+            "nationalHours": 405,
+            "plannedHours": 406.4,
+            "deficitHours": 0,
+            "surplusHours": 1.4,
+            "reducedPercent": 0,
+            "protectedFromReduction": false,
+            "children": [
+              { "subjectCode": "GE", "minimumHours": 80, "plannedHours": 94.3 },
+              { "subjectCode": "HI", "minimumHours": 100, "plannedHours": 114.5 },
+              { "subjectCode": "RE", "minimumHours": 80, "plannedHours": 94.3 },
+              { "subjectCode": "SH", "minimumHours": 90, "plannedHours": 103.2 }
+            ],
+            "subjectIds": [
+              "s-GE",
+              "s-HI",
+              "s-RE",
+              "s-SH"
+            ]
+          },
+          { "subjectCode": "SV_SVA", "stage": "LAG", "nationalHours": 680, "plannedHours": 680.6, "deficitHours": 0, "surplusHours": 0.6, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-SV_SVA"] },
+          { "subjectCode": "SV_SVA", "stage": "MELLAN", "nationalHours": 520, "plannedHours": 520.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-SV_SVA"] },
+          { "subjectCode": "SV_SVA", "stage": "HOG", "nationalHours": 290, "plannedHours": 290.1, "deficitHours": 0, "surplusHours": 0.1, "reducedPercent": 0, "protectedFromReduction": true, "subjectIds": ["s-SV_SVA"] },
+          { "subjectCode": "TK", "stage": "LAG", "nationalHours": 47, "plannedHours": 47.5, "deficitHours": 0, "surplusHours": 0.5, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-TK"] },
+          { "subjectCode": "TK", "stage": "MELLAN", "nationalHours": 65, "plannedHours": 65.3, "deficitHours": 0, "surplusHours": 0.3, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-TK"] },
+          { "subjectCode": "TK", "stage": "HOG", "nationalHours": 88, "plannedHours": 88.4, "deficitHours": 0, "surplusHours": 0.4, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-TK"] }
+        ],
+        "unmapped": [],
+        "gradesOutsideStages": [],
+        "skolansVal": { "availableHours": 600, "takenHours": 0.1, "placedHours": 11.7 },
+        "total": { "plannedHours": 6901.7, "guaranteedHours": 6890, "deficitHours": 0 },
+        "verdicts": [
+          {
+            "code": "TIMPLAN_PROTECTED_SUBJECT_REDUCED",
+            "severity": "warning",
+            "subjectCode": "MA",
+            "stage": "MELLAN",
+            "subjectIds": [
+              "s-MA"
+            ],
+            "params": { "nationalHours": 410, "plannedHours": 409.9, "deficitHours": 0.1, "reducedPercent": 0.1 }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ämnesområden with an own subject and kommunikation reduced: no skolans val to count against",
+      "versionCode": "SFS2022:1619/B2B",
+      "planningWeeksTenths": 300,
+      "subjects": [
+        { "id": "s-EST", "name": "EST", "nationalCode": "EST", "countsTowardTimplan": true },
+        { "id": "s-KOM", "name": "KOM", "nationalCode": "KOM", "countsTowardTimplan": true },
+        { "id": "s-MOT", "name": "MOT", "nationalCode": "MOT", "countsTowardTimplan": true },
+        { "id": "s-VAR", "name": "VAR", "nationalCode": "VAR", "countsTowardTimplan": true },
+        { "id": "s-VER", "name": "VER", "nationalCode": "VER", "countsTowardTimplan": true },
+        { "id": "s-FORDELNINGSBAR", "name": "FORDELNINGSBAR", "nationalCode": "FORDELNINGSBAR", "countsTowardTimplan": true },
+        { "id": "s-SINNE", "name": "Sinnesträning", "nationalCode": null, "countsTowardTimplan": true }
+      ],
+      "entries": [
+        { "subjectId": "s-EST", "gradeLevel": 1, "minutesPerWeek": 210 },
+        { "subjectId": "s-EST", "gradeLevel": 2, "minutesPerWeek": 210 },
+        { "subjectId": "s-EST", "gradeLevel": 3, "minutesPerWeek": 210 },
+        { "subjectId": "s-EST", "gradeLevel": 4, "minutesPerWeek": 227 },
+        { "subjectId": "s-EST", "gradeLevel": 5, "minutesPerWeek": 227 },
+        { "subjectId": "s-EST", "gradeLevel": 6, "minutesPerWeek": 226 },
+        { "subjectId": "s-EST", "gradeLevel": 7, "minutesPerWeek": 240 },
+        { "subjectId": "s-EST", "gradeLevel": 8, "minutesPerWeek": 240 },
+        { "subjectId": "s-EST", "gradeLevel": 9, "minutesPerWeek": 240 },
+        { "subjectId": "s-KOM", "gradeLevel": 4, "minutesPerWeek": 227 },
+        { "subjectId": "s-KOM", "gradeLevel": 5, "minutesPerWeek": 227 },
+        { "subjectId": "s-KOM", "gradeLevel": 6, "minutesPerWeek": 226 },
+        { "subjectId": "s-KOM", "gradeLevel": 7, "minutesPerWeek": 240 },
+        { "subjectId": "s-KOM", "gradeLevel": 8, "minutesPerWeek": 240 },
+        { "subjectId": "s-KOM", "gradeLevel": 9, "minutesPerWeek": 240 },
+        { "subjectId": "s-MOT", "gradeLevel": 1, "minutesPerWeek": 210 },
+        { "subjectId": "s-MOT", "gradeLevel": 2, "minutesPerWeek": 210 },
+        { "subjectId": "s-MOT", "gradeLevel": 3, "minutesPerWeek": 210 },
+        { "subjectId": "s-MOT", "gradeLevel": 4, "minutesPerWeek": 227 },
+        { "subjectId": "s-MOT", "gradeLevel": 5, "minutesPerWeek": 227 },
+        { "subjectId": "s-MOT", "gradeLevel": 6, "minutesPerWeek": 226 },
+        { "subjectId": "s-MOT", "gradeLevel": 7, "minutesPerWeek": 240 },
+        { "subjectId": "s-MOT", "gradeLevel": 8, "minutesPerWeek": 240 },
+        { "subjectId": "s-MOT", "gradeLevel": 9, "minutesPerWeek": 240 },
+        { "subjectId": "s-VAR", "gradeLevel": 1, "minutesPerWeek": 210 },
+        { "subjectId": "s-VAR", "gradeLevel": 2, "minutesPerWeek": 210 },
+        { "subjectId": "s-VAR", "gradeLevel": 3, "minutesPerWeek": 210 },
+        { "subjectId": "s-VAR", "gradeLevel": 4, "minutesPerWeek": 227 },
+        { "subjectId": "s-VAR", "gradeLevel": 5, "minutesPerWeek": 227 },
+        { "subjectId": "s-VAR", "gradeLevel": 6, "minutesPerWeek": 226 },
+        { "subjectId": "s-VAR", "gradeLevel": 7, "minutesPerWeek": 240 },
+        { "subjectId": "s-VAR", "gradeLevel": 8, "minutesPerWeek": 240 },
+        { "subjectId": "s-VAR", "gradeLevel": 9, "minutesPerWeek": 240 },
+        { "subjectId": "s-VER", "gradeLevel": 1, "minutesPerWeek": 210 },
+        { "subjectId": "s-VER", "gradeLevel": 2, "minutesPerWeek": 210 },
+        { "subjectId": "s-VER", "gradeLevel": 3, "minutesPerWeek": 210 },
+        { "subjectId": "s-VER", "gradeLevel": 4, "minutesPerWeek": 227 },
+        { "subjectId": "s-VER", "gradeLevel": 5, "minutesPerWeek": 227 },
+        { "subjectId": "s-VER", "gradeLevel": 6, "minutesPerWeek": 226 },
+        { "subjectId": "s-VER", "gradeLevel": 7, "minutesPerWeek": 240 },
+        { "subjectId": "s-VER", "gradeLevel": 8, "minutesPerWeek": 240 },
+        { "subjectId": "s-VER", "gradeLevel": 9, "minutesPerWeek": 240 },
+        { "subjectId": "s-FORDELNINGSBAR", "gradeLevel": 1, "minutesPerWeek": 200 },
+        { "subjectId": "s-FORDELNINGSBAR", "gradeLevel": 2, "minutesPerWeek": 200 },
+        { "subjectId": "s-FORDELNINGSBAR", "gradeLevel": 3, "minutesPerWeek": 200 },
+        { "subjectId": "s-FORDELNINGSBAR", "gradeLevel": 4, "minutesPerWeek": 427 },
+        { "subjectId": "s-FORDELNINGSBAR", "gradeLevel": 5, "minutesPerWeek": 427 },
+        { "subjectId": "s-FORDELNINGSBAR", "gradeLevel": 6, "minutesPerWeek": 426 },
+        { "subjectId": "s-FORDELNINGSBAR", "gradeLevel": 7, "minutesPerWeek": 434 },
+        { "subjectId": "s-FORDELNINGSBAR", "gradeLevel": 8, "minutesPerWeek": 433 },
+        { "subjectId": "s-FORDELNINGSBAR", "gradeLevel": 9, "minutesPerWeek": 433 },
+        { "subjectId": "s-KOM", "gradeLevel": 1, "minutesPerWeek": 100 },
+        { "subjectId": "s-KOM", "gradeLevel": 2, "minutesPerWeek": 100 },
+        { "subjectId": "s-KOM", "gradeLevel": 3, "minutesPerWeek": 100 },
+        { "subjectId": "s-SINNE", "gradeLevel": 2, "minutesPerWeek": 60 }
+      ],
+      "check": {
+        "versionCode": "SFS2022:1619/B2B",
+        "distributionPublished": true,
+        "planningWeeks": 30,
+        "stageGrades": { "LAG": [1,2,3], "MELLAN": [4,5,6], "HOG": [7,8,9] },
+        "cells": [
+          { "subjectCode": "EST", "stage": "LAG", "nationalHours": 315, "plannedHours": 315, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-EST"] },
+          { "subjectCode": "EST", "stage": "MELLAN", "nationalHours": 340, "plannedHours": 340, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-EST"] },
+          { "subjectCode": "EST", "stage": "HOG", "nationalHours": 360, "plannedHours": 360, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-EST"] },
+          { "subjectCode": "FORDELNINGSBAR", "stage": "LAG", "nationalHours": 300, "plannedHours": 300, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-FORDELNINGSBAR"] },
+          { "subjectCode": "FORDELNINGSBAR", "stage": "MELLAN", "nationalHours": 640, "plannedHours": 640, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-FORDELNINGSBAR"] },
+          { "subjectCode": "FORDELNINGSBAR", "stage": "HOG", "nationalHours": 650, "plannedHours": 650, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-FORDELNINGSBAR"] },
+          { "subjectCode": "KOM", "stage": "LAG", "nationalHours": 315, "plannedHours": 150, "deficitHours": 165, "surplusHours": 0, "reducedPercent": 52.4, "protectedFromReduction": false, "subjectIds": ["s-KOM"] },
+          { "subjectCode": "KOM", "stage": "MELLAN", "nationalHours": 340, "plannedHours": 340, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-KOM"] },
+          { "subjectCode": "KOM", "stage": "HOG", "nationalHours": 360, "plannedHours": 360, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-KOM"] },
+          { "subjectCode": "MOT", "stage": "LAG", "nationalHours": 315, "plannedHours": 315, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MOT"] },
+          { "subjectCode": "MOT", "stage": "MELLAN", "nationalHours": 340, "plannedHours": 340, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MOT"] },
+          { "subjectCode": "MOT", "stage": "HOG", "nationalHours": 360, "plannedHours": 360, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-MOT"] },
+          { "subjectCode": "VAR", "stage": "LAG", "nationalHours": 315, "plannedHours": 315, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-VAR"] },
+          { "subjectCode": "VAR", "stage": "MELLAN", "nationalHours": 340, "plannedHours": 340, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-VAR"] },
+          { "subjectCode": "VAR", "stage": "HOG", "nationalHours": 360, "plannedHours": 360, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-VAR"] },
+          { "subjectCode": "VER", "stage": "LAG", "nationalHours": 315, "plannedHours": 315, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-VER"] },
+          { "subjectCode": "VER", "stage": "MELLAN", "nationalHours": 340, "plannedHours": 340, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-VER"] },
+          { "subjectCode": "VER", "stage": "HOG", "nationalHours": 360, "plannedHours": 360, "deficitHours": 0, "surplusHours": 0, "reducedPercent": 0, "protectedFromReduction": false, "subjectIds": ["s-VER"] }
+        ],
+        "unmapped": [
+          { "subjectId": "s-SINNE", "subjectName": "Sinnesträning", "plannedHours": 30 }
+        ],
+        "gradesOutsideStages": [],
+        "skolansVal": { "availableHours": null, "takenHours": 165, "placedHours": 30 },
+        "total": { "plannedHours": 6530, "guaranteedHours": 6665, "deficitHours": 135 },
+        "verdicts": [
+          {
+            "code": "TIMPLAN_SUBJECT_UNMAPPED",
+            "severity": "notice",
+            "subjectIds": [
+              "s-SINNE"
+            ],
+            "params": { "subjectId": "s-SINNE", "subjectName": "Sinnesträning", "plannedHours": 30, "timeCountsAs": "fordelningsbar" }
+          },
+          {
+            "code": "TIMPLAN_STAGE_BELOW_NATIONAL",
+            "severity": "notice",
+            "subjectCode": "KOM",
+            "stage": "LAG",
+            "subjectIds": [
+              "s-KOM"
+            ],
+            "params": { "nationalHours": 315, "plannedHours": 150, "deficitHours": 165, "reducedPercent": 52.4, "timeCountsAs": "none" }
+          },
+          {
+            "code": "TIMPLAN_TOTAL_BELOW_GUARANTEE",
+            "severity": "warning",
+            "params": { "plannedHours": 6530, "guaranteedHours": 6665, "deficitHours": 135 }
           }
         ]
       }

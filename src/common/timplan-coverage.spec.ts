@@ -263,10 +263,11 @@ describe('checkLocalTimplan — grundskolan, bilaga 1', () => {
     expect(cell(met, 'MA', 'LAG')).toMatchObject({ plannedHours: 420.1, deficitHours: 0 });
     expect(codes(met)).toEqual([]);
 
-    // One minute a week less in åk 3: 707 × 35.6 = 25 169.2 min = 419.49 h.
+    // One minute a week less in åk 3: 707 × 35.6 = 25 169.2 min = 419.49 h,
+    // shown as 419,4 so that it and the 0,6 h deficit make the 420.
     const short = check(B1, 356, subjects, replaceStage(entries, 's-MA', [1, 2, 3], [236, 236, 235]));
     expect(cell(short, 'MA', 'LAG')).toMatchObject({
-      plannedHours: 419.5,
+      plannedHours: 419.4,
       deficitHours: 0.6,
       reducedPercent: 0.2,
       protectedFromReduction: true,
@@ -278,7 +279,7 @@ describe('checkLocalTimplan — grundskolan, bilaga 1', () => {
         subjectCode: 'MA',
         stage: 'LAG',
         subjectIds: ['s-MA'],
-        params: { nationalHours: 420, plannedHours: 419.5, deficitHours: 0.6, reducedPercent: 0.2 },
+        params: { nationalHours: 420, plannedHours: 419.4, deficitHours: 0.6, reducedPercent: 0.2 },
       },
     ]);
     // The other cells' rounding to whole minutes still carries the total.
@@ -305,31 +306,87 @@ describe('checkLocalTimplan — grundskolan, bilaga 1', () => {
     }
   });
 
-  it('rolls Svenska and SvA into the one SV_SVA cell, and names a forgotten SvA mapping first', () => {
+  it('takes Svenska and SvA as the alternatives they are: the cell is the longer of the two, per årskurs', () => {
+    // "Svenska eller svenska som andraspråk": a pupil reads one. Both planned
+    // at full length used to add up to 1 360 h of lågstadiesvenska and lift the
+    // plan's total past a guarantee it was short of.
     const { subjects, entries } = compliantPlan(B1, 300);
-    // Split svenska lågstadiet 680 h = 1 360 min/vecka at 30 weeks: 1 200 Svenska, 160 SvA.
     const sva: CoverageSubject = coded('SV_SVA', { id: 's-SVA', name: 'Svenska som andraspråk' });
-    const split = [
-      ...replaceStage(entries, 's-SV_SVA', [1, 2, 3], [400, 400, 400]),
-      ...spread(sva.id, 160, [1, 2, 3]),
-    ];
-    const mapped = check(B1, 300, [...subjects, sva], split);
-    expect(cell(mapped, 'SV_SVA', 'LAG')).toMatchObject({
-      plannedHours: 680,
-      deficitHours: 0,
+    const svaEntries = entries
+      .filter((e) => e.subjectId === 's-SV_SVA')
+      .map((e) => ({ ...e, subjectId: sva.id }));
+    const alone = check(B1, 300, subjects, entries);
+    const both = check(B1, 300, [...subjects, sva], [...entries, ...svaEntries]);
+    expect(cell(both, 'SV_SVA', 'LAG')).toMatchObject({
+      plannedHours: cell(alone, 'SV_SVA', 'LAG').plannedHours,
       subjectIds: ['s-SVA', 's-SV_SVA'],
     });
-    expect(mapped.verdicts).toEqual([]);
+    expect(both.total.plannedHours).toBe(alone.total.plannedHours);
+    expect(both.skolansVal.placedHours).toBe(alone.skolansVal.placedHours);
+    expect(both.verdicts).toEqual([]);
 
-    const forgotten = check(B1, 300, [...subjects, { ...sva, nationalCode: null }], split);
-    expect(codes(forgotten)).toEqual(['TIMPLAN_SUBJECT_UNMAPPED', 'TIMPLAN_PROTECTED_SUBJECT_REDUCED']);
+    // An SvA group shorter than Svenska leaves the cell at Svenska's minutes:
+    // the plan offers the time; who reads which is the per-pupil check (P2).
+    const short = check(B1, 300, [...subjects, sva], [...entries, ...spread(sva.id, 160, [1, 2, 3])]);
+    expect(cell(short, 'SV_SVA', 'LAG').plannedHours).toBe(cell(alone, 'SV_SVA', 'LAG').plannedHours);
+
+    // A forgotten SvA mapping is named first, and its hours are the school's own.
+    const forgotten = check(B1, 300, [...subjects, { ...sva, nationalCode: null }], [...entries, ...spread(sva.id, 160, [1, 2, 3])]);
+    expect(codes(forgotten)).toEqual(['TIMPLAN_SUBJECT_UNMAPPED']);
     expect(forgotten.verdicts[0]).toMatchObject({
       severity: 'notice',
-      params: { subjectId: 's-SVA', subjectName: 'Svenska som andraspråk', plannedHours: 80 },
+      params: { subjectId: 's-SVA', subjectName: 'Svenska som andraspråk', plannedHours: 80, timeCountsAs: 'skolansVal' },
     });
-    // The hours are not lost: they count as the school's own, so the total holds.
-    expect(forgotten.total.deficitHours).toBe(0);
-    expect(forgotten.skolansVal.placedHours).toBe(80);
+    expect(forgotten.skolansVal.placedHours).toBe(alone.skolansVal.placedHours + 80);
+  });
+
+  it('takes språkval languages as alternatives: three languages short of the cell are short, not three times over', () => {
+    // A pupil reads ONE språkval. Spanska, Tyska and Franska at 30 min in åk 6
+    // and 60 in åk 7–9 give each pupil 17,8 h of 48 and 106,8 h of 272 — the
+    // sum (53,4 h and 320,4 h) used to report both cells met and the plan
+    // without a single verdict.
+    const { subjects, entries } = compliantPlan(B1, 356);
+    const languages = ['Spanska', 'Tyska', 'Franska'].map((name) =>
+      coded('M2', { id: `s-${name}`, name }),
+    );
+    const others = subjects.filter((s) => s.id !== 's-M2');
+    const rest = entries.filter((e) => e.subjectId !== 's-M2');
+    const taught = (subject: CoverageSubject) => [
+      { subjectId: subject.id, gradeLevel: 6, minutesPerWeek: 30 },
+      ...[7, 8, 9].map((gradeLevel) => ({ subjectId: subject.id, gradeLevel, minutesPerWeek: 60 })),
+    ];
+
+    const three = check(B1, 356, [...others, ...languages], [...rest, ...languages.flatMap(taught)]);
+    const one = check(B1, 356, [...others, languages[0]!], [...rest, ...taught(languages[0]!)]);
+
+    expect(cell(three, 'M2', 'MELLAN')).toMatchObject({ nationalHours: 48, plannedHours: 17.8 });
+    expect(cell(three, 'M2', 'HOG')).toMatchObject({ nationalHours: 272, plannedHours: 106.8 });
+    expect(codes(three)).toEqual(codes(one));
+    expect(three.verdicts.filter((v) => v.subjectCode === 'M2')).toEqual([
+      expect.objectContaining({ code: 'TIMPLAN_PROTECTED_SUBJECT_REDUCED', stage: 'MELLAN' }),
+      expect.objectContaining({ code: 'TIMPLAN_PROTECTED_SUBJECT_REDUCED', stage: 'HOG' }),
+    ]);
+    expect(three.total.plannedHours).toBe(one.total.plannedHours);
+    expect(cell(three, 'M2', 'HOG').subjectIds).toEqual(['s-Franska', 's-Spanska', 's-Tyska']);
+  });
+
+  it('never shows a cell as met in its figures while calling it short: planned + deficit is the target', () => {
+    // 231 + 230 + 230 min of matematik over 35.6 weeks is 409,99 h: four
+    // minute-tenths short of 410. Rounded to nearest it read "410 h planerat,
+    // 0,1 h under målet 410 h".
+    const { subjects, entries } = compliantPlan(B1, 356);
+    const result = check(B1, 356, subjects, replaceStage(entries, 's-MA', [4, 5, 6], [231, 230, 230]));
+    expect(cell(result, 'MA', 'MELLAN')).toMatchObject({ plannedHours: 409.9, deficitHours: 0.1 });
+    expect(result.verdicts.find((v) => v.subjectCode === 'MA')?.params).toMatchObject({
+      nationalHours: 410,
+      plannedHours: 409.9,
+      deficitHours: 0.1,
+    });
+
+    // The total likewise, when it is below the guarantee.
+    const empty = check(B1, 356, subjects, replaceStage(entries, 's-MA', [4, 5, 6], [0, 0, 0]));
+    const total = empty.verdicts.find((v) => v.code === 'TIMPLAN_TOTAL_BELOW_GUARANTEE')!;
+    expect(Number(total.params.plannedHours) + Number(total.params.deficitHours)).toBeCloseTo(6890, 5);
   });
 
   it('allows a cell reduced by exactly 20 %, and calls 20 % + 1 minute a week over the cap', () => {
@@ -343,7 +400,7 @@ describe('checkLocalTimplan — grundskolan, bilaga 1', () => {
         severity: 'notice',
         subjectCode: 'BL',
         stage: 'LAG',
-        params: { nationalHours: 60, plannedHours: 48, deficitHours: 12, reducedPercent: 20 },
+        params: { nationalHours: 60, plannedHours: 48, deficitHours: 12, reducedPercent: 20, timeCountsAs: 'skolansVal' },
       }),
       expect.objectContaining({ code: 'TIMPLAN_TOTAL_BELOW_GUARANTEE' }),
     ]);
@@ -573,6 +630,34 @@ describe('checkLocalTimplan — the other bilagor', () => {
     const deep = check(B2B, 300, omraden.subjects, replaceStage(omraden.entries, 's-KOM', [1, 2, 3], [0, 0, 0]));
     expect(deep.skolansVal.availableHours).toBeNull();
     expect(codes(deep)).toEqual(['TIMPLAN_STAGE_BELOW_NATIONAL', 'TIMPLAN_TOTAL_BELOW_GUARANTEE']);
+  });
+
+  it('says what reduced and uncoded time counts as by the bilaga: skolans val only where one is printed', () => {
+    // Bilaga 1 prints skolans val: a cell under mål and an uncoded subject are
+    // that pool's time.
+    const grund = compliantPlan(B1, 300);
+    const own = coded('PROG', { id: 's-PROG', name: 'Programmering', nationalCode: null });
+    const bild = grund.entries.filter((e) => e.subjectId === 's-BL' && [1, 2, 3].includes(e.gradeLevel));
+    const b1 = check(B1, 300, [...grund.subjects, own], [
+      ...replaceStage(grund.entries, 's-BL', [1, 2, 3], bild.map((e, i) => e.minutesPerWeek - (i === 0 ? 5 : 0))),
+      { subjectId: own.id, gradeLevel: 2, minutesPerWeek: 60 },
+    ]);
+    expect(b1.verdicts.find((v) => v.code === 'TIMPLAN_SUBJECT_UNMAPPED')?.params.timeCountsAs).toBe('skolansVal');
+    expect(b1.verdicts.find((v) => v.code === 'TIMPLAN_STAGE_BELOW_NATIONAL')?.params.timeCountsAs).toBe('skolansVal');
+
+    // Ämnesområden prints none; its free time is the cell "Fördelningsbar
+    // undervisningstid", which an uncoded subject is pointed to.
+    const omraden = compliantPlan(B2B, 300);
+    const b2b = check(B2B, 300, [...omraden.subjects, own], [
+      ...replaceStage(omraden.entries, 's-KOM', [1, 2, 3], [100, 100, 100]),
+      { subjectId: own.id, gradeLevel: 2, minutesPerWeek: 60 },
+    ]);
+    expect(b2b.verdicts.find((v) => v.code === 'TIMPLAN_SUBJECT_UNMAPPED')?.params.timeCountsAs).toBe('fordelningsbar');
+    expect(b2b.verdicts.find((v) => v.code === 'TIMPLAN_STAGE_BELOW_NATIONAL')?.params.timeCountsAs).toBe('none');
+
+    // The 2028 law states neither yet.
+    const law = check(LAW_2028, 300, [...grund.subjects, own], [...grund.entries, { subjectId: own.id, gradeLevel: 2, minutesPerWeek: 60 }]);
+    expect(law.verdicts.find((v) => v.code === 'TIMPLAN_SUBJECT_UNMAPPED')?.params.timeCountsAs).toBe('own');
   });
 
   it('the 2028 law: "fördelning ej publicerad", never zero hours in every cell', () => {
