@@ -22,10 +22,14 @@ const teacher = (overrides: Partial<TeacherLoad>): TeacherLoad => ({
   targetMinutesPerWeek: 865,
   assignedMinutesPerWeek: 900,
   peakMinutesPerWeek: 960,
+  dutyMinutesPerWeek: 0,
+  countedDutyMinutesPerWeek: 0,
+  countedMinutesPerWeek: 900,
   balanceMinutesPerWeek: -35,
   percentOfTarget: 104,
   status: "OK",
   requirementCount: 2,
+  dutyCount: 0,
   subjects: [
     {
       subjectId: "s-ma",
@@ -95,7 +99,9 @@ const report: TeacherLoadReport = {
   unstaffedRequirements: [],
   unqualifiedAssignments: [],
   qualificationsRecorded: false,
-  totals: { teacherMinutesPerWeek: 2280, lessonMinutesPerWeek: 2280 },
+  subjectBottlenecks: [],
+  bottlenecksComputed: false,
+  totals: { teacherMinutesPerWeek: 2280, lessonMinutesPerWeek: 2280, dutyMinutesPerWeek: 0 },
 };
 
 const subjects = [

@@ -39,6 +39,22 @@ describe('the load report agrees with the shared fixture', () => {
     expect(cases.some((c) => c.input.closures.length > 0)).toBe(true);
   });
 
+  it('reaches every Fas 2 branch: a percentage off 100, both kinds of uppdrag, both bottleneck verdicts and the uncomputed one', () => {
+    const rows = cases.flatMap((c) => c.input.requirements);
+    expect(rows.some((r) => r.teacherLoadPercent !== 100)).toBe(true);
+    expect(rows.some((r) => r.coTeacherId !== null && r.coTeacherLoadPercent === 0)).toBe(true);
+    const duties = cases.flatMap((c) => c.input.duties);
+    expect(duties.some((d) => d.countsAsTeaching)).toBe(true);
+    expect(duties.some((d) => !d.countsAsTeaching)).toBe(true);
+    const bottlenecks = cases.flatMap((c) => c.report.subjectBottlenecks);
+    expect(bottlenecks.some((b) => b.short)).toBe(true);
+    expect(bottlenecks.some((b) => !b.short)).toBe(true);
+    expect(bottlenecks.some((b) => b.qualifiedNoTargetCount > 0)).toBe(true);
+    expect(
+      cases.some((c) => !c.report.bottlenecksComputed && c.report.unstaffedRequirements.length > 0),
+    ).toBe(true);
+  });
+
   it.each(cases.map((entry) => [entry.name, entry] as const))('%s', (_name, entry) => {
     expect(buildTeacherLoadReport(entry.input)).toEqual(entry.report);
   });

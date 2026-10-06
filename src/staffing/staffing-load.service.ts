@@ -80,7 +80,12 @@ export class StaffingLoadService {
       unqualifiedAssignments: report.unqualifiedAssignments.filter(
         (row) => row.userId === own,
       ),
-      totals: { teacherMinutesPerWeek: 0, lessonMinutesPerWeek: 0 },
+      // Capacity per subject is a sum over colleagues' targets — and RLS has
+      // handed this caller no colleague's post, so the figure would be wrong
+      // as well as not theirs.
+      subjectBottlenecks: [],
+      bottlenecksComputed: false,
+      totals: { teacherMinutesPerWeek: 0, lessonMinutesPerWeek: 0, dutyMinutesPerWeek: 0 },
     };
   }
 
@@ -111,7 +116,7 @@ export class StaffingLoadService {
     }
     const year: YearBounds = { startDate: asDay(yearRow.startDate), endDate: asDay(yearRow.endDate) };
 
-    const [requirements, employments, policy, breaks, qualifications] = await Promise.all([
+    const [requirements, employments, policy, breaks, qualifications, duties] = await Promise.all([
       tx.teachingRequirement.findMany({
         where: { academicYearId },
         select: {
@@ -122,6 +127,8 @@ export class StaffingLoadService {
           coTeacherId: true,
           lessonsPerWeek: true,
           minutesPerLesson: true,
+          teacherLoadPercent: true,
+          coTeacherLoadPercent: true,
           recurrence: true,
           startDate: true,
           endDate: true,
@@ -145,6 +152,12 @@ export class StaffingLoadService {
           validFrom: true,
           validTo: true,
         },
+      }),
+      // The year's uppdrag. RLS hands a TEACHER only their own, which is all
+      // their row needs.
+      tx.teacherDuty.findMany({
+        where: { academicYearId },
+        select: { userId: true, minutesPerWeek: true, countsAsTeaching: true },
       }),
     ]);
 
@@ -190,6 +203,8 @@ export class StaffingLoadService {
         coTeacherId: row.coTeacherId,
         lessonsPerWeek: row.lessonsPerWeek,
         minutesPerLesson: row.minutesPerLesson,
+        teacherLoadPercent: row.teacherLoadPercent,
+        coTeacherLoadPercent: row.coTeacherLoadPercent,
         recurrence: row.recurrence,
         startDate: asDayOrNull(row.startDate),
         endDate: asDayOrNull(row.endDate),
@@ -209,6 +224,11 @@ export class StaffingLoadService {
         endDate: asDay(row.endDate),
         minGradeLevel: row.minGradeLevel,
         maxGradeLevel: row.maxGradeLevel,
+      })),
+      duties: duties.map((row) => ({
+        userId: row.userId,
+        minutesPerWeek: row.minutesPerWeek,
+        countsAsTeaching: row.countsAsTeaching,
       })),
     };
     return { year, input };

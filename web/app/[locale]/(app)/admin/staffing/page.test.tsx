@@ -41,10 +41,14 @@ const report: TeacherLoadReport & { academicYearId: string; horizon: "planned"; 
       targetMinutesPerWeek: 1080,
       assignedMinutesPerWeek: 1200,
       peakMinutesPerWeek: 1260,
+      dutyMinutesPerWeek: 0,
+      countedDutyMinutesPerWeek: 0,
+      countedMinutesPerWeek: 1200,
       balanceMinutesPerWeek: -120,
       percentOfTarget: 111.1,
       status: "OVER",
       requirementCount: 1,
+      dutyCount: 0,
       subjects: [
         {
           subjectId: "s-ma",
@@ -66,12 +70,15 @@ const report: TeacherLoadReport & { academicYearId: string; horizon: "planned"; 
       studentGroupId: "g-7a",
       groupName: "7A",
       minutesPerWeek: 120,
+      teacherMinutesPerWeek: 120,
       gradeSpan: { min: 7, max: 7 },
     },
   ],
   unqualifiedAssignments: [],
   qualificationsRecorded: false,
-  totals: { teacherMinutesPerWeek: 1200, lessonMinutesPerWeek: 1320 },
+  subjectBottlenecks: [],
+  bottlenecksComputed: false,
+  totals: { teacherMinutesPerWeek: 1200, lessonMinutesPerWeek: 1320, dutyMinutesPerWeek: 0 },
 };
 
 const state = vi.hoisted(() => ({
