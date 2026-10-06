@@ -43,6 +43,7 @@ import { FamilyModule } from '../../src/family/family.module';
 import { RoomBookingsModule } from '../../src/room-bookings/room-bookings.module';
 import { HealthModule } from '../../src/health/health.module';
 import { StaffingModule } from '../../src/staffing/staffing.module';
+import { TimplanModule } from '../../src/timplan/timplan.module';
 import { JwtAuthGuard } from '../../src/auth/jwt-auth.guard';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RealtimeService } from '../../src/realtime/realtime.service';
@@ -146,6 +147,7 @@ const FEATURE_MODULES = [
   CalendarModule,
   RoomBookingsModule,
   StaffingModule,
+  TimplanModule,
 ];
 
 /** Everything global AppModule applies, minus the throttler (see below). */
