@@ -1,0 +1,290 @@
+{
+  "year": {
+    "startDate": "2026-08-17",
+    "endDate": "2027-06-11"
+  },
+  "cases": [
+    {
+      "name": "whole year, every week",
+      "period": {},
+      "closures": [],
+      "gradeLevel": null,
+      "weeksInPeriod": 43,
+      "teachingWeeks": 43
+    },
+    {
+      "name": "whole year, odd weeks (53-to-1 seam gives odd the surplus)",
+      "period": {
+        "recurrence": "ODD_WEEKS"
+      },
+      "closures": [],
+      "gradeLevel": null,
+      "weeksInPeriod": 22,
+      "teachingWeeks": 22
+    },
+    {
+      "name": "whole year, even weeks",
+      "period": {
+        "recurrence": "EVEN_WEEKS"
+      },
+      "closures": [],
+      "gradeLevel": null,
+      "weeksInPeriod": 21,
+      "teachingWeeks": 21
+    },
+    {
+      "name": "autumn course from a Wednesday counts its edge week whole",
+      "period": {
+        "startDate": "2026-09-02",
+        "endDate": "2026-12-18"
+      },
+      "closures": [],
+      "gradeLevel": null,
+      "weeksInPeriod": 16,
+      "teachingWeeks": 16
+    },
+    {
+      "name": "spring term only",
+      "period": {
+        "startDate": "2027-01-11"
+      },
+      "closures": [],
+      "gradeLevel": null,
+      "weeksInPeriod": 22,
+      "teachingWeeks": 22
+    },
+    {
+      "name": "period outside the year",
+      "period": {
+        "startDate": "2027-07-01",
+        "endDate": "2027-08-01"
+      },
+      "closures": [],
+      "gradeLevel": null,
+      "weeksInPeriod": 0,
+      "teachingWeeks": 0
+    },
+    {
+      "name": "period the wrong way round",
+      "period": {
+        "startDate": "2026-12-01",
+        "endDate": "2026-09-01"
+      },
+      "closures": [],
+      "gradeLevel": null,
+      "weeksInPeriod": 0,
+      "teachingWeeks": 0
+    },
+    {
+      "name": "period straddling the year start is clamped",
+      "period": {
+        "startDate": "2026-06-01",
+        "endDate": "2026-09-04"
+      },
+      "closures": [],
+      "gradeLevel": null,
+      "weeksInPeriod": 3,
+      "teachingWeeks": 3
+    },
+    {
+      "name": "jullov takes three whole weeks off the year",
+      "period": {},
+      "closures": [
+        {
+          "startDate": "2026-12-21",
+          "endDate": "2027-01-08"
+        }
+      ],
+      "gradeLevel": null,
+      "weeksInPeriod": 43,
+      "teachingWeeks": 40
+    },
+    {
+      "name": "jullov takes two odd weeks off an odd-weeks course",
+      "period": {
+        "recurrence": "ODD_WEEKS"
+      },
+      "closures": [
+        {
+          "startDate": "2026-12-21",
+          "endDate": "2027-01-08"
+        }
+      ],
+      "gradeLevel": null,
+      "weeksInPeriod": 22,
+      "teachingWeeks": 20
+    },
+    {
+      "name": "jullov takes one even week off an even-weeks course",
+      "period": {
+        "recurrence": "EVEN_WEEKS"
+      },
+      "closures": [
+        {
+          "startDate": "2026-12-21",
+          "endDate": "2027-01-08"
+        }
+      ],
+      "gradeLevel": null,
+      "weeksInPeriod": 21,
+      "teachingWeeks": 20
+    },
+    {
+      "name": "one studiedag is a fifth of a week",
+      "period": {},
+      "closures": [
+        {
+          "startDate": "2026-09-14",
+          "endDate": "2026-09-14"
+        }
+      ],
+      "gradeLevel": null,
+      "weeksInPeriod": 43,
+      "teachingWeeks": 42.8
+    },
+    {
+      "name": "a studiedag for lagstadiet charges arskurs 2",
+      "period": {},
+      "closures": [
+        {
+          "startDate": "2026-10-05",
+          "endDate": "2026-10-05",
+          "minGradeLevel": 0,
+          "maxGradeLevel": 3
+        }
+      ],
+      "gradeLevel": 2,
+      "weeksInPeriod": 43,
+      "teachingWeeks": 42.8
+    },
+    {
+      "name": "a studiedag for lagstadiet spares arskurs 7",
+      "period": {},
+      "closures": [
+        {
+          "startDate": "2026-10-05",
+          "endDate": "2026-10-05",
+          "minGradeLevel": 0,
+          "maxGradeLevel": 3
+        }
+      ],
+      "gradeLevel": 7,
+      "weeksInPeriod": 43,
+      "teachingWeeks": 43
+    },
+    {
+      "name": "a studiedag for lagstadiet spares a question with no grade",
+      "period": {},
+      "closures": [
+        {
+          "startDate": "2026-10-05",
+          "endDate": "2026-10-05",
+          "minGradeLevel": 0,
+          "maxGradeLevel": 3
+        }
+      ],
+      "gradeLevel": null,
+      "weeksInPeriod": 43,
+      "teachingWeeks": 43
+    },
+    {
+      "name": "a lov before a spring course subtracts nothing from it",
+      "period": {
+        "startDate": "2027-01-11"
+      },
+      "closures": [
+        {
+          "startDate": "2026-12-21",
+          "endDate": "2027-01-08"
+        }
+      ],
+      "gradeLevel": null,
+      "weeksInPeriod": 22,
+      "teachingWeeks": 22
+    },
+    {
+      "name": "sportlov inside a spring course takes a week",
+      "period": {
+        "startDate": "2027-01-11"
+      },
+      "closures": [
+        {
+          "startDate": "2027-02-15",
+          "endDate": "2027-02-19"
+        }
+      ],
+      "gradeLevel": null,
+      "weeksInPeriod": 22,
+      "teachingWeeks": 21
+    },
+    {
+      "name": "a lov on the Monday of a Wednesday-start edge week subtracts nothing",
+      "period": {
+        "startDate": "2026-09-16",
+        "endDate": "2026-12-18"
+      },
+      "closures": [
+        {
+          "startDate": "2026-09-14",
+          "endDate": "2026-09-14"
+        }
+      ],
+      "gradeLevel": null,
+      "weeksInPeriod": 14,
+      "teachingWeeks": 14
+    },
+    {
+      "name": "two lov sharing a day close it once",
+      "period": {},
+      "closures": [
+        {
+          "startDate": "2026-09-14",
+          "endDate": "2026-09-14"
+        },
+        {
+          "startDate": "2026-09-14",
+          "endDate": "2026-09-15"
+        }
+      ],
+      "gradeLevel": null,
+      "weeksInPeriod": 43,
+      "teachingWeeks": 42.6
+    },
+    {
+      "name": "a lov padded over a weekend charges only its weekdays",
+      "period": {},
+      "closures": [
+        {
+          "startDate": "2026-10-31",
+          "endDate": "2026-11-08"
+        }
+      ],
+      "gradeLevel": null,
+      "weeksInPeriod": 43,
+      "teachingWeeks": 42
+    },
+    {
+      "name": "a Sunday-only period still counts its week",
+      "period": {
+        "startDate": "2027-01-10",
+        "endDate": "2027-01-10"
+      },
+      "closures": [],
+      "gradeLevel": null,
+      "weeksInPeriod": 1,
+      "teachingWeeks": 1
+    },
+    {
+      "name": "odd weeks across new year with no lov",
+      "period": {
+        "recurrence": "ODD_WEEKS",
+        "startDate": "2026-12-01",
+        "endDate": "2027-01-31"
+      },
+      "closures": [],
+      "gradeLevel": null,
+      "weeksInPeriod": 5,
+      "teachingWeeks": 5
+    }
+  ]
+}
