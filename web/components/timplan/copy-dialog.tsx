@@ -20,6 +20,8 @@ export interface CopyDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   planName: string;
+  /** Every plan name the school has, for the name the gateway will pick. */
+  takenNames?: readonly string[];
   pending: boolean;
   /** undefined = let the gateway name it ("… (utkast)" / "… (kopia)", numbered when taken). */
   onConfirm: (name: string | undefined) => Promise<void>;
@@ -35,12 +37,20 @@ export interface CopyDialogProps {
  * For a reopen the body says the decided plan stays as it is: the admin is
  * not editing the decision, they are starting the next proposal from it.
  */
-export function CopyDialog({ mode, open, onOpenChange, planName, pending, onConfirm }: CopyDialogProps) {
+export function CopyDialog({
+  mode,
+  open,
+  onOpenChange,
+  planName,
+  takenNames = [],
+  pending,
+  onConfirm,
+}: CopyDialogProps) {
   const t = useTranslations("timplan");
   const tCommon = useTranslations("common");
   const [name, setName] = useState("");
 
-  const fallback = t(mode === "reopen" ? "reopenDefaultName" : "copyDefaultName", { name: planName });
+  const fallback = gatewayDraftName(planName, mode === "reopen" ? "utkast" : "kopia", takenNames);
   const tooLong = name.trim().length > 100;
 
   return (
@@ -87,4 +97,24 @@ export function CopyDialog({ mode, open, onOpenChange, planName, pending, onConf
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * The name POST /:id/reopen or /:id/copy gives a draft when none is sent —
+ * freeName in src/timplan/local-timplans.service.ts, restated: "<name>
+ * (utkast)" or "<name> (kopia)", then "(utkast 2)", … — the first one no plan
+ * of the school has, cut to stay within 100 characters. The suffix is the
+ * gateway's and Swedish in every locale, because it is part of the stored
+ * name. The hint used to print "{name} (draft)" in English and never the
+ * number, so the draft the toast landed on was not the one announced.
+ */
+export function gatewayDraftName(base: string, suffix: "utkast" | "kopia", taken: readonly string[]): string {
+  const names = new Set(taken);
+  const candidate = (n: number) => {
+    const tail = n === 1 ? ` (${suffix})` : ` (${suffix} ${n})`;
+    return `${base.slice(0, 100 - tail.length).trimEnd()}${tail}`;
+  };
+  let n = 1;
+  while (names.has(candidate(n))) n += 1;
+  return candidate(n);
 }

@@ -496,8 +496,6 @@
     "copyBody": "Kopian av {name} blir ett nytt utkast med samma skolform, nationella timplan, veckor och rutor.",
     "copyNameLabel": "Namn på utkastet",
     "copyNameHint": "Lämnas fältet tomt får utkastet namnet {name}.",
-    "reopenDefaultName": "{name} (utkast)",
-    "copyDefaultName": "{name} (kopia)",
     "reopenConfirm": "Skapa utkast",
     "copyConfirm": "Kopiera",
     "reopened": "Ett nytt utkast är skapat.",

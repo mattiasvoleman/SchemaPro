@@ -593,6 +593,7 @@ export default function TimplanPage() {
             open
             onOpenChange={(open) => !open && setDialog(null)}
             planName={shown.name}
+            takenNames={(plans ?? []).map((entry) => entry.name)}
             pending={actions.reopen.isPending || actions.copy.isPending}
             onConfirm={(name) =>
               run(async () => {

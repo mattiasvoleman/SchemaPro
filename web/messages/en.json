@@ -496,8 +496,6 @@
     "copyBody": "The copy of {name} becomes a new draft with the same school form, national timplan, weeks and cells.",
     "copyNameLabel": "Name of the draft",
     "copyNameHint": "Left empty, the draft is named {name}.",
-    "reopenDefaultName": "{name} (draft)",
-    "copyDefaultName": "{name} (copy)",
     "reopenConfirm": "Create draft",
     "copyConfirm": "Copy",
     "reopened": "A new draft has been created.",
