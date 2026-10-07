@@ -4564,3 +4564,444 @@ BEGIN
     RAISE EXCEPTION 'duties: % of the two load-percent CHECKs on TeachingRequirements exist', n;
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 18: which plan a year's årskurs follows is the admin's to say, the
+-- staff's to read, and a family's to read only once the plan is decided.
+--
+-- AcademicYearTimplans (20261007130000) carries LocalTimplans' three arms:
+-- admin_all, staff_select (every attachment, drafts included) and
+-- family_select (STUDENT and GUARDIAN read the rows whose plan is DECIDED).
+-- The failure that matters is again the third arm's: a pupil or guardian
+-- learning that next year's grade is being planned on a draft. So the admin
+-- attaches one year's grades to a plan of each status, and every family read
+-- is an exact count against both rows existing in the transaction.
+--
+-- The second half is the plan key. ON DELETE RESTRICT refuses deleting a plan
+-- a year follows — decided or draft — for the admin too, through the same SQL
+-- PostgREST would send, and the refusal names the constraint the gateway
+-- translates into 409 TIMPLAN_IN_USE. Detaching first lets the plan go; a
+-- year deleted takes its attachments and leaves the plan standing.
+--
+-- Composite keys: another school's year, another school's plan, each under a
+-- row honestly stamped with this school — foreign_key_violation, since no
+-- policy can see the difference; a row STAMPED with school B is RLS's to
+-- refuse (42501). The CHECK mirrors the DTO's 0..10, and the key is one plan
+-- per (year, grade).
+--
+-- The tenant half: school B's admin (fixture authId ...0006) acts last and
+-- sees its own two fixture attachments and none of A's; everyone of school A
+-- sees none of B's. The runner refuses to start without B's rows.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+SELECT set_config('app.test_plan_b', :'plan_b', true);
+SELECT set_config('app.test_school_b', :'school_b', true);
+SELECT set_config('app.test_year_b', :'year_b', true);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me     uuid := app.current_user_id();
+  b1 uuid; year uuid; draft uuid; decided uuid; spare uuid;
+  n bigint;
+  msg text; con text;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'year timplans: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+
+  -- Tenant half first, before this school has rows of its own (7d's reason).
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" WHERE "schoolId" <> school;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: % attachment(s) from another school visible — tenant isolation is not enforced', n;
+  END IF;
+
+  SELECT id INTO b1 FROM "NationalTimplanVersions" WHERE code = 'SFS2023:945/B1';
+
+  -- A year of this transaction's own, far from any seeded one, and three plans:
+  -- one decided, one draft, and a spare that nothing will point at.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS18 år', DATE '2097-08-15', DATE '2098-06-10', false, now())
+  RETURNING id INTO year;
+  INSERT INTO "LocalTimplans" ("schoolId", name, "schoolForm", "nationalTimplanVersionId", "updatedAt")
+  VALUES (school, 'RLS18 beslutad', 'GRUNDSKOLA', b1, now()),
+         (school, 'RLS18 utkast',   'GRUNDSKOLA', b1, now()),
+         (school, 'RLS18 reserv',   'GRUNDSKOLA', b1, now());
+  SELECT id INTO decided FROM "LocalTimplans" WHERE "schoolId" = school AND name = 'RLS18 beslutad';
+  SELECT id INTO draft   FROM "LocalTimplans" WHERE "schoolId" = school AND name = 'RLS18 utkast';
+  SELECT id INTO spare   FROM "LocalTimplans" WHERE "schoolId" = school AND name = 'RLS18 reserv';
+  UPDATE "LocalTimplans"
+     SET status = 'DECIDED', "decidedAt" = now(), "decidedByUserId" = me,
+         "decisionNote" = 'Beslutat, dnr RLS-18', "updatedAt" = now()
+   WHERE id = decided;
+
+  -- Grades 0 and 7 follow the decided plan, grade 8 the draft: a draft may be
+  -- attached, because next year is planned before it is decided.
+  INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+  VALUES (school, year, 0, decided, now()),
+         (school, year, 7, decided, now()),
+         (school, year, 8, draft,   now());
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'year timplans: an admin attached % of 3 grades', n;
+  END IF;
+
+  -- One plan per (year, grade).
+  BEGIN
+    INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+    VALUES (school, year, 7, spare, now());
+    RAISE EXCEPTION 'year timplans: a grade followed two plans in one year';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+
+  -- The DTO's 0..10, as a CHECK.
+  BEGIN
+    INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+    VALUES (school, year, 11, spare, now());
+    RAISE EXCEPTION 'year timplans: årskurs 11 was attached to a plan';
+  EXCEPTION WHEN check_violation THEN
+    GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME;
+    IF con IS DISTINCT FROM 'AcademicYearTimplans_gradeLevel_is_sane' THEN
+      RAISE EXCEPTION 'year timplans: årskurs 11 was refused by "%", not the gradeLevel CHECK the gateway names', con;
+    END IF;
+  END;
+  BEGIN
+    UPDATE "AcademicYearTimplans" SET "gradeLevel" = -1 WHERE "academicYearId" = year AND "gradeLevel" = 0;
+    RAISE EXCEPTION 'year timplans: årskurs -1 was attached to a plan';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- Composite keys. Each row is stamped with this school's id; only the key
+  -- can tell that what it names is another school's.
+  BEGIN
+    INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+    VALUES (school, current_setting('app.test_year_b')::uuid, 5, spare, now());
+    RAISE EXCEPTION 'year timplans: an admin attached their plan to another school''s year';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+    VALUES (school, year, 5, current_setting('app.test_plan_b')::uuid, now());
+    RAISE EXCEPTION 'year timplans: an admin attached another school''s plan to their year';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "AcademicYearTimplans" SET "localTimplanId" = current_setting('app.test_plan_b')::uuid
+     WHERE "academicYearId" = year AND "gradeLevel" = 8;
+    RAISE EXCEPTION 'year timplans: an admin pointed a grade at another school''s plan';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- And rows STAMPED with school B: RLS answers, not a key.
+  BEGIN
+    INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+    VALUES (current_setting('app.test_school_b')::uuid, current_setting('app.test_year_b')::uuid, 5,
+            current_setting('app.test_plan_b')::uuid, now());
+    RAISE EXCEPTION 'year timplans: an admin wrote an attachment stamped with another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "AcademicYearTimplans"
+       SET "schoolId" = current_setting('app.test_school_b')::uuid,
+           "academicYearId" = current_setting('app.test_year_b')::uuid,
+           "localTimplanId" = current_setting('app.test_plan_b')::uuid,
+           "gradeLevel" = 5
+     WHERE "academicYearId" = year AND "gradeLevel" = 8;
+    RAISE EXCEPTION 'year timplans: an admin moved their attachment into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  -- The plan key: a plan a year follows cannot be deleted, decided or draft.
+  -- The constraint is asserted by name because the gateway recognises the
+  -- refusal by it.
+  BEGIN
+    DELETE FROM "LocalTimplans" WHERE id = decided;
+    RAISE EXCEPTION 'year timplans: an admin deleted a decided plan two grades follow';
+  EXCEPTION WHEN foreign_key_violation THEN
+    GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME, msg = MESSAGE_TEXT;
+    IF con IS DISTINCT FROM 'AcademicYearTimplans_localTimplanId_schoolId_fkey' THEN
+      RAISE EXCEPTION 'year timplans: the refused plan delete names "%" (%), not the attachment key', con, msg;
+    END IF;
+  END;
+  BEGIN
+    DELETE FROM "LocalTimplans" WHERE id = draft;
+    RAISE EXCEPTION 'year timplans: an admin deleted a draft a grade follows';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM "LocalTimplans" WHERE id IN (decided, draft);
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'year timplans: % of the two attached plans survive their refused deletes', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" WHERE "academicYearId" = year;
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'year timplans: the year holds % of its 3 attachments after the refused writes', n;
+  END IF;
+
+  -- A plan nothing points at goes as it always has.
+  DELETE FROM "LocalTimplans" WHERE id = spare;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'year timplans: an unattached plan could not be deleted (% row(s))', n;
+  END IF;
+END
+$$;
+
+-- A teacher of the school reads all three, the draft's included, and writes
+-- nothing. Filtered writes raise nothing, so each refusal is a ROW_COUNT;
+-- inserts meet WITH CHECK and raise.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint; year uuid; decided uuid;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+    RAISE EXCEPTION 'year timplans: expected to be acting as a TEACHER of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT id INTO year FROM "AcademicYears" WHERE name = 'RLS18 år';
+  SELECT id INTO decided FROM "LocalTimplans" WHERE name = 'RLS18 beslutad';
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" WHERE "academicYearId" = year;
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'year timplans: a teacher reads % of the year''s 3 attachments, the draft''s included', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a teacher reads % attachment(s) of another school', n;
+  END IF;
+  BEGIN
+    INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+    VALUES (app.current_school_id(), year, 9, decided, now());
+    RAISE EXCEPTION 'year timplans: a teacher attached a grade';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  UPDATE "AcademicYearTimplans" SET "localTimplanId" = decided WHERE "academicYearId" = year AND "gradeLevel" = 8;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a teacher re-pointed a grade (% row(s))', n;
+  END IF;
+  DELETE FROM "AcademicYearTimplans" WHERE "academicYearId" = year;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a teacher detached % grade(s)', n;
+  END IF;
+END
+$$;
+
+-- A pupil: the two grades that follow the decided plan, and nothing of the
+-- grade that follows the draft.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'year timplans: expected to be acting as a STUDENT of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  -- The pupil reads no draft plan, so the year's draft attachment is found by
+  -- its grade; it is the only row of grade 8 in the transaction's year.
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" a
+    JOIN "AcademicYears" y ON y.id = a."academicYearId"
+   WHERE y.name = 'RLS18 år';
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'year timplans: a pupil reads % of the year''s attachments, expected the decided plan''s 2', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" a
+    JOIN "AcademicYears" y ON y.id = a."academicYearId"
+   WHERE y.name = 'RLS18 år' AND a."gradeLevel" = 8;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a pupil reads the grade that follows a DRAFT — the family arm has lost its status test';
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" a
+   WHERE NOT EXISTS (SELECT 1 FROM "LocalTimplans" p WHERE p.id = a."localTimplanId" AND p.status = 'DECIDED');
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a pupil reads % attachment(s) whose plan is not a decided plan they can read', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a pupil reads % attachment(s) of another school', n;
+  END IF;
+  BEGIN
+    INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+    SELECT a."schoolId", a."academicYearId", 9, a."localTimplanId", now()
+      FROM "AcademicYearTimplans" a JOIN "AcademicYears" y ON y.id = a."academicYearId"
+     WHERE y.name = 'RLS18 år' LIMIT 1;
+    RAISE EXCEPTION 'year timplans: a pupil attached a grade';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  DELETE FROM "AcademicYearTimplans";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a pupil detached % grade(s)', n;
+  END IF;
+END
+$$;
+
+-- A guardian, by the fixture's literal authId: the same reads, no writes.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'year timplans: expected to be acting as a GUARDIAN of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" a
+    JOIN "AcademicYears" y ON y.id = a."academicYearId"
+   WHERE y.name = 'RLS18 år';
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'year timplans: a guardian reads % of the year''s attachments, expected the decided plan''s 2', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" WHERE "gradeLevel" = 8
+     AND "academicYearId" = (SELECT id FROM "AcademicYears" WHERE name = 'RLS18 år');
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a guardian reads the grade that follows a DRAFT';
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a guardian reads % attachment(s) of another school', n;
+  END IF;
+  UPDATE "AcademicYearTimplans" SET "gradeLevel" = 9;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a guardian changed % attachment(s)', n;
+  END IF;
+END
+$$;
+
+-- The other school's admin: their own two fixture attachments, none of A's.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'year timplans: expected to be acting as school B''s SCHOOL_ADMIN, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: another school''s admin reads % attachment(s) outside their school', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans";
+  IF n < 2 THEN
+    RAISE EXCEPTION 'year timplans: school B''s admin reads % of their own two fixture attachments', n;
+  END IF;
+  UPDATE "AcademicYearTimplans" SET "gradeLevel" = 9 WHERE "schoolId" <> app.current_school_id();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: another school''s admin changed % of school A''s attachments', n;
+  END IF;
+  DELETE FROM "AcademicYearTimplans" WHERE "schoolId" <> app.current_school_id();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: another school''s admin deleted % of school A''s attachments', n;
+  END IF;
+END
+$$;
+
+-- Back as school A's admin: nothing above moved; then the ways out — a grade
+-- detached frees its plan, and a deleted year takes its attachments and
+-- leaves the plan standing.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE year uuid; draft uuid; decided uuid; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'year timplans: expected to be back as the admin, am %', app.current_user_role();
+  END IF;
+  SELECT id INTO year    FROM "AcademicYears" WHERE name = 'RLS18 år';
+  SELECT id INTO decided FROM "LocalTimplans" WHERE name = 'RLS18 beslutad';
+  SELECT id INTO draft   FROM "LocalTimplans" WHERE name = 'RLS18 utkast';
+  SELECT count(*) INTO n FROM "AcademicYearTimplans"
+   WHERE "academicYearId" = year
+     AND ("gradeLevel", "localTimplanId") IN ((0, decided), (7, decided), (8, draft));
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'year timplans: % of the year''s 3 attachments are as the admin left them', n;
+  END IF;
+
+  DELETE FROM "AcademicYearTimplans" WHERE "academicYearId" = year AND "gradeLevel" = 8;
+  DELETE FROM "LocalTimplans" WHERE id = draft;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'year timplans: a detached draft could not be deleted (% row(s))', n;
+  END IF;
+
+  DELETE FROM "AcademicYears" WHERE id = year;
+  SELECT count(*) INTO n FROM "AcademicYearTimplans" WHERE "academicYearId" = year;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'year timplans: a deleted year left % attachment(s) behind', n;
+  END IF;
+  SELECT count(*) INTO n FROM "LocalTimplans" WHERE id = decided AND status = 'DECIDED';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'year timplans: deleting a year took the plan it followed with it';
+  END IF;
+  DELETE FROM "LocalTimplans" WHERE id = decided;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'year timplans: a plan no year follows any more could not be deleted (% row(s))', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- The catalog half: row security on, exactly the three arms, the plan key is
+-- RESTRICT and the year key CASCADE.
+DO $$
+DECLARE n integer; action "char";
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."AcademicYearTimplans"'::regclass) THEN
+    RAISE EXCEPTION 'year timplans: row security is off on AcademicYearTimplans';
+  END IF;
+  SELECT count(*) INTO n FROM pg_policy WHERE polrelid = 'public."AcademicYearTimplans"'::regclass;
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'year timplans: AcademicYearTimplans has % policies, expected admin_all, staff_select and family_select', n;
+  END IF;
+  SELECT confdeltype INTO action FROM pg_constraint
+   WHERE conname = 'AcademicYearTimplans_localTimplanId_schoolId_fkey';
+  IF action IS DISTINCT FROM 'r' THEN
+    RAISE EXCEPTION 'year timplans: the plan key deletes with action %, expected RESTRICT (r)', action;
+  END IF;
+  SELECT confdeltype INTO action FROM pg_constraint
+   WHERE conname = 'AcademicYearTimplans_academicYearId_schoolId_fkey';
+  IF action IS DISTINCT FROM 'c' THEN
+    RAISE EXCEPTION 'year timplans: the year key deletes with action %, expected CASCADE (c)', action;
+  END IF;
+END $$;

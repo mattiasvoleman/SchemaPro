@@ -286,6 +286,22 @@ UPDATE "LocalTimplans" p
    AND p.name = 'RLS Fixture Beslutad'
    AND p.status = 'DRAFT';
 
+-- The second school's year follows both of its plans: årskurs 7 the DECIDED
+-- one, årskurs 8 the DRAFT. Section 18 asserts that school A sees neither
+-- attachment and that school B's admin sees both; with nothing planted here
+-- each half would pass while proving nothing. One of each status, for the
+-- reason the plans above have one: a family arm that ignored the tenant would
+-- show the decided one, an admin arm that ignored it would show both.
+INSERT INTO "AcademicYearTimplans" ("schoolId", "academicYearId", "gradeLevel", "localTimplanId", "updatedAt")
+SELECT p."schoolId", y.id, g.grade, p.id, now()
+FROM "LocalTimplans" p
+JOIN "Schools" s ON s.id = p."schoolId"
+JOIN "AcademicYears" y ON y."schoolId" = p."schoolId" AND y.name = 'RLS Fixture Year'
+JOIN (VALUES ('RLS Fixture Beslutad', 7), ('RLS Fixture Utkast', 8)) AS g(name, grade)
+  ON g.name = p.name
+WHERE s.slug = 'rls-fixture-school'
+ON CONFLICT ("academicYearId", "gradeLevel") DO NOTHING;
+
 -- What each school's lesson is made of, and the lessons themselves once they
 -- exist. A view rather than a CTE because every statement below reads it
 -- afresh, so the link rows find the lessons the statements before them
