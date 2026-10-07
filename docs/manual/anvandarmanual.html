@@ -59,7 +59,8 @@
     <li><span>8 · Årscykel</span><span class="dots"></span><span class="pg" data-pg="ch8"></span></li>
     <ol>
       <li><span>8.1 Rulla vidare till nästa läsår</span><span class="dots"></span><span class="pg" data-pg="s81"></span></li>
-      <li><span>8.2 Aktivera det nya läsåret</span><span class="dots"></span><span class="pg" data-pg="s82"></span></li>
+      <li><span>8.2 Planera nästa läsår före aktiveringen</span><span class="dots"></span><span class="pg" data-pg="s82"></span></li>
+      <li><span>8.3 Aktivera det nya läsåret</span><span class="dots"></span><span class="pg" data-pg="s83"></span></li>
     </ol>
     <li><span>9 · Felsökning</span><span class="dots"></span><span class="pg" data-pg="ch9"></span></li>
     <li><span>10 · Snabbreferens</span><span class="dots"></span><span class="pg" data-pg="ch10"></span></li>
@@ -1234,6 +1235,11 @@
     du navigerar vidare.
   </p>
   <p>
+    Är nästa läsår rullat men ännu inte aktiverat väljer du överst på sidan
+    vilket läsår som genereras. Nästa läsår genereras på de förberäknade
+    klasslistorna (8.2).
+  </p>
+  <p>
     Under <span class="ui">Förutsättningar</span> står också
     <span class="ui">Alla timplansposter har lärare</span>, med hur många som
     saknar en. Raden länkar till <span class="ui">Obemannade rader</span> på
@@ -1694,9 +1700,10 @@
     <tbody>
       <tr><td class="k">Vårterminen</td><td>Rulla vidare</td><td>Nästa läsår skapas med klasserna uppflyttade, timplansposter och lärare (8.1). Eleverna stannar kvar i sina klasser.</td></tr>
       <tr><td class="k">Försommar</td><td>Uppdatera grunddata</td><td>Nya salar, ändrade klasser, personal som slutar eller tillkommer. Tjänster och uppdrag för det nya läsåret läggs in på tjänstefördelningssidan.</td></tr>
-      <tr><td class="k">Efter sista skoldagen</td><td>Aktivera det nya läsåret</td><td>Eleverna flyttar till sina nya klasser och nians går ut (8.2).</td></tr>
-      <tr><td class="k">Innan sommaren</td><td>Timplan och tillgänglighet</td><td>Fas 2 i sin helhet. Det tidskrävande momentet — planera in det.</td></tr>
-      <tr><td class="k">Sensommar</td><td>Generera och granska</td><td>Iterera: generera, lås det som är bra, generera om.</td></tr>
+      <tr><td class="k">Innan sommaren</td><td>Timplan och tillgänglighet</td><td>Fas 2 i sin helhet, för det nya läsåret. Det tidskrävande momentet — planera in det.</td></tr>
+      <tr><td class="k">Innan sommaren</td><td>Generera och granska</td><td>Nästa läsårs schema, på de förberäknade klasslistorna (8.2). Iterera: generera, lås det som är bra, generera om.</td></tr>
+      <tr><td class="k">Efter sista skoldagen</td><td>Aktivera det nya läsåret</td><td>Eleverna flyttar till sina nya klasser och nians går ut (8.3).</td></tr>
+      <tr><td class="k">Sensommar</td><td>Granska efter sommarens klassbyten</td><td>Klassbyten och nya elever efter genereringen kan ge krockar; de ritas i grundschemat. Justera, eller generera om med hög <span class="ui">Schemastabilitet</span>.</td></tr>
       <tr><td class="k">Före terminsstart</td><td>Spara version och publicera</td><td>Publicera hela terminen eller läsåret.</td></tr>
       <tr><td class="k">Löpande</td><td>Drift</td><td>Närvaro, vikarier, ledigheter, bokningar.</td></tr>
       <tr><td class="k">Vid större ändringar</td><td>Spara version, justera, generera om</td><td>Höj <span class="ui">Schemastabilitet</span> så att befintliga placeringar behålls.</td></tr>
@@ -1760,7 +1767,8 @@
   </p>
   <p>
     Följer <strong>inte</strong> med: grundschemat (nästa läsårs schema
-    genereras för de nya klasserna), lunchsittningarna, tjänster och uppdrag
+    genereras för de nya klasserna, redan före aktiveringen, se 8.2),
+    lunchsittningarna, tjänster och uppdrag
     — med uppdragens spärrade pass — samt det gamla läsårets historik.
     Ramtider, raster, lunchflöden, lunchinställningen, regler per årskurs,
     lärarnas arbetstidsregler och salspreferenser hör inte till något läsår;
@@ -1778,7 +1786,69 @@
     </p>
   </div>
 
-  <h3 id="s82"><span class="num">8.2</span>Aktivera det nya läsåret</h3>
+  <h3 id="s82"><span class="num">8.2</span>Planera nästa läsår före aktiveringen</h3>
+  <p>
+    Nästa läsårs schema behöver inte vänta på aktiveringen. Så snart läsåret
+    är rullat står <span class="ui">Generera schema</span> på dess rad under
+    <span class="path">Planering › Läsår</span>, och på sidorna
+    <span class="path">Schemaläggning › Generera schema</span> och
+    <span class="path">Schemaläggning › Grundschema</span> väljer du överst
+    mellan det aktiva läsåret och nästa, <em>2027/28 (nästa, inte
+    aktiverat)</em>. Allt på sidan följer valet: timplansposterna,
+    lektionerna, luncherna, versionerna, salsförslagen och publiceringen.
+    Timplansposter, tillgänglighet och tjänstefördelning görs för läsåret
+    som för vilket läsår som helst.
+  </p>
+  <p>
+    Före aktiveringen har nästa läsårs klasser inga elever — eleverna går
+    kvar i årets klasser. Schemat räknas därför på <em>förberäknade
+    klasslistor</em>: de klasser som aktiveringen kommer att ge eleverna,
+    räknade på samma sätt som aktiveringen själv räknar. Årets 7A:s elever
+    räknas i 8A. Niorna som går ut, och elever vars klass inte rullades
+    vidare, räknas inte i någon klass. Inaktiva elever räknas där de står,
+    som vid aktiveringen. Samma listor används överallt där systemet räknar
+    elever: i genereringen, i salsförslagen, i lunchsittningarnas antal, i
+    krockkontrollen när du lägger eller drar en lektion och i årskursen för
+    en undervisningsgrupp. Ingenting skrivs: eleverna flyttar först vid
+    aktiveringen.
+  </p>
+  <p>
+    En ruta överst på sidorna säger att klasslistorna är förberäknade, hur
+    många elever som flyttar, går ut och blir utan klass, och länkar till
+    aktiveringen. Har elever bytt klass sedan rullningen säger den också hur
+    många medlemskap i undervisningsgrupperna som inte längre stämmer.
+    Grupperna bestämdes vid rullningen och räknas som de står, så se över
+    dem under <span class="path">Planering › Klasser</span>.
+  </p>
+  <div class="warn">
+    <span class="label">Klassbyten i år ändrar nästa års listor</span>
+    <p>
+      Byter en elev klass i det aktiva läsåret, till exempel från 7B till 7A
+      i maj, räknas eleven direkt i 8A i stället för 8B. Ett schema som
+      genererades i april kan då få en krock som det inte hade, och krocken
+      ritas i grundschemat. Lunchsittningarnas antal sparades när de lades och
+      räknas inte om, precis som för det aktiva läsåret. Se över schemat efter
+      större klassbyten, eller generera om med hög
+      <span class="ui">Schemastabilitet</span>.
+    </p>
+  </div>
+  <p>
+    Publicera går också före aktiveringen. Elever i undervisningsgrupper som
+    följde med i rullningen ser då gruppens lektioner direkt. Klassernas
+    lektioner syns för eleverna först när aktiveringen har flyttat dem.
+  </p>
+  <div class="note">
+    <span class="label">Bara läsåret närmast efter det aktiva</span>
+    <p>
+      Det är bara läsåret som rullats från det aktiva som kan planeras före
+      aktiveringen. För ett läsår längre fram, eller vilket läsår som helst på
+      en skola utan aktivt läsår, svarar systemet <em>kan inte schemaläggas
+      ännu: föregående läsår är inte aktiverat</em>. Aktivera föregående
+      läsår först.
+    </p>
+  </div>
+
+  <h3 id="s83"><span class="num">8.3</span>Aktivera det nya läsåret</h3>
   <p>
     Eleverna flyttar inte vid rullningen. Det gamla läsåret pågår fortfarande,
     och närvarolistorna byggs från elevens klass — skulle 7A:s elever flytta
@@ -1807,9 +1877,9 @@
   <p>
     Mellan rullningen och aktiveringen finns varje klassnamn två gånger.
     Klassväljarna visar därför bara det aktiva läsårets klasser, eller namnger
-    läsåret: <em>8A (2027/28)</em>. Det kommande läsåret går inte heller att
-    schemalägga innan det är aktiverat: dess klasser har inga elever än, så
-    elevkrockar och salsplatser skulle räknas fel.
+    läsåret: <em>8A (2027/28)</em>. Grundschemat och genereringen väljer
+    läsår själva och räknar det kommande läsåret på förberäknade klasslistor
+    (8.2).
   </p>
   <p>
     En elev som var inaktiv vid aktiveringen står kvar i förra årets klass.
@@ -1907,7 +1977,12 @@
       <tr>
         <td class="k">Rulla vidare är avstängd</td>
         <td>Läsåret är rullat men inte aktiverat, så dess klasser har inga elever än — eller, på det aktiva läsåret, en elev står kvar i förra årets klass.</td>
-        <td>Aktivera läsåret först, eller tryck <span class="ui">Flytta kvarvarande elever</span> (8.2).</td>
+        <td>Aktivera läsåret först, eller tryck <span class="ui">Flytta kvarvarande elever</span> (8.3).</td>
+      </tr>
+      <tr>
+        <td class="k">”Kan inte schemaläggas ännu”</td>
+        <td>Läsåret ligger två steg fram, eller skolan har inget aktivt läsår, så föregående läsår är inte aktiverat.</td>
+        <td>Aktivera föregående läsår först. Bara läsåret närmast efter det aktiva planeras före aktiveringen (8.2).</td>
       </tr>
       <tr>
         <td class="k">Ett läsår går inte att ta bort</td>
@@ -1931,7 +2006,7 @@
   <table>
     <thead><tr><th style="width:8%">Steg</th><th style="width:30%">Moment</th><th>Klart när</th></tr></thead>
     <tbody>
-      <tr><td class="k">1</td><td>Läsår skapat och aktivt</td><td>Läsåret visas som aktivt. Från andra året: rullat vidare och, efter sista skoldagen, aktiverat (8.1–8.2).</td></tr>
+      <tr><td class="k">1</td><td>Läsår skapat och aktivt</td><td>Läsåret visas som aktivt. Från andra året: rullat vidare och, efter sista skoldagen, aktiverat (8.1, 8.3).</td></tr>
       <tr><td class="k">2</td><td>Ämnen inlagda</td><td>Samtliga ämnen finns med färg.</td></tr>
       <tr><td class="k">3</td><td>Salar inlagda</td><td>Kapacitet och typ angivna för varje sal; specialsalarnas typer finns i listan.</td></tr>
       <tr><td class="k">4</td><td>Klasser skapade</td><td>Alla klasser med rätt årskurs.</td></tr>
