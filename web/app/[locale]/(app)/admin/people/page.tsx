@@ -51,6 +51,12 @@ const QualificationsCard = lazy(() =>
     default: module.QualificationsCard,
   })),
 );
+/** Fas 2's third card, lazy for the same reason and on the same condition. */
+const DutiesCard = lazy(() =>
+  import("@/components/staffing/duties-card").then((module) => ({
+    default: module.DutiesCard,
+  })),
+);
 import { studentsToCsv, teacherQualificationsToCsv, teachersToCsv } from "@/lib/csv";
 import {
   useCrudMutations,
@@ -182,6 +188,8 @@ const EMPTY_FORM: PersonForm = {
 interface StaffingContext {
   academicYearId: string;
   academicYearName: string;
+  /** The läsår's groups, for an uppdrag's mentorskap class. */
+  groups: { id: string; name: string }[];
   employment: TeacherEmployment | null;
   qualifications: TeacherQualification[] | undefined;
   policy: StaffingPolicy | null | undefined;
@@ -262,7 +270,7 @@ function PersonDetail({
           </div>
         ) : null}
         {/*
-          The same two cards the staffing drawer shows, because they are about
+          The same cards the staffing drawer shows, because they are about
           the same person and the same rows: an admin adding a new teacher in
           August fills the post here without leaving the register, and the
           matrix reads it the next time it is opened. Staff roles, as for the
@@ -285,6 +293,15 @@ function PersonDetail({
                 teacher={person}
                 qualifications={staffing.qualifications}
                 subjects={staffing.subjects}
+              />
+            </Suspense>
+            <Suspense fallback={<Skeleton className="h-32 w-full" />}>
+              <DutiesCard
+                teacher={person}
+                academicYearId={staffing.academicYearId}
+                academicYearName={staffing.academicYearName}
+                subjects={staffing.subjects}
+                groups={staffing.groups}
               />
             </Suspense>
           </div>
@@ -352,6 +369,7 @@ export default function PeoplePage() {
       ? {
           academicYearId: activeYear.id,
           academicYearName: activeYear.name,
+          groups: (groups ?? []).filter((group) => group.academicYearId === activeYear.id),
           employment: employmentOf(person.id),
           qualifications: qualifications?.filter((row) => row.userId === person.id),
           policy,

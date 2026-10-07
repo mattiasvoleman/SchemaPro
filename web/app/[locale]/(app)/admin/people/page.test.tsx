@@ -75,6 +75,7 @@ const state = vi.hoisted(() => ({
   workRules: [] as unknown[],
   employments: [] as unknown[],
   qualifications: [] as unknown[],
+  duties: [] as unknown[],
 }));
 
 const { saveEmployment, createPerson } = vi.hoisted(() => ({
@@ -121,6 +122,16 @@ vi.mock("@/lib/staffing-queries", () => ({
     remove: { mutateAsync: vi.fn(), isPending: false },
   }),
   useReplaceTeacherQualifications: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useTeacherDuties: (academicYearId: string, userId: string) => ({
+    data: userId === "t-1" ? state.duties : [],
+    isLoading: false,
+    isError: false,
+  }),
+  useTeacherDutyActions: () => ({
+    create: { mutateAsync: vi.fn(), isPending: false },
+    update: { mutateAsync: vi.fn(), isPending: false },
+    remove: { mutateAsync: vi.fn(), isPending: false },
+  }),
 }));
 
 vi.mock("@/components/import/csv-import-dialog", () => ({
@@ -153,6 +164,7 @@ describe("People page", () => {
     state.workRules = [];
     state.employments = [];
     state.qualifications = [];
+    state.duties = [];
     saveEmployment.mockResolvedValue(undefined);
     createPerson.mockResolvedValue({ id: "t-new" });
   });
@@ -460,6 +472,34 @@ describe("People page", () => {
       expect(await screen.findByText("qualificationsTitle")).toBeInTheDocument();
       expect(await screen.findByText("employmentSummarySignature(KEK)")).toBeInTheDocument();
       expect(screen.queryByText("employmentSummarySignature(XXX)")).toBeNull();
+    });
+
+    it("shows the teacher's own uppdrag in a third card, fetched with the row like the other two", async () => {
+      state.duties = [
+        {
+          id: "d-1",
+          userId: "t-1",
+          academicYearId: "year-1",
+          kind: "MENTORSKAP",
+          label: "Mentor 7A",
+          minutesPerWeek: 90,
+          countsAsTeaching: false,
+          subjectId: null,
+          studentGroupId: "g-7a",
+          blockedConstraintId: null,
+          blockedSlot: null,
+          note: null,
+        },
+      ];
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(nameButton("Karin Ek"));
+
+      expect(await screen.findByText("dutiesTitle")).toBeInTheDocument();
+      expect(await screen.findByText("Mentor 7A")).toBeInTheDocument();
+      // The mentorskap class is named from the active year's groups.
+      expect(screen.getByText("dutyMinutes(90) · 7A")).toBeInTheDocument();
     });
 
     it("offers no post card to a pupil", async () => {
