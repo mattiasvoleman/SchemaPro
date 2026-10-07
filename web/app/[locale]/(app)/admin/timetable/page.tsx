@@ -93,6 +93,17 @@ import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
  * dialog above and for its reason: the version diff is most of the dialog's
  * code, and nothing on the grid needs it (see versions-dialog.tsx).
  */
+/*
+ * Fetched the first time a lesson is added — from the toolbar, a click on
+ * empty time or Duplicera (see create-lesson-dialog.tsx). Its draft type is
+ * imported as a type only, which brings no code with it.
+ */
+const CreateLessonDialog = lazy(() =>
+  import("@/components/schedule/create-lesson-dialog").then((module) => ({
+    default: module.CreateLessonDialog,
+  })),
+);
+import type { CreateDraft } from "@/components/schedule/create-lesson-dialog";
 const VersionsDialog = lazy(() =>
   import("@/components/schedule/versions-dialog").then((module) => ({
     default: module.VersionsDialog,
@@ -226,23 +237,6 @@ function snapshotOf(lesson: MasterLesson): LessonSnapshot {
   };
 }
 
-interface CreateDraft {
-  subjectId: string;
-  studentGroupId: string;
-  /** Additional classes attending the lesson (must also be free). */
-  extraGroupIds: string[];
-  /** Individual participating students from any class. */
-  studentIds: string[];
-  dayOfWeek: string;
-  startTime: string;
-  endTime: string;
-  roomId: string;
-  teacherId: string;
-  isLocked: boolean;
-  recurrence: LessonRecurrence;
-  startDate: string;
-  endDate: string;
-}
 
 type GroupBy = "none" | "teacher" | "room" | "group";
 
@@ -357,8 +351,12 @@ export default function TimetablePage() {
   const [editEndDate, setEditEndDate] = useState("");
 
   const [creating, setCreating] = useState<CreateDraft | null>(null);
+  // Whether a lesson has been added this visit, which is what decides that the
+  // dialog's code is fetched — set during render, React's pattern for state
+  // derived from an earlier render, so it holds from the first open onward.
+  const [createUsed, setCreateUsed] = useState(false);
+  if (creating !== null && !createUsed) setCreateUsed(true);
   const [slotMatches, setSlotMatches] = useState<OpenSlotMatch[] | null>(null);
-  const [studentFilter, setStudentFilter] = useState("");
   const [suggesting, setSuggesting] = useState<{
     lesson: MasterLesson;
     options: PlacementSuggestion[];
@@ -1649,28 +1647,6 @@ export default function TimetablePage() {
     );
   };
 
-  const applySlot = (match: OpenSlotMatch) => {
-    if (!creating) return;
-    setCreating({
-      ...creating,
-      dayOfWeek: String(match.dayOfWeek),
-      startTime: minutesToHHMM(match.startMinutes),
-      endTime: minutesToHHMM(match.endMinutes),
-      teacherId: match.teacherId,
-    });
-  };
-
-  const toggleExtraGroup = (groupId: string) => {
-    if (!creating) return;
-    setSlotMatches(null);
-    setCreating({
-      ...creating,
-      extraGroupIds: creating.extraGroupIds.includes(groupId)
-        ? creating.extraGroupIds.filter((id) => id !== groupId)
-        : [...creating.extraGroupIds, groupId],
-    });
-  };
-
   const doCreate = async () => {
     if (!creating || !activeYear) return;
     try {
@@ -2406,373 +2382,35 @@ export default function TimetablePage() {
       </Dialog>
 
       {/* ---------------- Create dialog ---------------- */}
-      <Dialog
-        open={creating !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setCreating(null);
-            setSlotMatches(null);
-          }
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("addTitle")}</DialogTitle>
-            <DialogDescription>{t("addBody")}</DialogDescription>
-          </DialogHeader>
-          {creating ? (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>{t("addSubject")}</Label>
-                <Select
-                  value={creating.subjectId || undefined}
-                  onValueChange={(value) =>
-                    setCreating({ ...creating, subjectId: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={t("addSubject")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(subjects ?? []).map((subject) => (
-                      <SelectItem key={subject.id} value={subject.id}>
-                        {subject.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>{t("addGroup")}</Label>
-                <Select
-                  value={creating.studentGroupId || undefined}
-                  onValueChange={(value) =>
-                    setCreating({ ...creating, studentGroupId: value })
-                  }
-                >
-                  {/* Named here: a Label beside a Radix trigger is not tied to
-                      it, so this dialog read as a row of unnamed comboboxes. */}
-                  <SelectTrigger aria-label={t("addGroup")}>
-                    <SelectValue placeholder={t("addGroup")} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(groups ?? []).map((group) => (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="col-span-2 space-y-3 rounded-md border p-3">
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <Sparkles className="h-4 w-4" />
-                    {t("slotFinderTitle")}
-                  </div>
-                  <p className="text-xs text-muted-foreground">{t("slotFinderHint")}</p>
-                </div>
-                {(groups ?? []).filter((group) => group.id !== creating.studentGroupId)
-                  .length > 0 ? (
-                  <div>
-                    <div className="mb-1 text-xs text-muted-foreground">
-                      {t("slotFinderAlsoFree")}
-                    </div>
-                    {/*
-                      Capped like its two siblings below, which have had
-                      `max-h` and a scroll all along — this list was the one
-                      that did not, and it is the one that grows with the
-                      school. Forty teaching groups made the dialog taller than
-                      the window.
-                    */}
-                    <div className="flex max-h-32 flex-wrap gap-1.5 overflow-y-auto">
-                      {(groups ?? [])
-                        .filter((group) => group.id !== creating.studentGroupId)
-                        .map((group) => (
-                          <button
-                            key={group.id}
-                            type="button"
-                            onClick={() => toggleExtraGroup(group.id)}
-                            className={
-                              creating.extraGroupIds.includes(group.id)
-                                ? "rounded-full bg-primary px-2.5 py-0.5 text-xs font-medium text-primary-foreground"
-                                : "rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-accent"
-                            }
-                          >
-                            {group.name}
-                          </button>
-                        ))}
-                    </div>
-                  </div>
-                ) : null}
-                <div>
-                  <div className="mb-1 text-xs text-muted-foreground">
-                    {t("participantStudents")}
-                  </div>
-                  {creating.studentIds.length > 0 ? (
-                    <div className="mb-1.5 flex flex-wrap gap-1">
-                      {creating.studentIds.map((studentId) => {
-                        const student = students.find((entry) => entry.id === studentId);
-                        return (
-                          <button
-                            key={studentId}
-                            type="button"
-                            onClick={() =>
-                              setCreating({
-                                ...creating,
-                                studentIds: creating.studentIds.filter(
-                                  (id) => id !== studentId,
-                                ),
-                              })
-                            }
-                            className="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground"
-                            title={tCommon("delete")}
-                          >
-                            {student
-                              ? `${student.firstName} ${student.lastName} ×`
-                              : "×"}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                  <Input
-                    placeholder={t("participantSearch")}
-                    value={studentFilter}
-                    onChange={(e) => setStudentFilter(e.target.value)}
-                    className="mb-1 h-8"
-                  />
-                  {studentFilter.trim().length > 0 ? (
-                    <div className="max-h-28 space-y-0.5 overflow-y-auto rounded-md border p-1">
-                      {students
-                        .filter(
-                          (student) =>
-                            !creating.studentIds.includes(student.id) &&
-                            `${student.firstName} ${student.lastName}`
-                              .toLowerCase()
-                              .includes(studentFilter.trim().toLowerCase()),
-                        )
-                        .slice(0, 8)
-                        .map((student) => (
-                          <button
-                            key={student.id}
-                            type="button"
-                            onClick={() => {
-                              setSlotMatches(null);
-                              setCreating({
-                                ...creating,
-                                studentIds: [...creating.studentIds, student.id],
-                              });
-                              setStudentFilter("");
-                            }}
-                            className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs hover:bg-accent"
-                          >
-                            <span>
-                              {student.firstName} {student.lastName}
-                            </span>
-                            <span className="text-muted-foreground">
-                              {student.studentGroupId
-                                ? (groupById.get(student.studentGroupId)?.name ?? "")
-                                : ""}
-                            </span>
-                          </button>
-                        ))}
-                    </div>
-                  ) : null}
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={runSlotSearch}
-                  disabled={!creating.subjectId || !creating.studentGroupId}
-                >
-                  {t("slotFinderSearch")}
-                </Button>
-                {slotMatches !== null ? (
-                  slotMatches.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      {t("slotFinderNone")}
-                    </p>
-                  ) : (
-                    <div className="max-h-44 space-y-1 overflow-y-auto">
-                      {slotMatches.map((match) => {
-                        const teacher = teacherById.get(match.teacherId);
-                        return (
-                          <button
-                            key={`${match.dayOfWeek}-${match.startMinutes}-${match.teacherId}`}
-                            type="button"
-                            onClick={() => applySlot(match)}
-                            className="flex w-full items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-accent"
-                          >
-                            <span className="font-medium">
-                              {tDays(String(match.dayOfWeek))}{" "}
-                              <span className="tabular-nums">
-                                {minutesToHHMM(match.startMinutes)}–
-                                {minutesToHHMM(match.endMinutes)}
-                              </span>
-                            </span>
-                            <span className="flex items-center gap-1.5 text-muted-foreground">
-                              {teacher
-                                ? `${teacher.firstName[0]}. ${teacher.lastName}`
-                                : "—"}
-                              <span
-                                className={
-                                  match.isFallback
-                                    ? "rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800"
-                                    : "rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-800"
-                                }
-                              >
-                                {match.isFallback
-                                  ? t("slotFinderFallback")
-                                  : t("slotFinderAssigned")}
-                              </span>
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )
-                ) : null}
-              </div>
-              <div className="col-span-2 space-y-2">
-                <Label>{t("editDay")}</Label>
-                <Select
-                  value={creating.dayOfWeek}
-                  onValueChange={(value) =>
-                    setCreating({ ...creating, dayOfWeek: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4, 5, 6, 7].map((day) => (
-                      <SelectItem key={day} value={String(day)}>
-                        {tDays(String(day))}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="create-start">{t("editStart")}</Label>
-                <Input
-                  id="create-start"
-                  type="time"
-                  value={creating.startTime}
-                  onChange={(e) =>
-                    setCreating({ ...creating, startTime: e.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="create-end">{t("editEnd")}</Label>
-                <Input
-                  id="create-end"
-                  type="time"
-                  value={creating.endTime}
-                  onChange={(e) =>
-                    setCreating({ ...creating, endTime: e.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>{t("editRoom")}</Label>
-                <Select
-                  value={creating.roomId}
-                  onValueChange={(value) =>
-                    setCreating({ ...creating, roomId: value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE}>{t("noRoom")}</SelectItem>
-                    {(rooms ?? []).map((room) => (
-                      <SelectItem key={room.id} value={room.id}>
-                        {room.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>{t("editTeacher")}</Label>
-                <Select
-                  value={creating.teacherId}
-                  onValueChange={(value) =>
-                    setCreating({ ...creating, teacherId: value })
-                  }
-                >
-                  <SelectTrigger aria-label={t("editTeacher")}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={NONE}>{t("noTeacher")}</SelectItem>
-                    {teachers.map((teacher) => (
-                      <SelectItem key={teacher.id} value={teacher.id}>
-                        {teacher.firstName} {teacher.lastName}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Suspense fallback={<RecurrenceFieldsFallback />}>
-                <RecurrenceFields
-                  idPrefix="create"
-                  value={{
-                    recurrence: creating.recurrence,
-                    startDate: creating.startDate,
-                    endDate: creating.endDate,
-                  }}
-                  onChange={(next) => setCreating({ ...creating, ...next })}
-                />
-              </Suspense>
-              <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <Lock className="h-4 w-4 text-muted-foreground" />
-                  <div>
-                    <div className="text-sm font-medium">{t("lockLabel")}</div>
-                    <div className="text-xs text-muted-foreground">{t("lockHint")}</div>
-                  </div>
-                </div>
-                <Switch
-                  checked={creating.isLocked}
-                  onCheckedChange={(checked) =>
-                    setCreating({ ...creating, isLocked: checked })
-                  }
-                />
-              </div>
-            </div>
-          ) : null}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreating(null)}>
-              {tCommon("cancel")}
-            </Button>
-            <Button
-              onClick={doCreate}
-              disabled={
-                createLesson.isPending ||
-                !creating ||
-                !creating.subjectId ||
-                !creating.studentGroupId ||
-                !creating.startTime ||
-                !creating.endTime
-              }
-            >
-              {createLesson.isPending ? (
-                <>
-                  <Loader2 className="animate-spin" />
-                  {tCommon("saving")}
-                </>
-              ) : (
-                t("addConfirm")
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/*
+        Mounted from the first lesson added onward, and never unmounted
+        again: closing keeps it in the tree so it animates out as before.
+      */}
+      {createUsed && (
+        <Suspense fallback={null}>
+          <CreateLessonDialog
+            draft={creating}
+            onDraftChange={setCreating}
+            onClose={() => {
+              setCreating(null);
+              setSlotMatches(null);
+            }}
+            subjects={subjects ?? []}
+            groups={groups ?? []}
+            rooms={rooms ?? []}
+            teachers={teachers}
+            students={students}
+            groupById={groupById}
+            teacherById={teacherById}
+            slotMatches={slotMatches}
+            onSlotMatchesChange={setSlotMatches}
+            onSearchSlots={runSlotSearch}
+            onCreate={() => void doCreate()}
+            pending={createLesson.isPending}
+            none={NONE}
+          />
+        </Suspense>
+      )}
 
       {/* ---------------- Smart placement suggestions ---------------- */}
       <Dialog

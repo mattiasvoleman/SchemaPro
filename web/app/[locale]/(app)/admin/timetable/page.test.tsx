@@ -709,9 +709,10 @@ describe("what a new lesson starts out as", () => {
     clickEmptySlot();
 
     // A rektor who has narrowed to one class and one teacher is about to
-    // create a lesson for them; asking again would be asking twice.
+    // create a lesson for them; asking again would be asking twice. (The
+    // dialog's code arrives on that first click: create-lesson-dialog.tsx.)
     expect(
-      screen.getByRole("combobox", { name: "timetable.addGroup" }).textContent,
+      (await screen.findByRole("combobox", { name: "timetable.addGroup" })).textContent,
     ).toBe("5.1");
     expect(
       screen.getByRole("combobox", { name: "timetable.editTeacher" }).textContent,
@@ -731,7 +732,7 @@ describe("what a new lesson starts out as", () => {
     clickEmptySlot();
 
     expect(
-      screen.getByRole("combobox", { name: "timetable.editTeacher" }).textContent,
+      (await screen.findByRole("combobox", { name: "timetable.editTeacher" })).textContent,
     ).toBe("timetable.noTeacher");
     // The group placeholder, not one of the two picked.
     expect(
