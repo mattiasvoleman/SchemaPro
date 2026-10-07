@@ -1646,7 +1646,29 @@
     "problem_dutyNoteTooLong": "The note can be at most {max} characters.",
     "problem_slotTimeRequired": "Give both a start and an end for the time to block, or switch Block time off.",
     "problem_slotOffGrid": "{time} is not on the timetable's {grid}-minute grid.",
-    "problem_slotReversed": "The end ({end}) must be after the start ({start})."
+    "problem_slotReversed": "The end ({end}) must be after the start ({start}).",
+    "carry": {
+      "summary": {
+        "counts": "{employments, plural, one {# teaching post} other {# teaching posts}} and {duties, plural, one {# duty} other {# duties}} are carried over. {slots, plural, =0 {None has a blocked slot.} one {# has a blocked slot, which becomes a new one.} other {# have a blocked slot, which become new ones.}} {followed, plural, =0 {} one {# follows its group into next year.} other {# follow their group into next year.}}",
+        "dutyLine": "{label} — {teacher}",
+        "dutyLineGroup": "{label} ({group}) — {teacher}",
+        "relabelLine": "{from} → {to} — {teacher}",
+        "signatureLine": "{teacher} ({signature})",
+        "withReduction": "The reduction is carried over — does it still apply next year?",
+        "withTargetOverride": "The own target is carried over — does it still apply next year?",
+        "mentorskapLeft": "Mentorships not carried over, because the class graduates or is not rolled over",
+        "groupDropped": "Carried over without its group, which does not exist next year",
+        "relabelled": "Renamed with the group",
+        "slotDropped": "Carried over without its blocked slot, which lies off the schedule's grid",
+        "inactive": "Inactive — their post and duties are not carried over",
+        "notStaff": "Not a teacher or school leader — their post and duties are not carried over",
+        "alreadySetUp": "Already has a post in the year and is skipped whole, duties included",
+        "dutyAlreadyPresent": "Already in the year",
+        "signatureTaken": "The signature is already used by someone else and is not carried over",
+        "overlapsTargetDuty": "The blocked slot overlaps a slot the teacher already has in the year",
+        "successorHasMentor": "The class already has a mentor in the year"
+      }
+    }
   },
   "myStaffing": {
     "title": "My workload",
@@ -1756,6 +1778,7 @@
     "previewNeedsInput": "The preview is waiting: give the new year a name in step 1.",
     "createYear": "Create {name}",
     "created": "{name} was created with {groups, plural, one {# group} other {# groups}} and {requirements, plural, one {# teaching requirement} other {# teaching requirements}}.",
+    "createdWithStaffing": "{name} was created with {groups, plural, one {# group} other {# groups}}, {requirements, plural, one {# teaching requirement} other {# teaching requirements}}, {employments, plural, one {# teaching post} other {# teaching posts}} and {duties, plural, one {# duty} other {# duties}}.",
     "problemsLabel": "To fix and to know",
     "blocking": "Must be fixed",
     "notice": "Good to know",
@@ -1782,13 +1805,15 @@
       "carryTeachingGroups": "Teaching groups are carried over",
       "carryTeachingGroupMembers": "Group members are carried over",
       "keepTeachers": "Teachers stay on their requirements",
-      "carryClassRules": "Weekly class rules are carried over"
+      "carryClassRules": "Weekly class rules are carried over",
+      "carryStaffing": "Teaching posts and duties are carried over"
     },
     "optionHint": {
       "carryTeachingGroups": "Promoted like the classes. Off: they are not created.",
       "carryTeachingGroupMembers": "Except pupils whose class graduates or is not rolled over.",
       "keepTeachers": "Except inactive teachers, and teachers lacking qualification when that check refuses.",
-      "carryClassRules": "Per-weekday blocks for a class. Dated rules are not carried."
+      "carryClassRules": "Per-weekday blocks for a class. Dated rules are not carried.",
+      "carryStaffing": "Post %, reduction, signature and duties of active teachers. A mentorship follows its class, and a blocked slot becomes a new one in the new year."
     },
     "noGroups": "The year has no groups.",
     "colGroup": "Group",
@@ -1892,11 +1917,12 @@
     "classRuleLine": "{from} → {to}: {day} {start}–{end}",
     "reviewBreaks": "{count, plural, =0 {No holidays are carried over} one {# holiday is carried over} other {# holidays are carried over}}",
     "breakLine": "{name}: {start} – {end}",
+    "reviewStaffing": "Teaching posts and duties",
     "reviewLeftOut": "Not carried over",
     "skipped": {
       "MasterLesson": "The base schedule ({count, plural, one {# lesson} other {# lessons}}) — next year’s schedule is generated for the new classes, and that can be done as soon as the year is created, before its activation.",
       "LunchSitting": "The lunch sittings ({count}) — they are placed against the new schedule.",
-      "TeacherEmployment": "The teaching posts ({count}) — entered for the new year on the staffing page.",
+      "TeacherEmployment": "The teaching posts ({count}) — turn on Teaching posts and duties are carried over in step 2, or bring them over later from the staffing page.",
       "TeacherDuty": "The duties ({count}), with their blocked slots and mentorships."
     },
     "skippedHistory": "The old year’s history — the calendar, attendance, saved versions and generation runs — stays with it.",
@@ -1916,7 +1942,15 @@
       "YEAR_DATES_OVERLAP": "The dates overlap {years}.",
       "BREAK_NEEDS_DATES": "{name} has no proposed dates next year. Enter its first and last day.",
       "BREAK_OUTSIDE_YEAR": "{name} ({startDate} – {endDate}) lies outside the new year.",
-      "DUTY_SLOTS_NOT_CARRIED": "Duties are not carried over: {duties, plural, one {# duty} other {# duties}}, {blockedSlots, plural, one {# blocked slot} other {# blocked slots}} and {mentorskap, plural, one {# mentorship} other {# mentorships}}. The new year has none until they are entered, and a schedule generated before then does not account for them.",
+      "DUTY_SLOTS_NOT_CARRIED": "Duties are not carried over: {duties, plural, one {# duty} other {# duties}}, {blockedSlots, plural, one {# blocked slot} other {# blocked slots}} and {mentorskap, plural, one {# mentorship} other {# mentorships}}. The new year has none until they are entered, and a schedule generated before then does not account for them. Turn on Teaching posts and duties are carried over in step 2 to bring them.",
+      "STAFFING_MENTORSKAP_NOT_CARRIED": "{duties, plural, one {# mentorship is} other {# mentorships are}} not carried over, because the class graduates or is not rolled over: {groups}.",
+      "STAFFING_DUTY_GROUP_DROPPED": "{duties, plural, one {# duty is} other {# duties are}} carried over without its group, because the group does not exist next year: {groups}.",
+      "STAFFING_TEACHERS_NOT_CARRIED": "{teachers, plural, one {# person is} other {# people are}} not an active teacher or school leader, so their post and duties are not carried over.",
+      "STAFFING_SLOT_OFF_GRID": "{duties, plural, one {# duty has} other {# duties have}} a blocked slot off the schedule's grid. The duty is carried over, the slot is not.",
+      "STAFFING_PER_YEAR_TERMS_CARRIED": "The reduction is carried over for {reductions, plural, one {# teacher} other {# teachers}} and an own target for {overrides, plural, one {# teacher} other {# teachers}}. Such terms are often agreed for one year — check that they still apply next year.",
+      "STAFFING_SIGNATURE_TAKEN": "{teachers, plural, one {# teacher's signature is} other {# teachers' signatures are}} already used by someone else in the year and not carried over.",
+      "STAFFING_ALREADY_PRESENT": "{teachers, plural, one {# teacher already has a post in the year and is} other {# teachers already have a post in the year and are}} skipped whole, and {duties, plural, one {# duty already exists or belongs} other {# duties already exist or belong}} to them.",
+      "STAFFING_SLOTS_OVER_LESSONS": "{duties, plural, one {# blocked slot lands} other {# blocked slots land}} on {lessons, plural, one {# lesson} other {# lessons}} the teacher already has in the year's schedule. They become conflicts to resolve in the schedule.",
       "VOLUME_DIFFERS_FROM_TIMPLAN": "The teaching requirements of {groups} differ from the decided timplan for the grade they are promoted into.",
       "ISO_WEEK_53_CROSSED": "The rollover crosses a week 53: {rows, plural, one {# odd- or even-week requirement switches} other {# odd- or even-week requirements switch}} to the other week type. Check them."
     },

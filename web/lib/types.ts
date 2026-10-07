@@ -786,6 +786,8 @@ export interface RolloverPreview {
     stageChange: boolean;
   }[];
   timplans: RolloverPlannedTimplan[];
+  /** What carrying tjänster and uppdrag would do (staffing Fas 5); null without carryStaffing. */
+  staffing: StaffingCarryPreview | null;
   skipped: { model: string; reason: string; count: number | null }[];
   problems: RolloverProblem[];
   blocking: boolean;
@@ -803,6 +805,8 @@ export interface RolloverOptions {
   carryTeachingGroupMembers?: boolean;
   keepTeachers?: boolean;
   carryClassRules?: boolean;
+  /** Ta med tjänster och uppdrag. The server reads an absent field as false; the wizard always sends it. */
+  carryStaffing?: boolean;
   breaks?: { sourceBreakId: string; startDate?: string; endDate?: string }[];
 }
 
@@ -816,6 +820,78 @@ export interface RolloverResult {
     classRules: number;
     timplans: number;
   };
+  /** Tjänster, uppdrag and their new slots; null for a rollover without carryStaffing. */
+  staffing: StaffingCarryCounts | null;
+  planHash: string;
+}
+
+// ---------------------------------------------------------------------------
+// Tjänster och uppdrag till nästa läsår (staffing Fas 5)
+//
+// The gateway's StaffingCarryPreview (src/year-rollover/rollover-staffing.ts):
+// the same shape inside the rollover's preview and in the carry into an
+// already rolled year (POST /academic-years/:id/staffing-rollover/preview).
+// Teachers arrive as ids; the pages name them from usePeople.
+// ---------------------------------------------------------------------------
+
+interface StaffingDutyRef {
+  sourceDutyId: string;
+  userId: string;
+  kind: TeacherDutyKind;
+  label: string;
+}
+
+export interface StaffingCarryPreview {
+  employments: {
+    carried: number;
+    /** A nedsättning carried: often agreed for one year only. */
+    withReduction: string[];
+    /** A per-teacher riktmärke carried, likewise. */
+    withTargetOverride: string[];
+    notCarried: { userId: string; reason: "INACTIVE" | "NOT_STAFF" | "ALREADY_PRESENT" }[];
+    signaturesDropped: { userId: string; signature: string }[];
+  };
+  duties: {
+    carried: number;
+    slots: number;
+    followedGroup: number;
+    relabelled: { sourceDutyId: string; userId: string; from: string; to: string }[];
+    groupDropped: (StaffingDutyRef & { groupName: string | null })[];
+    slotDropped: (StaffingDutyRef & { reason: "OFF_GRID" })[];
+    overlapsTargetDuty: (StaffingDutyRef & { targetDutyId: string })[];
+    successorHasMentor: (StaffingDutyRef & { groupName: string })[];
+    notCarried: (StaffingDutyRef & {
+      groupName: string | null;
+      reason: "GROUP_LEAVES" | "TEACHER_NOT_CARRIED" | "TEACHER_ALREADY_SET_UP" | "ALREADY_PRESENT";
+    })[];
+  };
+  /** Per teacher, sorted by userId. */
+  teachers: {
+    userId: string;
+    employment: "CARRIED" | "ALREADY_PRESENT" | "NOT_CARRIED" | "NONE";
+    duties: number;
+    dutyMinutesPerWeek: number;
+  }[];
+}
+
+export interface StaffingCarryCounts {
+  employments: number;
+  duties: number;
+  dutySlots: number;
+}
+
+/** POST /academic-years/:id/staffing-rollover/preview — `:id` is the TARGET year. */
+export type StaffingRolloverPreview = StaffingCarryPreview & {
+  source: { id: string; name: string };
+  target: { id: string; name: string };
+  problems: RolloverProblem[];
+  blocking: false;
+  planHash: string;
+};
+
+export interface StaffingRolloverResult {
+  targetYearId: string;
+  counts: StaffingCarryCounts;
   planHash: string;
 }
 

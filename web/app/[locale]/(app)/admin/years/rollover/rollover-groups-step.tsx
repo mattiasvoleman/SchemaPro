@@ -30,8 +30,14 @@ import {
 } from "@/components/ui/table";
 
 const DEFAULT = "DEFAULT";
-type Switches = "carryTeachingGroups" | "carryTeachingGroupMembers" | "keepTeachers" | "carryClassRules";
-const SWITCHES: Switches[] = ["carryTeachingGroups", "carryTeachingGroupMembers", "keepTeachers", "carryClassRules"];
+type Switches = "carryTeachingGroups" | "carryTeachingGroupMembers" | "keepTeachers" | "carryClassRules" | "carryStaffing";
+const SWITCHES: Switches[] = [
+  "carryTeachingGroups",
+  "carryTeachingGroupMembers",
+  "keepTeachers",
+  "carryClassRules",
+  "carryStaffing",
+];
 
 /**
  * Steg 2, Klasser och grupper: what each group of this year becomes.

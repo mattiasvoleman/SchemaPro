@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import { usePeople } from "@/lib/queries";
 import type { RolloverPreview } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
+import { RolloverStaffingReview } from "./rollover-staffing-review";
 
 const OUTCOMES = ["PROMOTE", "CARRY", "INTAKE", "GRADUATE", "SKIP"] as const;
 
@@ -256,6 +257,8 @@ export function RolloverReview({
           </ul>
         ) : null}
       </section>
+
+      {plan.staffing ? <RolloverStaffingReview staffing={plan.staffing} teacherName={teacherName} /> : null}
 
       <section aria-labelledby="review-left" className="space-y-1">
         <h3 id="review-left" className="font-medium">
