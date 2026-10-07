@@ -24,7 +24,7 @@ const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 
 const HASH = "b".repeat(64);
-const names: Record<string, string> = { "t-bo": "Bo Alm", "t-cilla": "Cilla Öst" };
+const names: Record<string, string> = { "t-bo": "Bo Alm", "t-cilla": "Cilla Öst", "t-gone": "Gun Gone" };
 
 const preview = (overrides: Partial<StaffingRolloverPreview> = {}): StaffingRolloverPreview => ({
   source: { id: "y26", name: "2026/27" },
@@ -104,11 +104,52 @@ describe("StaffingCarryDialog", () => {
       "Mentor 8A — Bo Alm",
     );
     expect(screen.getByText(/1 lärare har redan en tjänst i läsåret och hoppas över helt/)).toBeInTheDocument();
+    // A zero side of a problem is not printed: no "0 uppdrag … hör till dem".
+    expect(screen.queryByText(/0 uppdrag/)).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Ta med" }));
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(executes()).toEqual([["/api/v1/academic-years/y27/staffing-rollover", { planHash: HASH }]]);
     expect(toast.success).toHaveBeenCalledWith("2027/28 fick 1 tjänst och 2 uppdrag.");
+  });
+
+  it("names a person who only had uppdrag and is not carried, and prints no zero side of a problem", async () => {
+    post.mockResolvedValue(
+      preview({
+        duties: {
+          ...preview().duties,
+          successorHasMentor: [],
+          notCarried: [
+            { sourceDutyId: "d-9", userId: "t-gone", kind: "RASTVAKT", label: "Rastvakt", groupName: null, reason: "TEACHER_NOT_CARRIED" },
+          ],
+        },
+        problems: [
+          { code: "STAFFING_TEACHERS_NOT_CARRIED", blocking: false, params: { teachers: 1 } },
+          { code: "STAFFING_PER_YEAR_TERMS_CARRIED", blocking: false, params: { reductions: 2, overrides: 0 } },
+          { code: "STAFFING_ALREADY_PRESENT", blocking: false, params: { teachers: 0, duties: 2 } },
+        ],
+      }),
+    );
+    renderDialog();
+    expect(await screen.findByText("Rastvakt — Gun Gone")).toBeInTheDocument();
+    const problems = screen.getByRole("list", { name: "Att se över" });
+    expect(problems).not.toHaveTextContent(/för 0 lärare|0 lärare har|hör till dem/);
+    expect(problems).toHaveTextContent("Nedsättningen följer med för 2 lärare.");
+    expect(problems).toHaveTextContent("2 uppdrag följer inte med");
+  });
+
+  it("says a refusal once: in the dialog, not again as a toast", async () => {
+    post.mockImplementation(async (path: string) => {
+      if (path.endsWith("/preview")) return preview();
+      throw new ApiError(409, "…", "WRITE_CONFLICT");
+    });
+    const user = userEvent.setup();
+    renderDialog();
+    const button = await screen.findByRole("button", { name: "Ta med" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("says a stale preview wrote nothing, and fetches it again", async () => {

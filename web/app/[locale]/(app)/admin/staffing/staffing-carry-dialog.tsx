@@ -16,7 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { STAFFING_ROLLOVER_STALE, useExecuteStaffingCarry, useStaffingCarryPreview } from "./use-staffing-carry";
+import { useExecuteStaffingCarry, useStaffingCarryPreview } from "./use-staffing-carry";
 
 /**
  * "Ta med tjänster och uppdrag" for a läsår that was rolled WITHOUT them —
@@ -85,9 +85,10 @@ export function StaffingCarryDialog({
       );
       onOpenChange(false);
     } catch (error) {
-      // Stale: nothing was written, and onSettled is already refetching the preview.
+      // Said once, in the dialog that stays open — a toast as well would be
+      // announced twice. Stale: nothing was written, and onSettled is
+      // already refetching the preview.
       setRefusal(errorText(error));
-      if (!(error instanceof ApiError && error.code === STAFFING_ROLLOVER_STALE)) toast.error(errorText(error));
     }
   };
 

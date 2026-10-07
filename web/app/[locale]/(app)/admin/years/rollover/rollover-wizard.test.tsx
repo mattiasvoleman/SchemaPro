@@ -471,6 +471,29 @@ describe("RolloverWizard", () => {
     );
   });
 
+  it("says nothing of tjänster in the toast when the switch was on and the school has none", async () => {
+    post.mockImplementation(async (path: string, body: RolloverOptions) =>
+      path.endsWith("/preview")
+        ? previewFor(body)
+        : {
+            academicYear: { name: body.name },
+            counts: { groups: 3, requirements: 24 },
+            staffing: { employments: 0, duties: 0, dutySlots: 0 },
+            planHash: HASH,
+          },
+    );
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    const create = await screen.findByRole("button", { name: "Skapa 2027/28" });
+    await waitFor(() => expect(create).toBeEnabled());
+    await user.click(create);
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("2027/28 skapades med 3 grupper och 24 timplansposter."),
+    );
+  });
+
   it("does not create on the second click of a double click on Nästa, and moves focus to the review", async () => {
     const user = userEvent.setup();
     renderWizard();

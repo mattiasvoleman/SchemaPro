@@ -69,6 +69,10 @@ export function StaffingCarrySummary({
     duties.notCarried.filter((row) => row.reason === reason);
   const people = (reason: (typeof employments.notCarried)[number]["reason"]) =>
     employments.notCarried.filter((row) => row.reason === reason).map((row) => teacherName(row.userId));
+  // A person who had uppdrag but no post is in no people list above, yet
+  // STAFFING_TEACHERS_NOT_CARRIED counts them: name them by their uppdrag.
+  const withPost = new Set(employments.notCarried.map((row) => row.userId));
+  const dutyOnlyNotCarried = notCarried("TEACHER_NOT_CARRIED").filter((row) => !withPost.has(row.userId));
 
   return (
     <div className="space-y-3 text-sm">
@@ -93,6 +97,7 @@ export function StaffingCarrySummary({
       <Section title={t("slotDropped")} items={duties.slotDropped.map(duty)} warn />
       <Section title={t("inactive")} items={people("INACTIVE")} />
       <Section title={t("notStaff")} items={people("NOT_STAFF")} />
+      <Section title={t("dutyOnlyNotCarried")} items={dutyOnlyNotCarried.map(duty)} />
       <Section title={t("alreadySetUp")} items={people("ALREADY_PRESENT")} />
       <Section title={t("dutyAlreadyPresent")} items={notCarried("ALREADY_PRESENT").map(duty)} />
       <Section
