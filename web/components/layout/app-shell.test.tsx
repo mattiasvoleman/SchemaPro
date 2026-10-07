@@ -118,18 +118,18 @@ describe("AppShell navigation", () => {
       timplan.compareDocumentPosition(requirements) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
 
-    // The one-release hint is TEXT under the renamed entry, part of its
-    // accessible name, not a tooltip a touch screen never shows.
-    expect(requirements).toHaveTextContent("nav.requirementsFormerly");
-    expect(timplan).not.toHaveTextContent("nav.requirementsFormerly");
+    // The one-release "Hette tidigare Timplan" line has had its release: the
+    // entry is its name alone again.
+    expect(requirements).toHaveTextContent(/^nav\.requirements$/);
   });
 
-  it("names the two pages Timplan and Timplansposter in Swedish, with the old name stated", async () => {
+  it("names the two pages Timplan and Timplansposter in Swedish, the old name no longer stated", async () => {
     const sv = (await import("@/messages/sv.json")).default as { nav: Record<string, string> };
     const en = (await import("@/messages/en.json")).default as { nav: Record<string, string> };
     expect(sv.nav.timplan).toBe("Timplan");
     expect(sv.nav.requirements).toBe("Timplansposter");
-    expect(sv.nav.requirementsFormerly).toBe("Hette tidigare Timplan");
+    expect(sv.nav).not.toHaveProperty("requirementsFormerly");
+    expect(en.nav).not.toHaveProperty("requirementsFormerly");
     expect(en.nav.requirements).not.toBe(en.nav.timplan);
   });
 
@@ -147,6 +147,27 @@ describe("AppShell navigation", () => {
     expect(sv.requirements.empty).toMatch(/^Inga timplansposter/);
     expect(sv.requirements.tableCaption).toMatch(/^Timplansposter per grupp/);
     expect(sv.engineMessages.INPUT_NO_REQUIREMENTS).toContain("timplansposter");
+    // The pages that speak of the posts' hours, their rows or their file
+    // name them as posts; "timplanen" is the lokal timplan now.
+    const svAll = (await import("@/messages/sv.json")).default as unknown as Record<
+      string,
+      Record<string, string>
+    >;
+    for (const [namespace, key] of [
+      ["breaks", "intro"],
+      ["breaks", "empty"],
+      ["breaks", "deleteBody"],
+      ["breaks", "tableCaption"],
+      ["generate", "subtitle"],
+      ["generate", "noYearTitle"],
+      ["csvImport", "updatesNotDeletes"],
+      ["gaps", "idlePupilTime"],
+      ["staffing", "unstaffedEmpty"],
+      ["staffing", "teacherRowsHint"],
+    ] as const) {
+      expect(svAll[namespace]![key]).toMatch(/[Tt]implansposte/);
+      expect(svAll[namespace]![key]).not.toMatch(/[Tt]implanen|[Tt]implanens/);
+    }
     expect(en.requirements.empty).toMatch(/^No curriculum entries/);
     expect(en.requirements.tableCaption).toMatch(/^Curriculum entries by group/);
     // The English is the engine's own sentence (i18n/engine-messages.test.ts
