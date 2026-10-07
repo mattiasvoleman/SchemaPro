@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { Download } from "lucide-react";
-import { CSV_TEMPLATES, downloadCsv, type ImportKind } from "@/lib/csv";
+import { CSV_TEMPLATES, downloadCsv, type ImportKind } from "@/lib/csv-export";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,

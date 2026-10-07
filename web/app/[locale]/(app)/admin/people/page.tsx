@@ -57,7 +57,7 @@ const DutiesCard = lazy(() =>
     default: module.DutiesCard,
   })),
 );
-import { studentsToCsv, teacherQualificationsToCsv, teachersToCsv } from "@/lib/csv";
+import { studentsToCsv, teacherQualificationsToCsv, teachersToCsv } from "@/lib/csv-export";
 import {
   useCrudMutations,
   useAcademicYears,

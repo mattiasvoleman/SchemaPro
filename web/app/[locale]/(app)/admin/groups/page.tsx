@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Pencil, Plus, Search, Trash2, Upload, UserPlus, Users } from "lucide-react";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
-import { classesToCsv, membershipsToCsv } from "@/lib/csv";
+import { classesToCsv, membershipsToCsv } from "@/lib/csv-export";
 import {
   useAcademicYears,
   useCrudMutations,

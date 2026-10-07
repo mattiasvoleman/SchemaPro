@@ -7,7 +7,7 @@ import { MapPin, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useCrudMutations, useRooms , useRoomTypes } from "@/lib/queries";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
-import { roomTypesToCsv } from "@/lib/csv";
+import { roomTypesToCsv } from "@/lib/csv-export";
 import { SCHOOL_STAGES, gradeRangeLabel, stageOf } from "@/lib/school-stages";
 import type { Room, RoomType } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";

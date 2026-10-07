@@ -5,8 +5,8 @@ import { CsvExportButton } from "./csv-export-button";
 
 const downloadCsv = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/csv", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/csv")>()),
+vi.mock("@/lib/csv-export", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/csv-export")>()),
   downloadCsv,
 }));
 
