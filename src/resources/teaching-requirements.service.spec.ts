@@ -882,6 +882,18 @@ describe('TeachingRequirementsService', () => {
         expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
       });
 
+      it('refuses one person as both the lead and the co-teacher, naming the field, and writes nothing', async () => {
+        // Charged twice in the load report, and judged twice: under WARN the
+        // answer carried two identical over-target warnings for one person.
+        arrange();
+
+        const refused = service.create(dto({ teacherId: ANNA, coTeacherId: ANNA }), testUser());
+
+        await expect(refused).rejects.toThrow(BadRequestException);
+        await expect(refused).rejects.toThrow(/^coTeacherId: /);
+        expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+      });
+
       it('WARN over target: saves, and the warning carries the same params', async () => {
         arrange();
 
@@ -946,6 +958,16 @@ describe('TeachingRequirementsService', () => {
         );
         return handle;
       };
+
+      it('refuses a PATCH that makes the stored lead the co-teacher as well', async () => {
+        arrangeRow();
+
+        const refused = service.update(REQUIREMENT_ID, { coTeacherId: ANNA }, testUser());
+
+        await expect(refused).rejects.toThrow(BadRequestException);
+        await expect(refused).rejects.toThrow(/^coTeacherId: /);
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
 
       it('REFUSE: a PATCH adding lessons that take the teacher past the limit is 409, and nothing is written', async () => {
         arrangeRow({ policy: { overAllocationMode: 'REFUSE' } });

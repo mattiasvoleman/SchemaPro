@@ -7,7 +7,12 @@ import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { SLOT_MINUTES, fitsTheGrid } from '../common/solver-grid';
 import { parseDateString } from '../common/utils/time';
 import { readYearBoundsForShare } from './academic-year-bounds';
-import { enforceRequirementWrite, touchesStaffing } from '../staffing/staffing-enforcement';
+import {
+  SAME_TEACHER_TWICE,
+  enforceRequirementWrite,
+  sameTeacherTwice,
+  touchesStaffing,
+} from '../staffing/staffing-enforcement';
 import type { StaffingWarning } from '../staffing/staffing-checks';
 import type {
   CreateTeachingRequirementDto,
@@ -121,6 +126,9 @@ export class TeachingRequirementsService {
           minutesPerLesson: dto.minutesPerLesson ?? 60,
           recurrence: dto.recurrence ?? 'ALL_WEEKS',
         } as const;
+        if (sameTeacherTwice(charged.teacherId, charged.coTeacherId)) {
+          throw new BadRequestException(SAME_TEACHER_TWICE);
+        }
 
         // The staffing policy's two questions, asked of the row as it is about
         // to be written and before it is — see staffing-enforcement.ts. A
@@ -225,6 +233,16 @@ export class TeachingRequirementsService {
             },
           });
           if (stored) {
+            // As the row will end up: a PATCH naming only the co-teacher is
+            // measured against the lead already on the row.
+            if (
+              sameTeacherTwice(
+                dto.teacherId !== undefined ? dto.teacherId : stored.teacherId,
+                dto.coTeacherId !== undefined ? dto.coTeacherId : stored.coTeacherId,
+              )
+            ) {
+              throw new BadRequestException(SAME_TEACHER_TWICE);
+            }
             warnings = await enforceRequirementWrite(tx, {
               schoolId: requireSchoolId(user),
               academicYearId: stored.academicYearId,
