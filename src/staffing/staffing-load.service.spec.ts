@@ -283,7 +283,11 @@ describe('StaffingLoadService', () => {
 
   describe('suggestTeachers', () => {
     it('reads the row’s year in the same transaction and ranks the school’s active staff', async () => {
-      tx.teachingRequirement.findUnique.mockResolvedValue({ academicYearId: YEAR_ID });
+      tx.teachingRequirement.findUnique.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: MA,
+        studentGroup: { predecessorId: null },
+      });
       tx.user.findMany.mockResolvedValue([{ id: COLLEAGUE }, { id: ME }]);
 
       const answer = await service.suggestTeachers('req-2', testUser());
@@ -291,8 +295,16 @@ describe('StaffingLoadService', () => {
       expect(prisma.withRls).toHaveBeenCalledTimes(1);
       expect(tx.teachingRequirement.findUnique).toHaveBeenCalledWith({
         where: { id: 'req-2' },
-        select: { academicYearId: true },
+        select: {
+          academicYearId: true,
+          subjectId: true,
+          studentGroup: { select: { predecessorId: true } },
+        },
       });
+      // No predecessor: the year's one requirement read and nothing more, so
+      // a school that never rolls makes today's statements.
+      expect(tx.teachingRequirement.findMany).toHaveBeenCalledTimes(1);
+      expect(answer.lastYear).toBeNull();
       expect(tx.user.findMany).toHaveBeenCalledWith({
         where: { role: { in: ['TEACHER', 'SCHOOL_ADMIN'] }, isActive: true },
         select: { id: true },
@@ -304,6 +316,46 @@ describe('StaffingLoadService', () => {
       expect(answer.candidates).toEqual([
         expect.objectContaining({ userId: ME, teachesSubjectAlready: true, remainingMinutesPerWeek: 145, status: 'UNDER' }),
         expect.objectContaining({ userId: COLLEAGUE, remainingMinutesPerWeek: null, status: 'NO_TARGET' }),
+      ]);
+    });
+
+    it('with a predecessor group, reads its rows of the subject once, after the year, and ranks on them', async () => {
+      const PRED = '77777777-7777-4777-8777-777777777777';
+      tx.teachingRequirement.findUnique.mockResolvedValue({
+        academicYearId: YEAR_ID,
+        subjectId: MA,
+        studentGroup: { predecessorId: PRED },
+      });
+      tx.user.findMany.mockResolvedValue([{ id: COLLEAGUE }, { id: ME }]);
+      const lastYearRows = [
+        { teacherId: COLLEAGUE, coTeacherId: null, studentGroup: { name: '6A', academicYear: { name: '2025/26' } } },
+        { teacherId: null, coTeacherId: COLLEAGUE, studentGroup: { name: '6A', academicYear: { name: '2025/26' } } },
+      ];
+      tx.teachingRequirement.findMany.mockImplementation(((args: { where: Record<string, unknown> }) =>
+        Promise.resolve(
+          args.where.studentGroupId === PRED
+            ? lastYearRows
+            : [requirementRow(), requirementRow({ id: 'req-2', teacherId: null, lessonsPerWeek: 2 })],
+        )) as never);
+
+      const answer = await service.suggestTeachers('req-2', testUser());
+
+      expect(tx.teachingRequirement.findMany).toHaveBeenCalledTimes(2);
+      expect(tx.teachingRequirement.findMany).toHaveBeenLastCalledWith({
+        where: { studentGroupId: PRED, subjectId: MA },
+        select: {
+          teacherId: true,
+          coTeacherId: true,
+          studentGroup: { select: { name: true, academicYear: { select: { name: true } } } },
+        },
+        orderBy: { id: 'asc' },
+      });
+      expect(answer.lastYear).toEqual({ groupName: '6A', yearName: '2025/26' });
+      // Both teach Ma in the fallback tier (ME this year, the colleague last
+      // year); continuity is the next key.
+      expect(answer.candidates.map((c) => [c.userId, c.taughtLastYear])).toEqual([
+        [COLLEAGUE, true],
+        [ME, false],
       ]);
     });
 

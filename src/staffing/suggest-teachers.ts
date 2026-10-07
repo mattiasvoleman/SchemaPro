@@ -25,6 +25,12 @@ export interface TeacherCandidate {
   teachesSubjectAlready: boolean;
   /** Leads or co-teaches another row for the same group this year. */
   teachesGroupAlready: boolean;
+  /**
+   * Led or co-taught the subject for the group's predecessor in the
+   * predecessor year (any of its rows: split, odd/even, term courses). Always
+   * false when the group has no predecessor.
+   */
+  taughtLastYear: boolean;
   /** Already the row's lead teacher. */
   currentlyAssigned: boolean;
   /** target − counted after taking the row; null without a target. */
@@ -43,24 +49,53 @@ export interface TeacherSuggestions {
   /** What the row charges its lead: lessons × minutes × weight × teacherLoadPercent. */
   teacherMinutesPerWeek: number;
   qualificationsRecorded: boolean;
+  /**
+   * The group's predecessor and its year, when the predecessor had a row in
+   * the subject; null otherwise — a school that never rolls, a new group, or a
+   * subject the class did not read last year.
+   */
+  lastYear: { groupName: string; yearName: string } | null;
   candidates: TeacherCandidate[];
+}
+
+/**
+ * Who taught the subject for the group's predecessor, as the caller read it:
+ * the union of lead and co-teacher over every predecessor row of the subject.
+ */
+export interface LastYearTeachers {
+  groupName: string;
+  yearName: string;
+  teacherIds: readonly string[];
 }
 
 /**
  * Who should take this timplanspost: every active member of staff, ranked.
  *
- * THREE KEYS, IN ORDER. (1) Behörighet for the subject over the group's
+ * FOUR KEYS, IN ORDER. (1) Behörighet for the subject over the group's
  * derived grade span — LEGITIMATION, BEHORIG, TILLATEN, none — the same
  * coverage rule as the report's unqualified list and the substitute picker,
- * so the badge here and the warning there never disagree. (2) Already
- * teaching the group: a class with three teachers rather than six. (3) Room
- * left, after taking the row, most first; a teacher with no target sorts
- * last within their tier, because "unknown" is not "plenty". Then by id, so
- * two loads of the panel agree.
+ * so the badge here and the warning there never disagree. (2) The same
+ * teacher as last year: led or co-taught this subject for the group's
+ * predecessor. (3) Already teaching the group: a class with three teachers
+ * rather than six. (4) Room left, after taking the row, most first; a teacher
+ * with no target sorts last within their tier, because "unknown" is not
+ * "plenty". Then by id, so two loads of the panel agree.
+ *
+ * WHY CONTINUITY SITS BETWEEN (1) AND (3). Below behörighet, because that is
+ * the legal question (who may set the grade), REFUSE refuses the write anyway,
+ * and the badge, the report and the substitute picker keep one order —
+ * continuity never lifts an unqualified candidate over a qualified one. Above
+ * "teaches the group", because last year's teacher knows the same pupils in
+ * the same SUBJECT, carries the progression through åk 7–9 and sets the grade
+ * at the end of it; "teaches the group" knows the pupils only from another
+ * subject. It names one or two people per row, so it reorders little.
  *
  * A SCHOOL WITH NO BEHÖRIGHET ROWS falls back, for key (1), to "has a
- * requirement in the subject" — the floor the substitute picker has always
- * had — rather than ranking everybody as unqualified alike.
+ * requirement in the subject, this year or for the group last year" — the
+ * floor the substitute picker has always had, widened by continuity — rather
+ * than ranking everybody as unqualified alike. Without the widening a freshly
+ * rolled year would rank last year's teacher of this very subject below
+ * whoever happened to be staffed first in it.
  *
  * "AFTER TAKING THE ROW" means with this row's lead charge moved to them: the
  * current lead's own figure excludes the row first, so they are compared on
@@ -76,6 +111,7 @@ export function suggestTeachers(
   input: LoadInput,
   requirementId: string,
   staffIds: readonly string[],
+  lastYear: LastYearTeachers | null = null,
 ): TeacherSuggestions {
   const requirement = input.requirements.find((row) => row.id === requirementId);
   if (!requirement) {
@@ -97,6 +133,7 @@ export function suggestTeachers(
   const others = input.requirements.filter((row) => row.id !== requirementId);
   const teaches = (userId: string, row: (typeof others)[number]) =>
     row.teacherId === userId || row.coTeacherId === userId;
+  const lastYearTeachers = new Set(lastYear?.teacherIds ?? []);
 
   const candidates: TeacherCandidate[] = [];
   for (const userId of new Set(staffIds)) {
@@ -115,6 +152,7 @@ export function suggestTeachers(
       teachesGroupAlready: others.some(
         (row) => row.studentGroupId === requirement.studentGroupId && teaches(userId, row),
       ),
+      taughtLastYear: lastYearTeachers.has(userId),
       currentlyAssigned: requirement.teacherId === userId,
       remainingMinutesPerWeek: target === null ? null : target - Math.round(after),
       // Only a row that adds minutes can take anybody past the limit: the
@@ -130,10 +168,11 @@ export function suggestTeachers(
       ? candidate.qualificationKind
         ? QUALIFICATION_RANK[candidate.qualificationKind]
         : 0
-      : Number(candidate.teachesSubjectAlready);
+      : Number(candidate.teachesSubjectAlready || candidate.taughtLastYear);
   candidates.sort(
     (a, b) =>
       tier(b) - tier(a) ||
+      Number(b.taughtLastYear) - Number(a.taughtLastYear) ||
       Number(b.teachesGroupAlready) - Number(a.teachesGroupAlready) ||
       Number(a.remainingMinutesPerWeek === null) - Number(b.remainingMinutesPerWeek === null) ||
       (b.remainingMinutesPerWeek ?? 0) - (a.remainingMinutesPerWeek ?? 0) ||
@@ -147,6 +186,7 @@ export function suggestTeachers(
     gradeSpan: requirement.gradeSpan,
     teacherMinutesPerWeek: Math.round(charge),
     qualificationsRecorded,
+    lastYear: lastYear ? { groupName: lastYear.groupName, yearName: lastYear.yearName } : null,
     candidates,
   };
 }

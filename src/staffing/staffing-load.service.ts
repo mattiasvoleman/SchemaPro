@@ -12,7 +12,11 @@ import {
   type UnstaffedRequirement,
 } from './teacher-load';
 import type { YearBounds } from './teaching-weeks';
-import { suggestTeachers, type TeacherSuggestions } from './suggest-teachers';
+import {
+  suggestTeachers,
+  type LastYearTeachers,
+  type TeacherSuggestions,
+} from './suggest-teachers';
 
 /** The horizons the report can be asked for. Only the first exists in Fas 1. */
 export const LOAD_HORIZONS = ['planned'] as const;
@@ -110,13 +114,27 @@ export class StaffingLoadService {
    * a teaching rektor is assigned rows here, as the requirement's teacherId
    * already allows. The requirement is read first and answers 404 when RLS
    * hides it, as every other route names a foreign id.
+   *
+   * CONTINUITY. When the row's group has a predecessor (StudentGroup
+   * .predecessorId, set by the year rollover), one more plain read names who
+   * taught the subject for it: the union of lead and co-teacher over every
+   * predecessor row of the subject. LR409 keeps a predecessor group in the
+   * predecessor year, so no year filter is needed. The read runs after the
+   * others, on its own, and only then — a school that never rolls makes the
+   * same statements as before and gets the same ranking. It reads
+   * TeachingRequirements, which are not HR data, and never reaches
+   * rostersOfYear (the roster-readers inventory's rule 5).
    */
   async suggestTeachers(requirementId: string, user: AuthenticatedUser): Promise<TeacherSuggestions> {
     requireSchoolId(user);
-    const { input, staffIds } = await this.prisma.withRls(user, async (tx) => {
+    const { input, staffIds, lastYear } = await this.prisma.withRls(user, async (tx) => {
       const requirement = await tx.teachingRequirement.findUnique({
         where: { id: requirementId },
-        select: { academicYearId: true },
+        select: {
+          academicYearId: true,
+          subjectId: true,
+          studentGroup: { select: { predecessorId: true } },
+        },
       });
       if (!requirement) {
         throw new NotFoundException('The requested record does not exist.');
@@ -129,9 +147,23 @@ export class StaffingLoadService {
           orderBy: { id: 'asc' },
         }),
       ]);
-      return { input: yearInput, staffIds: staff.map((row) => row.id) };
+      const predecessorId = requirement.studentGroup.predecessorId;
+      const lastYear = predecessorId
+        ? lastYearTeachers(
+            await tx.teachingRequirement.findMany({
+              where: { studentGroupId: predecessorId, subjectId: requirement.subjectId },
+              select: {
+                teacherId: true,
+                coTeacherId: true,
+                studentGroup: { select: { name: true, academicYear: { select: { name: true } } } },
+              },
+              orderBy: { id: 'asc' },
+            }),
+          )
+        : null;
+      return { input: yearInput, staffIds: staff.map((row) => row.id), lastYear };
     });
-    return suggestTeachers(input, requirementId, staffIds);
+    return suggestTeachers(input, requirementId, staffIds, lastYear);
   }
 
   private async readInput(
@@ -145,4 +177,26 @@ export class StaffingLoadService {
     }
     return { year: read.year, input: read.input };
   }
+}
+
+/** The predecessor's rows of the subject, folded to who taught them; null for none. */
+function lastYearTeachers(
+  rows: {
+    teacherId: string | null;
+    coTeacherId: string | null;
+    studentGroup: { name: string; academicYear: { name: string } };
+  }[],
+): LastYearTeachers | null {
+  const first = rows[0];
+  if (!first) return null;
+  const teacherIds = new Set<string>();
+  for (const row of rows) {
+    if (row.teacherId) teacherIds.add(row.teacherId);
+    if (row.coTeacherId) teacherIds.add(row.coTeacherId);
+  }
+  return {
+    groupName: first.studentGroup.name,
+    yearName: first.studentGroup.academicYear.name,
+    teacherIds: [...teacherIds].sort(),
+  };
 }

@@ -205,4 +205,85 @@ describe('suggestTeachers', () => {
   it('lists each person once whatever the caller hands in', () => {
     expect(order(suggestTeachers(input(), 'target', [ANNA, ANNA]))).toEqual([ANNA]);
   });
+
+  describe('continuity: the same teacher as last year', () => {
+    const LAST = (teacherIds: string[]) => ({ groupName: '7A', yearName: '2025/26', teacherIds });
+
+    it('ranks last year’s teacher after behörighet and before the group’s own teachers', () => {
+      const result = suggestTeachers(
+        input({
+          employments: [post(ANNA), post(BO), post(CY), post(DAG)],
+          requirements: [
+            row('target'),
+            // Bo already teaches 8A (Sv); Cy taught 7A Ma last year.
+            row('bo-8a', { subjectId: 'sv', subjectName: 'Svenska', teacherId: BO, lessonsPerWeek: 1 }),
+          ],
+          qualifications: [qual(BO), qual(CY), qual(DAG, { kind: 'BEHORIG' })],
+        }),
+        'target',
+        [ANNA, BO, CY, DAG],
+        LAST([CY, DAG]),
+      );
+      // Tier LEGITIMATION: Cy (last year) before Bo (the group); then Dag,
+      // BEHORIG, though he taught it last year; then Anna.
+      expect(order(result)).toEqual([CY, BO, DAG, ANNA]);
+      expect(result.candidates.map((c) => c.taughtLastYear)).toEqual([true, false, true, false]);
+      expect(result.lastYear).toEqual({ groupName: '7A', yearName: '2025/26' });
+    });
+
+    it('never lifts a candidate over a better-qualified one', () => {
+      const result = suggestTeachers(
+        input({ qualifications: [qual(ANNA, { kind: 'TILLATEN' })] }),
+        'target',
+        [ANNA, BO],
+        LAST([BO]),
+      );
+      expect(order(result)).toEqual([ANNA, BO]);
+      expect(result.candidates[1]).toMatchObject({ userId: BO, taughtLastYear: true, qualificationKind: null });
+    });
+
+    it('joins the fallback tier when the school has recorded no behörighet', () => {
+      // A freshly rolled year: Cy was staffed first in Ma (9B), Bo taught
+      // 7A Ma last year and has nothing yet. Without continuity in the tier
+      // Bo would sit below Cy and level with Anna.
+      const result = suggestTeachers(
+        input({
+          requirements: [
+            row('target'),
+            row('cy-ma', { studentGroupId: 'g-9b', groupName: '9B', teacherId: CY, lessonsPerWeek: 1 }),
+          ],
+        }),
+        'target',
+        [ANNA, BO, CY],
+        LAST([BO]),
+      );
+      expect(order(result)).toEqual([BO, CY, ANNA]);
+    });
+
+    it('flags lead and co-teacher alike, and nobody when last year’s row had none', () => {
+      const both = suggestTeachers(input(), 'target', [ANNA, BO, CY], LAST([ANNA, BO]));
+      expect(both.candidates.filter((c) => c.taughtLastYear).map((c) => c.userId)).toEqual([ANNA, BO]);
+
+      const none = suggestTeachers(input(), 'target', [ANNA, BO, CY], LAST([]));
+      expect(none.candidates.some((c) => c.taughtLastYear)).toBe(false);
+      expect(none.lastYear).toEqual({ groupName: '7A', yearName: '2025/26' });
+    });
+
+    it('is today’s ranking exactly without a predecessor', () => {
+      const rows = input({
+        employments: [post(ANNA), post(BO), post(CY), post(DAG)],
+        requirements: [
+          row('target'),
+          row('bo-8a', { subjectId: 'sv', subjectName: 'Svenska', teacherId: BO, lessonsPerWeek: 10 }),
+        ],
+        qualifications: [qual(BO, { kind: 'TILLATEN' }), qual(CY, { kind: 'BEHORIG' }), qual(DAG)],
+      });
+      const without = suggestTeachers(rows, 'target', [ANNA, BO, CY, DAG]);
+      const withNull = suggestTeachers(rows, 'target', [ANNA, BO, CY, DAG], null);
+      expect(withNull).toEqual(without);
+      expect(without.lastYear).toBeNull();
+      expect(without.candidates.every((c) => c.taughtLastYear === false)).toBe(true);
+      expect(order(without)).toEqual([DAG, CY, BO, ANNA]);
+    });
+  });
 });
