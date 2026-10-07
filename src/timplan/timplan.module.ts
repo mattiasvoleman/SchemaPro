@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { AcademicYearTimplansController } from './academic-year-timplans.controller';
+import { AcademicYearTimplansService } from './academic-year-timplans.service';
 import { LocalTimplansController } from './local-timplans.controller';
 import { LocalTimplansService } from './local-timplans.service';
 
@@ -16,7 +18,7 @@ import { LocalTimplansService } from './local-timplans.service';
  * ai-engine-contract.spec.ts holds the payload's shape.
  */
 @Module({
-  controllers: [LocalTimplansController],
-  providers: [LocalTimplansService],
+  controllers: [LocalTimplansController, AcademicYearTimplansController],
+  providers: [LocalTimplansService, AcademicYearTimplansService],
 })
 export class TimplanModule {}

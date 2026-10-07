@@ -311,6 +311,50 @@ describe('LocalTimplansService', () => {
       tx.localTimplan.delete.mockRejectedValue(prismaError('P2025'));
       await expect(service.remove(PLAN_ID, testUser())).rejects.toThrow('Den lokala timplanen finns inte.');
     });
+
+    it('409s TIMPLAN_IN_USE naming every läsår that follows it, once each, before trying the delete', async () => {
+      tx.academicYearTimplan.findMany.mockResolvedValue([
+        { academicYear: { name: '2027/28' } },
+        { academicYear: { name: '2026/27' } },
+        { academicYear: { name: '2026/27' } },
+      ]);
+
+      const error = await service.remove(PLAN_ID, testUser()).catch((thrown: unknown) => thrown);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      const body = (error as ConflictException).getResponse() as { code: string; message: string };
+      expect(body.code).toBe('TIMPLAN_IN_USE');
+      expect(body.message).toContain('följs av läsåren "2026/27" och "2027/28"');
+      expect(tx.academicYearTimplan.findMany).toHaveBeenCalledWith({
+        where: { localTimplanId: PLAN_ID },
+        select: { academicYear: { select: { name: true } } },
+      });
+      expect(tx.localTimplan.delete).not.toHaveBeenCalled();
+    });
+
+    it('answers the key’s own refusal — a year attached after the read — with the same code', async () => {
+      tx.localTimplan.delete.mockRejectedValue(
+        prismaError('P2003', {
+          modelName: 'LocalTimplan',
+          driverAdapterError: {
+            cause: {
+              originalCode: '23503',
+              constraint: { index: 'AcademicYearTimplans_localTimplanId_schoolId_fkey' },
+              originalMessage:
+                'update or delete on table "LocalTimplans" violates foreign key constraint ' +
+                '"AcademicYearTimplans_localTimplanId_schoolId_fkey" on table "AcademicYearTimplans"',
+            },
+          },
+        }),
+      );
+
+      const error = await service.remove(PLAN_ID, testUser()).catch((thrown: unknown) => thrown);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      const body = (error as ConflictException).getResponse() as { code: string; message: string };
+      expect(body.code).toBe('TIMPLAN_IN_USE');
+      expect(body.message).toContain('minst ett läsår');
+    });
   });
 
   describe('replaceEntries', () => {

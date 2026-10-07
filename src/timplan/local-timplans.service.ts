@@ -14,7 +14,11 @@ import {
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
-import { decidedTimplanConflict, rethrowPrismaError } from '../common/utils/prisma-errors';
+import {
+  decidedTimplanConflict,
+  rethrowPrismaError,
+  timplanInUseConflict,
+} from '../common/utils/prisma-errors';
 import {
   checkLocalTimplan,
   planningWeeksInTenths,
@@ -215,11 +219,31 @@ export class LocalTimplansService {
    * Delete a plan, decided or not. Its entries cascade (the entries trigger
    * finds no parent and lets them go), and any plan copied from it keeps its
    * content and loses only the pointer.
+   *
+   * NOT WHILE A LÄSÅR FOLLOWS IT. The years are asked first, so the 409
+   * TIMPLAN_IN_USE names them ("läsåret 2026/27") and the admin knows which
+   * dialog to open. The key AcademicYearTimplans_localTimplanId_schoolId_fkey
+   * is ON DELETE RESTRICT and refuses it a second time — for the PostgREST
+   * writer, and for a year attached between this read and the delete, which
+   * the read cannot see — and rethrowPrismaError gives that refusal the same
+   * code, saying "minst ett läsår" because the key does not know which.
    */
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
     requireSchoolId(user);
     try {
-      await this.prisma.withRls(user, (tx) => tx.localTimplan.delete({ where: { id } }));
+      await this.prisma.withRls(user, async (tx) => {
+        const followers = await tx.academicYearTimplan.findMany({
+          where: { localTimplanId: id },
+          select: { academicYear: { select: { name: true } } },
+        });
+        if (followers.length > 0) {
+          const names = [...new Set(followers.map((row) => row.academicYear.name))].sort((a, b) =>
+            a.localeCompare(b, 'sv'),
+          );
+          throw timplanInUseConflict(names);
+        }
+        await tx.localTimplan.delete({ where: { id } });
+      });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
         throw notFound();
