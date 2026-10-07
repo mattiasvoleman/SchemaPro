@@ -14,8 +14,8 @@
 // the teacher's uppdrag. Every one of those writes is a PATCH of the
 // timplanspost's teacherId, which the gateway checks against the policy in
 // the write's own transaction: WARN saves and comes back with `warnings`,
-// shown in the banner below the KPI strip; REFUSE is a 409 shown where the
-// click was. The matrix itself stays read-only — a cell sums several groups,
+// shown where the click was (the panel, the drawer's card), naming the row;
+// REFUSE is a 409 shown there too. The matrix itself stays read-only — a cell sums several groups,
 // so it cannot say which row a click would mean.
 //
 // TWO TOGGLES, BOTH ABOUT WHAT A NUMBER MEANS. Standardvecka / Toppvecka
@@ -54,10 +54,8 @@ import {
   useTeacherQualifications,
 } from "@/lib/staffing-queries";
 import { kpis, type UnitView, type WeekView } from "@/lib/staffing-view";
-import type { StaffingWarning } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { BottlenecksPanel } from "@/components/staffing/bottlenecks-panel";
-import { WarningsNotice } from "@/components/staffing/staffing-notices";
 import { StaffingMatrix } from "@/components/staffing/staffing-matrix";
 import { UnstaffedPanel } from "@/components/staffing/unstaffed-panel";
 import { StaffingPolicyCard } from "@/components/staffing/staffing-policy-card";
@@ -111,8 +109,6 @@ export default function StaffingPage() {
   const [unit, setUnit] = useState<UnitView>("minutes");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openTeacherId, setOpenTeacherId] = useState<string | null>(null);
-  /** What WARN mode said about the last assignment made from the panel. */
-  const [warnings, setWarnings] = useState<StaffingWarning[]>([]);
 
   /**
    * One gate for every query a NUMBER is printed from — the report and the
@@ -275,8 +271,6 @@ export default function StaffingPage() {
             </dl>
           ) : null}
 
-          <WarningsNotice warnings={warnings} onDismiss={() => setWarnings([])} />
-
           <div className="flex flex-wrap items-center gap-3">
             <Tabs value={week} onValueChange={(value) => setWeek(value as WeekView)}>
               <TabsList aria-label={t("weekToggle")}>
@@ -311,11 +305,7 @@ export default function StaffingPage() {
             />
           )}
 
-          <UnstaffedPanel
-            rows={report.unstaffedRequirements}
-            teacherName={teacherName}
-            onAssigned={setWarnings}
-          />
+          <UnstaffedPanel rows={report.unstaffedRequirements} teacherName={teacherName} />
 
           <BottlenecksPanel report={report} />
 
