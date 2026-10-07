@@ -66,6 +66,9 @@ import { RoomBookingsService } from '../../src/room-bookings/room-bookings.servi
 import { ImportService } from '../../src/import/import.service';
 import { SubjectsService } from '../../src/resources/subjects.service';
 import { LocalTimplansService } from '../../src/timplan/local-timplans.service';
+import { AcademicYearTimplansService } from '../../src/timplan/academic-year-timplans.service';
+import { TimplanCoverageService } from '../../src/timplan/timplan-coverage.service';
+import { TimplanRequirementsService } from '../../src/timplan/timplan-requirements.service';
 import {
   decidedTimplanRefusal,
   isTimplanInUseRefusal,
@@ -1492,13 +1495,22 @@ async function runChecks(
       { name: `${MARKER} följd`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
       admin,
     );
-    // The attachment, as an admin's own write under RLS (the year dialog's
-    // PUT is P2's next stage; the key does not care who wrote the row).
-    await api.withRls(admin, (tx) =>
-      tx.academicYearTimplan.create({
-        data: { schoolId: fixture.schoolId, academicYearId: fixture.activeYearId, gradeLevel: 4, localTimplanId: plan.id },
-      }),
+    // The attachment through the year dialog's PUT: its FOR NO KEY UPDATE
+    // read of the year runs under RLS as the admin, through the adapter.
+    const yearTimplans = new AcademicYearTimplansService(api);
+    const before = await yearTimplans.list(fixture.activeYearId, admin);
+    const attached = await yearTimplans.replace(
+      fixture.activeYearId,
+      { timplans: [...before, { gradeLevel: 4, localTimplanId: plan.id }].filter((row, i, all) => all.findIndex((other) => other.gradeLevel === row.gradeLevel) === i) },
+      admin,
     );
+    assert.ok(
+      attached.some((row) => row.gradeLevel === 4 && row.localTimplanId === plan.id && row.planStatus === 'DRAFT'),
+      `the PUT did not attach årskurs 4: ${JSON.stringify(attached)}`,
+    );
+    const yearName = (
+      await owner.query<{ name: string }>('SELECT name FROM "AcademicYears" WHERE id = $1', [fixture.activeYearId])
+    ).rows[0].name;
     const isInUse = (error: unknown) => {
       assert.ok(error instanceof ConflictException, `expected ConflictException, got ${summarise(error)}`);
       const body = error.getResponse() as { code?: string };
@@ -1514,8 +1526,13 @@ async function runChecks(
       assert.equal(sqlStateOf(error), '23503', summarise(error));
       assert.ok(isTimplanInUseRefusal(error), `not recognised as in use: ${summarise(error)}`);
     }
-    // Through the service, whichever line answers.
-    await assert.rejects(timplans.remove(plan.id, admin), isInUse);
+    // Through the service: its own read answers first, naming the year.
+    await assert.rejects(timplans.remove(plan.id, admin), (error: unknown) => {
+      isInUse(error);
+      const message = ((error as ConflictException).getResponse() as { message?: string }).message ?? '';
+      assert.ok(message.includes(`läsåret "${yearName}"`), `the 409 did not name the year: ${message}`);
+      return true;
+    });
     assert.equal((await owner.query('SELECT 1 FROM "LocalTimplans" WHERE id = $1', [plan.id])).rowCount, 1);
 
     // The same key's other direction — another school's year under a row
@@ -1553,10 +1570,113 @@ async function runChecks(
       });
     }
 
-    // Detached, the plan goes.
-    await api.withRls(admin, (tx) => tx.academicYearTimplan.deleteMany({ where: { localTimplanId: plan.id } }));
+    // Detached through the same PUT (the year's own rows as they were), the plan goes.
+    await yearTimplans.replace(fixture.activeYearId, { timplans: before }, admin);
     await timplans.remove(plan.id, admin);
     assert.equal((await owner.query('SELECT 1 FROM "LocalTimplans" WHERE id = $1', [plan.id])).rowCount, 0);
+  });
+
+  // ---- (u) P2 end to end through the real adapter: a year's defaults, generate, coverage
+  await check('(u) a new year follows the newest decided plan, generate-requirements is idempotent, and coverage reads under RLS by role', async () => {
+    const timplans = new LocalTimplansService(api);
+    const subjects = new SubjectsService(api);
+    const years = new AcademicYearsService(api);
+    const yearTimplans = new AcademicYearTimplansService(api);
+    const generator = new TimplanRequirementsService(api);
+    const coverage = new TimplanCoverageService(api);
+
+    const subject = await subjects.create({ name: `${MARKER} p2-ämne`, nationalCode: 'MA' } as never, admin);
+    const plan = await timplans.create(
+      { name: `${MARKER} p2`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
+      admin,
+    );
+    await timplans.replaceEntries(plan.id, { entries: [{ subjectId: subject.id, gradeLevel: 7, minutesPerWeek: 175 }] }, admin);
+    await timplans.decide(plan.id, { decisionNote: MARKER }, admin);
+
+    // The year's create attaches grades 1–9 to the newest decided plan, in its transaction.
+    const year = await years.create(
+      { name: `${MARKER} p2`, startDate: '2098-08-17', endDate: '2099-06-11' } as never,
+      admin,
+    );
+    assert.deepEqual(
+      year.timplans.map((row) => [row.gradeLevel, row.localTimplanId]),
+      [1, 2, 3, 4, 5, 6, 7, 8, 9].map((grade) => [grade, plan.id]),
+    );
+    // The dialog narrows it to åk 7.
+    await yearTimplans.replace(year.id, { timplans: [{ gradeLevel: 7, localTimplanId: plan.id }] }, admin);
+
+    const groups = await owner.query<{ id: string; kind: string }>(
+      `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+       VALUES ($1, $2, $3 || ' 7A', 'CLASS', 7, now()), ($1, $2, $3 || ' Ma-grupp', 'TEACHING_GROUP', NULL, now())
+       RETURNING id, kind::text`,
+      [fixture.schoolId, year.id, MARKER],
+    );
+    const classId = groups.rows.find((row) => row.kind === 'CLASS')!.id;
+    const teachingId = groups.rows.find((row) => row.kind === 'TEACHING_GROUP')!.id;
+    // The demo pupil as a member of the teaching group: their home class is
+    // another year's, so the coverage counts them outside this year's classes.
+    await owner.query(
+      'INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES ($1, $2, $3)',
+      [fixture.schoolId, teachingId, fixture.pupilId],
+    );
+
+    const dto = { academicYearId: year.id, minutesPerLesson: 60 };
+    const preview = await generator.generate(plan.id, { ...dto, dryRun: true }, admin);
+    assert.deepEqual(
+      preview.rows.map((row) => [row.lessonsPerWeek, row.minutesPerLesson, row.surplusMinutesPerWeek]),
+      [[3, 60, 5]],
+    );
+    const countRows = async () =>
+      (await owner.query<{ n: number }>('SELECT count(*)::int AS n FROM "TeachingRequirements" WHERE "academicYearId" = $1', [year.id])).rows[0].n;
+    assert.equal(await countRows(), 0, 'a preview wrote a requirement');
+
+    // createManyAndReturn + skipDuplicates under RLS, twice: one row, then none.
+    const first = await generator.generate(plan.id, { ...dto, dryRun: false }, admin);
+    assert.equal(first.created, 1, JSON.stringify(first));
+    assert.ok(first.rows[0]?.requirementId, 'the created row has no id');
+    const second = await generator.generate(plan.id, { ...dto, dryRun: false }, admin);
+    assert.equal(second.created, 0);
+    assert.deepEqual(second.skipped.map((row) => row.reason), ['EXISTS']);
+    assert.equal(await countRows(), 1);
+
+    // The ON CONFLICT path itself: a row created behind the read is passed by, not a 409.
+    const raced = await api.withRls(admin, (tx) =>
+      tx.teachingRequirement.createManyAndReturn({
+        data: [{ schoolId: fixture.schoolId, academicYearId: year.id, subjectId: subject.id, studentGroupId: classId, lessonsPerWeek: 1, minutesPerLesson: 60 }],
+        skipDuplicates: true,
+        select: { id: true },
+      }),
+    );
+    assert.equal(raced.length, 0);
+
+    const forAdmin = await coverage.planned({ academicYearId: year.id }, admin);
+    const line = forAdmin.groups.find((group) => group.studentGroupId === classId)?.lines[0];
+    assert.deepEqual(
+      [line?.targetMinutesPerWeek, line?.plannedMinutesPerWeek, line?.status],
+      [175, 180, 'MET'],
+    );
+    assert.equal(forAdmin.pupilLevel, true);
+    assert.equal(forAdmin.pupilsOutsideClasses, 1);
+
+    const teacherRow = (
+      await owner.query<{ id: string; authId: string }>(
+        `SELECT id, "authId" FROM "Users" WHERE "schoolId" = $1 AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL
+          ORDER BY "authId" LIMIT 1`,
+        [fixture.schoolId],
+      )
+    ).rows[0];
+    const forTeacher = await coverage.planned(
+      { academicYearId: year.id },
+      { authId: teacherRow.authId, userId: teacherRow.id, schoolId: fixture.schoolId, role: Role.TEACHER },
+    );
+    assert.equal(forTeacher.pupilLevel, false);
+    assert.equal(forTeacher.pupils, null);
+    assert.ok(!JSON.stringify(forTeacher).includes(fixture.pupilId), 'a pupil id reached the teacher');
+    assert.equal(forTeacher.groups[0]?.lines[0]?.status, 'MET');
+
+    // Deleting the year takes its groups, rows and attachments; then the plan goes.
+    await years.remove(year.id, admin);
+    await timplans.remove(plan.id, admin);
   });
 
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
@@ -1698,6 +1818,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query(`DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1 AND reason LIKE $2 || '%'`, [schoolId, MARKER]);
   // (s)'s next year, for a run that stopped before deleting it; its duties and slots go with it.
   await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2 || ' nästa år'`, [schoolId, MARKER]);
+  // (u)'s year, for a run that stopped first: its groups, rows and attachments go with it.
+  await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2 || ' p2'`, [schoolId, MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-duty@example.invalid'`, [schoolId, MARKER]);
   // (r): the person (their post goes with them), the two subjects (their
