@@ -108,8 +108,9 @@ export function TimplanGrid({
             ) : null}
             {countsToward && !subject.nationalCode ? (
               // What the badge names is where the subject's minutes GO, so a
-              // subject with none in the plan (the check lists only uncoded
-              // subjects with time) is just "no code": calling an empty row
+              // subject with none in the stages (the check lists only uncoded
+              // subjects with time there; förskoleklass minutes count toward
+              // nothing, hence the hint's wording) is just "no code": calling an empty row
               // "skolans val" told a school starting its first plan that its
               // Matematik was pool time. With minutes: skolans val only where
               // the bilaga prints a pool; ämnesområden and an unpublished
@@ -220,6 +221,8 @@ export function TimplanGrid({
   const poolPrinted = check.skolansVal.availableHours !== null;
   // An empty plan "takes" every national hour from the subjects: true
   // arithmetic, but "6890 av 600 h tagna" reads as a fault, not a start.
+  // Stage time only (förskoleklass is outside), and with or without a pool:
+  // the sentence says neither "nothing at all" nor "skolans val".
   const nothingPlanned = !check.total.plannedHours;
   const poolShown = poolPrinted && !nothingPlanned;
 
