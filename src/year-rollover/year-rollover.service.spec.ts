@@ -517,6 +517,31 @@ describe('YearRolloverService — activation', () => {
     expect(writesOf(world.calls)).toEqual([]);
   });
 
+  it('names the stragglers of an ACTIVE year instead of calling it not activated, and its own activation moves them', async () => {
+    const { world, service, yearB } = await rolled();
+    const preview = await service.previewActivation(yearB, admin, AFTER);
+    await service.executeActivation(yearB, { planHash: preview.planHash }, admin, AFTER);
+    // The pupil on leave at the activation comes back in the autumn, still in last year's 7A.
+    world.rows['user']!.find((user) => user['id'] === IDS.pGone)!['isActive'] = true;
+
+    const next = { name: '2028/29', startDate: '2028-08-14', endDate: '2029-06-08', graduatingGradeLevel: 9 };
+    const refusal = await service.previewRollover(yearB, next, admin).catch((e) => e);
+    expect(refusal).toBeInstanceOf(ConflictException);
+    expect(refusal.getResponse()).toMatchObject({
+      code: 'ROLLOVER_SOURCE_HAS_STRAGGLERS',
+      params: { year: '2027/28', pupils: 1 },
+    });
+    expect(refusal.message).not.toMatch(/inte aktiverat/);
+
+    // The remedy the refusal names: the active year's activation, which hands no flag over.
+    const again = await service.previewActivation(yearB, admin, AFTER);
+    expect(again).toMatchObject({ year: { isActive: true }, blocking: false });
+    expect(again.moves).toEqual([expect.objectContaining({ fromGroupId: IDS.g7a, toGroupName: '8A', count: 1, studentIds: [IDS.pGone] })]);
+    await service.executeActivation(yearB, { planHash: again.planHash }, admin, AFTER);
+    expect(homeOf(world, IDS.pGone)).toBe(groupNamed(world, yearB, '8A'));
+    await expect(service.previewRollover(yearB, next, admin)).resolves.toMatchObject({ planHash: expect.any(String) });
+  });
+
   it('refuses while the old year runs, a superseded year, a stale preview and a hidden year', async () => {
     const { world, service, yearB } = await rolled();
     const early = await service.previewActivation(yearB, admin, { today: '2027-06-11' });

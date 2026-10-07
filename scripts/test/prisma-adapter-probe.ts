@@ -1884,6 +1884,7 @@ async function runChecks(
   const rollover = new YearRolloverService(api);
   const rullYears = new AcademicYearsService(api);
   let targetYearId = '';
+  let thirdYearId = '';
   const rolloverOptions = {
     name: `${MARKER} rull mål`,
     startDate: '2094-08-16',
@@ -2090,6 +2091,7 @@ async function runChecks(
     const rolled = await rollover.previewRollover(targetYearId, third, rullAdmin);
     assert.equal(rolled.blocking, false, JSON.stringify(rolled.problems));
     const yearC = (await rollover.executeRollover(targetYearId, { ...third, planHash: rolled.planHash }, rullAdmin)).academicYear.id;
+    thirdYearId = yearC;
 
     // A stale activation: p2 leaves B's 8A between the preview and the
     // execute. Nobody moves, the flag stays, and a fresh preview moves both.
@@ -2119,7 +2121,42 @@ async function runChecks(
       back.problems.map((problem) => [problem.code, problem.params['successor']]),
       [['YEAR_IS_SUPERSEDED', third.name]],
     );
+  });
 
+  await check('(x3) an active year with a straggler in last year\'s class names it instead of calling itself not activated, and its own activation moves them', async () => {
+    const pupil = async (name: string) =>
+      (
+        await owner.query<{ id: string; group: string | null }>(
+          `SELECT u.id, g.name AS "group" FROM "Users" u LEFT JOIN "StudentGroups" g ON g.id = u."studentGroupId"
+            WHERE u.email = $1`,
+          [`${MARKER}-${name}@example.invalid`],
+        )
+      ).rows[0];
+    const refusedWith = (code: string) => (error: unknown) => {
+      assert.ok(error instanceof ConflictException, summarise(error));
+      assert.equal((error.getResponse() as { code?: string }).code, code, summarise(error));
+      return true;
+    };
+    const today = { today: '2095-06-12' };
+    assert.ok(thirdYearId, '(x2) did not roll the third year');
+    // p4 comes back: a straggler in A's 7A while C is active. The rollover of
+    // C names that, the activation of the active C moves them, and then C rolls.
+    const p4 = await pupil('rull-p4');
+    await owner.query('UPDATE "Users" SET "isActive" = true WHERE id = $1', [p4.id]);
+    const fourth = { name: `${MARKER} rull fyra`, startDate: '2096-08-13', endDate: '2097-06-09', graduatingGradeLevel: 9 };
+    await assert.rejects(rollover.previewRollover(thirdYearId, fourth, rullAdmin), (error: unknown) => {
+      refusedWith('ROLLOVER_SOURCE_HAS_STRAGGLERS')(error);
+      assert.deepEqual(((error as ConflictException).getResponse() as { params?: unknown }).params, { year: `${MARKER} rull tre`, pupils: 1 });
+      return true;
+    });
+    const stragglers = await rollover.previewActivation(thirdYearId, rullAdmin, today);
+    assert.deepEqual(
+      stragglers.moves.map((move) => [move.fromGroupName, move.toGroupName, move.studentIds]),
+      [[`${MARKER} 7A`, `${MARKER} 9A`, [p4.id]]],
+    );
+    await rollover.executeActivation(thirdYearId, { planHash: stragglers.planHash }, rullAdmin, today);
+    assert.equal((await pupil('rull-p4')).group, `${MARKER} 9A`);
+    assert.equal((await rollover.previewRollover(thirdYearId, fourth, rullAdmin)).blocking, false);
   });
 
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {

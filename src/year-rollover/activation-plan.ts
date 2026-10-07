@@ -85,8 +85,19 @@ export interface ActivationPlan {
   year: { id: string; name: string; isActive: boolean };
   currentlyActive: { id: string; name: string } | null;
   chain: { id: string; name: string; endDate: string }[];
-  /** Pupils moved into a class of the year, per (from, to) pair. */
-  moves: { fromGroupId: string; fromGroupName: string; toGroupId: string; toGroupName: string; count: number }[];
+  /**
+   * Pupils moved into a class of the year, per (from, to) pair, with their
+   * ids (no names; the web resolves them) — so an active year's stragglers
+   * can be named before their move.
+   */
+  moves: {
+    fromGroupId: string;
+    fromGroupName: string;
+    toGroupId: string;
+    toGroupName: string;
+    count: number;
+    studentIds: string[];
+  }[];
   graduates: { count: number; studentIds: string[] };
   unplaced: {
     count: number;
@@ -342,6 +353,7 @@ export function planActivation(source: ActivationSource, today: string): Activat
         toGroupId: move.toGroupId as string,
         toGroupName: move.toGroupName as string,
         count: move.studentIds.length,
+        studentIds: move.studentIds,
       })),
     graduates: { count: graduates.length, studentIds: [...graduates].sort() },
     unplaced: {

@@ -128,7 +128,12 @@ export interface RolloverSource {
     dutyBlockedSlots: number;
     mentorskap: number;
   };
-  /** Pupils the source's own activation would still move (ROLLOVER_SOURCE_NOT_ACTIVATED). */
+  /**
+   * Pupils the source's own activation would still move: all of a year not
+   * yet activated (ROLLOVER_SOURCE_NOT_ACTIVATED), or the stragglers of an
+   * active one (ROLLOVER_SOURCE_HAS_STRAGGLERS) — a pupil who was inactive at
+   * the activation and has come back, still in last year's class.
+   */
   pendingMoves: number;
 }
 

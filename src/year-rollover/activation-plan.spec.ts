@@ -71,8 +71,8 @@ describe('planActivation', () => {
     const plan = planActivation(school(), '2027-06-14');
     expect(plan.chain.map((previous) => previous.name)).toEqual(['2026/27']);
     expect(plan.moves).toEqual([
-      { fromGroupId: 'a7', fromGroupName: 'A7', toGroupId: 'b8', toGroupName: 'B8', count: 2 },
-      { fromGroupId: 'a8', fromGroupName: 'A8', toGroupId: 'b9', toGroupName: 'B9', count: 1 },
+      { fromGroupId: 'a7', fromGroupName: 'A7', toGroupId: 'b8', toGroupName: 'B8', count: 2, studentIds: ['p1', 'p2'] },
+      { fromGroupId: 'a8', fromGroupName: 'A8', toGroupId: 'b9', toGroupName: 'B9', count: 1, studentIds: ['p3'] },
     ]);
     expect(plan.graduates).toEqual({ count: 1, studentIds: ['p4'] });
     expect(plan.unplaced.pupils).toEqual([
