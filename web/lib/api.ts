@@ -22,6 +22,14 @@ export class ApiError extends Error {
      * English prose written for a log, so it is no key to branch on.
      */
     public readonly code?: string,
+    /**
+     * The values the code's sentence is written from, when the gateway sends
+     * them — STAFF_TEACHER_NOT_QUALIFIED carries the subject and the grades,
+     * so the reader can render the sentence in its own language from the
+     * engine catalogue (lib/engine-message.ts) rather than show `detail`.
+     * The gateway forwards only a flat object of short scalars.
+     */
+    public readonly params?: Record<string, string | number>,
   ) {
     super(message);
     this.name = "ApiError";
@@ -62,18 +70,23 @@ async function request<T>(
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
     let code: string | undefined;
+    let params: Record<string, string | number> | undefined;
     try {
       const problem = (await response.json()) as {
         detail?: string;
         message?: string;
         code?: unknown;
+        params?: unknown;
       };
       detail = problem.detail ?? problem.message ?? detail;
       if (typeof problem.code === "string") code = problem.code;
+      if (problem.params && typeof problem.params === "object" && !Array.isArray(problem.params)) {
+        params = problem.params as Record<string, string | number>;
+      }
     } catch {
       // Non-JSON error body; keep the generic message.
     }
-    throw new ApiError(response.status, detail, code);
+    throw new ApiError(response.status, detail, code, params);
   }
 
   if (response.status === 204) {

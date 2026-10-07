@@ -3,13 +3,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
+import type { DutyBody } from "@/lib/duty-forms";
 import type {
   EmploymentBody,
   PolicyBody,
   QualificationItemBody,
 } from "@/lib/staffing-forms";
 import type { TeacherLoadReport, UnstaffedRequirement } from "@/lib/teacher-load";
-import type { StaffingPolicy, TeacherEmployment, TeacherQualification } from "@/lib/types";
+import type {
+  StaffingPolicy,
+  StaffingWarning,
+  TeacherDuty,
+  TeacherEmployment,
+  TeacherQualification,
+  TeacherSuggestions,
+  TeachingRequirement,
+} from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Tjänstefördelning (src/staffing)
@@ -57,6 +66,8 @@ export function useSaveStaffingPolicy() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.policy });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
+      // A changed tolerance moves every candidate's wouldExceed.
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
     },
   });
 }
@@ -168,4 +179,106 @@ export function useUnstaffedRequirements(academicYearId: string | null) {
         `/api/v1/staffing/unstaffed?academicYearId=${encodeURIComponent(academicYearId!)}`,
       ),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Fas 2: the matrix as a workspace
+// ---------------------------------------------------------------------------
+
+/**
+ * Who could take one timplanspost, ranked by the gateway (behörighet for the
+ * group's grades, already teaches the group, room left after the row). Only
+ * fetched when a row's "Föreslå lärare" is opened: the ranking reads the
+ * whole year's load, and a page of forty unstaffed rows must not ask forty
+ * times on load.
+ */
+export function useSuggestTeachers(requirementId: string | null) {
+  return useQuery({
+    queryKey: [...STAFFING_KEYS.suggestions, requirementId],
+    enabled: requirementId !== null,
+    queryFn: () =>
+      api.get<TeacherSuggestions>(
+        `/api/v1/staffing/suggest-teachers?requirementId=${encodeURIComponent(requirementId!)}`,
+      ),
+  });
+}
+
+/** A saved timplanspost, with what the policy's WARN mode had to say about it. */
+export type StaffedRequirement = TeachingRequirement & { warnings: StaffingWarning[] };
+
+/**
+ * Sets (or clears) a timplanspost's lead teacher — the workspace's one write.
+ *
+ * PATCH /teaching-requirements/:id with `teacherId` alone, so nothing else on
+ * the row is touched; the gateway runs the policy's two checks inside the
+ * write's own transaction. WARN comes back as `warnings` on the saved row,
+ * REFUSE as a 409 ApiError whose `code` and `params` name the refusal —
+ * the caller renders both through the engine catalogue.
+ *
+ * Every reader of the row is refreshed: the timplan's own matrix (the
+ * ["requirements"] prefix lives in lib/queries.ts), the load report and the
+ * unstaffed list, and every cached suggestion, because taking a row changes
+ * the remaining minutes of the teacher who took it.
+ */
+export function useAssignTeacher() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ requirementId, teacherId }: { requirementId: string; teacherId: string | null }) =>
+      api.patch<StaffedRequirement>(`/api/v1/teaching-requirements/${requirementId}`, { teacherId }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["requirements"] });
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.unstaffed });
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
+    },
+  });
+}
+
+/**
+ * A teacher's uppdrag for one läsår. The gateway answers a TEACHER with their
+ * own only (and 403s a colleague's id), so the same hook serves the drawer,
+ * the people page and the teacher's own view.
+ */
+export function useTeacherDuties(academicYearId: string | null, userId?: string | null) {
+  return useQuery({
+    queryKey: [...STAFFING_KEYS.duties, academicYearId, userId ?? "all"],
+    enabled: academicYearId !== null,
+    queryFn: () =>
+      api.get<TeacherDuty[]>(
+        `/api/v1/teacher-duties?academicYearId=${encodeURIComponent(academicYearId!)}${
+          userId ? `&userId=${encodeURIComponent(userId)}` : ""
+        }`,
+      ),
+  });
+}
+
+/**
+ * Write, change and remove an uppdrag. A blocked slot travels in the same
+ * body and the gateway writes its UNAVAILABLE constraint in the same
+ * transaction, so the constraints list is refreshed with the duties — the
+ * tillgänglighet page would otherwise show the old slot until reloaded.
+ */
+export function useTeacherDutyActions() {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.duties });
+    void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
+    void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
+    void queryClient.invalidateQueries({ queryKey: ["constraints"] });
+  };
+  const create = useMutation({
+    mutationFn: (body: { userId: string; academicYearId: string } & DutyBody) =>
+      api.post<TeacherDuty>("/api/v1/teacher-duties", body),
+    onSuccess: invalidate,
+  });
+  const update = useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & DutyBody) =>
+      api.patch<TeacherDuty>(`/api/v1/teacher-duties/${id}`, body),
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/v1/teacher-duties/${id}`),
+    onSuccess: invalidate,
+  });
+  return { create, update, remove };
 }

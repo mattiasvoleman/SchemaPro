@@ -22,4 +22,8 @@ export const STAFFING_KEYS = {
   qualifications: ["teacherQualifications"],
   load: ["staffingLoad"],
   unstaffed: ["staffingUnstaffed"],
+  /** Uppdrag per läsår and teacher; the duties import invalidates these too. */
+  duties: ["teacherDuties"],
+  /** suggest-teachers per requirement: every staffing write makes them stale. */
+  suggestions: ["staffingSuggestions"],
 } as const;

@@ -90,6 +90,41 @@ describe("StaffingPolicyCard", () => {
       overAllocationMode: "WARN",
       overAllocationTolerancePercent: 15,
       loadModel: "MINUTES",
+      unstaffedGeneration: "ALLOW",
     });
+  });
+
+  it("reads the school's generation refusal and sends the choice back on every save", async () => {
+    const user = userEvent.setup();
+    state.data = {
+      id: "p1",
+      fullTimeTeachingMinutesPerWeek: 1080,
+      fullTimeRegulatedHoursPerYear: 1360,
+      fullTimeAnnualHours: 1767,
+      workDaysPerYear: 194,
+      semesterHoursPerWeek: 40,
+      qualificationMode: "WARN",
+      overAllocationMode: "WARN",
+      overAllocationTolerancePercent: 10,
+      loadModel: "MINUTES",
+      unstaffedGeneration: "REFUSE",
+    };
+    render(<StaffingPolicyCard />);
+    await waitFor(() => expect(field("riktmarke").value).toBe("1080"));
+    const generation = screen.getByRole("combobox", { name: "unstaffedGeneration" });
+    expect(generation).toHaveTextContent("generationREFUSE");
+    expect(screen.getByText("unstaffedGenerationHint")).toBeInTheDocument();
+
+    // Saving something else keeps the refusal: PUT replaces the row whole.
+    fireEvent.change(field("tolerance"), { target: { value: "12" } });
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save).toHaveBeenLastCalledWith(
+      expect.objectContaining({ overAllocationTolerancePercent: 12, unstaffedGeneration: "REFUSE" }),
+    );
+
+    await user.click(generation);
+    await user.click(screen.getByRole("option", { name: "generationALLOW" }));
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ unstaffedGeneration: "ALLOW" }));
   });
 });

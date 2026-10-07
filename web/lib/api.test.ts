@@ -167,6 +167,40 @@ describe("api client", () => {
     });
   });
 
+  it("carries a coded refusal's params, so the reader can write the sentence itself", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: "about:blank",
+          title: "Conflict",
+          status: 409,
+          detail: "Läraren saknar behörighet i Matematik för åk 7–9.",
+          instance: "/api/v1/teaching-requirements/r1",
+          code: "STAFF_TEACHER_NOT_QUALIFIED",
+          params: { role: "TEACHER", subject: "Matematik", grades: "7–9" },
+        }),
+        { status: 409, headers: { "Content-Type": "application/problem+json" } },
+      ),
+    );
+    const { api } = await loadApi();
+    await expect(api.patch("/api/v1/teaching-requirements/r1", {})).rejects.toMatchObject({
+      status: 409,
+      code: "STAFF_TEACHER_NOT_QUALIFIED",
+      params: { role: "TEACHER", subject: "Matematik", grades: "7–9" },
+    });
+  });
+
+  it("drops params that are not an object, and leaves them empty when absent", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ status: 409, detail: "x", code: "C", params: ["a"] }), {
+        status: 409,
+      }),
+    );
+    const { api } = await loadApi();
+    const error = await api.get("/x").catch((caught: unknown) => caught);
+    expect((error as { params?: unknown }).params).toBeUndefined();
+  });
+
   it("leaves the code empty when the body has none", async () => {
     fetchMock.mockResolvedValue(problemResponse(403, "Forbidden", "Forbidden resource", "/admin"));
     const { api } = await loadApi();

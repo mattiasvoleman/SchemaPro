@@ -498,6 +498,11 @@ export type TeacherContractKind = "FERIE" | "SEMESTER";
  * about a person, stated by the school.
  */
 export type TeacherQualificationKind = "LEGITIMATION" | "BEHORIG" | "TILLATEN";
+/**
+ * Whether a schema may be generated while a timplanspost has no teacher. Two
+ * values, not the check modes' three: a generation starts or it does not.
+ */
+export type UnstaffedGenerationMode = "ALLOW" | "REFUSE";
 
 /**
  * One row per school, like LunchSettings. The riktmärke is the one field with
@@ -516,6 +521,7 @@ export interface StaffingPolicy {
   overAllocationMode: StaffingCheckMode;
   overAllocationTolerancePercent: number;
   loadModel: StaffingLoadModel;
+  unstaffedGeneration: UnstaffedGenerationMode;
 }
 
 /** A teacher's post for ONE läsår; percentages carry up to three decimals. */
@@ -545,4 +551,83 @@ export interface TeacherQualification {
   validFrom: string | null;
   validTo: string | null;
   note: string | null;
+}
+
+/** What an övrigt uppdrag is, as the gateway's TeacherDutyKind enum names it. */
+export type TeacherDutyKind =
+  | "MENTORSKAP"
+  | "AMNESANSVAR"
+  | "FORSTELARARE"
+  | "RASTVAKT"
+  | "PEDAGOGISK_LUNCH"
+  | "APT_KONFERENS"
+  | "VFU_HANDLEDNING"
+  | "APL"
+  | "ANNAT";
+
+/** The weekly time an uppdrag keeps free in the schema; HH:MM. */
+export interface TeacherDutySlot {
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+}
+
+/**
+ * An uppdrag for one teacher and one läsår — mentorskap 7B, APT, rastvakt.
+ *
+ * `blockedSlot` is read back from the linked UNAVAILABLE constraint the
+ * gateway writes in the same transaction; the client never names that
+ * constraint, and `blockedConstraintId` is only there so a constraint list
+ * can say which rows an uppdrag holds.
+ */
+export interface TeacherDuty {
+  id: string;
+  userId: string;
+  academicYearId: string;
+  kind: TeacherDutyKind;
+  label: string;
+  minutesPerWeek: number;
+  /** Counted toward the teaching target (resurstid a school chooses to count). */
+  countsAsTeaching: boolean;
+  subjectId: string | null;
+  studentGroupId: string | null;
+  blockedConstraintId: string | null;
+  blockedSlot: TeacherDutySlot | null;
+  note: string | null;
+}
+
+/**
+ * One finding a staffing write came back with: a code from the engine
+ * catalogue and the values its sentence is written from. WARN mode returns
+ * these beside the saved row; REFUSE mode returns the same code and params
+ * in a 409 instead.
+ */
+export interface StaffingWarning {
+  code: string;
+  params: Record<string, string | number>;
+}
+
+/** One person who could take a timplanspost, from GET /staffing/suggest-teachers. */
+export interface TeacherCandidate {
+  userId: string;
+  qualificationKind: TeacherQualificationKind | null;
+  teachesSubjectAlready: boolean;
+  teachesGroupAlready: boolean;
+  currentlyAssigned: boolean;
+  /** target − counted after taking the row; null without a target. */
+  remainingMinutesPerWeek: number | null;
+  /** Taking the row would pass target × (1 + tolerance). */
+  wouldExceed: boolean;
+  status: "UNDER" | "OK" | "OVER" | "NO_TARGET";
+}
+
+export interface TeacherSuggestions {
+  requirementId: string;
+  subjectId: string;
+  studentGroupId: string;
+  gradeSpan: { min: number; max: number } | null;
+  teacherMinutesPerWeek: number;
+  qualificationsRecorded: boolean;
+  /** Ranked: qualification, teaches the group, room left. */
+  candidates: TeacherCandidate[];
 }
