@@ -495,6 +495,14 @@ export function givenRolloverWorld(
           return world.queryRaw(sql, values);
         };
       }
+      if (key === '$executeRaw') {
+        // An advisory lock or a set_config: recorded, and nothing to answer.
+        return async (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const sql = strings.join('?').replace(/\s+/g, ' ').trim();
+          calls.push({ model: '$executeRaw', method: '$executeRaw', args: null, sql, values });
+          return 0;
+        };
+      }
       return (target[key] ??= model(key));
     },
   }) as unknown as PrismaClient;

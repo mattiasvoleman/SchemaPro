@@ -3,6 +3,9 @@ import { SUCCESSOR, givenSuccessorWorld, schoolAdmin, type SuccessorWorld } from
 import type { ConfigService } from '@nestjs/config';
 import type { HttpService } from '@nestjs/axios';
 import { OptimizationProxyService } from '../optimization/optimization-proxy.service';
+import { RoomOptimizationService } from '../optimization/room-optimization.service';
+import type { ScheduleVersionsService } from '../calendar/schedule-versions.service';
+import type { RealtimeService } from '../realtime/realtime.service';
 import { LunchSittingsService } from '../resources/lunch-sittings.service';
 import { readLoadInput } from '../staffing/load-input';
 import { attendanceSpan } from '../staffing/staffing-enforcement';
@@ -204,6 +207,78 @@ describe('förberäknade klasslistor — every reader reads the same before and 
     expect(payload.requirements.find((row) => row.studentGroupId === ma8)).toMatchObject({ studentGroupSize: 4, minGradeLevel: 8, maxGradeLevel: 9 });
     expect(payload.groupConflicts).toEqual(expect.arrayContaining([[g8a, ma8].sort(), [g9a, ma8].sort()]));
     expect(payload.headcountByGroup).toEqual(sortedBy([[g8a, 5], [g9a, 1]] as [string, number][], ([id]) => id));
+  });
+
+  it('P3 room optimisation: each lesson’s needs, and the basis hash a proposal is applied against', async () => {
+    const { before } = await proveEquivalent(async (world) => {
+      const service = new RoomOptimizationService(
+        world.prisma,
+        {} as OptimizationProxyService,
+        {} as ScheduleVersionsService,
+        {} as RealtimeService,
+      );
+      const state = await (
+        service as unknown as { readYear: (...args: unknown[]) => Promise<{ needs: Map<string, unknown> }> }
+      ).readYear(world.world.tx, schoolAdmin, world.yearB);
+      // With no rooms the proposal is answered without the engine: its basis.
+      const proposal = await service.propose({ academicYearId: world.yearB, walkers: 'BOTH' } as never, schoolAdmin);
+      return { needs: sortedBy([...state.needs], ([id]) => id), basis: proposal.basis };
+    });
+    const needs = new Map(before.needs as [string, { studentGroupSize: number; minGradeLevel: number | null; maxGradeLevel: number | null }][]);
+    // Ma8's Monday lesson: four members, åk 8–9. The lesson naming p9a1, who
+    // graduates, on 9A: 9A's one coming pupil, and p9a1 with no class.
+    expect(needs.get(SUCCESSOR.lessonMa8)).toMatchObject({ studentGroupSize: 4, minGradeLevel: 8, maxGradeLevel: 9 });
+    expect(needs.get(SUCCESSOR.lessonNamed)).toMatchObject({ studentGroupSize: 2, minGradeLevel: 9, maxGradeLevel: 9 });
+  });
+
+  it('P3 a room proposal made before the activation applies after it: the basis it was made on is the basis after', async () => {
+    const world = await givenSuccessorWorld();
+    const [r1, r2] = ['f4000000-0000-4000-8000-000000000001', 'f4000000-0000-4000-8000-000000000002'];
+    const room = (id: string) => ({ id, schoolId: IDS.school, capacity: 30, roomTypeId: null, minGradeLevel: null, maxGradeLevel: null, building: null, floor: null });
+    world.world.rows['room'] = [room(r1), room(r2)];
+    // The unlocked lesson naming p9a1: its needs come from the rosters.
+    world.world.rows['masterLesson']!.find((lesson) => lesson['id'] === SUCCESSOR.lessonNamed)!['roomId'] = r1;
+    const engine = {
+      callAiEngine: jest.fn(async (_path: string, payload: { lessons: { id: string; roomId: string | null }[]; rooms: { id: string }[] }) => {
+        const lesson = payload.lessons.find((candidate) => candidate.roomId !== null)!;
+        const other = payload.rooms.find((candidate) => candidate.id !== lesson.roomId)!;
+        const none = { roomChanges: 0, floorChanges: 0, buildingChanges: 0 };
+        return {
+          requestId: 'r',
+          status: 'OPTIMAL',
+          changes: [{ lessonId: lesson.id, roomId: other.id }],
+          teachers: { before: none, after: none },
+          groups: { before: none, after: none },
+          missedWishes: { before: 0, after: 0 },
+          walkers: [],
+          frozenLessonIds: [],
+        };
+      }),
+    };
+    const service = new RoomOptimizationService(
+      world.prisma,
+      engine as unknown as OptimizationProxyService,
+      { snapshotInTransaction: jest.fn(async () => ({ id: 'version' })) } as unknown as ScheduleVersionsService,
+      { notifyMasterTimetableChanged: jest.fn() } as unknown as RealtimeService,
+    );
+    const proposal = await observed(() => service.propose({ academicYearId: world.yearB, walkers: 'BOTH' } as never, schoolAdmin));
+    expect(proposal.kinds).toEqual(['PROJECTED']);
+    expect(proposal.value.changes).toEqual([expect.objectContaining({ lessonId: SUCCESSOR.lessonNamed, fromRoomId: r1, toRoomId: r2 })]);
+
+    await world.activate();
+    const applied = await observed(() =>
+      service.apply(
+        {
+          academicYearId: world.yearB,
+          basis: proposal.value.basis,
+          changes: proposal.value.changes.map((change) => ({ lessonId: change.lessonId, fromRoomId: change.fromRoomId, toRoomId: change.toRoomId })),
+        } as never,
+        schoolAdmin,
+      ),
+    );
+    expect(applied.kinds).toEqual(['CURRENT']);
+    expect(applied.value).toMatchObject({ updated: 1 });
+    expect(world.world.rows['masterLesson']!.find((lesson) => lesson['id'] === SUCCESSOR.lessonNamed)!['roomId']).toBe(r2);
   });
 
   it('P5 attendanceSpan (the vikarie badge and warning): Ma8 spans 8–9 from its members’ coming classes', async () => {
