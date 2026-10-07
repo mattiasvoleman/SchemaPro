@@ -136,6 +136,21 @@ describe("Min tjänst", () => {
     expect(screen.getByText("myStaffing.annual(573,5)")).toBeInTheDocument();
   });
 
+  it("says once that there is no target, with the counted minutes, and never 'counted against the target'", () => {
+    // Webbgenomgången 2026-10-07: "Inget mål · räknat mot målet 600 min/v ·
+    // Inget mål" said it twice and read as if the target were 600.
+    state.load = {
+      data: { teachers: [row({ targetMinutesPerWeek: null, status: "NO_TARGET", countedMinutesPerWeek: 600 })] },
+      isLoading: false,
+      isError: false,
+    };
+    render(<MyStaffingPage />);
+
+    expect(screen.getByText("myStaffing.countedNoTarget(600)")).toBeInTheDocument();
+    expect(screen.queryByText(/myStaffing\.counted\(/)).toBeNull();
+    expect(screen.queryByText("staffing.statusNO_TARGET")).toBeNull();
+  });
+
   it("lists each subject with its minutes and its share of the post", () => {
     render(<MyStaffingPage />);
 
@@ -173,7 +188,7 @@ describe("Min tjänst", () => {
     render(<MyStaffingPage />);
 
     expect(screen.getByText("myStaffing.noEmployment")).toBeInTheDocument();
-    expect(screen.getByText(/myStaffing\.noTarget/)).toBeInTheDocument();
+    expect(screen.getByText(/myStaffing\.countedNoTarget/)).toBeInTheDocument();
     expect(screen.getByText("—")).toBeInTheDocument();
     expect(screen.queryByText("0 %")).toBeNull();
   });

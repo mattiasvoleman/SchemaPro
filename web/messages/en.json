@@ -1724,7 +1724,7 @@
     "notRegisteredBody": "The school leadership has not entered an employment, teaching or any duty for you this school year.",
     "noEmployment": "No employment registered. Without one there is no target to compare with.",
     "target": "Target {minutes} min/wk",
-    "noTarget": "No target",
+    "countedNoTarget": "Counted teaching {minutes} min/wk · no target to compare it with",
     "counted": "counted against the target {minutes} min/wk",
     "annual": "{hours} h of teaching per school year, with holidays and staff days deducted.",
     "lastYear": "Last year ({year}): post {percent} % · {minutes} min counted teaching",
