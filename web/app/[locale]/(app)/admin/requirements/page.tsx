@@ -134,7 +134,7 @@
 // secondary text colour, painted on every page there is, so moving it is a
 // change to the palette rather than to this file.
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { splitGroupsByKind } from "@/lib/group-sections";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -179,7 +179,6 @@ import type { TargetState } from "@/components/timplan/requirements-target";
 import { subjectColor } from "@/lib/utils";
 import { sortByName } from "@/lib/sorting";
 import { PageHeader } from "@/components/layout/page-header";
-import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
 import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -202,6 +201,29 @@ import {
 } from "@/components/ui/select";
 
 const NO_TEACHER = "__none__";
+
+/*
+ * Fetched with the cell dialog, the only place the fields are drawn — as the
+ * master timetable's Justera and Lägg till have them, for their reason: the
+ * fields carry components/ui/date-field.tsx, 546 lines of date picker, which
+ * the page otherwise paid for to draw the matrix. Radix mounts no dialog
+ * content while the dialog is closed, so the fetch starts at the first cell
+ * opened.
+ */
+const RecurrenceFields = lazy(() =>
+  import("@/components/schedule/recurrence-fields").then((module) => ({
+    default: module.RecurrenceFields,
+  })),
+);
+/** Holds the recurrence box's place in the dialog while its code arrives. */
+function RecurrenceFieldsFallback() {
+  return (
+    <div className="col-span-2 space-y-3 rounded-md border p-3">
+      <Skeleton className="h-14" />
+      <Skeleton className="h-14" />
+    </div>
+  );
+}
 
 /**
  * Mål mode's code, fetched the first time the toggle is pressed. A bare
@@ -1542,15 +1564,17 @@ export default function RequirementsPage() {
               `idPrefix` keeps its label/input pairs unique; "req" because this
               dialog can be open while nothing else is.
             */}
-            <RecurrenceFields
-              idPrefix="req"
-              value={{
-                recurrence: form.recurrence,
-                startDate: form.startDate,
-                endDate: form.endDate,
-              }}
-              onChange={(next) => setForm({ ...form, ...next })}
-            />
+            <Suspense fallback={<RecurrenceFieldsFallback />}>
+              <RecurrenceFields
+                idPrefix="req"
+                value={{
+                  recurrence: form.recurrence,
+                  startDate: form.startDate,
+                  endDate: form.endDate,
+                }}
+                onChange={(next) => setForm({ ...form, ...next })}
+              />
+            </Suspense>
             {/*
               Avancerat: what each teacher is CHARGED of this row in
               tjänstefördelningen — Skola24's "Justera längd för lärare (%)".
