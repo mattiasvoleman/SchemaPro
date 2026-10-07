@@ -1870,8 +1870,9 @@
     "timplanLine": {
       "CARRIED": "{grade, select, 0 {Preschool class} other {Grade {grade}}}: {plan} — the cohort followed it in {from, select, 0 {preschool class} other {grade {from}}}",
       "DEFAULT": "{grade, select, 0 {Preschool class} other {Grade {grade}}}: {plan} — the most recently decided timplan, as no cohort moves up into this grade",
-      "NONE": "{grade, select, 0 {Preschool class} other {Grade {grade}}}: no timplan — the school has no decided plan for this grade"
+      "KEPT": "{grade, select, 0 {Preschool class} other {Grade {grade}}}: {plan} — the same as this year, as no cohort moves up into this grade and no decided plan covers it"
     },
+    "timplanLaterPlan": "{plan} was decided later but applies only to cohorts starting grade 1 in {term}.",
     "timplanDraft": "draft — not decided",
     "reviewClassRules": "{count, plural, =0 {No class rules are carried over} one {# class rule is carried over} other {# class rules are carried over}}",
     "classRuleLine": "{from} → {to}: {day} {start}–{end}",
