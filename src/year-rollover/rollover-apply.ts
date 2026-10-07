@@ -135,6 +135,8 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
       data: context.writes.classRules.map((rule) => ({
         schoolId: context.schoolId,
         resourceType: 'STUDENT_GROUP' as const,
+        userId: null,
+        roomId: null,
         studentGroupId: groupOf(context, rule.groupKey),
         dayOfWeek: rule.dayOfWeek,
         date: null,

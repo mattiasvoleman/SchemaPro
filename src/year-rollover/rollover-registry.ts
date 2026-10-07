@@ -50,7 +50,14 @@ export type ColumnRule =
   /** The request: the new year's name, dates and graduating grade. */
   | 'FROM_REQUEST'
   /** The column's default (timestamps, isActive false). */
-  | 'DEFAULT';
+  | 'DEFAULT'
+  /**
+   * Always null in a carried row, because of which rows are carried: a weekly
+   * STUDENT_GROUP class rule has no user, no room and no date. Written as
+   * null rather than "copied" so the write audit can tell a column the copy
+   * forgot from one it never has a value for.
+   */
+  | 'NULL';
 
 /** The rollover's write steps, in the order they run. */
 export type RolloverStepName =
@@ -189,13 +196,13 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       id: 'NEW_ID',
       schoolId: 'COPY',
       resourceType: 'COPY',
-      userId: 'COPY',
-      roomId: 'COPY',
+      userId: 'NULL',
+      roomId: 'NULL',
       studentGroupId: 'MAP_GROUP',
       minGradeLevel: 'COPY',
       maxGradeLevel: 'COPY',
       dayOfWeek: 'COPY',
-      date: 'COPY',
+      date: 'NULL',
       startTime: 'COPY',
       endTime: 'COPY',
       type: 'COPY',
