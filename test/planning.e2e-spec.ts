@@ -3416,6 +3416,25 @@ describe('Planning surface (e2e)', () => {
 
     });
 
+    it('409s rolling an active year whose straggler is still in last year’s class, naming it as such, until its own activation moves them', async () => {
+      const { world, options } = givenSchool(2020);
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+      await activate(yearB);
+      // The pupil on leave at the activation returns, still in A's 7A.
+      world.rows['user']!.find((user) => user['id'] === IDS.pGone)!['isActive'] = true;
+      const next = { name: 'Tredje läsåret', startDate: '2022-08-15', endDate: '2023-06-09', graduatingGradeLevel: 9 };
+      const straggling = await request(http())
+        .post(`/api/v1/academic-years/${yearB}/rollover/preview`)
+        .set('x-test-user', admin())
+        .send(next)
+        .expect(409);
+      expect(straggling.body).toMatchObject({ code: 'ROLLOVER_SOURCE_HAS_STRAGGLERS', params: { year: 'Nästa läsår', pupils: 1 } });
+      const preview = await request(http()).post(`/api/v1/academic-years/${yearB}/activation/preview`).set('x-test-user', admin()).expect(200);
+      expect(preview.body.moves).toEqual([expect.objectContaining({ count: 1, studentIds: [IDS.pGone] })]);
+      expect((await activate(yearB)).body).toMatchObject({ moved: 1 });
+      await request(http()).post(`/api/v1/academic-years/${yearB}/rollover/preview`).set('x-test-user', admin()).send(next).expect(200);
+    });
+
     it('409s PATCH {isActive: true} while pupils wait to move, and DELETE of a year that holds home classes', async () => {
       const { world, options } = givenSchool(2020);
       const created = await roll(options, 201);

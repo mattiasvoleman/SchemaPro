@@ -27,6 +27,7 @@ import type { ExecuteActivationDto, ExecuteRolloverDto, RolloverOptionsDto } fro
 /** The problem codes the rollover and the activation answer with, beside RolloverProblemCode. */
 export const YEAR_HAS_SUCCESSOR = 'YEAR_HAS_SUCCESSOR';
 export const ROLLOVER_SOURCE_NOT_ACTIVATED = 'ROLLOVER_SOURCE_NOT_ACTIVATED';
+export const ROLLOVER_SOURCE_HAS_STRAGGLERS = 'ROLLOVER_SOURCE_HAS_STRAGGLERS';
 export const ROLLOVER_PREVIEW_STALE = 'ROLLOVER_PREVIEW_STALE';
 export const ACTIVATION_PREVIEW_STALE = 'ACTIVATION_PREVIEW_STALE';
 export const YEAR_NAME_TAKEN = 'YEAR_NAME_TAKEN';
@@ -318,18 +319,40 @@ function yearNameTaken(name: string): ConflictException {
   });
 }
 
-/** The two reasons a year cannot be rolled at all, whatever is asked. */
+/**
+ * The reasons a year cannot be rolled at all, whatever is asked.
+ *
+ * Pending moves mean two different things. In a year not yet activated they
+ * are all its pupils, still in the classes of the year before
+ * (ROLLOVER_SOURCE_NOT_ACTIVATED: activate it). In the ACTIVE year they are
+ * stragglers — a pupil who was inactive at the activation and has been set
+ * active again, or one put back in an old class since, still sitting in last
+ * year's class. Telling that admin "the year is not activated" is false and
+ * names a remedy they cannot see; the activation of the active year moves
+ * exactly those pupils (it hands no flag over), so the refusal says so. Their
+ * ids are not in `params` (the problem filter drops an array whole); the
+ * activation preview of the active year lists them per move, and the web
+ * names them there.
+ */
 function refuseUnrollable(source: RolloverSource): void {
   if (source.successor) throw yearHasSuccessorConflict(source.year.name, source.successor);
-  if (source.pendingMoves > 0) {
+  if (source.pendingMoves === 0) return;
+  if (source.year.isActive) {
     throw new ConflictException({
       message:
-        `Läsåret ${source.year.name} är inte aktiverat: ${source.pendingMoves} elever väntar fortfarande på att flyttas in i dess klasser. ` +
-        'Aktivera det innan det rullas vidare, så räknas klasserna på sina egna elever.',
-      code: ROLLOVER_SOURCE_NOT_ACTIVATED,
-      params: { pupils: source.pendingMoves },
+        `${source.pendingMoves} elever står kvar i klasser från ett tidigare läsår än ${source.year.name}. ` +
+        'Kör aktiveringen av läsåret igen, så flyttas de till sina klasser, och rulla sedan vidare.',
+      code: ROLLOVER_SOURCE_HAS_STRAGGLERS,
+      params: { year: source.year.name, pupils: source.pendingMoves },
     });
   }
+  throw new ConflictException({
+    message:
+      `Läsåret ${source.year.name} är inte aktiverat: ${source.pendingMoves} elever väntar fortfarande på att flyttas in i dess klasser. ` +
+      'Aktivera det innan det rullas vidare, så räknas klasserna på sina egna elever.',
+    code: ROLLOVER_SOURCE_NOT_ACTIVATED,
+    params: { year: source.year.name, pupils: source.pendingMoves },
+  });
 }
 
 const GROUP_CHOICE_SV: Record<string, string> = {
