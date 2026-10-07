@@ -2,6 +2,8 @@ import { IDS } from '../../test/utils/rollover-world';
 import { SUCCESSOR, givenSuccessorWorld, schoolAdmin, type SuccessorWorld } from '../../test/utils/successor-world';
 import type { ConfigService } from '@nestjs/config';
 import type { HttpService } from '@nestjs/axios';
+import { MasterLessonsService } from '../calendar/master-lessons.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { OptimizationProxyService } from '../optimization/optimization-proxy.service';
 import { RoomOptimizationService } from '../optimization/room-optimization.service';
 import type { ScheduleVersionsService } from '../calendar/schedule-versions.service';
@@ -62,9 +64,10 @@ const writesIn = (world: SuccessorWorld['world']) =>
  */
 async function proveEquivalent<T>(
   read: (world: SuccessorWorld) => Promise<T>,
-  options: { writes?: boolean } = {},
+  options: { writes?: boolean; setup?: (world: SuccessorWorld) => void } = {},
 ): Promise<{ before: T; world: SuccessorWorld }> {
   const world = await givenSuccessorWorld();
+  options.setup?.(world);
   world.world.calls.length = 0;
   const before = await observed(() => read(world));
   expect(before.kinds.length).toBeGreaterThan(0);
@@ -279,6 +282,70 @@ describe('förberäknade klasslistor — every reader reads the same before and 
     expect(applied.kinds).toEqual(['CURRENT']);
     expect(applied.value).toMatchObject({ updated: 1 });
     expect(world.world.rows['masterLesson']!.find((lesson) => lesson['id'] === SUCCESSOR.lessonNamed)!['roomId']).toBe(r2);
+  });
+
+  it('P4 master lessons: the clashes a lesson placed by hand meets, and who sits in each group', async () => {
+    const minutes = (clock: string) => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3));
+    const { before, world } = await proveEquivalent(
+      async (world) => {
+        const service = new MasterLessonsService(world.prisma, {} as RealtimeService, {} as NotificationsService);
+        const internals = service as unknown as {
+          findConflicts: (...args: unknown[]) => Promise<{ kind: string; message: string; masterLessonId?: string }[]>;
+          rosterOf: (...args: unknown[]) => Promise<Map<string, Set<string>>>;
+        };
+        // As create asks for it: the flags off the year row it reads.
+        const basis = await rostersOfYear(world.world.tx, schoolAdmin, world.yearB, flagsOf(world, world.yearB));
+        const candidates = [
+          // 8A against Ma8's Monday lesson: the pupils they share (rosterOf).
+          { group: world.b('8A'), dayOfWeek: 1, studentIds: [] as string[] },
+          // 8A against 9A's Tuesday lesson, which names p7a2 — coming to 8A (the reverse count).
+          { group: world.b('8A'), dayOfWeek: 2, studentIds: [] },
+          // Ma8 naming p8a1 — coming to 9A — against the same lesson (a participant's home class).
+          { group: world.b('Ma8 grupp 1'), dayOfWeek: 2, studentIds: [IDS.p8a1] },
+        ];
+        const found = [];
+        for (const [index, candidate] of candidates.entries()) {
+          const conflicts = await internals.findConflicts(
+            world.world.tx,
+            basis,
+            { id: null, academicYearId: world.yearB, studentGroupId: candidate.group, subjectId: IDS.sv },
+            {
+              dayOfWeek: candidate.dayOfWeek,
+              startMinutes: minutes('08:00'),
+              endMinutes: minutes('09:00'),
+              teacherId: null,
+              roomId: null,
+              studentIds: candidate.studentIds,
+            },
+          );
+          found.push(...conflicts.map((conflict) => [index, conflict.kind, conflict.message, conflict.masterLessonId]));
+        }
+        const roster = await internals.rosterOf(world.world.tx, basis, new Set(['8A', '9A', 'Ma8 grupp 1'].map(world.b)));
+        return {
+          conflicts: sortedBy(found, (row) => JSON.stringify(row)),
+          roster: sortedBy([...roster].map(([group, ids]) => [group, [...ids].sort()]), (row) => row[0] as string),
+        };
+      },
+      {
+        setup: (world) => {
+          world.world.rows['masterLesson']!.find((lesson) => lesson['id'] === SUCCESSOR.lessonNamed)!['participants'] = [
+            { studentId: IDS.p9a1 },
+            { studentId: IDS.p7a2 },
+          ];
+        },
+      },
+    );
+    expect(before.conflicts).toEqual([
+      [0, 'GROUP', 'Students of this group already have Matematik in this slot.', SUCCESSOR.lessonMa8],
+      [1, 'GROUP', 'A student of this class attends Matematik in this slot.', SUCCESSOR.lessonNamed],
+      [2, 'GROUP', 'A participating student already has Matematik in this slot.', SUCCESSOR.lessonNamed],
+      [2, 'GROUP', 'Students of this group already have Matematik in this slot.', SUCCESSOR.lessonNamed],
+    ]);
+    // rosterOf has no role or isActive filter of its own: the inactive pGone
+    // is in Ma8 before the activation as after it.
+    const roster = new Map(before.roster as [string, string[]][]);
+    expect(roster.get(world.b('Ma8 grupp 1'))).toContain(IDS.pGone);
+    expect(roster.get(world.b('8A'))).toEqual([IDS.p7a1, IDS.p7a2, SUCCESSOR.p7b1, SUCCESSOR.p7c1, SUCCESSOR.pNew].sort());
   });
 
   it('P5 attendanceSpan (the vikarie badge and warning): Ma8 spans 8–9 from its members’ coming classes', async () => {

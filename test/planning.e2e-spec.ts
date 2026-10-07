@@ -3436,7 +3436,7 @@ describe('Planning surface (e2e)', () => {
       await request(http()).post(`/api/v1/academic-years/${yearB}/rollover/preview`).set('x-test-user', admin()).send(next).expect(200);
     });
 
-    it('starts a job for a rolled year whose pupils have not moved in (projected rosters), and still 409s room proposals and lesson placement there', async () => {
+    it('generates, proposes rooms and judges a hand-placed lesson for a rolled year whose pupils have not moved in, on its projected rosters', async () => {
       const { world, options } = givenSchool(2098);
       const yearB = (await roll(options, 201)).body.academicYear.id as string;
       const started = await request(http())
@@ -3466,12 +3466,37 @@ describe('Planning surface (e2e)', () => {
         .set('x-test-user', admin())
         .send({ academicYearId: yearB, walkers: 'BOTH' })
         .expect(200);
+      // A lesson placed by hand for B's 8A at Ma8's hour: they will share
+      // p7a1, so it is a pupil clash now, as it will be after the activation.
+      const inB = (name: string) =>
+        world.rows['studentGroup']!.find((group) => group['academicYearId'] === yearB && group['name'] === name)!['id'] as string;
+      world.rows['masterLesson']!.push({
+        id: 'f3000000-0000-4000-8000-0000000000e1',
+        academicYearId: yearB,
+        subjectId: IDS.ma,
+        studentGroupId: inB('Ma8 grupp 1'),
+        teacherId: null,
+        coTeacherId: null,
+        roomId: null,
+        dayOfWeek: 1,
+        startTime: wallClock('08:00'),
+        endTime: wallClock('09:00'),
+        isLocked: true,
+        isGenerated: false,
+        isParked: false,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        subject: { name: 'Matematik' },
+        extraGroups: [],
+        participants: [],
+      });
       const lesson = await request(http())
         .post('/api/v1/master-lessons')
         .set('x-test-user', admin())
-        .send({ academicYearId: yearB, subjectId: IDS.ma, studentGroupId: IDS.g7a, dayOfWeek: 1, startTime: '08:00', endTime: '09:00' })
+        .send({ academicYearId: yearB, subjectId: IDS.sv, studentGroupId: inB('8A'), dayOfWeek: 1, startTime: '08:00', endTime: '09:00' })
         .expect(409);
-      expect(lesson.body).toMatchObject({ code: 'ROLLOVER_NOT_ACTIVATED' });
+      expect(JSON.stringify(lesson.body)).toContain('Students of this group already have Matematik in this slot.');
       // The active year itself is never refused for it.
       await request(http())
         .post('/api/v1/optimization/rooms/proposal')
