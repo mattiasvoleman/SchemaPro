@@ -189,7 +189,8 @@ describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
     state.policy = { unstaffedGeneration: "REFUSE" };
     render(<GeneratePage />);
 
-    expect(within(staffedLine()).getByText("0")).toBeInTheDocument();
+    // The check mark says it; a "0" beside the sentence read as "none has one".
+    expect(staffedLine().textContent).toBe("generate.preStaffed");
     expect(within(staffedLine()).queryByRole("link")).toBeNull();
     expect(runButton()).toBeEnabled();
     expect(screen.queryByText("generate.runBlockedUnstaffed")).toBeNull();
@@ -448,6 +449,15 @@ describe("next year, before its activation", () => {
     );
   });
 
+  it("calls the year row the year being planned, not the active year it is not", async () => {
+    render(<GeneratePage />);
+    await screen.findByText("planningYear.bannerTitle(2027/28)");
+
+    const yearLine = screen.getByText("generate.preYearPlanned").closest("li") as HTMLElement;
+    expect(within(yearLine).getByText("2027/28")).toBeInTheDocument();
+    expect(screen.queryByText("generate.preYear")).toBeNull();
+  });
+
   it("says the class lists are projected, with the counts the gateway sent", async () => {
     render(<GeneratePage />);
 
@@ -534,6 +544,8 @@ describe("next year, before its activation", () => {
     expect(apiGet).not.toHaveBeenCalled();
     expect(state.requirementsFor.at(-1)).toBe("y-1");
     expect(screen.queryByText(/planningYear\.bannerTitle/)).toBeNull();
+    // This year IS the active one, and its row says so.
+    expect(screen.getByText("generate.preYear")).toBeInTheDocument();
   });
 
   it("switches to next year from the choice, and the run follows it", async () => {

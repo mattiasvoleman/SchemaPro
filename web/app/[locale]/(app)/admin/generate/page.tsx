@@ -203,7 +203,15 @@ export default function GeneratePage() {
     warn?: boolean;
     href?: string;
   }[] = [
-    { label: t("preYear"), ok: year !== null, detail: year?.name ?? "—" },
+    /*
+     * The year the run is FOR, which is next year's when it is picked — so
+     * not "Aktivt läsår" then: next year is by definition not activated yet.
+     */
+    {
+      label: year && !year.isActive ? t("preYearPlanned") : t("preYear"),
+      ok: year !== null,
+      detail: year?.name ?? "—",
+    },
     {
       label: t("preRequirements"),
       ok: (requirements?.length ?? 0) > 0,
@@ -221,14 +229,15 @@ export default function GeneratePage() {
      * the behaviour every school had before Fas 2 — it is a warning, because
      * an unstaffed post is scheduled without a teacher and that may be what
      * the school means while it is still recruiting. Either way it links to
-     * the panel where a post is staffed with one click.
+     * the panel where a post is staffed with one click. Met, it shows the
+     * check mark and no figure: a "0" beside "Alla timplansposter har
+     * lärare" read as "none of them has one".
      */
     {
       label: t("preStaffed"),
       ok: unstaffedCount === 0,
       warn: unstaffedCount > 0 && !refusesUnstaffed,
-      detail:
-        unstaffedCount === 0 ? "0" : t("preStaffedMissing", { count: unstaffedCount }),
+      detail: unstaffedCount === 0 ? "" : t("preStaffedMissing", { count: unstaffedCount }),
       href: unstaffedCount > 0 ? "/admin/staffing#unstaffed" : undefined,
     },
   ];
