@@ -173,7 +173,9 @@ export default function YearsPage() {
                     <Badge variant={STATUS_VARIANT[status]}>{t(`status.${status}`)}</Badge>
                   </TableCell>
                   <TableCell className="text-sm">
-                    {plan && moving > 0 ? (
+                    {plan && moving > 0 && year.isActive ? (
+                      <div>{t("stragglers", { count: moving })}</div>
+                    ) : plan && moving > 0 ? (
                       <>
                         <div>{t("pendingMoves", { count: moving })}</div>
                         {tooEarly ? (
@@ -193,7 +195,12 @@ export default function YearsPage() {
                     <div className="flex flex-wrap justify-end gap-2">
                       {status !== "FINISHED" && !successor ? (
                         moving > 0 ? (
-                          <Button size="sm" variant="outline" disabled title={t("rolloverNeedsActivation")}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled
+                            title={t(year.isActive ? "rolloverNeedsStragglers" : "rolloverNeedsActivation")}
+                          >
                             {t("rollover")}
                           </Button>
                         ) : (
@@ -208,6 +215,13 @@ export default function YearsPage() {
                       {status === "UPCOMING" ? (
                         <Button size="sm" onClick={() => setActivating(year)}>
                           {t("activate")}
+                        </Button>
+                      ) : null}
+                      {/* The active year's own activation, run again: it hands no
+                          flag over and moves only the pupils left behind. */}
+                      {year.isActive && moving > 0 ? (
+                        <Button size="sm" onClick={() => setActivating(year)}>
+                          {t("moveStragglers")}
                         </Button>
                       ) : null}
                       {status === "UPCOMING" ? (

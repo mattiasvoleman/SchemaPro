@@ -787,8 +787,9 @@ export interface RolloverResult {
 }
 
 export interface ActivationProblem {
-  code: "YEAR_ACTIVATION_TOO_EARLY" | "YEAR_IS_SUPERSEDED";
-  blocking: true;
+  code: "YEAR_ACTIVATION_TOO_EARLY" | "YEAR_IS_SUPERSEDED" | "MEMBERSHIPS_OUT_OF_DATE";
+  /** MEMBERSHIPS_OUT_OF_DATE is a notice; the other two refuse the activation. */
+  blocking: boolean;
   params: Record<string, string | number>;
 }
 
@@ -796,7 +797,15 @@ export interface ActivationPreview {
   year: { id: string; name: string; isActive: boolean };
   currentlyActive: { id: string; name: string } | null;
   chain: { id: string; name: string; endDate: string }[];
-  moves: { fromGroupId: string; fromGroupName: string; toGroupId: string; toGroupName: string; count: number }[];
+  /** With the pupils' ids (no names), so an active year's stragglers can be named. */
+  moves: {
+    fromGroupId: string;
+    fromGroupName: string;
+    toGroupId: string;
+    toGroupName: string;
+    count: number;
+    studentIds: string[];
+  }[];
   graduates: { count: number; studentIds: string[] };
   unplaced: {
     count: number;

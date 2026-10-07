@@ -32,10 +32,13 @@ export function useActivationPreview(yearId: string | null) {
 }
 
 /**
- * The pending moves of every year that has some to show: an inactive year
- * rolled from another. The list on /admin/years says "34 elever flyttar hit
- * vid aktiveringen" from these, before anyone opens the dialog. A school has
- * a handful of years and at most one or two of these.
+ * The pending moves of every year that has some to show: a coming year
+ * rolled from another, and the ACTIVE year when it was rolled from one — a
+ * pupil inactive at its activation and back since sits in last year's class
+ * (a straggler), and only its own activation, run again, moves them. The list
+ * on /admin/years says "34 elever flyttar hit vid aktiveringen" or "1 elev
+ * står kvar i förra årets klass" from these, before anyone opens the dialog.
+ * A school has a handful of years and at most two of these.
  *
  * ONE query fetching them all, not useQueries: react-query is in the chunk
  * every route shares, and Turbopack keeps a shared module whole, so the first
@@ -44,8 +47,13 @@ export function useActivationPreview(yearId: string | null) {
  * prefix, so an activation's invalidation reaches it.
  */
 export function usePendingActivations(years: readonly AcademicYear[] | undefined) {
+  const active = (years ?? []).find((year) => year.isActive) ?? null;
   const ids = (years ?? [])
-    .filter((year) => !year.isActive && year.predecessorId !== null)
+    .filter(
+      (year) =>
+        year.predecessorId !== null &&
+        (year.isActive || active === null || year.startDate > active.startDate),
+    )
     .map((year) => year.id);
   const { data } = useQuery({
     queryKey: [...YEAR_KEYS.activationPreview, "pending", ids],
