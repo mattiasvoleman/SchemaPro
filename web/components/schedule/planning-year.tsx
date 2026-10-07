@@ -106,7 +106,7 @@ export function ProjectedRostersBanner({
         {missing + stale > 0 ? <p>{t("bannerMemberships", { missing, stale })}</p> : null}
         <p className="text-muted-foreground">{t("bannerChanges", { active: active.name })}</p>
         <Link href="/admin/years" className="underline underline-offset-4">
-          {t("bannerLink")}
+          {t("bannerLink", { active: active.name })}
         </Link>
       </div>
     </div>
