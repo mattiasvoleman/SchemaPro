@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import {
   TIMPLAN_KEYS,
@@ -44,31 +44,30 @@ export function useYearTimplans(academicYearId: string | null, enabled = true) {
 /**
  * Every plan a year attaches, with its entries — the targets themselves.
  *
- * Under TIMPLAN_KEYS.plan, the key /admin/timplan reads and its saves seed,
- * so an entry saved there is the entry read here. `data` is undefined until
- * every plan has answered: a target table with one plan missing would call
- * that plan's årskurs "no target", which is a statement, not a gap.
+ * One query for all of them, under a key that starts with
+ * TIMPLAN_KEYS.list: every write on a plan (/admin/timplan's saves, decide,
+ * reopen, import) invalidates that prefix, so an entry saved there is the
+ * entry read here. `data` is undefined until every plan has answered: a
+ * target table with one plan missing would call that plan's årskurs "no
+ * target", which is a statement, not a gap.
  *
- * `combine` is module-level so react-query can keep its result referentially
- * stable (it structurally shares the combined value while the inputs and the
- * function are unchanged), which is what lets a caller memoise on `data`.
+ * One `useQuery` over `Promise.all` and not `useQueries` per plan, for the
+ * bundle: the matrix's Mål module is loaded lazily, and useQueries in a lazy
+ * chunk made Turbopack re-slice react-query's shared internals (QueryObserver,
+ * the suspense helpers) into a chunk every route loads — measured at +0,2 KB
+ * on /admin/timetable, which has 0,5 KB of budget left. A school attaches one
+ * or two plans, so fetching them together costs nothing a per-plan cache
+ * would save.
  */
-export function useLocalTimplanDetails(ids: readonly string[]) {
-  return useQueries({
-    queries: ids.map((id) => ({
-      queryKey: TIMPLAN_KEYS.plan(id),
-      queryFn: () =>
-        api.get<LocalTimplanDetail>(`/api/v1/local-timplans/${encodeURIComponent(id)}`),
-    })),
-    combine: combineDetails,
+export function useLocalTimplanDetails(ids: readonly string[], enabled = true) {
+  return useQuery({
+    queryKey: [...TIMPLAN_KEYS.list, "details", ...ids],
+    enabled,
+    queryFn: () =>
+      Promise.all(
+        ids.map((id) =>
+          api.get<LocalTimplanDetail>(`/api/v1/local-timplans/${encodeURIComponent(id)}`),
+        ),
+      ),
   });
-}
-
-function combineDetails(results: UseQueryResult<LocalTimplanDetail>[]) {
-  return {
-    data: results.every((result) => result.data !== undefined)
-      ? results.map((result) => result.data!)
-      : undefined,
-    isError: results.some((result) => result.isError),
-  };
 }
