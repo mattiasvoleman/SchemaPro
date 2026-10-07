@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { coverageCase, LANGUAGES, MIXED, UNATTACHED_AND_DRAFT } from "@/lib/__fixtures__/timplan-tackning";
+import {
+  coverageCase,
+  EMPTY_PLAN,
+  LANGUAGES,
+  MIXED,
+  UNATTACHED_AND_DRAFT,
+} from "@/lib/__fixtures__/timplan-tackning";
 import { buildCoverageMatrix, coverageTone, signedMinutes } from "./timplan-tackning";
 
 const id = (n: number) => `00000000-0000-4000-8000-000000000${n}`;
@@ -43,6 +49,18 @@ describe("buildCoverageMatrix", () => {
     const matrix = buildCoverageMatrix(response, input.groups, input.subjects);
     expect(matrix.unattachedGrades).toEqual([6]);
     expect(matrix.draftPlans).toEqual([{ id: id(202), name: "Grundskolan 2027 (utkast)", gradeLevels: [9] }]);
+  });
+
+  it("names an årskurs attached to a plan that gives it no minutes, and never asks åk 11 for a plan", () => {
+    const { input, response } = coverageCase(EMPTY_PLAN);
+    const matrix = buildCoverageMatrix(response, input.groups, input.subjects);
+    expect(matrix.emptyPlanGrades).toEqual([{ gradeLevel: 3, planName: "Högstadiet 2024" }]);
+    expect(matrix.unattachedGrades).toEqual([]);
+    expect(matrix.classes.map((row) => [row.name, row.summary.linesWithTarget])).toEqual([
+      ["11A", 0],
+      ["3A", 0],
+      ["3B", 0],
+    ]);
   });
 
   it("keeps a subject the school list no longer holds, named by its id", () => {

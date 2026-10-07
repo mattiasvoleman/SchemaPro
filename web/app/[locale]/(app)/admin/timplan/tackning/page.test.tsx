@@ -1,7 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { coverageCase, LANGUAGES, UNATTACHED_AND_DRAFT } from "@/lib/__fixtures__/timplan-tackning";
+import { coverageCase, EMPTY_PLAN, LANGUAGES, UNATTACHED_AND_DRAFT } from "@/lib/__fixtures__/timplan-tackning";
 import type { TimplanCoverageResponse } from "@/lib/timplan-tackning";
 import TimplanCoveragePage from "./page";
 
@@ -94,6 +94,17 @@ describe("TimplanCoveragePage", () => {
     // Five of six lines reach every pupil: the M2 line has one pupil short.
     expect(within(row).getByLabelText("coverageLabel(5|6)")).toHaveTextContent("5/6");
     expect(screen.getByText("pupilsBelow(5|1)")).toBeInTheDocument();
+  });
+
+  it("says a class attached to a plan with no time for its årskurs has none, rather than 0/0", () => {
+    state.case = coverageCase(EMPTY_PLAN) as typeof state.case;
+    render(<TimplanCoveragePage />);
+    expect(screen.getByText("emptyPlan(Högstadiet 2024|grade(3))")).toBeInTheDocument();
+    const row = screen.getByRole("row", { name: /3A/ });
+    expect(within(row).getByText("emptyPlanShort")).toBeInTheDocument();
+    expect(within(row).queryByText("0/0")).not.toBeInTheDocument();
+    // Åk 11 has nothing to attach: no notice asks for it.
+    expect(screen.queryByText(/^unattached/)).not.toBeInTheDocument();
   });
 
   it("opens a class's drill-down: per line min / median / max, and its own pupils by name", async () => {

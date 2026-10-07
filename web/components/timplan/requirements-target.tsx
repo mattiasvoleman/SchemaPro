@@ -163,6 +163,11 @@ export function TargetHost({ academicYearId, sources, onState }: TargetHostProps
           {t("target.draft", { name: plan.name, grades: plan.gradeLevels.map(grade).join(", ") })}
         </p>
       ))}
+      {view.emptyPlanGrades.map((entry) => (
+        <p key={entry.gradeLevel} className="rounded-md bg-muted px-3 py-2">
+          {t("target.emptyPlan", { name: entry.planName, grade: grade(entry.gradeLevel) })}
+        </p>
+      ))}
       <p role="status" aria-live="polite" aria-atomic="true" className="font-medium">
         {view.total.target === null
           ? t("target.totalNoTarget", {
@@ -283,6 +288,13 @@ export function CoveragePill({
   if (summary.localTimplanId === null) {
     return (
       <span className="ml-2 text-xs font-normal text-muted-foreground">{t("target.pillNoPlan")}</span>
+    );
+  }
+  if (summary.linesWithTarget === 0) {
+    // Attached to a plan that gives this årskurs nothing: 0/0 would read as
+    // covered (TIMPLAN_ATTACHED_PLAN_EMPTY).
+    return (
+      <span className="ml-2 text-xs font-normal text-muted-foreground">{t("target.pillEmptyPlan")}</span>
     );
   }
   const short = summary.linesCovered < summary.linesWithTarget;

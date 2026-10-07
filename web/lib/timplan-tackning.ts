@@ -76,6 +76,8 @@ export interface CoverageMatrix {
   unattachedGrades: number[];
   /** Attached plans that are drafts, with the årskurser that follow them. */
   draftPlans: { id: string; name: string; gradeLevels: number[] }[];
+  /** Årskurser with classes attached to a plan that gives them no minutes. */
+  emptyPlanGrades: { gradeLevel: number; planName: string }[];
 }
 
 export interface NamedGroup {
@@ -148,9 +150,15 @@ export function buildCoverageMatrix(
 
   const unattachedGrades: number[] = [];
   const draftPlans: CoverageMatrix["draftPlans"] = [];
+  const emptyPlanGrades: CoverageMatrix["emptyPlanGrades"] = [];
   for (const verdict of coverage.verdicts) {
     if (verdict.code === "TIMPLAN_YEAR_GRADE_UNATTACHED" && verdict.gradeLevel !== undefined) {
       unattachedGrades.push(verdict.gradeLevel);
+    } else if (verdict.code === "TIMPLAN_ATTACHED_PLAN_EMPTY" && verdict.gradeLevel !== undefined) {
+      emptyPlanGrades.push({
+        gradeLevel: verdict.gradeLevel,
+        planName: String(verdict.params.planName ?? ""),
+      });
     } else if (verdict.code === "TIMPLAN_ATTACHED_DRAFT" && verdict.localTimplanId) {
       draftPlans.push({
         id: verdict.localTimplanId,
@@ -178,6 +186,7 @@ export function buildCoverageMatrix(
     },
     unattachedGrades,
     draftPlans,
+    emptyPlanGrades,
   };
 }
 
