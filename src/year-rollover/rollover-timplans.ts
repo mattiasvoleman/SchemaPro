@@ -1,4 +1,5 @@
 import type { LocalTimplanStatus } from '@prisma/client';
+import { cohortYear } from '../common/timplan-coverage';
 
 /**
  * Timplan per årskurs (AcademicYearTimplans, timplan P2) carried into the new
@@ -28,13 +29,27 @@ import type { LocalTimplanStatus } from '@prisma/client';
  *     carried along stays attached, and the preview says it is a draft.
  *   - DEFAULT: no cohort carries a plan into g — the school's entry grade (F
  *     or åk 1 in an F–9 school, åk 7 in a 7–9 school), or a grade with no
- *     class below it. g takes the newest DECIDED plan that speaks for g and
- *     is of the school form the source year's plan for g is.
+ *     class below it. g takes a DECIDED plan that speaks for g and is of the
+ *     school form the source year's plan for g is: the newest decided one of
+ *     the lydelse that applies to the cohort entering g (WHICH LYDELSE).
  *   - KEPT: as DEFAULT, but no decided plan of that form speaks for g (the
  *     newest plan plans no förskoleklass, say). g keeps the plan the source
  *     year attaches to it, rather than losing its row every summer.
  * Such a grade always has a source row of its own (see WHICH GRADES), so
  * there is no third outcome: every grade of the new year gets a plan.
+ *
+ * WHICH LYDELSE. The reason for carrying by cohort holds for the entering
+ * cohort too: it follows the lydelse in force for the term it started åk 1,
+ * HT(Y − g + 1) for a new year starting HT Y (förskoleklass: HT(Y + 1), the
+ * term it starts åk 1). Of the lydelser the school has decided plans for,
+ * the latest whose appliesFromCohortTerm is not after that term applies; a
+ * plan on a later lydelse is skipped, and the preview names it (laterPlan).
+ * A school that decides its HT2028 (tioårig) plan in the spring of 2027
+ * does not put next year's åk 1, who start HT2027, on it. When no decided
+ * lydelse is that old — the reference data has no bilaga before SFS
+ * 2023:945, so a 7–9 school's intake that started åk 1 before HT2024 has
+ * none — the earliest one the school has stands in for it: the closest to
+ * the cohort's own, and never a later one when an earlier exists.
  *
  * WHICH GRADES. Those the source year attaches, and those a cohort carries a
  * plan into. A 7–9 school that removed åk 1–6 from its year does not get them
@@ -85,6 +100,12 @@ export interface PlannedTimplan {
   localTimplanId: string;
   planName: string;
   planStatus: LocalTimplanStatus;
+  /**
+   * DEFAULT: a more recently decided plan for the grade that was skipped
+   * because its lydelse applies only to cohorts starting later; null
+   * otherwise.
+   */
+  laterPlan: { name: string; appliesFromCohortTerm: string } | null;
 }
 
 export interface CohortTimplanInput {
@@ -95,18 +116,41 @@ export interface CohortTimplanInput {
   movingCohorts: ReadonlySet<number>;
   /** The school's decided plans, newest first (readDecidedTimplans). */
   decided: readonly DecidedTimplanChoice[];
+  /** The calendar year the new läsår starts (its HT): 2027 for 2027/28. */
+  targetStartYear: number;
+}
+
+/** The term-year the cohort in årskurs g of a year starting HT `year` started åk 1. */
+export function cohortStartYear(gradeLevel: number, year: number): number {
+  return gradeLevel === 0 ? year + 1 : year - gradeLevel + 1;
+}
+
+/**
+ * Of the plans (newest decided first), the newest decided one of the latest
+ * lydelse that applies to a cohort starting åk 1 in `startYear`, or of the
+ * earliest lydelse when none does. See WHICH LYDELSE.
+ */
+function forCohort(
+  candidates: readonly DecidedTimplanChoice[],
+  startYear: number,
+): DecidedTimplanChoice | undefined {
+  const years = candidates.map((plan) => cohortYear(plan.appliesFromCohortTerm));
+  const applying = years.filter((year) => year <= startYear);
+  const lydelse = applying.length > 0 ? Math.max(...applying) : Math.min(...years);
+  return candidates.find((_, index) => years[index] === lydelse);
 }
 
 /** The table's CHECK: 0 = förskoleklass … 10. */
 const MAX_GRADE = 10;
 
 export function planCohortTimplans(input: CohortTimplanInput): PlannedTimplan[] {
-  const { source, graduatingGradeLevel, movingCohorts, decided } = input;
+  const { source, graduatingGradeLevel, movingCohorts, decided, targetStartYear } = input;
   const planned = (
     gradeLevel: number,
     reason: TimplanCarryReason,
     plan: { id: string; name: string; status: LocalTimplanStatus },
     fromGradeLevel: number | null = null,
+    laterPlan: PlannedTimplan['laterPlan'] = null,
   ): PlannedTimplan => ({
     gradeLevel,
     reason,
@@ -114,6 +158,7 @@ export function planCohortTimplans(input: CohortTimplanInput): PlannedTimplan[] 
     localTimplanId: plan.id,
     planName: plan.name,
     planStatus: plan.status,
+    laterPlan,
   });
 
   if (source.length === 0) {
@@ -140,14 +185,20 @@ export function planCohortTimplans(input: CohortTimplanInput): PlannedTimplan[] 
     }
     // Not carried, so the grade is in the set by its own source row.
     const own = byGrade.get(gradeLevel)!;
-    const fallback = decided.find(
+    const candidates = decided.filter(
       (plan) => plan.gradeLevels.includes(gradeLevel) && plan.schoolForm === own.planSchoolForm,
     );
-    out.push(
-      fallback
-        ? planned(gradeLevel, 'DEFAULT', fallback)
-        : planned(gradeLevel, 'KEPT', { id: own.localTimplanId, name: own.planName, status: own.planStatus }),
-    );
+    const chosen = forCohort(candidates, cohortStartYear(gradeLevel, targetStartYear));
+    if (!chosen) {
+      out.push(planned(gradeLevel, 'KEPT', { id: own.localTimplanId, name: own.planName, status: own.planStatus }));
+      continue;
+    }
+    const newest = candidates[0]!;
+    const skipped =
+      newest !== chosen && cohortYear(newest.appliesFromCohortTerm) > cohortYear(chosen.appliesFromCohortTerm)
+        ? { name: newest.name, appliesFromCohortTerm: newest.appliesFromCohortTerm }
+        : null;
+    out.push(planned(gradeLevel, 'DEFAULT', chosen, null, skipped));
   }
   return out;
 }

@@ -643,9 +643,9 @@ describe('YearRolloverService — timplan per årskurs by cohort', () => {
     const { service } = setup();
     const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
     expect(preview.timplans).toEqual([
-      { gradeLevel: 7, reason: 'KEPT', fromGradeLevel: null, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT' },
-      { gradeLevel: 8, reason: 'CARRIED', fromGradeLevel: 7, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT' },
-      { gradeLevel: 9, reason: 'CARRIED', fromGradeLevel: 8, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT' },
+      { gradeLevel: 7, reason: 'KEPT', fromGradeLevel: null, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT', laterPlan: null },
+      { gradeLevel: 8, reason: 'CARRIED', fromGradeLevel: 7, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT', laterPlan: null },
+      { gradeLevel: 9, reason: 'CARRIED', fromGradeLevel: 8, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT', laterPlan: null },
     ]);
   });
 
@@ -697,6 +697,25 @@ describe('YearRolloverService — timplan per årskurs by cohort', () => {
       [8, 'CARRIED', 7, 'Grundskola 2024'],
       [9, 'CARRIED', 8, 'Grundskola 2024'],
     ]);
+  });
+
+  it('does not give åk 7 of 2027/28 the HT2028 plan decided last, and says which plan it skipped', async () => {
+    const rows = defaultRolloverRows();
+    rows['localTimplan']!.push(decided(), {
+      ...decided(),
+      id: 'f2000000-0000-4000-8000-0000000000d4',
+      name: 'Tioårig 2028',
+      decidedAt: new Date('2027-03-01T00:00:00Z'),
+      nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2028' },
+    });
+    const { service } = setup(rows);
+    const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    expect(preview.timplans[0]).toMatchObject({
+      gradeLevel: 7,
+      reason: 'DEFAULT',
+      planName: 'Grundskola 2024',
+      laterPlan: { name: 'Tioårig 2028', appliesFromCohortTerm: 'HT2028' },
+    });
   });
 
   it('makes the preview stale when the source year’s mapping changes before the execute', async () => {

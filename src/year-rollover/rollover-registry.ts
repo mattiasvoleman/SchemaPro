@@ -59,8 +59,9 @@ export type ColumnRule =
   /**
    * The plan that grade follows: the source row's for g−1 when a class moves
    * up from g−1, kept whatever its status; otherwise the newest DECIDED plan
-   * that speaks for the grade, of the form of the grade's own source row, or
-   * that own row's plan when no decided plan does.
+   * that speaks for the grade, of the form of the grade's own source row and
+   * of the lydelse the cohort entering the grade started under, or that own
+   * row's plan when no decided plan does.
    */
   | 'COHORT_PLAN'
   /** The column's default (timestamps, isActive false). */

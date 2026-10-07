@@ -602,6 +602,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     graduatingGradeLevel: g,
     movingCohorts,
     decided: source.decidedTimplans,
+    targetStartYear: Number(target.startDate.slice(0, 4)),
   });
   for (const row of timplans) {
     writes.timplans.push({ gradeLevel: row.gradeLevel, localTimplanId: row.localTimplanId });
