@@ -644,6 +644,11 @@ export interface TeacherCandidate {
   /** Taking the row would pass target × (1 + tolerance). */
   wouldExceed: boolean;
   status: "UNDER" | "OK" | "OVER" | "NO_TARGET";
+  /**
+   * Taught (or co-taught) this subject to the group's predecessor last läsår
+   * (staffing Fas 5). Ranked after behörighet and before teachesGroupAlready.
+   */
+  taughtLastYear: boolean;
 }
 
 export interface TeacherSuggestions {
@@ -653,7 +658,9 @@ export interface TeacherSuggestions {
   gradeSpan: { min: number; max: number } | null;
   teacherMinutesPerWeek: number;
   qualificationsRecorded: boolean;
-  /** Ranked: qualification, teaches the group, room left. */
+  /** The group's predecessor and its läsår, or null without one (or without a row in the subject). */
+  lastYear: { groupName: string; yearName: string } | null;
+  /** Ranked: qualification, taught the group last year, teaches the group, room left. */
   candidates: TeacherCandidate[];
 }
 

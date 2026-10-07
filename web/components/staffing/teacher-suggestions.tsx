@@ -42,7 +42,8 @@ export interface TeacherSuggestionsProps {
  * and a button per name that takes it.
  *
  * THE RANKING IS THE GATEWAY'S and nothing here re-sorts it — behörighet for
- * the group's grades, then already teaching the group, then room left after
+ * the group's grades, then the teacher who had the group's predecessor in the
+ * subject last läsår, then already teaching the group, then room left after
  * the row (GET /staffing/suggest-teachers). Each name carries the badge the
  * timplan's own picker paints (CandidateBadge) — the same behörighet — but
  * with the minutes worded as what is left AFTER this row ("kvar efter
@@ -51,6 +52,14 @@ export interface TeacherSuggestionsProps {
  * there and "kvar 60" here. Plus what only this list knows: whether they
  * already teach the group, and whether this row would take them past the
  * policy's limit.
+ *
+ * "FÖRRA ÅRET" (staffing Fas 5) marks the lead or co-teacher of the subject on
+ * the group's predecessor — the reason a name sits above one that already has
+ * the group. The badge's own text names the group and the year (6A, 2025/26),
+ * so a reader of the list sees why without a tooltip. Only here: the
+ * timplanspost dialog on /admin/requirements paints its candidates from the
+ * load report alone (lib/staffing-candidates.ts), and that route sits at its
+ * budget to the decimal, so continuity is not computed there.
  *
  * ONE CLICK ASSIGNS. A REFUSE verdict comes back as a 409 and is shown here,
  * under the list, as the catalogue's sentence (subject, grades, minutes —
@@ -125,6 +134,16 @@ export function TeacherSuggestions({
                       remaining={remainingOf(candidate)}
                       afterRow
                     />
+                    {candidate.taughtLastYear ? (
+                      <span className={badgeVariants({ variant: "outline" })}>
+                        {data.lastYear
+                          ? t("suggestLastYearNamed", {
+                              group: data.lastYear.groupName,
+                              year: data.lastYear.yearName,
+                            })
+                          : t("suggestLastYear")}
+                      </span>
+                    ) : null}
                     {candidate.teachesGroupAlready ? (
                       <span className={badgeVariants({ variant: "outline" })}>
                         {t("suggestTeachesGroup")}

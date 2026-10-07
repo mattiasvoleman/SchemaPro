@@ -38,6 +38,7 @@ const candidate = (overrides: Partial<TeacherCandidate>): TeacherCandidate => ({
   remainingMinutesPerWeek: null,
   wouldExceed: false,
   status: "NO_TARGET",
+  taughtLastYear: false,
   ...overrides,
 });
 
@@ -49,6 +50,7 @@ const ranked: Suggestions = {
   gradeSpan: { min: 7, max: 7 },
   teacherMinutesPerWeek: 180,
   qualificationsRecorded: true,
+  lastYear: null,
   candidates: [
     candidate({
       userId: "t-anna",
@@ -183,6 +185,37 @@ describe("TeacherSuggestions", () => {
     expect(screen.getAllByRole("listitem")).toHaveLength(6);
     await user.click(screen.getByRole("button", { name: "suggestShowAll(8)" }));
     expect(screen.getAllByRole("listitem")).toHaveLength(8);
+  });
+
+  it("names last year's teacher of the group, with the group and the year, and nobody else", () => {
+    // As the gateway ranks it: behörighet, then last year's teacher, then the group.
+    suggestions.data = {
+      ...ranked,
+      lastYear: { groupName: "6A", yearName: "2025/26" },
+      candidates: [
+        candidate({ userId: "t-bo", qualificationKind: "BEHORIG", taughtLastYear: true }),
+        ...ranked.candidates.filter((row) => row.userId !== "t-bo"),
+      ],
+    };
+    renderList();
+    const list = screen.getByRole("list", { name: "suggestListLabel" });
+    expect(within(list).getAllByRole("listitem").map((li) => li.getAttribute("data-candidate"))).toEqual([
+      "t-bo",
+      "t-anna",
+      "t-cilla",
+    ]);
+    expect(within(item("Bo Alm")).getByText("suggestLastYearNamed(6A|2025/26)")).toBeInTheDocument();
+    expect(within(item("Anna Ek")).queryByText(/suggestLastYear/)).toBeNull();
+    expect(within(item("Cilla Öst")).queryByText(/suggestLastYear/)).toBeNull();
+  });
+
+  it("still marks last year's teacher when the gateway could not name the group", () => {
+    suggestions.data = {
+      ...ranked,
+      candidates: [candidate({ userId: "t-bo", taughtLastYear: true })],
+    };
+    renderList();
+    expect(within(item("Bo Alm")).getByText("suggestLastYear")).toBeInTheDocument();
   });
 
   it("says when the school has no behörigheter, so the ranking's basis is visible", () => {
