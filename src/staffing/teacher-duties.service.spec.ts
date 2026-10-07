@@ -10,7 +10,7 @@ import {
 import { lockingRead, rawSql, type LockedTable } from '../../test/utils/locking-read';
 import type { PrismaService } from '../database/prisma.service';
 import { Role } from '../auth/enums/role.enum';
-import { TeacherDutiesService, assertDutySlot } from './teacher-duties.service';
+import { DUTY_SLOT_REASON, TeacherDutiesService, assertDutySlot } from './teacher-duties.service';
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const ME = '22222222-2222-4222-8222-222222222222';
@@ -181,7 +181,7 @@ describe('TeacherDutiesService', () => {
           resourceType: 'TEACHER',
           userId: COLLEAGUE,
           type: 'UNAVAILABLE',
-          reason: 'Uppdrag: Rastvakt',
+          reason: DUTY_SLOT_REASON,
           dayOfWeek: 2,
           date: null,
           startTime: wallClock('10:00'),
@@ -193,6 +193,22 @@ describe('TeacherDutiesService', () => {
         expect.objectContaining({ data: expect.objectContaining({ blockedConstraintId: NEW_CONSTRAINT_ID }) }),
       );
       expect(answer.blockedSlot).toEqual({ dayOfWeek: 2, startTime: '10:00', endTime: '10:20' });
+    });
+
+    it('never copies the label into the slot: every colleague reads AvailabilityConstraints', async () => {
+      // availability_teacher_select hands every TEACHER of the school every
+      // constraint row; the label is HR data that teacher_own_select keeps
+      // from colleagues, so it must not ride along in `reason`.
+      expect(DUTY_SLOT_REASON).toBe('Uppdrag');
+      tx.availabilityConstraint.create.mockResolvedValue({ id: NEW_CONSTRAINT_ID });
+      tx.teacherDuty.create.mockResolvedValue(storedDuty({ blockedConstraintId: NEW_CONSTRAINT_ID }));
+      await service.create(
+        body({ kind: 'FORSTELARARE', label: 'Förstelärare matematik', blockedSlot: { dayOfWeek: 4, startTime: '13:00', endTime: '15:00' } }),
+        testUser(),
+      );
+      const written = JSON.stringify(tx.availabilityConstraint.create.mock.calls);
+      expect(written).not.toContain('Förstelärare');
+      expect(written).not.toContain('FORSTELARARE');
     });
 
     it('refuses an uppdrag for a pupil before a slot is made', async () => {
@@ -299,7 +315,7 @@ describe('TeacherDutiesService', () => {
           userId: COLLEAGUE,
           dayOfWeek: 3,
           date: null,
-          reason: 'Uppdrag: Rastvakt tisdag',
+          reason: DUTY_SLOT_REASON,
         }),
         select: { id: true },
       });
@@ -324,7 +340,7 @@ describe('TeacherDutiesService', () => {
           date: null,
           startTime: wallClock('10:00'),
           endTime: wallClock('10:20'),
-          reason: 'Uppdrag: Rastvakt onsdag',
+          reason: DUTY_SLOT_REASON,
         },
         select: { id: true },
       });
@@ -334,15 +350,12 @@ describe('TeacherDutiesService', () => {
       );
     });
 
-    it('renames the slot’s reason when only the label moves', async () => {
+    it('leaves the slot alone when only the label moves: the reason never carried it', async () => {
       duties = [storedDuty({ blockedConstraintId: CONSTRAINT_ID })];
       tx.teacherDuty.update.mockResolvedValue(storedDuty());
-      await service.update(DUTY_ID, { label: 'Rastvakt B-gården' }, testUser());
-      expect(tx.availabilityConstraint.update).toHaveBeenCalledWith({
-        where: { id: CONSTRAINT_ID },
-        data: { reason: 'Uppdrag: Rastvakt B-gården' },
-        select: { id: true },
-      });
+      await service.update(DUTY_ID, { label: 'Förstelärare matematik' }, testUser());
+      expect(tx.availabilityConstraint.update).not.toHaveBeenCalled();
+      expect(tx.availabilityConstraint.create).not.toHaveBeenCalled();
     });
 
     it('removes the slot on null: unlinks first, then deletes the constraint', async () => {
