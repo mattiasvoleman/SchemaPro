@@ -2984,7 +2984,9 @@ describe('Planning surface (e2e)', () => {
           message: '7A: Matematik är planerat till 120 min/vecka, 60 under målet 180 min/vecka för åk 7.',
         }),
       ]);
-      expect(response.body.pupils).toEqual([expect.objectContaining({ pupilId: STUDENT_ID })]);
+      // The pupil is short only because 7A is: counted, not listed line by line.
+      expect(response.body).toMatchObject({ pupils: [], pupilsBelowTarget: 1 });
+      expect(response.body.groups[0].lines[0].pupils).toEqual({ min: 120, median: 120, max: 120, below: 1 });
     });
 
     it('a teacher reads the group level, with no pupil in the answer', async () => {
