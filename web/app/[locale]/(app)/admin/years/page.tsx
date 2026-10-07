@@ -21,6 +21,13 @@
 // uses once; deleting one is here, because the undo of a rollover — before
 // its activation — is deleting the year it made, and the gateway refuses the
 // delete once pupils have their classes in it (YEAR_HAS_HOME_PUPILS).
+//
+// Only a COMING year is offered for deletion. A finished one holds the
+// year's history: its classes cascade to their calendar lessons, and those to
+// every närvaro record taken on them. After an activation nobody's home class
+// is left in it, so the gateway's guard does not stop that delete, and one
+// click would erase a year of frånvaro. A finished year that really must go
+// is a job for support, not for this list.
 
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -203,7 +210,7 @@ export default function YearsPage() {
                           {t("activate")}
                         </Button>
                       ) : null}
-                      {!year.isActive ? (
+                      {status === "UPCOMING" ? (
                         <Button
                           size="sm"
                           variant="ghost"

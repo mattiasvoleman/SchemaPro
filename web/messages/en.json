@@ -1890,7 +1890,7 @@
       "ROLLOVER_PREVIEW_STALE": "The year changed after the preview. Nothing was created — review the new preview and try again.",
       "ACTIVATION_PREVIEW_STALE": "Pupils’ classes changed after the preview. Nobody was moved — review it again.",
       "YEAR_NAME_TAKEN": "There is already a year with that name.",
-      "YEAR_HAS_HOME_PUPILS": "{pupils} active pupils have their classes in this year. Move them, or activate a year that takes them over, before deleting it.",
+      "YEAR_HAS_HOME_PUPILS": "{pupils, plural, one {# pupil has their class} other {# pupils have their classes}} in this year{inactive, plural, =0 {} one {, # of them inactive} other {, # of them inactive}}. Move them, or activate a year that takes them over, before deleting it.",
       "YEAR_ACTIVATION_TOO_EARLY": "{year} runs until {endDate}. Pupils move once it has ended.",
       "YEAR_IS_SUPERSEDED": "{year} has been succeeded by {successor}, where {pupils} pupils already have their classes.",
       "YEAR_ACTIVATION_HAS_MOVES": "{pupils} pupils have not moved in yet. Activate the year here, so the move is shown and made.",
