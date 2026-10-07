@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { YearRolloverController } from './year-rollover.controller';
+import { StaffingRolloverService } from './staffing-rollover.service';
 import { YearRolloverService } from './year-rollover.service';
 
 /**
@@ -10,6 +11,6 @@ import { YearRolloverService } from './year-rollover.service';
  */
 @Module({
   controllers: [YearRolloverController],
-  providers: [YearRolloverService],
+  providers: [YearRolloverService, StaffingRolloverService],
 })
 export class YearRolloverModule {}

@@ -15,7 +15,13 @@ import { Role } from '../auth/enums/role.enum';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
-import { ExecuteActivationDto, ExecuteRolloverDto, RolloverOptionsDto } from './dto/year-rollover.dto';
+import {
+  ExecuteActivationDto,
+  ExecuteRolloverDto,
+  ExecuteStaffingRolloverDto,
+  RolloverOptionsDto,
+} from './dto/year-rollover.dto';
+import { StaffingRolloverService } from './staffing-rollover.service';
 import { YearRolloverService } from './year-rollover.service';
 
 /**
@@ -30,12 +36,20 @@ import { YearRolloverService } from './year-rollover.service';
  * activation would give each pupil it moves (projected-rosters.ts). Pupil ids
  * only, and the admin's: the class lists of next year are not a teacher's to
  * browse, although the teacher-facing reports compute from them.
+ *
+ * POST :id/staffing-rollover(/preview) carries tjänster and uppdrag into a
+ * year that was rolled without them; `:id` is that year, the TARGET, and the
+ * source is its predecessor (staffing-rollover.service.ts). Admin only, like
+ * the rest: the preview lists every teacher's post and uppdrag.
  */
 @Controller('api/v1/academic-years')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
 export class YearRolloverController {
-  constructor(private readonly rollover: YearRolloverService) {}
+  constructor(
+    private readonly rollover: YearRolloverService,
+    private readonly staffing: StaffingRolloverService,
+  ) {}
 
   @Post(':id/rollover/preview')
   @HttpCode(HttpStatus.OK)
@@ -62,6 +76,24 @@ export class YearRolloverController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.rollover.rosters(id, user);
+  }
+
+  @Post(':id/staffing-rollover/preview')
+  @HttpCode(HttpStatus.OK)
+  previewStaffingRollover(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.staffing.preview(id, user);
+  }
+
+  @Post(':id/staffing-rollover')
+  executeStaffingRollover(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: ExecuteStaffingRolloverDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.staffing.execute(id, dto.planHash, user);
   }
 
   @Post(':id/activation/preview')

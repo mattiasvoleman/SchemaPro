@@ -603,7 +603,16 @@ export function givenRolloverWorld(
                 name === 'studentGroupMember'
                   ? { ...row, student: { studentGroupId: table('user').find((user) => user['id'] === row['studentId'])?.['studentGroupId'] ?? null } }
                   : name === 'teachingRequirement'
-                    ? { ...row, subject: { name: table('subject').find((subject) => subject['id'] === row['subjectId'])?.['name'] } }
+                    ? {
+                        ...row,
+                        subject: { name: table('subject').find((subject) => subject['id'] === row['subjectId'])?.['name'] },
+                        // The load report's read of a row's group (load-input.ts); a
+                        // strict world joins it whole by studentGroupId instead.
+                        studentGroup: options.strict ? undefined : (() => {
+                          const group = table('studentGroup').find((candidate) => candidate['id'] === row['studentGroupId']);
+                          return group ? { name: group['name'], gradeLevel: group['gradeLevel'] } : undefined;
+                        })(),
+                      }
                     : name === 'academicYearTimplan'
                       ? { ...row, localTimplan: table('localTimplan').find((plan) => plan['id'] === row['localTimplanId']) }
                       : name === 'teacherDuty'

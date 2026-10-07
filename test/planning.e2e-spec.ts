@@ -3308,6 +3308,88 @@ describe('Planning surface (e2e)', () => {
       expect(world.rows['academicYear']).toHaveLength(1);
     });
 
+    describe('tjänster carried into a year rolled without them (staffing-rollover)', () => {
+      /** 2026/27 with a full staff, rolled to 2027/28 without tjänster, as before Fas 5. */
+      const givenRolledWithoutStaffing = async () => {
+        const world = givenRolloverWorld(staffingRows());
+        prisma.withRls.mockImplementation((_user: unknown, fn: (tx: unknown) => unknown) => fn(world.tx));
+        const options = { name: '2027/28', startDate: '2027-08-16', endDate: '2028-06-09' };
+        const preview = await request(http()).post(`${base}/rollover/preview`).set('x-test-user', admin()).send(options).expect(200);
+        const created = await request(http())
+          .post(`${base}/rollover`)
+          .set('x-test-user', admin())
+          .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
+          .expect(201);
+        return { world, yearB: created.body.academicYear.id as string };
+      };
+      const carry = (yearId: string) => `/api/v1/academic-years/${yearId}/staffing-rollover`;
+      const asTeacher = (userId: string) => asUser({ role: 'TEACHER' as never, userId });
+
+      it('previews, carries, and a second preview finds everyone already there and carries nothing (admin round-trips)', async () => {
+        const { world, yearB } = await givenRolledWithoutStaffing();
+        const preview = await request(http()).post(`${carry(yearB)}/preview`).set('x-test-user', admin()).expect(200);
+        expect(preview.body).toMatchObject({
+          source: { id: IDS.yearA, name: '2026/27' },
+          target: { id: yearB, name: '2027/28' },
+          blocking: false,
+          employments: { carried: 2 },
+          duties: { carried: 5, slots: 2 },
+        });
+        const done = await request(http()).post(carry(yearB)).set('x-test-user', admin()).send({ planHash: preview.body.planHash }).expect(201);
+        expect(done.body).toEqual({ targetYearId: yearB, counts: { employments: 2, duties: 5, dutySlots: 2 }, planHash: preview.body.planHash });
+        expect(world.rows['teacherEmployment']!.filter((row) => row['academicYearId'] === yearB)).toHaveLength(2);
+
+        const again = await request(http()).post(`${carry(yearB)}/preview`).set('x-test-user', admin()).expect(200);
+        expect(again.body.employments.notCarried).toEqual(
+          expect.arrayContaining([
+            { userId: IDS.anna, reason: 'ALREADY_PRESENT' },
+            { userId: IDS.cecilia, reason: 'ALREADY_PRESENT' },
+          ]),
+        );
+        expect(again.body.duties.carried).toBe(0);
+        const twice = await request(http()).post(carry(yearB)).set('x-test-user', admin()).send({ planHash: again.body.planHash }).expect(201);
+        expect(twice.body.counts).toEqual({ employments: 0, duties: 0, dutySlots: 0 });
+      });
+
+      it('409s a stale preview and a year nobody rolled into, 400s a malformed hash, 404s an unknown year', async () => {
+        const { world, yearB } = await givenRolledWithoutStaffing();
+        const preview = await request(http()).post(`${carry(yearB)}/preview`).set('x-test-user', admin()).expect(200);
+        world.rows['teacherDuty']!.find((row) => row['id'] === IDS.dutyAmne)!['minutesPerWeek'] = 55;
+        const stale = await request(http()).post(carry(yearB)).set('x-test-user', admin()).send({ planHash: preview.body.planHash }).expect(409);
+        expect(stale.body).toMatchObject({ code: 'STAFFING_ROLLOVER_PREVIEW_STALE' });
+        expect(world.rows['teacherEmployment']!.filter((row) => row['academicYearId'] === yearB)).toHaveLength(0);
+
+        const never = await request(http()).post(`${carry(IDS.yearA)}/preview`).set('x-test-user', admin()).expect(409);
+        expect(never.body).toMatchObject({ code: 'STAFFING_ROLLOVER_NO_PREDECESSOR' });
+        const malformed = await request(http()).post(carry(yearB)).set('x-test-user', admin()).send({ planHash: 'nej' }).expect(400);
+        expect(JSON.stringify(malformed.body)).toContain('planHash: förhandsvisningens planHash, 64 hexadecimala tecken.');
+        await request(http()).post(carry(yearB)).set('x-test-user', admin()).send({ planHash: 'a'.repeat(64), extra: 1 }).expect(400);
+        await request(http()).post(`${carry(YEAR_ID)}/preview`).set('x-test-user', admin()).expect(404);
+      });
+
+      it('keeps HR data HR for a teacher: 403 on both carry routes and on a colleague’s uppdrag, only their own post and load row in either year', async () => {
+        const { yearB } = await givenRolledWithoutStaffing();
+        const preview = await request(http()).post(`${carry(yearB)}/preview`).set('x-test-user', admin()).expect(200);
+        await request(http()).post(`${carry(yearB)}/preview`).set('x-test-user', asTeacher(IDS.anna)).expect(403);
+        await request(http()).post(carry(yearB)).set('x-test-user', asTeacher(IDS.anna)).send({ planHash: preview.body.planHash }).expect(403);
+        await request(http()).post(carry(yearB)).set('x-test-user', admin()).send({ planHash: preview.body.planHash }).expect(201);
+
+        await request(http())
+          .get(`/api/v1/teacher-duties?academicYearId=${yearB}&userId=${IDS.cecilia}`)
+          .set('x-test-user', asTeacher(IDS.anna))
+          .expect(403);
+        const own = await request(http()).get(`/api/v1/teacher-duties?academicYearId=${yearB}`).set('x-test-user', asTeacher(IDS.anna)).expect(200);
+        expect(own.body.map((row: { userId: string }) => row.userId)).toEqual([IDS.anna, IDS.anna]);
+        const posts = await request(http()).get(`/api/v1/teacher-employments?academicYearId=${yearB}`).set('x-test-user', asTeacher(IDS.anna)).expect(200);
+        expect(posts.body.map((row: { userId: string }) => row.userId)).toEqual([IDS.anna]);
+        for (const year of [yearB, IDS.yearA]) {
+          const load = await request(http()).get(`/api/v1/staffing/load?academicYearId=${year}`).set('x-test-user', asTeacher(IDS.anna)).expect(200);
+          expect({ year, teachers: load.body.teachers.map((row: { userId: string }) => row.userId) }).toEqual({ year, teachers: [IDS.anna] });
+          expect(load.body.unstaffedRequirements).toEqual([]);
+        }
+      });
+    });
+
     it('400s carryStaffing that is not a boolean, naming it, before reading anything', async () => {
       givenSchool(2020);
       const response = await request(http())
@@ -3933,6 +4015,9 @@ describe('Planning surface (e2e)', () => {
       ['POST', `/api/v1/academic-years/${YEAR_ID}/rollover`],
       ['POST', `/api/v1/academic-years/${YEAR_ID}/activation/preview`],
       ['POST', `/api/v1/academic-years/${YEAR_ID}/activation`],
+      // Tjänster carried into a rolled year: every teacher's post, the admin's.
+      ['POST', `/api/v1/academic-years/${YEAR_ID}/staffing-rollover/preview`],
+      ['POST', `/api/v1/academic-years/${YEAR_ID}/staffing-rollover`],
       // Next year's class lists, pupil by pupil: the admin's.
       ['GET', `/api/v1/academic-years/${YEAR_ID}/rosters`],
     ] as const;
