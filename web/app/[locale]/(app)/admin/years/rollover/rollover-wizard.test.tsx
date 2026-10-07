@@ -255,7 +255,9 @@ describe("RolloverWizard", () => {
     expect(await screen.findByText(/Bo Alm — Fysik, 8A: saknar behörighet för nästa årskurs/)).toBeInTheDocument();
     expect(screen.getByText(/Grundschemat \(140 lektioner\)/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Skapa 2027/28" }));
+    const create = screen.getByRole("button", { name: "Skapa 2027/28" });
+    await waitFor(() => expect(create).toBeEnabled());
+    await user.click(create);
     await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/years"));
     const execute = post.mock.calls.find(([path]) => String(path) === "/api/v1/academic-years/y26/rollover");
     expect(execute?.[1]).toEqual({
@@ -271,6 +273,31 @@ describe("RolloverWizard", () => {
       planHash: HASH,
     });
     expect(toast.success).toHaveBeenCalledWith("2027/28 skapades med 3 grupper och 24 timplansposter.");
+  });
+
+  it("does not create on the second click of a double click on Nästa, and moves focus to the review", async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Lov/ }));
+    await user.dblClick(screen.getByRole("button", { name: "Nästa" }));
+    expect(screen.getByRole("heading", { name: "Granska" })).toHaveFocus();
+    // A second Enter lands on the heading, not on Skapa.
+    await user.keyboard("{Enter}");
+    expect(post.mock.calls.some(([path]) => String(path) === "/api/v1/academic-years/y26/rollover")).toBe(false);
+    // Once the review has been on screen a moment, Skapa works.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Skapa 2027/28" })).toBeEnabled());
+  });
+
+  it("names the missing name instead of waiting for a preview that cannot come", async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.clear(screen.getByLabelText("Namn"));
+    expect(screen.getByLabelText("Namn")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Ange ett namn för det nya läsåret.")).toBeInTheDocument();
+    expect(screen.getByText("Förhandsvisningen väntar: ge det nya läsåret ett namn i steg 1.")).toBeInTheDocument();
+    expect(screen.queryByText("Förhandsvisningen uppdateras…")).toBeNull();
   });
 
   it("shows a blocking finding on its own step and will not create", async () => {
@@ -309,7 +336,9 @@ describe("RolloverWizard", () => {
     renderWizard();
     await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
     await user.click(screen.getByRole("button", { name: /Granska/ }));
-    await user.click(await screen.findByRole("button", { name: "Skapa 2027/28" }));
+    const create = await screen.findByRole("button", { name: "Skapa 2027/28" });
+    await waitFor(() => expect(create).toBeEnabled());
+    await user.click(create);
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
         "Läsåret ändrades efter förhandsvisningen. Inget skapades — granska den nya förhandsvisningen och försök igen.",
