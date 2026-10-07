@@ -155,6 +155,24 @@ describe('suggestTeachers', () => {
     ]);
   });
 
+  it('never says wouldExceed for a row that charges nothing, which the write lets through', () => {
+    // A resurslärare row at 0 %: Anna is already over (240 of 200), but taking
+    // this row adds nothing, and the over-target check asks only of a write
+    // that adds minutes. Her status stays what it is.
+    const result = suggestTeachers(
+      input({
+        employments: [post(ANNA, { teachingTargetMinutesPerWeek: 200 })],
+        requirements: [
+          row('target', { teacherLoadPercent: 0 }),
+          row('held', { teacherId: ANNA, studentGroupId: 'g-9a', groupName: '9A' }),
+        ],
+      }),
+      'target',
+      [ANNA],
+    );
+    expect(result.candidates[0]).toMatchObject({ userId: ANNA, wouldExceed: false, status: 'OVER' });
+  });
+
   it('compares the current lead on the same footing, and leaves the co-teacher out', () => {
     const result = suggestTeachers(
       input({ requirements: [row('target', { teacherId: ANNA, coTeacherId: BO })] }),

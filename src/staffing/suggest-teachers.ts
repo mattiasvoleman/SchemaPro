@@ -65,9 +65,10 @@ export interface TeacherSuggestions {
  * "AFTER TAKING THE ROW" means with this row's lead charge moved to them: the
  * current lead's own figure excludes the row first, so they are compared on
  * the same footing as everybody else, and a co-teacher of the row is left
- * out — one person cannot be both of a row's teachers. wouldExceed and status
- * come from loadStatus over the unrounded minutes (countedMinutesByTeacher),
- * which is exactly the question STAFF_TEACHER_OVER_TARGET asks of the write.
+ * out — one person cannot be both of a row's teachers (the writers refuse it).
+ * wouldExceed and status come from loadStatus over countedMinutesByTeacher,
+ * which is exactly the question STAFF_TEACHER_OVER_TARGET asks of the write —
+ * wouldExceed only for a row that adds minutes, as the write asks only then.
  *
  * PURE: the caller reads the rows; nothing here knows a name.
  */
@@ -116,7 +117,10 @@ export function suggestTeachers(
       ),
       currentlyAssigned: requirement.teacherId === userId,
       remainingMinutesPerWeek: target === null ? null : target - Math.round(after),
-      wouldExceed: status === 'OVER',
+      // Only a row that adds minutes can take anybody past the limit: the
+      // over-target check asks of no other write (overTargetFinding), and a
+      // 0 % row must not warn the admin off a teacher the write lets through.
+      wouldExceed: charge > 1e-9 && status === 'OVER',
       status,
     });
   }
