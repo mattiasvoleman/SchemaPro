@@ -112,8 +112,11 @@ describe("YearsPage", () => {
     expect(within(rowOf("2027/28")).getByText("Kommande")).toBeInTheDocument();
     expect(within(rowOf("2027/28")).getByText("Rullat från 2026/27")).toBeInTheDocument();
 
-    // Moved, graduating and unplaced alike leave their class at activation.
-    expect(await within(rowOf("2027/28")).findByText("4 elever flyttar hit vid aktiveringen")).toBeInTheDocument();
+    // Those moving in, apart from those leaving with no class (graduates, unplaced).
+    expect(await within(rowOf("2027/28")).findByText("2 elever flyttar hit vid aktiveringen")).toBeInTheDocument();
+    expect(
+      within(rowOf("2027/28")).getByText("2 elever lämnar sina klasser (går ut eller blir utan klass)"),
+    ).toBeInTheDocument();
     expect(within(rowOf("2027/28")).getByText("Kan aktiveras när 2026/27 har slutat (2027-06-11)")).toBeInTheDocument();
     // The coming year, and the active one (rolled from 2025/26, so it may
     // have stragglers); never the finished year.
@@ -214,6 +217,33 @@ describe("YearsPage", () => {
     expect(await within(dialog).findByText(/2 medlemskap saknas för elever som flyttar in, och 1 medlemskap hör till elever som blir utan klass/)).toBeInTheDocument();
     expect(within(dialog).queryByRole("alert")).toBeNull();
     expect(within(dialog).getByRole("button", { name: "Aktivera 2027/28" })).toBeEnabled();
+  });
+
+  it("warns that a year made by hand takes the flag but no pupils, and asks for a separate confirmation", async () => {
+    const handMade: AcademicYear = { ...y27, predecessorId: null };
+    state.years = [y25, { ...y26, predecessorId: null }, handMade];
+    post.mockResolvedValue(
+      plan({
+        chain: [],
+        moves: [],
+        graduates: { count: 0, studentIds: [] },
+        unplaced: { count: 0, studentIds: [], pupils: [] },
+        otherOrNone: 412,
+        inactiveUntouched: 0,
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(within(rowOf("2027/28")).getByRole("button", { name: "Aktivera" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByText(/2027\/28 blir skolans aktiva läsår i stället för 2026\/27, men inga elever flyttas: 412 elever stannar/),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/och eleverna flyttar till sina nya klasser/)).toBeNull();
+    const confirm = within(dialog).getByRole("button", { name: "Aktivera 2027/28" });
+    expect(confirm).toBeDisabled();
+    await user.click(within(dialog).getByLabelText(/Jag förstår att 412 elever inte flyttas/));
+    expect(confirm).toBeEnabled();
   });
 
   it("will not activate while the old year runs, and says until when", async () => {

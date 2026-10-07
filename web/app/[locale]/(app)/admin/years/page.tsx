@@ -70,9 +70,12 @@ function localToday(): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-/** Pupils the activation moves into the year: into a class, out as graduates, or out unplaced. */
-const movingPupils = (plan: ActivationPreview) =>
-  plan.moves.reduce((sum, move) => sum + move.count, 0) + plan.graduates.count + plan.unplaced.count;
+/** Pupils the activation moves into one of the year's classes. */
+const movingIn = (plan: ActivationPreview) => plan.moves.reduce((sum, move) => sum + move.count, 0);
+/** Pupils it takes out of their class: graduates, and those with no class to go to. */
+const leaving = (plan: ActivationPreview) => plan.graduates.count + plan.unplaced.count;
+/** Every pupil whose home class the activation changes. */
+const movingPupils = (plan: ActivationPreview) => movingIn(plan) + leaving(plan);
 
 export default function YearsPage() {
   const t = useTranslations("years");
@@ -177,7 +180,12 @@ export default function YearsPage() {
                       <div>{t("stragglers", { count: moving })}</div>
                     ) : plan && moving > 0 ? (
                       <>
-                        <div>{t("pendingMoves", { count: moving })}</div>
+                        {movingIn(plan) > 0 ? <div>{t("pendingMoves", { count: movingIn(plan) })}</div> : null}
+                        {leaving(plan) > 0 ? (
+                          <div className="text-xs text-muted-foreground">
+                            {t("pendingLeaves", { count: leaving(plan) })}
+                          </div>
+                        ) : null}
                         {tooEarly ? (
                           <div className="text-xs text-muted-foreground">
                             {t("activatableAfter", {
@@ -244,6 +252,8 @@ export default function YearsPage() {
       )}
 
       <ActivationDialog
+        // A fresh dialog per year: its "I understand" box starts unticked.
+        key={activating?.id ?? "none"}
         year={activating}
         onOpenChange={(open) => {
           if (!open) setActivating(null);
