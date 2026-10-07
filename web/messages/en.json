@@ -1748,7 +1748,7 @@
     "noGrade": "no year group",
     "unattached": "The academic year follows no local timplan in {grades}, so those classes have no targets. Choose one under Timplan per year on the Timplan page.",
     "draft": "{name} is a draft — not decided. The targets for {grades} are the draft's.",
-    "legend": "Each cell shows planned / target in minutes per standard week: an entry running odd or even weeks counts half, a dated entry by its share of the year's teaching weeks. Amber is below target, red has no entries, “in group” means the subject is taught in teaching groups and judged per pupil. Hours per year are an estimate per entry.",
+    "legend": "Each cell shows planned / target in minutes per standard week: an entry running odd or even weeks counts half, a dated entry by its share of the year's teaching weeks. Amber is below target, red has no entries, “in group” means the subject is taught in teaching groups reaching at least half the class and judged per pupil. Hours per year are an estimate per entry.",
     "caption": "Planned against timplan per class and subject, {year}",
     "classColumn": "Class",
     "coverageColumn": "Coverage",

@@ -1748,7 +1748,7 @@
     "noGrade": "ingen årskurs",
     "unattached": "Läsåret följer ingen lokal timplan i {grades}, så de klasserna har inga mål. Välj en under Timplan per årskurs på sidan Timplan.",
     "draft": "{name} är ett utkast — inte beslutad. Målen för {grades} gäller utkastet.",
-    "legend": "Varje ruta visar planerat / mål i minuter per standardvecka: en post som går udda eller jämna veckor räknas till hälften, en post med datum efter sin andel av läsårets undervisningsveckor. Gult är under mål, rött har inga poster, ”i grupp” betyder att ämnet läses i undervisningsgrupper och avgörs per elev. Timmarna per läsår är en uppskattning per post.",
+    "legend": "Varje ruta visar planerat / mål i minuter per standardvecka: en post som går udda eller jämna veckor räknas till hälften, en post med datum efter sin andel av läsårets undervisningsveckor. Gult är under mål, rött har inga poster, ”i grupp” betyder att ämnet läses i undervisningsgrupper som når minst halva klassen och avgörs per elev. Timmarna per läsår är en uppskattning per post.",
     "caption": "Planerat mot timplan per klass och ämne, {year}",
     "classColumn": "Klass",
     "coverageColumn": "Täckning",

@@ -67,11 +67,17 @@ import { TIMPLAN_ALTERNATIVE_CODES } from './timplan-coverage';
  *                surplus the generator itself reports. 240 is OVER.
  *   UNPLANNED    nothing planned for a target
  *   UNDER        something planned, less than the target
- *   PUPILS       the class's own rows are short, but a teaching group holding
- *                pupils of this class plans the line: the class is not the
- *                measure, its pupils are (språkval in teaching groups across
- *                classes is the ordinary case), so no class verdict — each
- *                pupil below target gets their own
+ *   PUPILS       the class's own rows are short, but teaching groups that
+ *                plan the line reach AT LEAST HALF of the class's pupils:
+ *                the class is not the measure, its pupils are (språkval in
+ *                teaching groups across classes is the ordinary case), so no
+ *                class verdict — each pupil below target gets their own.
+ *                Fewer than half — one SvA pupil in a 7A short of Svenska, one
+ *                pupil with anpassad idrott in a class with no Idrott — and
+ *                the class keeps its UNDER/UNPLANNED: the class is short for
+ *                everybody else, and a teacher's group-level read must still
+ *                say so. The carrying groups are named either way
+ *                (teachingGroupIds).
  *   NO_TARGET    no plan attached to the årskurs, or no entry for the subject
  *
  * A class line is COVERED (the "n of m" a Täckning pill counts) when every
@@ -456,6 +462,8 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
   interface PupilResult {
     pupil: PlannedPupilInput;
     grade: number | null;
+    /** The pupil's teaching groups of this year. */
+    teachingGroupIds: string[];
     lines: Map<string, LineDraft>;
     perSource: Map<string, Map<string, number>>; // subjectId → groupId → week minutes
   }
@@ -471,8 +479,9 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     const carriers = new Set<string>();
     const ordered = [...(pupilsByClass.get(classId) ?? [])].sort((a, b) => byCode(a.id, b.id));
     for (const pupil of ordered) {
-      const groups = [classId, ...teachingGroupsOf(pupil).sort(groupOrder)];
-      for (const id of groups.slice(1)) carriers.add(id);
+      const own = teachingGroupsOf(pupil).sort(groupOrder);
+      const groups = [classId, ...own];
+      for (const id of own) carriers.add(id);
       const rows = groups.flatMap((id) => rowsByGroup.get(id) ?? []);
       const perSource = new Map<string, Map<string, number>>();
       for (const row of rows) {
@@ -483,7 +492,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
         );
         perSource.set(row.subjectId, bySubject);
       }
-      results.push({ pupil, grade, lines: buildLines(targets, rows, grade), perSource });
+      results.push({ pupil, grade, teachingGroupIds: own, lines: buildLines(targets, rows, grade), perSource });
     }
     pupilResults.set(classId, results);
     carriersByClass.set(classId, carriers);
@@ -571,13 +580,20 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
           (rowsByGroup.get(id) ?? []).some((row) => lineKeyOf(row.subjectId).key === draft.key),
         )
         .sort(groupOrder);
+      // Pupils of the class a carrying group reaches: the class stops being
+      // the measure only when that is at least half of it.
+      const reached =
+        carriedBy.length === 0
+          ? 0
+          : results.filter((result) => result.teachingGroupIds.some((id) => carriedBy.includes(id)))
+              .length;
       let status: PlannedStatus;
       if (target === null) status = 'NO_TARGET';
       else if (planned >= target) {
         const surplus = planned - target;
         status =
           surplus > 0 && (target === 0 || surplus >= Math.round(draft.smallestLesson)) ? 'OVER' : 'MET';
-      } else if (carriedBy.length > 0) status = 'PUPILS';
+      } else if (reached > 0 && reached * 2 >= results.length) status = 'PUPILS';
       else status = planned === 0 ? 'UNPLANNED' : 'UNDER';
 
       const values = results.map((result) => Math.round(result.lines.get(draft.key)?.week ?? 0));
