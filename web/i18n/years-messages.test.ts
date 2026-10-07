@@ -111,6 +111,16 @@ describe("the läsår sentences that count", () => {
     );
   });
 
+  it("agree the English verb with a single requirement that stays", () => {
+    // Review of the zero-clause rewrite: "None carried over and 1 stay." —
+    // the nested notCarried plurals had =0 and other but no one.
+    const tEn = translate(en as Messages, "en");
+    const counts = (carried: number) => ({ carried, notCarried: 1, shifted: 0, anchored: 0 });
+    expect(tEn("reviewRequirementsCounts", counts(0))).toBe("None carried over and 1 stays.");
+    expect(tEn("reviewRequirementsCounts", counts(24))).toBe("24 carried over and 1 stays.");
+    expect(tEn("reviewRequirementsCounts", { ...counts(24), notCarried: 3 })).toBe("24 carried over and 3 stay.");
+  });
+
   it("translate every refusal the rollover's execute answers with a code, so English never shows the gateway's Swedish", () => {
     // year-rollover.service.ts refuseBlockedRollover and refuseUnrollable, and the 409s around them.
     const codes = [
