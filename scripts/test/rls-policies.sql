@@ -5005,3 +5005,588 @@ BEGIN
     RAISE EXCEPTION 'year timplans: the year key deletes with action %, expected CASCADE (c)', action;
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 19: a läsår and a class have at most one successor, a class's
+-- predecessor is in the year before its own, and a link stays as written.
+--
+-- 20261007150000 gives AcademicYears and StudentGroups a predecessorId, the
+-- link läsårsrullning writes (7A in 2026/27 -> 8A in 2027/28) and activation
+-- follows to move every pupil. A wrong link moves a whole class into another
+-- cohort, so it is held by the database for every writer: composite keys
+-- (another school's year or group is 23503), one successor each (23505), a
+-- CHECK against pointing at oneself (23514), and two triggers raising SQLSTATE
+-- LR409 with a reason token — ROLLOVER_LINK_MISMATCH for a group whose
+-- predecessor is not in its year's predecessor year, ROLLOVER_LINK_IS_FIXED
+-- for any link set, re-pointed or cleared after the INSERT, and
+-- ROLLOVER_GROUP_IS_LINKED for a linked group (either end) moved to another
+-- year. Only LR409 is caught where LR409 is expected, and its token is read:
+-- a CHECK or a key answering instead would mean the guard never had its say.
+--
+-- The tenant half is the cross-school group: school A's admin files a linked
+-- group under school B's year (the plain academicYearId key lets that
+-- through), and the trigger refuses it without its message or DETAIL naming
+-- school B's school, year or class. The deletes that must pass — the
+-- predecessor year, a predecessor group, the successor year — run as the
+-- admin through RLS, and the successor's columns are compared whole before and
+-- after. Deleting a whole school with a three-year chain is the adapter
+-- probe's (v), as the owner: this role has no DELETE on Schools.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+SELECT set_config('app.test_school_b', :'school_b', true);
+SELECT set_config('app.test_year_b', :'year_b', true);
+SELECT set_config('app.test_group_b', :'group_b', true);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  seed_year uuid; seed_group uuid;
+  y1 uuid; y2 uuid; y3 uuid; self uuid := gen_random_uuid();
+  g7 uuid; g7b uuid; g8 uuid; g9 uuid; loose uuid;
+  n bigint;
+  msg text; det text;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'rollover: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  SELECT id INTO seed_year FROM "AcademicYears" WHERE "schoolId" = school AND "isActive" LIMIT 1;
+  SELECT id INTO seed_group FROM "StudentGroups" WHERE "academicYearId" = seed_year ORDER BY name LIMIT 1;
+  IF seed_year IS NULL OR seed_group IS NULL THEN
+    RAISE EXCEPTION 'rollover: the seed lacks an active year (%) or a group in it (%)', seed_year, seed_group;
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYears" WHERE id = current_setting('app.test_year_b')::uuid;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'rollover: school B''s year is visible to school A''s admin';
+  END IF;
+
+  -- A three-year chain with a class in each, as the rollover writes it, and
+  -- two unlinked groups: a parallel 7B and a teaching group in year 2.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "updatedAt")
+  VALUES (school, 'RLS19 år 1', DATE '2095-08-15', DATE '2096-06-10', now()) RETURNING id INTO y1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "predecessorId", "graduatingGradeLevel", "updatedAt")
+  VALUES (school, 'RLS19 år 2', DATE '2096-08-15', DATE '2097-06-10', y1, 9, now()) RETURNING id INTO y2;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "predecessorId", "graduatingGradeLevel", "updatedAt")
+  VALUES (school, 'RLS19 år 3', DATE '2097-08-15', DATE '2098-06-10', y2, 9, now()) RETURNING id INTO y3;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (school, y1, 'RLS19 7A', 7, now()) RETURNING id INTO g7;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (school, y1, 'RLS19 7B', 7, now()) RETURNING id INTO g7b;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "predecessorId", "updatedAt")
+  VALUES (school, y2, 'RLS19 8A', 8, g7, now()) RETURNING id INTO g8;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "predecessorId", "updatedAt")
+  VALUES (school, y3, 'RLS19 9A', 9, g8, now()) RETURNING id INTO g9;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, y2, 'RLS19 språkval', 'TEACHING_GROUP', now()) RETURNING id INTO loose;
+  SELECT count(*) INTO n FROM "AcademicYears" WHERE (id, "predecessorId") IN ((y2, y1), (y3, y2));
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'rollover: an admin could not write a successor year (% of 2 links read back)', n;
+  END IF;
+  SELECT count(*) INTO n FROM "StudentGroups" WHERE (id, "predecessorId") IN ((g8, g7), (g9, g8));
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'rollover: an admin could not write a linked group (% of 2 links read back)', n;
+  END IF;
+
+  -- graduatingGradeLevel: 0..12, and writable (it labels; it moves nobody).
+  BEGIN
+    UPDATE "AcademicYears" SET "graduatingGradeLevel" = 13 WHERE id = y2;
+    RAISE EXCEPTION 'rollover: a graduating årskurs of 13 was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  UPDATE "AcademicYears" SET "graduatingGradeLevel" = 6 WHERE id = y2;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: an admin could not correct a graduating årskurs (% row(s))', n;
+  END IF;
+
+  -- Not its own predecessor.
+  BEGIN
+    INSERT INTO "AcademicYears" (id, "schoolId", name, "startDate", "endDate", "predecessorId", "updatedAt")
+    VALUES (self, school, 'RLS19 sig själv', DATE '2099-08-15', DATE '2100-06-10', self, now());
+    RAISE EXCEPTION 'rollover: a year was stored as its own predecessor';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "StudentGroups" (id, "schoolId", "academicYearId", name, "predecessorId", "updatedAt")
+    VALUES (self, school, y2, 'RLS19 sig själv', self, now());
+    RAISE EXCEPTION 'rollover: a group was stored as its own predecessor';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+
+  -- One successor each: the unique keys.
+  BEGIN
+    INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "predecessorId", "updatedAt")
+    VALUES (school, 'RLS19 år 2 igen', DATE '2096-08-15', DATE '2097-06-10', y1, now());
+    RAISE EXCEPTION 'rollover: a year was rolled over twice';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "predecessorId", "updatedAt")
+    VALUES (school, y2, 'RLS19 8A igen', g7, now());
+    RAISE EXCEPTION 'rollover: a class got two successors';
+  EXCEPTION WHEN unique_violation THEN NULL;
+  END;
+
+  -- A predecessor outside the year before: LR409 ROLLOVER_LINK_MISMATCH.
+  -- Two years back; the group's own year; a year with no predecessor at all;
+  -- and the seed's running year, which is not in the chain.
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "predecessorId", "updatedAt")
+    VALUES (school, y3, 'RLS19 två år', g7b, now());
+    RAISE EXCEPTION 'rollover: a group took a predecessor two years back';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_MISMATCH:%' THEN
+      RAISE EXCEPTION 'rollover: two years back answered %', SQLERRM;
+    END IF;
+  END;
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "predecessorId", "updatedAt")
+    VALUES (school, y2, 'RLS19 samma år', loose, now());
+    RAISE EXCEPTION 'rollover: a group took a predecessor in its own year';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_MISMATCH:%' THEN
+      RAISE EXCEPTION 'rollover: the same year answered %', SQLERRM;
+    END IF;
+  END;
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "predecessorId", "updatedAt")
+    VALUES (school, y1, 'RLS19 inget år före', seed_group, now());
+    RAISE EXCEPTION 'rollover: a group in a year with no predecessor took a predecessor';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_MISMATCH:%' THEN
+      RAISE EXCEPTION 'rollover: a year with no predecessor answered %', SQLERRM;
+    END IF;
+  END;
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "predecessorId", "updatedAt")
+    VALUES (school, seed_year, 'RLS19 utanför kedjan', g7b, now());
+    RAISE EXCEPTION 'rollover: a group in the running year took a predecessor from an unrelated year';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_MISMATCH:%' THEN
+      RAISE EXCEPTION 'rollover: an unrelated year answered %', SQLERRM;
+    END IF;
+  END;
+
+  -- Another school's year or group as the predecessor, under a row honestly
+  -- stamped with this school: the composite keys', and only theirs.
+  BEGIN
+    INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "predecessorId", "updatedAt")
+    VALUES (school, 'RLS19 efter skola B', DATE '2099-08-15', DATE '2100-06-10',
+            current_setting('app.test_year_b')::uuid, now());
+    RAISE EXCEPTION 'rollover: a year in school A took school B''s year as its predecessor';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "predecessorId", "updatedAt")
+    VALUES (school, y2, 'RLS19 efter skola B', current_setting('app.test_group_b')::uuid, now());
+    RAISE EXCEPTION 'rollover: a group in school A took school B''s class as its predecessor';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- A row stamped with school B: the policy's.
+  BEGIN
+    INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "predecessorId", "updatedAt")
+    VALUES (current_setting('app.test_school_b')::uuid, 'RLS19 i skola B', DATE '2099-08-15', DATE '2100-06-10',
+            current_setting('app.test_year_b')::uuid, now());
+    RAISE EXCEPTION 'rollover: an admin wrote a successor year into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  -- A linked group filed under school B's year: the plain academicYearId key
+  -- lets it through, the trigger refuses it — and names nothing of school B.
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "predecessorId", "updatedAt")
+    VALUES (school, current_setting('app.test_year_b')::uuid, 'RLS19 i skola B:s år', g7b, now());
+    RAISE EXCEPTION 'rollover: a linked group was filed under another school''s year';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    GET STACKED DIAGNOSTICS msg = MESSAGE_TEXT, det = PG_EXCEPTION_DETAIL;
+    IF msg NOT LIKE 'ROLLOVER_LINK_MISMATCH:%' OR det NOT LIKE 'studentGroupId=%' THEN
+      RAISE EXCEPTION 'rollover: a group in school B''s year answered % / %', msg, det;
+    END IF;
+    IF position(current_setting('app.test_year_b') IN msg || det) > 0
+       OR position(current_setting('app.test_school_b') IN msg || det) > 0
+       OR position(current_setting('app.test_group_b') IN msg || det) > 0 THEN
+      RAISE EXCEPTION 'rollover: the refusal named school B''s rows: % / %', msg, det;
+    END IF;
+  END;
+
+  -- Set once: no writer re-points, sets or clears a link. Not even a re-point
+  -- to a group that would pass the year rule, and not a cycle.
+  BEGIN
+    UPDATE "AcademicYears" SET "predecessorId" = NULL WHERE id = y2;
+    RAISE EXCEPTION 'rollover: a year''s link was cleared while its predecessor stands';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_IS_FIXED:%' THEN
+      RAISE EXCEPTION 'rollover: clearing a year''s link answered %', SQLERRM;
+    END IF;
+  END;
+  BEGIN
+    UPDATE "AcademicYears" SET "predecessorId" = y3 WHERE id = y1;
+    RAISE EXCEPTION 'rollover: a year was linked after the fact, into a cycle';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_IS_FIXED:%' THEN
+      RAISE EXCEPTION 'rollover: a cycle answered %', SQLERRM;
+    END IF;
+  END;
+  BEGIN
+    UPDATE "AcademicYears" SET "predecessorId" = seed_year WHERE id = y1;
+    RAISE EXCEPTION 'rollover: a year without a predecessor was given one after the fact';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_IS_FIXED:%' THEN
+      RAISE EXCEPTION 'rollover: setting a year''s link answered %', SQLERRM;
+    END IF;
+  END;
+  BEGIN
+    UPDATE "StudentGroups" SET "predecessorId" = NULL WHERE id = g8;
+    RAISE EXCEPTION 'rollover: a group''s link was cleared while its predecessor stands';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_IS_FIXED:%' THEN
+      RAISE EXCEPTION 'rollover: clearing a group''s link answered %', SQLERRM;
+    END IF;
+  END;
+  BEGIN
+    UPDATE "StudentGroups" SET "predecessorId" = g7b WHERE id = g8;
+    RAISE EXCEPTION 'rollover: 8A was re-pointed from 7A to 7B';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_IS_FIXED:%' THEN
+      RAISE EXCEPTION 'rollover: re-pointing a group answered %', SQLERRM;
+    END IF;
+  END;
+  BEGIN
+    UPDATE "StudentGroups" SET "predecessorId" = g7b WHERE id = loose;
+    RAISE EXCEPTION 'rollover: an unlinked group was given a predecessor after the fact';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_IS_FIXED:%' THEN
+      RAISE EXCEPTION 'rollover: setting a group''s link answered %', SQLERRM;
+    END IF;
+  END;
+  -- An UPDATE that names the column and leaves it as it was is no change.
+  UPDATE "AcademicYears" SET "predecessorId" = "predecessorId", name = 'RLS19 år 2 (ny)' WHERE id = y2;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: an unchanged link refused a rename of its year (% row(s))', n;
+  END IF;
+  UPDATE "StudentGroups" SET "predecessorId" = g7 WHERE id = g8;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: rewriting a group''s link to the same value was refused (% row(s))', n;
+  END IF;
+
+  -- A group linked at either end stays in its year: LR409 ROLLOVER_GROUP_IS_LINKED.
+  BEGIN
+    UPDATE "StudentGroups" SET "academicYearId" = y3 WHERE id = g8;
+    RAISE EXCEPTION 'rollover: a group with a predecessor moved to another year';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_GROUP_IS_LINKED:%' THEN
+      RAISE EXCEPTION 'rollover: moving a successor answered %', SQLERRM;
+    END IF;
+  END;
+  BEGIN
+    UPDATE "StudentGroups" SET "academicYearId" = seed_year WHERE id = g7;
+    RAISE EXCEPTION 'rollover: a group that is a predecessor moved to another year';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_GROUP_IS_LINKED:%' THEN
+      RAISE EXCEPTION 'rollover: moving a predecessor answered %', SQLERRM;
+    END IF;
+  END;
+  -- An unlinked group still moves, and a linked one is still renamed, retyped
+  -- and regraded: the trigger guards the link and the year, nothing else.
+  UPDATE "StudentGroups" SET "academicYearId" = y3 WHERE id = loose;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: an unlinked group could not change year (% row(s))', n;
+  END IF;
+  UPDATE "StudentGroups" SET "academicYearId" = y2 WHERE id = loose;
+  UPDATE "StudentGroups" SET name = 'RLS19 8A (ny)', kind = 'TEACHING_GROUP', "gradeLevel" = 9 WHERE id = g8;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: a linked group could not be renamed, retyped or regraded (% row(s))', n;
+  END IF;
+  UPDATE "StudentGroups" SET name = 'RLS19 8A', kind = 'CLASS', "gradeLevel" = 8 WHERE id = g8;
+
+  -- Every refusal above left the chain as it was.
+  SELECT count(*) INTO n FROM "AcademicYears"
+   WHERE (id, "predecessorId") IN ((y2, y1), (y3, y2)) OR (id = y1 AND "predecessorId" IS NULL);
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'rollover: the year chain is not what the refused writes left it (% of 3)', n;
+  END IF;
+  SELECT count(*) INTO n FROM "StudentGroups"
+   WHERE ((id, "predecessorId", "academicYearId") IN ((g8, g7, y2), (g9, g8, y3)))
+      OR (id IN (g7, g7b) AND "predecessorId" IS NULL AND "academicYearId" = y1)
+      OR (id = loose AND "predecessorId" IS NULL AND "academicYearId" = y2);
+  IF n <> 5 THEN
+    RAISE EXCEPTION 'rollover: the group chain is not what the refused writes left it (% of 5)', n;
+  END IF;
+END
+$$;
+
+-- A teacher reads the links (a year and a group are staff reading) and writes
+-- none of them: no successor year, no linked group, no clearing, no move.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE school uuid := app.current_school_id(); y3 uuid; g9 uuid; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+    RAISE EXCEPTION 'rollover: expected to be acting as a TEACHER of school A, am %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYears" WHERE name LIKE 'RLS19 %' AND "predecessorId" IS NOT NULL;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'rollover: a teacher reads % linked years, expected 2', n;
+  END IF;
+  SELECT id INTO y3 FROM "AcademicYears" WHERE name = 'RLS19 år 3';
+  SELECT id INTO g9 FROM "StudentGroups" WHERE name = 'RLS19 9A';
+  IF y3 IS NULL OR g9 IS NULL THEN
+    RAISE EXCEPTION 'rollover: a teacher cannot read the chain''s last year (%) or class (%)', y3, g9;
+  END IF;
+
+  BEGIN
+    INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "predecessorId", "updatedAt")
+    VALUES (school, 'RLS19 lärarens år', DATE '2098-08-15', DATE '2099-06-10', y3, now());
+    RAISE EXCEPTION 'rollover: a teacher rolled a year over';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "predecessorId", "updatedAt")
+    VALUES (school, y3, 'RLS19 lärarens grupp', g9, now());
+    RAISE EXCEPTION 'rollover: a teacher wrote a linked group';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  UPDATE "AcademicYears" SET "predecessorId" = NULL, "graduatingGradeLevel" = 3 WHERE name LIKE 'RLS19 %';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'rollover: a teacher rewrote % years'' links', n;
+  END IF;
+  UPDATE "StudentGroups" SET "predecessorId" = NULL WHERE name LIKE 'RLS19 %';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'rollover: a teacher cleared % groups'' links', n;
+  END IF;
+  UPDATE "StudentGroups" SET "academicYearId" = y3 WHERE name LIKE 'RLS19 %';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'rollover: a teacher moved % groups', n;
+  END IF;
+  DELETE FROM "AcademicYears" WHERE name LIKE 'RLS19 %';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'rollover: a teacher deleted % years', n;
+  END IF;
+END
+$$;
+
+-- A pupil writes none of it either.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'rollover: expected to be acting as a STUDENT of school A, am %', app.current_user_role();
+  END IF;
+  UPDATE "AcademicYears" SET "predecessorId" = NULL WHERE name LIKE 'RLS19 %';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'rollover: a pupil rewrote % years'' links', n;
+  END IF;
+  UPDATE "StudentGroups" SET "predecessorId" = NULL;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'rollover: a pupil cleared % groups'' links', n;
+  END IF;
+END
+$$;
+
+-- The SS12000 service principal INSERTs groups (student_groups_service_insert)
+-- and meets the same rule; it updates none.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', :'school_a', true);
+
+DO $$
+DECLARE school uuid := app.current_service_school_id(); y3 uuid; g7b uuid; n bigint;
+BEGIN
+  IF app.current_user_id() IS NOT NULL OR school IS NULL THEN
+    RAISE EXCEPTION 'rollover: the service principal is not alone in force (user %, school %)',
+      app.current_user_id(), school;
+  END IF;
+  SELECT id INTO y3 FROM "AcademicYears" WHERE name = 'RLS19 år 3';
+  SELECT id INTO g7b FROM "StudentGroups" WHERE name = 'RLS19 7B';
+  IF y3 IS NULL OR g7b IS NULL THEN
+    RAISE EXCEPTION 'rollover: the service principal cannot read its own school''s year (%) or group (%)', y3, g7b;
+  END IF;
+  BEGIN
+    INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "predecessorId", "updatedAt")
+    VALUES (school, y3, 'RLS19 importerad', g7b, now());
+    RAISE EXCEPTION 'rollover: the service principal imported a group linked two years back';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_MISMATCH:%' THEN
+      RAISE EXCEPTION 'rollover: the service principal''s wrong link answered %', SQLERRM;
+    END IF;
+  END;
+  UPDATE "StudentGroups" SET "predecessorId" = NULL WHERE name LIKE 'RLS19 %';
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'rollover: the service principal cleared % groups'' links', n;
+  END IF;
+END
+$$;
+
+-- Back as the admin: the deletes that must pass, and what they leave.
+SELECT set_config('app.service_school_id', '', true);
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y1 uuid; y2 uuid; y3 uuid; y4 uuid;
+  g7 uuid; g8 uuid; g9 uuid; g9b uuid; loose uuid;
+  y2_before jsonb; g8_before jsonb;
+  n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'rollover: expected to be back as the admin, am %', app.current_user_role();
+  END IF;
+  SELECT id INTO y1 FROM "AcademicYears" WHERE name = 'RLS19 år 1';
+  SELECT id INTO y2 FROM "AcademicYears" WHERE name = 'RLS19 år 2 (ny)';
+  SELECT id INTO y3 FROM "AcademicYears" WHERE name = 'RLS19 år 3';
+  SELECT id INTO g7 FROM "StudentGroups" WHERE name = 'RLS19 7A';
+  SELECT id INTO g8 FROM "StudentGroups" WHERE name = 'RLS19 8A';
+  SELECT id INTO g9 FROM "StudentGroups" WHERE name = 'RLS19 9A';
+  SELECT id INTO loose FROM "StudentGroups" WHERE name = 'RLS19 språkval';
+  IF y2 IS NULL OR g9 IS NULL THEN
+    RAISE EXCEPTION 'rollover: the chain did not survive the other roles'' writes (year 2 %, 9A %)', y2, g9;
+  END IF;
+
+  -- The successor year deleted (the undo of a rollover): its class goes with
+  -- it, and the year and class it continued are exactly as they were.
+  SELECT to_jsonb(y) INTO y2_before FROM "AcademicYears" y WHERE id = y2;
+  SELECT to_jsonb(g) INTO g8_before FROM "StudentGroups" g WHERE id = g8;
+  DELETE FROM "AcademicYears" WHERE id = y3;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: an admin could not delete a successor year (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "StudentGroups" WHERE id = g9;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'rollover: a deleted year kept its class';
+  END IF;
+  IF (SELECT to_jsonb(y) FROM "AcademicYears" y WHERE id = y2) IS DISTINCT FROM y2_before
+     OR (SELECT to_jsonb(g) FROM "StudentGroups" g WHERE id = g8) IS DISTINCT FROM g8_before THEN
+    RAISE EXCEPTION 'rollover: deleting the successor year changed the year or class it continued';
+  END IF;
+
+  -- The predecessor year deleted: its classes cascade, and the successor year
+  -- and its classes stand, with the links cleared by the foreign keys — no
+  -- LR409 (any error here fails the suite) — and the graduating årskurs kept.
+  DELETE FROM "AcademicYears" WHERE id = y1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: an admin could not delete a predecessor year (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AcademicYears"
+   WHERE id = y2 AND "predecessorId" IS NULL AND "graduatingGradeLevel" = 6 AND "schoolId" = school;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: deleting the predecessor year did more than clear the successor''s link';
+  END IF;
+  SELECT count(*) INTO n FROM "StudentGroups"
+   WHERE id = g8 AND "predecessorId" IS NULL AND "academicYearId" = y2 AND "schoolId" = school;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: deleting the predecessor year did more than clear the successor class''s link';
+  END IF;
+  SELECT count(*) INTO n FROM "StudentGroups" WHERE id = g7;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'rollover: a deleted year kept its class';
+  END IF;
+
+  -- A predecessor GROUP deleted on its own: the successor stands, unlinked,
+  -- and a cleared link is not set again.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "predecessorId", "updatedAt")
+  VALUES (school, 'RLS19 år 4', DATE '2097-08-15', DATE '2098-06-10', y2, now()) RETURNING id INTO y4;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "predecessorId", "updatedAt")
+  VALUES (school, y4, 'RLS19 9A igen', 9, g8, now()) RETURNING id INTO g9b;
+  DELETE FROM "StudentGroups" WHERE id = g8;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: an admin could not delete a predecessor class (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "StudentGroups" WHERE id = g9b AND "predecessorId" IS NULL AND "academicYearId" = y4;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'rollover: deleting a predecessor class did more than clear its successor''s link';
+  END IF;
+  BEGIN
+    UPDATE "StudentGroups" SET "predecessorId" = loose WHERE id = g9b;
+    RAISE EXCEPTION 'rollover: a cleared link was set again';
+  EXCEPTION WHEN SQLSTATE 'LR409' THEN
+    IF SQLERRM NOT LIKE 'ROLLOVER_LINK_IS_FIXED:%' THEN
+      RAISE EXCEPTION 'rollover: re-setting a cleared link answered %', SQLERRM;
+    END IF;
+  END;
+END
+$$;
+ROLLBACK;
+
+-- The catalog half: the keys, the CHECKs, both triggers enabled and SECURITY
+-- DEFINER in schema app, and no EXECUTE for PUBLIC or the API role.
+DO $$
+DECLARE n integer;
+BEGIN
+  SELECT count(*) INTO n FROM pg_constraint
+   WHERE contype = 'f' AND confdeltype = 'n'
+     AND (conrelid, conname) IN (
+       ('public."AcademicYears"'::regclass, 'AcademicYears_predecessorId_schoolId_fkey'),
+       ('public."StudentGroups"'::regclass, 'StudentGroups_predecessorId_schoolId_fkey'))
+     -- SET NULL of the link column only: schoolId is NOT NULL.
+     AND array_length(confdelsetcols, 1) = 1;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'rollover: % of the two predecessor keys are ON DELETE SET NULL ("predecessorId")', n;
+  END IF;
+  SELECT count(*) INTO n FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+   WHERE i.indisunique AND c.relname IN ('AcademicYears_predecessorId_schoolId_key', 'StudentGroups_predecessorId_schoolId_key');
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'rollover: % of the two one-successor keys exist', n;
+  END IF;
+  SELECT count(*) INTO n FROM pg_constraint
+   WHERE contype = 'c' AND conname IN ('AcademicYears_is_not_its_own_predecessor',
+                                       'AcademicYears_graduatingGradeLevel_is_sane',
+                                       'StudentGroups_is_not_its_own_predecessor');
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'rollover: % of the three CHECKs exist', n;
+  END IF;
+  SELECT count(*) INTO n
+    FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+   WHERE NOT t.tgisinternal AND t.tgenabled = 'O' AND p.prosecdef
+     AND p.pronamespace = 'app'::regnamespace
+     AND NOT has_function_privilege('public', p.oid, 'EXECUTE')
+     AND NOT has_function_privilege('app_authenticated', p.oid, 'EXECUTE')
+     AND (t.tgrelid, t.tgname) IN (
+       ('public."AcademicYears"'::regclass, 'AcademicYears_predecessor_is_fixed'),
+       ('public."StudentGroups"'::regclass, 'StudentGroups_predecessor_is_last_years'));
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'rollover: % of the two link triggers are present, enabled, SECURITY DEFINER in app and closed to PUBLIC', n;
+  END IF;
+END $$;

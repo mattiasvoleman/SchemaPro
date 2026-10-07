@@ -36,6 +36,14 @@ import { Prisma } from '@prisma/client';
  * gives itself when it finds the years first — not the generic "references
  * a record that does not exist", which would be false. See
  * isTimplanInUseRefusal.
+ *
+ * The läsårsrullning link triggers (migration 20261007150000) answer SQLSTATE
+ * LR409 with one of three reason tokens, each a 409 of the same name: a link
+ * set, re-pointed or cleared by a writer (ROLLOVER_LINK_IS_FIXED), a group
+ * whose predecessor is not in its year's predecessor year
+ * (ROLLOVER_LINK_MISMATCH), and a linked group moved to another year
+ * (ROLLOVER_GROUP_IS_LINKED) — the last one met by the groups PATCH, which
+ * takes academicYearId. See rolloverLinkRefusal.
  */
 export function rethrowPrismaError(error: unknown): never {
   const decided = decidedTimplanRefusal(error);
@@ -48,6 +56,10 @@ export function rethrowPrismaError(error: unknown): never {
   const dutyBlock = teacherDutyBlockRefusal(error);
   if (dutyBlock) {
     throw teacherDutyBlockException(dutyBlock);
+  }
+  const rolloverLink = rolloverLinkRefusal(error);
+  if (rolloverLink) {
+    throw rolloverLinkConflict(rolloverLink);
   }
   if (isWriteConflict(error)) {
     throw writeConflict();
@@ -326,5 +338,68 @@ export function teacherDutyBlockException(
       'Tiden är blockerad av ett uppdrag och måste förbli en återkommande otillgänglighet för uppdragets egen lärare. ' +
       'Ändra eller ta bort den genom uppdraget.',
     code: TEACHER_DUTY_BLOCK_MISMATCH,
+  });
+}
+
+/** The reason tokens the läsårsrullning link triggers (migration 20261007150000) raise, each a 409 code. */
+export const ROLLOVER_LINK_IS_FIXED = 'ROLLOVER_LINK_IS_FIXED';
+export const ROLLOVER_LINK_MISMATCH = 'ROLLOVER_LINK_MISMATCH';
+export const ROLLOVER_GROUP_IS_LINKED = 'ROLLOVER_GROUP_IS_LINKED';
+
+export type RolloverLinkReason =
+  | typeof ROLLOVER_LINK_IS_FIXED
+  | typeof ROLLOVER_LINK_MISMATCH
+  | typeof ROLLOVER_GROUP_IS_LINKED;
+
+/** What the link triggers report: the reason, and the written row's own id. */
+export interface RolloverLinkRefusal {
+  reason: RolloverLinkReason;
+  academicYearId: string | null;
+  studentGroupId: string | null;
+}
+
+const ROLLOVER_REASON = /\b(ROLLOVER_LINK_IS_FIXED|ROLLOVER_LINK_MISMATCH|ROLLOVER_GROUP_IS_LINKED)\b/;
+
+/**
+ * Recognises the link triggers' refusal. LR409, like TP409 and TD409, is a
+ * SQLSTATE class PostgreSQL does not define, so the adapter hands it over as
+ * P2039 with the driver's fields under meta.driverAdapterError.cause; the
+ * rendered message ("Code: `LR409`. Message: `ROLLOVER_…`") is the fallback
+ * for both the code and the reason. An LR409 whose reason cannot be read is
+ * still a 409, under ROLLOVER_LINK_IS_FIXED: all three say that a written
+ * link stays as written. DETAIL carries the written row's own id only.
+ */
+export function rolloverLinkRefusal(error: unknown): RolloverLinkRefusal | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return null;
+  const cause = (error.meta as { driverAdapterError?: { cause?: DriverCause } } | undefined)
+    ?.driverAdapterError?.cause;
+  const byMeta = cause?.originalCode === 'LR409';
+  const byMessage = error.code === 'P2039' && error.message.includes('Code: `LR409`');
+  if (!byMeta && !byMessage) return null;
+  const text =
+    typeof cause?.originalMessage === 'string' ? cause.originalMessage : error.message;
+  const reason = (ROLLOVER_REASON.exec(text)?.[1] ?? ROLLOVER_LINK_IS_FIXED) as RolloverLinkReason;
+  const detail = typeof cause?.detail === 'string' ? cause.detail : '';
+  return {
+    reason,
+    academicYearId: /academicYearId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+    studentGroupId: /studentGroupId=([0-9a-f-]{36})/i.exec(detail)?.[1] ?? null,
+  };
+}
+
+const ROLLOVER_LINK_MESSAGES: Record<RolloverLinkReason, string> = {
+  ROLLOVER_LINK_IS_FIXED:
+    'Kopplingen till förra läsårets läsår eller grupp sätts när läsåret rullas vidare och kan inte ändras i efterhand.',
+  ROLLOVER_LINK_MISMATCH:
+    'En grupps föregångare måste ligga i läsåret före gruppens eget läsår, i samma skola.',
+  ROLLOVER_GROUP_IS_LINKED:
+    'Gruppen är kopplad till en grupp i förra eller nästa läsår och kan inte flyttas till ett annat läsår.',
+};
+
+/** The 409 for a write the link triggers refused, coded by its reason. */
+export function rolloverLinkConflict(refusal: Pick<RolloverLinkRefusal, 'reason'>): ConflictException {
+  return new ConflictException({
+    message: ROLLOVER_LINK_MESSAGES[refusal.reason],
+    code: refusal.reason,
   });
 }

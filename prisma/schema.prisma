@@ -616,10 +616,23 @@ model AcademicYear {
   startDate DateTime @db.Date
   endDate   DateTime @db.Date
   isActive  Boolean  @default(false)
+  /// The year this one was rolled over from (läsårsrullning). Written at
+  /// INSERT only: a trigger refuses every later change (SQLSTATE LR409,
+  /// ROLLOVER_LINK_IS_FIXED) except the foreign key clearing it — this column
+  /// only, ON DELETE SET NULL ("predecessorId"), which Prisma's SetNull below
+  /// cannot say and the migration does — when the predecessor is deleted. At
+  /// most one successor per year (@@unique below). See 20261007150000.
+  predecessorId        String?  @db.Uuid
+  /// The årskurs that left school at the hand-over into this year: a class of
+  /// the predecessor at or above it got no successor, and activation calls its
+  /// pupils graduates. 0..12. Set by the rollover; never moves anyone.
+  graduatingGradeLevel Int?
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 
   school               School                @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  predecessor          AcademicYear?         @relation("YearSuccession", fields: [predecessorId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  successor            AcademicYear?         @relation("YearSuccession")
   studentGroups        StudentGroup[]
   teachingRequirements TeachingRequirement[]
   masterLessons        MasterLesson[]
@@ -633,6 +646,8 @@ model AcademicYear {
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
   @@unique([id, schoolId])
+  /// One successor per year; also the index the predecessor key's SET NULL scans.
+  @@unique([predecessorId, schoolId])
   @@index([schoolId])
   @@index([schoolId, startDate, endDate])
   // Not stated here, because schema.prisma cannot state a partial index: the
@@ -663,11 +678,21 @@ model StudentGroup {
   name           String
   kind           StudentGroupKind @default(CLASS)
   gradeLevel     Int?
+  /// Last year's group this one continues (7A -> 8A), written by the rollover
+  /// at INSERT. A trigger (SQLSTATE LR409) holds it to the group's year's
+  /// predecessor year (ROLLOVER_LINK_MISMATCH), refuses every later change but
+  /// the foreign key clearing it — this column only, ON DELETE SET NULL
+  /// ("predecessorId") — (ROLLOVER_LINK_IS_FIXED), and keeps a group linked
+  /// either way in its year (ROLLOVER_GROUP_IS_LINKED). One successor per
+  /// group. See 20261007150000.
+  predecessorId  String?          @db.Uuid
   createdAt      DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime         @updatedAt @db.Timestamptz(6)
 
-  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  academicYear AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear  @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  predecessor  StudentGroup? @relation("GroupSuccession", fields: [predecessorId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  successor    StudentGroup? @relation("GroupSuccession")
 
   // Home-class members (User.studentGroupId points here).
   members                 User[]                   @relation("StudentGroupMembers")
@@ -690,6 +715,8 @@ model StudentGroup {
   @@unique([schoolId, academicYearId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
   @@unique([id, schoolId])
+  /// One successor per group; also the index the predecessor key's SET NULL scans.
+  @@unique([predecessorId, schoolId])
   @@index([schoolId])
   @@index([academicYearId])
   @@map("StudentGroups")
