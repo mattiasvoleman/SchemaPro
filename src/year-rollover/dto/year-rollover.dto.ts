@@ -92,6 +92,15 @@ abstract class RolloverRequestBaseDto {
   @IsBoolean({ message: 'carryClassRules: true eller false.' })
   carryClassRules?: boolean;
 
+  /**
+   * Ta med tjänster och uppdrag (staffing Fas 5). Absent is false: a body
+   * from before the field existed is the rollover it always was, hash and
+   * all. The wizard sends it, true by default.
+   */
+  @IsOptional()
+  @IsBoolean({ message: 'carryStaffing: true eller false.' })
+  carryStaffing?: boolean;
+
   @IsOptional()
   @IsArray({ message: 'breaks: loven anges som en lista.' })
   @ArrayMaxSize(ROLLOVER_MAX_BREAKS, { message: `breaks: högst ${ROLLOVER_MAX_BREAKS} lov.` })
@@ -120,6 +129,13 @@ export class ExecuteRolloverDto extends RolloverRequestBaseDto {
   @Max(12, { message: GRADE })
   graduatingGradeLevel!: number;
 
+  @IsString({ message: PLAN_HASH_MESSAGE })
+  @Matches(PLAN_HASH, { message: PLAN_HASH_MESSAGE })
+  planHash!: string;
+}
+
+/** The carry of tjänster into an already rolled year takes only its preview's hash back. */
+export class ExecuteStaffingRolloverDto {
   @IsString({ message: PLAN_HASH_MESSAGE })
   @Matches(PLAN_HASH, { message: PLAN_HASH_MESSAGE })
   planHash!: string;

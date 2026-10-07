@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Prisma } from '@prisma/client';
-import { ROLLOVER_REGISTRY, ROLLOVER_STEP_ORDER, type Disposition } from './rollover-registry';
+import { createHash } from 'node:crypto';
+import {
+  ROLLOVER_REGISTRY,
+  ROLLOVER_STEP_ORDER,
+  carriedModels,
+  skippedModels,
+  type Disposition,
+} from './rollover-registry';
 
 /**
  * The completeness test: no table that belongs to a läsår is left out of the
@@ -166,16 +173,83 @@ describe('the rollover registry', () => {
     expect(ROLLOVER_STEP_ORDER.slice(0, 2)).toEqual(['year', 'groups']);
   });
 
-  it('states a rule for every column of every carried table, and only for real columns', () => {
+  it('states a rule for every column of every carried table, and only for real columns — for every writer of it', () => {
     for (const [model, disposition] of Object.entries(ROLLOVER_REGISTRY)) {
       if (!isCarried(disposition)) continue;
-      const columns = (disposition as { columns: Record<string, string> }).columns;
+      const entry = disposition as { columns: Record<string, string>; alsoWrittenBy?: { step: string; columns: Record<string, string> }[] };
       // A failure here is a column added to a table the rollover writes:
       // decide whether the copy keeps, maps, shifts or defaults it.
-      expect({ model, columns: Object.keys(columns).sort() }).toEqual({
+      expect({ model, columns: Object.keys(entry.columns).sort() }).toEqual({
         model,
         columns: scalarColumns(model),
       });
+      // And for the second writer of the table (an uppdrag's slot).
+      for (const writer of entry.alsoWrittenBy ?? []) {
+        expect({ model, step: writer.step, columns: Object.keys(writer.columns).sort() }).toEqual({
+          model,
+          step: writer.step,
+          columns: scalarColumns(model),
+        });
+      }
     }
+  });
+
+  it('gives every second writer a step the rollover runs, and after the step of the table’s own rows', () => {
+    for (const [model, disposition] of Object.entries(ROLLOVER_REGISTRY)) {
+      if (!isCarried(disposition)) continue;
+      const entry = disposition as { step: string; alsoWrittenBy?: { step: string; rows: string }[] };
+      for (const writer of entry.alsoWrittenBy ?? []) {
+        expect({ model, step: writer.step, known: ROLLOVER_STEP_ORDER.includes(writer.step as never) }).toEqual({
+          model,
+          step: writer.step,
+          known: true,
+        });
+        expect({ model, rows: writer.rows.replace(/\s/g, '').length >= 20 }).toEqual({ model, rows: true });
+        expect({ model, after: ROLLOVER_STEP_ORDER.indexOf(writer.step as never) > ROLLOVER_STEP_ORDER.indexOf(entry.step as never) }).toEqual({
+          model,
+          after: true,
+        });
+      }
+    }
+    expect(ROLLOVER_REGISTRY['AvailabilityConstraint']).toMatchObject({ alsoWrittenBy: [{ step: 'duties' }] });
+  });
+
+  it('says what an optional carry is with its option off, in a reason someone can act on, and counts it', () => {
+    const optional = Object.entries(ROLLOVER_REGISTRY).filter(
+      ([, disposition]) => isCarried(disposition) && (disposition as { option?: string }).option !== undefined,
+    );
+    expect(optional.map(([model]) => model).sort()).toEqual(['TeacherDuty', 'TeacherEmployment']);
+    for (const [model, disposition] of optional) {
+      const whenOff = (disposition as { whenOff?: { reason: string; previewCount: true } }).whenOff;
+      expect({ model, enough: (whenOff?.reason.replace(/\s/g, '').length ?? 0) >= 20, counted: whenOff?.previewCount }).toEqual({
+        model,
+        enough: true,
+        counted: true,
+      });
+    }
+  });
+
+  it('lists, with the option off, exactly fa4a3d6’s skipped tables and reasons, and carries exactly its tables', () => {
+    // sha256 of JSON.stringify(skippedModels()) at fa4a3d6 (a git archive of it).
+    expect(createHash('sha256').update(JSON.stringify(skippedModels())).digest('hex')).toBe(
+      '15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113',
+    );
+    expect(skippedModels({ carryStaffing: false })).toEqual(skippedModels());
+    expect(carriedModels().map(({ model }) => model)).toEqual([
+      'AcademicYear',
+      'StudentGroup',
+      'StudentGroupMember',
+      'TeachingRequirement',
+      'SchoolBreak',
+      'AvailabilityConstraint',
+      'AcademicYearTimplan',
+    ]);
+    // With it on: the two staffing tables carried, by their own steps, last.
+    expect(carriedModels({ carryStaffing: true }).slice(-2)).toEqual([
+      { model: 'TeacherEmployment', step: 'employments' },
+      { model: 'TeacherDuty', step: 'duties' },
+    ]);
+    expect(skippedModels({ carryStaffing: true }).map((entry) => entry.model)).not.toContain('TeacherDuty');
+    expect(ROLLOVER_STEP_ORDER.slice(-2)).toEqual(['employments', 'duties']);
   });
 });

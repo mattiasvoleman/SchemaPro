@@ -19,7 +19,7 @@ import {
   type ActivationPlan,
   type ActivationProblem,
 } from './activation-plan';
-import { applyRollover } from './rollover-apply';
+import { applyRollover, type StaffingCounts } from './rollover-apply';
 import { planRollover, previewOf, type RolloverPlan, type RolloverProblem } from './rollover-plan';
 import { readRolloverSource, type RolloverSource } from './rollover-source';
 import { rostersOfYear } from './projected-rosters';
@@ -53,6 +53,8 @@ export interface RolloverResult {
     graduatingGradeLevel: number;
   };
   counts: { groups: number; members: number; requirements: number; breaks: number; classRules: number; timplans: number };
+  /** Tjänster, uppdrag and their new slots; null for a rollover without carryStaffing. */
+  staffing: StaffingCounts | null;
   planHash: string;
 }
 
@@ -115,7 +117,7 @@ export class YearRolloverService {
       return await this.prisma.withRls(
         user,
         async (tx) => {
-          const source = await readRolloverSource(tx, sourceYearId);
+          const source = await readRolloverSource(tx, sourceYearId, { carryStaffing: dto.carryStaffing === true });
           if (!source) throw yearNotFound();
           refuseUnrollable(source);
           return previewOf(planRollover(source, dto));
@@ -133,6 +135,7 @@ export class YearRolloverService {
     user: AuthenticatedUser,
   ): Promise<RolloverResult> {
     const schoolId = requireSchoolId(user);
+    const carryStaffing = dto.carryStaffing === true;
     try {
       const result = await this.prisma.withRls(
         user,
@@ -151,12 +154,14 @@ export class YearRolloverService {
             ORDER BY "id"
             FOR SHARE
           `;
-          const source = await readRolloverSource(tx, sourceYearId);
+          // With tjänster: the people whose rows are carried, then the rows.
+          if (carryStaffing) await lockSourceStaffing(tx, sourceYearId);
+          const source = await readRolloverSource(tx, sourceYearId, { carryStaffing });
           if (!source) throw yearNotFound();
           refuseUnrollable(source);
           const plan = planRollover(source, dto);
           refuseBlockedRollover(plan, source);
-          if (plan.planHash !== dto.planHash) throw rolloverStale();
+          if (plan.planHash !== dto.planHash) throw rolloverStale(carryStaffing);
 
           const applied = await applyRollover(tx, schoolId, plan.writes);
           return {
@@ -170,16 +175,21 @@ export class YearRolloverService {
               graduatingGradeLevel: plan.writes.year.graduatingGradeLevel,
             },
             counts: applied.counts,
+            staffing: carryStaffing ? applied.staffingCounts : null,
             planHash: plan.planHash,
           };
         },
         { timeoutMs: ROLLOVER_TIMEOUT_MS },
       );
-      const { counts } = result;
+      const { counts, staffing } = result;
       this.logger.log(
         `Läsår rullat [school=${schoolId}, source=${sourceYearId}, target=${result.academicYear.id}, ` +
           `groups=${counts.groups}, members=${counts.members}, requirements=${counts.requirements}, ` +
-          `breaks=${counts.breaks}, classRules=${counts.classRules}, timplans=${counts.timplans}]`,
+          `breaks=${counts.breaks}, classRules=${counts.classRules}, timplans=${counts.timplans}` +
+          (staffing
+            ? `, employments=${staffing.employments}, duties=${staffing.duties}, dutySlots=${staffing.dutySlots}`
+            : '') +
+          ']',
       );
       return result;
     } catch (error) {
@@ -492,13 +502,60 @@ function refuseBlockedRollover(plan: RolloverPlan, source: RolloverSource): void
   if (other) throw new BadRequestException({ message: other.code, code: other.code });
 }
 
-function rolloverStale(): ConflictException {
+function rolloverStale(carryStaffing: boolean): ConflictException {
+  const what = carryStaffing
+    ? 'grupper, elever, timplansposter, lov, tjänster eller uppdrag'
+    : 'grupper, elever, timplansposter eller lov';
   return new ConflictException({
-    message:
-      'Läsåret har ändrats sedan förhandsvisningen: grupper, elever, timplansposter eller lov är inte längre desamma. ' +
-      'Inget skapades. Förhandsvisa igen och granska.',
+    message: `Läsåret har ändrats sedan förhandsvisningen: ${what} är inte längre desamma. Inget skapades. Förhandsvisa igen och granska.`,
     code: ROLLOVER_PREVIEW_STALE,
   });
+}
+
+/**
+ * The locks a carry of tjänster takes on its source year's staffing, after
+ * the year and the groups: the people whose posts and uppdrag it reads (FOR
+ * NO KEY UPDATE, in id order — the lock lockStaffRow and the role PATCH
+ * take), then the posts and the uppdrag themselves (FOR SHARE, in id order).
+ *
+ * No cycle with the writers it can meet: an employment upsert takes the
+ * person, then the post; a duty create the person, then inserts; the uppdrag
+ * import the people, then its rows; a duty PATCH or delete the duty alone;
+ * a role PATCH the person, then their own rows. The activation locks pupils,
+ * never staff. A row that appears after the plain read below, for a person
+ * outside the locked set, was not in the preview either, so it can only
+ * change the writes — which is the 409 stale, before anything is written.
+ * An empty set takes no Users lock at all, as lockPupils does.
+ *
+ * Shared with the carry into an already rolled year (staffing-rollover.service.ts).
+ */
+export async function lockSourceStaffing(tx: PrismaClient, sourceYearId: string): Promise<void> {
+  const posts = await tx.teacherEmployment.findMany({ where: { academicYearId: sourceYearId }, select: { userId: true } });
+  const duties = await tx.teacherDuty.findMany({ where: { academicYearId: sourceYearId }, select: { userId: true } });
+  const ids = [...new Set([...(posts ?? []), ...(duties ?? [])].map((row) => row.userId))].sort();
+  if (ids.length > 0) {
+    await tx.$queryRaw`
+      SELECT "id"
+      FROM "Users"
+      WHERE "id" = ANY(${ids}::uuid[])
+      ORDER BY "id"
+      FOR NO KEY UPDATE
+    `;
+  }
+  await tx.$queryRaw`
+    SELECT "id"
+    FROM "TeacherEmployments"
+    WHERE "academicYearId" = ${sourceYearId}::uuid
+    ORDER BY "id"
+    FOR SHARE
+  `;
+  await tx.$queryRaw`
+    SELECT "id"
+    FROM "TeacherDuties"
+    WHERE "academicYearId" = ${sourceYearId}::uuid
+    ORDER BY "id"
+    FOR SHARE
+  `;
 }
 
 function activationStale(): ConflictException {
