@@ -1882,6 +1882,7 @@ async function runChecks(
     role: Role.SCHOOL_ADMIN,
   };
   const rollover = new YearRolloverService(api);
+  const rullYears = new AcademicYearsService(api);
   let targetYearId = '';
   const rolloverOptions = {
     name: `${MARKER} rull mål`,
@@ -1978,7 +1979,7 @@ async function runChecks(
     );
   });
 
-  await check('(x) the activation moves the planned pupils by id through the real adapter, once, and not while the old year runs', async () => {
+  await check('(x) the activation moves the planned pupils by id through the real adapter, once, not while the old year runs, and the year form cannot go around it', async () => {
     const homes = async () =>
       Object.fromEntries(
         (
@@ -1989,6 +1990,18 @@ async function runChecks(
           )
         ).rows.map((row) => [row.email.replace(`${MARKER}-`, '').replace('@example.invalid', ''), row.group]),
       );
+
+    const refusedWith = (code: string) => (error: unknown) => {
+      assert.ok(error instanceof ConflictException, summarise(error));
+      assert.equal((error.getResponse() as { code?: string }).code, code, summarise(error));
+      return true;
+    };
+    // Before the activation: the year form cannot flip the flag past the
+    // moves, the source cannot be deleted from under its pupils, and the new
+    // year cannot be moved to start before the old one ends.
+    await assert.rejects(rullYears.update(targetYearId, { isActive: true }, rullAdmin), refusedWith('YEAR_ACTIVATION_HAS_MOVES'));
+    await assert.rejects(rullYears.remove(rull.sourceYearId, rullAdmin), refusedWith('YEAR_HAS_HOME_PUPILS'));
+    await assert.rejects(rullYears.update(targetYearId, { startDate: '2094-06-01' }, rullAdmin), BadRequestException);
 
     const early = await rollover.previewActivation(targetYearId, rullAdmin, { today: '2094-06-12' });
     await assert.rejects(
@@ -2028,7 +2041,10 @@ async function runChecks(
       { year: { id: targetYearId, name: rolloverOptions.name, isActive: true }, moved: 0, graduated: 0, unplaced: 0 },
     );
 
-    // The old year again: superseded.
+    // The old year again: superseded, by the activation and by the year form;
+    // and the new year now holds the home classes, so it is not deleted.
+    await assert.rejects(rullYears.update(rull.sourceYearId, { isActive: true }, rullAdmin), refusedWith('YEAR_IS_SUPERSEDED'));
+    await assert.rejects(rullYears.remove(targetYearId, rullAdmin), refusedWith('YEAR_HAS_HOME_PUPILS'));
     const back = await rollover.previewActivation(rull.sourceYearId, rullAdmin, today);
     await assert.rejects(
       rollover.executeActivation(rull.sourceYearId, { planHash: back.planHash }, rullAdmin, today),
