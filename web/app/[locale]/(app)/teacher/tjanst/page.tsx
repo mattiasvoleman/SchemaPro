@@ -1,0 +1,256 @@
+"use client";
+
+// Min tjänst: a teacher's own tjänstefördelning, read-only.
+//
+// Everything here is the teacher's OWN row, and it is cut down to that on the
+// gateway, not here: GET /staffing/load answers a TEACHER with their row alone
+// (StaffingLoadService.load — RLS hands them no colleague's post, and the
+// response drops the unstaffed list and the bottlenecks), and GET
+// /teacher-duties answers them with their own uppdrag and 403s a colleague's.
+// The `userId` filter below is for a SCHOOL_ADMIN who teaches and opens this
+// page — they get the whole school's report, and this page is about one
+// person.
+//
+// READ-ONLY on purpose. A post, a behörighet and an uppdrag are set by the
+// skolledning (every write endpoint is @Roles(SCHOOL_ADMIN)), and the page
+// says so in one sentence rather than greying out controls a teacher could
+// never use. What it does give a teacher is what Lectio and Skola24 give
+// theirs: the same bar the admin sees, so a conversation about the tjänst
+// starts from one picture.
+//
+// Bundle: core tier (170KB). It reuses lib/staffing-queries.ts and the
+// LoadBar the admin page draws — two small modules — and nothing from the
+// admin drawer, whose cards carry forms this page has no use for.
+
+import { useMemo } from "react";
+import { useTranslations } from "next-intl";
+import { CalendarClock, Scale } from "lucide-react";
+import { useProfile } from "@/components/profile-context";
+import { useActiveYear, useGroups, useSubjects } from "@/lib/queries";
+import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
+import { formatPercent } from "@/lib/staffing-view";
+import { LoadBar } from "@/components/staffing/load-bar";
+import { PageHeader } from "@/components/layout/page-header";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Skeleton } from "@/components/ui/skeleton";
+
+export default function MyStaffingPage() {
+  const t = useTranslations("myStaffing");
+  const tStaffing = useTranslations("staffing");
+  const tDays = useTranslations("days");
+  const { profile } = useProfile();
+  const { activeYear, isLoading: yearLoading } = useActiveYear();
+  const yearId = activeYear?.id ?? null;
+  const load = useStaffingLoad(yearId);
+  const duties = useTeacherDuties(yearId, profile.id);
+  const { data: subjects } = useSubjects();
+  const { data: groups } = useGroups();
+
+  const row = useMemo(
+    () => load.data?.teachers.find((teacher) => teacher.userId === profile.id) ?? null,
+    [load.data, profile.id],
+  );
+  const ownDuties = useMemo(
+    () => (duties.data ?? []).filter((duty) => duty.userId === profile.id),
+    [duties.data, profile.id],
+  );
+  const subjectName = (id: string | null) =>
+    id ? (subjects?.find((subject) => subject.id === id)?.name ?? null) : null;
+  const groupName = (id: string | null) =>
+    id ? (groups?.find((group) => group.id === id)?.name ?? null) : null;
+
+  const header = (
+    <PageHeader
+      title={t("title")}
+      subtitle={activeYear ? t("subtitle", { year: activeYear.name }) : undefined}
+    />
+  );
+
+  if (yearLoading || (yearId !== null && (load.isLoading || duties.isLoading))) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        {header}
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+
+  if (!activeYear) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        {header}
+        <EmptyState icon={Scale} title={t("noYear")} />
+      </div>
+    );
+  }
+
+  // A failed read is said as one, never drawn as an empty tjänst: "no
+  // teaching assigned" is a statement a teacher would take to their rektor.
+  if (load.isError || duties.isError) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        {header}
+        <EmptyState icon={Scale} title={t("loadFailed")} />
+      </div>
+    );
+  }
+
+  if (!row && ownDuties.length === 0) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        {header}
+        <EmptyState
+          icon={Scale}
+          title={t("notRegistered", { year: activeYear.name })}
+          description={t("notRegisteredBody")}
+        />
+      </div>
+    );
+  }
+
+  const employment = row?.employment ?? null;
+  const clock = (value: string) => value.slice(0, 5);
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-6">
+      {header}
+      <p className="text-sm text-foreground">{t("readOnly")}</p>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{tStaffing("employmentTitle")}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {employment ? (
+            <p>
+              {employment.reductionPercent > 0
+                ? tStaffing("employmentSummaryReduction", {
+                    percent: formatPercent(employment.employmentPercent),
+                    reduction: formatPercent(employment.reductionPercent),
+                    kind: tStaffing(`contract${employment.contractKind}`),
+                  })
+                : tStaffing("employmentSummary", {
+                    percent: formatPercent(employment.employmentPercent),
+                    kind: tStaffing(`contract${employment.contractKind}`),
+                  })}
+            </p>
+          ) : (
+            <p>{t("noEmployment")}</p>
+          )}
+          {row ? (
+            <>
+              <p>
+                {row.targetMinutesPerWeek === null
+                  ? t("noTarget")
+                  : t("target", { minutes: row.targetMinutesPerWeek })}
+                {" · "}
+                {t("counted", { minutes: row.countedMinutesPerWeek })}
+                {" · "}
+                <span className="font-medium">{tStaffing(`status${row.status}`)}</span>
+              </p>
+              <LoadBar teacher={row} />
+              <p>
+                {t("annual", { hours: formatPercent(row.annual.assignedHoursPerYear) })}
+              </p>
+            </>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("teachingTitle")}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {row && row.subjects.length > 0 ? (
+            <table className="w-full text-sm">
+              <caption className="sr-only">{t("teachingCaption")}</caption>
+              <thead>
+                <tr className="text-left">
+                  <th scope="col" className="py-1 pr-3 font-medium">
+                    {t("subjectHeader")}
+                  </th>
+                  <th scope="col" className="py-1 pr-3 text-right font-medium">
+                    {t("minutesHeader")}
+                  </th>
+                  <th scope="col" className="py-1 text-right font-medium">
+                    {t("shareHeader")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {row.subjects.map((subject) => (
+                  <tr key={subject.subjectId}>
+                    <th scope="row" className="py-1.5 pr-3 text-left font-normal">
+                      {subject.subjectName}
+                    </th>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">
+                      {subject.minutesPerWeek}
+                    </td>
+                    <td className="py-1.5 text-right tabular-nums">
+                      {/* No post, no denominator: a dash, never a 0 %. */}
+                      {subject.percentOfEmployment === null
+                        ? "—"
+                        : `${formatPercent(subject.percentOfEmployment)} %`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="text-sm">{t("noTeaching")}</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{tStaffing("dutiesTitle")}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {ownDuties.length === 0 ? (
+            <p className="text-sm">{t("noDuties")}</p>
+          ) : (
+            <ul className="divide-y text-sm">
+              {ownDuties.map((duty) => {
+                const about = [subjectName(duty.subjectId), groupName(duty.studentGroupId)].filter(
+                  (part): part is string => part !== null,
+                );
+                return (
+                  <li key={duty.id} className="space-y-0.5 py-2">
+                    <p className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-medium">{duty.label}</span>
+                      <Badge variant="outline">{tStaffing(`dutyKind${duty.kind}`)}</Badge>
+                    </p>
+                    <p>
+                      {duty.countsAsTeaching
+                        ? tStaffing("dutyMinutesCounted", { minutes: duty.minutesPerWeek })
+                        : tStaffing("dutyMinutes", { minutes: duty.minutesPerWeek })}
+                      {about.length > 0 ? ` · ${about.join(" · ")}` : ""}
+                    </p>
+                    {duty.blockedSlot ? (
+                      <p className="flex items-center gap-1">
+                        <CalendarClock
+                          className="size-3.5 text-muted-foreground"
+                          aria-hidden="true"
+                        />
+                        {tStaffing("dutyBlocks", {
+                          day: tDays(String(duty.blockedSlot.dayOfWeek)),
+                          start: clock(duty.blockedSlot.startTime),
+                          end: clock(duty.blockedSlot.endTime),
+                        })}
+                      </p>
+                    ) : null}
+                    {duty.note ? <p className="text-muted-foreground">{duty.note}</p> : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

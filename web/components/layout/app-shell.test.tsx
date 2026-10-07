@@ -165,10 +165,12 @@ describe("AppShell navigation", () => {
     expect(link("nav.mySchedule")).toHaveAttribute("href", "/teacher");
     expect(link("nav.attendance")).toHaveAttribute("href", "/teacher/attendance");
     expect(link("nav.roomBooking")).toHaveAttribute("href", "/teacher/rooms");
+    expect(link("nav.myStaffing")).toHaveAttribute("href", "/teacher/tjanst");
 
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("link")).toHaveLength(3);
+    expect(screen.getAllByRole("link")).toHaveLength(4);
+
   });
 
   it("student gets schedule and attendance links", () => {
