@@ -240,6 +240,30 @@ describe('YearRolloverService — rollover preview', () => {
     expect(chosen).toMatchObject({ graduatingGradeLevel: 9, graduatingGradeSource: 'REQUEST', blocking: false });
   });
 
+  it('counts a member whose home class takes INTAKE in a one-grade school as graduating, as the activation will', async () => {
+    const rows = defaultRolloverRows();
+    // Only 9A, and an ungraded språkval group with one of its pupils.
+    rows['studentGroup'] = [
+      { id: IDS.g9a, academicYearId: IDS.yearA, name: '9A', kind: 'CLASS', gradeLevel: 9, predecessorId: null },
+      { id: IDS.gMa7, academicYearId: IDS.yearA, name: 'Språkval', kind: 'TEACHING_GROUP', gradeLevel: null, predecessorId: null },
+    ];
+    rows['studentGroupMember'] = [{ studentGroupId: IDS.gMa7, studentId: IDS.p9a1, student: { studentGroupId: IDS.g9a } }];
+    rows['teachingRequirement'] = [];
+    rows['availabilityConstraint'] = [];
+    const { service } = setup(rows);
+    const preview = await service.previewRollover(
+      IDS.yearA,
+      { ...OPTIONS, graduatingGradeLevel: 9, groups: [{ sourceGroupId: IDS.g9a, outcome: 'INTAKE' }] },
+      admin,
+    );
+    expect(preview.groups.find((group) => group.sourceGroupId === IDS.g9a)).toMatchObject({ outcome: 'INTAKE', targetName: null });
+    expect(preview.groups.find((group) => group.sourceGroupId === IDS.gMa7)).toMatchObject({
+      outcome: 'CARRY',
+      membersCopied: 0,
+      membersExcluded: { graduating: 1, noSuccessor: 0 },
+    });
+  });
+
   it('strands the non-graduating members of a skipped teaching group, and warns on overlapping years and case-only names', async () => {
     const rows = defaultRolloverRows();
     rows['academicYear']!.push({ id: 'other', name: 'Sommarskola 2028', startDate: new Date('2028-06-01'), endDate: new Date('2028-06-30'), isActive: false, predecessorId: null });
