@@ -1673,9 +1673,9 @@
     "optionNext": "{name} (nästa, inte aktiverat)",
     "bannerTitle": "{year} planeras på förberäknade klasslistor",
     "bannerBody": "{year} är inte aktiverat, och eleverna går kvar i klasserna i {active} tills det aktiveras. Schemat räknas därför på klasslistorna som aktiveringen ger: {moved, plural, one {# elev flyttar} other {# elever flyttar}} in i sin nya klass, {graduates, plural, one {# elev går} other {# elever går}} ut och {unplaced, plural, one {# elev blir} other {# elever blir}} utan klass. Eleverna flyttar in vid aktiveringen.",
-    "bannerMemberships": "Undervisningsgruppernas medlemmar bestämdes vid rullningen, och några elever har bytt klass sedan dess: {missing, plural, one {# medlemskap saknas} other {# medlemskap saknas}} för elever som flyttar in, och {stale, plural, one {# medlemskap hör} other {# medlemskap hör}} till elever som blir utan klass. Schemat räknas med grupperna som de står.",
+    "bannerMemberships": "Undervisningsgruppernas medlemmar bestämdes vid rullningen, och några elever har bytt klass sedan dess: {missing, plural, one {# medlemskap saknas} other {# medlemskap saknas}} för elever som flyttar in, och {stale, plural, one {# medlemskap hör} other {# medlemskap hör}} till elever som går ut eller blir utan klass. Schemat räknas med grupperna som de står.",
     "bannerChanges": "Byter en elev klass i {active} ändras listorna direkt, och en krock som det ger visas i schemat.",
-    "bannerLink": "Aktivera läsåret på sidan Läsår",
+    "bannerLink": "Aktiveringen görs på sidan Läsår när {active} har slutat",
     "rostersFailed": "Klasslistorna för {year} kunde inte hämtas, så krockarna och årskurserna på sidan räknas som om ingen elev hade flyttat. Ladda om sidan innan du planerar."
   },
   "years": {
@@ -1902,7 +1902,7 @@
     "problems": {
       "YEAR_ACTIVATION_TOO_EARLY": "{year} pågår till och med {endDate}. Eleverna flyttas när det har slutat — annars blir närvarolistorna för de sista veckornas lektioner tomma.",
       "YEAR_IS_SUPERSEDED": "{year} har efterträtts av {successor}, där {pupils, plural, one {# elev redan har sin klass} other {# elever redan har sina klasser}}. Att aktivera det igen skulle lämna det utan elever.",
-      "MEMBERSHIPS_OUT_OF_DATE": "Undervisningsgruppernas medlemmar bestämdes vid rullningen, och några elever har bytt klass sedan dess: {missing, plural, one {# medlemskap saknas} other {# medlemskap saknas}} för elever som flyttar in, och {stale, plural, one {# medlemskap hör} other {# medlemskap hör}} till elever som blir utan klass. Se över grupperna efter aktiveringen.",
+      "MEMBERSHIPS_OUT_OF_DATE": "Undervisningsgruppernas medlemmar bestämdes vid rullningen, och några elever har bytt klass sedan dess: {missing, plural, one {# medlemskap saknas} other {# medlemskap saknas}} för elever som flyttar in, och {stale, plural, one {# medlemskap hör} other {# medlemskap hör}} till elever som går ut eller blir utan klass. Se över grupperna efter aktiveringen.",
       "GRADUATING_GRADE_REQUIRED": "Välj vilken årskurs som går ut.",
       "ROLLOVER_NAME_COLLISION": "Nästa läsår skulle få flera grupper som heter {names}. Byt namn på någon av dem.",
       "ROLLOVER_NAME_CASE_COLLISION": "{names} skiljer sig bara i stora och små bokstäver.",

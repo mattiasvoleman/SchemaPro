@@ -1673,9 +1673,9 @@
     "optionNext": "{name} (next, not activated)",
     "bannerTitle": "{year} is planned on projected class lists",
     "bannerBody": "{year} has not been activated, and pupils stay in the classes of {active} until it is. The schedule is therefore computed on the class lists the activation will give: {moved, plural, one {# pupil moves} other {# pupils move}} into their new class, {graduates, plural, one {# pupil graduates} other {# pupils graduate}} and {unplaced, plural, one {# pupil is} other {# pupils are}} left without a class. Pupils move in at the activation.",
-    "bannerMemberships": "The teaching groups’ members were set at the rollover, and some pupils have changed class since: {missing, plural, one {# membership is} other {# memberships are}} missing for pupils moving in, and {stale, plural, one {# membership belongs} other {# memberships belong}} to pupils left without a class. The schedule is computed with the groups as they stand.",
+    "bannerMemberships": "The teaching groups’ members were set at the rollover, and some pupils have changed class since: {missing, plural, one {# membership is} other {# memberships are}} missing for pupils moving in, and {stale, plural, one {# membership belongs} other {# memberships belong}} to pupils who graduate or are left without a class. The schedule is computed with the groups as they stand.",
     "bannerChanges": "A class change in {active} changes the lists at once, and a clash it causes shows in the timetable.",
-    "bannerLink": "Activate the year on the School years page",
+    "bannerLink": "Activation is on the School years page once {active} has ended",
     "rostersFailed": "The class lists for {year} could not be fetched, so the clashes and grades on this page are computed as if no pupil had moved. Reload the page before planning."
   },
   "years": {
@@ -1902,7 +1902,7 @@
     "problems": {
       "YEAR_ACTIVATION_TOO_EARLY": "{year} runs until {endDate}. Pupils move once it has ended — otherwise the attendance lists of its last weeks’ lessons would be empty.",
       "YEAR_IS_SUPERSEDED": "{year} has been succeeded by {successor}, where {pupils, plural, one {# pupil already has their class} other {# pupils already have their classes}}. Activating it again would leave it without pupils.",
-      "MEMBERSHIPS_OUT_OF_DATE": "Teaching-group members were decided at the rollover, and some pupils have changed class since: {missing, plural, one {# membership is} other {# memberships are}} missing for pupils moving in, and {stale, plural, one {# membership belongs} other {# memberships belong}} to pupils left without a class. Review the groups after the activation.",
+      "MEMBERSHIPS_OUT_OF_DATE": "Teaching-group members were decided at the rollover, and some pupils have changed class since: {missing, plural, one {# membership is} other {# memberships are}} missing for pupils moving in, and {stale, plural, one {# membership belongs} other {# memberships belong}} to pupils who graduate or are left without a class. Review the groups after the activation.",
       "GRADUATING_GRADE_REQUIRED": "Choose which grade graduates.",
       "ROLLOVER_NAME_COLLISION": "Next year would have several groups named {names}. Rename one of them.",
       "ROLLOVER_NAME_CASE_COLLISION": "{names} differ only in upper and lower case.",

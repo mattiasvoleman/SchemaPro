@@ -69,10 +69,11 @@ describe("the förberäknade klasslistor banner", () => {
     );
     expect(banner).toHaveTextContent("eleverna går kvar i klasserna i 2026/27");
     expect(banner).toHaveTextContent("Byter en elev klass i 2026/27 ändras listorna direkt");
-    expect(screen.getByRole("link", { name: "Aktivera läsåret på sidan Läsår" })).toHaveAttribute(
-      "href",
-      "/admin/years",
-    );
+    // Information, not a call to act: the activation is refused until
+    // 2026/27 has ended, and the banner is up all spring.
+    expect(
+      screen.getByRole("link", { name: "Aktiveringen görs på sidan Läsår när 2026/27 har slutat" }),
+    ).toHaveAttribute("href", "/admin/years");
   });
 
   it("says it in English too", () => {
@@ -89,6 +90,9 @@ describe("the förberäknade klasslistor banner", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "2 pupils move into their new class, 1 pupil graduates and 1 pupil is left without a class",
     );
+    expect(
+      screen.getByRole("link", { name: "Activation is on the School years page once 2026/27 has ended" }),
+    ).toBeInTheDocument();
   });
 
   it("names the teaching-group memberships the activation preview calls out of date", () => {
@@ -102,8 +106,27 @@ describe("the förberäknade klasslistor banner", () => {
       />,
     );
 
+    // STALE is every member the activation sends to no class: graduates
+    // first of all (a ninth-grader still in a carried group), and the
+    // unplaced — so the sentence names both, as the body above does.
     expect(screen.getByRole("status")).toHaveTextContent(
-      "1 medlemskap saknas för elever som flyttar in, och 2 medlemskap hör till elever som blir utan klass",
+      "1 medlemskap saknas för elever som flyttar in, och 2 medlemskap hör till elever som går ut eller blir utan klass",
+    );
+  });
+
+  it("names both kinds of stale member in English too", () => {
+    inLocale(
+      "en",
+      <ProjectedRostersBanner
+        year={B}
+        active={A}
+        rosters={projected({ membershipsOutOfDate: { missing: 0, stale: 1 } })}
+        failed={false}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "1 membership belongs to pupils who graduate or are left without a class",
     );
   });
 
