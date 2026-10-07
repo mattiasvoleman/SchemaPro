@@ -57,6 +57,22 @@ export const IDS = {
   vecka53: 'f0000000-0000-4000-8000-000000000004',
   rule7a: 'f1000000-0000-4000-8000-000000000001',
   draftPlan: 'f2000000-0000-4000-8000-000000000001',
+  cecilia: 'd0000000-0000-4000-8000-00000000000c',
+  guardian: 'd0000000-0000-4000-8000-0000000000ee',
+  empAnna: 'f3000000-0000-4000-8000-00000000000a',
+  empBo: 'f3000000-0000-4000-8000-00000000000b',
+  empCecilia: 'f3000000-0000-4000-8000-00000000000c',
+  dutyRast: 'f4000000-0000-4000-8000-000000000001',
+  dutyMentor7a: 'f4000000-0000-4000-8000-000000000002',
+  dutyMentor9a: 'f4000000-0000-4000-8000-000000000003',
+  dutyStudie9a: 'f4000000-0000-4000-8000-000000000004',
+  dutyAmne: 'f4000000-0000-4000-8000-000000000005',
+  dutyBo: 'f4000000-0000-4000-8000-000000000006',
+  dutyApt: 'f4000000-0000-4000-8000-000000000007',
+  dutyGuardian: 'f4000000-0000-4000-8000-000000000008',
+  slotRast: 'f5000000-0000-4000-8000-000000000001',
+  slotMentor: 'f5000000-0000-4000-8000-000000000002',
+  slotApt: 'f5000000-0000-4000-8000-000000000003',
 } as const;
 
 /** The national grundskola version P2's plans hang on: stadier 1–3, 4–6, 7–9. */
@@ -138,6 +154,7 @@ export function defaultRolloverRows(): Record<string, Row[]> {
         minGradeLevel: null,
         maxGradeLevel: null,
       },
+      slot(IDS.slotRast, IDS.anna, 2, '10:00', '10:20'),
     ],
     frameTime: [
       { minGradeLevel: 7, maxGradeLevel: 9, dayOfWeek: null, startTime: clock('08:00'), endTime: clock('15:30') },
@@ -165,8 +182,26 @@ export function defaultRolloverRows(): Record<string, Row[]> {
     teacherSubjectQualification: [],
     masterLesson: [{ academicYearId: IDS.yearA, isLocked: true }, { academicYearId: IDS.yearA, isLocked: false }],
     lunchSitting: [{ academicYearId: IDS.yearA, isGenerated: false }],
-    teacherEmployment: [{ academicYearId: IDS.yearA }],
-    teacherDuty: [{ academicYearId: IDS.yearA, blockedConstraintId: 'slot', kind: 'RASTVAKT' }],
+    // Anna's post and her rastvakt with its slot, as the services write them:
+    // a rollover without carryStaffing only counts them (one duty, one slot,
+    // no mentorskap); staffingRows() gives the school a fuller staff.
+    teacherEmployment: [
+      {
+        id: IDS.empAnna,
+        schoolId: IDS.school,
+        userId: IDS.anna,
+        academicYearId: IDS.yearA,
+        employmentPercent: new Prisma.Decimal('100.000'),
+        reductionPercent: new Prisma.Decimal('0.000'),
+        contractKind: 'FERIE',
+        teachingTargetMinutesPerWeek: null,
+        signature: 'AN',
+        note: null,
+      },
+    ],
+    teacherDuty: [
+      duty(IDS.dutyRast, IDS.anna, 'RASTVAKT', 'Rastvakt', 30, { blockedConstraintId: IDS.slotRast, note: 'rast' }),
+    ],
   };
 
   function requirement(id: string, studentGroupId: string, subjectId: string, subjectRow: Row, extra: Row): Row {
@@ -190,6 +225,9 @@ export function defaultRolloverRows(): Record<string, Row[]> {
       ...extra,
     };
   }
+  function slot(id: string, userId: string, dayOfWeek: number, startTime: string, endTime: string): Row {
+    return teacherSlot(id, userId, dayOfWeek, startTime, endTime);
+  }
   function lov(id: string, name: string, startDate: string, endDate: string): Row {
     return {
       id,
@@ -202,6 +240,111 @@ export function defaultRolloverRows(): Record<string, Row[]> {
       maxGradeLevel: null,
     };
   }
+}
+
+/** An uppdrag row as TeacherDutiesService writes it. */
+function duty(id: string, userId: string, kind: string, label: string, minutesPerWeek: number, extra: Row = {}): Row {
+  return {
+    id,
+    schoolId: IDS.school,
+    userId,
+    academicYearId: IDS.yearA,
+    kind,
+    label,
+    minutesPerWeek,
+    countsAsTeaching: false,
+    subjectId: null,
+    studentGroupId: null,
+    blockedConstraintId: null,
+    note: null,
+    ...extra,
+  };
+}
+
+/** A duty's slot as the Fas 2 shape has it: weekly, UNAVAILABLE, the teacher's own, "Uppdrag". */
+function teacherSlot(id: string, userId: string, dayOfWeek: number, startTime: string, endTime: string): Row {
+  return {
+    id,
+    resourceType: 'TEACHER',
+    userId,
+    roomId: null,
+    studentGroupId: null,
+    dayOfWeek,
+    date: null,
+    startTime: clock(startTime),
+    endTime: clock(endTime),
+    type: 'UNAVAILABLE',
+    reason: 'Uppdrag',
+    minGradeLevel: null,
+    maxGradeLevel: null,
+  };
+}
+
+/**
+ * The default school with a staff worth carrying (staffing Fas 5):
+ *
+ *  - Anna, active: a post with a 20 % nedsättning, her rastvakt (Tuesday
+ *    10:00–10:20) and "Mentor 7A" for 7A with a Monday slot — which follows
+ *    7A to 8A and becomes "Mentor 8A".
+ *  - Cecilia, active: a post with a target override; "Mentor 9A" (9A
+ *    graduates: not carried), "Studiehandledning 9A" on 9A (carried without
+ *    its group), ämnesansvar in Ma, and an APT whose slot PostgREST put off
+ *    the five-minute grid (15:02–16:00: carried without it).
+ *  - Bo, inactive: a post and a rastvakt, neither carried.
+ *  - A guardian with an uppdrag only PostgREST could have written: not staff.
+ *
+ * Every source row carries a value no default would give, and a note naming
+ * it, so the registry audit can find each written row's source.
+ */
+export function staffingRows(rows: Record<string, Row[]> = defaultRolloverRows()): Record<string, Row[]> {
+  rows['user']!.push(
+    { id: IDS.cecilia, role: 'TEACHER', isActive: true, studentGroupId: null },
+    { id: IDS.guardian, role: 'GUARDIAN', isActive: true, studentGroupId: null },
+  );
+  const post = (id: string, userId: string, extra: Row): Row => ({
+    id,
+    schoolId: IDS.school,
+    userId,
+    academicYearId: IDS.yearA,
+    employmentPercent: new Prisma.Decimal('100.000'),
+    reductionPercent: new Prisma.Decimal('0.000'),
+    contractKind: 'FERIE',
+    teachingTargetMinutesPerWeek: null,
+    signature: null,
+    note: null,
+    ...extra,
+  });
+  rows['teacherEmployment'] = [
+    post(IDS.empAnna, IDS.anna, { employmentPercent: new Prisma.Decimal('90.500'), reductionPercent: new Prisma.Decimal('20.000'), signature: 'AN', note: 'anna' }),
+    post(IDS.empBo, IDS.bo, { signature: 'BO', note: 'bo' }),
+    post(IDS.empCecilia, IDS.cecilia, {
+      employmentPercent: new Prisma.Decimal('80.000'),
+      contractKind: 'SEMESTER',
+      teachingTargetMinutesPerWeek: 700,
+      signature: 'CE',
+      note: 'cecilia',
+    }),
+  ];
+  rows['teacherDuty'] = [
+    duty(IDS.dutyRast, IDS.anna, 'RASTVAKT', 'Rastvakt', 30, { blockedConstraintId: IDS.slotRast, note: 'rast' }),
+    duty(IDS.dutyMentor7a, IDS.anna, 'MENTORSKAP', 'Mentor 7A', 60, {
+      studentGroupId: IDS.g7a,
+      blockedConstraintId: IDS.slotMentor,
+      countsAsTeaching: true,
+      note: 'mentor 7a',
+    }),
+    duty(IDS.dutyMentor9a, IDS.cecilia, 'MENTORSKAP', 'Mentor 9A', 60, { studentGroupId: IDS.g9a, note: 'mentor 9a' }),
+    duty(IDS.dutyStudie9a, IDS.cecilia, 'ANNAT', 'Studiehandledning 9A', 30, { studentGroupId: IDS.g9a, note: 'studie' }),
+    duty(IDS.dutyAmne, IDS.cecilia, 'AMNESANSVAR', 'Ämnesansvar Ma', 40, { subjectId: IDS.ma, note: 'amne' }),
+    duty(IDS.dutyBo, IDS.bo, 'RASTVAKT', 'Rastvakt', 20, { note: 'bo' }),
+    duty(IDS.dutyApt, IDS.cecilia, 'APT_KONFERENS', 'APT', 120, { blockedConstraintId: IDS.slotApt, note: 'apt' }),
+    duty(IDS.dutyGuardian, IDS.guardian, 'ANNAT', 'Föräldraråd', 15, { note: 'guardian' }),
+  ];
+  rows['availabilityConstraint']!.push(
+    teacherSlot(IDS.slotMentor, IDS.anna, 1, '08:00', '08:30'),
+    teacherSlot(IDS.slotApt, IDS.cecilia, 2, '15:02', '16:00'),
+  );
+  return rows;
 }
 
 // ---- the schema's relations, from the generated client's DMMF
@@ -463,7 +606,13 @@ export function givenRolloverWorld(
                     ? { ...row, subject: { name: table('subject').find((subject) => subject['id'] === row['subjectId'])?.['name'] } }
                     : name === 'academicYearTimplan'
                       ? { ...row, localTimplan: table('localTimplan').find((plan) => plan['id'] === row['localTimplanId']) }
-                      : row,
+                      : name === 'teacherDuty'
+                        ? {
+                            ...row,
+                            blockedConstraint:
+                              table('availabilityConstraint').find((constraint) => constraint['id'] === row['blockedConstraintId']) ?? null,
+                          }
+                        : row,
               );
             const context: MatchContext = { model: name, table, strict: options.strict === true };
             const found = table(name).filter((row) => matches(row, where, context));

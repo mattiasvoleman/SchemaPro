@@ -12,6 +12,7 @@ import type { LoadQualification } from '../staffing/teacher-load';
 import { readDecidedTimplans, type DecidedTimplan } from '../timplan/year-timplans';
 import { pendingMoves, planActivation, readActivationSource } from './activation-plan';
 import type { SourceTimplanRow } from './rollover-timplans';
+import type { SourceDuty, StaffingSource } from './rollover-staffing';
 
 /**
  * Everything the rollover plan is computed from, read in the caller's
@@ -137,6 +138,12 @@ export interface RolloverSource {
     mentorskap: number;
   };
   /**
+   * The source year's tjänster and uppdrag, read only when the request asks
+   * to carry them (staffing Fas 5); null otherwise, and then `skipped` holds
+   * the four counts the preview has always shown.
+   */
+  staffing: StaffingSource | null;
+  /**
    * Pupils the source's own activation would still move: all of a year not
    * yet activated (ROLLOVER_SOURCE_NOT_ACTIVATED), or the stragglers of an
    * active one (ROLLOVER_SOURCE_HAS_STRAGGLERS) — a pupil who was inactive at
@@ -148,6 +155,7 @@ export interface RolloverSource {
 export async function readRolloverSource(
   tx: PrismaClient,
   sourceYearId: string,
+  options: { carryStaffing?: boolean } = {},
 ): Promise<RolloverSource | null> {
   const year = await tx.academicYear.findUnique({
     where: { id: sourceYearId },
@@ -323,14 +331,30 @@ export async function readRolloverSource(
   const handPinnedSittings = await tx.lunchSitting.count({
     where: { academicYearId: sourceYearId, isGenerated: false },
   });
-  const employments = await tx.teacherEmployment.count({ where: { academicYearId: sourceYearId } });
-  const duties = await tx.teacherDuty.count({ where: { academicYearId: sourceYearId } });
-  const dutyBlockedSlots = await tx.teacherDuty.count({
-    where: { academicYearId: sourceYearId, blockedConstraintId: { not: null } },
-  });
-  const mentorskap = await tx.teacherDuty.count({
-    where: { academicYearId: sourceYearId, kind: 'MENTORSKAP' },
-  });
+  // Without the option, exactly the four counts of fa4a3d6, so a rollover
+  // that does not carry tjänster sends the statements it always has. With
+  // it, the rows themselves, and the counts follow from them.
+  let staffing: StaffingSource | null = null;
+  let employments: number;
+  let duties: number;
+  let dutyBlockedSlots: number;
+  let mentorskap: number;
+  if (options.carryStaffing === true) {
+    staffing = await readSourceStaffing(tx, sourceYearId);
+    employments = staffing.employments.length;
+    duties = staffing.duties.length;
+    dutyBlockedSlots = staffing.duties.filter((duty) => duty.slot !== null).length;
+    mentorskap = staffing.duties.filter((duty) => duty.kind === 'MENTORSKAP').length;
+  } else {
+    employments = await tx.teacherEmployment.count({ where: { academicYearId: sourceYearId } });
+    duties = await tx.teacherDuty.count({ where: { academicYearId: sourceYearId } });
+    dutyBlockedSlots = await tx.teacherDuty.count({
+      where: { academicYearId: sourceYearId, blockedConstraintId: { not: null } },
+    });
+    mentorskap = await tx.teacherDuty.count({
+      where: { academicYearId: sourceYearId, kind: 'MENTORSKAP' },
+    });
+  }
 
   // ROLLOVER_SOURCE_NOT_ACTIVATED: a year whose own pupils have not moved in
   // yet has empty home classes, so its counts and exclusions would be judged
@@ -426,6 +450,101 @@ export async function readRolloverSource(
       dutyBlockedSlots: dutyBlockedSlots ?? 0,
       mentorskap: mentorskap ?? 0,
     },
+    staffing,
     pendingMoves: pending,
+  };
+}
+
+/** Seconds kept when there are any, so the grid check sees a slot PostgREST wrote at 10:00:30. */
+const slotClock = (value: Date): string =>
+  value.getUTCSeconds() === 0 ? asClock(value) : value.toISOString().slice(11, 19);
+
+/**
+ * A year's tjänster and uppdrag as the carry reads them (staffing Fas 5), and
+ * the role and active flag of every person they name.
+ *
+ * Shared by the rollover and by the carry into an already rolled year, and
+ * read in the caller's transaction after its locks. A slot is read only in
+ * the shape the Fas 2 triggers guard — a weekly UNAVAILABLE TEACHER row of
+ * the duty's own teacher; anything else reads as no slot, so a carry never
+ * copies a shape the triggers would refuse. The people read is by id, not a
+ * roster: whose rows these are, not who sits in which class.
+ */
+export async function readSourceStaffing(tx: PrismaClient, yearId: string): Promise<StaffingSource> {
+  const employmentRows = await tx.teacherEmployment.findMany({
+    where: { academicYearId: yearId },
+    select: {
+      id: true,
+      userId: true,
+      employmentPercent: true,
+      reductionPercent: true,
+      contractKind: true,
+      teachingTargetMinutesPerWeek: true,
+      signature: true,
+      note: true,
+    },
+    orderBy: { id: 'asc' },
+  });
+  const dutyRows = await tx.teacherDuty.findMany({
+    where: { academicYearId: yearId },
+    select: {
+      id: true,
+      userId: true,
+      kind: true,
+      label: true,
+      minutesPerWeek: true,
+      countsAsTeaching: true,
+      subjectId: true,
+      studentGroupId: true,
+      note: true,
+      blockedConstraint: {
+        select: { resourceType: true, type: true, userId: true, dayOfWeek: true, date: true, startTime: true, endTime: true },
+      },
+    },
+    orderBy: { id: 'asc' },
+  });
+  const ids = [...new Set([...(employmentRows ?? []), ...(dutyRows ?? [])].map((row) => row.userId))].sort();
+  const people =
+    ids.length > 0
+      ? await tx.user.findMany({ where: { id: { in: ids } }, select: { id: true, role: true, isActive: true } })
+      : [];
+  const decimal = (value: unknown): string => Number(value).toFixed(3);
+  return {
+    employments: (employmentRows ?? []).map((row) => ({
+      id: row.id,
+      userId: row.userId,
+      employmentPercent: decimal(row.employmentPercent),
+      reductionPercent: decimal(row.reductionPercent),
+      contractKind: row.contractKind,
+      teachingTargetMinutesPerWeek: row.teachingTargetMinutesPerWeek,
+      signature: row.signature,
+      note: row.note,
+    })),
+    duties: (dutyRows ?? []).map((row): SourceDuty => {
+      const slot = row.blockedConstraint;
+      const guarded =
+        slot !== null &&
+        slot !== undefined &&
+        slot.resourceType === 'TEACHER' &&
+        slot.type === 'UNAVAILABLE' &&
+        slot.userId === row.userId &&
+        slot.dayOfWeek !== null &&
+        slot.date === null;
+      return {
+        id: row.id,
+        userId: row.userId,
+        kind: row.kind,
+        label: row.label,
+        minutesPerWeek: row.minutesPerWeek,
+        countsAsTeaching: row.countsAsTeaching,
+        subjectId: row.subjectId,
+        studentGroupId: row.studentGroupId,
+        note: row.note,
+        slot: guarded
+          ? { dayOfWeek: slot.dayOfWeek as number, startTime: slotClock(slot.startTime), endTime: slotClock(slot.endTime) }
+          : null,
+      };
+    }),
+    staff: new Map((people ?? []).map((person) => [person.id, { role: person.role, isActive: person.isActive }])),
   };
 }

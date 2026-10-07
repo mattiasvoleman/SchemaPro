@@ -24,6 +24,13 @@ import { qualificationFinding } from '../staffing/staffing-checks';
 import type { GradeSpan } from '../staffing/teacher-load';
 import { skippedModels } from './rollover-registry';
 import type { RolloverSource, SourceGroup } from './rollover-source';
+import {
+  planStaffingCarry,
+  stableStaffing,
+  type StaffingCarryPreview,
+  type StaffingProblemCode,
+  type StaffingWrites,
+} from './rollover-staffing';
 import { planCohortTimplans, type PlannedTimplan } from './rollover-timplans';
 
 /**
@@ -45,6 +52,12 @@ export interface RolloverRequest {
   keepTeachers?: boolean;
   carryClassRules?: boolean;
   breaks?: { sourceBreakId: string; startDate?: string; endDate?: string }[];
+  /**
+   * Carry tjänster and uppdrag (staffing Fas 5). Absent means false, unlike
+   * the four options above: a request from before the option existed plans,
+   * writes and hashes exactly as it did. The wizard sends true by default.
+   */
+  carryStaffing?: boolean;
 }
 
 export type RolloverProblemCode =
@@ -61,7 +74,8 @@ export type RolloverProblemCode =
   | 'BREAK_OUTSIDE_YEAR'
   | 'DUTY_SLOTS_NOT_CARRIED'
   | 'VOLUME_DIFFERS_FROM_TIMPLAN'
-  | 'ISO_WEEK_53_CROSSED';
+  | 'ISO_WEEK_53_CROSSED'
+  | StaffingProblemCode;
 
 export interface RolloverProblem {
   code: RolloverProblemCode;
@@ -127,6 +141,8 @@ export interface RolloverWrites {
   }[];
   /** Timplan per årskurs of the new year: the cohorts' plans, and each other grade's default or own plan. */
   timplans: { gradeLevel: number; localTimplanId: string }[];
+  /** Tjänster and uppdrag (staffing Fas 5); null without carryStaffing, and then outside the hash. */
+  staffing: StaffingWrites | null;
 }
 
 export interface PlannedGroup {
@@ -192,6 +208,8 @@ export interface RolloverPlan {
    * own when none does. See rollover-timplans.ts.
    */
   timplans: PlannedTimplan[];
+  /** What carrying tjänster and uppdrag would do; null without carryStaffing. */
+  staffing: StaffingCarryPreview | null;
   skipped: { model: string; reason: string; count: number | null }[];
   problems: RolloverProblem[];
   blocking: boolean;
@@ -208,7 +226,11 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     carryTeachingGroupMembers: request.carryTeachingGroupMembers ?? true,
     keepTeachers: request.keepTeachers ?? true,
     carryClassRules: request.carryClassRules ?? true,
+    carryStaffing: request.carryStaffing === true,
   };
+  if (options.carryStaffing && source.staffing === null) {
+    throw new Error('planRollover: carryStaffing needs the source read with its staffing.');
+  }
   const problems: RolloverProblem[] = [];
   const sourceBounds: DayBounds = { startDate: source.year.startDate, endDate: source.year.endDate };
   const target: DayBounds = { startDate: request.startDate, endDate: request.endDate };
@@ -314,6 +336,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     breaks: [],
     classRules: [],
     timplans: [],
+    staffing: null,
   };
   for (const row of resolved) {
     const group = groupById.get(row.sourceGroupId)!;
@@ -648,8 +671,27 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     });
   }
 
+  // ---- tjänster and uppdrag, when asked for
+  let staffing: StaffingCarryPreview | null = null;
+  if (options.carryStaffing) {
+    const carry = planStaffingCarry({
+      staffing: source.staffing!,
+      // The successor the groups step writes, keyed by the source group as
+      // every other step maps a group; an INTAKE twin continues nothing.
+      successorOf: (sourceGroupId) => {
+        const successor = resolvedById.get(sourceGroupId)?.successor;
+        return successor ? { key: sourceGroupId, name: successor.name } : null;
+      },
+      groupName: (sourceGroupId) => groupById.get(sourceGroupId)?.name ?? null,
+      existing: null,
+    });
+    writes.staffing = carry.writes;
+    staffing = carry.preview;
+    problems.push(...carry.problems);
+  }
+
   // ---- left behind
-  if (source.skipped.duties > 0) {
+  if (!options.carryStaffing && source.skipped.duties > 0) {
     problems.push({
       code: 'DUTY_SLOTS_NOT_CARRIED',
       blocking: false,
@@ -666,7 +708,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     TeacherEmployment: source.skipped.employments,
     TeacherDuty: source.skipped.duties,
   };
-  const skipped = skippedModels().map((entry) => ({
+  const skipped = skippedModels({ carryStaffing: options.carryStaffing }).map((entry) => ({
     model: entry.model,
     reason: entry.reason,
     count: entry.counted ? (counts[entry.model] ?? 0) : null,
@@ -715,6 +757,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     breaks,
     classRules,
     timplans,
+    staffing,
     skipped,
     problems,
     blocking: problems.some((problem) => problem.blocking),
@@ -743,6 +786,9 @@ export function hashWrites(writes: RolloverWrites): string {
       .sort((a, b) => (a.sourceConstraintId < b.sourceConstraintId ? -1 : 1))
       .map((rule) => ({ ...rule, startTime: clock(rule.startTime), endTime: clock(rule.endTime) })),
     timplans: [...writes.timplans].sort((a, b) => a.gradeLevel - b.gradeLevel),
+    // Appended only when tjänster are carried: without the option the JSON,
+    // and so the hash, is fa4a3d6's to the byte (pinned in the service spec).
+    ...(writes.staffing !== null ? { staffing: stableStaffing(writes.staffing) } : {}),
   };
   return createHash('sha256').update(JSON.stringify(ordered)).digest('hex');
 }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../database/prisma.service';
@@ -8,6 +9,7 @@ import {
   defaultRolloverRows,
   givenRolloverWorld,
   prismaFor,
+  staffingRows,
   type RecordedCall,
   type RolloverWorld,
   type Row,
@@ -422,8 +424,11 @@ describe('YearRolloverService — rollover execute', () => {
    * must be null on both sides, TARGET_YEAR is the new year and MAP_GROUP a
    * new group that continues the source row's group.
    */
-  it('writes every COPY column as the source has it, and every NULL column as null (registry against the writes)', async () => {
-    const rows = defaultRolloverRows();
+  it.each([
+    ['without tjänster', false],
+    ['with tjänster and uppdrag (carryStaffing)', true],
+  ])('writes every COPY column as the source has it, and every NULL column as null (registry against the writes), %s', async (_label, carryStaffing) => {
+    const rows = carryStaffing ? staffingRows() : defaultRolloverRows();
     // A decided plan, so the new year's entry grade (åk 7) is written from
     // the default rule and not only the cohorts' rows are audited.
     rows['localTimplan']!.push({
@@ -453,9 +458,20 @@ describe('YearRolloverService — rollover execute', () => {
       ...OPTIONS,
       breaks: [{ sourceBreakId: IDS.hostlov }],
       groups: [{ sourceGroupId: IDS.g7a, outcome: 'INTAKE' }],
+      carryStaffing,
     });
     const target = result.academicYear.id;
     const created = (id: unknown) => world.rows['studentGroup']!.find((group) => group['id'] === id)!;
+    /** The source duty a carried slot holds the time of: the teacher's, on that weekday and start. */
+    const dutyOfSlot = (row: Row) =>
+      source['teacherDuty']!.find((duty) => {
+        const slot = source['availabilityConstraint']!.find((constraint) => constraint['id'] === duty['blockedConstraintId']);
+        return (
+          duty['userId'] === row['userId'] &&
+          slot?.['dayOfWeek'] === row['dayOfWeek'] &&
+          slot?.['startTime'] === (row['startTime'] as Date).toISOString()
+        );
+      });
     // The source group a new group continues: its link, or (the intake twin) its name.
     const sourceGroupOf = (id: unknown): unknown => {
       const group = created(id);
@@ -477,10 +493,17 @@ describe('YearRolloverService — rollover execute', () => {
             requirement['subjectId'] === row['subjectId'] && requirement['studentGroupId'] === sourceGroupOf(row['studentGroupId']),
         ),
       schoolBreak: (row) => source['schoolBreak']!.find((lov) => lov['name'] === row['name']),
+      // A class rule continues the rule of the group it moved from; an
+      // uppdrag's slot (C12) copies the slot of the duty it is carried with.
       availabilityConstraint: (row) =>
-        source['availabilityConstraint']!.find(
-          (rule) => rule['dayOfWeek'] === row['dayOfWeek'] && rule['studentGroupId'] === sourceGroupOf(row['studentGroupId']),
-        ),
+        row['resourceType'] === 'TEACHER'
+          ? source['availabilityConstraint']!.find((constraint) => constraint['id'] === dutyOfSlot(row)?.['blockedConstraintId'])
+          : source['availabilityConstraint']!.find(
+              (rule) => rule['dayOfWeek'] === row['dayOfWeek'] && rule['studentGroupId'] === sourceGroupOf(row['studentGroupId']),
+            ),
+      teacherEmployment: (row) => source['teacherEmployment']!.find((post) => post['userId'] === row['userId']),
+      // Every source duty carries a note naming it (staffingRows).
+      teacherDuty: (row) => source['teacherDuty']!.find((duty) => duty['note'] === row['note']),
       // The source row a written grade comes from (timplanOrigin).
       academicYearTimplan: (row) => timplanOrigin(row).from,
     };
@@ -511,21 +534,47 @@ describe('YearRolloverService — rollover execute', () => {
     function findId(row: Row): unknown {
       return world.rows['studentGroup']!.find((group) => group['academicYearId'] === target && group['name'] === row['name'])!['id'];
     }
-    const comparable = (value: unknown) => (value instanceof Date ? value.toISOString() : value ?? null);
+    // A Decimal(6,3) is read as a Prisma Decimal and written as its toFixed(3) string (C12).
+    const comparable = (value: unknown) =>
+      value instanceof Date
+        ? value.toISOString()
+        : value instanceof Prisma.Decimal || (typeof value === 'object' && value !== null && 'toFixed' in value)
+          ? Number(value).toFixed(3)
+          : (value ?? null);
+    // JSON.parse turned the source's Decimals into strings; read them as numbers.
+    const comparableSource = (column: string, value: unknown) =>
+      /Percent$/.test(column) && typeof value === 'string' ? Number(value).toFixed(3) : comparable(value);
+    const newSlots = new Set<unknown>();
+    for (const call of world.calls) {
+      if (call.model === 'availabilityConstraint' && call.method === 'createManyAndReturn') {
+        for (const row of world.rows['availabilityConstraint']!.slice(-((call.args as { data: Row[] }).data.length))) newSlots.add(row['id']);
+      }
+    }
+    const staffingRules: string[] = [];
 
     let checked = 0;
     for (const call of world.calls) {
       if (!call.method.startsWith('create')) continue;
       const modelName = call.model[0]!.toUpperCase() + call.model.slice(1);
-      const disposition = ROLLOVER_REGISTRY[modelName] as { columns: Record<string, ColumnRule> };
+      const disposition = ROLLOVER_REGISTRY[modelName] as {
+        columns: Record<string, ColumnRule>;
+        alsoWrittenBy?: { columns: Record<string, ColumnRule> }[];
+      };
       const data = (call.args as { data: Row | Row[] }).data;
       for (const row of Array.isArray(data) ? data : [data]) {
         const from = sourceRowOf[call.model]!(row);
         expect({ model: call.model, found: from !== undefined }).toEqual({ model: call.model, found: true });
-        for (const [column, rule] of Object.entries(disposition.columns)) {
+        // AvailabilityConstraints has two writers (C12): a TEACHER row is an
+        // uppdrag's slot, held to the duties step's rules.
+        const columns =
+          call.model === 'availabilityConstraint' && row['resourceType'] === 'TEACHER'
+            ? disposition.alsoWrittenBy![0]!.columns
+            : disposition.columns;
+        for (const [column, rule] of Object.entries(columns)) {
           const at = { model: call.model, column, rule };
+          if (['PROMOTE_LABEL', 'FOLLOW_GROUP', 'NEW_SLOT', 'DUTY_SLOT_REASON'].includes(rule)) staffingRules.push(rule);
           if (rule === 'COPY') {
-            const expected = column === 'schoolId' ? admin.schoolId : comparable(from![column]);
+            const expected = column === 'schoolId' ? admin.schoolId : comparableSource(column, from![column]);
             expect({ ...at, written: column in row, value: comparable(row[column]) }).toEqual({ ...at, written: true, value: expected });
             checked++;
           } else if (rule === 'NULL') {
@@ -544,6 +593,38 @@ describe('YearRolloverService — rollover execute', () => {
             expect({ ...at, kind: origin.kind, value: row[column] }).toEqual({ ...at, kind: origin.kind, value: origin.plan });
             timplanKinds.push(origin.kind);
             checked++;
+          } else if (rule === 'FOLLOW_GROUP') {
+            // The successor of the source duty's group, or null when it has none.
+            const successor = world.rows['studentGroup']!.find(
+              (group) => group['academicYearId'] === target && group['predecessorId'] === from![column],
+            );
+            expect({ ...at, value: row[column] }).toEqual({ ...at, value: from![column] === null ? null : (successor?.['id'] ?? null) });
+            checked++;
+          } else if (rule === 'PROMOTE_LABEL') {
+            const fromGroup = source['studentGroup']!.find((group) => group['id'] === from!['studentGroupId']);
+            const toGroup = world.rows['studentGroup']!.find((group) => group['id'] === row['studentGroupId']);
+            const expected =
+              fromGroup && toGroup
+                ? String(from![column]).split(String(fromGroup['name'])).join(String(toGroup['name']))
+                : from![column];
+            expect({ ...at, value: row[column] }).toEqual({ ...at, value: expected });
+            checked++;
+          } else if (rule === 'NEW_SLOT') {
+            // A slot made in this run for this teacher, never the source's own;
+            // none where the source had none (or one off the grid: 15:02).
+            const sourceSlot = source['availabilityConstraint']!.find((constraint) => constraint['id'] === from![column]);
+            const onGrid = sourceSlot !== undefined && new Date(String(sourceSlot['startTime'])).getUTCMinutes() % 5 === 0;
+            const slot = world.rows['availabilityConstraint']!.find((constraint) => constraint['id'] === row[column]);
+            expect({ ...at, made: row[column] === null ? null : newSlots.has(row[column]), sameTeacher: slot ? slot['userId'] === row['userId'] : null }).toEqual({
+              ...at,
+              made: onGrid ? true : null,
+              sameTeacher: onGrid ? true : null,
+            });
+            expect(row[column]).not.toBe(from![column] ?? 'none');
+            checked++;
+          } else if (rule === 'DUTY_SLOT_REASON') {
+            expect({ ...at, value: row[column] }).toEqual({ ...at, value: 'Uppdrag' });
+            checked++;
           }
         }
       }
@@ -551,6 +632,10 @@ describe('YearRolloverService — rollover execute', () => {
     expect(checked).toBeGreaterThan(40);
     // Both ways a timplan row is written were audited.
     expect(timplanKinds.sort()).toEqual(['CARRIED', 'CARRIED', 'DEFAULT']);
+    // And every staffing rule, when tjänster are carried; none without.
+    expect([...new Set(staffingRules)].sort()).toEqual(
+      carryStaffing ? ['DUTY_SLOT_REASON', 'FOLLOW_GROUP', 'NEW_SLOT', 'PROMOTE_LABEL'] : [],
+    );
   });
 
   it('refuses a stale preview with 409 before any write', async () => {
@@ -638,6 +723,241 @@ describe('YearRolloverService — rollover execute', () => {
       .executeRollover(IDS.yearA, { ...OPTIONS, graduatingGradeLevel: 9, planHash: preview.planHash }, admin)
       .catch((e) => e);
     expect(refusal.getResponse()).toMatchObject({ code: 'YEAR_NAME_TAKEN' });
+  });
+});
+
+describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => {
+  const PINNED = 'ad548651574bc2a534bab3564dded501c71d6cb1c549fb935de895e610a0a621';
+  const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const callNames = (calls: RecordedCall[]) => calls.map((call) => call.sql ?? `${call.model}.${call.method}`);
+
+  /**
+   * fa4a3d6's preview and execute of the frozen school, statement by
+   * statement: the preview's calls with their arguments as a digest, the
+   * execute's as names (its creates carry fresh ids). Recorded against a
+   * `git archive fa4a3d6` of src/ and test/ before this change, and equal to
+   * what the code sends now with the option absent or false (C3).
+   */
+  const FA4A3D6_PREVIEW_CALLS = '4f1fba52e20373abfa1905fd30742edc9cf3d591dc62f473e77db45dccdb114e';
+  const FA4A3D6_EXECUTE_CALLS = [
+    'SELECT "startDate", "endDate" FROM "AcademicYears" WHERE "id" = ?::uuid FOR SHARE',
+    'SELECT "id" FROM "StudentGroups" WHERE "academicYearId" = ?::uuid ORDER BY "id" FOR SHARE',
+    'academicYear.findUnique', 'academicYear.findFirst', 'academicYear.findMany', 'studentGroup.findMany',
+    'user.findMany', 'studentGroupMember.findMany', 'teachingRequirement.findMany', 'schoolBreak.findMany',
+    'availabilityConstraint.findMany', 'frameTime.findMany', 'localTimplan.findMany', 'subject.findMany',
+    'academicYearTimplan.findMany', 'localTimplan.findMany', 'user.findMany', 'staffingPolicy.findFirst',
+    'teacherSubjectQualification.findMany', 'masterLesson.count', 'masterLesson.count', 'lunchSitting.count',
+    'lunchSitting.count', 'teacherEmployment.count', 'teacherDuty.count', 'teacherDuty.count', 'teacherDuty.count',
+    'academicYear.findMany', 'studentGroup.findMany', 'user.findMany', 'studentGroupMember.findMany',
+    'academicYear.create', 'studentGroup.createManyAndReturn', 'studentGroupMember.createMany',
+    'teachingRequirement.createMany', 'availabilityConstraint.createMany', 'academicYearTimplan.count',
+    'academicYearTimplan.createMany',
+  ];
+
+  it.each([
+    ['absent', {}],
+    ['false', { carryStaffing: false }],
+  ])('with the option %s, plans, hashes, reads and writes exactly as fa4a3d6 (C3, D2)', async (_label, option) => {
+    const { world, service } = setup(rolloverRowsAtFa4a3d6());
+    const preview = await service.previewRollover(IDS.yearA, { ...OPTIONS, ...option }, admin);
+    expect(preview.planHash).toBe(PINNED);
+    expect(digest(world.calls)).toBe(FA4A3D6_PREVIEW_CALLS);
+    expect(preview.staffing).toBeNull();
+    expect(preview.problems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'DUTY_SLOTS_NOT_CARRIED', params: { duties: 1, blockedSlots: 1, mentorskap: 0 } }),
+      ]),
+    );
+    expect(preview.problems.filter((problem) => problem.code.startsWith('STAFFING_'))).toEqual([]);
+    expect(preview.skipped.filter((entry) => entry.model.startsWith('Teacher'))).toEqual([
+      { model: 'TeacherEmployment', reason: 'Tjänster are rolled by staffing Fas 5, which decides what a post carries into the next year.', count: 1 },
+      expect.objectContaining({ model: 'TeacherDuty', count: 1 }),
+    ]);
+    world.calls.length = 0;
+    const result = await service.executeRollover(
+      IDS.yearA,
+      { ...OPTIONS, ...option, graduatingGradeLevel: 9, planHash: preview.planHash },
+      admin,
+    );
+    expect(callNames(world.calls)).toEqual(FA4A3D6_EXECUTE_CALLS);
+    expect(result.staffing).toBeNull();
+    expect(result.planHash).toBe(PINNED);
+  });
+
+  it('previews who and what is carried, names every nedsättning and target override, and blocks on none of it', async () => {
+    const { world, service } = setup(staffingRows());
+    const preview = await service.previewRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true }, admin);
+    expect(writesOf(world.calls)).toEqual([]);
+    expect(preview.blocking).toBe(false);
+    expect(preview.staffing!.employments).toEqual({
+      carried: 2,
+      withReduction: [IDS.anna],
+      withTargetOverride: [IDS.cecilia],
+      notCarried: [{ userId: IDS.bo, reason: 'INACTIVE' }],
+      signaturesDropped: [],
+    });
+    const duties = preview.staffing!.duties;
+    expect(duties).toMatchObject({ carried: 5, slots: 2, followedGroup: 1 });
+    expect(duties.relabelled).toEqual([{ sourceDutyId: IDS.dutyMentor7a, userId: IDS.anna, from: 'Mentor 7A', to: 'Mentor 8A' }]);
+    expect(duties.groupDropped).toEqual([expect.objectContaining({ sourceDutyId: IDS.dutyStudie9a, groupName: '9A' })]);
+    expect(duties.slotDropped).toEqual([expect.objectContaining({ sourceDutyId: IDS.dutyApt, reason: 'OFF_GRID' })]);
+    expect(duties.notCarried.map((row) => [row.sourceDutyId, row.reason])).toEqual([
+      [IDS.dutyMentor9a, 'GROUP_LEAVES'],
+      [IDS.dutyBo, 'TEACHER_NOT_CARRIED'],
+      [IDS.dutyGuardian, 'TEACHER_NOT_CARRIED'],
+    ]);
+    expect(preview.staffing!.teachers).toEqual([
+      { userId: IDS.anna, employment: 'CARRIED', duties: 2, dutyMinutesPerWeek: 90 },
+      { userId: IDS.bo, employment: 'NOT_CARRIED', duties: 0, dutyMinutesPerWeek: 0 },
+      { userId: IDS.cecilia, employment: 'CARRIED', duties: 3, dutyMinutesPerWeek: 190 },
+      { userId: IDS.guardian, employment: 'NONE', duties: 0, dutyMinutesPerWeek: 0 },
+    ]);
+    const codes = preview.problems.filter((problem) => problem.code.startsWith('STAFFING_') || problem.code === 'DUTY_SLOTS_NOT_CARRIED');
+    expect(codes).toEqual([
+      { code: 'STAFFING_MENTORSKAP_NOT_CARRIED', blocking: false, params: { duties: 1, groups: ['9A'] } },
+      { code: 'STAFFING_DUTY_GROUP_DROPPED', blocking: false, params: { duties: 1, groups: ['9A'] } },
+      { code: 'STAFFING_TEACHERS_NOT_CARRIED', blocking: false, params: { teachers: 2 } },
+      { code: 'STAFFING_SLOT_OFF_GRID', blocking: false, params: { duties: 1 } },
+      { code: 'STAFFING_PER_YEAR_TERMS_CARRIED', blocking: false, params: { reductions: 1, overrides: 1 } },
+    ]);
+    // Carried tables are not "left behind".
+    expect(preview.skipped.map((entry) => entry.model)).not.toEqual(expect.arrayContaining(['TeacherEmployment']));
+    expect(preview.skipped.map((entry) => entry.model)).not.toContain('TeacherDuty');
+    // Params name no teacher.
+    expect(JSON.stringify(preview.problems)).not.toContain(IDS.anna);
+  });
+
+  it('writes the posts, the uppdrag and NEW slots into the new year, takes the staff and their rows under lock, and changes nothing of the source', async () => {
+    const rows = staffingRows();
+    const { world, service } = setup(rows);
+    const before = JSON.stringify(rows);
+    const { result } = await previewAndExecute(world, service, {
+      ...OPTIONS,
+      carryStaffing: true,
+      breaks: [{ sourceBreakId: IDS.jullov }],
+    });
+    const target = result.academicYear.id;
+
+    expect(result.staffing).toEqual({ employments: 2, duties: 5, dutySlots: 2 });
+    // `counts` keeps its shape: the adapter probe compares it whole.
+    expect(Object.keys(result.counts).sort()).toEqual(['breaks', 'classRules', 'groups', 'members', 'requirements', 'timplans']);
+
+    expect(
+      world.calls.filter((call) => call.model === '$queryRaw').map((call) => call.sql!.replace(/^SELECT .*? FROM /, '')),
+    ).toEqual([
+      '"AcademicYears" WHERE "id" = ?::uuid FOR SHARE',
+      '"StudentGroups" WHERE "academicYearId" = ?::uuid ORDER BY "id" FOR SHARE',
+      '"Users" WHERE "id" = ANY(?::uuid[]) ORDER BY "id" FOR NO KEY UPDATE',
+      '"TeacherEmployments" WHERE "academicYearId" = ?::uuid ORDER BY "id" FOR SHARE',
+      '"TeacherDuties" WHERE "academicYearId" = ?::uuid ORDER BY "id" FOR SHARE',
+    ]);
+    const usersLock = world.calls.find((call) => call.sql?.includes('"Users"'))!;
+    expect(usersLock.values![0]).toEqual([IDS.anna, IDS.bo, IDS.cecilia, IDS.guardian]);
+
+    const posts = world.rows['teacherEmployment']!.filter((row) => row['academicYearId'] === target);
+    expect(posts.map((row) => [row['userId'], row['employmentPercent'], row['reductionPercent'], row['signature']]).sort()).toEqual([
+      [IDS.anna, '90.500', '20.000', 'AN'],
+      [IDS.cecilia, '80.000', '0.000', 'CE'],
+    ]);
+    const carried = world.rows['teacherDuty']!.filter((row) => row['academicYearId'] === target);
+    const g8a = world.rows['studentGroup']!.find((group) => group['academicYearId'] === target && group['name'] === '8A')!['id'];
+    expect(carried.find((row) => row['kind'] === 'MENTORSKAP')).toMatchObject({ label: 'Mentor 8A', studentGroupId: g8a, countsAsTeaching: true });
+    expect(carried.find((row) => row['note'] === 'studie')).toMatchObject({ studentGroupId: null, label: 'Studiehandledning 9A' });
+    expect(carried.find((row) => row['note'] === 'apt')).toMatchObject({ blockedConstraintId: null });
+    const slots = carried.filter((row) => row['blockedConstraintId'] !== null).map((row) =>
+      world.rows['availabilityConstraint']!.find((constraint) => constraint['id'] === row['blockedConstraintId'])!,
+    );
+    expect(slots.map((slot) => [slot['userId'], slot['dayOfWeek'], slot['reason'], slot['type'], slot['resourceType']]).sort()).toEqual([
+      [IDS.anna, 1, 'Uppdrag', 'UNAVAILABLE', 'TEACHER'],
+      [IDS.anna, 2, 'Uppdrag', 'UNAVAILABLE', 'TEACHER'],
+    ]);
+    expect(slots.map((slot) => slot['id'])).not.toEqual(expect.arrayContaining([IDS.slotRast, IDS.slotMentor]));
+
+    // Every create targets the new year, and the created tables are the
+    // registry's carried ones with the option on.
+    const created = new Set(world.calls.filter((call) => call.method.startsWith('create')).map((call) => call.model));
+    expect([...created].sort()).toEqual(
+      carriedModels({ carryStaffing: true }).map(({ model }) => model[0]!.toLowerCase() + model.slice(1)).sort(),
+    );
+    for (const call of world.calls.filter((entry) => entry.method.startsWith('create') && entry.model.startsWith('teacher'))) {
+      for (const row of (call.args as { data: Row[] }).data) expect(row['academicYearId']).toBe(target);
+    }
+    expect(writesOf(world.calls).every((call) => call.method.startsWith('create'))).toBe(true);
+    // The source year, its staff and their slots, untouched.
+    const sourceNow = JSON.stringify(
+      Object.fromEntries(
+        Object.entries(world.rows).map(([model, list]) => [
+          model,
+          list.filter((row) => !String(row['id'] ?? '').startsWith('90000000') && row['academicYearId'] !== target),
+        ]),
+      ),
+    );
+    expect(sourceNow).toBe(before);
+  });
+
+  it('refuses a stale preview before any write when a carried row changed, and says tjänster', async () => {
+    const { world, service } = setup(staffingRows());
+    const preview = await service.previewRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true }, admin);
+    world.rows['teacherDuty']!.find((duty) => duty['id'] === IDS.dutyAmne)!['minutesPerWeek'] = 45;
+    world.calls.length = 0;
+    const refusal = await service
+      .executeRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true, graduatingGradeLevel: 9, planHash: preview.planHash }, admin)
+      .catch((e) => e);
+    expect(refusal).toBeInstanceOf(ConflictException);
+    expect(refusal.getResponse()).toMatchObject({ code: 'ROLLOVER_PREVIEW_STALE' });
+    expect(refusal.message).toContain('tjänster eller uppdrag');
+    expect(writesOf(world.calls)).toEqual([]);
+  });
+
+  it('asks the option of the hash: the same school hashes differently with and without tjänster, and either way twice the same', async () => {
+    const { service } = setup(staffingRows());
+    const off = await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    const on = await service.previewRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true }, admin);
+    expect(on.planHash).not.toBe(off.planHash);
+    expect((await service.previewRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true }, admin)).planHash).toBe(on.planHash);
+  });
+
+  it('takes no Users lock when the source year has no tjänster, and writes none', async () => {
+    const rows = defaultRolloverRows();
+    rows['teacherEmployment'] = [];
+    rows['teacherDuty'] = [];
+    const { world, service } = setup(rows);
+    const { result, preview } = await previewAndExecute(world, service, { ...OPTIONS, carryStaffing: true });
+    expect(preview.staffing).toMatchObject({ employments: { carried: 0 }, duties: { carried: 0 }, teachers: [] });
+    expect(world.calls.some((call) => call.sql?.includes('"Users"'))).toBe(false);
+    expect(result.staffing).toEqual({ employments: 0, duties: 0, dutySlots: 0 });
+    expect(world.calls.some((call) => call.model.startsWith('teacher') && call.method.startsWith('create'))).toBe(false);
+  });
+
+  it('carries a mentorskap to the successor of a CARRY group, never to an INTAKE twin, and not with a teaching group left behind', async () => {
+    const rows = staffingRows();
+    rows['teacherDuty']!.push({
+      ...rows['teacherDuty']![1]!,
+      id: 'f4000000-0000-4000-8000-000000000009',
+      label: 'Mentor Ma7 grupp 1',
+      studentGroupId: IDS.gMa7,
+      blockedConstraintId: null,
+      note: 'ma7',
+    });
+    const { service } = setup(rows);
+    const intake = await service.previewRollover(
+      IDS.yearA,
+      { ...OPTIONS, carryStaffing: true, groups: [{ sourceGroupId: IDS.g7a, outcome: 'INTAKE' }] },
+      admin,
+    );
+    // 7A's cohort moves to 8A (the twin 7A is new, with no predecessor).
+    expect(intake.staffing!.duties.relabelled.map((row) => row.to).sort()).toEqual(['Mentor 8A', 'Mentor Ma8 grupp 1']);
+    const carry = await service.previewRollover(
+      IDS.yearA,
+      { ...OPTIONS, carryStaffing: true, groups: [{ sourceGroupId: IDS.g7a, outcome: 'CARRY' }] },
+      admin,
+    );
+    expect(carry.staffing!.duties.notCarried.some((row) => row.sourceDutyId === IDS.dutyMentor7a)).toBe(false);
+    expect(carry.staffing!.duties.relabelled.map((row) => row.to)).toEqual(['Mentor Ma8 grupp 1']);
+    const noGroups = await service.previewRollover(IDS.yearA, { ...OPTIONS, carryStaffing: true, carryTeachingGroups: false }, admin);
+    expect(noGroups.staffing!.duties.notCarried).toEqual(
+      expect.arrayContaining([expect.objectContaining({ sourceDutyId: 'f4000000-0000-4000-8000-000000000009', reason: 'GROUP_LEAVES', groupName: 'Ma7 grupp 1' })]),
+    );
   });
 });
 

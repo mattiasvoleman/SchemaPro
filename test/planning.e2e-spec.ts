@@ -3,7 +3,7 @@ import request from 'supertest';
 import { lockingRead, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './utils/staffing-world';
-import { GRUNDSKOLA_2024, IDS, defaultRolloverRows, givenRolloverWorld, type Row } from './utils/rollover-world';
+import { GRUNDSKOLA_2024, IDS, defaultRolloverRows, givenRolloverWorld, staffingRows, type Row } from './utils/rollover-world';
 import { rolloverRowsAtFa4a3d6 } from './utils/rollover-rows-fa4a3d6';
 import type { PrismaMock } from './utils/prisma-mock';
 import { PrismaService } from '../src/database/prisma.service';
@@ -3261,6 +3261,62 @@ describe('Planning surface (e2e)', () => {
         .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
         .expect(201);
       expect(created.body.planHash).toBe(preview.body.planHash);
+      // Without the field: no staffing in the preview or the result, as before.
+      expect(preview.body.staffing).toBeNull();
+      expect(created.body.staffing).toBeNull();
+    });
+
+    it('carries tjänster and uppdrag when asked, over HTTP: the preview names them, the execute writes them (admin round-trip)', async () => {
+      const world = givenRolloverWorld(staffingRows());
+      prisma.withRls.mockImplementation((_user: unknown, fn: (tx: unknown) => unknown) => fn(world.tx));
+      const options = { name: '2027/28', startDate: '2027-08-16', endDate: '2028-06-09', carryStaffing: true };
+      const preview = await request(http()).post(`${base}/rollover/preview`).set('x-test-user', admin()).send(options).expect(200);
+      expect(preview.body.blocking).toBe(false);
+      expect(preview.body.staffing).toMatchObject({
+        employments: { carried: 2, withReduction: [IDS.anna], withTargetOverride: [IDS.cecilia] },
+        duties: { carried: 5, slots: 2, relabelled: [expect.objectContaining({ from: 'Mentor 7A', to: 'Mentor 8A' })] },
+      });
+      expect(preview.body.problems.map((problem: { code: string }) => problem.code)).toEqual(
+        expect.arrayContaining(['STAFFING_MENTORSKAP_NOT_CARRIED', 'STAFFING_PER_YEAR_TERMS_CARRIED']),
+      );
+      expect(preview.body).not.toHaveProperty('writes');
+      const created = await request(http())
+        .post(`${base}/rollover`)
+        .set('x-test-user', admin())
+        .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
+        .expect(201);
+      expect(created.body.staffing).toEqual({ employments: 2, duties: 5, dutySlots: 2 });
+      const target = created.body.academicYear.id as string;
+      expect(world.rows['teacherDuty']!.filter((row) => row['academicYearId'] === target)).toHaveLength(5);
+    });
+
+    it('409s a carry’s hash executed without the option: the option is inside the plan hash', async () => {
+      const world = givenRolloverWorld(staffingRows());
+      prisma.withRls.mockImplementation((_user: unknown, fn: (tx: unknown) => unknown) => fn(world.tx));
+      const options = { name: '2027/28', startDate: '2027-08-16', endDate: '2028-06-09' };
+      const preview = await request(http())
+        .post(`${base}/rollover/preview`)
+        .set('x-test-user', admin())
+        .send({ ...options, carryStaffing: true })
+        .expect(200);
+      const stale = await request(http())
+        .post(`${base}/rollover`)
+        .set('x-test-user', admin())
+        .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
+        .expect(409);
+      expect(stale.body).toMatchObject({ code: 'ROLLOVER_PREVIEW_STALE' });
+      expect(world.rows['academicYear']).toHaveLength(1);
+    });
+
+    it('400s carryStaffing that is not a boolean, naming it, before reading anything', async () => {
+      givenSchool(2020);
+      const response = await request(http())
+        .post(`${base}/rollover/preview`)
+        .set('x-test-user', admin())
+        .send({ name: 'x', startDate: '2021-08-16', endDate: '2022-06-10', carryStaffing: 'ja' })
+        .expect(400);
+      expect(JSON.stringify(response.body)).toContain('carryStaffing: true eller false.');
+      expect(prisma.withRls).not.toHaveBeenCalled();
     });
 
     it.each([

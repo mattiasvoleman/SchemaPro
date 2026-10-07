@@ -1,7 +1,9 @@
 import type { PrismaClient } from '@prisma/client';
-import { parseDateString } from '../common/utils/time';
+import { parseDateString, toWallClock } from '../common/utils/time';
+import { dutySlotConstraintData } from '../staffing/duty-slot';
 import type { RolloverWrites } from './rollover-plan';
 import { ROLLOVER_STEP_ORDER, type RolloverStepName } from './rollover-registry';
+import type { StaffingWrites } from './rollover-staffing';
 
 /**
  * The rollover's writes, one step per carried table, in ROLLOVER_STEP_ORDER.
@@ -26,6 +28,18 @@ export interface StepContext {
   targetYearId: string | null;
   groupIdByKey: Map<string, string>;
   counts: { groups: number; members: number; requirements: number; breaks: number; classRules: number; timplans: number };
+  /**
+   * What the two staffing steps wrote, beside `counts` rather than in it: the
+   * result's `counts` stays the shape it has always had (the adapter probe
+   * compares it whole), and a rollover without tjänster reports null here.
+   */
+  staffingCounts: StaffingCounts;
+}
+
+export interface StaffingCounts {
+  employments: number;
+  duties: number;
+  dutySlots: number;
 }
 
 const day = (value: string | null): Date | null => (value === null ? null : parseDateString(value));
@@ -171,14 +185,129 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
     });
     context.counts.timplans = count;
   },
+
+  async employments(context) {
+    const staffing = context.writes.staffing;
+    if (!staffing || staffing.employments.length === 0) return;
+    const counts = await applyStaffingWrites(
+      context.tx,
+      context.schoolId,
+      context.targetYearId as string,
+      { employments: staffing.employments, duties: [] },
+      (key) => groupOf(context, key),
+    );
+    context.staffingCounts.employments = counts.employments;
+  },
+
+  async duties(context) {
+    const staffing = context.writes.staffing;
+    if (!staffing || staffing.duties.length === 0) return;
+    const counts = await applyStaffingWrites(
+      context.tx,
+      context.schoolId,
+      context.targetYearId as string,
+      { employments: [], duties: staffing.duties },
+      (key) => groupOf(context, key),
+    );
+    context.staffingCounts.duties = counts.duties;
+    context.staffingCounts.dutySlots = counts.dutySlots;
+  },
 };
+
+/**
+ * Tjänster and uppdrag into `targetYearId`, inserts only: the rollover's two
+ * last steps, and the whole of the carry into an already rolled year.
+ *
+ *  - employments: one createMany.
+ *  - duties: the slots first, one createManyAndReturn of NEW constraints
+ *    (dutySlotConstraintData — the shape TeacherDutiesService writes), then
+ *    one createMany of the duties linking them. A returned slot is matched to
+ *    its duty by teacher, weekday and times; two identical slots of one
+ *    teacher are interchangeable, so the order RETURNING gives them in does
+ *    not matter and the ids stay the database's own. The Fas 2 trigger
+ *    TeacherDuties_block_is_the_teachers checks every duty row as it lands; a
+ *    refusal (TD409) aborts the whole transaction.
+ *
+ * Three statements whatever the school's size. The source's own slots are
+ * never touched: they stay with their year (constraintsOfYear).
+ */
+export async function applyStaffingWrites(
+  tx: PrismaClient,
+  schoolId: string,
+  targetYearId: string,
+  staffing: StaffingWrites,
+  groupOf: (key: string) => string,
+): Promise<StaffingCounts> {
+  const counts: StaffingCounts = { employments: 0, duties: 0, dutySlots: 0 };
+  if (staffing.employments.length > 0) {
+    const { count } = await tx.teacherEmployment.createMany({
+      data: staffing.employments.map((row) => ({
+        schoolId,
+        userId: row.userId,
+        academicYearId: targetYearId,
+        employmentPercent: row.employmentPercent,
+        reductionPercent: row.reductionPercent,
+        contractKind: row.contractKind,
+        teachingTargetMinutesPerWeek: row.teachingTargetMinutesPerWeek,
+        signature: row.signature,
+        note: row.note,
+      })),
+    });
+    counts.employments = count;
+  }
+  if (staffing.duties.length === 0) return counts;
+
+  const bucket = (userId: string, slot: { dayOfWeek: number; startTime: string; endTime: string }) =>
+    `${userId}|${slot.dayOfWeek}|${slot.startTime.slice(0, 5)}|${slot.endTime.slice(0, 5)}`;
+  const withSlot = staffing.duties.filter((duty) => duty.slot !== null);
+  const slotsByKey = new Map<string, string[]>();
+  if (withSlot.length > 0) {
+    const created = await tx.availabilityConstraint.createManyAndReturn({
+      data: withSlot.map((duty) => dutySlotConstraintData(schoolId, duty.userId, duty.slot!)),
+      select: { id: true, userId: true, dayOfWeek: true, startTime: true, endTime: true },
+    });
+    for (const row of created) {
+      const key = bucket(row.userId as string, {
+        dayOfWeek: row.dayOfWeek as number,
+        startTime: toWallClock(row.startTime),
+        endTime: toWallClock(row.endTime),
+      });
+      slotsByKey.set(key, [...(slotsByKey.get(key) ?? []), row.id]);
+    }
+    counts.dutySlots = created.length;
+  }
+  const { count } = await tx.teacherDuty.createMany({
+    data: staffing.duties.map((duty) => {
+      let blockedConstraintId: string | null = null;
+      if (duty.slot) {
+        blockedConstraintId = slotsByKey.get(bucket(duty.userId, duty.slot))?.pop() ?? null;
+        if (!blockedConstraintId) throw new Error('Rollover: a created slot did not come back.');
+      }
+      return {
+        schoolId,
+        userId: duty.userId,
+        academicYearId: targetYearId,
+        kind: duty.kind,
+        label: duty.label,
+        minutesPerWeek: duty.minutesPerWeek,
+        countsAsTeaching: duty.countsAsTeaching,
+        subjectId: duty.subjectId,
+        studentGroupId: duty.groupKey === null ? null : groupOf(duty.groupKey),
+        blockedConstraintId,
+        note: duty.note,
+      };
+    }),
+  });
+  counts.duties = count;
+  return counts;
+}
 
 /** Runs every step in order; returns the new year's id and what was written. */
 export async function applyRollover(
   tx: PrismaClient,
   schoolId: string,
   writes: RolloverWrites,
-): Promise<{ targetYearId: string; counts: StepContext['counts'] }> {
+): Promise<{ targetYearId: string; counts: StepContext['counts']; staffingCounts: StaffingCounts }> {
   const context: StepContext = {
     tx,
     schoolId,
@@ -186,9 +315,10 @@ export async function applyRollover(
     targetYearId: null,
     groupIdByKey: new Map(),
     counts: { groups: 0, members: 0, requirements: 0, breaks: 0, classRules: 0, timplans: 0 },
+    staffingCounts: { employments: 0, duties: 0, dutySlots: 0 },
   };
   for (const step of ROLLOVER_STEP_ORDER) {
     await ROLLOVER_STEPS[step](context);
   }
-  return { targetYearId: context.targetYearId as string, counts: context.counts };
+  return { targetYearId: context.targetYearId as string, counts: context.counts, staffingCounts: context.staffingCounts };
 }

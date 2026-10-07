@@ -11,7 +11,8 @@
  * generated DMMF) and fails until each one has an entry here. A table added
  * later fails that test until somebody decides, and says why — as timplan
  * P2's AcademicYearTimplans did until it got its entry below (carried by
- * cohort), and as staffing Fas 5's rolled employments will.
+ * cohort), and as staffing Fas 5's tjänster and uppdrag did (carried when the
+ * admin asks for them).
  *
  * DISPOSITIONS.
  *  - ROOT: AcademicYear itself, the row the rollover creates first.
@@ -24,6 +25,20 @@
  *  - SKIPPED: left behind, with the reason a schemaläggare would ask for.
  *    `previewCount` means the preview counts the rows left behind.
  *  - FOLLOWS: a child of a SKIPPED model, left behind with its parent.
+ *
+ * OPTIONAL CARRIES. A PROMOTED or COPIED entry with an `option` is written
+ * only when the request turns that option on; with it off the entry is left
+ * behind exactly as its `whenOff` says — the reason and the preview count a
+ * SKIPPED entry would have — so carriedModels() and skippedModels() take the
+ * request's options. Today only staffing Fas 5's `carryStaffing` is one: a
+ * rollover without it lists TeacherEmployment and TeacherDuty as skipped, in
+ * the words it always has.
+ *
+ * SECOND WRITERS. A table one step copies may also be written by another
+ * step, with other rows and other rules: an uppdrag's blocked slot is an
+ * AvailabilityConstraints row the `duties` step writes, beside the class
+ * rules the `classRules` step copies. `alsoWrittenBy` names that step, which
+ * rows, and their column rules, held to the DMMF like the entry's own.
  */
 
 /** How one column of a carried row is filled. */
@@ -67,6 +82,26 @@ export type ColumnRule =
   /** The column's default (timestamps, isActive false). */
   | 'DEFAULT'
   /**
+   * An uppdrag's label with every whole-token occurrence of its group's name
+   * replaced by the successor's ("Mentor 7B" → "Mentor 8B"); the source label
+   * when the group has no successor or the result would pass 80 characters.
+   * See rollover-staffing.ts.
+   */
+  | 'PROMOTE_LABEL'
+  /**
+   * The uppdrag's group's successor through StudentGroup.predecessorId (never
+   * an INTAKE twin), or null when it has none.
+   */
+  | 'FOLLOW_GROUP'
+  /**
+   * A NEW constraint holding the uppdrag's blocked time in the new year, made
+   * by dutySlotConstraintData; null when the source has no slot or its slot is
+   * off the solver's grid. The source's own constraint stays with its year.
+   */
+  | 'NEW_SLOT'
+  /** DUTY_SLOT_REASON, the bare word a colleague may read; never the source row's reason. */
+  | 'DUTY_SLOT_REASON'
+  /**
    * Always null in a carried row, because of which rows are carried: a weekly
    * STUDENT_GROUP class rule has no user, no room and no date. Written as
    * null rather than "copied" so the write audit can tell a column the copy
@@ -82,7 +117,9 @@ export type RolloverStepName =
   | 'requirements'
   | 'breaks'
   | 'classRules'
-  | 'timplans';
+  | 'timplans'
+  | 'employments'
+  | 'duties';
 
 export const ROLLOVER_STEP_ORDER: readonly RolloverStepName[] = [
   'year',
@@ -92,7 +129,20 @@ export const ROLLOVER_STEP_ORDER: readonly RolloverStepName[] = [
   'breaks',
   'classRules',
   'timplans',
+  'employments',
+  'duties',
 ];
+
+/** The request switches an entry's carry can depend on. */
+export type RolloverOption = 'carryStaffing';
+export type RolloverOptions = Partial<Record<RolloverOption, boolean>>;
+
+/** Another step that writes rows of the same table, with its own rules. */
+export interface SecondWriter {
+  step: RolloverStepName;
+  rows: string;
+  columns: Record<string, ColumnRule>;
+}
 
 export type Disposition =
   | { kind: 'ROOT'; columns: Record<string, ColumnRule>; step: 'year'; reason: string }
@@ -101,6 +151,11 @@ export type Disposition =
       columns: Record<string, ColumnRule>;
       step: RolloverStepName;
       reason: string;
+      /** Carried only when the request turns this on. */
+      option?: RolloverOption;
+      /** What the entry is with its option off: a SKIPPED entry's reason and count. */
+      whenOff?: { reason: string; previewCount: true };
+      alsoWrittenBy?: SecondWriter[];
     }
   | { kind: 'AT_ACTIVATION'; reason: string }
   | { kind: 'SKIPPED'; reason: string; previewCount?: true }
@@ -208,7 +263,8 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     step: 'classRules',
     reason:
       'Weekly class rules move to the successor group; dated rows belong to a day of the old year, ' +
-      'and TEACHER, ROOM and GRADE_LEVEL rows carry no year at all.',
+      'and TEACHER, ROOM and GRADE_LEVEL rows carry no year at all. TEACHER rows are written only as uppdrag ' +
+      'slots, by the duties step; a teacher’s own rows have no year and are never written.',
     columns: {
       id: 'NEW_ID',
       schoolId: 'COPY',
@@ -226,6 +282,29 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       reason: 'COPY',
       ...timestamps,
     },
+    alsoWrittenBy: [
+      {
+        step: 'duties',
+        rows: "resourceType = 'TEACHER': a carried uppdrag's slot, a new row for the duty's teacher",
+        columns: {
+          id: 'NEW_ID',
+          schoolId: 'COPY',
+          resourceType: 'COPY',
+          userId: 'COPY',
+          roomId: 'NULL',
+          studentGroupId: 'NULL',
+          minGradeLevel: 'NULL',
+          maxGradeLevel: 'NULL',
+          dayOfWeek: 'COPY',
+          date: 'NULL',
+          startTime: 'COPY',
+          endTime: 'COPY',
+          type: 'COPY',
+          reason: 'DUTY_SLOT_REASON',
+          ...timestamps,
+        },
+      },
+    ],
   },
 
   AcademicYearTimplan: {
@@ -305,16 +384,60 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       'Lunch sittings are placed against the new year’s schedule; hand-pinned sittings are counted so they can be pinned again.',
   },
   TeacherEmployment: {
-    kind: 'SKIPPED',
-    previewCount: true,
-    reason: 'Tjänster are rolled by staffing Fas 5, which decides what a post carries into the next year.',
+    kind: 'COPIED',
+    step: 'employments',
+    option: 'carryStaffing',
+    reason:
+      'Tjänster carry into the next year when the admin asks for them ("Ta med tjänster och uppdrag"): ' +
+      'an active TEACHER or SCHOOL_ADMIN keeps percent, nedsättning, contract, target and signature, ' +
+      'and the preview names every nedsättning and target override, which are often agreed for one year.',
+    whenOff: {
+      reason: 'Tjänster are rolled by staffing Fas 5, which decides what a post carries into the next year.',
+      previewCount: true,
+    },
+    columns: {
+      id: 'NEW_ID',
+      schoolId: 'COPY',
+      userId: 'COPY',
+      academicYearId: 'TARGET_YEAR',
+      employmentPercent: 'COPY',
+      reductionPercent: 'COPY',
+      contractKind: 'COPY',
+      teachingTargetMinutesPerWeek: 'COPY',
+      signature: 'COPY',
+      note: 'COPY',
+      ...timestamps,
+    },
   },
   TeacherDuty: {
-    kind: 'SKIPPED',
-    previewCount: true,
+    kind: 'COPIED',
+    step: 'duties',
+    option: 'carryStaffing',
     reason:
-      'Uppdrag and their blocked slots are rolled by staffing Fas 5 (mentorskap through the group link); ' +
-      'until then the new year has none, and the preview says how many slots that frees.',
+      'Uppdrag carry with the tjänster: a mentorskap follows its class to the successor ("Mentor 7B" becomes ' +
+      '"Mentor 8B") and is left behind with a class that graduates or ends; another uppdrag of such a class is ' +
+      'carried without it; a blocked slot becomes a new slot of the new year.',
+    whenOff: {
+      reason:
+        'Uppdrag and their blocked slots are rolled by staffing Fas 5 (mentorskap through the group link); ' +
+        'until then the new year has none, and the preview says how many slots that frees.',
+      previewCount: true,
+    },
+    columns: {
+      id: 'NEW_ID',
+      schoolId: 'COPY',
+      userId: 'COPY',
+      academicYearId: 'TARGET_YEAR',
+      kind: 'COPY',
+      label: 'PROMOTE_LABEL',
+      minutesPerWeek: 'COPY',
+      countsAsTeaching: 'COPY',
+      subjectId: 'COPY',
+      studentGroupId: 'FOLLOW_GROUP',
+      blockedConstraintId: 'NEW_SLOT',
+      note: 'COPY',
+      ...timestamps,
+    },
   },
   ScheduleVersion: {
     kind: 'SKIPPED',
@@ -330,22 +453,34 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
   },
 };
 
-/** The models the rollover writes, with their step. */
-export function carriedModels(): { model: string; step: RolloverStepName }[] {
+const isOn = (disposition: Disposition, options: RolloverOptions): boolean =>
+  !('option' in disposition) || disposition.option === undefined || options[disposition.option] === true;
+
+/** The models the rollover writes with these options, with their step. */
+export function carriedModels(options: RolloverOptions = {}): { model: string; step: RolloverStepName }[] {
   return Object.entries(ROLLOVER_REGISTRY).flatMap(([model, disposition]) =>
-    disposition.kind === 'ROOT' || disposition.kind === 'PROMOTED' || disposition.kind === 'COPIED'
+    (disposition.kind === 'ROOT' || disposition.kind === 'PROMOTED' || disposition.kind === 'COPIED') &&
+    isOn(disposition, options)
       ? [{ model, step: disposition.step }]
       : [],
   );
 }
 
-/** The SKIPPED and FOLLOWS entries, as the preview lists them. */
-export function skippedModels(): { model: string; reason: string; counted: boolean }[] {
-  return Object.entries(ROLLOVER_REGISTRY).flatMap(([model, disposition]) =>
-    disposition.kind === 'SKIPPED'
-      ? [{ model, reason: disposition.reason, counted: disposition.previewCount === true }]
-      : disposition.kind === 'FOLLOWS'
-        ? [{ model, reason: disposition.reason, counted: false }]
-        : [],
-  );
+/**
+ * The SKIPPED and FOLLOWS entries, as the preview lists them — and, with its
+ * option off, an optional carry as its `whenOff` describes it, in its place.
+ */
+export function skippedModels(options: RolloverOptions = {}): { model: string; reason: string; counted: boolean }[] {
+  return Object.entries(ROLLOVER_REGISTRY).flatMap(([model, disposition]) => {
+    if (disposition.kind === 'SKIPPED') {
+      return [{ model, reason: disposition.reason, counted: disposition.previewCount === true }];
+    }
+    if (disposition.kind === 'FOLLOWS') return [{ model, reason: disposition.reason, counted: false }];
+    if ((disposition.kind === 'PROMOTED' || disposition.kind === 'COPIED') && !isOn(disposition, options)) {
+      return disposition.whenOff
+        ? [{ model, reason: disposition.whenOff.reason, counted: disposition.whenOff.previewCount === true }]
+        : [];
+    }
+    return [];
+  });
 }
