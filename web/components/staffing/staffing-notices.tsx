@@ -23,9 +23,17 @@ import { Button } from "@/components/ui/button";
 export function WarningsNotice({
   warnings,
   onDismiss,
+  context,
 }: {
   warnings: StaffingWarning[];
   onDismiss?: () => void;
+  /**
+   * Which row the warning is about, when the banner outlives the place the
+   * save was made — the timplansposter matrix shows it after its dialog has
+   * closed, and "Läraren hamnar på 1 200 min/v" alone does not say where.
+   * Group · subject, never a teacher's name.
+   */
+  context?: string;
 }) {
   const t = useTranslations("staffing");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
@@ -37,7 +45,11 @@ export function WarningsNotice({
     >
       <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden="true" />
       <div className="min-w-0 flex-1">
-        <p className="font-medium">{t("warnedTitle")}</p>
+        <p className="font-medium">
+          {t("warnedTitle")}
+          {context ? ` ${context}` : null}
+        </p>
+
         <ul className="list-disc space-y-0.5 pl-4">
           {warnings.map((warning, index) => (
             <li key={`${warning.code}-${index}`}>{warningText(tEngine, warning)}</li>
