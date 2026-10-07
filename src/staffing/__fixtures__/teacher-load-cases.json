@@ -3540,6 +3540,211 @@
           "dutyMinutesPerWeek": 0
         }
       }
+    },
+    {
+      "name": "Fas 2: a deactivated behörighet holder is no capacity, an active one is",
+      "input": {
+        "year": {
+          "startDate": "2026-08-17",
+          "endDate": "2027-06-11"
+        },
+        "policy": {
+          "fullTimeTeachingMinutesPerWeek": 1080,
+          "overAllocationTolerancePercent": 10,
+          "fullTimeRegulatedHoursPerYear": 1360,
+          "workDaysPerYear": 194,
+          "qualificationMode": "WARN"
+        },
+        "employments": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": 900,
+            "signature": null
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": 300,
+            "signature": null
+          }
+        ],
+        "requirements": [
+          {
+            "id": "r-ma-7a",
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "teacherId": null,
+            "coTeacherId": null,
+            "lessonsPerWeek": 3,
+            "minutesPerLesson": 60,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "id": "r-ma-8a",
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-8a",
+            "groupName": "8A",
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "coTeacherId": null,
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 60,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 8,
+              "max": 8
+            }
+          }
+        ],
+        "qualifications": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "subjectId": "ma-subject",
+            "minGradeLevel": 7,
+            "maxGradeLevel": 9,
+            "kind": "LEGITIMATION",
+            "validFrom": null,
+            "validTo": null
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "subjectId": "ma-subject",
+            "minGradeLevel": 7,
+            "maxGradeLevel": 9,
+            "kind": "BEHORIG",
+            "validFrom": null,
+            "validTo": null
+          }
+        ],
+        "closures": [],
+        "duties": [],
+        "inactiveUserIds": [
+          "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        ]
+      },
+      "report": {
+        "teachers": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "employment": {
+              "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": 900,
+              "signature": null
+            },
+            "targetMinutesPerWeek": 900,
+            "assignedMinutesPerWeek": 0,
+            "peakMinutesPerWeek": 0,
+            "dutyMinutesPerWeek": 0,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 0,
+            "balanceMinutesPerWeek": 900,
+            "percentOfTarget": 0,
+            "status": "UNDER",
+            "requirementCount": 0,
+            "dutyCount": 0,
+            "subjects": [],
+            "annual": {
+              "assignedHoursPerYear": 0,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194
+            }
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "employment": {
+              "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": 300,
+              "signature": null
+            },
+            "targetMinutesPerWeek": 300,
+            "assignedMinutesPerWeek": 120,
+            "peakMinutesPerWeek": 120,
+            "dutyMinutesPerWeek": 0,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 120,
+            "balanceMinutesPerWeek": 180,
+            "percentOfTarget": 40,
+            "status": "UNDER",
+            "requirementCount": 1,
+            "dutyCount": 0,
+            "subjects": [
+              {
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "minutesPerWeek": 120,
+                "shareOfTeaching": 1,
+                "percentOfEmployment": 100,
+                "percentOfFullTime": 11.1
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 86,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194
+            }
+          }
+        ],
+        "unstaffedRequirements": [
+          {
+            "requirementId": "r-ma-7a",
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "minutesPerWeek": 180,
+            "teacherMinutesPerWeek": 180,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          }
+        ],
+        "unqualifiedAssignments": [],
+        "qualificationsRecorded": true,
+        "subjectBottlenecks": [
+          {
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "unstaffedCount": 1,
+            "demandedMinutesPerWeek": 180,
+            "qualifiedRemainingMinutesPerWeek": 180,
+            "qualifiedTeacherCount": 1,
+            "qualifiedNoTargetCount": 0,
+            "short": false
+          }
+        ],
+        "bottlenecksComputed": true,
+        "totals": {
+          "teacherMinutesPerWeek": 120,
+          "lessonMinutesPerWeek": 300,
+          "dutyMinutesPerWeek": 0
+        }
+      }
     }
   ]
 }

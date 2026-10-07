@@ -90,6 +90,17 @@ export async function readLoadInput(
       validTo: true,
     },
   });
+  // Holders who are deactivated: kept out of bottleneck capacity, as the
+  // picker keeps them out of its candidates. A read that RLS narrows only
+  // narrows what is excluded, never what is counted.
+  const holderIds = [...new Set(qualifications.map((row) => row.userId))];
+  const inactive =
+    holderIds.length > 0
+      ? await tx.user.findMany({
+          where: { id: { in: holderIds }, isActive: false },
+          select: { id: true },
+        })
+      : [];
   // The year's uppdrag. RLS hands a TEACHER only their own, which is all
   // their row needs.
   const duties = await tx.teacherDuty.findMany({
@@ -184,6 +195,7 @@ export async function readLoadInput(
       minutesPerWeek: row.minutesPerWeek,
       countsAsTeaching: row.countsAsTeaching,
     })),
+    inactiveUserIds: (inactive ?? []).map((row) => row.id),
   };
   return {
     year,

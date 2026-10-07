@@ -177,6 +177,13 @@ export interface LoadInput {
   qualifications: LoadQualification[];
   closures: ClosedRange[];
   duties: LoadDuty[];
+  /**
+   * Users who hold a behörighet but are deactivated: no capacity in a
+   * bottleneck, since nobody can give them a row (the picker ranks active
+   * staff only). Optional and empty by default, so an input without it reads
+   * as it always did.
+   */
+  inactiveUserIds?: string[];
 }
 
 export interface SubjectLoad {
@@ -676,8 +683,10 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     // Who holds a qualification in which subject this year, any span: the
     // question is whether the subject has teachers left, not who takes which row.
     const holders = new Map<string, Set<string>>();
+    const inactive = new Set(input.inactiveUserIds ?? []);
     for (const qualification of input.qualifications) {
       if (!qualificationValidInYear(qualification, year)) continue;
+      if (inactive.has(qualification.userId)) continue;
       const set = holders.get(qualification.subjectId) ?? new Set<string>();
       set.add(qualification.userId);
       holders.set(qualification.subjectId, set);

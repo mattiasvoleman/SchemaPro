@@ -15,7 +15,7 @@ import {
  * round trip. The fixture was generated from the GATEWAY copy, so what this
  * test proves is that the web arrives at the same whole minutes, the same
  * one-decimal percentages, the same four-decimal shares and the same sort
- * order for nineteen inputs that between them reach every branch: odd/even
+ * order for twenty inputs that between them reach every branch: odd/even
  * halves, a term course under jullov, the tolerance edge, a null policy, the
  * teacher's own target, unstaffed rows, behörighet by span and validity, and a
  * grade-spanned studiedag. `toEqual` and not `toBeCloseTo`, because every
