@@ -354,7 +354,12 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       }
       if (!options.carryTeachingGroupMembers) continue;
       if (homeLeaves) {
-        if (homeRow!.outcome === 'GRADUATE') stats.graduating++;
+        // Labelled as the activation will label the pupil: a graduate when
+        // the home class is at or above G, whatever its outcome is called
+        // (INTAKE on the lowest class of a one-grade school also leaves it
+        // without a successor), unplaced otherwise.
+        const homeGrade = groupById.get(home!)?.gradeLevel ?? null;
+        if (homeGrade !== null && homeGrade >= g) stats.graduating++;
         else stats.noSuccessor++;
         continue;
       }
