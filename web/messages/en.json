@@ -2110,6 +2110,7 @@
     "layerPlanned": "Planned against timplan",
     "pupilsTotal": "{pupils, plural, one {# pupil} other {# pupils}} in the year's classes.",
     "pupilsBelow": "{pupils, plural, one {# pupil} other {# pupils}} in the year's classes; {below, plural, =0 {none is below target} one {# is below target in at least one subject} other {# are below target in at least one subject}}.",
+    "pupilsNoTarget": "{pupils, plural, one {# pupil} other {# pupils}} in the year's classes, but no class has a target to compare with.",
     "pupilsOutside": "{count, plural, one {# active pupil has no class in the academic year and is not counted.} other {# active pupils have no class in the academic year and are not counted.}}",
     "grade": "{grade, select, 0 {preschool class} other {year {grade}}}",
     "noGrade": "no year group",
