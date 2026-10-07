@@ -79,9 +79,11 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
   const t = useTranslations("timplan.generate");
   const tCommon = useTranslations("common");
 
-  const [yearId, setYearId] = useState<string | null>(
-    initialYearId ?? years.find((year) => year.isActive)?.id ?? years[0]?.id ?? null,
-  );
+  // Derived, not frozen at mount, as in the year dialog: the years may
+  // arrive after the dialog opened.
+  const [chosenYearId, setYearId] = useState<string | null>(null);
+  const yearId =
+    chosenYearId ?? initialYearId ?? years.find((year) => year.isActive)?.id ?? years[0]?.id ?? null;
   const year = years.find((entry) => entry.id === yearId) ?? null;
   const requirements = useRequirements(yearId);
   const generate = useGenerateRequirements();
