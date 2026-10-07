@@ -3,6 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { SchoolForm, TimplanCheck, TimplanVerdict } from "@/lib/timplan-coverage";
+import type { GenerateBody, GenerateRequirementsResponse } from "@/lib/timplan-generate";
+import { TIMPLAN_COVERAGE_KEYS } from "@/lib/year-timplan-keys";
 
 // ---------------------------------------------------------------------------
 // Lokala timplaner (src/timplan)
@@ -254,6 +256,28 @@ export function useImportTimplan() {
     onSuccess: (_report, body) => {
       void queryClient.invalidateQueries({ queryKey: TIMPLAN_KEYS.plan(body.localTimplanId) });
       void queryClient.invalidateQueries({ queryKey: TIMPLAN_KEYS.list });
+    },
+  });
+}
+
+/**
+ * POST /local-timplans/:id/generate-requirements — "Skapa timplansposter".
+ * A preview (dryRun true) writes nothing and invalidates nothing. An apply
+ * invalidates the year's requirements (the Timplansposter matrix's key, by
+ * its prefix and the year) and the year's coverage; the plan itself is
+ * unchanged, so its keys are left alone.
+ */
+export function useGenerateRequirements() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ planId, ...body }: GenerateBody & { planId: string }) =>
+      api.post<GenerateRequirementsResponse>(path(planId, "/generate-requirements"), body),
+    onSuccess: (result) => {
+      if (result.dryRun) return;
+      void queryClient.invalidateQueries({ queryKey: ["requirements", result.academicYearId] });
+      void queryClient.invalidateQueries({
+        queryKey: TIMPLAN_COVERAGE_KEYS.year(result.academicYearId),
+      });
     },
   });
 }

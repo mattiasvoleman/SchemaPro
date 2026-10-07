@@ -13,3 +13,14 @@ export const YEAR_TIMPLAN_KEYS = {
   all: ["yearTimplans"],
   year: (academicYearId: string) => ["yearTimplans", academicYearId] as const,
 } as const;
+
+/**
+ * GET /timplan-coverage, per läsår. Beside the year's attachments because
+ * everything that changes one changes the other: the year dialog's PUT, a new
+ * year's defaults and "Skapa timplansposter" all invalidate this prefix, and
+ * none of them should have to import the coverage page's hooks to do it.
+ */
+export const TIMPLAN_COVERAGE_KEYS = {
+  all: ["timplanCoverage"],
+  year: (academicYearId: string) => ["timplanCoverage", academicYearId] as const,
+} as const;
