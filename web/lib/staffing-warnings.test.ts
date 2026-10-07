@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
 import sv from "@/messages/sv.json";
-import { refusalText, staffingRefusal, warningText } from "./staffing-warnings";
+import { refusalText, savedToast, staffingRefusal, warningText } from "./staffing-warnings";
+
+const toasts = vi.hoisted(() => ({ success: vi.fn(), warning: vi.fn() }));
+vi.mock("sonner", () => ({ toast: toasts }));
 
 /** A next-intl-shaped lookup over the real Swedish catalogue, without ICU. */
 const lookup = (catalogue: Record<string, string>): MessageLookup => {
@@ -62,5 +65,36 @@ describe("staffingRefusal", () => {
     expect(staffingRefusal(new ApiError(409, "Krock", "LESSON_CLASH"))).toBeNull();
     expect(staffingRefusal(new ApiError(403, "Nej", "STAFF_TEACHER_NOT_QUALIFIED"))).toBeNull();
     expect(staffingRefusal(new Error("network"))).toBeNull();
+  });
+});
+
+describe("savedToast", () => {
+  /*
+   * The vikarie and the re-teachered lesson: the gateway answers 200 with the
+   * policy's WARN in `warnings`, and a plain "saved" toast threw it away — the
+   * "warned, never refused" rule for a vikarie showed the rektor nothing.
+   */
+  beforeEach(() => {
+    toasts.success.mockClear();
+    toasts.warning.mockClear();
+  });
+
+  it("says saved when the policy had nothing to say", () => {
+    savedToast(lookup({}), "Vikarie tillsatt", []);
+    savedToast(lookup({}), "Vikarie tillsatt", undefined);
+    expect(toasts.success).toHaveBeenCalledTimes(2);
+    expect(toasts.warning).not.toHaveBeenCalled();
+  });
+
+  it("says saved WITH the policy's sentences when it warned, and holds the toast longer", () => {
+    const t = lookup(sv.engineMessages as Record<string, string>);
+    savedToast(t, "Vikarie tillsatt", [
+      { code: "STAFF_TEACHER_NOT_QUALIFIED", params: { role: "SUBSTITUTE", subject: "Engelska", grades: "5" } },
+    ]);
+    expect(toasts.success).not.toHaveBeenCalled();
+    const [title, options] = toasts.warning.mock.calls[0]!;
+    expect(title).toBe("Vikarie tillsatt");
+    expect(options.description).toContain('"role":"SUBSTITUTE"');
+    expect(options.duration).toBeGreaterThan(4000);
   });
 });
