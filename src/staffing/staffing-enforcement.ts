@@ -359,6 +359,26 @@ export class RequirementImportChecks {
 }
 
 /**
+ * A lesson's grade span from its whole attendance — its groups and its named
+ * pupils — derived over every group of the year, as the proxy derives a
+ * lesson's (roomNeedsOf): a pupil's home class need not be on the lesson to
+ * give them their grade. The one derivation the vikarie warning, the vikarie
+ * picker's badge and the master-lesson PATCH share, so they cannot disagree
+ * about one teacher on one lesson.
+ */
+export async function attendanceSpan(
+  tx: PrismaClient,
+  args: { academicYearId: string; groupIds: string[]; studentIds?: string[] },
+): Promise<{ min: number; max: number } | null> {
+  const groups = await tx.studentGroup.findMany({
+    where: { academicYearId: args.academicYearId },
+    select: { id: true, gradeLevel: true },
+  });
+  const rosters = await loadRosters(tx, args.groupIds, groups ?? [], args.studentIds ?? []);
+  return gradeSpanOf(rosters, args.groupIds, args.studentIds ?? []);
+}
+
+/**
  * The qualification question alone, for a write that puts teachers on LESSONS
  * rather than on the timplan: a master lesson re-teachered, a vikarie. The load
  * report is computed from the timplan, so a lesson has no load to be over.
@@ -412,16 +432,11 @@ export async function lessonQualificationFindings(
         where: { id: args.academicYearId },
         select: { startDate: true, endDate: true },
       });
-  const groups = await tx.studentGroup.findMany({
-    where: { academicYearId: args.academicYearId },
-    select: { id: true, gradeLevel: true },
-  });
   if (!subject) return [];
   const window = args.window ?? (year ? { startDate: asDay(year.startDate), endDate: asDay(year.endDate) } : null);
   if (!window) return [];
 
-  const rosters = await loadRosters(tx, args.groupIds, groups ?? [], args.studentIds ?? []);
-  const span = gradeSpanOf(rosters, args.groupIds, args.studentIds ?? []);
+  const span = await attendanceSpan(tx, args);
   return args.assignees
     .map(({ userId, role }) =>
       qualificationFinding({
