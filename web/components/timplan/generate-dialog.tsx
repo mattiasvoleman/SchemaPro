@@ -179,7 +179,10 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
             </p>
             {existingCount(result) > 0 ? <p>{t("resultSkipped", { count: existingCount(result) })}</p> : null}
             <p>{t("resultNext")}</p>
-            <Link href="/admin/requirements" className="font-medium underline underline-offset-2">
+            <Link
+              href={`/admin/requirements?year=${encodeURIComponent(result.academicYearId)}`}
+              className="font-medium underline underline-offset-2"
+            >
               {t("openRequirements")}
             </Link>
           </div>
