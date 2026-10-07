@@ -3,6 +3,8 @@ import { AcademicYearTimplansController } from './academic-year-timplans.control
 import { AcademicYearTimplansService } from './academic-year-timplans.service';
 import { LocalTimplansController } from './local-timplans.controller';
 import { LocalTimplansService } from './local-timplans.service';
+import { TimplanCoverageController } from './timplan-coverage.controller';
+import { TimplanCoverageService } from './timplan-coverage.service';
 
 /**
  * Den lokala timplanen: a school's own minutes per week per subject and
@@ -18,7 +20,7 @@ import { LocalTimplansService } from './local-timplans.service';
  * ai-engine-contract.spec.ts holds the payload's shape.
  */
 @Module({
-  controllers: [LocalTimplansController, AcademicYearTimplansController],
-  providers: [LocalTimplansService, AcademicYearTimplansService],
+  controllers: [LocalTimplansController, AcademicYearTimplansController, TimplanCoverageController],
+  providers: [LocalTimplansService, AcademicYearTimplansService, TimplanCoverageService],
 })
 export class TimplanModule {}
