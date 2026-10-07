@@ -134,6 +134,7 @@ export class TeachingRequirementsService {
         // to be written and before it is — see staffing-enforcement.ts. A
         // REFUSE throws here and nothing is written.
         const warnings = await enforceRequirementWrite(tx, {
+          viewer: user,
           schoolId,
           academicYearId: dto.academicYearId,
           requirementId: null,
@@ -244,6 +245,7 @@ export class TeachingRequirementsService {
               throw new BadRequestException(SAME_TEACHER_TWICE);
             }
             warnings = await enforceRequirementWrite(tx, {
+              viewer: user,
               schoolId: requireSchoolId(user),
               academicYearId: stored.academicYearId,
               requirementId: id,

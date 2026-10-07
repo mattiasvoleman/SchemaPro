@@ -13,6 +13,7 @@ import {
 } from '../common/timplan-planned';
 import type { TimplanCoverageQueryDto } from './dto/timplan-coverage.dto';
 import { describePlannedVerdict } from './timplan-planned-messages';
+import { readHomePupils, rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
 
 const asDay = (value: Date): string => value.toISOString().slice(0, 10);
 const asDayOrNull = (value: Date | null): string | null => (value === null ? null : asDay(value));
@@ -57,7 +58,7 @@ export class TimplanCoverageService {
     requireSchoolId(user);
     const includePupils = user.role === Role.SCHOOL_ADMIN;
     const input = await this.prisma.withRls(user, (tx) =>
-      readPlannedInput(tx, query.academicYearId, includePupils),
+      readPlannedInput(tx, user, query.academicYearId, includePupils),
     );
     if (!input) throw new NotFoundException('Läsåret finns inte.');
     const coverage = computePlannedCoverage(input);
@@ -80,14 +81,18 @@ export class TimplanCoverageService {
  */
 export async function readPlannedInput(
   tx: Prisma.TransactionClient,
+  viewer: RosterViewer,
   academicYearId: string,
   includePupils: boolean,
 ): Promise<PlannedCoverageInput | null> {
   const year = await tx.academicYear.findUnique({
     where: { id: academicYearId },
-    select: { startDate: true, endDate: true },
+    select: { startDate: true, endDate: true, isActive: true, predecessorId: true },
   });
   if (!year) return null;
+  // The pupils as the year's activation would place them, for a rolled year
+  // not yet activated (projected-rosters.ts); the active year asks nothing more.
+  const basis = await rostersOfYear(tx, viewer, academicYearId, year);
 
   const attachments = await tx.academicYearTimplan.findMany({
     where: { academicYearId },
@@ -137,10 +142,7 @@ export async function readPlannedInput(
   const homes =
     classIds.length === 0
       ? []
-      : await tx.user.findMany({
-          where: { studentGroupId: { in: classIds }, role: 'STUDENT', isActive: true },
-          select: { id: true, studentGroupId: true },
-        });
+      : await readHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, classIds);
   const memberships =
     teachingIds.length === 0
       ? []

@@ -44,6 +44,7 @@ import type {
 } from './interfaces/ai-engine-payload.interface';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
 import { refuseRostersNotActivated } from '../year-rollover/rosters-current';
+import { rostersOfYear, type RosterBasis } from '../year-rollover/projected-rosters';
 
 /**
  * Masking proxy between NestJS and the Python AI engine.
@@ -177,11 +178,14 @@ export class OptimizationProxyService {
     const fetched = await this.prisma.withRls(user, async (tx) => {
       // A rolled year not yet activated has no pupils in its classes.
       await refuseRostersNotActivated(tx, academicYearId);
+      // Whose classes these are: for a rolled year not yet activated, the
+      // pupils its activation would place (projected-rosters.ts).
+      const basis = await rostersOfYear(tx, user, academicYearId);
       const refusal = await this.unstaffedRefusal(tx, academicYearId, requireSchoolId(user), requestId);
       if (refusal) return { refusal, data: null };
       return {
         refusal: null,
-        data: await this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user)),
+        data: await this.fetchAndAnonymize(tx, academicYearId, requireSchoolId(user), basis),
       };
     });
     if (fetched.refusal) {
@@ -533,6 +537,7 @@ export class OptimizationProxyService {
     tx: PrismaClient,
     academicYearId: string,
     schoolId: string,
+    basis: RosterBasis,
   ): Promise<{
     requirements: AnonymousRequirement[];
     rooms: AnonymousRoom[];
@@ -759,7 +764,7 @@ export class OptimizationProxyService {
     // Read through room-eligibility.ts because the room optimisation reads it
     // the same way: a lesson it moves may only land where this run could have
     // put it, and that holds only while both count 7A with one piece of code.
-    const rosters = await loadRosters(tx, scheduledGroupIds, allGroups, participantIds);
+    const rosters = await loadRosters(tx, basis, scheduledGroupIds, allGroups, participantIds);
     const { groupsByStudent, membersByGroup, homeMembers, homeClassOf } = rosters;
 
     /*

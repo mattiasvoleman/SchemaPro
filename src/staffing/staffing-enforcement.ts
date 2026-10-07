@@ -1,6 +1,7 @@
 import type { LessonRecurrence, PrismaClient, UnstaffedGenerationMode } from '@prisma/client';
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { asDay, readLoadInput } from './load-input';
+import { rostersOfYear, type BasisOrYear, type RosterViewer } from '../year-rollover/projected-rosters';
 import {
   DEFAULT_CHECK_POLICY,
   checksAnything,
@@ -197,6 +198,8 @@ export function mergeRequirement(
 export async function enforceRequirementWrite(
   tx: PrismaClient,
   args: {
+    /** Whoever writes: the year's roster basis is computed for them (projected-rosters.ts). */
+    viewer: RosterViewer;
     schoolId: string;
     academicYearId: string;
     /** Null for a create. */
@@ -227,7 +230,7 @@ export async function enforceRequirementWrite(
     (await lockEmploymentsOf(tx, args.academicYearId, assignees)) > 0;
   if (!asksQualification && !asksLoad) return [];
 
-  const read = await readLoadInput(tx, args.academicYearId, args.schoolId, {
+  const read = await readLoadInput(tx, args.viewer, args.academicYearId, args.schoolId, {
     alsoGroupIds: [args.studentGroupId],
   });
   if (!read) return [];
@@ -282,6 +285,7 @@ export class RequirementImportChecks {
   static async open(
     tx: PrismaClient,
     args: {
+      viewer: RosterViewer;
       schoolId: string;
       academicYearId: string;
       /** Every teacher a row of the file can end up with. */
@@ -297,7 +301,7 @@ export class RequirementImportChecks {
       policy.overAllocationMode !== 'OFF' &&
       (await lockEmploymentsOf(tx, args.academicYearId, args.teacherIds)) > 0;
     if (policy.qualificationMode === 'OFF' && !asksLoad) return null;
-    const read = await readLoadInput(tx, args.academicYearId, args.schoolId, {
+    const read = await readLoadInput(tx, args.viewer, args.academicYearId, args.schoolId, {
       alsoGroupIds: [...args.groupIds],
     });
     if (!read) return null;
@@ -368,13 +372,28 @@ export class RequirementImportChecks {
  */
 export async function attendanceSpan(
   tx: PrismaClient,
-  args: { academicYearId: string; groupIds: string[]; studentIds?: string[] },
+  args: {
+    academicYearId: string;
+    groupIds: string[];
+    studentIds?: string[];
+    /**
+     * The year's roster basis, or the viewer and the year's flags to compute
+     * it from (projected-rosters.ts). Required: a span read without one would
+     * read a rolled year's empty classes and judge every teacher against the
+     * groups' own grades.
+     */
+    rosters: BasisOrYear;
+  },
 ): Promise<{ min: number; max: number } | null> {
+  const basis =
+    'kind' in args.rosters
+      ? args.rosters
+      : await rostersOfYear(tx, args.rosters.viewer, args.academicYearId, args.rosters.known);
   const groups = await tx.studentGroup.findMany({
     where: { academicYearId: args.academicYearId },
     select: { id: true, gradeLevel: true },
   });
-  const rosters = await loadRosters(tx, args.groupIds, groups ?? [], args.studentIds ?? []);
+  const rosters = await loadRosters(tx, basis, args.groupIds, groups ?? [], args.studentIds ?? []);
   return gradeSpanOf(rosters, args.groupIds, args.studentIds ?? []);
 }
 
@@ -397,6 +416,8 @@ export async function lessonQualificationFindings(
     studentIds?: string[];
     assignees: { userId: string; role: StaffingRole }[];
     window?: YearBounds;
+    /** For the span: see attendanceSpan. Resolved only when the span is asked. */
+    rosters: BasisOrYear;
   },
 ): Promise<StaffingFinding[]> {
   if (args.assignees.length === 0) return [];

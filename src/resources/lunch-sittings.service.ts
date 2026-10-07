@@ -7,6 +7,11 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseTimeString, toWallClock } from '../common/utils/time';
 import type { MoveLunchSittingDto, PlaceLunchSittingDto } from './dto/lunch-sitting.dto';
+import {
+  countHomePupils,
+  rostersOfYear,
+  type RosterBasis,
+} from '../year-rollover/projected-rosters';
 
 /** A sitting as the admin grid sees it: clock strings, and who placed it. */
 export interface LunchSittingResponse {
@@ -46,9 +51,13 @@ export class LunchSittingsService {
     try {
       const row = await this.prisma.withRls(user, async (tx) => {
         const minutes = await lunchMinutesOf(tx, schoolId);
-        await assertIsAClassOf(tx, dto.studentGroupId, dto.academicYearId);
+        const year = await assertIsAClassOf(tx, dto.studentGroupId, dto.academicYearId);
         const endTime = endOf(dto.startTime, minutes);
-        const headcount = await headcountOf(tx, dto.studentGroupId);
+        // The class's pupils as its year's activation would place them
+        // (projected-rosters.ts): a meal placed by hand in a rolled year not
+        // yet activated seats 8A's coming pupils, not the nobody in it today.
+        const basis = await rostersOfYear(tx, user, dto.academicYearId, year);
+        const headcount = await headcountOf(tx, basis, dto.studentGroupId);
         return tx.lunchSitting.upsert({
           where: {
             academicYearId_studentGroupId_dayOfWeek: {
@@ -168,15 +177,24 @@ async function lunchMinutesOf(tx: Tx, schoolId: string): Promise<number> {
   return settings.lunchMinutes;
 }
 
-/** Only a home class eats: a teaching group's pupils eat with their class. */
-async function assertIsAClassOf(tx: Tx, studentGroupId: string, academicYearId: string): Promise<void> {
+/**
+ * Only a home class eats: a teaching group's pupils eat with their class.
+ * Returns the year's flags, read on the same row, for the roster basis — so
+ * the active year's meal costs no statement more than it did.
+ */
+async function assertIsAClassOf(
+  tx: Tx,
+  studentGroupId: string,
+  academicYearId: string,
+): Promise<{ isActive: boolean; predecessorId: string | null } | undefined> {
   const group = await tx.studentGroup.findFirst({
     where: { id: studentGroupId, academicYearId, kind: 'CLASS' },
-    select: { id: true },
+    select: { id: true, academicYear: { select: { isActive: true, predecessorId: true } } },
   });
   if (!group) {
     throw new BadRequestException('A meal can only be placed for a class of this academic year.');
   }
+  return group.academicYear;
 }
 
 /**
@@ -185,8 +203,8 @@ async function assertIsAClassOf(tx: Tx, studentGroupId: string, academicYearId: 
  * also in. A second rule here would put a different number on the kitchen's
  * list for a meal placed by hand than for one the solver chose.
  */
-function headcountOf(tx: Tx, studentGroupId: string): Promise<number> {
-  return tx.user.count({ where: { role: 'STUDENT', isActive: true, studentGroupId } });
+function headcountOf(tx: Tx, basis: RosterBasis, studentGroupId: string): Promise<number> {
+  return countHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, studentGroupId);
 }
 
 /**

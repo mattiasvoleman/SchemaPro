@@ -79,9 +79,10 @@ describe('StaffingLoadService', () => {
 
     expect(prisma.withRls).toHaveBeenCalledTimes(1);
     expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
+    // The year's flags ride on the same read, for the roster basis.
     expect(tx.academicYear.findUnique).toHaveBeenCalledWith({
       where: { id: YEAR_ID },
-      select: { startDate: true, endDate: true },
+      select: { startDate: true, endDate: true, isActive: true, predecessorId: true },
     });
     expect(tx.staffingPolicy.findUnique).toHaveBeenCalledWith({ where: { schoolId: SCHOOL_ID } });
     expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith({ where: { academicYearId: YEAR_ID } });

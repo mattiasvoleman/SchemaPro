@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { PrismaClient, StudentGroupKind } from '@prisma/client';
+import type { Prisma, StudentGroupKind } from '@prisma/client';
 
 /**
  * Who moves where when a läsår is activated: the pupils of the years before
@@ -130,7 +130,7 @@ const asDay = (value: Date): string => value.toISOString().slice(0, 10);
  * the caller's school. Null when RLS hides the year.
  */
 export async function readActivationSource(
-  tx: PrismaClient,
+  tx: Prisma.TransactionClient,
   yearId: string,
 ): Promise<ActivationSource | null> {
   const years = await tx.academicYear.findMany({
