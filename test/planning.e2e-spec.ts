@@ -3435,6 +3435,35 @@ describe('Planning surface (e2e)', () => {
       await request(http()).post(`/api/v1/academic-years/${yearB}/rollover/preview`).set('x-test-user', admin()).send(next).expect(200);
     });
 
+    it('409s generating, room proposals and lesson placement in a rolled year whose pupils have not moved in (the R-4b fallback)', async () => {
+      const { options } = givenSchool(2098);
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+      const job = await request(http())
+        .post('/api/v1/optimization/jobs')
+        .set('x-test-user', admin())
+        .send({ academicYearId: yearB })
+        .expect(409);
+      expect(job.body).toMatchObject({ code: 'ROLLOVER_NOT_ACTIVATED', params: { year: 'Nästa läsår', pupils: 4 } });
+      const rooms = await request(http())
+        .post('/api/v1/optimization/rooms/proposal')
+        .set('x-test-user', admin())
+        .send({ academicYearId: yearB, walkers: 'BOTH' })
+        .expect(409);
+      expect(rooms.body).toMatchObject({ code: 'ROLLOVER_NOT_ACTIVATED' });
+      const lesson = await request(http())
+        .post('/api/v1/master-lessons')
+        .set('x-test-user', admin())
+        .send({ academicYearId: yearB, subjectId: IDS.ma, studentGroupId: IDS.g7a, dayOfWeek: 1, startTime: '08:00', endTime: '09:00' })
+        .expect(409);
+      expect(lesson.body).toMatchObject({ code: 'ROLLOVER_NOT_ACTIVATED' });
+      // The active year itself is never refused for it.
+      await request(http())
+        .post('/api/v1/optimization/rooms/proposal')
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, walkers: 'BOTH' })
+        .expect((response) => expect(response.body?.code).not.toBe('ROLLOVER_NOT_ACTIVATED'));
+    });
+
     it('409s PATCH {isActive: true} while pupils wait to move, and DELETE of a year that holds home classes', async () => {
       const { world, options } = givenSchool(2020);
       const created = await roll(options, 201);

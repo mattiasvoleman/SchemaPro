@@ -8,6 +8,7 @@ import type {
   ObjectiveWeights,
   ScheduleRules,
 } from './interfaces/ai-engine-payload.interface';
+import { refuseRostersNotActivated } from '../year-rollover/rosters-current';
 
 /**
  * A stored params blob, read back as the scalars the engine promised.
@@ -155,8 +156,11 @@ export class OptimizationJobsService {
       throw new NotFoundException('School context missing from token.');
     }
 
-    const job = await this.prisma.withRls(user, (tx) =>
-      tx.optimizationJob.create({
+    const job = await this.prisma.withRls(user, async (tx) => {
+      // Answered here, not in the job: a rolled year not yet activated has
+      // no pupils in its classes, and the admin should hear that at the click.
+      await refuseRostersNotActivated(tx, academicYearId);
+      return tx.optimizationJob.create({
         data: {
           schoolId: user.schoolId as string,
           academicYearId,
@@ -165,8 +169,8 @@ export class OptimizationJobsService {
           weights: (weights ?? undefined) as Prisma.InputJsonValue | undefined,
         },
         select: { id: true },
-      }),
-    );
+      });
+    });
 
     // Fire and forget — run() records its own outcome on the job row and is
     // written never to throw. The catch stays regardless: this promise is
