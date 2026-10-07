@@ -284,7 +284,7 @@ export default function SubjectsPage() {
                       variant="ghost"
                       size="icon"
                       onClick={() => openEdit(subject)}
-                      aria-label={tCommon("edit")}
+                      aria-label={tCommon("editNamed", { name: subject.name })}
                     >
                       <Pencil />
                     </Button>
@@ -292,7 +292,7 @@ export default function SubjectsPage() {
                       variant="ghost"
                       size="icon"
                       onClick={() => setDeleting(subject)}
-                      aria-label={tCommon("delete")}
+                      aria-label={tCommon("deleteNamed", { name: subject.name })}
                     >
                       <Trash2 className="text-destructive" />
                     </Button>
@@ -344,7 +344,7 @@ export default function SubjectsPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>
+              <Label htmlFor="subject-room-type">
                 {t("requiredRoomType")}{" "}
                 <span className="text-muted-foreground">({tCommon("optional")})</span>
               </Label>
@@ -361,7 +361,7 @@ export default function SubjectsPage() {
                   setForm({ ...form, requiredRoomTypeId: value });
                 }}
               >
-                <SelectTrigger>
+                <SelectTrigger id="subject-room-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>

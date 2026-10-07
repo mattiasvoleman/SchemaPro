@@ -219,7 +219,7 @@ describe("the Nationell ämneskod picker", () => {
     state.subjects = [subject("s-1", "Mentorstid", "MA", false)];
     const user = userEvent.setup();
     render(<SubjectsPage />);
-    await user.click(screen.getByRole("button", { name: "edit" }));
+    await user.click(screen.getByRole("button", { name: "editNamed(Mentorstid)" }));
 
     expect(nationalPicker()).toHaveTextContent("Matematik (MA)");
     expect(teachingSwitch()).not.toBeChecked();
@@ -242,7 +242,7 @@ describe("the Nationell ämneskod picker", () => {
     state.subjects = [subject("s-1", "Matematik", "MA")];
     const user = userEvent.setup();
     render(<SubjectsPage />);
-    await user.click(screen.getByRole("button", { name: "edit" }));
+    await user.click(screen.getByRole("button", { name: "editNamed(Matematik)" }));
 
     expect(nationalPicker()).toHaveTextContent("MA");
     expect(screen.getByText("nationalCodeUnavailable")).toBeInTheDocument();
@@ -280,12 +280,32 @@ describe("the Räknas som undervisningstid switch", () => {
     state.subjects = [subject("s-1", "Mentorstid", null, false)];
     const user = userEvent.setup();
     render(<SubjectsPage />);
-    await user.click(screen.getByRole("button", { name: "edit" }));
+    await user.click(screen.getByRole("button", { name: "editNamed(Mentorstid)" }));
     expect(teachingSwitch()).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "cancel" }));
 
     await openCreate(user);
     expect(teachingSwitch()).toBeChecked();
     expect(nationalPicker()).toHaveTextContent("nationalCodeNone");
+  });
+});
+
+describe("the dialog's and the rows' accessible names", () => {
+  it("names the room-type picker by its label, and each row's buttons by the subject", async () => {
+    // Walk-through 2026-10-07: the picker had no name at all, and a screen
+    // reader heard "Redigera, Ta bort" twenty times with no subject.
+    state.subjects = [subject("s-1", "Matematik", "MA"), subject("s-2", "Bild", "BL")];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+
+    expect(screen.getByRole("button", { name: "editNamed(Matematik)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "deleteNamed(Bild)" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "editNamed(Matematik)" }));
+    expect(screen.getByRole("combobox", { name: "requiredRoomType (optional)" })).toBeInTheDocument();
+    // The text fields were already named by their labels (input.labels in
+    // Chrome); the walk-through's tree printed the placeholder. Held here.
+    expect(screen.getByRole("textbox", { name: "name" })).toHaveValue("Matematik");
+    expect(screen.getByRole("textbox", { name: "code (optional)" })).toBeInTheDocument();
   });
 });
