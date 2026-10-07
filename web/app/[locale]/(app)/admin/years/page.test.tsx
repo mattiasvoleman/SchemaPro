@@ -59,7 +59,7 @@ const plan = (overrides: Partial<ActivationPreview> = {}): ActivationPreview => 
   year: { id: "y27", name: "2027/28", isActive: false },
   currentlyActive: { id: "y26", name: "2026/27" },
   chain: [{ id: "y26", name: "2026/27", endDate: "2027-06-11" }],
-  moves: [{ fromGroupId: "g-7a", fromGroupName: "7A", toGroupId: "g27-8a", toGroupName: "8A", count: 2 }],
+  moves: [{ fromGroupId: "g-7a", fromGroupName: "7A", toGroupId: "g27-8a", toGroupName: "8A", count: 2, studentIds: ["p-1", "p-2"] }],
   graduates: { count: 1, studentIds: ["p-3"] },
   unplaced: { count: 1, studentIds: ["p-4"], pupils: [{ studentId: "p-4", fromGroupId: "g-8b", reason: "NO_SUCCESSOR" }] },
   alreadyInYear: 0,
@@ -115,9 +115,11 @@ describe("YearsPage", () => {
     // Moved, graduating and unplaced alike leave their class at activation.
     expect(await within(rowOf("2027/28")).findByText("4 elever flyttar hit vid aktiveringen")).toBeInTheDocument();
     expect(within(rowOf("2027/28")).getByText("Kan aktiveras när 2026/27 har slutat (2027-06-11)")).toBeInTheDocument();
-    // Only the one year that has pupils to receive is previewed.
-    expect(post).toHaveBeenCalledTimes(1);
+    // The coming year, and the active one (rolled from 2025/26, so it may
+    // have stragglers); never the finished year.
+    expect(post).toHaveBeenCalledTimes(2);
     expect(post).toHaveBeenCalledWith("/api/v1/academic-years/y27/activation/preview");
+    expect(post).toHaveBeenCalledWith("/api/v1/academic-years/y26/activation/preview");
   });
 
   it("offers Rulla vidare only where a rollover can start", async () => {
@@ -168,6 +170,50 @@ describe("YearsPage", () => {
       expect(post).toHaveBeenCalledWith("/api/v1/academic-years/y27/activation", { planHash: HASH }),
     );
     expect(toast.success).toHaveBeenCalledWith("2027/28 är aktivt. 2 elever flyttade, 1 gick ut och 1 saknar klass.");
+  });
+
+  it("names an active year's stragglers and offers to move them, instead of a dead end", async () => {
+    // A pupil on leave at 2026/27's activation is back, still in 2025/26's 7A.
+    const stragglers = plan({
+      year: { id: "y26", name: "2026/27", isActive: true },
+      currentlyActive: { id: "y26", name: "2026/27" },
+      chain: [{ id: "y25", name: "2025/26", endDate: "2026-06-12" }],
+      moves: [{ fromGroupId: "g25-7a", fromGroupName: "7A", toGroupId: "g26-8a", toGroupName: "8A", count: 1, studentIds: ["p-2"] }],
+      graduates: { count: 0, studentIds: [] },
+      unplaced: { count: 0, studentIds: [], pupils: [] },
+    });
+    state.years = [y25, { ...y26 }];
+    post.mockImplementation(async (path: string) =>
+      path.endsWith("/preview") ? stragglers : { year: { id: "y26", name: "2026/27", isActive: true }, moved: 1, graduated: 0, unplaced: 0 },
+    );
+    const user = userEvent.setup();
+    renderPage();
+    expect(await within(rowOf("2026/27")).findByText("1 elev står kvar i förra årets klass")).toBeInTheDocument();
+    const rollover = within(rowOf("2026/27")).getByRole("button", { name: "Rulla vidare" });
+    expect(rollover).toBeDisabled();
+    expect(rollover).toHaveAttribute("title", "Flytta de kvarvarande eleverna innan läsåret rullas vidare");
+
+    await user.click(within(rowOf("2026/27")).getByRole("button", { name: "Flytta kvarvarande elever" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("2026/27 är redan aktivt. Aktiveringen flyttar de elever som ännu inte har flyttats.")).toBeInTheDocument();
+    expect(await within(dialog).findByText("Bea Ek")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Flytta eleverna" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/api/v1/academic-years/y26/activation", { planHash: HASH }),
+    );
+  });
+
+  it("shows a membership notice without disabling the activation", async () => {
+    post.mockResolvedValue(
+      plan({ problems: [{ code: "MEMBERSHIPS_OUT_OF_DATE", blocking: false, params: { missing: 2, stale: 1 } }] }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(within(rowOf("2027/28")).getByRole("button", { name: "Aktivera" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/2 medlemskap saknas för elever som flyttar in, och 1 medlemskap hör till elever som blir utan klass/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    expect(within(dialog).getByRole("button", { name: "Aktivera 2027/28" })).toBeEnabled();
   });
 
   it("will not activate while the old year runs, and says until when", async () => {

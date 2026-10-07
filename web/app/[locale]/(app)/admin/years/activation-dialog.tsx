@@ -118,7 +118,11 @@ export function ActivationDialog({ year, onOpenChange }: ActivationDialogProps) 
             onClick={() => void confirm()}
             disabled={!plan || plan.blocking || pending || preview.isFetching}
           >
-            {pending ? tCommon("saving") : t("activateConfirm", { name: year?.name ?? "" })}
+            {pending
+              ? tCommon("saving")
+              : plan?.year.isActive
+                ? t("moveStragglersConfirm")
+                : t("activateConfirm", { name: year?.name ?? "" })}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -150,16 +154,24 @@ export function ActivationPlanView({
     <div className="space-y-4 text-sm">
       {plan.problems.length > 0 ? (
         <ul className="space-y-2">
-          {plan.problems.map((problem) => (
-            <li
-              key={problem.code}
-              role="alert"
-              className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-destructive"
-            >
-              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-              <span>{problemText(problem)}</span>
-            </li>
-          ))}
+          {plan.problems.map((problem) =>
+            problem.blocking ? (
+              <li
+                key={problem.code}
+                role="alert"
+                className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-destructive"
+              >
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                <span>{problemText(problem)}</span>
+              </li>
+            ) : (
+              // A notice (MEMBERSHIPS_OUT_OF_DATE): it does not stop the activation.
+              <li key={problem.code} className="flex gap-2 rounded-md border p-3 text-muted-foreground">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+                <span>{problemText(problem)}</span>
+              </li>
+            ),
+          )}
         </ul>
       ) : null}
 
@@ -172,11 +184,20 @@ export function ActivationPlanView({
         ) : (
           <ul className="grid gap-1 sm:grid-cols-2">
             {plan.moves.map((move) => (
-              <li key={`${move.fromGroupId}>${move.toGroupId}`} className="flex items-center gap-2">
-                <span className="font-medium">{move.fromGroupName}</span>
-                <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" aria-label={t("becomes")} />
-                <span className="font-medium">{move.toGroupName}</span>
-                <span className="text-muted-foreground">{t("pupils", { count: move.count })}</span>
+              <li key={`${move.fromGroupId}>${move.toGroupId}`}>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{move.fromGroupName}</span>
+                  <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" aria-label={t("becomes")} />
+                  <span className="font-medium">{move.toGroupName}</span>
+                  <span className="text-muted-foreground">{t("pupils", { count: move.count })}</span>
+                </div>
+                {/* An active year's moves are its stragglers, a few: named, so the
+                    admin knows whom the move is about. A whole activation's are not. */}
+                {plan.year.isActive ? (
+                  <div className="text-muted-foreground">
+                    {[...move.studentIds].sort(byName).map(nameOf).join(", ")}
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
