@@ -1105,7 +1105,7 @@ export default function PeoplePage() {
       ) : null}
 
       <CsvImportDialog
-        kinds={["students", "teachers", "teacherQualifications"]}
+        kinds={["students", "teachers", "teacherQualifications", "teacherDuties"]}
         open={importOpen}
         onOpenChange={setImportOpen}
       />

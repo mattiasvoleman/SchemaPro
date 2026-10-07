@@ -80,6 +80,7 @@ describe("importCsvInBatches", () => {
       roomTypes: 200,
       requirements: 1000,
       teacherQualifications: 2000,
+      teacherDuties: 2000,
     });
   });
 

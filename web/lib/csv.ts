@@ -12,6 +12,7 @@ import { parseDecimal } from "@/lib/staffing-forms";
 import type {
   LessonRecurrence,
   TeacherContractKind,
+  TeacherDutyKind,
   TeacherQualificationKind,
 } from "@/lib/types";
 
@@ -142,7 +143,8 @@ export type ImportKind =
   | "teachingGroups"
   | "roomTypes"
   | "requirements"
-  | "teacherQualifications";
+  | "teacherQualifications"
+  | "teacherDuties";
 
 interface CsvTemplate {
   filename: string;
@@ -211,6 +213,30 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
       ["karin.ek@example.com", "MA", "7", "9", "legitimation"],
       ["karin.ek@example.com", "NO", "7", "9", "behörig"],
       ["bo.alm@example.com", "SLTX", "1", "9", "tillåten"],
+    ],
+  },
+  teacherDuties: {
+    filename: "uppdrag.csv",
+    // One uppdrag per row, for the läsår the dialog names. Typ is a word
+    // ("mentorskap", "apt", "rastvakt"), benämning is what the uppdrag is
+    // called and — with the teacher and the typ — how a re-upload finds it
+    // again. The last four columns are optional and written only when the
+    // file has them. No blocked time: a slot is set on the uppdrag in the app,
+    // where it can be seen against the teacher's week.
+    headers: [
+      "larare_epost",
+      "typ",
+      "benamning",
+      "minuter_per_vecka",
+      "raknas_som_undervisning",
+      "amne",
+      "grupp",
+      "anteckning",
+    ],
+    exampleRows: [
+      ["karin.ek@example.com", "mentorskap", "Mentor 7B", "90", "nej", "", "7B", ""],
+      ["karin.ek@example.com", "apt", "APT", "120", "nej", "", "", ""],
+      ["bo.alm@example.com", "ämnesansvar", "Ämnesansvar slöjd", "60", "ja", "SLTX", "", ""],
     ],
   },
   students: {
@@ -787,6 +813,171 @@ export function mapTeacherQualificationRows(parsed: ParsedCsv): MappedRows<Teach
     rowNumbers.push(rowNumber);
   });
   return { rows, errors, rowNumbers };
+}
+
+/**
+ * One row of uppdrag.csv after mapping — ImportTeacherDutyRowDto. The four
+ * optional fields are present only when the file had their column.
+ */
+export type TeacherDutyRow = {
+  teacherEmail: string;
+  kind: TeacherDutyKind;
+  label: string;
+  minutesPerWeek: number;
+  countsAsTeaching?: boolean;
+  /** Code or name, resolved server-side. */
+  subject?: string | null;
+  /** A group of the dialog's läsår, by name. */
+  groupName?: string | null;
+  note?: string | null;
+};
+
+const DUTY_COLUMNS = {
+  teacherEmail: ["larareepost", "larare", "epost", "email", "teacheremail"],
+  kind: ["typ", "uppdragstyp", "kind"],
+  label: ["benamning", "namn", "uppdrag", "label"],
+  minutesPerWeek: ["minuterpervecka", "minuter", "minutesperweek", "minutes"],
+  countsAsTeaching: ["raknassomundervisning", "raknas", "countsasteaching"],
+  subject: ["amne", "amneskod", "subject"],
+  groupName: ["grupp", "klass", "group", "groupname"],
+  note: ["anteckning", "kommentar", "note"],
+} satisfies Record<string, string[]>;
+
+type DutyField = keyof typeof DUTY_COLUMNS;
+const DUTY_REQUIRED: DutyField[] = ["teacherEmail", "kind", "label", "minutesPerWeek"];
+const DUTY_LABELS: Record<DutyField, string> = {
+  teacherEmail: "larare_epost",
+  kind: "typ",
+  label: "benamning",
+  minutesPerWeek: "minuter_per_vecka",
+  countsAsTeaching: "raknas_som_undervisning",
+  subject: "amne",
+  groupName: "grupp",
+  note: "anteckning",
+};
+
+/**
+ * The typ, read like `behorighet`: case, spacing and diacritics dropped, so
+ * "Mentorskap", "mentor", "APT/konferens" and "Ämnesansvar" all land, and so
+ * does the gateway's own enum name.
+ */
+const DUTY_KIND_BY_WORD: Record<string, TeacherDutyKind> = {
+  mentorskap: "MENTORSKAP",
+  mentor: "MENTORSKAP",
+  amnesansvar: "AMNESANSVAR",
+  amnesansvarig: "AMNESANSVAR",
+  forstelarare: "FORSTELARARE",
+  rastvakt: "RASTVAKT",
+  pedagogisklunch: "PEDAGOGISK_LUNCH",
+  apt: "APT_KONFERENS",
+  konferens: "APT_KONFERENS",
+  aptkonferens: "APT_KONFERENS",
+  vfu: "VFU_HANDLEDNING",
+  vfuhandledning: "VFU_HANDLEDNING",
+  apl: "APL",
+  annat: "ANNAT",
+};
+
+/**
+ * Uppdrag rows. Bounds are the DTO's (label 1..80, minutes 1..2400, note
+ * ≤ 500). Two rows for one teacher, typ and benämning are refused here as the
+ * behörigheter's duplicates are: the gateway identifies an uppdrag by exactly
+ * those three, and a pair straddling a batch cut would be two clean requests
+ * whose second silently overwrote the first.
+ */
+export function mapTeacherDutyRows(parsed: ParsedCsv): MappedRows<TeacherDutyRow> & {
+  columns: string[];
+} {
+  const normalized = parsed.headers.map(normalizeHeader);
+  const columnOf = new Map<DutyField, number>();
+  for (const [field, aliases] of Object.entries(DUTY_COLUMNS)) {
+    const index = normalized.findIndex((header) => aliases.includes(header));
+    if (index !== -1) columnOf.set(field as DutyField, index);
+  }
+  const missing = DUTY_REQUIRED.filter((field) => !columnOf.has(field));
+  if (missing.length > 0) {
+    return {
+      rows: [],
+      errors: [
+        {
+          row: 0,
+          message: `Kolumner saknas: ${missing.map((field) => DUTY_LABELS[field]).join(", ")}. Ladda ner mallen och utgå från den.`,
+        },
+      ],
+      rowNumbers: [],
+      columns: [],
+    };
+  }
+
+  const rows: TeacherDutyRow[] = [];
+  const rowNumbers: number[] = [];
+  const errors: RowError[] = [];
+  const seenAtRow = new Map<string, number>();
+  parsed.rows.forEach((raw, index) => {
+    const rowNumber = index + 1;
+    const cell = (field: DutyField) => {
+      const column = columnOf.get(field);
+      return column === undefined ? "" : (raw[column] ?? "").trim();
+    };
+    const fail = (message: string) => {
+      errors.push({ row: rowNumber, message });
+    };
+
+    for (const field of DUTY_REQUIRED) {
+      if (cell(field) === "") return fail(`Rad ${rowNumber}: kolumnen "${DUTY_LABELS[field]}" är tom.`);
+    }
+    const teacherEmail = cell("teacherEmail");
+    const rawKind = cell("kind");
+    const kind = DUTY_KIND_BY_WORD[normalizeHeader(rawKind)];
+    if (kind === undefined) {
+      return fail(
+        `Rad ${rowNumber}: typ "${rawKind}" känns inte igen. Skriv till exempel "mentorskap", "ämnesansvar", "förstelärare", "rastvakt", "pedagogisk lunch", "apt", "vfu", "apl" eller "annat".`,
+      );
+    }
+    const label = cell("label");
+    if ([...label].length > 80) {
+      return fail(`Rad ${rowNumber}: benamning är längre än 80 tecken.`);
+    }
+    const rawMinutes = cell("minutesPerWeek");
+    const minutesPerWeek = /^\d+$/.test(rawMinutes) ? Number(rawMinutes) : NaN;
+    if (!Number.isInteger(minutesPerWeek) || minutesPerWeek < 1 || minutesPerWeek > 2400) {
+      return fail(
+        `Rad ${rowNumber}: minuter_per_vecka "${rawMinutes}" är inte ett heltal mellan 1 och 2400.`,
+      );
+    }
+
+    const row: TeacherDutyRow = { teacherEmail, kind, label, minutesPerWeek };
+    if (columnOf.has("countsAsTeaching")) {
+      const counts = parseYesNoCell(cell("countsAsTeaching"));
+      if (counts === undefined) {
+        return fail(
+          `Rad ${rowNumber}: raknas_som_undervisning "${cell("countsAsTeaching")}" är varken ja eller nej.`,
+        );
+      }
+      // Empty is "no" here: the column's default, as the gateway reads it.
+      row.countsAsTeaching = counts ?? false;
+    }
+    if (columnOf.has("subject")) row.subject = cell("subject") || null;
+    if (columnOf.has("groupName")) row.groupName = cell("groupName") || null;
+    if (columnOf.has("note")) {
+      const note = cell("note");
+      if ([...note].length > 500) return fail(`Rad ${rowNumber}: anteckning är längre än 500 tecken.`);
+      row.note = note || null;
+    }
+
+    const duplicateKey = `${teacherEmail.toLowerCase()}\u0000${kind}\u0000${label.toLowerCase()}`;
+    const firstSeenAt = seenAtRow.get(duplicateKey);
+    if (firstSeenAt !== undefined) {
+      return fail(
+        `Rad ${rowNumber}: samma lärare, typ och benämning står redan på rad ${firstSeenAt}. Ett uppdrag skrivs en gång — ändra minuterna där.`,
+      );
+    }
+    seenAtRow.set(duplicateKey, rowNumber);
+
+    rows.push(row);
+    rowNumbers.push(rowNumber);
+  });
+  return { rows, errors, rowNumbers, columns: [...columnOf.keys()] };
 }
 
 export function mapClassRows(parsed: ParsedCsv): {

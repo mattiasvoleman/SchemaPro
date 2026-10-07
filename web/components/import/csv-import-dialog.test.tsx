@@ -419,6 +419,42 @@ describe("CsvImportDialog import", () => {
     });
   });
 
+  it("posts uppdrag to /import/teacher-duties with the läsår and the file's columns", async () => {
+    supabaseState.years = [ACTIVE_YEAR];
+    mockPost.mockResolvedValue({ created: 1, skipped: 0, updated: 0, errors: [] });
+    const user = userEvent.setup();
+    const { invalidateSpy } = renderDialog({ kinds: ["teacherQualifications", "teacherDuties"] });
+
+    await switchKind(user, "teacherDuties");
+    await uploadCsv(
+      user,
+      `${BOM}larare_epost;typ;benamning;minuter_per_vecka;grupp\r\nkarin.ek@example.com;mentorskap;Mentor 7B;90;7B\r\n`,
+      "uppdrag.csv",
+    );
+    await screen.findByText("rowsReady(count=1)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(mockPost).toHaveBeenCalledWith("/api/v1/import/teacher-duties", {
+      academicYearId: "y-1",
+      columns: ["teacherEmail", "kind", "label", "minutesPerWeek", "groupName"],
+      rows: [
+        {
+          teacherEmail: "karin.ek@example.com",
+          kind: "MENTORSKAP",
+          label: "Mentor 7B",
+          minutesPerWeek: 90,
+          groupName: "7B",
+        },
+      ],
+    });
+    // The drawer's and the people page's uppdrag cards refetch.
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["teacherDuties"] }),
+    );
+  });
+
   it("renders the report's per-row errors", async () => {
     mockPost.mockResolvedValue({
       created: 1,

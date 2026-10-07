@@ -12,6 +12,7 @@ import {
   mapRoomTypeRows,
   mapSubjectRows,
   mapStudentRows,
+  mapTeacherDutyRows,
   mapTeacherQualificationRows,
   mapTeacherRows,
   parseCsv,
@@ -74,6 +75,7 @@ const MAPPERS: Record<
   subjects: mapSubjectRows,
   requirements: mapRequirementRows,
   teacherQualifications: mapTeacherQualificationRows,
+  teacherDuties: mapTeacherDutyRows,
 };
 
 const PREVIEW_ROWS = 5;
