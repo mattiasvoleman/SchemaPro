@@ -356,7 +356,8 @@ describe('CalendarLessonsService', () => {
         });
         tx.teacherSubjectQualification.findMany.mockResolvedValue(held);
         tx.subject.findUnique.mockResolvedValue({ name: 'Engelska' });
-        tx.studentGroup.findUnique.mockResolvedValue({ academicYearId: 'year-1' });
+        // The lesson's year, asked with its class as a relation filter.
+        tx.academicYear.findFirst.mockResolvedValue({ id: 'year-1', isActive: true, predecessorId: null });
         tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 5 }]);
       };
       const held = (overrides: Record<string, unknown> = {}) => ({
@@ -784,7 +785,7 @@ describe('CalendarLessonsService', () => {
       await service.suggestSubstitutes(LESSON_ID, testUser());
 
       expect(tx.teacherSubjectQualification.findMany).not.toHaveBeenCalled();
-      expect(tx.studentGroup.findUnique).not.toHaveBeenCalled();
+      expect(tx.academicYear.findFirst).not.toHaveBeenCalled();
     });
 
     describe('with behörigheter recorded', () => {
@@ -805,8 +806,12 @@ describe('CalendarLessonsService', () => {
         tx.teacherSubjectQualification.count.mockResolvedValue(3);
         // The lesson's class is a plain åk 7 class with no roster rows, so its
         // span is its own year, 7-7 — derived through the proxy's helper.
-        tx.studentGroup.findUnique.mockImplementation(
-          answerById([{ id: GROUP_ID, gradeLevel: 7, academicYearId: 'year-1' }]),
+        tx.academicYear.findFirst.mockImplementation(({ where }: Query) =>
+          Promise.resolve(
+            (where?.studentGroups as { some?: { id?: string } } | undefined)?.some?.id === GROUP_ID
+              ? { id: 'year-1', isActive: true, predecessorId: null }
+              : null,
+          ),
         );
         // The year's groups, which the span is derived over (attendanceSpan).
         tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 7 }]);

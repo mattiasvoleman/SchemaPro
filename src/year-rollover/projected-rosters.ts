@@ -79,13 +79,30 @@ export interface YearFlags {
   predecessorId: string | null;
 }
 
+/**
+ * The years R1 and R2 settle as CURRENT without reading anything more: the
+ * active year, and a year outside every chain.
+ *
+ * For a reader that can only COUNT the year inside a statement it already
+ * makes. Prisma 7 loads a selected relation (a lesson's `academicYear`) in a
+ * statement of its own, but a relation count (`_count`) with this filter is
+ * a join inside the statement that carries it. A reader that has the count
+ * passes `{ settledCurrent: count > 0 }` as `known`.
+ */
+export const SETTLED_CURRENT: Prisma.AcademicYearWhereInput = { OR: [{ isActive: true }, { predecessorId: null }] };
+
+/** What a relation count over SETTLED_CURRENT tells: true is CURRENT, false asks the year. */
+export interface SettledCount {
+  settledCurrent: boolean;
+}
+
 /** Who asks: the projection is computed for staff only. */
 export interface RosterViewer {
   role: Role | string;
 }
 
 /** A basis, or what a reader that may not need one knows to compute it lazily. */
-export type BasisOrYear = RosterBasis | { viewer: RosterViewer; known?: YearFlags };
+export type BasisOrYear = RosterBasis | { viewer: RosterViewer; known?: YearFlags | SettledCount };
 
 const CURRENT: CurrentRosters = Object.freeze({ kind: 'CURRENT' });
 
@@ -98,17 +115,23 @@ const STAFF: ReadonlySet<string> = new Set([Role.SCHOOL_ADMIN, Role.TEACHER]);
  * `known` is the year's flags from a row the reader already read: the active
  * year and a year outside every chain then cost no statement at all, which is
  * what keeps a lesson dragged in this year's grundschema as cheap as it was.
- * Without it, one primary-key read. From R4 on, the four school-wide reads of
+ * A SettledCount does the same for R1 and R2 when it is true; false says only
+ * that the year is neither, and the flags are read. Without either, one
+ * primary-key read. From R4 on, the four school-wide reads of
  * readActivationSource.
  */
 export async function rostersOfYear(
   tx: Prisma.TransactionClient,
   viewer: RosterViewer,
   academicYearId: string,
-  known?: YearFlags,
+  known?: YearFlags | SettledCount,
 ): Promise<RosterBasis> {
   if (!STAFF.has(viewer.role)) {
     throw new ForbiddenException('Klasslistor räknas bara fram för personal.');
+  }
+  if (known && 'settledCurrent' in known) {
+    if (known.settledCurrent) return CURRENT; // R1 or R2
+    known = undefined;
   }
   let flags: Partial<YearFlags> | null | undefined = known;
   if (!flags) {

@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import type { PrismaMock } from './prisma-mock';
 
 /**
@@ -204,6 +204,34 @@ export function defaultRolloverRows(): Record<string, Row[]> {
   }
 }
 
+// ---- the schema's relations, from the generated client's DMMF
+
+const MODELS = new Map(Prisma.dmmf.datamodel.models.map((model) => [model.name, model]));
+const dmmfName = (delegate: string): string => delegate.charAt(0).toUpperCase() + delegate.slice(1);
+const delegateOf = (model: string): string => model.charAt(0).toLowerCase() + model.slice(1);
+
+/**
+ * The delegate a relation field of `model` points at (`school.academicYears`
+ * → `academicYear`), or undefined when the field is a column or unknown.
+ */
+export function relationTarget(model: string, field: string): string | undefined {
+  const found = MODELS.get(dmmfName(model))?.fields.find((candidate) => candidate.name === field);
+  return found && found.kind === 'object' ? delegateOf(found.type) : undefined;
+}
+
+/**
+ * The rows a to-many relation of `row` holds: the list on the row when the
+ * fixture put one there (a lesson's extraGroups), else the related table's
+ * rows that name it by `${model}Id` (a year's studentGroups and masterLessons).
+ */
+function relatedRows(row: Row, model: string, field: string, table: (model: string) => Row[]): Row[] | undefined {
+  if (Array.isArray(row[field])) return row[field] as Row[];
+  if (row[field] !== undefined) return undefined;
+  const target = relationTarget(model, field);
+  if (!target) return undefined;
+  return table(target).filter((candidate) => candidate[`${model}Id`] === row['id']);
+}
+
 /** How `matches` resolves a relation filter: the row's model and the world's tables. */
 export interface MatchContext {
   model: string;
@@ -294,14 +322,15 @@ function relationMatches(row: Row, key: string, wanted: unknown, context: MatchC
       return ('is' in filter ? test(filter['is']) : true) && ('isNot' in filter ? !test(filter['isNot']) : true);
     }
   }
-  // A to-many relation held on the row itself (a lesson's extraGroups).
+  // A to-many relation: held on the row itself (a lesson's extraGroups), or
+  // the related table's rows that name this one (a year's studentGroups).
   if (wanted !== null && typeof wanted === 'object' && Array.isArray(row[key] ?? [])) {
     const filter = wanted as Row;
-    const list = (row[key] ?? []) as Row[];
+    const list = relatedRows(row, context.model, key, context.table) ?? ((row[key] ?? []) as Row[]);
     const keys = Object.keys(filter);
     if (keys.length === 1 && (keys[0] === 'some' || keys[0] === 'none' || keys[0] === 'every')) {
       const inner = filter[keys[0]] as Row;
-      const hit = (item: Row) => matches(item, inner, { ...context, model: key });
+      const hit = (item: Row) => matches(item, inner, { ...context, model: relationTarget(context.model, key) ?? key });
       if (keys[0] === 'some') return list.some(hit);
       if (keys[0] === 'none') return !list.some(hit);
       return list.every(hit);
@@ -383,15 +412,34 @@ export function givenRolloverWorld(
             // The two relations the readers select, joined from the rows as they are now.
             // A selected to-many relation with its own `where`/`take` (a plan's
             // grade-0 entries): filtered here, as the database would.
-            const project = (row: Row, select = args['select'] as Row | undefined): Row => {
+            const project = (row: Row, select = args['select'] as Row | undefined, model = name): Row => {
               if (!select) return row;
               const out = { ...row };
               for (const [field, spec] of Object.entries(select)) {
+                // A relation count (`_count: { select: { academicYears: { where } } }`),
+                // counted over the related rows as the database's join would.
+                if (field === '_count' && spec !== null && typeof spec === 'object') {
+                  const counted: Row = {};
+                  for (const [relation, how] of Object.entries(((spec as Row)['select'] ?? {}) as Row)) {
+                    const related = relatedRows(row, model, relation, table) ?? [];
+                    const inner = how !== null && typeof how === 'object' ? ((how as Row)['where'] as Row | undefined) : undefined;
+                    const target = relationTarget(model, relation) ?? relation;
+                    counted[relation] = related.filter((item) => matches(item, inner, { model: target, table, strict: options.strict === true })).length;
+                  }
+                  out[field] = counted;
+                  continue;
+                }
                 // A strict world joins a selected to-one relation the row
                 // names by `${field}Id` (a lesson's or a group's academicYear).
                 if (options.strict && out[field] === undefined && typeof out[`${field}Id`] === 'string' && spec !== null && typeof spec === 'object') {
                   const target = table(field).find((candidate) => candidate['id'] === out[`${field}Id`]);
-                  out[field] = target ? project(target, (spec as Row)['select'] as Row | undefined) : null;
+                  out[field] = target ? project(target, (spec as Row)['select'] as Row | undefined, relationTarget(model, field) ?? field) : null;
+                  continue;
+                }
+                // A selected to-one relation the fixture put on the row (a
+                // lesson's school): projected further, for its own `_count`.
+                if (out[field] !== null && typeof out[field] === 'object' && !Array.isArray(out[field]) && !(out[field] instanceof Date) && spec !== null && typeof spec === 'object' && (spec as Row)['select']) {
+                  out[field] = project(out[field] as Row, (spec as Row)['select'] as Row, relationTarget(model, field) ?? field);
                   continue;
                 }
                 if (!Array.isArray(out[field]) || spec === null || typeof spec !== 'object') continue;
@@ -522,4 +570,49 @@ export function prismaFor(world: RolloverWorld): PrismaMock {
     withServicePrincipal: jest.fn(),
     withSystemTransaction: jest.fn(),
   };
+}
+
+/**
+ * The SQL statements a recorded call costs under Prisma 7, by name: the call
+ * itself, then one more for every relation it selects or includes, nested
+ * ones too (`masterLesson.findUnique › school`). Prisma 7 loads a selected
+ * relation with a query of its own; a relation count (`_count`) and a
+ * relation FILTER are joins inside the statement that carries them, so they
+ * add nothing. One fake call is one entry in `calls` but can be several
+ * round-trips to Postgres, and a statement budget pinned on `calls` alone
+ * would not see a relation select added to a hot path. A write that selects
+ * a relation also reads its row back first (`› row`): the UPDATE's RETURNING
+ * does not carry the relations, so Prisma selects the row again for them.
+ *
+ * The model was checked against pg's own count on Postgres (the adapter
+ * probe's case (z) pins the same paths there).
+ */
+export function statementsOf(calls: readonly RecordedCall[]): string[] {
+  const out: string[] = [];
+  const WRITES = new Set(['create', 'update', 'upsert', 'delete']);
+  const nested = (model: string, shape: unknown, path: string, write = false): void => {
+    if (shape === null || typeof shape !== 'object') return;
+    let reread = write;
+    for (const [field, spec] of Object.entries(shape as Row)) {
+      if (field === '_count' || spec === false || spec === undefined) continue;
+      const target = relationTarget(model, field);
+      if (!target) continue;
+      if (reread) {
+        out.push(`${path} › row`);
+        reread = false;
+      }
+      const here = `${path} › ${field}`;
+      out.push(here);
+      if (spec !== null && typeof spec === 'object') {
+        nested(target, (spec as Row)['select'] ?? (spec as Row)['include'], here);
+      }
+    }
+  };
+  for (const call of calls) {
+    const head = `${call.model}.${call.method}`;
+    out.push(head);
+    const args = (call.args ?? {}) as Row;
+    nested(call.model, args['select'] ?? args['include'], head, WRITES.has(call.method));
+  }
+  return out;
 }

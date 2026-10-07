@@ -1,6 +1,6 @@
 import type { PrismaService } from '../database/prisma.service';
 import { testUser } from '../../test/utils/prisma-mock';
-import { IDS, defaultRolloverRows, givenRolloverWorld, prismaFor, type Row } from '../../test/utils/rollover-world';
+import { IDS, defaultRolloverRows, givenRolloverWorld, prismaFor, statementsOf, type Row } from '../../test/utils/rollover-world';
 import { MasterLessonsService } from '../calendar/master-lessons.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import type { RealtimeService } from '../realtime/realtime.service';
@@ -10,15 +10,23 @@ import { TeachingRequirementsService } from '../resources/teaching-requirements.
 /**
  * THE ACTIVE YEAR'S COST, PINNED.
  *
- * The roster basis of the active year is decided from flags its readers
+ * The roster basis of the active year is decided from what its readers
  * already read (projected-rosters.ts, R1), so the hot paths of this year's
  * planning ask the database nothing more than they did — and the master
  * lesson's PATCH one statement less, now that the refusal's scan of every
- * läsår is gone. Each number below is the statements one call makes in the
- * active year of rollover-world's school, every one recorded: reads, writes
- * and raw SQL, in order. At f5ff8da the same three calls, run against the
- * same world, made exactly these statements — the PATCH with
- * academicYear.findMany second, the refusal's scan — and nothing else.
+ * läsår is gone. Each list below is the SQL statements one call makes in the
+ * active year of rollover-world's school, in order, as statementsOf names
+ * them: every recorded read and write, and one more for every relation a
+ * call selects, because Prisma 7 loads a selected relation with a query of
+ * its own (`› school`). That is what a model-call log alone missed: the
+ * year's flags read as a selected `academicYear` relation cost a statement
+ * that no fake call showed, on the PATCH and on every meal placed.
+ *
+ * At f5ff8da the same three calls, run against the same world, made exactly
+ * these statements — the PATCH with `academicYear.findMany`, the refusal's
+ * scan, after its lesson read — and nothing else. The same paths, plus a
+ * substitute assigned and suggested, are counted at pg's own Client.query
+ * on Postgres by the adapter probe's case (z).
  */
 
 const admin = testUser();
@@ -76,7 +84,7 @@ function school() {
 }
 
 describe('the active year’s statement budget', () => {
-  it('a master lesson dragged to another day, with its teacher changed: 17 statements (18 before, the refusal’s scan gone)', async () => {
+  it('a master lesson dragged to another day, with its teacher changed: 26 statements (27 before, the refusal’s scan gone)', async () => {
     const { world, prisma } = school();
     const service = new MasterLessonsService(
       prisma,
@@ -84,9 +92,18 @@ describe('the active year’s statement budget', () => {
       { recipientsForGroups: jest.fn(async () => []), notifyUsers: jest.fn() } as unknown as NotificationsService,
     );
     await service.update('f5000000-0000-4000-8000-000000000001', { dayOfWeek: 2, teacherId: IDS.anna }, admin);
-    expect(world.calls.map((call) => `${call.model}.${call.method}`)).toEqual([
+    expect(statementsOf(world.calls)).toEqual([
       'masterLesson.findUnique',
+      'masterLesson.findUnique › extraGroups',
+      'masterLesson.findUnique › participants',
+      // The school, which now also counts whether the lesson's year is one
+      // R1 or R2 settles: a `_count` inside this statement, not a relation
+      // select of the year after it.
+      'masterLesson.findUnique › school',
       'masterLesson.findMany',
+      'masterLesson.findMany › subject',
+      'masterLesson.findMany › extraGroups',
+      'masterLesson.findMany › participants',
       'teachingRequirement.findMany',
       // rosterOf, CURRENT: the reader's own two reads.
       'user.findMany',
@@ -102,23 +119,28 @@ describe('the active year’s statement budget', () => {
       'studentGroupMember.findMany',
       'user.findMany',
       'masterLesson.update',
+      'masterLesson.update › row',
+      'masterLesson.update › extraGroups',
+      'masterLesson.update › participants',
       'calendarLesson.findMany',
       'scheduleChangeLog.create',
     ]);
   });
 
-  it('a timplanspost given a teacher under a WARN policy: 16 statements, as before', async () => {
+  it('a timplanspost given a teacher under a WARN policy: 18 statements, as before', async () => {
     const { world, prisma } = school();
     // r2 is Bo's (who has left): Anna is newly assigned, so behörighet is asked.
     const r2 = world.rows['teachingRequirement']![1]!['id'] as string;
     await new TeachingRequirementsService(prisma).update(r2, { teacherId: IDS.anna }, admin);
-    expect(world.calls.map((call) => `${call.model}.${call.method}`)).toEqual([
+    expect(statementsOf(world.calls)).toEqual([
       'teachingRequirement.findUnique',
       'staffingPolicy.findUnique',
       'teacherEmployment.findMany',
       // readLoadInput's year row, which now carries the flags too.
       'academicYear.findUnique',
       'teachingRequirement.findMany',
+      'teachingRequirement.findMany › subject',
+      'teachingRequirement.findMany › studentGroup',
       'teacherEmployment.findMany',
       'staffingPolicy.findUnique',
       'schoolBreak.findMany',
@@ -139,10 +161,12 @@ describe('the active year’s statement budget', () => {
       { academicYearId: IDS.yearA, studentGroupId: IDS.g7a, dayOfWeek: 1, startTime: '11:00' },
       admin,
     );
-    expect(world.calls.map((call) => `${call.model}.${call.method}`)).toEqual([
+    expect(statementsOf(world.calls)).toEqual([
       'lunchSetting.findUnique',
-      // The class check, which now reads the year's flags on the same row.
-      'studentGroup.findFirst',
+      // The class check, asked of the year with the class as a relation
+      // filter, so the year's flags come in the same statement. As
+      // `studentGroup.findFirst › academicYear` it was one more.
+      'academicYear.findFirst',
       'user.count',
       'lunchSitting.upsert',
     ]);

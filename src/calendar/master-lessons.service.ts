@@ -27,6 +27,7 @@ import {
   readHomeClassesOf,
   readHomePupils,
   rostersOfYear,
+  SETTLED_CURRENT,
   type RosterBasis,
 } from '../year-rollover/projected-rosters';
 
@@ -277,11 +278,23 @@ export class MasterLessonsService {
         where: { id },
         select: {
           ...LESSON_SELECT,
-          school: { select: { id: true, timezone: true } },
-          // The year's flags ride on the read the PATCH makes anyway, so a
-          // lesson dragged in the active year asks nothing more for its
-          // roster basis.
-          academicYear: { select: { isActive: true, predecessorId: true } },
+          school: {
+            select: {
+              id: true,
+              timezone: true,
+              // Whether the lesson's year is one R1 or R2 settles (the active
+              // year, or one outside every chain), counted inside the
+              // school's statement. A selected `academicYear` relation would
+              // be a statement of its own; this way a lesson dragged in the
+              // active year makes one statement fewer than when the refusal
+              // scanned every läsår, and none more.
+              _count: {
+                select: {
+                  academicYears: { where: { AND: [SETTLED_CURRENT, { masterLessons: { some: { id } } }] } },
+                },
+              },
+            },
+          },
         },
       });
       if (!lesson) {
@@ -289,7 +302,9 @@ export class MasterLessonsService {
       }
       // As on create. The same basis goes to the behörighet span below, so the
       // clash check and the warning read one set of pupils.
-      const rosters = await rostersOfYear(tx, user, lesson.academicYearId, lesson.academicYear);
+      const rosters = await rostersOfYear(tx, user, lesson.academicYearId, {
+        settledCurrent: lesson.school._count.academicYears > 0,
+      });
 
       // Merge the patch onto the current slot.
       const candidate = {
