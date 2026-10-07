@@ -192,6 +192,26 @@ describe("buildTargetView", () => {
   it("names the årskurser without a plan and the plans that are drafts", () => {
     expect(view.unattachedGrades).toEqual([9]);
     expect(view.draftPlans).toEqual([{ id: "p-draft", name: "Utkast 2027", gradeLevels: [8] }]);
+    expect(view.emptyPlanGrades).toEqual([]);
+  });
+
+  it("names an årskurs whose plan gives it no minutes, instead of a 0/0 that looks covered", () => {
+    const empty = buildTargetView(
+      computePlannedCoverage({
+        year,
+        closures: [],
+        plans,
+        attachments: [{ gradeLevel: 9, localTimplanId: "p-decided" }],
+        subjects,
+        groups,
+        requirements: [],
+        pupils: [],
+        includePupils: true,
+      }),
+      plans,
+    );
+    expect(empty.emptyPlanGrades).toEqual([{ gradeLevel: 9, planName: "Grundskola 2026" }]);
+    expect(empty.summary("g-9a")).toMatchObject({ localTimplanId: "p-decided", linesWithTarget: 0 });
   });
 
   it("maps every status to a tone", () => {

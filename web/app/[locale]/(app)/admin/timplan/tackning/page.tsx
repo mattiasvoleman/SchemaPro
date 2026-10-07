@@ -216,6 +216,11 @@ export default function TimplanCoveragePage() {
                 {t("draft", { name: plan.name, grades: plan.gradeLevels.map(gradeName).join(", ") })}
               </p>
             ))}
+            {matrix.emptyPlanGrades.map((entry) => (
+              <p key={entry.gradeLevel} className="rounded-md bg-muted px-3 py-2">
+                {t("emptyPlan", { name: entry.planName, grade: gradeName(entry.gradeLevel) })}
+              </p>
+            ))}
             <p className="text-xs text-muted-foreground">{t("legend")}</p>
           </section>
 
@@ -324,6 +329,8 @@ function ClassRow({ row, subjects, cell, open, gradeName, onToggle }: ClassRowPr
       <td className="px-3 py-1.5 text-center">
         {summary.localTimplanId === null ? (
           <span className="text-xs text-muted-foreground">{t("noPlan")}</span>
+        ) : summary.linesWithTarget === 0 ? (
+          <span className="text-xs text-muted-foreground">{t("emptyPlanShort")}</span>
         ) : (
           <span
             className={cn(

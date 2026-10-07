@@ -35,6 +35,7 @@ describe('planerat mot timplan agrees with the shared fixture', () => {
     const codes = new Set(cases.flatMap((c) => c.coverage.verdicts.map((v) => v.code)));
     expect([...codes].sort()).toEqual([
       'TIMPLAN_ATTACHED_DRAFT',
+      'TIMPLAN_ATTACHED_PLAN_EMPTY',
       'TIMPLAN_GROUP_OVERPLANNED',
       'TIMPLAN_GROUP_UNDERPLANNED',
       'TIMPLAN_GROUP_UNPLANNED',

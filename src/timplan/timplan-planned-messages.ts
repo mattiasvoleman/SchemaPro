@@ -25,6 +25,11 @@ export function describePlannedVerdict(verdict: PlannedVerdict): string {
         `${String(p.gradeLevels).includes(',') ? 'Årskurserna' : 'Årskurs'} ${p.gradeLevels} följer ` +
         `"${p.planName}", som är ett utkast — inte beslutad. Jämförelsen gäller utkastet.`
       );
+    case 'TIMPLAN_ATTACHED_PLAN_EMPTY':
+      return (
+        `Klasserna i ${grade(p.gradeLevel)} (${p.groupNames}) följer "${p.planName}", som inte ger ` +
+        'årskursen någon tid, så de har inga mål. Välj rätt plan under läsårets "Timplan per årskurs".'
+      );
     case 'TIMPLAN_GROUP_UNPLANNED':
       return (
         `${p.groupName}: ${p.subjectName} har inga timplansposter, och timplanen säger ` +

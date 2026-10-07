@@ -32,6 +32,7 @@ export type PlannedStatus = "MET" | "OVER" | "UNDER" | "UNPLANNED" | "PUPILS" | 
 export type PlannedVerdictCode =
   | "TIMPLAN_YEAR_GRADE_UNATTACHED"
   | "TIMPLAN_ATTACHED_DRAFT"
+  | "TIMPLAN_ATTACHED_PLAN_EMPTY"
   | "TIMPLAN_GROUP_UNPLANNED"
   | "TIMPLAN_GROUP_UNDERPLANNED"
   | "TIMPLAN_GROUP_OVERPLANNED"
@@ -199,12 +200,21 @@ export interface PlannedCoverage {
 const VERDICT_ORDER: Record<PlannedVerdictCode, number> = {
   TIMPLAN_YEAR_GRADE_UNATTACHED: 0,
   TIMPLAN_ATTACHED_DRAFT: 1,
-  TIMPLAN_GROUP_UNPLANNED: 2,
-  TIMPLAN_GROUP_UNDERPLANNED: 3,
-  TIMPLAN_GROUP_OVERPLANNED: 4,
-  TIMPLAN_PUPIL_UNDERPLANNED: 5,
-  TIMPLAN_PUPIL_DOUBLE_PLANNED: 6,
+  TIMPLAN_ATTACHED_PLAN_EMPTY: 2,
+  TIMPLAN_GROUP_UNPLANNED: 3,
+  TIMPLAN_GROUP_UNDERPLANNED: 4,
+  TIMPLAN_GROUP_OVERPLANNED: 5,
+  TIMPLAN_PUPIL_UNDERPLANNED: 6,
+  TIMPLAN_PUPIL_DOUBLE_PLANNED: 7,
 };
+
+/**
+ * The highest årskurs a year can attach a plan to: AcademicYearTimplans'
+ * CHECK (0..10, migration 20261007130000) and the year PUT's DTO. Classes
+ * may go to 12 (StudentGroups allow it); above 10 there is nothing to attach,
+ * so no notice asks for it.
+ */
+export const TIMPLAN_MAX_ATTACHABLE_GRADE = 10;
 
 const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const byName = (a: string, b: string): number => a.localeCompare(b, "sv");
@@ -437,8 +447,29 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     classGrades.set(grade, list);
   }
   for (const grade of [...classGrades.keys()].sort((a, b) => a - b)) {
-    if (planOfGrade.has(grade)) continue;
+    if (grade > TIMPLAN_MAX_ATTACHABLE_GRADE) continue;
     const ids = classGrades.get(grade)!;
+    const attached = planOfGrade.get(grade);
+    if (attached) {
+      // Attached to a plan that gives this årskurs no minutes at all — the
+      // åk 7–9 plan chosen for åk 3 by mistake: every line would read
+      // NO_TARGET and the class 0 of 0, which looks covered.
+      if ([...targetsOf(grade)!.values()].some((minutes) => minutes > 0)) continue;
+      verdicts.push({
+        code: "TIMPLAN_ATTACHED_PLAN_EMPTY",
+        severity: "notice",
+        gradeLevel: grade,
+        localTimplanId: attached.id,
+        studentGroupIds: ids,
+        params: {
+          gradeLevel: grade,
+          planName: attached.name,
+          groupCount: ids.length,
+          groupNames: ids.map((id) => groupsById.get(id)!.name).join(", "),
+        },
+      });
+      continue;
+    }
     verdicts.push({
       code: "TIMPLAN_YEAR_GRADE_UNATTACHED",
       severity: "notice",

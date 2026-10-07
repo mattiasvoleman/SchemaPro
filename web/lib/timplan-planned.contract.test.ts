@@ -35,7 +35,7 @@ describe("planerat mot timplan agrees with the gateway's fixture", () => {
   it("has cases to replay, reaching every verdict code", () => {
     expect(cases.length).toBeGreaterThanOrEqual(9);
     const seen = new Set(cases.flatMap((entry) => entry.coverage.verdicts.map((v) => v.code)));
-    expect(seen.size).toBe(7);
+    expect(seen.size).toBe(8);
   });
 
   it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, entry) => {

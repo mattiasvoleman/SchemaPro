@@ -482,6 +482,46 @@ describe('computePlannedCoverage', () => {
       expect(coverage.groups.map((g) => g.lines.map((l) => l.status))).toEqual([['NO_TARGET'], []]);
     });
 
+    // Review reproduction (P2 review, lens regler): a plan with no entries for
+    // the grade it is attached to gave no notice, every line NO_TARGET and a
+    // Täckning pill reading 0/0 — the class looked covered.
+    it('notices an årskurs attached to a plan that gives it no minutes, naming the plan and the classes', () => {
+      const a = group('3A', 'CLASS', 3);
+      const b = group('3B', 'CLASS', 3);
+      const coverage = computePlannedCoverage(
+        input({
+          plans: [plan([[S.MA, 7, 180], [S.EN, 3, 0]])],
+          attachments: [{ gradeLevel: 3, localTimplanId: PLAN }, { gradeLevel: 4, localTimplanId: PLAN }],
+          groups: [b, a],
+          requirements: [req(a, S.MA, 3, 60)],
+        }),
+      );
+      expect(coverage.verdicts).toEqual([
+        {
+          code: 'TIMPLAN_ATTACHED_PLAN_EMPTY',
+          severity: 'notice',
+          gradeLevel: 3,
+          localTimplanId: PLAN,
+          studentGroupIds: [a.id, b.id],
+          params: { gradeLevel: 3, planName: 'Grundskolan 2024', groupCount: 2, groupNames: '3A, 3B' },
+        },
+      ]);
+      expect(coverage.groups[0]).toMatchObject({ localTimplanId: PLAN, linesWithTarget: 0 });
+    });
+
+    // Review reproduction (P2 review, lens data-api): StudentGroups allow åk
+    // 11–12, AcademicYearTimplans only 0–10, so the notice asked the admin to
+    // attach a plan the dialog and the API cannot attach.
+    it('does not ask for a plan for åk 11 and 12, which no year can attach', () => {
+      const c = group('11A', 'CLASS', 11);
+      const d = group('12A', 'CLASS', 12);
+      const coverage = computePlannedCoverage(
+        input({ groups: [c, d], requirements: [req(c, S.MA, 3, 60)] }),
+      );
+      expect(coverage.verdicts).toEqual([]);
+      expect(coverage.groups.map((g) => g.localTimplanId)).toEqual([null, null]);
+    });
+
     it('marks a draft plan, and still judges the classes that follow it', () => {
       const c = group('9A', 'CLASS', 9);
       const coverage = computePlannedCoverage(

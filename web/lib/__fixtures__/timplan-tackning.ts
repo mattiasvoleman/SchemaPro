@@ -34,5 +34,7 @@ export function coverageCase(prefix: string): { input: PlannedCoverageInput; res
 export const LANGUAGES = "språkval and SvA in teaching groups";
 /** An årskurs without a plan, and a draft attached to åk 9. */
 export const UNATTACHED_AND_DRAFT = "an årskurs with classes and no plan";
+/** Åk 3 attached to a plan with no minutes for it, and an åk 11 class. */
+export const EMPTY_PLAN = "åk 3 attached to a plan that gives it no minutes";
 /** Unplanned, under and over in one class (7B). */
 export const MIXED = "unplanned, underplanned and overplanned";

@@ -20,8 +20,8 @@ const yearNotFound = () => new NotFoundException('Läsåret finns inte.');
  * WHAT IS NOT REFUSED. A draft plan (next year planned in the spring), two
  * school forms in one year (grundskola and anpassad grundskola side by side),
  * a grade the plan has no entries for: all legal, all marked by the readers —
- * the coverage report says TIMPLAN_ATTACHED_DRAFT, and a grade without entries
- * simply has no target. Nothing here judges the content of a plan.
+ * the coverage report says TIMPLAN_ATTACHED_DRAFT, and for a grade the plan
+ * gives no minutes TIMPLAN_ATTACHED_PLAN_EMPTY. Nothing here judges the content of a plan.
  */
 @Injectable()
 export class AcademicYearTimplansService {

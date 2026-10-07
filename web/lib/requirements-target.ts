@@ -179,6 +179,8 @@ export interface TargetView {
   unattachedGrades: number[];
   /** Attached plans that are DRAFTs, with the grades that follow them. */
   draftPlans: { id: string; name: string; gradeLevels: number[] }[];
+  /** Årskurser with classes attached to a plan that gives them no minutes. */
+  emptyPlanGrades: { gradeLevel: number; planName: string }[];
 }
 
 /** Hours arrive to the tenth already; a sum of them is rounded the same way. */
@@ -231,9 +233,15 @@ export function buildTargetView(coverage: PlannedCoverage, plans: PlannedPlan[])
 
   const unattachedGrades: number[] = [];
   const drafts: TargetView["draftPlans"] = [];
+  const emptyPlanGrades: TargetView["emptyPlanGrades"] = [];
   for (const verdict of coverage.verdicts) {
     if (verdict.code === "TIMPLAN_YEAR_GRADE_UNATTACHED" && verdict.gradeLevel !== undefined) {
       unattachedGrades.push(verdict.gradeLevel);
+    } else if (verdict.code === "TIMPLAN_ATTACHED_PLAN_EMPTY" && verdict.gradeLevel !== undefined) {
+      emptyPlanGrades.push({
+        gradeLevel: verdict.gradeLevel,
+        planName: String(verdict.params.planName ?? ""),
+      });
     } else if (verdict.code === "TIMPLAN_ATTACHED_DRAFT" && verdict.localTimplanId) {
       drafts.push({
         id: verdict.localTimplanId,
@@ -269,6 +277,7 @@ export function buildTargetView(coverage: PlannedCoverage, plans: PlannedPlan[])
     },
     unattachedGrades,
     draftPlans: drafts,
+    emptyPlanGrades,
   };
 }
 
