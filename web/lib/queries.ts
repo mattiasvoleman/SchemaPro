@@ -2108,6 +2108,10 @@ export function useImportCsv() {
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.qualifications });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.duties });
+      // A requirements file staffs and unstaffs rows; any file can move a
+      // ranking's figures.
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.unstaffed });
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
     },
   });
 }

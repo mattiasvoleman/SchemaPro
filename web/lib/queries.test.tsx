@@ -1643,6 +1643,10 @@ describe("useImportCsv", () => {
     ["teacherQualifications"],
     ["staffingLoad"],
     ["teacherDuties"],
+    // A requirements file can staff or unstaff rows, a teachers file post
+    // a target: the unstaffed list and the cached rankings go stale too.
+    ["staffingUnstaffed"],
+    ["staffingSuggestions"],
   ];
 
   it("students POST /import/students with the academic year in the body", async () => {

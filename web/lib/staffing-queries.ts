@@ -95,6 +95,8 @@ export function useTeacherEmploymentActions() {
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.employments });
     void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
+    // A target moves every kvar and wouldExceed in a cached ranking.
+    void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
   };
   const save = useMutation({
     mutationFn: ({
@@ -144,6 +146,8 @@ export function useReplaceTeacherQualifications() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.qualifications });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
+      // A behörighet moves a candidate's badge and tier in a cached ranking.
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
     },
   });
 }
