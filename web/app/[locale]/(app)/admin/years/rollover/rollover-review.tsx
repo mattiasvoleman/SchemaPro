@@ -34,6 +34,10 @@ const HISTORY = new Set([
  * Steg 4, Granska: everything the rollover will write and everything it
  * leaves behind, before "Skapa läsåret".
  *
+ * Timplan per årskurs is listed per grade with why it follows that plan
+ * (carried with its cohort, the entry grade's default, or none), and a draft
+ * carried along says so — the "utkast — inte beslutad" every P2 reader shows.
+ *
  * Teachers are named from usePeople — the preview sends ids only. The list of
  * what is NOT carried is the gateway's registry (every table with a läsår has
  * a written decision there, and a test that fails without one), rendered in
@@ -166,6 +170,35 @@ export function RolloverReview({
             </ul>
           </div>
         ) : null}
+      </section>
+
+      <section aria-labelledby="review-timplans" className="space-y-1">
+        <h3 id="review-timplans" className="font-medium">
+          {t("reviewTimplans")}
+        </h3>
+        {plan.timplans.length === 0 ? (
+          <p className="text-muted-foreground">{t("reviewTimplansNone")}</p>
+        ) : (
+          <>
+            <ul className="ml-4 list-disc text-muted-foreground">
+              {plan.timplans.map((row) => (
+                <li key={row.gradeLevel}>
+                  {t(`timplanLine.${row.reason}`, {
+                    grade: row.gradeLevel,
+                    plan: row.planName ?? "",
+                    from: row.fromGradeLevel ?? 0,
+                  })}
+                  {row.planStatus === "DRAFT" ? (
+                    <Badge variant="warning" className="ml-2 text-[10px]">
+                      {t("timplanDraft")}
+                    </Badge>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+            <p className="text-muted-foreground">{t("reviewTimplansHint")}</p>
+          </>
+        )}
       </section>
 
       <section aria-labelledby="review-rules" className="space-y-1">

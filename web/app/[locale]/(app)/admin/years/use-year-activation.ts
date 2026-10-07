@@ -98,7 +98,7 @@ export function useDeleteYear() {
   return useMutation({
     mutationFn: (yearId: string) => api.delete(`/api/v1/academic-years/${yearId}`),
     onSuccess: () => {
-      // The year's groups, rows and lov go with it (ON DELETE CASCADE).
+      // The year's groups, rows, lov and timplan per årskurs go with it (ON DELETE CASCADE).
       for (const queryKey of [
         YEAR_KEYS.years,
         YEAR_KEYS.groups,
@@ -106,6 +106,8 @@ export function useDeleteYear() {
         YEAR_KEYS.requirements,
         YEAR_KEYS.breaks,
         YEAR_KEYS.constraints,
+        YEAR_KEYS.yearTimplans,
+        YEAR_KEYS.timplanCoverage,
         YEAR_KEYS.activationPreview,
       ]) {
         void queryClient.invalidateQueries({ queryKey });

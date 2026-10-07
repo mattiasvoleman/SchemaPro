@@ -701,6 +701,20 @@ export interface RolloverPlannedGroup {
   volumePlanName: string | null;
 }
 
+/**
+ * One årskurs of the new year's timplan per årskurs, and why it follows that
+ * plan: CARRIED from the cohort's grade below (a draft stays a draft),
+ * DEFAULT (an entry grade: the newest decided plan), or NONE.
+ */
+export interface RolloverPlannedTimplan {
+  gradeLevel: number;
+  reason: "CARRIED" | "DEFAULT" | "NONE";
+  fromGradeLevel: number | null;
+  localTimplanId: string | null;
+  planName: string | null;
+  planStatus: "DRAFT" | "DECIDED" | null;
+}
+
 export interface RolloverRequirementRow {
   sourceRequirementId: string;
   subjectName: string;
@@ -760,6 +774,7 @@ export interface RolloverPreview {
     endTime: string;
     stageChange: boolean;
   }[];
+  timplans: RolloverPlannedTimplan[];
   skipped: { model: string; reason: string; count: number | null }[];
   problems: RolloverProblem[];
   blocking: boolean;
@@ -782,7 +797,14 @@ export interface RolloverOptions {
 
 export interface RolloverResult {
   academicYear: AcademicYear;
-  counts: { groups: number; members: number; requirements: number; breaks: number; classRules: number };
+  counts: {
+    groups: number;
+    members: number;
+    requirements: number;
+    breaks: number;
+    classRules: number;
+    timplans: number;
+  };
   planHash: string;
 }
 
