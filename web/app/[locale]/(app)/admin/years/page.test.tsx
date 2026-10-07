@@ -125,6 +125,14 @@ describe("YearsPage", () => {
     expect(post).toHaveBeenCalledWith("/api/v1/academic-years/y26/activation/preview");
   });
 
+  it("names the column after the moves it shows, so an active year's dash is not read as no pupils", async () => {
+    // Webbgenomgången 2026-10-07: "Elever: —" for the active year with 80 pupils.
+    post.mockResolvedValue(plan());
+    renderPage();
+    expect(screen.getByRole("columnheader", { name: "Elevflytt" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "Elever" })).toBeNull();
+  });
+
   it("offers Rulla vidare only where a rollover can start", async () => {
     post.mockResolvedValue(plan());
     renderPage();

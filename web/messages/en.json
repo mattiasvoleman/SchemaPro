@@ -1758,7 +1758,7 @@
     "colYear": "Year",
     "colPeriod": "Period",
     "colStatus": "Status",
-    "colPupils": "Pupils",
+    "colMoves": "Pupil moves",
     "status": {
       "ACTIVE": "Active",
       "UPCOMING": "Upcoming",
