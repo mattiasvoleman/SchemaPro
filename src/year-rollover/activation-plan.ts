@@ -57,6 +57,8 @@ export interface ActivationSource {
   groups: ActivationGroup[];
   /** Every pupil of the school, active or not. */
   students: ActivationStudent[];
+  /** Every teaching-group membership of the school (StudentGroupMembers). */
+  members: { studentGroupId: string; studentId: string }[];
 }
 
 /** How many links the chain is followed back; a school rolls once a year. */
@@ -73,11 +75,14 @@ export interface ActivationMove {
   studentIds: string[];
 }
 
-export type ActivationProblemCode = 'YEAR_ACTIVATION_TOO_EARLY' | 'YEAR_IS_SUPERSEDED';
+export type ActivationProblemCode =
+  | 'YEAR_ACTIVATION_TOO_EARLY'
+  | 'YEAR_IS_SUPERSEDED'
+  | 'MEMBERSHIPS_OUT_OF_DATE';
 
 export interface ActivationProblem {
   code: ActivationProblemCode;
-  blocking: true;
+  blocking: boolean;
   params: Record<string, string | number>;
 }
 
@@ -147,6 +152,9 @@ export async function readActivationSource(
     where: { role: 'STUDENT' },
     select: { id: true, isActive: true, studentGroupId: true },
   });
+  const members = await tx.studentGroupMember.findMany({
+    select: { studentGroupId: true, studentId: true },
+  });
   return {
     yearId,
     years: years.map((year) => ({
@@ -156,6 +164,7 @@ export async function readActivationSource(
     })),
     groups: groups ?? [],
     students: students ?? [],
+    members: members ?? [],
   };
 }
 
@@ -322,6 +331,53 @@ export function planActivation(source: ActivationSource, today: string): Activat
       code: 'YEAR_IS_SUPERSEDED',
       blocking: true,
       params: { year: year.name, successor: yearById.get(holderId)!.name, pupils },
+    });
+  }
+
+  // Teaching-group memberships were decided at the rollover, from the home
+  // classes as they were then; pupils move by their home classes as they are
+  // now. A pupil re-placed in between — out of a skipped 7C into 7A, or into
+  // a class that graduates — has next year's memberships of the old
+  // placement. Not changed here (StudentGroupMembers are the groups' own),
+  // but counted, so the admin knows to look: MISSING, a pupil placed into
+  // the year who is in a teaching group whose successor in the year lacks
+  // them; STALE, a pupil leaving with no class who is still a member of a
+  // teaching group of the year.
+  const groupsOf = new Map<string, string[]>();
+  for (const member of source.members ?? []) {
+    const list = groupsOf.get(member.studentId) ?? [];
+    list.push(member.studentGroupId);
+    groupsOf.set(member.studentId, list);
+  }
+  const carriedMembers = new Set((source.members ?? []).map((member) => member.studentGroupId));
+  let membershipsMissing = 0;
+  let membershipsStale = 0;
+  for (const move of writes.values()) {
+    for (const studentId of move.studentIds) {
+      const held = new Set(groupsOf.get(studentId) ?? []);
+      if (move.toGroupId === null) {
+        for (const groupId of held) {
+          if (groupById.get(groupId)?.academicYearId === year.id) membershipsStale++;
+        }
+        continue;
+      }
+      for (const groupId of held) {
+        const teaching = groupById.get(groupId);
+        if (!teaching || teaching.kind !== 'TEACHING_GROUP' || teaching.academicYearId === year.id) continue;
+        const next = successorOf.get(groupId);
+        // Only where the rollover carried members at all: with
+        // carryTeachingGroupMembers off, every pupil "misses" every group.
+        if (next && next.academicYearId === year.id && !held.has(next.id) && carriedMembers.has(next.id)) {
+          membershipsMissing++;
+        }
+      }
+    }
+  }
+  if (membershipsMissing + membershipsStale > 0) {
+    problems.push({
+      code: 'MEMBERSHIPS_OUT_OF_DATE',
+      blocking: false,
+      params: { missing: membershipsMissing, stale: membershipsStale },
     });
   }
 
