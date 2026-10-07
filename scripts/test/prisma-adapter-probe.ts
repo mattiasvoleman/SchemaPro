@@ -1853,6 +1853,19 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2 || ' p2'`, [schoolId, MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-duty@example.invalid'`, [schoolId, MARKER]);
+  // (t)'s attachment, for a run that stopped before detaching it: the plan
+  // key is ON DELETE RESTRICT, so the plans below would not go while it stands.
+  await owner.query(
+    `DELETE FROM "AcademicYearTimplans" a USING "LocalTimplans" p
+      WHERE p.id = a."localTimplanId" AND p."schoolId" = $1 AND p.name LIKE $2 || '%'`,
+    [schoolId, MARKER],
+  );
+  // Plans before ANY probe subject: a decided plan's entries refuse the
+  // subject's cascade (TIMPLAN_IS_DECIDED), and the plans' own cascade passes
+  // the trigger. (u)'s subjects sit in a decided plan and match the
+  // "MARKER %" subject delete below, so a (u) that stopped before removing
+  // its plan made every later run fail here until this came first.
+  await owner.query(`DELETE FROM "LocalTimplans" WHERE "schoolId" = $1 AND name LIKE $2 || '%'`, [schoolId, MARKER]);
   // (r): the person (their post goes with them), the two subjects (their
   // timplansposter go with them) and the policy row the probe created.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-staff@example.invalid'`, [schoolId, MARKER]);
@@ -1861,16 +1874,6 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
     schoolId,
     PROBE_ANNUAL_HOURS,
   ]);
-  // (t)'s attachment, for a run that stopped before detaching it: the plan
-  // key is ON DELETE RESTRICT, so the plans below would not go while it stands.
-  await owner.query(
-    `DELETE FROM "AcademicYearTimplans" a USING "LocalTimplans" p
-      WHERE p.id = a."localTimplanId" AND p."schoolId" = $1 AND p.name LIKE $2 || '%'`,
-    [schoolId, MARKER],
-  );
-  // Plans before the subject: a decided plan's entries refuse the subject's
-  // cascade, and the plans' own cascade passes the trigger.
-  await owner.query(`DELETE FROM "LocalTimplans" WHERE "schoolId" = $1 AND name LIKE $2 || '%'`, [schoolId, MARKER]);
   await owner.query('DELETE FROM "Subjects" WHERE "schoolId" = $1 AND name = $2', [schoolId, MARKER]);
   await owner.query('DELETE FROM "Rasts" WHERE "schoolId" = $1 AND name = $2', [schoolId, MARKER]);
   for (const table of ['FrameTimes', 'LunchServings']) {
