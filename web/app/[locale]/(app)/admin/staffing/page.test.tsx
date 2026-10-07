@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import type { TeacherLoadReport } from "@/lib/teacher-load";
 import StaffingPage from "./page";
 
@@ -22,6 +23,9 @@ globalThis.ResizeObserver ??= class ResizeObserverStub {
  */
 
 const year = { id: "y1", name: "2026/2027", isActive: true, startDate: "2026-08-17", endDate: "2027-06-11" };
+/** Last year, and this year as rolled from it (staffing Fas 5). */
+const lastYear = { id: "y0", name: "2025/2026", isActive: false, startDate: "2025-08-18", endDate: "2026-06-12", predecessorId: null };
+const rolledYear = { ...year, predecessorId: "y0" };
 
 const report: TeacherLoadReport & { academicYearId: string; horizon: "planned"; year: typeof year } = {
   academicYearId: "y1",
@@ -85,11 +89,15 @@ const state = vi.hoisted(() => ({
   policy: null as unknown,
   report: null as unknown,
   reportLoading: false,
+  years: null as unknown as unknown[],
+  /** Per year id: the load report, or an Error the read failed with. */
+  reports: {} as Record<string, unknown>,
+  employments: {} as Record<string, unknown[]>,
   assign: null as unknown as (body: unknown) => Promise<unknown>,
 }));
 
 vi.mock("@/lib/queries", () => ({
-  useAcademicYears: () => ({ data: [year], isLoading: false, isError: false }),
+  useAcademicYears: () => ({ data: state.years, isLoading: false, isError: false }),
   useSubjects: () => ({
     data: [{ id: "s-ma", name: "Matematik", code: "MA", color: null, requiredRoomTypeId: null }],
     isLoading: false,
@@ -118,14 +126,21 @@ vi.mock("@/lib/queries", () => ({
 }));
 
 vi.mock("@/lib/staffing-queries", () => ({
-  useStaffingLoad: () => ({
-    data: state.reportLoading ? undefined : state.report,
-    isLoading: state.reportLoading,
-    isError: false,
-  }),
+  useStaffingLoad: (yearId: string | null) => {
+    const other = yearId !== null && yearId !== "y1" ? state.reports[yearId] : undefined;
+    if (other instanceof Error) return { data: undefined, isLoading: false, isError: true, error: other };
+    if (other !== undefined) return { data: other, isLoading: false, isError: false };
+    return {
+      data: state.reportLoading ? undefined : state.report,
+      isLoading: state.reportLoading,
+      isError: false,
+    };
+  },
   useStaffingPolicy: () => ({ data: state.policy, isSuccess: true }),
   useSaveStaffingPolicy: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useTeacherEmployments: () => ({ data: [] }),
+  useTeacherEmployments: (yearId: string | null) => ({
+    data: yearId === null ? undefined : (state.employments[yearId] ?? []),
+  }),
   useTeacherQualifications: () => ({ data: [] }),
   useTeacherEmploymentActions: () => ({
     save: { mutateAsync: vi.fn(), isPending: false },
@@ -186,6 +201,9 @@ describe("StaffingPage", () => {
     state.policy = null;
     state.report = report;
     state.reportLoading = false;
+    state.years = [year];
+    state.reports = {};
+    state.employments = {};
   });
 
   it("shows the KPI strip, reading an unchecked school as 'not recorded' rather than zero", () => {
@@ -346,5 +364,86 @@ describe("StaffingPage", () => {
     expect(
       within(screen.getByRole("dialog")).getByRole("button", { name: "changeTeacherFor(7A · Matematik)" }),
     ).toBeInTheDocument();
+  });
+  describe("last year (staffing Fas 5)", () => {
+    const lastReport = {
+      ...report,
+      academicYearId: "y0",
+      teachers: [
+        { ...report.teachers[0]!, countedMinutesPerWeek: 960, employment: { ...report.teachers[0]!.employment!, employmentPercent: 80 } },
+        { ...report.teachers[0]!, userId: "t-gone", employment: null, countedMinutesPerWeek: 600 },
+      ],
+    };
+
+    it("offers no comparison and no carry for a year that was not rolled from another", () => {
+      state.employments = { y0: [{ id: "e0", userId: "t-bo" }] };
+      render(<StaffingPage />);
+      expect(screen.queryByRole("tab", { name: "compare.withLastYear" })).toBeNull();
+      expect(screen.queryByText(/carry.noticeTitle/)).toBeNull();
+    });
+
+    it("compares per teacher with the predecessor, naming who left, and filters to the changed", async () => {
+      const user = userEvent.setup();
+      const same = { ...report.teachers[0]!, userId: "t-same" };
+      state.years = [rolledYear, lastYear];
+      state.report = { ...report, teachers: [...report.teachers, same] };
+      state.reports = { y0: { ...lastReport, teachers: [...lastReport.teachers, same] } };
+      render(<StaffingPage />);
+      await user.click(screen.getByRole("tab", { name: "compare.withLastYear" }));
+
+      const row = (await screen.findByText("Bo Alm")).closest("tr")!;
+      expect(within(row).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
+        "80 %",
+        "100 %(+20 %)",
+        "960",
+        "1200",
+        "+240",
+      ]);
+      // A teacher with no row this year is a row, said in words.
+      const gone = screen.getByText("t-gone").closest("tr")!;
+      expect(gone).toHaveTextContent("changeLEFT");
+      expect(within(gone).getAllByRole("cell")[3]?.textContent).toBe("—");
+      expect(screen.getByText("footnote")).toBeInTheDocument();
+      // The matrix's own toggles do not apply here.
+      expect(screen.queryByRole("tab", { name: "weekPeak" })).toBeNull();
+
+      expect(screen.getByText("t-same")).toBeInTheDocument();
+      await user.click(screen.getByRole("checkbox", { name: "changedOnly" }));
+      expect(screen.getByText("Bo Alm")).toBeInTheDocument();
+      expect(screen.getByText("t-gone")).toBeInTheDocument();
+      expect(screen.queryByText("t-same")).toBeNull();
+    });
+
+    it("says why there is no comparison instead of drawing last year as zeros", async () => {
+      const user = userEvent.setup();
+      state.years = [rolledYear, lastYear];
+      state.reports = {
+        y0: new ApiError(409, "…", "ROLLOVER_NOT_ACTIVATED"),
+      };
+      render(<StaffingPage />);
+      await user.click(screen.getByRole("tab", { name: "compare.withLastYear" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("notActivated(2025/2026)");
+      expect(screen.queryByRole("table")).toBeNull();
+    });
+
+    it("offers to carry last year's tjänster only while this year has none and last year has some", () => {
+      state.years = [rolledYear, lastYear];
+      state.employments = { y0: [{ id: "e0", userId: "t-bo" }] };
+      const { unmount } = render(<StaffingPage />);
+      expect(screen.getByText("carry.noticeTitle(2025/2026)")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "carry.noticeAction" })).toBeInTheDocument();
+      unmount();
+
+      // Started by hand: no nag.
+      state.employments = { y0: [{ id: "e0", userId: "t-bo" }], y1: [{ id: "e1", userId: "t-bo" }] };
+      const second = render(<StaffingPage />);
+      expect(screen.queryByText(/carry.noticeTitle/)).toBeNull();
+      second.unmount();
+
+      // Never had any: nothing to offer.
+      state.employments = {};
+      render(<StaffingPage />);
+      expect(screen.queryByText(/carry.noticeTitle/)).toBeNull();
+    });
   });
 });

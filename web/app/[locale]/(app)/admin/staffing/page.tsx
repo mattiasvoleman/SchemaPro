@@ -31,6 +31,16 @@
 // NO_TARGET and a notice pointing at the settings card — never a default of
 // 1 080 slipped in, which would be a number nobody chose.
 //
+// LAST YEAR, WHEN THERE IS ONE (staffing Fas 5). A year rolled from another
+// gets a third toggle, "Matris | Jämför med förra läsåret": per teacher, last
+// year's tjänst and counted minutes beside this year's (year-comparison.tsx).
+// And a year rolled WITHOUT its tjänster — before Fas 5, or with the wizard's
+// switch off — gets one notice offering to carry them from the predecessor
+// (staffing-carry-dialog.tsx), shown only while this year has no post at all
+// and last year has at least one: a school that rolls but never enters
+// tjänster is not nagged forever, and one that has started by hand is not
+// told to start over. Both are React.lazy, as the drawer is.
+//
 // The settings card lives on THIS page, behind the settings button, rather
 // than on tillgänglighet beside the lunch card it is built like: the lunch
 // card's reader is the solver, this card's only reader is the matrix above
@@ -86,6 +96,22 @@ const TeacherDrawer = lazy(() =>
   })),
 );
 
+/**
+ * Click-opened like the drawer: the carry, and last year beside this one.
+ * Measured 2026-10-07 against fa4a3d6's 176.5KB own JS: the two lazy imports,
+ * the toggle, the notice and the predecessor's employments query cost the
+ * page 0.5KB (177.0KB); the dialog, the summary, the comparison and its join
+ * load on the click.
+ */
+const StaffingCarryDialog = lazy(() =>
+  import("./staffing-carry-dialog").then((module) => ({ default: module.StaffingCarryDialog })),
+);
+const YearComparison = lazy(() =>
+  import("./year-comparison").then((module) => ({ default: module.YearComparison })),
+);
+
+type PageView = "matrix" | "compare";
+
 export default function StaffingPage() {
   const t = useTranslations("staffing");
   const tCommon = useTranslations("common");
@@ -94,6 +120,8 @@ export default function StaffingPage() {
   const activeYearId =
     selectedYearId ?? years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
   const activeYear = years?.find((year) => year.id === activeYearId) ?? null;
+  /** The year this one was rolled from, when the list holds it. */
+  const predecessor = years?.find((year) => year.id === activeYear?.predecessorId) ?? null;
 
   const { data: report, isLoading: reportLoading, isError: reportFailed } =
     useStaffingLoad(activeYearId);
@@ -103,12 +131,22 @@ export default function StaffingPage() {
   const { data: groups } = useGroups();
   const { data: requirements } = useRequirements(activeYearId);
   const { data: employments } = useTeacherEmployments(activeYearId);
+  const { data: predecessorEmployments } = useTeacherEmployments(predecessor?.id ?? null);
   const { data: qualifications } = useTeacherQualifications();
 
   const [week, setWeek] = useState<WeekView>("standard");
   const [unit, setUnit] = useState<UnitView>("minutes");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openTeacherId, setOpenTeacherId] = useState<string | null>(null);
+  const [chosenView, setView] = useState<PageView>("matrix");
+  const [carryOpen, setCarryOpen] = useState(false);
+  const view: PageView = predecessor ? chosenView : "matrix";
+  /** Rolled without its tjänster: none here, some last year (C10). */
+  const offerCarry =
+    predecessor !== null &&
+    employments !== undefined &&
+    employments.length === 0 &&
+    (predecessorEmployments?.length ?? 0) > 0;
 
   /**
    * One gate for every query a NUMBER is printed from — the report and the
@@ -230,6 +268,21 @@ export default function StaffingPage() {
             </div>
           ) : null}
 
+          {offerCarry && predecessor ? (
+            <div
+              role="status"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted px-4 py-3 text-sm text-foreground"
+            >
+              <div>
+                <p className="font-medium">{t("carry.noticeTitle", { year: predecessor.name })}</p>
+                <p>{t("carry.noticeBody", { year: activeYear.name, source: predecessor.name })}</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setCarryOpen(true)}>
+                {t("carry.noticeAction")}
+              </Button>
+            </div>
+          ) : null}
+
           {figures ? (
             <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-lg border bg-card p-4">
@@ -272,25 +325,47 @@ export default function StaffingPage() {
           ) : null}
 
           <div className="flex flex-wrap items-center gap-3">
-            <Tabs value={week} onValueChange={(value) => setWeek(value as WeekView)}>
-              <TabsList aria-label={t("weekToggle")}>
-                <TabsTrigger value="standard">{t("weekStandard")}</TabsTrigger>
-                <TabsTrigger value="peak">{t("weekPeak")}</TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <Tabs value={unit} onValueChange={(value) => setUnit(value as UnitView)}>
-              <TabsList aria-label={t("unitToggle")}>
-                <TabsTrigger value="minutes">{t("unitMinutes")}</TabsTrigger>
-                <TabsTrigger value="percent">{t("unitPercent")}</TabsTrigger>
-              </TabsList>
-            </Tabs>
+            {predecessor ? (
+              <Tabs value={view} onValueChange={(value) => setView(value as PageView)}>
+                <TabsList aria-label={t("compare.toggle")}>
+                  <TabsTrigger value="matrix">{t("compare.matrix")}</TabsTrigger>
+                  <TabsTrigger value="compare">{t("compare.withLastYear")}</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            ) : null}
+            {view === "matrix" ? (
+              <>
+                <Tabs value={week} onValueChange={(value) => setWeek(value as WeekView)}>
+                  <TabsList aria-label={t("weekToggle")}>
+                    <TabsTrigger value="standard">{t("weekStandard")}</TabsTrigger>
+                    <TabsTrigger value="peak">{t("weekPeak")}</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <Tabs value={unit} onValueChange={(value) => setUnit(value as UnitView)}>
+                  <TabsList aria-label={t("unitToggle")}>
+                    <TabsTrigger value="minutes">{t("unitMinutes")}</TabsTrigger>
+                    <TabsTrigger value="percent">{t("unitPercent")}</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </>
+            ) : null}
           </div>
-          <p className="text-xs text-foreground">
-            {week === "peak" ? t("weekHintPeak") : t("weekHintStandard")}
-            {unit === "percent" ? ` ${t("unitHintPercent")}` : ""}
-          </p>
+          {view === "matrix" ? (
+            <p className="text-xs text-foreground">
+              {week === "peak" ? t("weekHintPeak") : t("weekHintStandard")}
+              {unit === "percent" ? ` ${t("unitHintPercent")}` : ""}
+            </p>
+          ) : null}
 
-          {report.teachers.length === 0 ? (
+          {view === "compare" && predecessor ? (
+            <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+              <YearComparison
+                thisYear={{ name: activeYear.name, teachers: report.teachers }}
+                predecessor={predecessor}
+                teacherName={teacherName}
+              />
+            </Suspense>
+          ) : report.teachers.length === 0 ? (
             <EmptyState icon={Users} title={tCommon("noResults")} description={t("empty")} />
           ) : (
             <StaffingMatrix
@@ -312,6 +387,16 @@ export default function StaffingPage() {
           {settingsOpen ? <StaffingPolicyCard /> : null}
         </div>
       )}
+
+      {carryOpen && activeYear ? (
+        <Suspense fallback={null}>
+          <StaffingCarryDialog
+            year={activeYear}
+            onOpenChange={(open) => !open && setCarryOpen(false)}
+            teacherName={teacherName}
+          />
+        </Suspense>
+      ) : null}
 
       {openTeacher && activeYearId && activeYear ? (
         <Suspense fallback={null}>
