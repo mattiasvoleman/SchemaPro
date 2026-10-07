@@ -1,13 +1,13 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import {
   TIMPLAN_KEYS,
   type LocalTimplanDetail,
   type LocalTimplanStatus,
 } from "@/lib/timplan-queries";
-import { YEAR_TIMPLAN_KEYS } from "@/lib/year-timplan-keys";
+import { TIMPLAN_COVERAGE_KEYS, YEAR_TIMPLAN_KEYS } from "@/lib/year-timplan-keys";
 
 /**
  * One row of "Timplan per årskurs": the lokal timplan an årskurs follows in a
@@ -69,5 +69,33 @@ export function useLocalTimplanDetails(ids: readonly string[], enabled = true) {
           api.get<LocalTimplanDetail>(`/api/v1/local-timplans/${encodeURIComponent(id)}`),
         ),
       ),
+  });
+}
+
+/**
+ * PUT /academic-years/:id/timplans — the year dialog's "Timplan per årskurs",
+ * wholesale. The answer is the year's rows after the write, so the cache is
+ * set from it rather than fetched again: Mål mode on Timplansposter reads the
+ * same key and repaints its targets from the save itself. The year's coverage
+ * is a different document now, so its key is invalidated.
+ */
+export function useSaveYearTimplans() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      academicYearId,
+      timplans,
+    }: {
+      academicYearId: string;
+      timplans: { gradeLevel: number; localTimplanId: string | null }[];
+    }) =>
+      api.put<YearTimplanRow[]>(
+        `/api/v1/academic-years/${encodeURIComponent(academicYearId)}/timplans`,
+        { timplans },
+      ),
+    onSuccess: (rows, { academicYearId }) => {
+      queryClient.setQueryData(YEAR_TIMPLAN_KEYS.year(academicYearId), rows);
+      void queryClient.invalidateQueries({ queryKey: TIMPLAN_COVERAGE_KEYS.year(academicYearId) });
+    },
   });
 }
