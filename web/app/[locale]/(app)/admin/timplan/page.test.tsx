@@ -94,6 +94,7 @@ const mutation = () => ({ mutateAsync: vi.fn(async (..._args: unknown[]) => ({})
 
 const state = vi.hoisted(() => ({
   plans: [] as unknown[],
+  subjects: null as unknown[] | null,
   plan: null as unknown,
   check: null as unknown,
   actions: null as unknown as Record<string, { mutateAsync: ReturnType<typeof vi.fn>; isPending: boolean }>,
@@ -109,7 +110,7 @@ vi.mock("@/lib/queries", () => ({
   useRequirements: () => ({ data: [] }),
   useGroups: () => ({ data: [], isLoading: false, isError: false }),
   useNationalTimplans: () => ({ data: NATIONAL, isLoading: false, isError: false }),
-  useSubjects: () => ({ data: SUBJECTS, isLoading: false, isError: false }),
+  useSubjects: () => ({ data: state.subjects ?? SUBJECTS, isLoading: false, isError: false }),
   usePeople: () => ({
     data: [{ id: "u-rektor", firstName: "Rut", lastName: "Rektor", role: "SCHOOL_ADMIN" }],
   }),
@@ -172,6 +173,7 @@ beforeEach(() => {
     generate: mutation(),
   };
   state.download.mockReset();
+  state.subjects = null;
   show(planOf());
 });
 
@@ -392,5 +394,28 @@ describe("TimplanPage: the läsår side (P2)", () => {
     await user.click(screen.getByRole("button", { name: /yearTimplansButton/ }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "title" })).toBeInTheDocument();
+  });
+});
+
+describe("TimplanPage: subjects without a national code", () => {
+  it("says how many counted subjects lack a code and links to Ämnen, unplanned ones included", () => {
+    // Production 2026-10-07: 23 subjects, none coded, an empty plan — 72
+    // "under mål" rows and nothing saying why. TIMPLAN_SUBJECT_UNMAPPED fires
+    // only for an uncoded subject WITH minutes, so the page counts itself.
+    state.subjects = [
+      subject("s-bl", "Bild", null),
+      subject("s-ma", "Matematik", null),
+      { ...subject("s-mt", "Mentorstid", null), countsTowardTimplan: false },
+    ];
+    show(planOf({ entries: [] }));
+    render(<TimplanPage />);
+
+    expect(screen.getByText(/^uncodedNotice\(2\)/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "uncodedNoticeLink" })).toHaveAttribute("href", "/admin/subjects");
+  });
+
+  it("says nothing when every counted subject has a code", () => {
+    render(<TimplanPage />);
+    expect(screen.queryByText(/uncodedNotice/)).not.toBeInTheDocument();
   });
 });

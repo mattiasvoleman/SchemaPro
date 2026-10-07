@@ -280,3 +280,51 @@ describe("TimplanGrid", () => {
     expect(row("s-prog")).toHaveTextContent("skolansValBadge");
   });
 });
+
+describe("TimplanGrid: an empty plan", () => {
+  /** The grid over `subjects` and an empty draft, as a school's first plan opens. */
+  function renderEmpty(subjects: Subject[]) {
+    const check = checkLocalTimplan({
+      planningWeeksTenths: 356,
+      version: toCoverageVersion(B1),
+      nationalSubjects: NATIONAL.subjects,
+      subjects,
+      entries: [],
+    });
+    render(
+      <TimplanGrid
+        subjects={subjects}
+        parentOf={parentOf}
+        columns={gridColumns(check.stageGrades)}
+        stageGrades={check.stageGrades}
+        draft={new Map()}
+        notes={new Map()}
+        check={check}
+        weeksTenths={356}
+        readOnly={false}
+        highlight={null}
+        onCellChange={() => {}}
+      />,
+    );
+  }
+
+  it("calls an uncoded subject with no minutes 'no national code', not skolans val", () => {
+    // Seen in production: every one of 23 uncoded subjects badged "skolans
+    // val" in a plan with no minutes at all — none of that time is pool time.
+    renderEmpty([subject("s-ma", "Matematik", null), subject("s-bl", "Bild", "BL")]);
+    expect(row("s-ma")).toHaveTextContent("uncodedBadge");
+    expect(row("s-ma")).not.toHaveTextContent("skolansValBadge");
+    expect(within(row("s-ma")).getByText("uncodedBadge")).toHaveAttribute("title", "uncodedBadgeHint");
+  });
+
+  it("says nothing is planned yet instead of a pool figure that reads as a fault", () => {
+    // Was "Skolans val 6890 av 600 h tagna", red: true arithmetic for a plan
+    // with no minutes, and it looked like an error.
+    renderEmpty([subject("s-ma", "Matematik", "MA")]);
+    const footer = document.querySelector("tfoot")!;
+    expect(within(footer).getByText("footerSkolansValEmpty")).toBeInTheDocument();
+    expect(footer).not.toHaveTextContent("footerSkolansValValue");
+    // Neutral, not the red of an overspent pool; the total row stays red.
+    expect(within(footer).getByText("footerSkolansValEmpty")).toHaveAttribute("data-tone", "none");
+  });
+});

@@ -254,6 +254,12 @@ export default function TimplanPage() {
   }, [current]);
   const columns = check ? gridColumns(check.stageGrades, extraGrades) : [];
 
+  // Counted subjects without a national code: their minutes feed no national
+  // cell, so a school whose subjects are all uncoded sees every stage under
+  // mål and — before this — nothing saying why. Unplanned ones included: the
+  // check's TIMPLAN_SUBJECT_UNMAPPED names only those with minutes.
+  const uncoded = (subjects ?? []).filter((subject) => subject.countsTowardTimplan && !subject.nationalCode).length;
+
   const loading =
     plansLoading || nationalLoading || subjectsLoading || (activeId !== null && planLoading);
   const failed = plansFailed || nationalFailed || subjectsFailed || planFailed;
@@ -552,6 +558,18 @@ export default function TimplanPage() {
               <p className="font-medium">{t("unpublishedTitle")}</p>
               <p>{t("unpublishedBody", { version: version.code, total: version.totalHours })}</p>
             </div>
+          ) : null}
+
+          {uncoded > 0 ? (
+            // Above the grid AND the rail, at every width: below xl the rail
+            // falls under twenty-odd rows, and its "under mål" rows are what
+            // this sentence explains when no subject is coded yet.
+            <p role="status" className="rounded-md border-l-4 border-l-warning bg-muted px-4 py-3 text-sm text-foreground">
+              {t("uncodedNotice", { count: uncoded })}{" "}
+              <Link href="/admin/subjects" className="underline">
+                {t("uncodedNoticeLink")}
+              </Link>
+            </p>
           ) : null}
 
           {(subjects ?? []).length === 0 ? (
