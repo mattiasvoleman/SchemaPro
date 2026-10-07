@@ -20,6 +20,9 @@ const groups = [
     kind: "TEACHING_GROUP",
     gradeLevel: null,
   },
+  // Next year's 8A — this year's 7A, rolled over and not yet activated. Same
+  // name as a class pupils will move into, in a year nobody is in yet.
+  { id: "g-next-8a", academicYearId: "year-2", name: "8A", kind: "CLASS", gradeLevel: 8 },
 ];
 
 const person = (
@@ -92,7 +95,12 @@ vi.mock("@/lib/queries", () => ({
   }),
   useGroups: () => ({ data: groups }),
   useGroupMemberships: () => ({ data: memberships }),
-  useAcademicYears: () => ({ data: [{ id: "year-1", name: "2026/2027", isActive: true }] }),
+  useAcademicYears: () => ({
+    data: [
+      { id: "year-1", name: "2026/2027", isActive: true },
+      { id: "year-2", name: "2027/2028", isActive: false },
+    ],
+  }),
   useRequirements: () => ({ data: requirements }),
   useSubjects: () => ({ data: [{ id: "sub-ma", name: "Matematik", code: "MA", color: "#123456", requiredRoomTypeId: null }] }),
   useStudentGuardians: () => ({ data: [] }),
@@ -500,6 +508,18 @@ describe("People page", () => {
       expect(await screen.findByText("Mentor 7A")).toBeInTheDocument();
       // The mentorskap class is named from the active year's groups.
       expect(screen.getByText("dutyMinutes(90) · 7A")).toBeInTheDocument();
+    });
+
+    it("offers the active year's classes as a home class — not next year's, not a teaching group", async () => {
+      const user = userEvent.setup();
+      render(<PeoplePage />);
+
+      await user.click(screen.getAllByRole("button", { name: "edit" })[0]!); // Alma, in 7A
+      const dialog = screen.getByRole("dialog");
+      const classPicker = within(dialog).getAllByRole("combobox")[1]!;
+      expect(classPicker).toHaveTextContent("7A");
+      await user.click(classPicker);
+      expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["none", "7A", "7B"]);
     });
 
     it("offers no post card to a pupil", async () => {
