@@ -138,10 +138,18 @@ import {
   useSubjects,
 } from "@/lib/queries";
 import { useStaffingLoad, useTeacherQualifications } from "@/lib/staffing-queries";
+import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { requirementsToCsv } from "@/lib/csv";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { candidateQualification, candidateRemaining } from "@/lib/staffing-candidates";
 import { CandidateBadge } from "@/components/staffing/candidate-badge";
+import { RefusalNotice, WarningsNotice } from "@/components/staffing/staffing-notices";
+import {
+  refusalText,
+  staffingRefusal,
+  type StaffingRefusal,
+} from "@/lib/staffing-warnings";
+import type { MessageLookup } from "@/lib/engine-message";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import { CsvImportDialog } from "@/components/import/csv-import-dialog";
 import { Link } from "@/i18n/navigation";
@@ -152,7 +160,7 @@ import {
   peakLessonsPerWeekByKey,
   type YearBounds,
 } from "@/lib/teaching-hours";
-import type { LessonRecurrence, TeachingRequirement } from "@/lib/types";
+import type { LessonRecurrence, StaffingWarning, TeachingRequirement } from "@/lib/types";
 import { subjectColor } from "@/lib/utils";
 import { sortByName } from "@/lib/sorting";
 import { PageHeader } from "@/components/layout/page-header";
@@ -190,6 +198,22 @@ function bufferInRange(value: string): boolean {
   return Number.isInteger(minutes) && minutes >= 0 && minutes <= 60;
 }
 
+/**
+ * Whether a load-percentage field holds a charge the API will take: an integer
+ * from 0 to 200, the bounds the DTO and the column's CHECK state
+ * (TeachingRequirements_teacher_load_percent_is_sane).
+ *
+ * Unlike a buffer, an EMPTIED field is not read as 0. Zero is a real and rare
+ * answer here — the row costs this teacher nothing — and a field cleared on
+ * the way to typing 50 must not be saved as that by accident. So empty is
+ * simply not yet a value, and the save button waits.
+ */
+function loadPercentInRange(value: string): boolean {
+  if (value.trim() === "") return false;
+  const percent = Number(value);
+  return Number.isInteger(percent) && percent >= 0 && percent <= 200;
+}
+
 interface CellTarget {
   groupId: string;
   subjectId: string;
@@ -208,6 +232,9 @@ interface CellForm {
   minutesAfter: string;
   teacherId: string;
   coTeacherId: string;
+  /** "Räknas för lärare (%)", as text for the reason the buffers are. */
+  teacherLoadPercent: string;
+  coTeacherLoadPercent: string;
   recurrence: LessonRecurrence;
   /** "" for the academic year's own boundary — the shape RecurrenceFields speaks. */
   startDate: string;
@@ -225,6 +252,9 @@ export default function RequirementsPage() {
   // The candidate badge's words live with the tjänstefördelning that
   // computes them, so the dialog and the matrix name a behörighet the same.
   const tStaffing = useTranslations("staffing");
+  // A STAFF_* refusal is the engine catalogue's sentence (lib/staffing-warnings.ts),
+  // so the dialog and the staffing workspace word the same 409 the same way.
+  const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const {
     data: years,
     isLoading: yearsLoading,
@@ -365,10 +395,35 @@ export default function RequirementsPage() {
     minutesPerLesson?: number;
     minutesBefore?: number;
     minutesAfter?: number;
+    teacherLoadPercent?: number;
+    coTeacherLoadPercent?: number;
     recurrence?: LessonRecurrence;
     startDate?: string | null;
     endDate?: string | null;
-  }>("/api/v1/teaching-requirements", [["requirements", activeYearId ?? ""]]);
+  }>("/api/v1/teaching-requirements", [
+    ["requirements", activeYearId ?? ""],
+    // A save that names or changes a teacher moves their load and the
+    // candidate badges this dialog draws from it; without these the badge
+    // would read the minutes from before the save.
+    [...STAFFING_KEYS.load],
+    [...STAFFING_KEYS.unstaffed],
+    [...STAFFING_KEYS.suggestions],
+  ]);
+  /**
+   * What the policy said about the last save, in the two shapes it can say it.
+   *
+   * A REFUSE is a 409 and nothing was written, so it belongs INSIDE the
+   * dialog, next to the fields the admin has to change — the dialog stays
+   * open with their input intact. A WARN saved the row, so the dialog closes
+   * like any save and the sentence moves to a banner above the matrix, where
+   * it stays until dismissed: it names a limit the admin may want to undo
+   * against, which a toast would take away after four seconds.
+   */
+  const [refusal, setRefusal] = useState<StaffingRefusal | null>(null);
+  const [savedWarnings, setSavedWarnings] = useState<{
+    label: string;
+    warnings: StaffingWarning[];
+  } | null>(null);
 
   const [importOpen, setImportOpen] = useState(false);
   const [cell, setCell] = useState<CellTarget | null>(null);
@@ -379,6 +434,8 @@ export default function RequirementsPage() {
     minutesAfter: "0",
     teacherId: NO_TEACHER,
     coTeacherId: NO_TEACHER,
+    teacherLoadPercent: "100",
+    coTeacherLoadPercent: "100",
     recurrence: "ALL_WEEKS",
     startDate: "",
     endDate: "",
@@ -558,6 +615,7 @@ export default function RequirementsPage() {
   const openCell = (groupId: string, subjectId: string) => {
     const existing = requirementIndex.get(`${groupId}:${subjectId}`) ?? null;
     setCell({ groupId, subjectId, existing });
+    setRefusal(null);
     setForm({
       lessonsPerWeek: String(existing?.lessonsPerWeek ?? 2),
       minutesPerLesson: String(existing?.minutesPerLesson ?? 60),
@@ -565,6 +623,8 @@ export default function RequirementsPage() {
       minutesAfter: String(existing?.minutesAfter ?? 0),
       teacherId: existing?.teacherId ?? NO_TEACHER,
       coTeacherId: existing?.coTeacherId ?? NO_TEACHER,
+      teacherLoadPercent: String(existing?.teacherLoadPercent ?? 100),
+      coTeacherLoadPercent: String(existing?.coTeacherLoadPercent ?? 100),
       recurrence: existing?.recurrence ?? "ALL_WEEKS",
       startDate: existing?.startDate ?? "",
       endDate: existing?.endDate ?? "",
@@ -599,9 +659,19 @@ export default function RequirementsPage() {
     // question, and the copy is the one that goes stale.
     const startDate = form.startDate === "" ? null : form.startDate;
     const endDate = form.endDate === "" ? null : form.endDate;
+    // Always sent, like the buffers: a column with a default and no "leave it
+    // alone" value. An unchanged 100 costs the gateway one policy read, and it
+    // asks nothing new of an unchanged teacher (staffing-checks.ts only asks
+    // the behörighet question of a NEW teacher, and the mål question only of a
+    // write that adds minutes).
+    const teacherLoadPercent = Number(form.teacherLoadPercent);
+    const coTeacherLoadPercent = Number(form.coTeacherLoadPercent);
+    const label = `${groupOf(cell.groupId)?.name ?? ""} · ${subjectOf(cell.subjectId)?.name ?? ""}`;
+    setRefusal(null);
     try {
+      let saved: unknown;
       if (cell.existing) {
-        await mutations.update.mutateAsync({
+        saved = await mutations.update.mutateAsync({
           id: cell.existing.id,
           lessonsPerWeek,
           minutesPerLesson,
@@ -609,12 +679,14 @@ export default function RequirementsPage() {
           minutesAfter,
           teacherId,
           coTeacherId,
+          teacherLoadPercent,
+          coTeacherLoadPercent,
           recurrence: form.recurrence,
           startDate,
           endDate,
         });
       } else {
-        await mutations.create.mutateAsync({
+        saved = await mutations.create.mutateAsync({
           academicYearId: activeYearId,
           subjectId: cell.subjectId,
           studentGroupId: cell.groupId,
@@ -624,17 +696,30 @@ export default function RequirementsPage() {
           minutesPerLesson,
           minutesBefore,
           minutesAfter,
+          teacherLoadPercent,
+          coTeacherLoadPercent,
           recurrence: form.recurrence,
           startDate,
           endDate,
         });
       }
+      // StaffedRequirement: the row plus `warnings`, always present from this
+      // gateway. Read defensively all the same — an older build answers with
+      // the bare row, and that must read as "nothing to say", not crash.
+      const warnings = (saved as { warnings?: StaffingWarning[] } | null)?.warnings ?? [];
+      setSavedWarnings(warnings.length > 0 ? { label, warnings } : null);
       toast.success(tCommon("updated"));
       setCell(null);
     } catch (error) {
+      const refused = staffingRefusal(error);
+      if (refused) {
+        setRefusal(refused);
+        return;
+      }
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
   };
+
 
   const removeCell = async () => {
     if (!cell?.existing) return;
@@ -796,6 +881,16 @@ export default function RequirementsPage() {
           {t("formerlyLink")}
         </Link>
       </p>
+
+      {savedWarnings ? (
+        <div className="mb-4">
+          <WarningsNotice
+            context={savedWarnings.label}
+            warnings={savedWarnings.warnings}
+            onDismiss={() => setSavedWarnings(null)}
+          />
+        </div>
+      ) : null}
 
       {loading ? (
         <Skeleton className="h-64 w-full" />
@@ -1262,6 +1357,67 @@ export default function RequirementsPage() {
               }}
               onChange={(next) => setForm({ ...form, ...next })}
             />
+            {/*
+              Avancerat: what each teacher is CHARGED of this row in
+              tjänstefördelningen — Skola24's "Justera längd för lärare (%)".
+              Folded away because nearly every row is 100/100 and a school
+              that never needs it should never have to read it; opened from
+              the start on a row that already carries something else, so a
+              stored 50 is never hidden behind a click.
+
+              A native <details>: keyboard and screen-reader behaviour for
+              free, and no state of our own to keep in step with the cell. The
+              key re-mounts it per cell so the initial `open` is read afresh.
+            */}
+            <details
+              key={cell ? `${cell.groupId}:${cell.subjectId}` : "none"}
+              open={
+                (cell?.existing?.teacherLoadPercent ?? 100) !== 100 ||
+                (cell?.existing?.coTeacherLoadPercent ?? 100) !== 100
+              }
+              className="rounded-md border px-3 py-2"
+            >
+              <summary className="cursor-pointer text-sm font-medium">{t("advanced")}</summary>
+              <div className="mt-3 space-y-3">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="req-teacher-load">{t("teacherLoadPercent")}</Label>
+                    <Input
+                      id="req-teacher-load"
+                      type="number"
+                      min={0}
+                      max={200}
+                      step={5}
+                      value={form.teacherLoadPercent}
+                      aria-invalid={!loadPercentInRange(form.teacherLoadPercent)}
+                      aria-describedby="req-load-hint"
+                      onChange={(e) => setForm({ ...form, teacherLoadPercent: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="req-co-teacher-load">{t("coTeacherLoadPercent")}</Label>
+                    <Input
+                      id="req-co-teacher-load"
+                      type="number"
+                      min={0}
+                      max={200}
+                      step={5}
+                      value={form.coTeacherLoadPercent}
+                      aria-invalid={!loadPercentInRange(form.coTeacherLoadPercent)}
+                      aria-describedby="req-load-hint"
+                      onChange={(e) => setForm({ ...form, coTeacherLoadPercent: e.target.value })}
+                    />
+                  </div>
+                </div>
+                <p id="req-load-hint" className="text-xs text-muted-foreground">
+                  {loadPercentInRange(form.teacherLoadPercent) &&
+                  loadPercentInRange(form.coTeacherLoadPercent)
+                    ? t("loadPercentHint")
+                    : t("loadPercentInvalid")}
+                </p>
+              </div>
+            </details>
+            {refusal ? <RefusalNotice text={refusalText(tEngine, refusal)} /> : null}
           </div>
           <DialogFooter className="sm:justify-between">
             {cell?.existing ? (
@@ -1290,7 +1446,10 @@ export default function RequirementsPage() {
                   // input only constrain the spinner — a typed 90 passes them.
                   !bufferInRange(form.minutesBefore) ||
                   !bufferInRange(form.minutesAfter) ||
+                  !loadPercentInRange(form.teacherLoadPercent) ||
+                  !loadPercentInRange(form.coTeacherLoadPercent) ||
                   mutations.create.isPending ||
+
                   mutations.update.isPending
                 }
               >

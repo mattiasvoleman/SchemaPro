@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { toast } from "sonner";
+import { ApiError } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv";
 import RequirementsPage from "./page";
 
@@ -88,6 +90,9 @@ interface RequirementFixture {
   /** The pupils' ombyte and dusch, 0 on every subject that needs none. */
   minutesBefore: number;
   minutesAfter: number;
+  /** Optional here: a fixture without them is a row at the column default, 100. */
+  teacherLoadPercent?: number;
+  coTeacherLoadPercent?: number;
   recurrence: "ALL_WEEKS" | "ODD_WEEKS" | "EVEN_WEEKS";
   startDate: string | null;
   endDate: string | null;
@@ -378,6 +383,9 @@ vi.mock("next-intl", () => ({
   useTranslations: () => {
     const t = (key: string, values?: Record<string, unknown>) =>
       values ? `${key}(${Object.values(values).join("|")})` : key;
+    // lib/engine-message.ts asks `has` before rendering a code; every key
+    // "exists" here, so a STAFF_* sentence renders as its code and params.
+    t.has = () => true;
     return t;
   },
 }));
@@ -1333,7 +1341,145 @@ describe("Timplan CSV", () => {
  * cell's subject and group — the failure this guards against is a badge that
  * answers for the wrong subject, or a figure recomputed to a second answer.
  */
+describe("Timplan cell dialog and the tjänstefördelning policy", () => {
+  const openCell = async (label: string) => {
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(label));
+    return user;
+  };
+  const SO_CELL = "cellLabelPeriod(7A|Samhällsorientering|2|60|badgeOdd)";
+  const saveButton = () => screen.getByRole("button", { name: "save" }) as HTMLButtonElement;
+
+  it("keeps the load percentages folded away on a row that counts in full, and sends 100", async () => {
+    const user = await openCell(SO_CELL);
+
+    const details = screen.getByText("advanced").closest("details");
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
+    await user.click(saveButton());
+
+    const sent = updateMock.mock.calls[0][0] as Record<string, unknown>;
+    // Numbers, always present: the DTO is @IsInt, and the columns have no
+    // "leave it alone" value for an omitted key to mean.
+    expect(sent.teacherLoadPercent).toBe(100);
+    expect(sent.coTeacherLoadPercent).toBe(100);
+  });
+
+  it("opens Avancerat on a row that already carries another charge, and sends the edit", async () => {
+    state.requirements = loaded([{ ...requirements[0], coTeacherLoadPercent: 50 }]);
+    const user = await openCell(SO_CELL);
+
+    expect(screen.getByText("advanced").closest("details")?.open).toBe(true);
+    expect((screen.getByLabelText("coTeacherLoadPercent") as HTMLInputElement).value).toBe("50");
+    fireEvent.change(screen.getByLabelText("teacherLoadPercent"), { target: { value: "80" } });
+    await user.click(saveButton());
+
+    const sent = updateMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(sent.teacherLoadPercent).toBe(80);
+    expect(sent.coTeacherLoadPercent).toBe(50);
+  });
+
+  it("will not save a charge outside 0..200, a decimal or an emptied field", async () => {
+    await openCell("cellLabel(7A|Bild)");
+    const field = screen.getByLabelText("teacherLoadPercent");
+
+    for (const bad of ["250", "-5", "12.5", ""]) {
+      fireEvent.change(field, { target: { value: bad } });
+      expect(saveButton().disabled).toBe(true);
+      expect(field).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByText("loadPercentInvalid")).toBeInTheDocument();
+    }
+    // Both ends of the range are real answers.
+    for (const good of ["0", "200"]) {
+      fireEvent.change(field, { target: { value: good } });
+      expect(saveButton().disabled).toBe(false);
+    }
+  });
+
+  it("saves a WARN, closes the dialog and keeps the warning above the matrix until dismissed", async () => {
+    updateMock.mockResolvedValue({
+      ...requirements[0],
+      warnings: [
+        {
+          code: "STAFF_TEACHER_OVER_TARGET",
+          params: { role: "TEACHER", minutes: 1200, target: 1000, limit: 1100, tolerance: 10 },
+        },
+      ],
+    });
+    const user = await openCell(SO_CELL);
+    await user.click(saveButton());
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const banner = screen.getByText("warnedTitle 7A · Samhällsorientering").closest(
+      "[role=status]",
+    ) as HTMLElement;
+    expect(banner).not.toBeNull();
+
+    // Group · subject says which row; the teacher's name is never in it.
+    expect(within(banner).getByText("warnedTitle 7A · Samhällsorientering")).toBeInTheDocument();
+    expect(
+      within(banner).getByText("STAFF_TEACHER_OVER_TARGET(TEACHER|1200|1000|1100|10)"),
+    ).toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalled();
+
+    await user.click(within(banner).getByRole("button", { name: "warnedDismiss" }));
+    expect(screen.queryByText(/warnedTitle/)).not.toBeInTheDocument();
+  });
+
+  it("says nothing extra when the save came back with no warnings", async () => {
+    updateMock.mockResolvedValue({ ...requirements[0], warnings: [] });
+    const user = await openCell(SO_CELL);
+    await user.click(saveButton());
+
+    expect(screen.queryByText(/warnedTitle/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the dialog open on a REFUSE and names the refusal from the catalogue", async () => {
+    createMock.mockRejectedValue(
+      new ApiError(409, "Läraren saknar behörighet i Bild för åk 7.", "STAFF_TEACHER_NOT_QUALIFIED", {
+        role: "TEACHER",
+        subject: "Bild",
+        grades: "7",
+      }),
+    );
+    const user = await openCell("cellLabel(7A|Bild)");
+    await user.click(saveButton());
+
+    const dialog = screen.getByRole("dialog");
+    const alert = within(dialog).getByRole("alert");
+    expect(alert).toHaveTextContent("refusedTitle");
+    expect(alert).toHaveTextContent("STAFF_TEACHER_NOT_QUALIFIED(TEACHER|Bild|7)");
+    // Inline, not a toast: the admin's input is still there to change.
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.queryByText(/warnedTitle/)).not.toBeInTheDocument();
+  });
+
+  it("forgets a refusal when another cell is opened", async () => {
+    createMock.mockRejectedValueOnce(
+      new ApiError(409, "x", "STAFF_TEACHER_OVER_TARGET", { role: "TEACHER" }),
+    );
+    const user = await openCell("cellLabel(7A|Bild)");
+    await user.click(saveButton());
+    expect(within(screen.getByRole("dialog")).getByRole("alert")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+    await user.click(screen.getByLabelText(SO_CELL));
+    expect(within(screen.getByRole("dialog")).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("still toasts a 409 that is not the policy's", async () => {
+    createMock.mockRejectedValue(new ApiError(409, "Posten finns redan.", "SOMETHING_ELSE"));
+    const user = await openCell("cellLabel(7A|Bild)");
+    await user.click(saveButton());
+
+    expect(toast.error).toHaveBeenCalledWith("Posten finns redan.");
+    expect(within(screen.getByRole("dialog")).queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
 describe("Timplan cell dialog candidates", () => {
+
   const anna: PersonFixture = {
     id: "t-anna",
     role: "TEACHER",
