@@ -1667,7 +1667,40 @@
         "signatureTaken": "Signaturen används redan av någon annan och följer inte med",
         "overlapsTargetDuty": "Det spärrade passet krockar med ett pass läraren redan har i läsåret",
         "successorHasMentor": "Klassen har redan en mentor i läsåret"
+      },
+      "noticeTitle": "Ta med tjänster och uppdrag från {year}",
+      "noticeBody": "{year} har inga tjänster ännu. Läsåret rullades vidare från {source} utan dem, och de kan tas med nu — tjänst %, nedsättning, signatur och uppdrag för aktiva lärare.",
+      "noticeAction": "Ta med tjänster och uppdrag",
+      "title": "Tjänster och uppdrag till {year}",
+      "intro": "Från {source} till {target}. Inget skrivs över: en lärare som redan har en tjänst i {target} hoppas över, och en andra körning skapar ingenting. Inget i {source} ändras.",
+      "introLoading": "Förhandsvisningen hämtas…",
+      "empty": "Det finns inga tjänster eller uppdrag att ta med från {source}.",
+      "nothingLeft": "Allt som kan tas med finns redan i läsåret.",
+      "problemsLabel": "Att se över",
+      "activeConfirm": "{year} är det aktiva läsåret. Spärrade pass som följer med kan hamna på lektioner som redan ligger i schemat, och blir då konflikter att lösa.",
+      "confirm": "Ta med",
+      "done": "{year} fick {employments, plural, one {# tjänst} other {# tjänster}} och {duties, plural, one {# uppdrag} other {# uppdrag}}.",
+      "errors": {
+        "STAFFING_ROLLOVER_NO_PREDECESSOR": "Läsåret {year} rullades inte vidare från något läsår, så det finns inga tjänster att ta med.",
+        "STAFFING_ROLLOVER_PREVIEW_STALE": "Tjänster eller uppdrag ändrades efter förhandsvisningen. Inget skapades — granska den nya förhandsvisningen och försök igen."
       }
+    },
+    "compare": {
+      "toggle": "Visning",
+      "matrix": "Matris",
+      "withLastYear": "Jämför med förra läsåret",
+      "caption": "Tjänst och räknad undervisning per lärare, {last} och {current}",
+      "teacher": "Lärare",
+      "post": "Tjänst {year}",
+      "counted": "Räknad min/v {year}",
+      "difference": "Skillnad min/v",
+      "changeNEW": "ny",
+      "changeLEFT": "inte kvar",
+      "changedOnly": "Bara ändrade",
+      "noChanges": "Ingen lärare har ändrad tjänst eller ändrade minuter.",
+      "footnote": "Räknad undervisning är timplansposternas minuter en standardvecka plus uppdrag som räknas som undervisning. Båda läsåren räknas med skolans inställningar i dag.",
+      "failed": "Tjänstefördelningen för {year} kunde inte läsas, så ingen jämförelse visas.",
+      "notActivated": "{year} har inte aktiverats färdigt, så dess tjänstefördelning kan inte läsas och ingen jämförelse visas."
     }
   },
   "myStaffing": {

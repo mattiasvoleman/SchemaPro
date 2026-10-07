@@ -1667,7 +1667,40 @@
         "signatureTaken": "The signature is already used by someone else and is not carried over",
         "overlapsTargetDuty": "The blocked slot overlaps a slot the teacher already has in the year",
         "successorHasMentor": "The class already has a mentor in the year"
+      },
+      "noticeTitle": "Bring teaching posts and duties over from {year}",
+      "noticeBody": "{year} has no teaching posts yet. The year was rolled over from {source} without them, and they can be brought over now — post %, reduction, signature and duties of active teachers.",
+      "noticeAction": "Bring posts and duties over",
+      "title": "Teaching posts and duties for {year}",
+      "intro": "From {source} to {target}. Nothing is overwritten: a teacher who already has a post in {target} is skipped, and a second run creates nothing. Nothing in {source} changes.",
+      "introLoading": "Loading the preview…",
+      "empty": "There are no teaching posts or duties to bring over from {source}.",
+      "nothingLeft": "Everything that can be brought over is already in the year.",
+      "problemsLabel": "To review",
+      "activeConfirm": "{year} is the active year. Blocked slots brought over may land on lessons already in the schedule, and then become conflicts to resolve.",
+      "confirm": "Bring over",
+      "done": "{year} got {employments, plural, one {# teaching post} other {# teaching posts}} and {duties, plural, one {# duty} other {# duties}}.",
+      "errors": {
+        "STAFFING_ROLLOVER_NO_PREDECESSOR": "The year {year} was not rolled over from another year, so there are no teaching posts to bring over.",
+        "STAFFING_ROLLOVER_PREVIEW_STALE": "Teaching posts or duties changed after the preview. Nothing was created — review the new preview and try again."
       }
+    },
+    "compare": {
+      "toggle": "View",
+      "matrix": "Matrix",
+      "withLastYear": "Compare with last year",
+      "caption": "Post and counted teaching per teacher, {last} and {current}",
+      "teacher": "Teacher",
+      "post": "Post {year}",
+      "counted": "Counted min/wk {year}",
+      "difference": "Difference min/wk",
+      "changeNEW": "new",
+      "changeLEFT": "no longer here",
+      "changedOnly": "Changed only",
+      "noChanges": "No teacher has a changed post or changed minutes.",
+      "footnote": "Counted teaching is the curriculum entries' minutes in a standard week plus duties counted as teaching. Both years are counted with the school's settings as they are today.",
+      "failed": "The staffing for {year} could not be read, so no comparison is shown.",
+      "notActivated": "{year} has not been fully activated, so its staffing cannot be read and no comparison is shown."
     }
   },
   "myStaffing": {
