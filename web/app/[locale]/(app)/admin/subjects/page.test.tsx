@@ -321,7 +321,7 @@ describe("the national code the school's own code already is", () => {
     render(<SubjectsPage />);
     await user.click(screen.getByRole("button", { name: "editNamed(Matematik)" }));
 
-    expect(screen.getByText("nationalCodeSuggestion(MA|Matematik)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "nationalCodeSuggestion(MA|Matematik)" })).toBeInTheDocument();
     expect(nationalPicker()).toHaveTextContent("nationalCodeNone");
 
     await user.click(screen.getByRole("button", { name: "save" }));
@@ -340,7 +340,7 @@ describe("the national code the school's own code already is", () => {
     expect(screen.getByText("nationalCodeSuggestion(SV_SVA|Svenska eller svenska som andraspråk)")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "cancel" }));
     await user.click(screen.getByRole("button", { name: "editNamed(Svenska som andraspråk)" }));
-    await user.click(screen.getByRole("button", { name: "nationalCodeUseSuggestion(SV_SVA)" }));
+    await user.click(screen.getByRole("button", { name: "nationalCodeSuggestion(SV_SVA|Svenska eller svenska som andraspråk)" }));
     await user.click(screen.getByRole("button", { name: "save" }));
     expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ id: "s-2", nationalCode: "SV_SVA" }));
   });
@@ -352,7 +352,7 @@ describe("the national code the school's own code already is", () => {
     await user.type(screen.getByLabelText("name"), "Bild");
     await user.type(screen.getByRole("textbox", { name: "code (optional)" }), "bl");
 
-    await user.click(screen.getByRole("button", { name: "nationalCodeUseSuggestion(BL)" }));
+    await user.click(screen.getByRole("button", { name: /^nationalCodeSuggestion\(BL\|/ }));
     expect(nationalPicker()).toHaveTextContent("Bild (BL)");
     expect(screen.queryByText(/^nationalCodeSuggestion/)).not.toBeInTheDocument();
 

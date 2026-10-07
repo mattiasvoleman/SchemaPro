@@ -434,19 +434,15 @@ export default function SubjectsPage() {
                 Schools often already use the statute's codes as their own (MA,
                 EN, IDH, SV) and leave the mapping empty. Offered, never applied:
                 a school's "NO" may be a local subject that only shares the
-                letters, and Spara is the decision.
+                letters, and Spara is the decision. One button that names the
+                code is both the offer and the click, right under the picker
+                and the school's own code; a sentence beside it cost the route
+                bytes it does not have (/admin/subjects, review 2026-10-08).
               */}
               {suggested && form.nationalCode === OUTSIDE_TIMPLAN ? (
-                <p className="text-xs text-muted-foreground">
-                  {t("nationalCodeSuggestion", { code: suggested.code, name: suggested.name })}{" "}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setForm({ ...form, nationalCode: suggested.code })}
-                  >
-                    {t("nationalCodeUseSuggestion", { code: suggested.code })}
-                  </Button>
-                </p>
+                <Button variant="outline" onClick={() => setForm({ ...form, nationalCode: suggested.code })}>
+                  {t("nationalCodeSuggestion", { code: suggested.code, name: suggested.name })}
+                </Button>
               ) : null}
             </div>
             <div className="flex items-start justify-between gap-4 rounded-md border p-3">
