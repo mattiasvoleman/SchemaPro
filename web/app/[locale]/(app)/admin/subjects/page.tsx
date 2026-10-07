@@ -13,7 +13,7 @@ import {
 } from "@/lib/queries";
 import type { NationalSubject, RoomType, Subject } from "@/lib/types";
 import { sectionNationalSubjects } from "@/lib/national-subjects";
-import { CsvImportDialog } from "@/components/import/csv-import-dialog";
+import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { subjectsToCsv } from "@/lib/csv";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import {
@@ -503,7 +503,7 @@ export default function SubjectsPage() {
         </DialogContent>
       </Dialog>
 
-      <CsvImportDialog
+      <LazyCsvImportDialog
         kinds={["subjects"]}
         open={importOpen}
         onOpenChange={setImportOpen}

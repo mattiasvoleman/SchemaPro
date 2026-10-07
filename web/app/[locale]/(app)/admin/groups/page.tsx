@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Pencil, Plus, Search, Trash2, Upload, UserPlus, Users } from "lucide-react";
-import { CsvImportDialog } from "@/components/import/csv-import-dialog";
+import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import { classesToCsv, membershipsToCsv } from "@/lib/csv";
 import {
@@ -528,7 +528,7 @@ export default function GroupsPage() {
         </DialogContent>
       </Dialog>
 
-      <CsvImportDialog
+      <LazyCsvImportDialog
         kinds={["classes", "teachingGroups"]}
         open={importOpen}
         onOpenChange={setImportOpen}
