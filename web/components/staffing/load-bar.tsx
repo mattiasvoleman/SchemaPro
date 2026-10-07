@@ -30,6 +30,13 @@ import type { TeacherLoad } from "@/lib/teacher-load";
  * the first reading and the sentence is the one a screen reader gets, via
  * role="img" and the full description; nothing is said by colour alone.
  *
+ * WRAPS WHERE IT IS NARROW. The matrix pins this to an 11rem column, where a
+ * 6rem track, the gap and "Inget riktmärke" (or "100 % av mål") do not fit
+ * on one line: the label used to run past the cell and was clipped at the
+ * container's right edge at 1440 px (webbgenomgången 2026-10-07). The row
+ * wraps instead, label under the track; in the drawer and on Min tjänst
+ * there is room and it stays one line.
+ *
  * UPPDRAG (Fas 2). An uppdrag that does not count toward the target is the
  * first, dark segment, outside the comparison; one that counts is inside the
  * teaching segment, because the report's status already reads it — and the
@@ -80,7 +87,7 @@ export function LoadBar({
 
   return (
     <div className={className}>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <div
           role="img"
           aria-label={description}

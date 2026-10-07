@@ -74,6 +74,26 @@ describe("LoadBar", () => {
     );
   });
 
+  it("lets the label wrap under the track instead of running past a narrow cell", () => {
+    // The matrix pins the bar to an 11rem column; a 6rem track, the gap and
+    // "Inget riktmärke" are wider than that, and the label was clipped at
+    // the container's edge (webbgenomgången, 1440 px). jsdom lays nothing
+    // out, so this holds the one class that lets the row break.
+    render(
+      <LoadBar
+        teacher={{
+          assignedMinutesPerWeek: 300,
+          targetMinutesPerWeek: null,
+          peakMinutesPerWeek: 300,
+          percentOfTarget: null,
+        }}
+      />,
+    );
+    const row = screen.getByText("barNoTarget").parentElement!;
+    expect(row).toContainElement(screen.getByRole("img"));
+    expect(row).toHaveClass("flex-wrap");
+  });
+
   it("reads the peak week when asked", () => {
     render(
       <LoadBar
