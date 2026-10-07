@@ -24,6 +24,7 @@ import {
   serializeCsv,
   subjectsToCsv,
   mapStudentRows,
+  mapTeacherDutyRows,
   mapTeacherQualificationRows,
   mapTeacherRows,
   normalizeHeader,
@@ -327,6 +328,7 @@ const ALL_KINDS: ImportKind[] = [
   "teachingGroups",
   "requirements",
   "teacherQualifications",
+  "teacherDuties",
 ];
 
 describe("templateCsvContent", () => {
@@ -396,6 +398,41 @@ describe("templateCsvContent", () => {
       { teacherEmail: "karin.ek@example.com", subject: "MA", minGrade: 7, maxGrade: 9, kind: "LEGITIMATION" },
       { teacherEmail: "karin.ek@example.com", subject: "NO", minGrade: 7, maxGrade: 9, kind: "BEHORIG" },
       { teacherEmail: "bo.alm@example.com", subject: "SLTX", minGrade: 1, maxGrade: 9, kind: "TILLATEN" },
+    ]);
+
+    const duties = mapTeacherDutyRows(parseCsv(templateCsvContent("teacherDuties")));
+    expect(duties.errors).toEqual([]);
+    expect(duties.rows).toStrictEqual([
+      {
+        teacherEmail: "karin.ek@example.com",
+        kind: "MENTORSKAP",
+        label: "Mentor 7B",
+        minutesPerWeek: 90,
+        countsAsTeaching: false,
+        subject: null,
+        groupName: "7B",
+        note: null,
+      },
+      {
+        teacherEmail: "karin.ek@example.com",
+        kind: "APT_KONFERENS",
+        label: "APT",
+        minutesPerWeek: 120,
+        countsAsTeaching: false,
+        subject: null,
+        groupName: null,
+        note: null,
+      },
+      {
+        teacherEmail: "bo.alm@example.com",
+        kind: "AMNESANSVAR",
+        label: "Ämnesansvar slöjd",
+        minutesPerWeek: 60,
+        countsAsTeaching: true,
+        subject: "SLTX",
+        groupName: null,
+        note: null,
+      },
     ]);
 
     const classes = mapClassRows(parseCsv(templateCsvContent("classes")));
@@ -2303,6 +2340,67 @@ describe("staffing export round trips", () => {
     expect(rows).toEqual([
       { teacherEmail: "k@s.se", subject: "MA", minGrade: 7, maxGrade: 9, kind: "LEGITIMATION" },
       { teacherEmail: "k@s.se", subject: "Naturorientering", minGrade: 4, maxGrade: 6, kind: "TILLATEN" },
+    ]);
+  });
+});
+
+describe("mapTeacherDutyRows", () => {
+  it("reads a four-column file and reports only those columns, so nothing optional is cleared", () => {
+    const { rows, errors, columns } = mapTeacherDutyRows(
+      parseCsv("Lärare e-post;Typ;Benämning;Minuter per vecka\nk@s.se;Mentor;Mentor 7B;90"),
+    );
+    expect(errors).toEqual([]);
+    expect(rows).toStrictEqual([
+      { teacherEmail: "k@s.se", kind: "MENTORSKAP", label: "Mentor 7B", minutesPerWeek: 90 },
+    ]);
+    expect(columns).toEqual(["teacherEmail", "kind", "label", "minutesPerWeek"]);
+  });
+
+  it("reads the typ as a word, with or without diacritics, and refuses one it does not know", () => {
+    const words = [
+      ["förstelärare", "FORSTELARARE"],
+      ["Pedagogisk lunch", "PEDAGOGISK_LUNCH"],
+      ["APT/konferens", "APT_KONFERENS"],
+      ["VFU-handledning", "VFU_HANDLEDNING"],
+      ["RASTVAKT", "RASTVAKT"],
+    ];
+    for (const [word, kind] of words) {
+      const { rows } = mapTeacherDutyRows(
+        parseCsv(`larare_epost;typ;benamning;minuter_per_vecka\nk@s.se;${word};X;30`),
+      );
+      expect(rows[0]?.kind).toBe(kind);
+    }
+    const { errors } = mapTeacherDutyRows(
+      parseCsv("larare_epost;typ;benamning;minuter_per_vecka\nk@s.se;städning;X;30"),
+    );
+    expect(errors[0]?.message).toContain('typ "städning" känns inte igen');
+  });
+
+  it("holds the DTO's bounds and refuses a duplicate identity, naming the first row", () => {
+    const { rows, errors } = mapTeacherDutyRows(
+      parseCsv(
+        [
+          "larare_epost;typ;benamning;minuter_per_vecka;raknas_som_undervisning",
+          "k@s.se;apt;APT;0;",
+          "k@s.se;apt;APT;2401;",
+          "k@s.se;apt;APT;120;kanske",
+          "k@s.se;apt;APT;120;ja",
+          "K@S.SE;apt;apt;60;",
+        ].join("\n"),
+      ),
+    );
+    expect(errors.map((error) => error.row)).toEqual([1, 2, 3, 5]);
+    expect(errors[0]?.message).toContain("mellan 1 och 2400");
+    expect(errors[2]?.message).toContain("varken ja eller nej");
+    expect(errors[3]?.message).toContain("rad 4");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ countsAsTeaching: true, minutesPerWeek: 120 });
+  });
+
+  it("names the missing required columns", () => {
+    const { errors } = mapTeacherDutyRows(parseCsv("larare_epost;typ\nk@s.se;apt"));
+    expect(errors).toEqual([
+      { row: 0, message: expect.stringContaining("benamning, minuter_per_vecka") },
     ]);
   });
 });

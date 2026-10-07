@@ -1756,6 +1756,7 @@ const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
   roomTypes: "/api/v1/import/room-types",
   requirements: "/api/v1/import/requirements",
   teacherQualifications: "/api/v1/import/teacher-qualifications",
+  teacherDuties: "/api/v1/import/teacher-duties",
 };
 
 /** Kinds whose payload carries the academic year the rows belong to. */
@@ -1779,6 +1780,9 @@ export const IMPORT_NEEDS_YEAR: Record<ImportKind, boolean> = {
   // columns DO land in a year — the active one, resolved on the gateway,
   // because the people page has no year picker to hand over.
   teacherQualifications: false,
+  // An uppdrag is per läsår, like the post it sits beside: Mentor 7B is a
+  // different 7B next year.
+  teacherDuties: true,
 };
 
 /** Result of inviting one person. */
@@ -1949,6 +1953,8 @@ export const IMPORT_MAX_ROWS: Record<ImportKind, number> = {
   // ImportTeacherQualificationsDto's @ArrayMaxSize: a school's whole table is
   // teachers × subjects, a few hundred rows, so one request carries it.
   teacherQualifications: 2000,
+  // ImportTeacherDutiesDto's: eighty teachers with five uppdrag each is 400.
+  teacherDuties: 2000,
 };
 
 /**
@@ -1977,6 +1983,8 @@ export const IMPORT_UPDATES_ROWS: Record<ImportKind, boolean> = {
   // behörighet is a document the school corrects, like the timplan, and a
   // create-only import would skip every correction as "already exists".
   teacherQualifications: true,
+  // Identified by teacher, typ and benämning; a changed row is updated.
+  teacherDuties: true,
 };
 
 /**
@@ -2070,6 +2078,7 @@ export function useImportCsv() {
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.employments });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.qualifications });
       void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
+      void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.duties });
     },
   });
 }
