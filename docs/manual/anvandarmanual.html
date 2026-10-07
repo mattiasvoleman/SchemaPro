@@ -76,7 +76,7 @@
     Till skillnad från en funktionslista är manualen ordnad efter
     <strong>arbetsgång</strong>. Kapitlen följer den ordning momenten utförs i,
     därför att ordningen har betydelse: AI-motorn kan inte generera ett schema
-    innan timplanen finns, och ett schema bör inte publiceras innan det
+    innan timplansposterna finns, och ett schema bör inte publiceras innan det
     granskats. Följ kapitlen i tur och ordning första gången.
   </p>
 
@@ -204,8 +204,16 @@
   <p>
     Skapa läsåret och ange start- och slutdatum, till exempel <em>2026/2027</em>.
     Markera det som <span class="ui">Aktivt</span>. Det aktiva läsåret binder
-    ihop klasser, timplan och det genererade schemat — utan ett aktivt läsår kan
-    ingen timplan registreras.
+    ihop klasser, timplansposter och det genererade schemat — utan ett aktivt
+    läsår kan inga timplansposter registreras.
+  </p>
+  <p>
+    Varje läsår säger också vilken <strong>lokal timplan</strong> (4.1) varje
+    årskurs följer. Ett nytt läsår följer automatiskt den senast beslutade
+    planen i de årskurser planen gäller, och ett meddelande säger vilken plan
+    det blev. Saknar skolan en beslutad plan följer läsåret ingen alls. Under
+    läsåren i steget står knappen <span class="ui">Timplan per årskurs</span>,
+    där du väljer plan för varje årskurs — se 4.1.
   </p>
   <div class="note">
     <span class="label">Endast ett aktivt läsår</span>
@@ -361,8 +369,8 @@
     oavsett om de kommer från klasstillhörigheten eller från medlemslistan.
   </p>
   <p>
-    Valet av sort är inte kosmetiskt. Det avgör hur gruppen presenteras i
-    timplanen, och en nivågrupp kan mycket väl ha en årskurs utan att för den
+    Valet av sort är inte kosmetiskt. Det avgör hur gruppen presenteras bland
+    timplansposterna, och en nivågrupp kan mycket väl ha en årskurs utan att för den
     skull vara en klass — därför frågar SchemaPro i stället för att gissa.
   </p>
   <div class="check">
@@ -396,7 +404,7 @@
   <p>
     <strong>Klicka på en persons namn</strong> för att fälla ut detaljerna. För
     en elev visas klassen och samtliga undervisningsgrupper hen ingår i; för en
-    lärare visas i stället vad hen undervisar enligt timplanen, med
+    lärare visas i stället vad hen undervisar enligt timplansposterna, med
     <em>medlärare</em> utskrivet där hen är andraläraren. Raden fälls ihop igen
     med ett nytt klick, och bara en person i taget är utfälld så att tabellen
     förblir läsbar.
@@ -529,15 +537,6 @@
     timmar per stadium, aldrig minuter per vecka. Sidan räknar om dina minuter
     till stadietimmar och ställer dem bredvid förordningens siffror.
   </p>
-  <div class="note">
-    <span class="label">Sidan hette tidigare något annat</span>
-    <p>
-      Det som tidigare hette <em>Timplan</em> i menyn heter nu
-      <span class="path">Planering › Timplansposter</span> (4.2) och ligger kvar
-      på samma adress. Namnet <em>Timplan</em> har gått till den här sidan,
-      eftersom det är målet som timplansposterna ska lägga ut.
-    </p>
-  </div>
   <p>
     Börja med <span class="ui">Ny timplan</span>. Ange ett namn, till exempel
     <em>Grundskola 2026–</em>, välj <span class="ui">Skolform</span> och den
@@ -625,10 +624,81 @@
     </p>
   </div>
 
+  <h4>Timplan per årskurs</h4>
+  <p>
+    En plan gäller inget läsår förrän läsåret säger det. Tryck
+    <span class="ui">Timplan per årskurs</span> överst på sidan (eller vid
+    läsåret i <span class="path">Kom igång</span>) och välj läsår. Varje
+    årskurs, förskoleklass till åk 9, har en rad med läsårets klasser i
+    årskursen och en lista med skolans planer; <em>Ingen timplan</em> betyder
+    att årskursen inte jämförs med något. Olika årskurser kan följa olika
+    planer — elever som började på den äldre timplanen fortsätter med den,
+    medan de yngre följer den nya — och det är du som väljer, inte systemet.
+  </p>
+  <p>
+    Ett <em>utkast</em> kan väljas, till exempel när nästa läsår planeras på
+    våren innan huvudmannen har beslutat. Det märks då
+    <em>utkast — inte beslutad</em> överallt där målen visas. En plan som ett
+    läsår följer kan inte tas bort; försöker du säger systemet vilka läsår som
+    följer den.
+  </p>
+
+  <h4>Skapa timplansposter</h4>
+  <p>
+    När läsåret följer planen kan planen lägga in de timplansposter klasserna
+    saknar. Tryck <span class="ui">Skapa timplansposter</span>, välj läsår och
+    <span class="ui">Lektionslängd</span> — förslaget är den längd läsårets
+    poster oftast har, annars 60 minuter — och tryck
+    <span class="ui">Förhandsvisa</span>. Förhandsvisningen listar varje post
+    som skulle skapas: klass, ämne, planens minuter och lektioner gånger
+    minuter. Antalet lektioner avrundas uppåt så att posten når målet, och
+    skillnaden står bredvid: 175 minuter blir 3 × 60, <em>+5</em>. Du kan
+    ändra lektioner och längd på en rad innan du skapar; längden ska vara
+    15–240 minuter i steg om fem.
+  </p>
+  <p>
+    Bara det som saknas skapas. En klass som redan har en post i ämnet hoppas
+    över och listas, undervisningsgrupper (språkval, SvA-grupper, nivågrupper)
+    skapas aldrig, ingen befintlig post ändras och ingen lärare sätts — det gör
+    du sedan på <span class="path">Timplansposter</span> och i
+    tjänstefördelningen. Trycker du en gång till skapas ingenting nytt.
+  </p>
+
+  <h4>Täckning</h4>
+  <p>
+    <span class="ui">Täckning</span> överst på sidan ställer läsårets
+    timplansposter mot planen, per klass och per elev. Tabellen har en rad per
+    klass och en kolumn per ämne; varje ruta visar <em>planerat / mål</em> i
+    minuter per vecka med skillnaden under. Gult är under mål, rött betyder
+    att klassen saknar poster i ämnet, och <em>i grupp</em> att ämnet läses i
+    undervisningsgrupper och avgörs elev för elev. En post som går udda eller
+    jämna veckor räknas till hälften, och en post med datum efter sin andel av
+    läsårets undervisningsveckor. Kolumnen <span class="ui">Täckning</span>
+    säger hur många av klassens ämnen som når målet för varje elev.
+  </p>
+  <p>
+    Klicka på en klass för att se ämne för ämne: klassens egna poster, vilka
+    undervisningsgrupper som bär dess elever, och elevernas lägsta, mittersta
+    och högsta minuter. Därunder listas de elever som avviker på egen hand —
+    under mål där klassen inte är det, eller som får samma ämne från två
+    grupper. En elev som bara ligger under för att hela klassen gör det
+    räknas men listas inte; det syns redan på klassens rad. Svenska och
+    svenska som andraspråk räknas tillsammans, liksom språkvalets språk: målet
+    är nått när elevens minuter i dem tillsammans räcker.
+  </p>
+  <div class="note">
+    <span class="label">Lärarnas minuter finns redan</span>
+    <p>
+      Hur många minuter varje lärare har per ämne visar
+      tjänstefördelningen (4.5) och lärarens egen vy
+      <span class="path">Min tjänst</span>. Täckningen handlar om elevernas tid.
+    </p>
+  </div>
+
   <h3 id="s42"><span class="num">4.2</span>Timplansposter</h3>
   <p>
-    Gå till <span class="path">Planering › Timplansposter</span>. Sidan hette
-    tidigare <em>Timplan</em>. En post beskriver ett
+    Gå till <span class="path">Planering › Timplansposter</span>. En post
+    beskriver ett
     undervisningsbehov: <em>klass, ämne, lärare, antal lektioner per vecka och
     lektionslängd i minuter</em>. Lägg in en post för varje kombination av klass
     och ämne.
@@ -713,8 +783,20 @@
   </p>
   <p>
     Längst ned visas <span class="ui">totalt antal lektioner per vecka</span>.
-    Stäm av den summan mot skolans faktiska timplan innan du går vidare — ett
-    fel här fortplantar sig genom hela schemat.
+    Stäm av posterna mot skolans timplan innan du går vidare — ett fel här
+    fortplantar sig genom hela schemat.
+  </p>
+  <p>
+    Det behöver du inte räkna för hand. Tryck <span class="ui">Mål</span>
+    bredvid läsåret, så visar varje klassruta <em>planerat / mål</em> i
+    minuter per vecka mot den lokala timplan klassens årskurs följer (4.1),
+    med skillnaden under: gult under mål, rött om posten saknas. En kolumn
+    summerar klassens vecka och läsår, en rad summerar varje ämne över
+    klasserna, och vid varje klass står hur många ämnen som når målet för alla
+    elever — klicka för att öppna täckningen för klassen. Öppnar du en ruta
+    säger dialogen vad timplanen kräver och om dina fält täcker det, till
+    exempel <em>Timplanen säger 180 min/vecka för åk 7; 3 × 60 täcker det</em>,
+    medan du skriver.
   </p>
   <div class="note">
     <span class="label">Räkna på utrymmet</span>
