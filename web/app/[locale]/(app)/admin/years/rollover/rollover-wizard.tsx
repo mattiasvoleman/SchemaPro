@@ -6,8 +6,10 @@
 // promoted (7A → 8A) and linked to the class they continue, teaching groups
 // carried with their members, timplansposter carried BY COHORT with their
 // teachers (7A's rows become 8A's — the cohort keeps its teachers), weekly
-// class rules carried, and the lov the admin ticks with dates proposed for the
-// new year. It only inserts; nothing in this year changes, and the pupils
+// class rules carried, tjänster and uppdrag carried for the active staff (a
+// mentorskap follows its class, a blocked slot becomes a new one; staffing
+// Fas 5, on by default), and the lov the admin ticks with dates proposed for
+// the new year. It only inserts; nothing in this year changes, and the pupils
 // stay where they are until the new year is activated (/admin/years).
 //
 // HOW IT IS SHOWN. Every step reads one PREVIEW — the gateway's own plan,
@@ -21,7 +23,8 @@
 //
 // WHAT IT DOES NOT DO is listed in the review step, in the gateway's words
 // (its registry), so the admin knows what to set up again: the schedule
-// itself, lunch sittings, tjänster and uppdrag, the old year's history.
+// itself, lunch sittings, the old year's history — and tjänster and uppdrag
+// when the switch is off, which /admin/staffing can still carry afterwards.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -75,6 +78,7 @@ function initialForm(source: { name: string; startDate: string; endDate: string 
     carryTeachingGroupMembers: true,
     keepTeachers: true,
     carryClassRules: true,
+    carryStaffing: true,
     breaks: {},
   };
 }
@@ -155,11 +159,19 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
         planHash: plan.planHash,
       });
       toast.success(
-        t("created", {
-          name: result.academicYear.name,
-          groups: result.counts.groups,
-          requirements: result.counts.requirements,
-        }),
+        result.staffing
+          ? t("createdWithStaffing", {
+              name: result.academicYear.name,
+              groups: result.counts.groups,
+              requirements: result.counts.requirements,
+              employments: result.staffing.employments,
+              duties: result.staffing.duties,
+            })
+          : t("created", {
+              name: result.academicYear.name,
+              groups: result.counts.groups,
+              requirements: result.counts.requirements,
+            }),
       );
       router.push("/admin/years");
     } catch (error) {

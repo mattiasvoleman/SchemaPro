@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import sv from "@/messages/sv.json";
 import { ApiError, api } from "@/lib/api";
-import type { RolloverOptions, RolloverPreview, StudentGroup } from "@/lib/types";
+import type { RolloverOptions, RolloverPreview, StaffingCarryPreview, StudentGroup } from "@/lib/types";
 import { RolloverWizard } from "./rollover-wizard";
 
 /**
@@ -66,6 +66,31 @@ const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 
 const HASH = "a".repeat(64);
+
+/** What carrying tjänster would do: one post with a nedsättning, a mentorskap promoted, one left behind. */
+const staffingPlan: StaffingCarryPreview = {
+  employments: {
+    carried: 2,
+    withReduction: ["t-bo"],
+    withTargetOverride: [],
+    notCarried: [{ userId: "t-gone", reason: "INACTIVE" }],
+    signaturesDropped: [],
+  },
+  duties: {
+    carried: 3,
+    slots: 1,
+    followedGroup: 1,
+    relabelled: [{ sourceDutyId: "d-1", userId: "t-bo", from: "Mentor 7A", to: "Mentor 8A" }],
+    groupDropped: [],
+    slotDropped: [],
+    overlapsTargetDuty: [],
+    successorHasMentor: [],
+    notCarried: [
+      { sourceDutyId: "d-9", userId: "t-bo", kind: "MENTORSKAP", label: "Mentor 9A", groupName: "9A", reason: "GROUP_LEAVES" },
+    ],
+  },
+  teachers: [{ userId: "t-bo", employment: "CARRIED", duties: 3, dutyMinutesPerWeek: 120 }],
+};
 
 /** A preview as the planner would answer the request, pared down to what the wizard reads. */
 function previewFor(body: RolloverOptions, overrides: Partial<RolloverPreview> = {}): RolloverPreview {
@@ -128,6 +153,7 @@ function previewFor(body: RolloverOptions, overrides: Partial<RolloverPreview> =
       },
     ],
     classRules: [],
+    staffing: body.carryStaffing ? staffingPlan : null,
     timplans: [
       { gradeLevel: 7, reason: "DEFAULT", fromGradeLevel: null, localTimplanId: "p-24", planName: "Grundskola 2024", planStatus: "DECIDED", laterPlan: null },
       { gradeLevel: 8, reason: "CARRIED", fromGradeLevel: 7, localTimplanId: "p-utkast", planName: "Utkast 2027", planStatus: "DRAFT", laterPlan: null },
@@ -185,6 +211,7 @@ describe("RolloverWizard", () => {
       carryTeachingGroupMembers: true,
       keepTeachers: true,
       carryClassRules: true,
+      carryStaffing: true,
     });
     // The grade is left to the server's default, and the default is shown as such.
     expect(await screen.findByText("Från den senast beslutade lokala timplanen.")).toBeInTheDocument();
@@ -344,11 +371,104 @@ describe("RolloverWizard", () => {
       carryTeachingGroupMembers: true,
       keepTeachers: true,
       carryClassRules: true,
+      carryStaffing: true,
       // Not chosen by the admin, so the preview's default — and the hash it was computed with.
       graduatingGradeLevel: 9,
       planHash: HASH,
     });
     expect(toast.success).toHaveBeenCalledWith("2027/28 skapades med 3 grupper och 24 timplansposter.");
+  });
+
+  it("carries tjänster och uppdrag by default, and previews again without them when switched off", async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Klasser och grupper/ }));
+    const toggle = screen.getByRole("switch", { name: /Tjänster och uppdrag följer med/ });
+    expect(toggle).toBeChecked();
+    expect(previewCalls().at(-1)?.carryStaffing).toBe(true);
+
+    await user.click(toggle);
+    await waitFor(() => expect(previewCalls().at(-1)?.carryStaffing).toBe(false));
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    // Off: no staffing card, as before Fas 5.
+    await screen.findByRole("heading", { name: "Timplan per årskurs" });
+    expect(screen.queryByRole("heading", { name: "Tjänster och uppdrag" })).toBeNull();
+  });
+
+  it("reviews the carried tjänster by name: the nedsättning to check, the mentorskap renamed and the one left behind", async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    const section = (await screen.findByRole("heading", { name: "Tjänster och uppdrag" })).closest("section")!;
+    expect(section).toHaveTextContent(
+      "2 tjänster och 3 uppdrag följer med. 1 har ett spärrat pass, som blir ett nytt. 1 följer sin grupp till nästa läsår.",
+    );
+    const listUnder = (title: string) => within(section).getByText(title).nextElementSibling as HTMLElement;
+    expect(within(listUnder("Nedsättningen följer med — gäller den även nästa läsår?")).getByText("Bo Alm")).toBeInTheDocument();
+    expect(within(listUnder("Byter namn med gruppen")).getByText("Mentor 7A → Mentor 8A — Bo Alm")).toBeInTheDocument();
+    expect(
+      within(
+        listUnder("Mentorskap som inte följer med, eftersom klassen går ut eller inte rullas vidare"),
+      ).getByText("Mentor 9A — Bo Alm"),
+    ).toBeInTheDocument();
+    // A person the roster cannot name is still listed, never dropped.
+    expect(
+      within(listUnder("Inaktiva — deras tjänst och uppdrag följer inte med")).getByText("Okänd lärare"),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the staffing card when there is nothing to carry and nothing to say", async () => {
+    const empty: StaffingCarryPreview = {
+      employments: { carried: 0, withReduction: [], withTargetOverride: [], notCarried: [], signaturesDropped: [] },
+      duties: {
+        carried: 0,
+        slots: 0,
+        followedGroup: 0,
+        relabelled: [],
+        groupDropped: [],
+        slotDropped: [],
+        overlapsTargetDuty: [],
+        successorHasMentor: [],
+        notCarried: [],
+      },
+      teachers: [],
+    };
+    post.mockImplementation(async (path: string, body: RolloverOptions) =>
+      path.endsWith("/preview") ? previewFor(body, { staffing: empty }) : { planHash: HASH },
+    );
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    await screen.findByRole("heading", { name: "Timplan per årskurs" });
+    expect(screen.queryByRole("heading", { name: "Tjänster och uppdrag" })).toBeNull();
+  });
+
+  it("says in the toast how many tjänster and uppdrag the new year got", async () => {
+    post.mockImplementation(async (path: string, body: RolloverOptions) =>
+      path.endsWith("/preview")
+        ? previewFor(body)
+        : {
+            academicYear: { name: body.name },
+            counts: { groups: 3, requirements: 24 },
+            staffing: { employments: 2, duties: 3, dutySlots: 1 },
+            planHash: HASH,
+          },
+    );
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    const create = await screen.findByRole("button", { name: "Skapa 2027/28" });
+    await waitFor(() => expect(create).toBeEnabled());
+    await user.click(create);
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "2027/28 skapades med 3 grupper, 24 timplansposter, 2 tjänster och 3 uppdrag.",
+      ),
+    );
   });
 
   it("does not create on the second click of a double click on Nästa, and moves focus to the review", async () => {

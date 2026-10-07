@@ -1646,7 +1646,29 @@
     "problem_dutyNoteTooLong": "Anteckningen kan vara högst {max} tecken.",
     "problem_slotTimeRequired": "Ange både från- och till-tid för tiden som ska blockeras, eller slå av Blockera tid.",
     "problem_slotOffGrid": "{time} ligger inte på schemats {grid}-minutersrutnät.",
-    "problem_slotReversed": "Till-tiden ({end}) måste ligga efter från-tiden ({start})."
+    "problem_slotReversed": "Till-tiden ({end}) måste ligga efter från-tiden ({start}).",
+    "carry": {
+      "summary": {
+        "counts": "{employments, plural, one {# tjänst} other {# tjänster}} och {duties, plural, one {# uppdrag} other {# uppdrag}} följer med. {slots, plural, =0 {Inget har ett spärrat pass.} one {# har ett spärrat pass, som blir ett nytt.} other {# har ett spärrat pass, som blir nya.}} {followed, plural, =0 {} one {# följer sin grupp till nästa läsår.} other {# följer sin grupp till nästa läsår.}}",
+        "dutyLine": "{label} — {teacher}",
+        "dutyLineGroup": "{label} ({group}) — {teacher}",
+        "relabelLine": "{from} → {to} — {teacher}",
+        "signatureLine": "{teacher} ({signature})",
+        "withReduction": "Nedsättningen följer med — gäller den även nästa läsår?",
+        "withTargetOverride": "Det egna riktmärket följer med — gäller det även nästa läsår?",
+        "mentorskapLeft": "Mentorskap som inte följer med, eftersom klassen går ut eller inte rullas vidare",
+        "groupDropped": "Följer med utan sin grupp, som inte finns nästa läsår",
+        "relabelled": "Byter namn med gruppen",
+        "slotDropped": "Följer med utan sitt spärrade pass, som ligger utanför schemats rutnät",
+        "inactive": "Inaktiva — deras tjänst och uppdrag följer inte med",
+        "notStaff": "Inte lärare eller skolledare — deras tjänst och uppdrag följer inte med",
+        "alreadySetUp": "Har redan en tjänst i läsåret och hoppas över helt, med sina uppdrag",
+        "dutyAlreadyPresent": "Finns redan i läsåret",
+        "signatureTaken": "Signaturen används redan av någon annan och följer inte med",
+        "overlapsTargetDuty": "Det spärrade passet krockar med ett pass läraren redan har i läsåret",
+        "successorHasMentor": "Klassen har redan en mentor i läsåret"
+      }
+    }
   },
   "myStaffing": {
     "title": "Min tjänst",
@@ -1756,6 +1778,7 @@
     "previewNeedsInput": "Förhandsvisningen väntar: ge det nya läsåret ett namn i steg 1.",
     "createYear": "Skapa {name}",
     "created": "{name} skapades med {groups, plural, one {# grupp} other {# grupper}} och {requirements, plural, one {# timplanspost} other {# timplansposter}}.",
+    "createdWithStaffing": "{name} skapades med {groups, plural, one {# grupp} other {# grupper}}, {requirements, plural, one {# timplanspost} other {# timplansposter}}, {employments, plural, one {# tjänst} other {# tjänster}} och {duties, plural, one {# uppdrag} other {# uppdrag}}.",
     "problemsLabel": "Att åtgärda och att känna till",
     "blocking": "Måste åtgärdas",
     "notice": "Bra att veta",
@@ -1782,13 +1805,15 @@
       "carryTeachingGroups": "Undervisningsgrupper följer med",
       "carryTeachingGroupMembers": "Gruppernas elever följer med",
       "keepTeachers": "Lärarna står kvar på posterna",
-      "carryClassRules": "Klassernas veckoregler följer med"
+      "carryClassRules": "Klassernas veckoregler följer med",
+      "carryStaffing": "Tjänster och uppdrag följer med"
     },
     "optionHint": {
       "carryTeachingGroups": "Flyttas upp som klasserna. Av: de skapas inte.",
       "carryTeachingGroupMembers": "Utom elever vars klass går ut eller inte rullas vidare.",
       "keepTeachers": "Utom inaktiva lärare, och lärare som saknar behörighet när den kontrollen vägrar.",
-      "carryClassRules": "Spärrar per veckodag för en klass. Datumbundna regler följer inte med."
+      "carryClassRules": "Spärrar per veckodag för en klass. Datumbundna regler följer inte med.",
+      "carryStaffing": "Tjänst %, nedsättning, signatur och uppdrag för aktiva lärare. Mentorskap följer klassen, och ett spärrat pass blir ett nytt i det nya läsåret."
     },
     "noGroups": "Läsåret har inga grupper.",
     "colGroup": "Grupp",
@@ -1892,11 +1917,12 @@
     "classRuleLine": "{from} → {to}: {day} {start}–{end}",
     "reviewBreaks": "{count, plural, =0 {Inga lov följer med} one {# lov följer med} other {# lov följer med}}",
     "breakLine": "{name}: {start} – {end}",
+    "reviewStaffing": "Tjänster och uppdrag",
     "reviewLeftOut": "Följer inte med",
     "skipped": {
       "MasterLesson": "Grundschemat ({count, plural, one {# lektion} other {# lektioner}}) — nästa läsårs schema genereras för de nya klasserna, och det går direkt när läsåret är skapat, före aktiveringen.",
       "LunchSitting": "Lunchsittningarna ({count}) — de läggs mot det nya schemat.",
-      "TeacherEmployment": "Tjänsterna ({count}) — läggs in för det nya läsåret på tjänstefördelningssidan.",
+      "TeacherEmployment": "Tjänsterna ({count}) — slå på Tjänster och uppdrag följer med i steg 2, eller ta med dem senare från tjänstefördelningssidan.",
       "TeacherDuty": "Uppdragen ({count}), med sina spärrade pass och mentorskap."
     },
     "skippedHistory": "Det gamla läsårets historik — kalendern, närvaron, sparade versioner och genereringar — stannar hos det.",
@@ -1916,7 +1942,15 @@
       "YEAR_DATES_OVERLAP": "Datumen överlappar {years}.",
       "BREAK_NEEDS_DATES": "{name} har inget datumförslag nästa år. Ange första och sista dag.",
       "BREAK_OUTSIDE_YEAR": "{name} ({startDate} – {endDate}) ligger utanför det nya läsåret.",
-      "DUTY_SLOTS_NOT_CARRIED": "Uppdragen följer inte med: {duties} uppdrag, {blockedSlots} spärrade pass och {mentorskap} mentorskap. Det nya läsåret har inga förrän de läggs in, och ett schema som genereras innan dess räknar inte med dem.",
+      "DUTY_SLOTS_NOT_CARRIED": "Uppdragen följer inte med: {duties} uppdrag, {blockedSlots} spärrade pass och {mentorskap} mentorskap. Det nya läsåret har inga förrän de läggs in, och ett schema som genereras innan dess räknar inte med dem. Slå på Tjänster och uppdrag följer med i steg 2 för att ta med dem.",
+      "STAFFING_MENTORSKAP_NOT_CARRIED": "{duties, plural, one {# mentorskap följer} other {# mentorskap följer}} inte med, eftersom klassen går ut eller inte rullas vidare: {groups}.",
+      "STAFFING_DUTY_GROUP_DROPPED": "{duties, plural, one {# uppdrag följer} other {# uppdrag följer}} med utan sin grupp, eftersom gruppen inte finns nästa läsår: {groups}.",
+      "STAFFING_TEACHERS_NOT_CARRIED": "{teachers, plural, one {# person är} other {# personer är}} inte aktiv lärare eller skolledare, så deras tjänst och uppdrag följer inte med.",
+      "STAFFING_SLOT_OFF_GRID": "{duties, plural, one {# uppdrag har} other {# uppdrag har}} ett spärrat pass utanför schemats rutnät. Uppdraget följer med, passet gör det inte.",
+      "STAFFING_PER_YEAR_TERMS_CARRIED": "Nedsättningen följer med för {reductions, plural, one {# lärare} other {# lärare}} och ett eget riktmärke för {overrides, plural, one {# lärare} other {# lärare}}. Sådant avtalas ofta för ett år — kontrollera att det gäller även nästa läsår.",
+      "STAFFING_SIGNATURE_TAKEN": "{teachers, plural, one {# lärares signatur} other {# lärares signaturer}} används redan av någon annan i läsåret och följer inte med.",
+      "STAFFING_ALREADY_PRESENT": "{teachers, plural, one {# lärare har} other {# lärare har}} redan en tjänst i läsåret och hoppas över helt, och {duties, plural, one {# uppdrag finns} other {# uppdrag finns}} redan eller hör till dem.",
+      "STAFFING_SLOTS_OVER_LESSONS": "{duties, plural, one {# spärrat pass hamnar} other {# spärrade pass hamnar}} på {lessons, plural, one {# lektion} other {# lektioner}} som läraren redan har i läsårets schema. De blir konflikter att lösa i schemat.",
       "VOLUME_DIFFERS_FROM_TIMPLAN": "Timplansposterna för {groups} skiljer sig från den beslutade timplanen för den årskurs de flyttas upp till.",
       "ISO_WEEK_53_CROSSED": "Rullningen passerar en vecka 53: {rows, plural, one {# post} other {# poster}} på udda eller jämna veckor byter till den andra veckotypen. Kontrollera dem."
     },

@@ -93,6 +93,13 @@ export interface RolloverFormState {
   carryTeachingGroupMembers: boolean;
   keepTeachers: boolean;
   carryClassRules: boolean;
+  /**
+   * Ta med tjänster och uppdrag (staffing Fas 5). Default on in the wizard,
+   * and always SENT: the gateway reads an absent field as false, so a body
+   * from before Fas 5 keeps today's plan and hash, and this form says what it
+   * means either way.
+   */
+  carryStaffing: boolean;
   /** The SELECTED lov, by source break id; absent means not carried. */
   breaks: Record<string, BreakChoiceState>;
 }
@@ -139,6 +146,7 @@ export function rolloverOptions(form: RolloverFormState): RolloverOptions | null
     carryTeachingGroupMembers: form.carryTeachingGroupMembers,
     keepTeachers: form.keepTeachers,
     carryClassRules: form.carryClassRules,
+    carryStaffing: form.carryStaffing,
     ...(breaks.length > 0 ? { breaks } : {}),
   };
 }

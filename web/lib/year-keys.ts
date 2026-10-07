@@ -1,3 +1,4 @@
+import { STAFFING_KEYS } from "./staffing-keys";
 import { TIMPLAN_COVERAGE_KEYS, YEAR_TIMPLAN_KEYS } from "./year-timplan-keys";
 
 /**
@@ -42,9 +43,18 @@ export const YEAR_KEYS = {
    */
   yearTimplans: YEAR_TIMPLAN_KEYS.all,
   timplanCoverage: TIMPLAN_COVERAGE_KEYS.all,
+  /**
+   * Tjänstefördelningen (lib/staffing-keys.ts): a rollover with "Tjänster och
+   * uppdrag följer med" writes the new year's posts and uppdrag, and the
+   * suggestions read the new predecessor link.
+   */
+  employments: STAFFING_KEYS.employments,
+  duties: STAFFING_KEYS.duties,
+  staffingLoad: STAFFING_KEYS.load,
+  suggestions: STAFFING_KEYS.suggestions,
 } as const;
 
-/** What a rollover writes: a year, its groups, members, rows, lov, rules and timplan per årskurs. */
+/** What a rollover writes: a year, its groups, members, rows, lov, rules, timplan per årskurs, tjänster and uppdrag. */
 export const AFTER_ROLLOVER = [
   YEAR_KEYS.years,
   YEAR_KEYS.groups,
@@ -55,6 +65,10 @@ export const AFTER_ROLLOVER = [
   YEAR_KEYS.constraints,
   YEAR_KEYS.yearTimplans,
   YEAR_KEYS.timplanCoverage,
+  YEAR_KEYS.employments,
+  YEAR_KEYS.duties,
+  YEAR_KEYS.staffingLoad,
+  YEAR_KEYS.suggestions,
   YEAR_KEYS.rolloverPreview,
   YEAR_KEYS.activationPreview,
 ] as const;

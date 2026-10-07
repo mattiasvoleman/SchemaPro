@@ -20,6 +20,7 @@ const form = (overrides: Partial<RolloverFormState> = {}): RolloverFormState => 
   carryTeachingGroupMembers: true,
   keepTeachers: true,
   carryClassRules: true,
+  carryStaffing: true,
   breaks: {},
   ...overrides,
 });
@@ -104,10 +105,16 @@ describe("rolloverOptions", () => {
       carryTeachingGroupMembers: true,
       keepTeachers: true,
       carryClassRules: true,
+      carryStaffing: true,
     });
     expect(rolloverOptions(form({ graduatingGradeLevel: 9 }))?.graduatingGradeLevel).toBe(9);
     // 0 is a grade (förskoleklass), not "unset".
     expect(rolloverOptions(form({ graduatingGradeLevel: 0 }))?.graduatingGradeLevel).toBe(0);
+  });
+
+  it("always sends carryStaffing, off as well as on: the server reads an absent field as off", () => {
+    expect(rolloverOptions(form({ carryStaffing: false }))?.carryStaffing).toBe(false);
+    expect(rolloverOptions(form())?.carryStaffing).toBe(true);
   });
 
   it("sends only real choices, in id order, and never a blank name", () => {
