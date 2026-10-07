@@ -892,6 +892,25 @@ describe('Fas 2: ämnesflaskhalsar', () => {
     });
   });
 
+  it('counts no capacity for a deactivated holder, whom Föreslå lärare never offers', () => {
+    // Deactivating a teacher keeps their post and behörigheter (users.service
+    // allows it). Their 1 080 minutes used to read as room in Matematik while
+    // the picker, which ranks active staff only, had nobody qualified to show.
+    const result = report({
+      employments: [employment()],
+      requirements: [unstaffed()],
+      qualifications: [qualification()],
+      inactiveUserIds: [ANNA],
+    });
+    expect(result.bottlenecksComputed).toBe(true);
+    expect(result.subjectBottlenecks[0]).toMatchObject({
+      qualifiedRemainingMinutesPerWeek: 0,
+      qualifiedTeacherCount: 0,
+      qualifiedNoTargetCount: 0,
+      short: true,
+    });
+  });
+
   it('takes a behörighet in the subject at any span as capacity, and none in another subject', () => {
     const result = report({
       employments: [employment()],
