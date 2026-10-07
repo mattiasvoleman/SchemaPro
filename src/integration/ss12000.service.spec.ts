@@ -320,17 +320,17 @@ describe('Ss12000Service', () => {
       });
     });
 
-    it('counts and lists the key’s school only, sorted by name', async () => {
+    it('counts and lists the key’s school’s active läsår only, sorted by name', async () => {
       arrangeList('studentGroup', 0, []);
 
       await service.groups(SCHOOL_ID);
 
       expect(tx.studentGroup.count).toHaveBeenCalledWith({
-        where: { schoolId: SCHOOL_ID },
+        where: { schoolId: SCHOOL_ID, academicYear: { isActive: true } },
       });
       expect(tx.studentGroup.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { schoolId: SCHOOL_ID },
+          where: { schoolId: SCHOOL_ID, academicYear: { isActive: true } },
           orderBy: { name: 'asc' },
         }),
       );
@@ -707,7 +707,7 @@ describe('Ss12000Service', () => {
       ]);
 
       expect(tx.studentGroup.findFirst).toHaveBeenCalledWith({
-        where: { schoolId: SCHOOL_ID, name: '7A' },
+        where: { schoolId: SCHOOL_ID, academicYearId: YEAR_ID, name: '7A' },
         select: { id: true },
       });
       expect(tx.studentGroup.create).not.toHaveBeenCalled();
@@ -719,6 +719,36 @@ describe('Ss12000Service', () => {
       });
       expect(tx.user.update).not.toHaveBeenCalled();
       expect(result).toMatchObject({ updated: 1, groupsCreated: 0 });
+    });
+
+    it('puts a pupil in the active läsår’s 8A when next year has an 8A too', async () => {
+      // After a läsårsrullning the school has two classes named 8A: this
+      // year's, and next year's (the promoted 7A). The table answers by the
+      // where it is asked: a lookup without the year would get either.
+      const NEXT_YEAR_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+      const classes = [
+        { id: 'g-next-8a', academicYearId: NEXT_YEAR_ID, name: '8A' },
+        { id: 'g-this-8a', academicYearId: YEAR_ID, name: '8A' },
+      ];
+      arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+      tx.studentGroup.findFirst.mockImplementation(
+        ({ where }: { where: { name: string; academicYearId?: string } }) =>
+          Promise.resolve(
+            classes.find(
+              (group) =>
+                group.name === where.name &&
+                (where.academicYearId === undefined || group.academicYearId === where.academicYearId),
+            ) ?? null,
+          ),
+      );
+
+      await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', groupDisplayName: '8A' }]);
+
+      expect(tx.user.updateMany).toHaveBeenCalledWith({
+        where: { id: STUDENT_ID, role: 'STUDENT' },
+        data: { studentGroupId: 'g-this-8a' },
+      });
+      expect(tx.studentGroup.create).not.toHaveBeenCalled();
     });
 
     it('gives a person made a teacher mid-sync their names and no class', async () => {
