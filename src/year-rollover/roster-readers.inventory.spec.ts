@@ -11,10 +11,13 @@ import * as ts from 'typescript';
  *
  *  1. a roster query in a file nobody has classified: a Users read or count
  *     whose arguments mention the home class, any StudentGroupMembers read,
- *     or raw SQL over either;
- *  2. a Users roster query outside projected-rosters.ts in a file classified
- *     PROJECTED — its home side must go through the helpers, so CURRENT runs
- *     the reader's own query and PROJECTED lays the overlay over it;
+ *     a read of any model that selects or filters through a group's members
+ *     (`members`, `teachingMembers`) or a pupil's (`groupMemberships`), or
+ *     raw SQL over either;
+ *  2. a Users roster query, or a members relation read, outside
+ *     projected-rosters.ts in a file classified PROJECTED — its home side must
+ *     go through the helpers, so CURRENT runs the reader's own query and
+ *     PROJECTED lays the overlay over it;
  *  3. a literal `kind: 'CURRENT'` basis outside projected-rosters.ts — a
  *     reader that builds its own CURRENT reads empty classes for a rolled
  *     year without anybody deciding so;
@@ -54,6 +57,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
   'src/resources/academic-years.service.ts': { basis: 'CURRENT', why: 'YEAR_HAS_HOME_PUPILS guards real rows' },
   'src/resources/student-groups.service.ts': { basis: 'CURRENT', why: 'shows and writes a group’s members as facts' },
   'src/users/users.service.ts': { basis: 'CURRENT', why: 'a user’s own class, read before it is written' },
+  'src/realtime/realtime.service.ts': {
+    basis: 'CURRENT',
+    why: 'pushes a dated lesson’s change to the people in its classes and groups as they are now',
+  },
 };
 
 const STAFF = new Set(['SCHOOL_ADMIN', 'TEACHER']);
@@ -87,18 +94,26 @@ function callAt(text: string, start: number, open: number): string {
 interface RosterQuery {
   path: string;
   line: number;
-  model: 'user' | 'studentGroupMember' | 'raw';
+  model: 'user' | 'studentGroupMember' | 'relation' | 'raw';
   call: string;
 }
+
+/** A group's members or a pupil's memberships, selected, included or filtered through. */
+const MEMBERS_RELATION = /\b(members|teachingMembers|groupMemberships)\s*:/;
 
 function rosterQueries(): RosterQuery[] {
   const found: RosterQuery[] = [];
   for (const { path, text } of files) {
-    const prisma = /\b(user|studentGroupMember)\.(findMany|findFirst|findUnique|count|groupBy|aggregate)\(/g;
+    const prisma = /\b(\w+)\.(findMany|findFirst|findUnique|findUniqueOrThrow|findFirstOrThrow|count|groupBy|aggregate)\(/g;
     for (let match = prisma.exec(text); match; match = prisma.exec(text)) {
       const call = callAt(text, match.index, match.index + match[0].length - 1);
-      if (match[1] === 'studentGroupMember' || /studentGroup/.test(call)) {
-        found.push({ path, line: text.slice(0, match.index).split('\n').length, model: match[1] as RosterQuery['model'], call });
+      const line = text.slice(0, match.index).split('\n').length;
+      if (match[1] === 'studentGroupMember' || (match[1] === 'user' && /studentGroup/.test(call))) {
+        found.push({ path, line, model: match[1] as RosterQuery['model'], call });
+      } else if (MEMBERS_RELATION.test(call)) {
+        // A roster read through a relation: the home class's members, a
+        // teaching group's, or a pupil's memberships, from any model.
+        found.push({ path, line, model: 'relation', call });
       }
     }
     const raw = /\$queryRaw[^`]*`([^`]*)`/g;
@@ -119,6 +134,9 @@ describe('the roster-reader inventory', () => {
     for (const path of ['src/year-rollover/projected-rosters.ts', 'src/year-rollover/activation-plan.ts', 'src/attendance/attendance.service.ts']) {
       expect(where).toContain(path);
     }
+    // The relation reads too: realtime's members selects, SS12000's.
+    const relations = new Set(queries.filter((query) => query.model === 'relation').map((query) => query.path));
+    expect(relations).toEqual(new Set(['src/realtime/realtime.service.ts', 'src/integration/ss12000.service.ts']));
   });
 
   it('has every roster query in a classified file', () => {
