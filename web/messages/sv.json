@@ -1818,6 +1818,8 @@
     },
     "count": {
       "homePupils": "{count, plural, one {# elev} other {# elever}} (flyttar vid aktiveringen)",
+      "homePupilsGraduate": "{count, plural, one {# elev} other {# elever}} (går ut vid aktiveringen)",
+      "homePupilsUnplaced": "{count, plural, one {# elev} other {# elever}} (blir utan klass vid aktiveringen)",
       "membersCopied": "{count, plural, one {# medlem} other {# medlemmar}}",
       "membersExcluded": "{count} utanför ({graduating} går ut, {noSuccessor} klass rullas inte)",
       "membersStranded": "{count} medlemmar blir utan grupp",
@@ -1847,6 +1849,7 @@
       "SKIP": "{count} följer inte med"
     },
     "reviewMembers": "{count, plural, one {# medlemskap} other {# medlemskap}} i undervisningsgrupper följer med.",
+    "reviewLeaving": "Vid aktiveringen {graduating, plural, one {går # elev ut} other {går # elever ut}} och {unplaced, plural, one {blir # elev utan klass} other {blir # elever utan klass}}.",
     "reviewRequirements": "Timplansposter",
     "reviewRequirementsCounts": "{carried} följer med och {notCarried} stannar. {shifted} perioder flyttas hela veckor och {anchored} följer läsårets början eller slut.",
     "reviewDropped": "{count, plural, one {# post följer inte med} other {# poster följer inte med}} — perioden hamnar utanför det nya läsåret:",

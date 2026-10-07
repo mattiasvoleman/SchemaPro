@@ -209,6 +209,21 @@ describe("RolloverWizard", () => {
     );
   });
 
+  it("says what the activation does with each class's pupils by its outcome, and totals the leavers in the review", async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Klasser och grupper/ }));
+    const rowOfGroup = (name: string) => screen.getByLabelText(`Vad ${name} blir`).closest("tr")!;
+    expect(await within(rowOfGroup("8A")).findByText("25 elever (flyttar vid aktiveringen)")).toBeInTheDocument();
+    // 9A graduates: its pupils do not move into anything.
+    expect(within(rowOfGroup("9A")).getByText("25 elever (går ut vid aktiveringen)")).toBeInTheDocument();
+    expect(within(rowOfGroup("9A")).queryByText(/flyttar vid aktiveringen/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    expect(await screen.findByText("Vid aktiveringen går 25 elever ut och blir 0 elever utan klass.")).toBeInTheDocument();
+  });
+
   it("offers a new intake class beside the promotion, for the lowest grade only", async () => {
     const user = userEvent.setup();
     renderWizard();

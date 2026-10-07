@@ -59,6 +59,13 @@ export function RolloverReview({
     byOutcome.set(group.outcome, (byOutcome.get(group.outcome) ?? 0) + 1);
   }
   const members = plan.groups.reduce((sum, group) => sum + group.membersCopied, 0);
+  // The classes' pupils who leave with no class at the activation.
+  const classPupils = (keep: (group: RolloverPreview["groups"][number]) => boolean) =>
+    plan.groups.filter((group) => group.kind === "CLASS" && keep(group)).reduce((sum, group) => sum + group.homePupils, 0);
+  const graduating = classPupils(
+    (group) => group.outcome === "GRADUATE" || (group.outcome === "INTAKE" && group.targetName === null),
+  );
+  const unplaced = classPupils((group) => group.outcome === "SKIP");
   const selectedBreaks = plan.breaks.filter((lov) => lov.selected);
   const { requirements } = plan;
 
@@ -87,6 +94,9 @@ export function RolloverReview({
           ))}
         </ul>
         {members > 0 ? <p className="mt-1 text-muted-foreground">{t("reviewMembers", { count: members })}</p> : null}
+        {graduating + unplaced > 0 ? (
+          <p className="mt-1 text-muted-foreground">{t("reviewLeaving", { graduating, unplaced })}</p>
+        ) : null}
       </section>
 
       <section aria-labelledby="review-requirements" className="space-y-1">

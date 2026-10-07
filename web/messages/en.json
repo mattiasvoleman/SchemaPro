@@ -1818,6 +1818,8 @@
     },
     "count": {
       "homePupils": "{count, plural, one {# pupil} other {# pupils}} (move on activation)",
+      "homePupilsGraduate": "{count, plural, one {# pupil} other {# pupils}} (graduate at the activation)",
+      "homePupilsUnplaced": "{count, plural, one {# pupil} other {# pupils}} (left without a class at the activation)",
       "membersCopied": "{count, plural, one {# member} other {# members}}",
       "membersExcluded": "{count} left out ({graduating} graduating, {noSuccessor} class not rolled over)",
       "membersStranded": "{count} members left without a group",
@@ -1847,6 +1849,7 @@
       "SKIP": "{count} not carried over"
     },
     "reviewMembers": "{count, plural, one {# teaching-group membership is} other {# teaching-group memberships are}} carried over.",
+    "reviewLeaving": "At the activation {graduating, plural, one {# pupil graduates} other {# pupils graduate}} and {unplaced, plural, one {# pupil is left without a class} other {# pupils are left without a class}}.",
     "reviewRequirements": "Teaching requirements",
     "reviewRequirementsCounts": "{carried} carried over and {notCarried} stay. {shifted} periods move by whole weeks and {anchored} follow the year’s start or end.",
     "reviewDropped": "{count, plural, one {# requirement is not carried over} other {# requirements are not carried over}} — the period falls outside the new year:",
