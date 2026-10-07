@@ -1714,6 +1714,19 @@ describe("Timplansposter in Mål mode", () => {
     expect(cellOf("Övrigt").textContent).toBe("");
   });
 
+  // Review reproduction (P2 review, lens webb): Mål mode dropped the
+  // recurrence badge, so an odd-weeks 3 × 60 read as an unexplained "90 / 180".
+  it("keeps a weighted post's badge under its figures, so 90 / 180 says why", async () => {
+    state.requirements = loaded([
+      { ...targetRequirements[0]!, recurrence: "ODD_WEEKS" },
+      targetRequirements[1]!,
+    ]);
+    render(<RequirementsPage />);
+    await enterTargetMode();
+    expect(within(cellOf("Samhällsorientering")).getByText("90 / 180")).toBeInTheDocument();
+    expect(within(cellOf("Samhällsorientering")).getByText("badgeOdd")).toBeInTheDocument();
+  });
+
   it("says under in amber and unplanned in red, and says both in words too", async () => {
     render(<RequirementsPage />);
     await enterTargetMode();

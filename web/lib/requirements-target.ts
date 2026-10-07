@@ -165,6 +165,13 @@ export interface TargetTotal {
   target: number | null;
   plannedHours: number;
   targetHours: number | null;
+  /**
+   * A partner column of an alternative line (SvA beside Svenska, the other
+   * språkval): the line is totalled once, in the column named here, so the
+   * row agrees with the cells and the columns add up to the grand total.
+   * Null for a column that carries its own figures. Absent on `total`.
+   */
+  countedWith?: string | null;
 }
 
 export interface TargetView {
@@ -199,21 +206,44 @@ export function buildTargetView(coverage: PlannedCoverage, plans: PlannedPlan[])
   }
   const cells = new Map<string, PlannedCell>();
   const subjectTotals = new Map<string, TargetTotal>();
+  const totalOf = (subjectId: string): TargetTotal => {
+    let total = subjectTotals.get(subjectId);
+    if (!total) {
+      total = { planned: 0, target: null, plannedHours: 0, targetHours: null, countedWith: null };
+      subjectTotals.set(subjectId, total);
+    }
+    return total;
+  };
   for (const cell of coverage.cells) {
     cells.set(`${cell.studentGroupId}:${cell.subjectId}`, cell);
-    const total = subjectTotals.get(cell.subjectId) ?? {
-      planned: 0,
-      target: null,
-      plannedHours: 0,
-      targetHours: null,
-    };
+    const line = lineByCell.get(`${cell.studentGroupId}:${cell.subjectId}`);
+    if (cell.alternativeCode !== null && line) {
+      // An alternative line once, in its first column, with the line's
+      // figures (its target is the highest among the alternatives, as the
+      // class total counts it); the partner columns point there.
+      const first = line.subjectIds[0]!;
+      if (cell.subjectId !== first) {
+        const partner = totalOf(cell.subjectId);
+        if (partner.target === null && partner.planned === 0) partner.countedWith ??= first;
+        continue;
+      }
+      const total = totalOf(first);
+      total.countedWith = null;
+      total.planned += line.plannedMinutesPerWeek;
+      total.plannedHours = tenth(total.plannedHours + line.plannedHours);
+      if (line.targetMinutesPerWeek !== null) {
+        total.target = (total.target ?? 0) + line.targetMinutesPerWeek;
+        total.targetHours = tenth((total.targetHours ?? 0) + (line.targetHours ?? 0));
+      }
+      continue;
+    }
+    const total = totalOf(cell.subjectId);
     total.planned += cell.plannedMinutesPerWeek;
     total.plannedHours = tenth(total.plannedHours + cell.plannedHours);
     if (cell.targetMinutesPerWeek !== null) {
       total.target = (total.target ?? 0) + cell.targetMinutesPerWeek;
       total.targetHours = tenth((total.targetHours ?? 0) + (cell.targetHours ?? 0));
     }
-    subjectTotals.set(cell.subjectId, total);
   }
 
   let planned = 0;
@@ -323,6 +353,13 @@ export type DraftHint =
       minutesPerLesson: number;
       /** The line's other subjects: SvA beside Svenska, the other språkval. */
       partnerSubjectIds: string[];
+      /**
+       * Teaching groups that carry the line for at least half the class
+       * WITHOUT a class post in this subject — the cell the matrix draws
+       * "i grupp". Non-empty means a class post would give those pupils the
+       * time twice, whatever the fields say.
+       */
+      carriedBy: string[];
     };
 
 /** The bounds the dialog's save button and CreateTeachingRequirementDto hold. */
@@ -389,6 +426,24 @@ export function draftHint(
   });
   const line = coverage.groups[0]?.lines.find((entry) => entry.subjectIds.includes(subjectId));
   if (!line || line.targetMinutesPerWeek === null) return { kind: "noTarget", gradeLevel, draft };
+
+  // The class's own line with no post in this subject, its pupils and the
+  // year's teaching groups in: the module itself decides whether the groups
+  // carry the line (PUPILS — at least half the class reached), so the
+  // dialog says what the cell says. One class's pupils, cheap per keystroke.
+  const teaching = input.groups.filter((entry) => entry.kind === "TEACHING_GROUP");
+  const teachingIds = new Set(teaching.map((entry) => entry.id));
+  const carried = computePlannedCoverage({
+    ...input,
+    groups: [group, ...teaching],
+    requirements: input.requirements.filter((row) =>
+      row.studentGroupId === groupId ? row.subjectId !== subjectId : teachingIds.has(row.studentGroupId),
+    ),
+    pupils: input.pupils.filter((pupil) => pupil.homeGroupId === groupId),
+    includePupils: false,
+  })
+    .groups.find((entry) => entry.studentGroupId === groupId)
+    ?.lines.find((entry) => entry.subjectIds.includes(subjectId));
   return {
     kind: "target",
     gradeLevel,
@@ -400,5 +455,6 @@ export function draftHint(
     lessonsPerWeek: valid?.lessons ?? 0,
     minutesPerLesson: valid?.minutes ?? 0,
     partnerSubjectIds: line.subjectIds.filter((id) => id !== subjectId),
+    carriedBy: carried?.status === "PUPILS" ? carried.teachingGroupIds : [],
   };
 }

@@ -248,7 +248,7 @@ export function targetCellClass(tone: TargetTone): string {
  * in groups say so in words instead, since their own two numbers are not the
  * whole story.
  */
-export function TargetCellBody({ cell }: { cell: TargetCellView }) {
+export function TargetCellBody({ cell, badge }: { cell: TargetCellView; badge?: string | null }) {
   const t = useTranslations("requirements");
   const note =
     cell.tone === "pupils"
@@ -265,6 +265,12 @@ export function TargetCellBody({ cell }: { cell: TargetCellView }) {
       </span>
       {note ? (
         <span className="text-[10px] font-semibold leading-tight tabular-nums">{note}</span>
+      ) : null}
+      {/* The post's own badge (udda, jämna, a period): why 3 × 60 reads 90. */}
+      {badge ? (
+        <span className="max-w-24 truncate text-[10px] font-semibold uppercase leading-tight tracking-wide">
+          {badge}
+        </span>
       ) : null}
     </>
   );
@@ -357,7 +363,18 @@ export function GroupTotalCell({
 
 /** One column's total over the classes, as the totals row prints it. */
 export function SubjectTotalCell({ total }: { total: TargetTotal | undefined }) {
+  const t = useTranslations("requirements");
   if (!total) return null;
+  if (total.countedWith) {
+    // SvA beside Svenska, the other språkval: the line is totalled once, in
+    // its first column, as the cells and the grand total count it.
+    return (
+      <span className="tabular-nums">
+        <span aria-hidden="true">–</span>
+        <span className="sr-only">{t("target.totalCountedWith")}</span>
+      </span>
+    );
+  }
   return (
     <span className="flex flex-col items-center tabular-nums">
       <span className="font-semibold">
@@ -421,6 +438,16 @@ export function TargetHint({
         deficit: hint.delta === null ? 0 : -hint.delta,
         surplus: hint.delta ?? 0,
       };
+      if (hint.carriedBy.length > 0) {
+        // Read in teaching groups for most of the class: "covers it" would
+        // steer the admin into giving those pupils the time twice.
+        const names = new Map(input.groups.map((group) => [group.id, group.name]));
+        sentences.push(t("target.hintTarget", values));
+        sentences.push(
+          t("target.hintCarried", { groups: hint.carriedBy.map((id) => names.get(id) ?? "").join(", ") }),
+        );
+        break;
+      }
       sentences.push(
         hint.status === null
           ? t("target.hintTarget", values)
