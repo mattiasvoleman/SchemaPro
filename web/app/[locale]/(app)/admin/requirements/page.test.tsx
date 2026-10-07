@@ -298,7 +298,28 @@ const freshState = () => ({
    * tests above have to grow a year they never mention.
    */
   requirementsByYear: null as Record<string, RequirementFixture[]> | null,
+  /**
+   * Mål mode's two reads: which plan each årskurs follows this year, and
+   * those plans with their entries. Nothing reads them until the toggle is
+   * pressed; the Mål tests set them.
+   */
+  yearTimplans: loaded([] as YearTimplanFixture[]),
+  planDetails: { data: [] as PlanFixture[] | undefined, isError: false },
 });
+
+interface YearTimplanFixture {
+  gradeLevel: number;
+  localTimplanId: string;
+  planName: string;
+  planStatus: "DRAFT" | "DECIDED";
+}
+
+interface PlanFixture {
+  id: string;
+  name: string;
+  status: "DRAFT" | "DECIDED";
+  entries: { id: string; subjectId: string; gradeLevel: number; minutesPerWeek: number; note: null }[];
+}
 
 let state = freshState();
 
@@ -356,6 +377,12 @@ vi.mock("@/lib/staffing-queries", () => ({
   useTeacherQualifications: () => state.qualifications,
 }));
 
+// Mål mode's reads, from the hooks file the lazily loaded module imports.
+vi.mock("@/lib/year-timplan-queries", () => ({
+  useYearTimplans: () => state.yearTimplans,
+  useLocalTimplanDetails: () => state.planDetails,
+}));
+
 // The real requirementsToCsv runs — the file's CONTENTS are what the export
 // tests assert. Only the browser download is stubbed.
 vi.mock("@/lib/csv", async (importOriginal) => ({
@@ -365,6 +392,21 @@ vi.mock("@/lib/csv", async (importOriginal) => ({
 
 const mockDownloadCsv = downloadCsv as unknown as Mock;
 
+// Mål mode's Täckning pill links to the coverage page. next-intl's real Link
+// cannot load under vitest (next/navigation), so it is a plain anchor here,
+// as the staffing page's test has it — passing its other props through, since
+// the pill's accessible name is an aria-label.
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({
+    href,
+    children,
+    ...rest
+  }: { href: string; children: React.ReactNode } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock("next-intl", () => ({
@@ -1591,5 +1633,222 @@ describe("Timplan cell dialog candidates", () => {
     const user = userEvent.setup();
     await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
     expect(within(screen.getByRole("dialog")).getByText("candidateHint")).toBeTruthy();
+  });
+});
+
+/**
+ * Mål mode: the year's lokal timplan laid over the matrix.
+ *
+ * Its own fixture, all-weeks posts only, so every figure is its face value
+ * per standardvecka and the cell texts can be asserted exactly — the
+ * standardvecka weight of odd weeks is lib/timplan-planned.ts's and pinned by
+ * its contract test. 7A follows a DECIDED plan for åk 7 that asks:
+ *
+ *   SO    180 min/vecka   planned 3 × 60 = 180   on target
+ *   Slöjd  60 min/vecka   planned 1 × 40 =  40   20 under (amber)
+ *   Bild   60 min/vecka   no post          =   0   unplanned (red)
+ *   Övrigt  —             no post                  no target, the plain plus
+ *
+ * 7A's total is therefore 220 of 300 min/vecka, and one line of three is on
+ * target (the roster is empty, so "covered" is the class's own posts).
+ */
+describe("Timplansposter in Mål mode", () => {
+  const targetRequirements: RequirementFixture[] = [
+    { ...requirements[0], id: "r-so", lessonsPerWeek: 3, recurrence: "ALL_WEEKS" },
+    { ...requirements[1], id: "r-sl", lessonsPerWeek: 1, minutesPerLesson: 40, recurrence: "ALL_WEEKS" },
+  ];
+  const plan = (status: "DRAFT" | "DECIDED"): PlanFixture => ({
+    id: "p-7",
+    name: "Grundskola 2026",
+    status,
+    entries: [
+      { id: "e-so", subjectId: "s-so", gradeLevel: 7, minutesPerWeek: 180, note: null },
+      { id: "e-sl", subjectId: "s-sl", gradeLevel: 7, minutesPerWeek: 60, note: null },
+      { id: "e-bi", subjectId: "s-bi", gradeLevel: 7, minutesPerWeek: 60, note: null },
+    ],
+  });
+  const attach = (status: "DRAFT" | "DECIDED") => {
+    state.yearTimplans = loaded([
+      { gradeLevel: 7, localTimplanId: "p-7", planName: "Grundskola 2026", planStatus: status },
+    ]);
+    state.planDetails = { data: [plan(status)], isError: false };
+  };
+
+  const cellOf = (subjectName: string) =>
+    within(screen.getByText("7A").closest("tr")!)
+      .getAllByRole("button")
+      .find((button) => button.getAttribute("aria-label")?.includes(`|${subjectName}`))!;
+
+  /** Presses the toggle and waits for the lazily loaded module to paint. */
+  const enterTargetMode = async () => {
+    await userEvent.click(screen.getByRole("button", { name: "target.toggle" }));
+    await screen.findByText("target.legend");
+  };
+
+  beforeEach(() => {
+    state.requirements = loaded(targetRequirements);
+    attach("DECIDED");
+  });
+
+  it("is off until pressed, and says so through aria-pressed", async () => {
+    render(<RequirementsPage />);
+    const toggle = screen.getByRole("button", { name: "target.toggle" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByText("180 / 180")).not.toBeInTheDocument();
+    expect(screen.getByText("3×60")).toBeInTheDocument();
+
+    await enterTargetMode();
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("paints each class cell planned / target, with the difference under it", async () => {
+    render(<RequirementsPage />);
+    await enterTargetMode();
+
+    expect(within(cellOf("Samhällsorientering")).getByText("180 / 180")).toBeInTheDocument();
+    expect(within(cellOf("Slöjd")).getByText("40 / 60")).toBeInTheDocument();
+    expect(within(cellOf("Slöjd")).getByText("−20")).toBeInTheDocument();
+    // A cell the plan asks for and nothing plans is no longer a quiet plus.
+    expect(within(cellOf("Bild")).getByText("0 / 60")).toBeInTheDocument();
+    // No target and no post: still the plus that adds one.
+    expect(cellOf("Övrigt").textContent).toBe("");
+  });
+
+  it("says under in amber and unplanned in red, and says both in words too", async () => {
+    render(<RequirementsPage />);
+    await enterTargetMode();
+
+    expect(cellOf("Slöjd").className).toContain("bg-warning/15");
+    expect(cellOf("Bild").className).toContain("border-destructive");
+    expect(cellOf("Samhällsorientering").className).toContain("bg-accent/70");
+    // The accessible name keeps what the cell is and adds the verdict.
+    expect(cellOf("Slöjd")).toHaveAttribute(
+      "aria-label",
+      "cellLabelSet(7A|Slöjd|1|40). target.cellUnder(40|60|20|-20)",
+    );
+    expect(cellOf("Bild")).toHaveAttribute(
+      "aria-label",
+      "cellLabel(7A|Bild). target.cellUnplanned(0|60|60|-60)",
+    );
+  });
+
+  it("adds a total column and a classes' total row in min/vecka and hours", async () => {
+    render(<RequirementsPage />);
+    await enterTargetMode();
+
+    expect(within(matrix()).getByRole("columnheader", { name: "target.totalHeader" })).toBeInTheDocument();
+    const row = screen.getByText("7A").closest("tr")!;
+    // 220 of 300 per week; over the year's 43 teaching weeks 157,7 of 215 h.
+    expect(within(row).getByText("220 / 300")).toBeInTheDocument();
+    expect(within(row).getByText("157,7 h / 215 h")).toBeInTheDocument();
+    // The year's hours stay the last column, where they were.
+    expect(hoursFor("7A")).toBe("157,7 h");
+
+    const totals = within(matrix()).getByRole("rowheader", { name: "target.totalsRow" }).closest("tr")!;
+    expect(within(totals).getByText("180 / 180")).toBeInTheDocument();
+    expect(within(totals).getByText("0 / 60")).toBeInTheDocument();
+    expect(screen.getByText("target.total(220|300|157,7 h|215 h)")).toBeInTheDocument();
+  });
+
+  it("gives a class a Täckning pill linking to its coverage, and a teaching group none", async () => {
+    render(<RequirementsPage />);
+    await enterTargetMode();
+
+    const pill = screen.getByRole("link", { name: "target.pillLabel(7A|1|3)" });
+    expect(pill).toHaveTextContent("1/3");
+    expect(pill).toHaveAttribute("href", "/admin/timplan/tackning?year=y1&group=g-7a");
+    expect(within(screen.getByText("Ma71").closest("tr")!).queryByRole("link")).toBeNull();
+  });
+
+  it("leaves a teaching group's cells as they were", async () => {
+    render(<RequirementsPage />);
+    await enterTargetMode();
+    const ma71 = within(screen.getByText("Ma71").closest("tr")!).getAllByRole("button");
+    expect(ma71.every((button) => !button.getAttribute("aria-label")?.includes("target."))).toBe(true);
+  });
+
+  it("marks a draft plan as not decided, in the notice and on the pill", async () => {
+    attach("DRAFT");
+    render(<RequirementsPage />);
+    await enterTargetMode();
+
+    expect(screen.getByText("target.draft(Grundskola 2026|target.grade(7))")).toBeInTheDocument();
+    const pill = screen.getByRole("link", { name: "target.pillLabelDraft(7A|1|3)" });
+    expect(pill).toHaveTextContent("target.pillDraft");
+  });
+
+  it("says which årskurs follows no plan, and judges nothing against one", async () => {
+    state.yearTimplans = loaded([]);
+    state.planDetails = { data: [], isError: false };
+    render(<RequirementsPage />);
+    await enterTargetMode();
+
+    expect(screen.getByText("target.unattached(target.grade(7))")).toBeInTheDocument();
+    expect(within(cellOf("Samhällsorientering")).getByText("180 / –")).toBeInTheDocument();
+    expect(screen.getByText("target.pillNoPlan")).toBeInTheDocument();
+  });
+
+  it("waits for the roster before it judges a class by its pupils", async () => {
+    state.people = pending();
+    render(<RequirementsPage />);
+    await userEvent.click(screen.getByRole("button", { name: "target.toggle" }));
+
+    expect(await screen.findByText("target.loading")).toBeInTheDocument();
+    expect(screen.queryByText("180 / 180")).not.toBeInTheDocument();
+  });
+
+  it("says the targets could not be read, and paints no cell from half the data", async () => {
+    state.planDetails = { data: undefined, isError: true };
+    render(<RequirementsPage />);
+    await userEvent.click(screen.getByRole("button", { name: "target.toggle" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("target.failed");
+    expect(screen.getByText("3×60")).toBeInTheDocument();
+  });
+
+  it("goes back to the posts when pressed again", async () => {
+    render(<RequirementsPage />);
+    await enterTargetMode();
+    await userEvent.click(screen.getByRole("button", { name: "target.toggle" }));
+
+    expect(screen.queryByText("180 / 180")).not.toBeInTheDocument();
+    expect(screen.getByText("3×60")).toBeInTheDocument();
+    expect(within(matrix()).queryByRole("columnheader", { name: "target.totalHeader" })).toBeNull();
+  });
+
+  it("says in the cell dialog what the timplan asks, and follows the fields", async () => {
+    render(<RequirementsPage />);
+    await enterTargetMode();
+    await userEvent.click(cellOf("Samhällsorientering"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("target.hintMet(180|target.grade(7)|3|60|180|0|0)"),
+    ).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("lessonsPerWeek"), { target: { value: "2" } });
+    expect(
+      within(dialog).getByText("target.hintUnder(180|target.grade(7)|2|60|120|60|-60)"),
+    ).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("lessonsPerWeek"), { target: { value: "" } });
+    expect(within(dialog).getByText("target.hintTarget(180|target.grade(7)|0|0|0|0|0)")).toBeInTheDocument();
+  });
+
+  it("tells a teaching group's dialog where its pupils are judged", async () => {
+    render(<RequirementsPage />);
+    await enterTargetMode();
+    await userEvent.click(
+      within(screen.getByText("Ma71").closest("tr")!).getAllByRole("button")[0]!,
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("target.hintTeachingGroup")).toBeInTheDocument();
+  });
+
+  it("has no hint in the dialog outside Mål mode", async () => {
+    render(<RequirementsPage />);
+    await userEvent.click(cellOf("Samhällsorientering"));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText(/target\.hint/)).toBeNull();
   });
 });

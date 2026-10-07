@@ -49,6 +49,18 @@
 // document has to carry its own footnote, and so does the table's caption,
 // which a reader arriving by table navigation is the only text they see.
 //
+// MÅL MODE (P2) lays the year's lokal timplan over the class rows: each cell
+// "planerat / mål" in standardvecka minutes with the line's signed
+// difference, a total column and a classes' total row in min/vecka and hours,
+// a Täckning pill per class linking to /admin/timplan/tackning, and a line in
+// the cell dialog saying what the plan asks and what the typed post gives.
+// The figures are lib/timplan-planned.ts's — the gateway's own arithmetic —
+// and the code lives in components/timplan/requirements-target.tsx, loaded on
+// the first press of the toggle, because this route had 2.9 KB of its budget
+// left. Its tones and their contrast are measured in that file's header.
+// What each TEACHER carries per subject is not here: the tjänstefördelning
+// (/admin/staffing, /teacher/tjanst) already states it.
+//
 // CONTRAST, MEASURED. Computed from the HSL tokens in app/globals.css, rounded
 // to 8-bit the way a browser paints them, and blended where a token is painted
 // through an alpha. Light theme first, then dark:
@@ -122,7 +134,7 @@
 // secondary text colour, painted on every page there is, so moving it is a
 // change to the palette rather than to this file.
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { splitGroupsByKind } from "@/lib/group-sections";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
@@ -160,6 +172,8 @@ import {
   type YearBounds,
 } from "@/lib/teaching-hours";
 import type { LessonRecurrence, StaffingWarning, TeachingRequirement } from "@/lib/types";
+import type { TargetSources } from "@/lib/requirements-target";
+import type { TargetState } from "@/components/timplan/requirements-target";
 import { subjectColor } from "@/lib/utils";
 import { sortByName } from "@/lib/sorting";
 import { PageHeader } from "@/components/layout/page-header";
@@ -186,6 +200,16 @@ import {
 } from "@/components/ui/select";
 
 const NO_TEACHER = "__none__";
+
+/**
+ * Mål mode's code, fetched the first time the toggle is pressed. A bare
+ * `import()` kept in state rather than React.lazy, because the mode is
+ * several components and a data host, not one; and not next/dynamic, whose
+ * loader costs 1.4 KB of its own. See components/timplan/requirements-target.tsx
+ * for why the route cannot carry it statically.
+ */
+type TargetModule = typeof import("@/components/timplan/requirements-target");
+const loadTargetModule = () => import("@/components/timplan/requirements-target");
 
 /**
  * Whether a pupil buffer field holds something the API will take: an integer
@@ -425,6 +449,31 @@ export default function RequirementsPage() {
   } | null>(null);
 
   const [importOpen, setImportOpen] = useState(false);
+  /**
+   * Mål: every class cell as "planerat / mål" against the lokal timplan the
+   * year attaches to its årskurs. Off by default — the matrix is where posts
+   * are entered, and the mode costs a fetch of the year's plans and a module
+   * of its own. `targetState` is what the module's host last computed; it is
+   * cleared with the toggle so a stale view never paints a cell.
+   */
+  const [targetMode, setTargetMode] = useState(false);
+  const [targetModule, setTargetModule] = useState<TargetModule | null>(null);
+  const [targetState, setTargetState] = useState<TargetState | null>(null);
+  useEffect(() => {
+    if (!targetMode || targetModule) return;
+    let live = true;
+    loadTargetModule().then(
+      (module) => live && setTargetModule(module),
+      () => {
+        if (!live) return;
+        setTargetMode(false);
+        toast.error(tCommon("error"));
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [targetMode, targetModule, tCommon]);
   const [cell, setCell] = useState<CellTarget | null>(null);
   const [form, setForm] = useState<CellForm>({
     lessonsPerWeek: "2",
@@ -604,6 +653,33 @@ export default function RequirementsPage() {
     for (const minutes of annualMinutesByGroup.values()) total += minutes;
     return total;
   }, [annualMinutesByGroup]);
+
+  /**
+   * What Mål mode computes from, all of it already on this page. Memoised on
+   * the queries' own data, because the module walks every pupil of the school
+   * and must not run again on a re-render that changed nothing. Null until
+   * the roster has answered: without it every class would read as having no
+   * pupils, and "covered" would be judged on the class's own posts alone.
+   */
+  const targetSources = useMemo<Omit<TargetSources, "attachments" | "plans"> | null>(
+    () =>
+      yearBounds && people && memberships && subjects
+        ? {
+            year: yearBounds,
+            closures: breaks ?? [],
+            subjects,
+            groups: yearGroups,
+            requirements: requirements ?? [],
+            people,
+            memberships,
+          }
+        : null,
+    [yearBounds, breaks, subjects, yearGroups, requirements, people, memberships],
+  );
+  const target =
+    targetMode && targetModule && targetState?.status === "ready"
+      ? { module: targetModule, ...targetState }
+      : null;
 
   const teacherLabel = (id: string | null) => {
     if (!id) return null;
@@ -854,6 +930,21 @@ export default function RequirementsPage() {
               </Select>
             ) : null}
             {/*
+              A toggle, so `aria-pressed` says which mode the matrix is in; the
+              label stays "Mål" in both states, as a toggle's name must.
+            */}
+            <Button
+              variant={targetMode ? "default" : "outline"}
+              aria-pressed={targetMode}
+              disabled={!activeYearId}
+              onClick={() => {
+                setTargetMode((on) => !on);
+                setTargetState(null);
+              }}
+            >
+              {t("target.toggle")}
+            </Button>
+            {/*
               Export before import, as on admin/subjects and admin/groups. Both
               carry their own text label, so neither needs an aria-label — an
               icon-only button here would be the third unnamed control in a
@@ -939,6 +1030,17 @@ export default function RequirementsPage() {
           <p id="requirements-hours-caveat" className="mb-3 mt-1 text-xs text-foreground">
             {(breaks ?? []).length > 0 ? t("hoursCaveat") : t("hoursCaveatNoBreaks")}
           </p>
+          {targetMode && targetModule && activeYearId ? (
+            <targetModule.TargetHost
+              academicYearId={activeYearId}
+              sources={targetSources}
+              onState={setTargetState}
+            />
+          ) : targetMode ? (
+            <p role="status" className="mb-3 text-sm text-foreground">
+              {t("target.loading")}
+            </p>
+          ) : null}
           {/*
             Its own scroll area, not the page's.
 
@@ -1020,6 +1122,14 @@ export default function RequirementsPage() {
                     needs no width of its own and is not given a class that
                     would not hold anyway.
                   */}
+                  {target ? (
+                    <th
+                      scope="col"
+                      className="sticky top-0 z-20 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground"
+                    >
+                      {t("target.totalHeader")}
+                    </th>
+                  ) : null}
                   <th
                     scope="col"
                     className="sticky right-24 top-0 z-30 border-l bg-card px-3 py-2.5 text-right font-medium text-foreground"
@@ -1042,7 +1152,7 @@ export default function RequirementsPage() {
                         // group column + every subject + peak + hours. A
                         // colSpan short of the row leaves the section label
                         // ending mid-table with a gap where the totals are.
-                        colSpan={columns.length + 3}
+                        colSpan={columns.length + (target ? 4 : 3)}
                         className="bg-muted px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                       >
                         {/*
@@ -1074,6 +1184,13 @@ export default function RequirementsPage() {
                       className="sticky left-0 z-10 bg-card px-3 py-2 text-left font-medium"
                     >
                       <span>{group.name}</span>
+                      {target && section.kind === "CLASS" && target.view.summary(group.id) ? (
+                        <target.module.CoveragePill
+                          summary={target.view.summary(group.id)!}
+                          academicYearId={activeYearId}
+                          groupName={group.name}
+                        />
+                      ) : null}
                       {section.kind === "TEACHING_GROUP" ? (
                         <span
                           className={
@@ -1095,6 +1212,18 @@ export default function RequirementsPage() {
                       const badge = requirement
                         ? recurrenceBadge(requirement, tTimetable)
                         : null;
+                      // Mål mode paints a CLASS cell from the timplan's line,
+                      // including a cell with no post that the plan asks for
+                      // ("0 / 180"). A teaching group has no årskurs and so no
+                      // target of its own: its cells stay as they are.
+                      const targetCell =
+                        target && section.kind === "CLASS"
+                          ? target.view.cell(group.id, subject.id)
+                          : null;
+                      const targetSentence =
+                        targetCell && target
+                          ? target.module.cellSentence(t, targetCell, target.input)
+                          : null;
                       return (
                         <td key={subject.id} className="border-l p-1 text-center">
                           <button
@@ -1114,7 +1243,7 @@ export default function RequirementsPage() {
                             // than one with a fragment glued on, so a
                             // translator sees what is being said.
                             aria-label={
-                              !requirement
+                              (!requirement
                                 ? t("cellLabel", {
                                     group: group.name,
                                     subject: subject.name,
@@ -1132,11 +1261,13 @@ export default function RequirementsPage() {
                                       subject: subject.name,
                                       lessons: requirement.lessonsPerWeek,
                                       minutes: requirement.minutesPerLesson,
-                                    })
+                                    })) + (targetSentence ? `. ${targetSentence}` : "")
                             }
                             onClick={() => openCell(group.id, subject.id)}
                             className={
-                              requirement
+                              targetCell && target
+                                ? target.module.targetCellClass(targetCell.tone)
+                                : requirement
                                 ? // min-h rather than h: a badged cell needs a
                                   // third line, and clipping the badge would
                                   // hide the very thing it exists to show.
@@ -1155,7 +1286,9 @@ export default function RequirementsPage() {
                                   "mx-auto flex h-10 w-full min-w-16 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                             }
                           >
-                            {requirement ? (
+                            {targetCell && target ? (
+                              <target.module.TargetCellBody cell={targetCell} />
+                            ) : requirement ? (
                               <>
                                 <span className="text-sm font-semibold tabular-nums">
                                   {requirement.lessonsPerWeek}×{requirement.minutesPerLesson}
@@ -1178,6 +1311,11 @@ export default function RequirementsPage() {
                         </td>
                       );
                     })}
+                    {target ? (
+                      <td className="border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground">
+                        <target.module.GroupTotalCell summary={target.view.summary(group.id)} />
+                      </td>
+                    ) : null}
                     <td className="sticky right-24 z-10 border-l bg-card px-3 py-2 text-right font-medium tabular-nums text-foreground">
                       {peakByGroup.get(group.id) ?? 0}
                     </td>
@@ -1186,6 +1324,34 @@ export default function RequirementsPage() {
                     </td>
                   </tr>
                     ))}
+                    {/*
+                      Mål mode's subject totals, over the classes and under
+                      them: a teaching group's minutes reach pupils of several
+                      classes and no target of their own, so adding them here
+                      would count one pupil's språkval against every class.
+                    */}
+                    {target && section.kind === "CLASS" ? (
+                      <tr className="border-b bg-muted/40">
+                        <th
+                          scope="row"
+                          className="sticky left-0 z-10 bg-muted px-3 py-2 text-left font-medium text-foreground"
+                        >
+                          {t("target.totalsRow")}
+                        </th>
+                        {columns.map((subject) => (
+                          <td key={subject.id} className="border-l px-1 py-2 text-center text-foreground">
+                            <target.module.SubjectTotalCell
+                              total={target.view.subjectTotals.get(subject.id)}
+                            />
+                          </td>
+                        ))}
+                        <td className="border-l px-3 py-2 text-right font-medium tabular-nums text-foreground">
+                          <target.module.GroupTotalCell summary={null} total={target.view.total} />
+                        </td>
+                        <td className="sticky right-24 z-10 border-l bg-muted" />
+                        <td className="sticky right-0 z-10 min-w-24 max-w-24 border-l bg-muted" />
+                      </tr>
+                    ) : null}
                   </Fragment>
                 ))}
               </tbody>
@@ -1244,6 +1410,20 @@ export default function RequirementsPage() {
                 />
               </div>
             </div>
+            {/*
+              Mål mode's line under the two numbers it reads: what the
+              timplan asks of this class in this subject, and what the post
+              as typed gives. It follows the fields (and the period below)
+              as they change, before anything is saved.
+            */}
+            {cell && target ? (
+              <target.module.TargetHint
+                input={target.input}
+                groupId={cell.groupId}
+                subjectId={cell.subjectId}
+                fields={form}
+              />
+            ) : null}
             {/*
               The pupils' own time, on the row BELOW the lesson's own length and
               not beside it — the pair above says how long the teaching is, and
