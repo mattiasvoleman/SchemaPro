@@ -79,8 +79,20 @@ export function withProjectedHomes<P extends { id: string; studentGroupId: strin
  * Under the people list's own prefix on purpose: the overlay is a function of
  * the pupils' home classes, so every write that makes ["people"] stale — a
  * pupil's class changed on the people page, an import, an activation
- * (AFTER_ACTIVATION in lib/year-keys.ts) — makes it stale with it, and no
- * mutation has to know this key exists. A teaching group's members change the
- * membership counts only; useSetGroupMembers invalidates this prefix by name.
+ * (AFTER_ACTIVATION in lib/year-keys.ts) — makes it stale with it. Two
+ * writes that are not about people change it too, and name it: a teaching
+ * group's members (the membership counts; useSetGroupMembers), and a group
+ * created, changed or deleted (where the pupils are going; GROUP_WRITE_KEYS).
  */
 export const YEAR_ROSTERS_KEY = ["people", "yearRosters"] as const;
+
+/**
+ * What a student-group write (create, update, delete) makes stale: the group
+ * lists, and next year's overlay. The overlay follows the groups as well as
+ * the pupils — the activation sends a class's pupils along its successor
+ * link and only into a CLASS — so deleting next year's 8A, relinking it or
+ * making it a teaching group changes where 7A's pupils are going, and the
+ * grid must ask again rather than draw the old answer for the cache's
+ * staleTime.
+ */
+export const GROUP_WRITE_KEYS: string[][] = [["groups"], [...YEAR_ROSTERS_KEY]];

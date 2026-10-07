@@ -17,6 +17,7 @@ import {
   useSetGroupMembers,
 } from "@/lib/queries";
 import type { StudentGroup } from "@/lib/types";
+import { GROUP_WRITE_KEYS } from "@/lib/projected-rosters";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,7 +75,7 @@ export default function GroupsPage() {
     gradeLevel?: number | null;
     kind?: "CLASS" | "TEACHING_GROUP";
     academicYearId: string;
-  }>("/api/v1/student-groups", [["groups"]]);
+  }>("/api/v1/student-groups", GROUP_WRITE_KEYS);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);

@@ -29,6 +29,7 @@ const state = vi.hoisted(() => ({
   years: [] as unknown[],
   create: vi.fn(),
   keys: [] as string[][][],
+  groupKeys: [] as string[][],
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
@@ -40,6 +41,7 @@ vi.mock("@/lib/queries", () => ({
   usePeople: () => ({ data: [] }),
   useCrudMutations: (path: string, keys: string[][]) => {
     if (path === "/api/v1/academic-years") state.keys.push(keys);
+    if (path === "/api/v1/student-groups") state.groupKeys = keys;
     return {
       create: { mutateAsync: path === "/api/v1/academic-years" ? state.create : vi.fn(), isPending: false },
       update: { mutateAsync: vi.fn(), isPending: false },
@@ -92,6 +94,12 @@ beforeEach(() => {
 });
 
 describe("SetupPage, the year step and the active flag", () => {
+  it("makes next year's projected class lists stale with a class it creates", () => {
+    state.years = [];
+    render(<SetupPage />);
+    expect(state.groupKeys).toEqual(expect.arrayContaining([["groups"], ["people", "yearRosters"]]));
+  });
+
   it("creates a school's first läsår active", async () => {
     state.years = [];
     const user = userEvent.setup();
