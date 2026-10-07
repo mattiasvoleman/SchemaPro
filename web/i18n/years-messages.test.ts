@@ -60,3 +60,52 @@ describe.each([
     expect(text.trim()).not.toBe("");
   });
 });
+
+describe("the läsår sentences that count", () => {
+  const translate = (messages: Messages, locale: string) =>
+    createTranslator({
+      locale,
+      messages,
+      namespace: "years",
+      onError: (error) => {
+        throw error;
+      },
+    }) as unknown as (key: string, values?: Record<string, number | string>) => string;
+
+  it("say one, not 'one … s', in both languages", () => {
+    const tSv = translate(sv as Messages, "sv");
+    const tEn = translate(en as Messages, "en");
+    expect(tSv("count.membersStranded", { count: 1 })).toBe("1 medlem blir utan grupp");
+    expect(tEn("count.membersStranded", { count: 1 })).toBe("1 member is left without a group");
+    expect(tSv("reviewRequirementsCounts", { carried: 3, notCarried: 0, shifted: 1, anchored: 0 })).toContain("1 period flyttas");
+    expect(tEn("reviewRequirementsCounts", { carried: 3, notCarried: 0, shifted: 1, anchored: 0 })).toContain("1 period moves");
+    expect(tEn("errors.YEAR_ACTIVATION_HAS_MOVES", { pupils: 1 })).toMatch(/^1 pupil has not/);
+  });
+
+  it("translate every refusal the rollover's execute answers with a code, so English never shows the gateway's Swedish", () => {
+    // year-rollover.service.ts refuseBlockedRollover and refuseUnrollable, and the 409s around them.
+    const codes = [
+      "ROLLOVER_TARGET_DATES",
+      "ROLLOVER_UNKNOWN_GROUP",
+      "PROMOTE_GRADUATING",
+      "PROMOTE_WITHOUT_GRADE",
+      "INTAKE_NOT_LOWEST",
+      "GRADUATING_GRADE_REQUIRED",
+      "ROLLOVER_NAME_COLLISION",
+      "ROLLOVER_UNKNOWN_BREAK",
+      "BREAK_NEEDS_DATES",
+      "BREAK_OUTSIDE_YEAR",
+      "YEAR_NAME_TAKEN",
+      "YEAR_HAS_SUCCESSOR",
+      "ROLLOVER_SOURCE_NOT_ACTIVATED",
+      "ROLLOVER_SOURCE_HAS_STRAGGLERS",
+      "ROLLOVER_PREVIEW_STALE",
+      "ACTIVATION_PREVIEW_STALE",
+      "ROLLOVER_NOT_ACTIVATED",
+    ];
+    for (const messages of [sv, en]) {
+      const errors = (messages as { years: { errors: Record<string, string> } }).years.errors;
+      expect(codes.filter((code) => errors[code] === undefined)).toEqual([]);
+    }
+  });
+});
