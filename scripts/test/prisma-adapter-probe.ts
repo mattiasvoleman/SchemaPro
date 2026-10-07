@@ -1088,10 +1088,27 @@ async function runChecks(
         date: null,
         startTime: '10:00:00',
         endTime: '10:20:00',
-        reason: `Uppdrag: ${MARKER} rastvakt`,
+        // The word, not the label: every colleague reads this column.
+        reason: 'Uppdrag',
       },
     );
     const firstConstraint = first.constraintId!;
+    // As the colleague, through the real adapter: the slot is visible (it
+    // blocks a timetable everybody reads), the uppdrag it stands for is not.
+    const colleagueUser: AuthenticatedUser = {
+      authId: colleague.authId,
+      userId: colleague.id,
+      schoolId: fixture.schoolId,
+      role: Role.TEACHER,
+    };
+    const seenByColleague = await api.withRls(colleagueUser, (tx) =>
+      tx.availabilityConstraint.findMany({ where: { id: firstConstraint }, select: { reason: true } }),
+    );
+    assert.equal(seenByColleague.length, 1, 'the colleague no longer reads the school’s constraints');
+    assert.ok(
+      !(seenByColleague[0].reason ?? '').includes(MARKER),
+      `a colleague read the uppdrag’s label through its slot: ${seenByColleague[0].reason}`,
+    );
 
     // Move it: the same constraint row, retimed — the BEFORE UPDATE trigger agrees.
     const moved = await duties.update(
@@ -1517,15 +1534,11 @@ async function findFixture(owner: Client): Promise<Fixture> {
 /** Removes what the probe writes. Narrow enough to touch nothing else. */
 async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query('DELETE FROM "RoomBookings" WHERE title = $1', [MARKER]);
-  // Duties before their slots, though either order is safe: a slot's delete
-  // only clears the duty's pointer.
+  // Duties first: TeacherDuties_take_their_block deletes each one's slot with
+  // it (the service writes the slot's reason as the bare word "Uppdrag", so a
+  // reason match could not find them, and must not: it would take the seed's).
   await owner.query(`DELETE FROM "TeacherDuties" WHERE "schoolId" = $1 AND label LIKE $2 || '%'`, [schoolId, MARKER]);
   await owner.query(`DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1 AND reason LIKE $2 || '%'`, [schoolId, MARKER]);
-  // The duties service names a slot after its uppdrag: "Uppdrag: <label>".
-  await owner.query(
-    `DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1 AND reason LIKE 'Uppdrag: ' || $2 || '%'`,
-    [schoolId, MARKER],
-  );
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-duty@example.invalid'`, [schoolId, MARKER]);
   // (r): the person (their post goes with them), the two subjects (their

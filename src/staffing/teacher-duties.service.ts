@@ -90,8 +90,15 @@ export function assertDutySlot(slot: TeacherDutySlotDto): void {
   }
 }
 
-/** The reason a linked constraint carries: the uppdrag, by its own label. */
-const reasonFor = (label: string): string => `Uppdrag: ${label.trim()}`;
+/**
+ * The reason a linked constraint carries: the word, never the uppdrag's label
+ * or kind. availability_teacher_select hands every TEACHER of the school every
+ * AvailabilityConstraints row, so whatever stands here is read by every
+ * colleague — and the label ("Förstelärare matematik", "Mentor 7B") is the HR
+ * data teacher_duties_teacher_own_select keeps from them. The admin reads the
+ * label from the duty, which the constraint names through blockedConstraintId.
+ */
+export const DUTY_SLOT_REASON = 'Uppdrag';
 
 /** The time fields of the constraint that holds a slot. */
 const slotColumns = (slot: TeacherDutySlotDto) => ({
@@ -173,7 +180,7 @@ export class TeacherDutiesService {
                 resourceType: 'TEACHER',
                 userId: dto.userId,
                 type: 'UNAVAILABLE',
-                reason: reasonFor(dto.label),
+                reason: DUTY_SLOT_REASON,
                 ...slotColumns(slot),
               },
               select: { id: true },
@@ -228,7 +235,7 @@ export class TeacherDutiesService {
           if (current.blockedConstraintId) {
             await tx.availabilityConstraint.update({
               where: { id: current.blockedConstraintId },
-              data: { ...slotColumns(dto.blockedSlot), reason: reasonFor(label) },
+              data: { ...slotColumns(dto.blockedSlot), reason: DUTY_SLOT_REASON },
               select: { id: true },
             });
           } else {
@@ -238,20 +245,13 @@ export class TeacherDutiesService {
                 resourceType: 'TEACHER',
                 userId: current.userId,
                 type: 'UNAVAILABLE',
-                reason: reasonFor(label),
+                reason: DUTY_SLOT_REASON,
                 ...slotColumns(dto.blockedSlot),
               },
               select: { id: true },
             });
             blockedConstraintId = created.id;
           }
-        } else if (dto.label !== undefined && current.blockedConstraintId) {
-          // The slot stays; its reason follows the renamed uppdrag.
-          await tx.availabilityConstraint.update({
-            where: { id: current.blockedConstraintId },
-            data: { reason: reasonFor(label) },
-            select: { id: true },
-          });
         }
 
         const updated = await tx.teacherDuty.update({
@@ -292,9 +292,10 @@ export class TeacherDutiesService {
         if (!current) throw new NotFoundException('The requested record does not exist.');
         await tx.teacherDuty.delete({ where: { id } });
         if (current.blockedConstraintId) {
-          // deleteMany: a constraint an admin already removed by hand has
-          // nulled the link (ON DELETE SET NULL), so a present id exists —
-          // but a count of 0 is still no reason to fail the delete asked for.
+          // TeacherDuties_take_their_block has already deleted it with the
+          // duty; this says so in the code that owns the pair, and costs a
+          // statement that finds nothing. deleteMany, so a count of 0 is no
+          // reason to fail the delete asked for.
           await tx.availabilityConstraint.deleteMany({ where: { id: current.blockedConstraintId } });
         }
       });
