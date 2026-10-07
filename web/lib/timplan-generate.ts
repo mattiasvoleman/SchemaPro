@@ -83,7 +83,11 @@ export interface GenerateSkippedRow {
   subjectId: string;
   subjectName: string;
   gradeLevel: number;
-  reason: "EXISTS";
+  /** EXISTS: the class has the pair. ALTERNATIVE: språkval, or the SV_SVA subject the class does not get. */
+  reason: "EXISTS" | "ALTERNATIVE";
+  alternativeCode: string | null;
+  /** ALTERNATIVE in SV_SVA: the subject of the line the class has or gets. */
+  alternativeTo: string | null;
 }
 
 /** Mirror of GenerateRequirementsResponse (src/timplan/timplan-requirements.service.ts). */
@@ -119,6 +123,13 @@ export interface RowEdit {
   lessons: string;
   minutes: string;
 }
+
+/**
+ * Pairs skipped because the class already has them — not the språkval and
+ * SvA pairs skipped as ALTERNATIVE, which were never going to be created.
+ */
+export const existingCount = (answer: Pick<GenerateRequirementsResponse, "skipped">): number =>
+  answer.skipped.filter((row) => row.reason === "EXISTS").length;
 
 export const rowKey = (row: { studentGroupId: string; subjectId: string }): string =>
   `${row.studentGroupId}:${row.subjectId}`;

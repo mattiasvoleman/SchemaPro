@@ -6,6 +6,7 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import type { GenerateRequirementsDto } from './dto/generate-requirements.dto';
 import {
+  alternativeLineOf,
   proposeRequirements,
   type ProposedRow,
   type SkippedRow,
@@ -106,7 +107,7 @@ export class TimplanRequirementsService {
             ? []
             : await tx.subject.findMany({
                 where: { id: { in: subjectIds } },
-                select: { id: true, name: true },
+                select: { id: true, name: true, nationalCode: true },
               });
 
         const proposal = proposeRequirements({
@@ -114,6 +115,7 @@ export class TimplanRequirementsService {
           entries: plan.entries,
           classes,
           subjectNames: new Map(subjects.map((subject) => [subject.id, subject.name])),
+          nationalCodes: new Map(subjects.map((subject) => [subject.id, subject.nationalCode])),
           existing,
           minutesPerLesson: dto.minutesPerLesson,
           overrides: dto.overrides ?? [],
@@ -171,6 +173,10 @@ export class TimplanRequirementsService {
               subjectName: row.subjectName,
               gradeLevel: row.gradeLevel,
               reason: 'EXISTS',
+              alternativeCode: alternativeLineOf(
+                subjects.find((subject) => subject.id === row.subjectId)?.nationalCode,
+              ),
+              alternativeTo: null,
             });
           }
         }

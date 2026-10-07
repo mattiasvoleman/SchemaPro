@@ -88,6 +88,8 @@ function answer(body: GenerateBody & { planId: string }): GenerateRequirementsRe
         subjectName: "Engelska",
         gradeLevel: 7,
         reason: "EXISTS",
+        alternativeCode: null,
+        alternativeTo: null,
       },
     ],
   };
@@ -134,6 +136,30 @@ describe("GenerateDialog", () => {
     expect(within(ma).getByText("+5")).toBeInTheDocument();
     expect(screen.getByText("skippedRow(7A|Engelska)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "apply(2)" })).toBeEnabled();
+  });
+
+  it("says why språkval and SvA are not created on the class, and counts only existing pairs as existing", async () => {
+    state.generate.mutateAsync = vi.fn(async (body: GenerateBody & { planId: string }) => {
+      const base = answer(body);
+      const where = { studentGroupId: "g-7a", groupName: "7A", gradeLevel: 7, reason: "ALTERNATIVE" as const };
+      return {
+        ...base,
+        skipped: [
+          ...base.skipped,
+          { ...where, subjectId: "s-es", subjectName: "Spanska", alternativeCode: "M2", alternativeTo: null },
+          { ...where, subjectId: "s-sva", subjectName: "Svenska som andraspråk", alternativeCode: "SV_SVA", alternativeTo: "Svenska" },
+        ],
+      };
+    });
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    // One pair exists; the two alternatives are not "already existing".
+    expect(await screen.findByText("summary(2|1|1|grade(7))")).toBeInTheDocument();
+    expect(screen.getByText("alternativesNote")).toBeInTheDocument();
+    expect(screen.getByText("skippedTitle(3)")).toBeInTheDocument();
+    expect(screen.getByText("skippedLanguage(7A|Spanska)")).toBeInTheDocument();
+    expect(screen.getByText("skippedAlternative(7A|Svenska som andraspråk|Svenska)")).toBeInTheDocument();
   });
 
   it("throws the preview away when the length changes", async () => {

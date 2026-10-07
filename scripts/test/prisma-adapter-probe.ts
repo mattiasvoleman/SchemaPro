@@ -1586,11 +1586,27 @@ async function runChecks(
     const coverage = new TimplanCoverageService(api);
 
     const subject = await subjects.create({ name: `${MARKER} p2-ämne`, nationalCode: 'MA' } as never, admin);
+    // The alternatives, read by the generator through Subject.nationalCode:
+    // a språkval never goes on a class, and of SV_SVA the class gets one.
+    const svenska = await subjects.create({ name: `${MARKER} p2-sv`, nationalCode: 'SV_SVA' } as never, admin);
+    const sva = await subjects.create({ name: `${MARKER} p2-sva`, nationalCode: 'SV_SVA' } as never, admin);
+    const language = await subjects.create({ name: `${MARKER} p2-språk`, nationalCode: 'M2' } as never, admin);
     const plan = await timplans.create(
       { name: `${MARKER} p2`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
       admin,
     );
-    await timplans.replaceEntries(plan.id, { entries: [{ subjectId: subject.id, gradeLevel: 7, minutesPerWeek: 175 }] }, admin);
+    await timplans.replaceEntries(
+      plan.id,
+      {
+        entries: [
+          { subjectId: subject.id, gradeLevel: 7, minutesPerWeek: 175 },
+          { subjectId: svenska.id, gradeLevel: 7, minutesPerWeek: 200 },
+          { subjectId: sva.id, gradeLevel: 7, minutesPerWeek: 200 },
+          { subjectId: language.id, gradeLevel: 7, minutesPerWeek: 100 },
+        ],
+      },
+      admin,
+    );
     await timplans.decide(plan.id, { decisionNote: MARKER }, admin);
 
     // The year's create attaches grades 1–9 to the newest decided plan, in its transaction.
@@ -1623,8 +1639,18 @@ async function runChecks(
     const dto = { academicYearId: year.id, minutesPerLesson: 60 };
     const preview = await generator.generate(plan.id, { ...dto, dryRun: true }, admin);
     assert.deepEqual(
-      preview.rows.map((row) => [row.lessonsPerWeek, row.minutesPerLesson, row.surplusMinutesPerWeek]),
-      [[3, 60, 5]],
+      preview.rows.map((row) => [row.subjectId, row.lessonsPerWeek, row.minutesPerLesson, row.surplusMinutesPerWeek]),
+      [
+        [svenska.id, 4, 60, 40],
+        [subject.id, 3, 60, 5],
+      ],
+    );
+    assert.deepEqual(
+      preview.skipped.map((row) => [row.subjectId, row.reason, row.alternativeCode, row.alternativeTo]),
+      [
+        [language.id, 'ALTERNATIVE', 'M2', null],
+        [sva.id, 'ALTERNATIVE', 'SV_SVA', svenska.name],
+      ],
     );
     const countRows = async () =>
       (await owner.query<{ n: number }>('SELECT count(*)::int AS n FROM "TeachingRequirements" WHERE "academicYearId" = $1', [year.id])).rows[0].n;
@@ -1632,12 +1658,12 @@ async function runChecks(
 
     // createManyAndReturn + skipDuplicates under RLS, twice: one row, then none.
     const first = await generator.generate(plan.id, { ...dto, dryRun: false }, admin);
-    assert.equal(first.created, 1, JSON.stringify(first));
-    assert.ok(first.rows[0]?.requirementId, 'the created row has no id');
+    assert.equal(first.created, 2, JSON.stringify(first));
+    assert.ok(first.rows.every((row) => row.requirementId), 'a created row has no id');
     const second = await generator.generate(plan.id, { ...dto, dryRun: false }, admin);
     assert.equal(second.created, 0);
-    assert.deepEqual(second.skipped.map((row) => row.reason), ['EXISTS']);
-    assert.equal(await countRows(), 1);
+    assert.deepEqual(second.skipped.map((row) => row.reason), ['ALTERNATIVE', 'EXISTS', 'ALTERNATIVE', 'EXISTS']);
+    assert.equal(await countRows(), 2);
 
     // The ON CONFLICT path itself: a row created behind the read is passed by, not a 409.
     const raced = await api.withRls(admin, (tx) =>
@@ -1650,7 +1676,9 @@ async function runChecks(
     assert.equal(raced.length, 0);
 
     const forAdmin = await coverage.planned({ academicYearId: year.id }, admin);
-    const line = forAdmin.groups.find((group) => group.studentGroupId === classId)?.lines[0];
+    const line = forAdmin.groups
+      .find((group) => group.studentGroupId === classId)
+      ?.lines.find((entry) => entry.key === `subject:${subject.id}`);
     assert.deepEqual(
       [line?.targetMinutesPerWeek, line?.plannedMinutesPerWeek, line?.status],
       [175, 180, 'MET'],
@@ -1672,7 +1700,10 @@ async function runChecks(
     assert.equal(forTeacher.pupilLevel, false);
     assert.equal(forTeacher.pupils, null);
     assert.ok(!JSON.stringify(forTeacher).includes(fixture.pupilId), 'a pupil id reached the teacher');
-    assert.equal(forTeacher.groups[0]?.lines[0]?.status, 'MET');
+    assert.equal(
+      forTeacher.groups[0]?.lines.find((entry) => entry.key === `subject:${subject.id}`)?.status,
+      'MET',
+    );
 
     // Deleting the year takes its groups, rows and attachments; then the plan goes.
     await years.remove(year.id, admin);
