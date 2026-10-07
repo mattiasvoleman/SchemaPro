@@ -58,6 +58,12 @@ const ADMIN_NAV: NavSection[] = [
     labelKey: "planning",
     items: [
       { labelKey: "setup", href: "/admin/setup", icon: GraduationCap },
+      // Directly after Kom igång, which creates a school's first läsår: this
+      // is where every later one comes from (Rulla vidare) and becomes the
+      // current one (Aktivera). The icon is Kom igång's own on purpose — one
+      // the layout chunk already carries, so the entry costs the shell no
+      // bytes (an icon of its own would be on every route's bill).
+      { labelKey: "years", href: "/admin/years", icon: GraduationCap },
       { labelKey: "subjects", href: "/admin/subjects", icon: BookOpen },
       { labelKey: "rooms", href: "/admin/rooms", icon: MapPin },
       { labelKey: "groups", href: "/admin/groups", icon: Users },

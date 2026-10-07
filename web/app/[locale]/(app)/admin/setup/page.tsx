@@ -151,12 +151,25 @@ export default function SetupPage() {
   const allDone = steps.every((step) => step.done);
 
   // --- quick-add form state ---------------------------------------------------
-  const [yearForm, setYearForm] = useState({
+  // isActive null = the default, which depends on whether the school already
+  // has a läsår. The first one is active; a later one is not, because handing
+  // the flag to a new, empty year leaves every pupil in a class of a year that
+  // is no longer the active one — the schedule, the attendance rosters and the
+  // pupil's own view all follow the active year. Next year normally comes from
+  // Rulla vidare on /admin/years, and becomes active there, with its pupils.
+  const [yearForm, setYearForm] = useState<{
+    name: string;
+    startDate: string;
+    endDate: string;
+    isActive: boolean | null;
+  }>({
     name: "",
     startDate: "",
     endDate: "",
-    isActive: true,
+    isActive: null,
   });
+  const hasYears = (years?.length ?? 0) > 0;
+  const yearIsActive = yearForm.isActive ?? !hasYears;
   const [quickName, setQuickName] = useState("");
   const [timplanYearId, setTimplanYearId] = useState<string | null>(null);
 
@@ -166,7 +179,7 @@ export default function SetupPage() {
         name: yearForm.name.trim(),
         startDate: yearForm.startDate,
         endDate: yearForm.endDate,
-        isActive: yearForm.isActive,
+        isActive: yearIsActive,
       })) as { name?: string; timplans?: { planName: string }[] } | undefined;
       toast.success(tCommon("created"));
       const attached = created?.timplans ?? [];
@@ -179,7 +192,7 @@ export default function SetupPage() {
           }),
         );
       }
-      setYearForm({ name: "", startDate: "", endDate: "", isActive: true });
+      setYearForm({ name: "", startDate: "", endDate: "", isActive: null });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
     }
@@ -210,7 +223,7 @@ export default function SetupPage() {
     year: {
       title: t("yearTitle"),
       hint: t("yearHint"),
-      href: "/admin/requirements",
+      href: "/admin/years",
       // Listed as rows of their own below the form, each with its
       // "Timplan per årskurs" button, rather than as badges.
       items: [],
@@ -320,10 +333,18 @@ export default function SetupPage() {
                   />
                 </div>
               </div>
+              {hasYears ? (
+                <p className="text-sm text-muted-foreground">
+                  {t("yearExistsHint")}{" "}
+                  <Link href="/admin/years" className="font-medium text-primary underline-offset-4 hover:underline">
+                    {t("yearsLink")}
+                  </Link>
+                </p>
+              ) : null}
               <div className="flex items-center justify-between">
                 <label className="flex items-center gap-2 text-sm">
                   <Switch
-                    checked={yearForm.isActive}
+                    checked={yearIsActive}
                     onCheckedChange={(checked) =>
                       setYearForm({ ...yearForm, isActive: checked })
                     }

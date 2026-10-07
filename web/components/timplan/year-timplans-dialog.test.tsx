@@ -55,8 +55,8 @@ vi.mock("next-intl", () => ({
 }));
 
 const YEARS: AcademicYear[] = [
-  { id: "y-0", name: "2025/26", startDate: "2025-08-18", endDate: "2026-06-12", isActive: false },
-  { id: "y-1", name: "2026/27", startDate: "2026-08-17", endDate: "2027-06-11", isActive: true },
+  { id: "y-0", name: "2025/26", startDate: "2025-08-18", endDate: "2026-06-12", isActive: false, predecessorId: null, graduatingGradeLevel: null },
+  { id: "y-1", name: "2026/27", startDate: "2026-08-17", endDate: "2027-06-11", isActive: true, predecessorId: null, graduatingGradeLevel: null },
 ];
 
 const select = (grade: number) => screen.getByRole("combobox", { name: `planFor(grade(${grade}))` });
