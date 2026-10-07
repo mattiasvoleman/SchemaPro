@@ -43,6 +43,7 @@
       <li><span>4.2 Timplansposter</span><span class="dots"></span><span class="pg" data-pg="s42"></span></li>
       <li><span>4.3 Tillgänglighet</span><span class="dots"></span><span class="pg" data-pg="s43"></span></li>
       <li><span>4.4 Raster</span><span class="dots"></span><span class="pg" data-pg="s44"></span></li>
+      <li><span>4.5 Tjänstefördelning</span><span class="dots"></span><span class="pg" data-pg="s45"></span></li>
     </ol>
     <li><span>5 · Fas 3 — Schemaläggning</span><span class="dots"></span><span class="pg" data-pg="ch5"></span></li>
     <ol>
@@ -164,7 +165,7 @@
       </tr>
       <tr>
         <td class="k">Lärare</td>
-        <td>Sitt eget schema, registrerar närvaro, bokar lokal.</td>
+        <td>Sitt eget schema och sin egen tjänst (endast läsa), registrerar närvaro, bokar lokal.</td>
         <td>Egna lektioner och elever</td>
       </tr>
       <tr>
@@ -445,6 +446,7 @@
       <tr><td class="k">larare.csv</td><td>fornamn; efternamn; epost</td><td>Ingen inbjudan skickas vid importen — du bjuder in när du vill, se 3.5.</td></tr>
       <tr><td class="k">elever.csv</td><td>fornamn; efternamn; epost; klass</td><td>Klassen anges med namn, t.ex. <em>7A</em>, och måste finnas.</td></tr>
       <tr><td class="k">undervisningsgrupper.csv</td><td>grupp; epost</td><td>En rad per medlem. Gruppen skapas automatiskt om den saknas.</td></tr>
+      <tr><td class="k">uppdrag.csv</td><td>larare_epost; typ; benamning; minuter_per_vecka; raknas_som_undervisning; amne; grupp; anteckning</td><td>Importeras under <span class="path">Planering › Personer</span>, till det aktiva läsåret. Samma lärare, typ och benämning en gång till uppdaterar uppdraget i stället för att dubblera det. Tid i schemat blockeras inte via fil — det görs på uppdraget, se 4.5.</td></tr>
     </tbody>
   </table>
   <p>
@@ -663,6 +665,30 @@
     Behöver två lärare undervisa tillsammans anger du en
     <span class="ui">Medlärare</span>. Båda schemaläggs då samtidigt och båda
     räknas som upptagna under lektionen.
+  </p>
+  <p>
+    Under <span class="ui">Avancerat</span> längst ned i dialogen finns
+    <span class="ui">Räknas för lärare (%)</span> och
+    <span class="ui">Räknas för medlärare (%)</span>. De säger hur stor del av
+    lektionstiden som räknas mot respektive lärares tjänst i
+    tjänstefördelningen (4.5), från 0 till 200 och 100 för nästan varje post.
+    Två lärare i samma slöjdsal kan till exempel räknas som 100 och 50.
+    Lektionen, elevernas tid och schemat ändras inte — bara vad läraren
+    belastas med. Har en post något annat än 100 öppnas
+    <span class="ui">Avancerat</span> av sig själv. I filen
+    <em>timplansposter.csv</em> heter kolumnerna <em>larare_procent</em> och
+    <em>medlarare_procent</em>; en tom cell betyder 100, och en fil utan
+    kolumnerna lämnar procentsatserna orörda.
+  </p>
+  <p>
+    När du sparar en post med en lärare frågar SchemaPro skolans inställningar
+    för tjänstefördelning: har läraren behörighet i ämnet för gruppens
+    årskurser, och går läraren över sitt mål? Beroende på inställningen sparas
+    posten tyst, sparas med en varning som ligger kvar ovanför matrisen tills
+    du stänger den, eller vägras — då står skälet i dialogen och ingenting är
+    sparat. Se 4.5. Vid import gäller samma sak rad för rad: en varnad rad
+    sparas och listas under <span class="ui">Sparade, med varning</span>, en
+    vägrad rad listas bland felen och resten av filen läses in.
   </p>
   <p>
     En timplanspost kan peka på en klass <em>eller</em> en undervisningsgrupp.
@@ -925,6 +951,124 @@
       minuter för det stadium som behöver det.
     </p>
   </div>
+
+  <h3 id="s45"><span class="num">4.5</span>Tjänstefördelning</h3>
+  <p>
+    <span class="path">Planering › Tjänstefördelning</span> är timplansposterna
+    lästa från andra hållet: där 4.2 säger vad varje grupp behöver, säger den
+    här sidan vad varje lärare bär av det och mot vilket mål. Det är också en
+    arbetsyta — en obemannad post bemannas härifrån med ett klick.
+  </p>
+  <p>
+    Överst står fyra nyckeltal: <span class="ui">Obemannade rader</span>,
+    <span class="ui">Lärare över mål</span>, <span class="ui">Obehöriga
+    tilldelningar</span> och <span class="ui">Ämnesflaskhalsar</span>. Under
+    dem ligger matrisen med en rad per lärare och en kolumn per ämne, och till
+    höger lärarens uppdrag, mål, saldo och en stapel. Klicka på en lärare för
+    att öppna lärarens kort: <span class="ui">Anställning</span> (tjänst,
+    nedsättning och avtal, som ger målet), <span class="ui">Behörigheter</span>,
+    <span class="ui">Uppdrag</span> och lärarens
+    <span class="ui">Timplansposter</span>.
+  </p>
+
+  <h4>Bemanna en post</h4>
+  <p>
+    Under <span class="ui">Obemannade rader</span> står varje timplanspost som
+    saknar lärare. <span class="ui">Föreslå lärare</span> rangordnar skolans
+    lärare: först efter behörighet i ämnet för gruppens årskurser
+    (legitimation före behörig före tillåten), sedan om läraren redan
+    undervisar gruppen, sist efter hur många minuter läraren har kvar till sitt
+    mål <em>efter</em> posten. Varje förslag visar behörigheten,
+    <em>kvar N min/v</em> och om läraren skulle hamna över gränsen.
+    <span class="ui">Tilldela</span> sparar direkt. Har skolan inte registrerat
+    några behörigheter rangordnas listan efter vem som redan undervisar ämnet.
+  </p>
+  <p>
+    En post som redan har en lärare byts i lärarens kort, under
+    <span class="ui">Timplansposter</span> med <span class="ui">Byt lärare</span>.
+    Medlärare ändras i timplansposternas dialog (4.2).
+  </p>
+
+  <h4>Ämnesflaskhalsar</h4>
+  <p>
+    Per ämne jämförs minuterna de obemannade posterna skulle belasta en lärare
+    med mot vad lärarna med behörighet i ämnet har kvar till sina mål.
+    <strong>Brist</strong> betyder att posterna inte kan bemannas utan att
+    någon går över sitt mål — då behövs en rekrytering, en omfördelning eller
+    ett beslut om övertid. Lärare utan mål räknas inte in i kapaciteten, men
+    redovisas för sig. Utan en enda registrerad behörighet går kapaciteten inte
+    att veta, och då visas ingen siffra alls i stället för noll.
+  </p>
+
+  <h4>Uppdrag</h4>
+  <p>
+    Mentorskap, ämnesansvar, förstelärare, rastvakt, pedagogisk lunch,
+    APT/konferens, VFU-handledning, APL och annat läggs som uppdrag i lärarens
+    kort, med minuter per vecka. Ett uppdrag som
+    <span class="ui">Räknas som undervisning</span> räknas in i det som
+    jämförs med målet; övriga uppdrag redovisas och ritas som ett mörkt
+    segment först i stapeln, utanför målet.
+  </p>
+  <p>
+    Med <span class="ui">Blockera tid i schemat</span> anger du dag, från och
+    till (på schemats femminutersrutnät). Läraren blir då otillgänglig den
+    tiden varje vecka, så att genereringen lämnar den fri — rastvakten på
+    tisdagar 12.00–12.20, till exempel. Tiden tas bort tillsammans med
+    uppdraget, och läraren kan inte själv flytta eller ta bort den. Uppdrag
+    kan även importeras från <em>uppdrag.csv</em> (3.6), men utan blockerad
+    tid.
+  </p>
+
+  <h4>Inställningar: varna eller vägra</h4>
+  <p>
+    Kortet <span class="ui">Inställningar för tjänstefördelning</span> har ett
+    riktmärke för heltid och tre kontroller.
+  </p>
+  <table>
+    <thead><tr><th style="width:30%">Inställning</th><th style="width:22%">Lägen</th><th>Vad den gör</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Behörighetskontroll</td><td>Av · Varna · Vägra</td><td>Frågar om läraren har en giltig behörighet i ämnet som täcker gruppens årskurser. Ställs bara när en post får en <em>ny</em> lärare, och bara om skolan har registrerat minst en behörighet.</td></tr>
+      <tr><td class="k">Överbeläggning</td><td>Av · Varna · Vägra</td><td>Frågar om läraren efter sparandet ligger över målet plus <span class="ui">Tolerans (%)</span>. Ställs bara när sparandet <em>ökar</em> lärarens minuter — att lätta på en lärare som redan ligger över vägras aldrig. Gäller inte lärare utan mål.</td></tr>
+      <tr><td class="k">Generering utan lärare</td><td>Tillåt · Vägra</td><td>Vägra betyder att ett schema inte genereras så länge någon timplanspost saknar lärare (5.2).</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <strong>Varna</strong> sparar och visar en mening som namnger ämnet och
+    årskurserna, eller minuterna och gränsen. <strong>Vägra</strong> sparar
+    ingenting och säger varför, till exempel <em>Läraren saknar behörighet i
+    Matematik för åk 7–9</em>. Kontrollerna gäller när en timplanspost skapas
+    eller ändras — i dialogen, på tjänstefördelningssidan och vid import.
+    När du byter lärare på en lektion i grundschemat ställs bara
+    behörighetsfrågan.
+  </p>
+  <div class="warn">
+    <span class="label">En vikarie vägras aldrig</span>
+    <p>
+      Också med <span class="ui">Vägra</span> får en obehörig vikarie en
+      varning, inte en vägran. Skollagen tillåter tillfällig obehörig
+      undervisning, och en vägran klockan 07.45 lämnar klassen utan någon
+      alls.
+    </p>
+  </div>
+  <div class="note">
+    <span class="label">Börja med Varna</span>
+    <p>
+      Varna är standard och ändrar ingenting för en skola som just börjat.
+      Byter du till Vägra innan behörigheterna är inlagda kommer varje
+      tilldelning som saknar en registrerad behörighet att vägras — även i
+      importer. Lägg in behörigheterna först.
+    </p>
+  </div>
+
+  <h4>Lärarens egen vy</h4>
+  <p>
+    En lärare ser sin egen tjänst under <span class="path">Min tjänst</span>:
+    anställning, mål och räknade minuter, samma stapel som du ser,
+    undervisningen per ämne med minuter och andel av tjänsten, och sina
+    uppdrag med tiden de blockerar. Läraren ser bara sig själv och kan inte
+    ändra något. Anställningen och behörigheterna är personaluppgifter: en
+    lärare ser aldrig en kollegas.
+  </p>
 </section>
 
 <!-- ============================ 5 ============================ -->
@@ -983,6 +1127,15 @@
     Klicka <span class="ui">Generera schema</span>. Motorn arbetar i bakgrunden
     och visar resultatet när den är klar. Vänta tills körningen avslutats innan
     du navigerar vidare.
+  </p>
+  <p>
+    Under <span class="ui">Förutsättningar</span> står också
+    <span class="ui">Alla timplansposter har lärare</span>, med hur många som
+    saknar en. Raden länkar till <span class="ui">Obemannade rader</span> på
+    tjänstefördelningssidan. Har skolan valt <span class="ui">Generering utan
+    lärare: Vägra</span> (4.5) är knappen avstängd tills alla poster har en
+    lärare, och skälet står under den. Med <span class="ui">Tillåt</span> är
+    raden bara en varning: poster utan lärare schemaläggs utan lärare.
   </p>
   <div class="warn">
     <span class="label">Grupper utan årskurs binds inte av ramtider och raster</span>
@@ -1467,8 +1620,19 @@
       <tr>
         <td class="k">Knappen Generera schema går inte att klicka</td>
         <td>En förutsättning saknas.</td>
-        <td>Läs rutan <span class="ui">Förutsättningar</span> — den visar vilken av de fyra som inte är uppfylld.</td>
+        <td>Läs rutan <span class="ui">Förutsättningar</span> — den visar vilken som inte är uppfylld.</td>
       </tr>
+      <tr>
+        <td class="k">Knappen är avstängd och det står att timplansposter saknar lärare</td>
+        <td>Skolan har valt <span class="ui">Generering utan lärare: Vägra</span>.</td>
+        <td>Bemanna posterna under <span class="ui">Obemannade rader</span> på tjänstefördelningssidan, eller ändra inställningen till Tillåt (4.5).</td>
+      </tr>
+      <tr>
+        <td class="k">En timplanspost vägras med ”saknar behörighet” eller ”över målet”</td>
+        <td>Behörighetskontrollen eller överbeläggningen står på Vägra.</td>
+        <td>Välj en annan lärare (<span class="ui">Föreslå lärare</span> rangordnar dem), registrera lärarens behörighet, eller ändra kontrollen till Varna (4.5).</td>
+      </tr>
+
       <tr>
         <td class="k">Inget giltigt schema möjligt</td>
         <td>Villkoren motsäger varandra. Oftast för få specialsalar, för snäva tillgänglighetsbegränsningar eller en klass med fler lektioner än dagarna rymmer.</td>
