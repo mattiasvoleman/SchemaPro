@@ -3461,12 +3461,11 @@ describe('Planning surface (e2e)', () => {
       expect(sizes).not.toContain(0);
       expect(payload.groupConflicts).toHaveLength(2);
       expect(payload.groups.map((group) => group.lunchHeadcount).sort()).toEqual([1, 2]);
-      const rooms = await request(http())
+      await request(http())
         .post('/api/v1/optimization/rooms/proposal')
         .set('x-test-user', admin())
         .send({ academicYearId: yearB, walkers: 'BOTH' })
-        .expect(409);
-      expect(rooms.body).toMatchObject({ code: 'ROLLOVER_NOT_ACTIVATED' });
+        .expect(200);
       const lesson = await request(http())
         .post('/api/v1/master-lessons')
         .set('x-test-user', admin())
