@@ -1,24 +1,20 @@
 "use client";
 
-import { Suspense, lazy, useCallback, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { toast } from "sonner";
 import {
   CalendarDays,
-  Copy,
   Download,
   History,
-  Loader2,
   Lock,
   LockOpen,
-  ParkingSquare,
   FileText,
   Footprints,
   Plus,
   Printer,
   Redo2,
-  Sparkles,
   Trash2,
   TriangleAlert,
   UtensilsCrossed,
@@ -83,9 +79,9 @@ import { FilterPicker } from "@/components/schedule/filter-picker";
  * decimal. With all three splits on lazy() the route measures 188.8KB
  * (2026-10-06). React is in every route already, so lazy() costs nothing on
  * top.
- * No lazy component is reachable during SSR: editing, creating, publishOpen
- * and roomsUsed are all falsy at first render, and Radix Dialog does not
- * mount its content while closed.
+ * No lazy component is reachable during SSR: every *Used latch below
+ * (confirm, edit, create, suggest, versions, rooms, publish) is false at first
+ * render, and each lazy dialog is mounted only behind its latch.
  */
 const RoomOptimizationDialog = lazy(() =>
   import("@/components/schedule/room-optimization-dialog").then((module) => ({
@@ -99,41 +95,42 @@ import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
  * code, and nothing on the grid needs it (see versions-dialog.tsx).
  */
 /*
- * Fetched the first time a lesson is added — from the toolbar, a click on
- * empty time or Duplicera (see create-lesson-dialog.tsx). Its draft type is
- * imported as a type only, which brings no code with it.
+ * Fetched the first time Versioner is pressed, like the room optimisation
+ * dialog above and for its reason: the version diff is most of the dialog's
+ * code, and nothing on the grid needs it (see versions-dialog.tsx).
  */
-const CreateLessonDialog = lazy(() =>
-  import("@/components/schedule/create-lesson-dialog").then((module) => ({
-    default: module.CreateLessonDialog,
-  })),
-);
-import type { CreateDraft } from "@/components/schedule/create-lesson-dialog";
 const VersionsDialog = lazy(() =>
   import("@/components/schedule/versions-dialog").then((module) => ({
     default: module.VersionsDialog,
   })),
 );
 /*
- * Fetched with the dialog that shows them. The grid needs the badge above on
- * every card, but the fields themselves are only ever edited inside Justera or
- * Lägg till — and they carry components/ui/date-field.tsx, 546 lines of date
- * picker, which the page otherwise paid for to draw a week.
+ * The lesson dialogs — Lägg till, Justera, Publicera and the shared-move and
+ * placement questions after a drag — fetched as one chunk right after the page
+ * mounts (see components/schedule/lesson-dialogs.ts for why one). Justera,
+ * Publicera and the two questions used to be written out at the bottom of this
+ * page; with them went the route's whole copy of @radix-ui/react-dialog, the
+ * Switch and the date picker, none of which the grid draws on load. The two
+ * draft types are imported as types only, which brings no code with them.
  */
-const RecurrenceFields = lazy(() =>
-  import("@/components/schedule/recurrence-fields").then((module) => ({
-    default: module.RecurrenceFields,
-  })),
+const loadLessonDialogs = () => import("@/components/schedule/lesson-dialogs");
+const CreateLessonDialog = lazy(() =>
+  loadLessonDialogs().then((module) => ({ default: module.CreateLessonDialog })),
 );
-/** Holds the recurrence box's place in a dialog's grid while its code arrives. */
-function RecurrenceFieldsFallback() {
-  return (
-    <div className="col-span-2 space-y-3 rounded-md border p-3">
-      <Skeleton className="h-14" />
-      <Skeleton className="h-14" />
-    </div>
-  );
-}
+const LessonEditDialog = lazy(() =>
+  loadLessonDialogs().then((module) => ({ default: module.LessonEditDialog })),
+);
+const PublishDialog = lazy(() =>
+  loadLessonDialogs().then((module) => ({ default: module.PublishDialog })),
+);
+const SharedMoveDialog = lazy(() =>
+  loadLessonDialogs().then((module) => ({ default: module.SharedMoveDialog })),
+);
+const SuggestPlacementsDialog = lazy(() =>
+  loadLessonDialogs().then((module) => ({ default: module.SuggestPlacementsDialog })),
+);
+import type { CreateDraft } from "@/components/schedule/create-lesson-dialog";
+import type { LessonEditDraft } from "@/components/schedule/lesson-edit-dialog";
 import type { LessonRecurrence, MasterLesson, StaffingWarning } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
 import { rastWindows } from "@/lib/rasts";
@@ -173,25 +170,8 @@ import {
   type TimetableGridHandle,
 } from "@/components/schedule/timetable-grid";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-// The page's own two date fields are the publishing dates, inside that dialog.
-const DateField = lazy(() =>
-  import("@/components/ui/date-field").then((module) => ({
-    default: module.DateField,
-  })),
-);
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -365,15 +345,17 @@ export default function TimetablePage() {
   const [toDate, setToDate] = useState("");
 
   const [editing, setEditing] = useState<MasterLesson | null>(null);
-  const [editDay, setEditDay] = useState("1");
-  const [editStart, setEditStart] = useState("");
-  const [editEnd, setEditEnd] = useState("");
-  const [editRoom, setEditRoom] = useState(NONE);
-  const [editTeacher, setEditTeacher] = useState(NONE);
-  const [editLocked, setEditLocked] = useState(false);
-  const [editRecurrence, setEditRecurrence] = useState<LessonRecurrence>("ALL_WEEKS");
-  const [editStartDate, setEditStartDate] = useState("");
-  const [editEndDate, setEditEndDate] = useState("");
+  const [editDraft, setEditDraft] = useState<LessonEditDraft>({
+    dayOfWeek: "1",
+    startTime: "",
+    endTime: "",
+    roomId: NONE,
+    teacherId: NONE,
+    isLocked: false,
+    recurrence: "ALL_WEEKS",
+    startDate: "",
+    endDate: "",
+  });
 
   const [creating, setCreating] = useState<CreateDraft | null>(null);
   // Whether a lesson has been added this visit, which is what decides that the
@@ -394,6 +376,27 @@ export default function TimetablePage() {
   // Whether the room dialog has been asked for at all this visit, which is what
   // decides that its code is fetched — see where it is rendered.
   const [roomsUsed, setRoomsUsed] = useState(false);
+  /*
+   * Whether each of the four lifted dialogs has been opened this visit, which
+   * is what mounts it and so fetches its code — set during render, as
+   * createUsed is, so each holds from its first open onward. All four are
+   * false at first render, so none of them is reached during SSR.
+   */
+  const [confirmUsed, setConfirmUsed] = useState(false);
+  if (confirming !== null && !confirmUsed) setConfirmUsed(true);
+  const [editUsed, setEditUsed] = useState(false);
+  if (editing !== null && !editUsed) setEditUsed(true);
+  const [suggestUsed, setSuggestUsed] = useState(false);
+  if (suggesting !== null && !suggestUsed) setSuggestUsed(true);
+  const [publishUsed, setPublishUsed] = useState(false);
+  if (publishOpen && !publishUsed) setPublishUsed(true);
+  // Justera and Lägg till are opened all day, so the lesson dialogs' chunk is
+  // fetched as soon as the page has mounted rather than on the first click;
+  // the click then rarely waits. A failed fetch here is left for the click to
+  // retry and report.
+  useEffect(() => {
+    loadLessonDialogs().catch(() => {});
+  }, []);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
 
   /**
@@ -1566,32 +1569,34 @@ export default function TimetablePage() {
     }
     setRemoteEditing(lessonId);
     setEditing(lesson);
-    setEditDay(String(lesson.dayOfWeek));
-    setEditStart(toHHMM(lesson.startTime));
-    setEditEnd(toHHMM(lesson.endTime));
-    setEditRoom(lesson.roomId ?? NONE);
-    setEditTeacher(lesson.teacherId ?? NONE);
-    setEditLocked(lesson.isLocked);
-    setEditRecurrence(lesson.recurrence);
-    setEditStartDate(lesson.startDate ?? "");
-    setEditEndDate(lesson.endDate ?? "");
+    setEditDraft({
+      dayOfWeek: String(lesson.dayOfWeek),
+      startTime: toHHMM(lesson.startTime),
+      endTime: toHHMM(lesson.endTime),
+      roomId: lesson.roomId ?? NONE,
+      teacherId: lesson.teacherId ?? NONE,
+      isLocked: lesson.isLocked,
+      recurrence: lesson.recurrence,
+      startDate: lesson.startDate ?? "",
+      endDate: lesson.endDate ?? "",
+    });
   };
 
   const doSaveEdit = async () => {
     if (!editing) return;
     try {
       const result = await undoableUpdate(editing, {
-        dayOfWeek: Number(editDay),
-        startTime: editStart,
-        endTime: editEnd,
-        roomId: editRoom === NONE ? null : editRoom,
-        teacherId: editTeacher === NONE ? null : editTeacher,
-        isLocked: editLocked,
-        recurrence: editRecurrence,
+        dayOfWeek: Number(editDraft.dayOfWeek),
+        startTime: editDraft.startTime,
+        endTime: editDraft.endTime,
+        roomId: editDraft.roomId === NONE ? null : editDraft.roomId,
+        teacherId: editDraft.teacherId === NONE ? null : editDraft.teacherId,
+        isLocked: editDraft.isLocked,
+        recurrence: editDraft.recurrence,
         // An empty field means "the academic year's own boundary", which the
         // API stores as null — not as an empty string.
-        startDate: editStartDate === "" ? null : editStartDate,
-        endDate: editEndDate === "" ? null : editEndDate,
+        startDate: editDraft.startDate === "" ? null : editDraft.startDate,
+        endDate: editDraft.endDate === "" ? null : editDraft.endDate,
       });
       announceSaved(result);
       setEditing(null);
@@ -2227,217 +2232,61 @@ export default function TimetablePage() {
       </section>
 
       {/* ---------------- Edit dialog ---------------- */}
-      {/* A drag that lands on classes the administrator was not looking at. */}
-      <Dialog
-        open={confirming !== null}
-        onOpenChange={(open) => {
-          if (!open) setConfirming(null);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("sharedMoveTitle")}</DialogTitle>
-            <DialogDescription>
-              {/* The classes BY NAME. "Flera klasser berörs" would be the same
-                  silence the "+1" badge kept: it tells you something is at
-                  stake without telling you what. */}
-              {t("sharedMoveBody", {
-                classes: (confirming?.classes ?? [])
-                  .map((id) => groupById.get(id)?.name ?? id)
-                  .join(", "),
-              })}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirming(null)}>
-              {tCommon("cancel")}
-            </Button>
-            <Button
-              onClick={() => {
-                if (!confirming) return;
-                applyGridChange(confirming.lesson, confirming.change);
-                setConfirming(null);
-              }}
-            >
-              {t("sharedMoveConfirm")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/*
+        Each of the four dialogs below is mounted from its first open onward and
+        never unmounted again, like the create, versions and room dialogs:
+        closing keeps it in the tree so it animates out as before, and nothing
+        is mounted for a dialog nobody opens. Their code is fetched right
+        after the page mounts (see loadLessonDialogs).
+      */}
+      {confirmUsed && (
+        <Suspense fallback={null}>
+          <SharedMoveDialog
+            open={confirming !== null}
+            classNames={(confirming?.classes ?? [])
+              .map((id) => groupById.get(id)?.name ?? id)
+              .join(", ")}
+            onCancel={() => setConfirming(null)}
+            onConfirm={() => {
+              if (!confirming) return;
+              applyGridChange(confirming.lesson, confirming.change);
+              setConfirming(null);
+            }}
+          />
+        </Suspense>
+      )}
 
-      <Dialog
-        open={editing !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setEditing(null);
-            setRemoteEditing(null);
-          }
-        }}
-      >
-        {/* The component's own max-w-lg, not the max-w-md this used to narrow it
-            to: two selects, two clocks and five buttons need the width, and a
-            dialog narrower than its content scrolls sideways. */}
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("editTitle")}</DialogTitle>
-            {/* WHICH lesson. Three maths lessons on a Tuesday all opened on the
-                same "Justera lektion", and the reader had to remember which one
-                they had clicked. */}
-            <DialogDescription>
-              {editing ? (
-                <span className="block font-medium text-foreground">
-                  {lessonName(editing)}
-                </span>
-              ) : null}
-              {t("editBody")}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
-            <div className="col-span-2 space-y-2">
-              <Label>{t("editDay")}</Label>
-              <Select value={editDay} onValueChange={setEditDay}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[1, 2, 3, 4, 5, 6, 7].map((day) => (
-                    <SelectItem key={day} value={String(day)}>
-                      {tDays(String(day))}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-start">{t("editStart")}</Label>
-              <Input
-                id="edit-start"
-                type="time"
-                value={editStart}
-                onChange={(e) => setEditStart(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-end">{t("editEnd")}</Label>
-              <Input
-                id="edit-end"
-                type="time"
-                value={editEnd}
-                onChange={(e) => setEditEnd(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>{t("editRoom")}</Label>
-              <Select value={editRoom} onValueChange={setEditRoom}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>{t("noRoom")}</SelectItem>
-                  {(rooms ?? []).map((room) => (
-                    <SelectItem key={room.id} value={room.id}>
-                      {room.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>{t("editTeacher")}</Label>
-              <Select value={editTeacher} onValueChange={setEditTeacher}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NONE}>{t("noTeacher")}</SelectItem>
-                  {teachers.map((teacher) => (
-                    <SelectItem key={teacher.id} value={teacher.id}>
-                      {teacher.firstName} {teacher.lastName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Suspense fallback={<RecurrenceFieldsFallback />}>
-              <RecurrenceFields
-                idPrefix="edit"
-                value={{
-                  recurrence: editRecurrence,
-                  startDate: editStartDate,
-                  endDate: editEndDate,
-                }}
-                onChange={(next) => {
-                  setEditRecurrence(next.recurrence);
-                  setEditStartDate(next.startDate);
-                  setEditEndDate(next.endDate);
-                }}
-              />
-            </Suspense>
-            <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
-              <div className="flex items-center gap-2">
-                <Lock className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <div className="text-sm font-medium">{t("lockLabel")}</div>
-                  <div className="text-xs text-muted-foreground">{t("lockHint")}</div>
-                </div>
-              </div>
-              <Switch checked={editLocked} onCheckedChange={setEditLocked} />
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground">{t("propagateHint")}</p>
-          <DialogFooter className="gap-2 sm:justify-between">
-            {/* Both groups WRAP. Five buttons on one row is the overflow that
-                put a sideways scrollbar on this dialog; a second row is what a
-                narrow window gets instead. */}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={doDelete}
-                disabled={deleteLesson.isPending}
-              >
-                <Trash2 />
-                {t("deleteLesson")}
-              </Button>
-              <Button variant="outline" size="sm" onClick={doDuplicate}>
-                <Copy />
-                {t("duplicateLesson")}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  if (!editing) return;
-                  park(editing);
-                  setEditing(null);
-                  setRemoteEditing(null);
-                }}
-              >
-                <ParkingSquare />
-                {t("park")}
-              </Button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={() => setEditing(null)}>
-                {tCommon("cancel")}
-              </Button>
-              <Button
-                onClick={doSaveEdit}
-                disabled={updateLesson.isPending || !editStart || !editEnd}
-              >
-                {updateLesson.isPending ? (
-                  <>
-                    <Loader2 className="animate-spin" />
-                    {tCommon("saving")}
-                  </>
-                ) : (
-                  tCommon("save")
-                )}
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {editUsed && (
+        <Suspense fallback={null}>
+          <LessonEditDialog
+            open={editing !== null}
+            onOpenChange={(open) => {
+              if (!open) {
+                setEditing(null);
+                setRemoteEditing(null);
+              }
+            }}
+            lessonName={editing ? lessonName(editing) : null}
+            draft={editDraft}
+            onDraftChange={setEditDraft}
+            rooms={rooms ?? []}
+            teachers={teachers}
+            onDelete={doDelete}
+            deletePending={deleteLesson.isPending}
+            onDuplicate={doDuplicate}
+            onPark={() => {
+              if (!editing) return;
+              park(editing);
+              setEditing(null);
+              setRemoteEditing(null);
+            }}
+            onCancel={() => setEditing(null)}
+            onSave={doSaveEdit}
+            savePending={updateLesson.isPending}
+            none={NONE}
+          />
+        </Suspense>
+      )}
 
       {/* ---------------- Create dialog ---------------- */}
       {/*
@@ -2471,44 +2320,16 @@ export default function TimetablePage() {
       )}
 
       {/* ---------------- Smart placement suggestions ---------------- */}
-      <Dialog
-        open={suggesting !== null}
-        onOpenChange={(open) => !open && setSuggesting(null)}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4" />
-              {t("suggestTitle")}
-            </DialogTitle>
-            <DialogDescription>{t("suggestBody")}</DialogDescription>
-          </DialogHeader>
-          {suggesting && suggesting.options.length > 0 ? (
-            <div className="space-y-2">
-              {suggesting.options.map((option) => (
-                <button
-                  key={`${option.dayOfWeek}-${option.startMinutes}`}
-                  type="button"
-                  onClick={() => void applySuggestion(option)}
-                  className="flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
-                >
-                  <span className="font-medium">{tDays(String(option.dayOfWeek))}</span>
-                  <span className="tabular-nums text-muted-foreground">
-                    {minutesToHHMM(option.startMinutes)}–{minutesToHHMM(option.endMinutes)}
-                  </span>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">{t("suggestNone")}</p>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setSuggesting(null)}>
-              {tCommon("cancel")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {suggestUsed && (
+        <Suspense fallback={null}>
+          <SuggestPlacementsDialog
+            open={suggesting !== null}
+            options={suggesting?.options ?? []}
+            onPick={(option) => void applySuggestion(option)}
+            onClose={() => setSuggesting(null)}
+          />
+        </Suspense>
+      )}
 
       {/* ---------------- Versions dialog ---------------- */}
       {versionsUsed && (
@@ -2552,67 +2373,21 @@ export default function TimetablePage() {
       )}
 
       {/* ---------------- Publish dialog ---------------- */}
-      <Dialog open={publishOpen} onOpenChange={setPublishOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("publishTitle")}</DialogTitle>
-            <DialogDescription>{t("publishBody")}</DialogDescription>
-          </DialogHeader>
-          {lunchSettings?.lunchEnabled ? null : (
-            <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
-              <div className="space-y-1">
-                <p>{tLunch("publishWarning")}</p>
-                <Link
-                  href="/admin/constraints"
-                  className="font-medium underline underline-offset-4"
-                >
-                  {tLunch("publishWarningLink")}
-                </Link>
-              </div>
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="publish-from">{t("publishFrom")}</Label>
-              <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-                <DateField
-                  label={t("publishFrom")}
-                  id="publish-from"
-                  value={fromDate}
-                  onChange={(value) => setFromDate(value)}
-                />
-              </Suspense>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="publish-to">{t("publishTo")}</Label>
-              <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-                <DateField
-                  label={t("publishTo")}
-                  id="publish-to"
-                  value={toDate}
-                  onChange={(value) => setToDate(value)}
-                />
-              </Suspense>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPublishOpen(false)}>
-              {tCommon("cancel")}
-            </Button>
-            <Button onClick={doPublish} disabled={publish.isPending}>
-              {publish.isPending ? (
-                <>
-                  <Loader2 className="animate-spin" />
-                  {t("publishing")}
-                </>
-              ) : (
-                t("publishConfirm")
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {publishUsed && (
+        <Suspense fallback={null}>
+          <PublishDialog
+            open={publishOpen}
+            onOpenChange={setPublishOpen}
+            lunchEnabled={lunchSettings?.lunchEnabled === true}
+            fromDate={fromDate}
+            onFromDateChange={setFromDate}
+            toDate={toDate}
+            onToDateChange={setToDate}
+            onPublish={doPublish}
+            pending={publish.isPending}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
