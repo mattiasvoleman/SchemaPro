@@ -42,6 +42,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { Client } from 'pg';
+import { throwError } from 'rxjs';
 import { Role } from '../../src/auth/enums/role.enum';
 import type { AuthenticatedUser } from '../../src/auth/interfaces/authenticated-user.interface';
 import { createPgAdapter } from '../../src/database/pool-config';
@@ -1402,6 +1403,87 @@ async function runChecks(
     }
   });
 
+  await check('(s) an uppdrag’s slot blocks its own läsår only, and goes with its year, through the real adapter', async () => {
+    const duties = new TeacherDutiesService(api);
+    const years = new AcademicYearsService(api);
+    const [teacherRow] = (
+      await owner.query<{ id: string }>(
+        `SELECT id FROM "Users" WHERE "schoolId" = $1 AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1`,
+        [fixture.schoolId],
+      )
+    ).rows;
+    const [next] = (
+      await owner.query<{ id: string }>(
+        `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+         VALUES ($1, $2, DATE '2098-08-15', DATE '2099-06-10', false, now()) RETURNING id`,
+        [fixture.schoolId, `${MARKER} nästa år`],
+      )
+    ).rows;
+    // An odd time no seed row uses, on two weekdays: Tuesday for next year's
+    // APT, Thursday for this year's.
+    const slot = { startTime: '15:55', endTime: '16:35' };
+    const nextYears = await duties.create(
+      { userId: teacherRow.id, academicYearId: next.id, kind: 'APT_KONFERENS', label: `${MARKER} apt nästa år`, minutesPerWeek: 120, blockedSlot: { dayOfWeek: 2, ...slot } },
+      admin,
+    );
+    const thisYears = await duties.create(
+      { userId: teacherRow.id, academicYearId: fixture.activeYearId, kind: 'APT_KONFERENS', label: `${MARKER} apt i år`, minutesPerWeek: 120, blockedSlot: { dayOfWeek: 4, ...slot } },
+      admin,
+    );
+    let payload: { constraints: { resourceKind: string; dayOfWeek: number | null; startTime: string }[] } | undefined;
+    const proxy = new OptimizationProxyService(
+      api,
+      {
+        post: (_url: string, body: typeof payload) => {
+          payload = body;
+          return throwError(() => new Error('engine stub'));
+        },
+      } as never,
+      { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1 }) } as never,
+    );
+    // (r)'s policy row may still refuse an unstaffed year (the sweep removes
+    // it at the end): allow generation for this one call, as it was.
+    const kept = (
+      await owner.query<{ unstaffedGeneration: string }>(
+        'SELECT "unstaffedGeneration"::text AS "unstaffedGeneration" FROM "StaffingPolicies" WHERE "schoolId" = $1',
+        [fixture.schoolId],
+      )
+    ).rows[0];
+    await owner.query(`UPDATE "StaffingPolicies" SET "unstaffedGeneration" = 'ALLOW' WHERE "schoolId" = $1`, [fixture.schoolId]);
+    try {
+      await proxy.triggerScheduling(fixture.activeYearId, admin).catch(() => undefined);
+    } finally {
+      if (kept) {
+        await owner.query(
+          `UPDATE "StaffingPolicies" SET "unstaffedGeneration" = $2::"UnstaffedGenerationMode" WHERE "schoolId" = $1`,
+          [fixture.schoolId, kept.unstaffedGeneration],
+        );
+      }
+    }
+    assert.ok(payload, 'the proxy never built a payload');
+    const blockedOn = (day: number) =>
+      payload!.constraints.filter(
+        (c) => c.resourceKind === 'TEACHER' && c.dayOfWeek === day && c.startTime.startsWith('15:55'),
+      ).length;
+    assert.equal(blockedOn(4), 1, 'this year’s uppdrag slot is missing from this year’s payload');
+    assert.equal(blockedOn(2), 0, 'next year’s uppdrag slot blocks this year’s generation');
+
+    // The year deleted as the gateway deletes it: its duty cascades, and the
+    // duty's slot goes with it instead of blocking every later year.
+    await years.remove(next.id, admin);
+    assert.equal(
+      (await owner.query('SELECT 1 FROM "AvailabilityConstraints" WHERE id = $1', [nextYears.blockedConstraintId])).rowCount,
+      0,
+      'a deleted year’s uppdrag left its slot behind',
+    );
+    assert.equal(
+      (await owner.query('SELECT 1 FROM "AvailabilityConstraints" WHERE id = $1', [thisYears.blockedConstraintId])).rowCount,
+      1,
+      'deleting another year took this year’s slot',
+    );
+    await duties.remove(thisYears.id, admin);
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the
@@ -1539,6 +1621,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // reason match could not find them, and must not: it would take the seed's).
   await owner.query(`DELETE FROM "TeacherDuties" WHERE "schoolId" = $1 AND label LIKE $2 || '%'`, [schoolId, MARKER]);
   await owner.query(`DELETE FROM "AvailabilityConstraints" WHERE "schoolId" = $1 AND reason LIKE $2 || '%'`, [schoolId, MARKER]);
+  // (s)'s next year, for a run that stopped before deleting it; its duties and slots go with it.
+  await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2 || ' nästa år'`, [schoolId, MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-duty@example.invalid'`, [schoolId, MARKER]);
   // (r): the person (their post goes with them), the two subjects (their
