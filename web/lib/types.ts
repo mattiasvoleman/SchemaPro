@@ -703,16 +703,20 @@ export interface RolloverPlannedGroup {
 
 /**
  * One årskurs of the new year's timplan per årskurs, and why it follows that
- * plan: CARRIED from the cohort's grade below (a draft stays a draft),
- * DEFAULT (an entry grade: the newest decided plan), or NONE.
+ * plan: CARRIED from the grade a class moves up from (a draft stays a draft),
+ * DEFAULT (no cohort moves in: the newest decided plan for the lydelse the
+ * entering cohort started under), or KEPT (no decided plan covers the grade,
+ * so it keeps this year's). Every grade of the new year has a plan.
  */
 export interface RolloverPlannedTimplan {
   gradeLevel: number;
-  reason: "CARRIED" | "DEFAULT" | "NONE";
+  reason: "CARRIED" | "DEFAULT" | "KEPT";
   fromGradeLevel: number | null;
-  localTimplanId: string | null;
-  planName: string | null;
-  planStatus: "DRAFT" | "DECIDED" | null;
+  localTimplanId: string;
+  planName: string;
+  planStatus: "DRAFT" | "DECIDED";
+  /** DEFAULT: a later-decided plan skipped because its lydelse applies only to later cohorts. */
+  laterPlan: { name: string; appliesFromCohortTerm: string } | null;
 }
 
 export interface RolloverRequirementRow {

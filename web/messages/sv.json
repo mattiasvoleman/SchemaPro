@@ -1870,8 +1870,9 @@
     "timplanLine": {
       "CARRIED": "{grade, select, 0 {Förskoleklass} other {Åk {grade}}}: {plan} — årskullen följde den i {from, select, 0 {förskoleklass} other {åk {from}}}",
       "DEFAULT": "{grade, select, 0 {Förskoleklass} other {Åk {grade}}}: {plan} — den senast beslutade timplanen, eftersom ingen årskull flyttar upp hit",
-      "NONE": "{grade, select, 0 {Förskoleklass} other {Åk {grade}}}: ingen timplan — skolan har ingen beslutad plan för årskursen"
+      "KEPT": "{grade, select, 0 {Förskoleklass} other {Åk {grade}}}: {plan} — samma som i år, eftersom ingen årskull flyttar upp hit och ingen beslutad plan gäller årskursen"
     },
+    "timplanLaterPlan": "{plan} är senare beslutad men gäller först årskullar som börjar åk 1 {term}.",
     "timplanDraft": "utkast — inte beslutad",
     "reviewClassRules": "{count, plural, =0 {Inga klassregler följer med} one {# klassregel följer med} other {# klassregler följer med}}",
     "classRuleLine": "{from} → {to}: {day} {start}–{end}",

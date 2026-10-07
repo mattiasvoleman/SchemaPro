@@ -35,8 +35,11 @@ const HISTORY = new Set([
  * leaves behind, before "Skapa läsåret".
  *
  * Timplan per årskurs is listed per grade with why it follows that plan
- * (carried with its cohort, the entry grade's default, or none), and a draft
- * carried along says so — the "utkast — inte beslutad" every P2 reader shows.
+ * (carried with its cohort, the default for a grade no cohort moves into, or
+ * kept as this year's when no decided plan covers it), and a draft says so —
+ * the "utkast — inte beslutad" every P2 reader shows. A later-decided plan
+ * the default skipped, because its lydelse applies only to later cohorts, is
+ * named under the line.
  *
  * Teachers are named from usePeople — the preview sends ids only. The list of
  * what is NOT carried is the gateway's registry (every table with a läsår has
@@ -185,13 +188,21 @@ export function RolloverReview({
                 <li key={row.gradeLevel}>
                   {t(`timplanLine.${row.reason}`, {
                     grade: row.gradeLevel,
-                    plan: row.planName ?? "",
+                    plan: row.planName,
                     from: row.fromGradeLevel ?? 0,
                   })}
                   {row.planStatus === "DRAFT" ? (
                     <Badge variant="warning" className="ml-2 text-[10px]">
                       {t("timplanDraft")}
                     </Badge>
+                  ) : null}
+                  {row.laterPlan ? (
+                    <span className="block text-xs">
+                      {t("timplanLaterPlan", {
+                        plan: row.laterPlan.name,
+                        term: row.laterPlan.appliesFromCohortTerm,
+                      })}
+                    </span>
                   ) : null}
                 </li>
               ))}
