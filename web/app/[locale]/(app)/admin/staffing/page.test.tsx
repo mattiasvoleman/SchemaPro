@@ -84,6 +84,7 @@ const report: TeacherLoadReport & { academicYearId: string; horizon: "planned"; 
 const state = vi.hoisted(() => ({
   policy: null as unknown,
   report: null as unknown,
+  reportLoading: false,
   assign: null as unknown as (body: unknown) => Promise<unknown>,
 }));
 
@@ -117,7 +118,11 @@ vi.mock("@/lib/queries", () => ({
 }));
 
 vi.mock("@/lib/staffing-queries", () => ({
-  useStaffingLoad: () => ({ data: state.report, isLoading: false, isError: false }),
+  useStaffingLoad: () => ({
+    data: state.reportLoading ? undefined : state.report,
+    isLoading: state.reportLoading,
+    isError: false,
+  }),
   useStaffingPolicy: () => ({ data: state.policy, isSuccess: true }),
   useSaveStaffingPolicy: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useTeacherEmployments: () => ({ data: [] }),
@@ -180,6 +185,7 @@ describe("StaffingPage", () => {
   beforeEach(() => {
     state.policy = null;
     state.report = report;
+    state.reportLoading = false;
   });
 
   it("shows the KPI strip, reading an unchecked school as 'not recorded' rather than zero", () => {
@@ -218,6 +224,34 @@ describe("StaffingPage", () => {
     const kpiBottlenecks = screen.getByText("kpiBottlenecks").parentElement!;
     expect(within(kpiBottlenecks).getByText("1")).toBeInTheDocument();
     expect(screen.getByText("bottleneckShort(120)")).toBeInTheDocument();
+  });
+
+  it("scrolls to the panel a link named in its hash once the report has drawn it", () => {
+    /*
+     * /admin/generate links to /admin/staffing#unstaffed. The page first draws
+     * a skeleton, so the target does not exist when Next handles the hash —
+     * and Next gives the hash up for good ("a missing hash target is still a
+     * handled scroll intent"). The admin landed at the top, the panel below
+     * the whole matrix.
+     */
+    const scrolled = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled(this.id);
+    };
+    window.history.replaceState(null, "", "#unstaffed");
+    try {
+      state.reportLoading = true;
+      const { rerender } = render(<StaffingPage />);
+      expect(document.getElementById("unstaffed")).toBeNull();
+      state.reportLoading = false;
+      rerender(<StaffingPage />);
+      expect(scrolled).toHaveBeenCalledWith("unstaffed");
+      expect(document.activeElement).toBe(document.getElementById("unstaffed"));
+    } finally {
+      Element.prototype.scrollIntoView = original;
+      window.history.replaceState(null, "", window.location.pathname);
+    }
   });
 
   it("staffs an unstaffed row from the panel and shows WARN's sentence over the matrix", async () => {
