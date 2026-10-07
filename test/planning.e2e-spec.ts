@@ -2788,6 +2788,142 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('timplan per årskurs', () => {
+    /*
+     * The year dialog's "Timplan per årskurs" over HTTP: a round trip that
+     * reaches the handler and writes the diff, the DTO's refusals with their
+     * field names, the 404 for a year RLS hides, the guard for a teacher — and
+     * the delete of a plan some year follows, refused with the years named.
+     */
+    const PLAN_ID = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+    const YEARS: LockedTable = {
+      name: 'AcademicYears',
+      columns: ['id', 'schoolId', 'name', 'startDate', 'endDate', 'isActive'],
+      lock: 'FOR NO KEY UPDATE',
+    };
+    const MODELS = ['academicYearTimplan', 'localTimplan', 'academicYear'];
+    const resetModels = () => {
+      for (const model of MODELS) {
+        for (const method of Object.values(harness.tx[model]!)) method.mockReset();
+        harness.tx[model]!['findMany']!.mockResolvedValue([]);
+      }
+    };
+    beforeEach(resetModels);
+    afterEach(resetModels);
+
+    it('an admin replaces the year’s mapping and reads it back, draft marked', async () => {
+      givenLockedRows(YEARS, [{ id: YEAR_ID, schoolId: SCHOOL_ID }]);
+      harness.tx['localTimplan']!['findMany']!.mockResolvedValueOnce([{ id: PLAN_ID }]);
+      harness.tx['academicYearTimplan']!['findMany']!
+        .mockResolvedValueOnce([{ gradeLevel: 9, localTimplanId: PLAN_ID }])
+        .mockResolvedValueOnce([
+          { gradeLevel: 7, localTimplanId: PLAN_ID, localTimplan: { name: 'Grundskolan 2027', status: 'DRAFT' } },
+        ]);
+
+      const response = await request(http())
+        .put(`/api/v1/academic-years/${YEAR_ID}/timplans`)
+        .set('x-test-user', admin())
+        .send({ timplans: [{ gradeLevel: 7, localTimplanId: PLAN_ID.toUpperCase() }, { gradeLevel: 9, localTimplanId: null }] })
+        .expect(200);
+
+      expect(response.body).toEqual([
+        { gradeLevel: 7, localTimplanId: PLAN_ID, planName: 'Grundskolan 2027', planStatus: 'DRAFT' },
+      ]);
+      expect(harness.tx['academicYearTimplan']!['deleteMany']).toHaveBeenCalledWith({
+        where: { academicYearId: YEAR_ID, gradeLevel: { in: [9] } },
+      });
+      expect(harness.tx['academicYearTimplan']!['create']).toHaveBeenCalledWith({
+        data: { schoolId: SCHOOL_ID, academicYearId: YEAR_ID, gradeLevel: 7, localTimplanId: PLAN_ID },
+      });
+
+      harness.tx['academicYear']!['findUnique']!.mockResolvedValueOnce({ id: YEAR_ID });
+      harness.tx['academicYearTimplan']!['findMany']!.mockResolvedValueOnce([
+        { gradeLevel: 7, localTimplanId: PLAN_ID, localTimplan: { name: 'Grundskolan 2027', status: 'DRAFT' } },
+      ]);
+      const read = await request(http())
+        .get(`/api/v1/academic-years/${YEAR_ID}/timplans`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(read.body).toEqual(response.body);
+    });
+
+    it('a new year answers with the årskurser it follows the newest decided plan in', async () => {
+      harness.tx['academicYear']!['create']!.mockResolvedValueOnce({ id: YEAR_ID, name: '2027/2028' });
+      harness.tx['localTimplan']!['findFirst']!.mockResolvedValueOnce({
+        id: PLAN_ID,
+        name: 'Grundskolan 2024',
+        status: 'DECIDED',
+        nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
+        entries: [],
+      });
+
+      const response = await request(http())
+        .post('/api/v1/academic-years')
+        .set('x-test-user', admin())
+        .send({ name: '2027/2028', startDate: '2027-08-16', endDate: '2028-06-09' })
+        .expect(201);
+
+      expect(response.body.timplans.map((row: { gradeLevel: number }) => row.gradeLevel)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(harness.tx['academicYearTimplan']!['createMany']).toHaveBeenCalledTimes(1);
+    });
+
+    it('400s a grade outside 0..10, a missing plan field and the same grade twice, naming the field', async () => {
+      const bodies: [object, string][] = [
+        [{ timplans: [{ gradeLevel: 11, localTimplanId: null }] }, 'gradeLevel: högsta årskurs är 10.'],
+        [{ timplans: [{ gradeLevel: 4 }] }, 'localTimplanId: den lokala timplanen anges med sitt id, eller null för ingen.'],
+        [{ timplans: [[{ gradeLevel: 4, localTimplanId: null }]] }, 'timplans: varje årskurs anges som ett objekt.'],
+        [
+          { timplans: [{ gradeLevel: 4, localTimplanId: null }, { gradeLevel: 4, localTimplanId: PLAN_ID }] },
+          'rad 2 gäller samma årskurs 4 som rad 1',
+        ],
+      ];
+      for (const [body, message] of bodies) {
+        const response = await request(http())
+          .put(`/api/v1/academic-years/${YEAR_ID}/timplans`)
+          .set('x-test-user', admin())
+          .send(body)
+          .expect(400);
+        expect(JSON.stringify(response.body)).toContain(message);
+      }
+      expect(harness.tx['academicYearTimplan']!['create']).not.toHaveBeenCalled();
+    });
+
+    it('404s a year RLS hides, on the read and on the write', async () => {
+      givenLockedRows(YEARS, []);
+      harness.tx['academicYear']!['findUnique']!.mockResolvedValueOnce(null);
+      await request(http()).get(`/api/v1/academic-years/${YEAR_ID}/timplans`).set('x-test-user', admin()).expect(404);
+      await request(http())
+        .put(`/api/v1/academic-years/${YEAR_ID}/timplans`)
+        .set('x-test-user', admin())
+        .send({ timplans: [] })
+        .expect(404);
+    });
+
+    it('stops a teacher at the guard on both verbs', async () => {
+      const teacher = asUser({ role: 'TEACHER' as never });
+      await request(http()).get(`/api/v1/academic-years/${YEAR_ID}/timplans`).set('x-test-user', teacher).expect(403);
+      await request(http())
+        .put(`/api/v1/academic-years/${YEAR_ID}/timplans`)
+        .set('x-test-user', teacher)
+        .send({ timplans: [] })
+        .expect(403);
+      expect(harness.tx['academicYearTimplan']!['findMany']).not.toHaveBeenCalled();
+    });
+
+    it('409s TIMPLAN_IN_USE for the delete of a plan a year follows, naming the year', async () => {
+      harness.tx['academicYearTimplan']!['findMany']!.mockResolvedValueOnce([{ academicYear: { name: '2026/2027' } }]);
+
+      const response = await request(http())
+        .delete(`/api/v1/local-timplans/${PLAN_ID}`)
+        .set('x-test-user', admin())
+        .expect(409);
+
+      expect(response.body).toMatchObject({ status: 409, code: 'TIMPLAN_IN_USE' });
+      expect(response.body.detail).toContain('läsåret "2026/2027"');
+      expect(harness.tx['localTimplan']!['delete']).not.toHaveBeenCalled();
+    });
+  });
+
   describe('RBAC', () => {
     const adminOnly = [
       ['POST', '/api/v1/academic-years'],

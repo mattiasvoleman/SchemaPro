@@ -108,7 +108,9 @@ describe('AcademicYearsService', () => {
       tx.academicYear.create.mockResolvedValue(row);
       const user = testUser();
 
-      await expect(service.create(dto(), user)).resolves.toBe(row);
+      // No decided timplan in the school (the mock's findFirst finds
+      // nothing): the year carries no attachments, exactly as before P2.
+      await expect(service.create(dto(), user)).resolves.toEqual({ ...row, timplans: [] });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.academicYear.create).toHaveBeenCalledWith({
@@ -122,6 +124,73 @@ describe('AcademicYearsService', () => {
       });
       // No other year loses its active flag for an inactive create.
       expect(tx.academicYear.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('attaches every årskurs the newest decided plan speaks for, in the transaction that creates the year', async () => {
+      tx.academicYear.create.mockResolvedValue({ id: YEAR_ID });
+      tx.localTimplan.findFirst.mockResolvedValue({
+        id: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
+        name: 'Grundskolan 2024',
+        status: 'DECIDED',
+        nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
+        entries: [],
+      });
+
+      const created = await service.create(dto(), testUser());
+
+      // Newest by decision, and only decided plans: a draft is never a default.
+      expect(tx.localTimplan.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: 'DECIDED' },
+          orderBy: [{ decidedAt: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+        }),
+      );
+      const rows = (tx.academicYearTimplan.createMany.mock.calls[0]?.[0] as {
+        data: { gradeLevel: number; academicYearId: string; schoolId: string }[];
+      }).data;
+      expect(rows.map((row) => row.gradeLevel)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+      expect(rows.every((row) => row.academicYearId === YEAR_ID && row.schoolId === SCHOOL_ID)).toBe(true);
+      expect(created.timplans).toHaveLength(9);
+      expect(created.timplans[0]).toEqual({
+        gradeLevel: 1,
+        localTimplanId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
+        planName: 'Grundskolan 2024',
+        planStatus: 'DECIDED',
+      });
+    });
+
+    it('attaches förskoleklassen only when the plan itself plans it, and follows the version’s stages', async () => {
+      tx.academicYear.create.mockResolvedValue({ id: YEAR_ID });
+      tx.localTimplan.findFirst.mockResolvedValue({
+        id: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
+        name: 'Sameskolan',
+        status: 'DECIDED',
+        nationalVersion: { schoolForm: 'SAMESKOLA', appliesFromCohortTerm: 'HT2024' },
+        entries: [{ gradeLevel: 0 }],
+      });
+
+      await service.create(dto(), testUser());
+
+      const rows = (tx.academicYearTimplan.createMany.mock.calls[0]?.[0] as {
+        data: { gradeLevel: number }[];
+      }).data;
+      // Sameskolan has no högstadium: 0 (the plan's own F-klass rows) and 1–6.
+      expect(rows.map((row) => row.gradeLevel)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    });
+
+    it('a failed default rolls the year back with it — one transaction, one error', async () => {
+      tx.academicYear.create.mockResolvedValue({ id: YEAR_ID });
+      tx.localTimplan.findFirst.mockResolvedValue({
+        id: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
+        name: 'Grundskolan 2024',
+        status: 'DECIDED',
+        nationalVersion: { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' },
+        entries: [],
+      });
+      tx.academicYearTimplan.createMany.mockRejectedValue(prismaError('P2003'));
+
+      await expect(service.create(dto(), testUser())).rejects.toThrow(ConflictException);
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
     });
 
     it('deactivates the school’s current active year before creating an active one', async () => {

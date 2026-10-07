@@ -5,19 +5,31 @@ import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { parseDateString } from '../common/utils/time';
+import { attachDefaultTimplans, type YearTimplanRow } from '../timplan/year-timplans';
 import type {
   CreateAcademicYearDto,
   UpdateAcademicYearDto,
 } from './dto/academic-year.dto';
 
+/** A created year, with the årskurser it follows a timplan in from the start. */
+export type CreatedAcademicYear = AcademicYear & { timplans: YearTimplanRow[] };
+
 @Injectable()
 export class AcademicYearsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /**
+   * A new läsår, and its timplan per årskurs: every grade the school's newest
+   * DECIDED plan can speak for follows that plan from the start (see
+   * attachDefaultTimplans), in the same transaction, so a year never exists
+   * half-seeded. No decided plan, no rows — a school without a timplan creates
+   * years exactly as before. The dialog's "Timplan per årskurs" edits them
+   * afterwards through PUT /academic-years/:id/timplans.
+   */
   async create(
     dto: CreateAcademicYearDto,
     user: AuthenticatedUser,
-  ): Promise<AcademicYear> {
+  ): Promise<CreatedAcademicYear> {
     const schoolId = requireSchoolId(user);
     if (dto.startDate >= dto.endDate) {
       throw new BadRequestException('startDate must be before endDate.');
@@ -41,7 +53,7 @@ export class AcademicYearsService {
             data: { isActive: false },
           });
         }
-        return tx.academicYear.create({
+        const year = await tx.academicYear.create({
           data: {
             schoolId,
             name: dto.name,
@@ -50,6 +62,8 @@ export class AcademicYearsService {
             isActive: dto.isActive ?? false,
           },
         });
+        const timplans = await attachDefaultTimplans(tx, schoolId, year.id);
+        return { ...year, timplans };
       });
     } catch (error) {
       rethrowPrismaError(error);
