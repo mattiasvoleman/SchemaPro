@@ -336,7 +336,7 @@ export function planningWeeksInTenths(value: number | string | { toString(): str
 }
 
 /** The lydelse's first cohort year: 'HT2024' → 2024. */
-function cohortYear(term: string): number {
+export function cohortYear(term: string): number {
   const match = /^(?:HT|VT)(\d{4})$/.exec(term);
   return match ? Number(match[1]) : 0;
 }

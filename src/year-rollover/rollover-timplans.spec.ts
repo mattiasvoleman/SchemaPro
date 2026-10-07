@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import { ROLLOVER_STEPS, type StepContext } from './rollover-apply';
 import type { RolloverWrites } from './rollover-plan';
 import {
+  cohortStartYear,
   planCohortTimplans,
   type CohortTimplanInput,
   type DecidedTimplanChoice,
@@ -42,12 +43,23 @@ const decidedOf = (plan: Plan, withF = true): DecidedTimplanChoice => ({
   gradeLevels: withF ? range(0, 9) : range(1, 9),
 });
 
-/** Every source grade below G has a class that moves up, unless a test says otherwise. */
+/** A decided plan on the 2028 (tioårig) lydelse: stadier 1–4, 5–7, 8–10. */
+const TIOARIG: DecidedTimplanChoice = {
+  id: 'p-2028',
+  name: 'Tioårig 2028',
+  status: 'DECIDED',
+  schoolForm: 'GRUNDSKOLA',
+  appliesFromCohortTerm: 'HT2028',
+  gradeLevels: range(1, 10),
+};
+
+/** Every source grade below G has a class that moves up, unless a test says otherwise; the new year is 2027/28. */
 const plan = (input: Partial<CohortTimplanInput> & { source: SourceTimplanRow[] }) =>
   planCohortTimplans({
     graduatingGradeLevel: 9,
     movingCohorts: new Set(range(0, 9)),
     decided: [],
+    targetStartYear: 2027,
     ...input,
   });
 
@@ -139,6 +151,7 @@ describe('planCohortTimplans', () => {
       localTimplanId: DRAFT.id,
       planName: 'Utkast 2028',
       planStatus: 'DRAFT',
+      laterPlan: null,
     });
   });
 
@@ -159,6 +172,7 @@ describe('planCohortTimplans', () => {
       localTimplanId: DRAFT.id,
       planName: 'Utkast 2028',
       planStatus: 'DRAFT',
+      laterPlan: null,
     });
     expect(planned.map((entry) => entry.gradeLevel)).toEqual(range(0, 9));
   });
@@ -185,6 +199,59 @@ describe('planCohortTimplans', () => {
       ANPASSAD.id,
       null,
     ]);
+  });
+
+  it('counts a cohort’s start from the term it starts åk 1', () => {
+    expect(cohortStartYear(1, 2027)).toBe(2027);
+    expect(cohortStartYear(7, 2027)).toBe(2021);
+    // Förskoleklass starts åk 1 the year after.
+    expect(cohortStartYear(0, 2027)).toBe(2028);
+  });
+
+  it('does not give the cohort entering åk 1 in HT2027 a plan on the HT2028 lydelse, and names the one it skipped', () => {
+    // Decided in the spring of 2027, after the HT2024 plan.
+    const planned = plan({ source: rows(range(1, 9), OLD), decided: [TIOARIG, decidedOf(NEW, false)] });
+    expect(planned[0]).toEqual({
+      gradeLevel: 1,
+      reason: 'DEFAULT',
+      fromGradeLevel: null,
+      localTimplanId: NEW.id,
+      planName: NEW.name,
+      planStatus: 'DECIDED',
+      laterPlan: { name: 'Tioårig 2028', appliesFromCohortTerm: 'HT2028' },
+    });
+  });
+
+  it('gives the HT2028 plan to the cohort that starts åk 1 under it', () => {
+    const planned = plan({
+      source: rows(range(1, 9), OLD),
+      decided: [TIOARIG, decidedOf(NEW, false)],
+      targetStartYear: 2028,
+    });
+    expect(planned[0]).toMatchObject({ gradeLevel: 1, reason: 'DEFAULT', localTimplanId: TIOARIG.id, laterPlan: null });
+  });
+
+  it('stands the earliest lydelse the school has in for one older than any, never a later one', () => {
+    // A 7–9 school's intake in HT2027 started åk 1 in HT2021, before every
+    // lydelse in the reference data; HT2024 is the closest it has.
+    const planned = plan({
+      source: rows([7, 8, 9], OLD),
+      movingCohorts: new Set([7, 8]),
+      decided: [TIOARIG, decidedOf(NEW)],
+    });
+    expect(planned[0]).toMatchObject({
+      gradeLevel: 7,
+      reason: 'DEFAULT',
+      localTimplanId: NEW.id,
+      laterPlan: { name: 'Tioårig 2028', appliesFromCohortTerm: 'HT2028' },
+    });
+    // With only the later lydelse decided, it is the one there is.
+    expect(plan({ source: rows([7, 8, 9], OLD), movingCohorts: new Set([7, 8]), decided: [TIOARIG] })[0]).toMatchObject({
+      gradeLevel: 7,
+      reason: 'DEFAULT',
+      localTimplanId: TIOARIG.id,
+      laterPlan: null,
+    });
   });
 
   it('stops at the graduating grade the admin chose, and at the table’s åk 10', () => {
