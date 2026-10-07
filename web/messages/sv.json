@@ -795,6 +795,7 @@
     "subtitle": "AI-motorn bygger ett optimalt veckoschema utifrån timplansposter och tillgänglighet",
     "prerequisites": "Förutsättningar",
     "preYear": "Aktivt läsår",
+    "preYearPlanned": "Läsår som planeras",
     "preRequirements": "Timplansposter",
     "preTeachers": "Lärare tilldelade",
     "preRooms": "Salar tillgängliga",
