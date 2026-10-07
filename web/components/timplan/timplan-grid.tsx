@@ -88,6 +88,11 @@ export function TimplanGrid({
 
   const renderRow = (subject: Subject, countsToward: boolean) => {
     const top = topOf(subject.nationalCode);
+    const badge = check.unmapped.some((entry) => entry.subjectId === subject.id)
+      ? poolPrinted
+        ? "skolansValBadge"
+        : "ownTimeBadge"
+      : "uncodedBadge";
     return (
       <tr key={subject.id} className="border-b" data-subject-id={subject.id}>
         <th
@@ -102,14 +107,18 @@ export function TimplanGrid({
               </span>
             ) : null}
             {countsToward && !subject.nationalCode ? (
-              // Skolans val only where the bilaga prints a pool; ämnesområden
-              // and an unpublished lydelse print none, and the minutes are
-              // then the school's own time.
+              // What the badge names is where the subject's minutes GO, so a
+              // subject with none in the plan (the check lists only uncoded
+              // subjects with time) is just "no code": calling an empty row
+              // "skolans val" told a school starting its first plan that its
+              // Matematik was pool time. With minutes: skolans val only where
+              // the bilaga prints a pool; ämnesområden and an unpublished
+              // lydelse print none, and the minutes are the school's own time.
               <span
                 className="rounded bg-muted px-1 text-[10px] font-normal text-foreground"
-                title={t(poolPrinted ? "skolansValBadgeHint" : "ownTimeBadgeHint")}
+                title={t(`${badge}Hint`)}
               >
-                {t(poolPrinted ? "skolansValBadge" : "ownTimeBadge")}
+                {t(badge)}
               </span>
             ) : null}
           </span>
@@ -209,6 +218,10 @@ export function TimplanGrid({
     ) / 10;
   const alternatives = hasAlternatives(counted, parentOf);
   const poolPrinted = check.skolansVal.availableHours !== null;
+  // An empty plan "takes" every national hour from the subjects: true
+  // arithmetic, but "6890 av 600 h tagna" reads as a fault, not a start.
+  const nothingPlanned = !check.total.plannedHours;
+  const poolShown = poolPrinted && !nothingPlanned;
 
   const totalUnder = check.verdicts.some((v) => v.code === "TIMPLAN_TOTAL_BELOW_GUARANTEE");
   const poolOverspent = check.verdicts.some((v) => v.code === "TIMPLAN_SKOLANS_VAL_OVERSPENT");
@@ -317,19 +330,18 @@ export function TimplanGrid({
             </th>
             <td
               colSpan={span}
-              data-tone={check.skolansVal.availableHours === null ? "none" : poolOverspent ? "under" : "met"}
-              className={cn(
-                "px-3 py-1.5 tabular-nums",
-                check.skolansVal.availableHours !== null && TONE_CLASS[poolOverspent ? "under" : "met"],
-              )}
+              data-tone={poolShown ? (poolOverspent ? "under" : "met") : "none"}
+              className={cn("px-3 py-1.5 tabular-nums", poolShown && TONE_CLASS[poolOverspent ? "under" : "met"])}
             >
-              {check.skolansVal.availableHours === null
-                ? t("footerSkolansValNone", { placed: formatH(check.skolansVal.placedHours) })
-                : t("footerSkolansValValue", {
-                    taken: formatH(check.skolansVal.takenHours),
-                    available: formatH(check.skolansVal.availableHours),
-                    placed: formatH(check.skolansVal.placedHours),
-                  })}
+              {nothingPlanned
+                ? t("footerSkolansValEmpty")
+                : check.skolansVal.availableHours === null
+                  ? t("footerSkolansValNone", { placed: formatH(check.skolansVal.placedHours) })
+                  : t("footerSkolansValValue", {
+                      taken: formatH(check.skolansVal.takenHours),
+                      available: formatH(check.skolansVal.availableHours),
+                      placed: formatH(check.skolansVal.placedHours),
+                    })}
             </td>
           </tr>
         </tfoot>
