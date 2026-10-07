@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Download } from "lucide-react";
+import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import {
   downloadTemplate,
   mapClassRows,
@@ -134,6 +135,7 @@ export function CsvImportDialog({
 }: CsvImportDialogProps) {
   const t = useTranslations("csvImport");
   const tCommon = useTranslations("common");
+  const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const { data: years } = useAcademicYears();
   const targetYear =
     (academicYearId !== undefined && academicYearId !== null
@@ -278,7 +280,12 @@ export function CsvImportDialog({
                   <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
                     {report.warnings.map((warning, index) => (
                       <li key={`${warning.row}-${index}`}>
-                        {t("rowError", { row: warning.row, message: warning.message })}
+                        {t("rowError", {
+                          row: warning.row,
+                          // The catalogue's sentence in the reader's language;
+                          // the gateway's Swedish when the web lacks the code.
+                          message: engineMessage(tEngine, warning),
+                        })}
                       </li>
                     ))}
                   </ul>

@@ -66,13 +66,17 @@ vi.mock("@/utils/supabase/client", () => ({
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
   useLocale: () => "sv",
-  useTranslations:
-    () => (key: string, values?: Record<string, unknown>) =>
-      values
-        ? `${key}(${Object.entries(values)
-            .map(([name, value]) => `${name}=${String(value)}`)
-            .join("|")})`
-        : key,
+  useTranslations: (namespace: string) =>
+    Object.assign(
+      (key: string, values?: Record<string, unknown>) =>
+        values
+          ? `${key}(${Object.entries(values)
+              .map(([name, value]) => `${name}=${String(value)}`)
+              .join("|")})`
+          : key,
+      // The engine catalogue knows its codes; nothing else is asked.
+      { has: () => namespace === "engineMessages" },
+    ),
 }));
 
 // ---------------------------------------------------------------------------
@@ -698,7 +702,11 @@ describe("CsvImportDialog for an import that updates", () => {
     await user.click(importButton());
 
     expect(await screen.findByText("rowWarnings")).toBeInTheDocument();
-    const warned = screen.getByText("rowError(row=1|message=Läraren hamnar på 1200 min/v.)");
+    // From the catalogue, with the params — an English reader gets English,
+    // not the gateway's Swedish `message`.
+    const warned = screen.getByText(
+      "rowError(row=1|message=STAFF_TEACHER_OVER_TARGET(role=TEACHER|minutes=1200|target=1000|limit=1100|tolerance=10))",
+    );
     expect(warned).not.toHaveClass("text-destructive");
     expect(warned.closest("ul")).not.toHaveClass("text-destructive");
     expect(
