@@ -22,7 +22,6 @@ import {
   type StaffingWarning,
 } from '../staffing/staffing-checks';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
-import { refuseRostersNotActivated } from '../year-rollover/rosters-current';
 import {
   countHomePupils,
   readHomeClassesOf,
@@ -157,11 +156,11 @@ export class MasterLessonsService {
       if (!year) {
         throw new NotFoundException('Academic year not found.');
       }
-      // A rolled year not yet activated has no pupils in its classes, so
-      // the pupil clashes below would be judged on nobody.
-      await refuseRostersNotActivated(tx, year.id);
       // Whose classes these are (projected-rosters.ts), from the flags just
-      // read: nothing more is asked of the active year.
+      // read: nothing more is asked of the active year, and a rolled year
+      // not yet activated judges pupil clashes on the pupils its activation
+      // would place — so next year's grundschema can be laid by hand in
+      // spring. A year two steps ahead is refused there (R6).
       const rosters = await rostersOfYear(tx, user, year.id, year);
 
       const candidate = {
@@ -288,7 +287,8 @@ export class MasterLessonsService {
       if (!lesson) {
         throw new NotFoundException('Master lesson not found.');
       }
-      await refuseRostersNotActivated(tx, lesson.academicYearId);
+      // As on create. The same basis goes to the behörighet span below, so the
+      // clash check and the warning read one set of pupils.
       const rosters = await rostersOfYear(tx, user, lesson.academicYearId, lesson.academicYear);
 
       // Merge the patch onto the current slot.

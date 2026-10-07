@@ -1911,7 +1911,7 @@
       "YEAR_HAS_SUCCESSOR_UNNAMED": "Läsåret har redan rullats vidare.",
       "ROLLOVER_SOURCE_NOT_ACTIVATED": "Läsåret är inte aktiverat: {pupils, plural, one {# elev väntar} other {# elever väntar}} på att flyttas in i dess klasser. Aktivera det innan det rullas vidare.",
       "ROLLOVER_SOURCE_HAS_STRAGGLERS": "{pupils, plural, one {# elev står} other {# elever står}} kvar i klasser från ett tidigare läsår än {year}. Flytta dem på läsårssidan (Flytta kvarvarande elever) och rulla sedan vidare.",
-      "ROLLOVER_NOT_ACTIVATED": "{year} är inte aktiverat: {pupils, plural, one {# elev går} other {# elever går}} fortfarande i förra årets klasser. Läsåret kan schemaläggas först när det har aktiverats.",
+      "ROLLOVER_NOT_ACTIVATED": "{year} kan inte schemaläggas ännu: föregående läsår {predecessor} är inte aktiverat. Aktivera {predecessor} först.",
       "ROLLOVER_PREVIEW_STALE": "Läsåret ändrades efter förhandsvisningen. Inget skapades — granska den nya förhandsvisningen och försök igen.",
       "ACTIVATION_PREVIEW_STALE": "Elevernas klasser ändrades efter förhandsvisningen. Ingen flyttades — granska igen.",
       "YEAR_NAME_TAKEN": "Det finns redan ett läsår med det namnet.",
