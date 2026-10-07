@@ -217,12 +217,32 @@ describe('dates', () => {
       endDate: '2027-12-17',
       status: 'SHIFTED',
     });
-    // A target year that ends a day earlier: a date one day before the source
-    // end shifts past the target end and the row is dropped.
+    // A target year that ends two days earlier: a date one day before the
+    // source end shifts a day past the target end, and is pulled onto it.
     const shorter = { startDate: '2027-08-16', endDate: '2028-06-07' };
-    expect(mapPeriod('2027-01-11', '2027-06-10', SOURCE, shorter, SHIFT).status).toBe('DROPPED');
+    expect(mapPeriod('2027-01-11', '2027-06-10', SOURCE, shorter, SHIFT)).toEqual({
+      startDate: '2028-01-10',
+      endDate: '2028-06-07',
+      status: 'BOUND_ANCHORED',
+    });
+    // A week or more outside is a period that does not fit: still dropped.
+    expect(mapPeriod('2027-01-11', '2027-06-10', SOURCE, { ...shorter, endDate: '2028-06-01' }, SHIFT).status).toBe('DROPPED');
     expect(mapPeriod('2027-01-11', '2027-06-11', SOURCE, shorter, SHIFT)).toMatchObject({
       endDate: '2028-06-07',
+      status: 'BOUND_ANCHORED',
+    });
+  });
+
+  it('pulls a date the whole-week rounding lands just outside the target onto its bound, instead of dropping the row', () => {
+    // Monday 2026-08-17 into Wednesday 2027-08-18: 366 days rounds to 364, so
+    // a hösttermin from the source's second day lands a day before the target.
+    const source = { startDate: '2026-08-17', endDate: '2027-06-11' };
+    const target = { startDate: '2027-08-18', endDate: '2028-06-09' };
+    const shift = dateShiftDays(source.startDate, target.startDate);
+    expect(shift).toBe(364);
+    expect(mapPeriod('2026-08-18', '2027-01-15', source, target, shift)).toEqual({
+      startDate: '2027-08-18',
+      endDate: '2028-01-14',
       status: 'BOUND_ANCHORED',
     });
   });
@@ -237,39 +257,70 @@ describe('dates', () => {
   });
 
   it('proposes lov dates by jul, påsk and ISO week, and none for a week that does not exist', () => {
-    expect(proposeBreak({ startDate: '2026-10-26', endDate: '2026-10-30' }, SOURCE, TARGET, SHIFT)).toEqual({
+    expect(proposeBreak({ startDate: '2026-10-26', endDate: '2026-10-30' }, SOURCE, TARGET)).toEqual({
       proposedStart: '2027-11-01',
       proposedEnd: '2027-11-05',
       anchor: 'ISO_WEEK',
       fits: true,
     });
-    expect(proposeBreak({ startDate: '2026-12-21', endDate: '2027-01-06' }, SOURCE, TARGET, SHIFT)).toEqual({
+    expect(proposeBreak({ startDate: '2026-12-21', endDate: '2027-01-06' }, SOURCE, TARGET)).toEqual({
       proposedStart: '2027-12-20',
       proposedEnd: '2028-01-05',
       anchor: 'CHRISTMAS',
       fits: true,
     });
-    expect(proposeBreak({ startDate: '2027-03-29', endDate: '2027-04-02' }, SOURCE, TARGET, SHIFT)).toEqual({
+    expect(proposeBreak({ startDate: '2027-03-29', endDate: '2027-04-02' }, SOURCE, TARGET)).toEqual({
       proposedStart: '2028-04-17',
       proposedEnd: '2028-04-21',
       anchor: 'EASTER',
       fits: true,
     });
-    expect(proposeBreak({ startDate: '2026-12-28', endDate: '2026-12-30' }, SOURCE, TARGET, SHIFT)).toEqual({
+    expect(proposeBreak({ startDate: '2026-12-28', endDate: '2026-12-30' }, SOURCE, TARGET)).toEqual({
       proposedStart: null,
       proposedEnd: null,
       anchor: 'NONE',
       fits: false,
     });
     // Sportlov v8 stays v8; a lov proposed outside a short target year does not fit.
-    expect(proposeBreak({ startDate: '2027-02-22', endDate: '2027-02-26' }, SOURCE, TARGET, SHIFT)).toMatchObject({
+    expect(proposeBreak({ startDate: '2027-02-22', endDate: '2027-02-26' }, SOURCE, TARGET)).toMatchObject({
       proposedStart: '2028-02-21',
       anchor: 'ISO_WEEK',
       fits: true,
     });
     expect(
-      proposeBreak({ startDate: '2027-06-07', endDate: '2027-06-11' }, SOURCE, { ...TARGET, endDate: '2028-06-02' }, SHIFT),
+      proposeBreak({ startDate: '2027-06-07', endDate: '2027-06-11' }, SOURCE, { ...TARGET, endDate: '2028-06-02' }),
     ).toMatchObject({ fits: false });
+  });
+});
+
+describe('the jullov proposal', () => {
+  it('keeps 24 December inside when the year’s own shift is 371 days across a week 53', () => {
+    // A school that starts in ISO week 34 both years: 2026-08-17 → 2027-08-23.
+    const source = { startDate: '2026-08-17', endDate: '2027-06-11' };
+    const target = { startDate: '2027-08-23', endDate: '2028-06-09' };
+    expect(dateShiftDays(source.startDate, target.startDate)).toBe(371);
+    expect(proposeBreak({ startDate: '2026-12-21', endDate: '2027-01-08' }, source, target)).toEqual({
+      proposedStart: '2027-12-20',
+      proposedEnd: '2028-01-07',
+      anchor: 'CHRISTMAS',
+      fits: true,
+    });
+  });
+
+  it('takes the next whole week when 364 days would leave 24 December just outside, and 364 when no week keeps it', () => {
+    // Thursday 17 to Thursday 24 December 2026; julafton 2027 is a Friday,
+    // which 364 days (16–23 December) misses and 371 (23–30 December) keeps.
+    expect(proposeBreak({ startDate: '2026-12-17', endDate: '2026-12-24' }, SOURCE, TARGET)).toEqual({
+      proposedStart: '2027-12-23',
+      proposedEnd: '2027-12-30',
+      anchor: 'CHRISTMAS',
+      fits: true,
+    });
+    // Monday to Thursday can hold no Friday at any whole-week move: 364 days.
+    expect(proposeBreak({ startDate: '2026-12-21', endDate: '2026-12-24' }, SOURCE, TARGET)).toMatchObject({
+      proposedStart: '2027-12-20',
+      proposedEnd: '2027-12-23',
+    });
   });
 });
 

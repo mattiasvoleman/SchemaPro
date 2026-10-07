@@ -87,7 +87,13 @@ describe("the rollover mirror agrees with the gateway's fixture", () => {
     "maps the period %s – %s the same way",
     (_start, _end, row) => {
       expect(
-        mapPeriod(row.startDate, row.endDate, source, row.target, fixture.shift.dateShiftDays),
+        mapPeriod(
+          row.startDate,
+          row.endDate,
+          source,
+          row.target,
+          dateShiftDays(source.startDate, row.target.startDate),
+        ),
       ).toEqual(row.expected);
     },
   );
@@ -95,9 +101,7 @@ describe("the rollover mirror agrees with the gateway's fixture", () => {
   it.each(fixture.breaks.map((row) => [row.lov.startDate, row] as const))(
     "proposes the same dates for the lov starting %s",
     (_start, row) => {
-      expect(proposeBreak(row.lov, source, row.target, fixture.shift.dateShiftDays)).toEqual(
-        row.expected,
-      );
+      expect(proposeBreak(row.lov, source, row.target)).toEqual(row.expected);
     },
   );
 

@@ -499,7 +499,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     }
   }
   const breaks: RolloverPlan['breaks'] = source.breaks.map((lov) => {
-    const proposal = proposeBreak(lov, sourceBounds, target, shift);
+    const proposal = proposeBreak(lov, sourceBounds, target);
     const choice = selected.get(lov.id);
     const startDateToWrite = choice ? (choice.startDate ?? proposal.proposedStart) : null;
     const endDateToWrite = choice ? (choice.endDate ?? proposal.proposedEnd) : null;

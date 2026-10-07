@@ -353,6 +353,15 @@ export type MappedDate = { date: string; how: 'ANCHORED' | 'SHIFTED' };
  * the day the year ends still ends the day the next year ends, even when the
  * whole-week shift would overshoot it by a day (BOUND_ANCHORED). Every other
  * date moves by the whole-week shift, keeping its weekday.
+ *
+ * A shifted date that lands less than a week outside the target is pulled
+ * onto the bound it missed, and counts as anchored too. The whole-week shift
+ * rounds the distance between the two starts, so a date can miss by up to
+ * three days, and more when the target year is a few days shorter: a
+ * höstterminsrad from 2026-08-18 (the source's second day) into a year that
+ * starts on Wednesday 2027-08-18 shifts by 364 to 2027-08-17, a day early.
+ * Dropping that row would lose a term of a subject over a rounding; a date a
+ * week or more outside is a period that does not fit, and is still dropped.
  */
 export function mapDate(
   day: string,
@@ -362,7 +371,14 @@ export function mapDate(
 ): MappedDate {
   if (day === source.startDate) return { date: target.startDate, how: 'ANCHORED' };
   if (day === source.endDate) return { date: target.endDate, how: 'ANCHORED' };
-  return { date: addDays(day, shiftDays), how: 'SHIFTED' };
+  const shifted = addDays(day, shiftDays);
+  if (shifted < target.startDate && daysBetween(shifted, target.startDate) < 7) {
+    return { date: target.startDate, how: 'ANCHORED' };
+  }
+  if (shifted > target.endDate && daysBetween(target.endDate, shifted) < 7) {
+    return { date: target.endDate, how: 'ANCHORED' };
+  }
+  return { date: shifted, how: 'SHIFTED' };
 }
 
 export type PeriodStatus = 'UNCHANGED' | 'SHIFTED' | 'BOUND_ANCHORED' | 'DROPPED';
@@ -478,8 +494,11 @@ export interface BreakProposal {
 /**
  * Next year's dates for a lov, as a proposal the admin can edit.
  *
- *  - A lov containing 24 December (jullov) moves by the whole-week shift:
- *    it hangs on the date, and a whole-week move keeps its weekdays.
+ *  - A lov containing 24 December (jullov) moves by whole weeks to next
+ *    year's 24 December (364 days, or a week more or less when that is what
+ *    keeps 24 December inside it): it hangs on the date, and a whole-week
+ *    move keeps its weekdays. Not by the year's own shift, which is 371
+ *    across a week 53 for a school that starts in the same ISO week.
  *  - A lov containing the source year's Easter Monday (påsklov) moves with
  *    Easter: 2027-03-29 → 2028-04-17, because Easter 2028 is 16 April.
  *  - Anything else (höstlov, sportlov, studiedagar) keeps its ISO week and
@@ -488,23 +507,32 @@ export interface BreakProposal {
  *  - When that week does not exist next year (a week-53 lov into a 52-week
  *    year) there is no proposal, and the admin types the dates.
  */
-export function proposeBreak(
-  lov: DayBounds,
-  source: DayBounds,
-  target: DayBounds,
-  shiftDays: number,
-): BreakProposal {
+export function proposeBreak(lov: DayBounds, source: DayBounds, target: DayBounds): BreakProposal {
   const fits = (start: string, end: string) =>
     start <= end && start >= target.startDate && end <= target.endDate;
+  const yearDelta = Number(target.startDate.slice(0, 4)) - Number(source.startDate.slice(0, 4));
 
   const years = new Set([Number(lov.startDate.slice(0, 4)), Number(lov.endDate.slice(0, 4))]);
-  const holdsChristmas = [...years].some((year) => {
+  const christmasYear = [...years].find((year) => {
     const christmasEve = `${year}-12-24`;
     return christmasEve >= lov.startDate && christmasEve <= lov.endDate;
   });
-  if (holdsChristmas) {
-    const start = addDays(lov.startDate, shiftDays);
-    const end = addDays(lov.endDate, shiftDays);
+  if (christmasYear !== undefined) {
+    // Whole weeks from this Christmas Eve to next year's, not the year's own
+    // shift: a school that starts in week 34 both years shifts 371 days
+    // across 2026's week 53, which would put jullov 2027 a week after
+    // julafton. 364 keeps the weekdays and nearly always keeps 24 December
+    // inside; when it does not (a lov that ends on julafton), the week more
+    // or less that does is taken, and 364 when none does.
+    const eve = `${christmasYear}-12-24`;
+    const nextEve = `${christmasYear + yearDelta}-12-24`;
+    const weeks = Math.round(daysBetween(eve, nextEve) / 7) * 7;
+    const moved =
+      [weeks, weeks + 7, weeks - 7].find(
+        (days) => addDays(lov.startDate, days) <= nextEve && addDays(lov.endDate, days) >= nextEve,
+      ) ?? weeks;
+    const start = addDays(lov.startDate, moved);
+    const end = addDays(lov.endDate, moved);
     return { proposedStart: start, proposedEnd: end, anchor: 'CHRISTMAS', fits: fits(start, end) };
   }
 
@@ -517,7 +545,6 @@ export function proposeBreak(
     return { proposedStart: start, proposedEnd: end, anchor: 'EASTER', fits: fits(start, end) };
   }
 
-  const yearDelta = Number(target.startDate.slice(0, 4)) - Number(source.startDate.slice(0, 4));
   const sameWeek = (day: string) => {
     const iso = isoWeekOf(day);
     return dayOfIsoWeek(iso.year + yearDelta, iso.week, iso.weekday);
