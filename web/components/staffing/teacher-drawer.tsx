@@ -14,6 +14,11 @@ import { EmploymentCard } from "@/components/staffing/employment-card";
 import { QualificationsCard } from "@/components/staffing/qualifications-card";
 import { LoadBar } from "@/components/staffing/load-bar";
 import { StatusBadge } from "@/components/staffing/staffing-matrix";
+import { DutiesCard } from "@/components/staffing/duties-card";
+import {
+  TeacherRequirementsCard,
+  type TeacherRequirementRow,
+} from "@/components/staffing/teacher-requirements-card";
 
 export interface TeacherDrawerProps {
   open: boolean;
@@ -27,10 +32,17 @@ export interface TeacherDrawerProps {
   subjects: Subject[];
   academicYearId: string;
   academicYearName: string;
+  /** The year's timplansposter; the drawer lists the ones this teacher carries. */
+  requirements: TeacherRequirementRow[];
+  /** The year's groups, for the names and the mentorskap picker. */
+  groups: { id: string; name: string }[];
+  teacherName: (userId: string) => string;
 }
 
 /**
- * One teacher, in full: the bar, the post, the behörigheter and the subjects.
+ * One teacher, in full: the bar, the post, the behörigheter, the uppdrag, the
+ * timplansposter they carry (each one can be handed on from here — Fas 2's
+ * "change a row's teacher from the drawer") and the subjects.
  *
  * A side panel rather than a centred dialog, because the matrix stays
  * readable behind it: an admin compares the row they opened with its
@@ -50,9 +62,14 @@ export function TeacherDrawer({
   subjects,
   academicYearId,
   academicYearName,
+  requirements,
+  groups,
+  teacherName,
 }: TeacherDrawerProps) {
   const t = useTranslations("staffing");
   const name = `${teacher.firstName} ${teacher.lastName}`;
+  const subjectName = (id: string) => subjects.find((subject) => subject.id === id)?.name ?? "—";
+  const groupName = (id: string) => groups.find((group) => group.id === id)?.name ?? "—";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -65,10 +82,11 @@ export function TeacherDrawer({
           {load ? (
             <DialogDescription>
               {load.targetMinutesPerWeek === null || load.percentOfTarget === null
-                ? t("drawerSubtitleNoTarget", { assigned: load.assignedMinutesPerWeek })
+                ? t("drawerSubtitleNoTarget", { assigned: load.countedMinutesPerWeek })
                 : t("drawerSubtitle", {
                     percent: formatPercent(load.percentOfTarget),
-                    assigned: load.assignedMinutesPerWeek,
+                    // Counted, since Fas 2: what the percentage and the status read.
+                    assigned: load.countedMinutesPerWeek,
                     target: load.targetMinutesPerWeek,
                   })}
             </DialogDescription>
@@ -86,6 +104,22 @@ export function TeacherDrawer({
         />
 
         <QualificationsCard teacher={teacher} qualifications={qualifications} subjects={subjects} />
+
+        <DutiesCard
+          teacher={teacher}
+          academicYearId={academicYearId}
+          academicYearName={academicYearName}
+          subjects={subjects}
+          groups={groups}
+        />
+
+        <TeacherRequirementsCard
+          teacherId={teacher.id}
+          rows={requirements}
+          subjectName={subjectName}
+          groupName={groupName}
+          teacherName={teacherName}
+        />
 
         {load && load.subjects.length > 0 ? (
           <section className="rounded-lg border bg-card p-4">

@@ -84,6 +84,7 @@ const report: TeacherLoadReport & { academicYearId: string; horizon: "planned"; 
 const state = vi.hoisted(() => ({
   policy: null as unknown,
   report: null as unknown,
+  assign: null as unknown as (body: unknown) => Promise<unknown>,
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -99,7 +100,20 @@ vi.mock("@/lib/queries", () => ({
     ],
   }),
   useGroups: () => ({ data: [{ id: "g-7a", academicYearId: "y1", name: "7A", kind: "CLASS", gradeLevel: 7 }] }),
-  useRequirements: () => ({ data: [] }),
+  useRequirements: () => ({
+    data: [
+      {
+        id: "r-bo-ma",
+        academicYearId: "y1",
+        subjectId: "s-ma",
+        studentGroupId: "g-7a",
+        teacherId: "t-bo",
+        coTeacherId: null,
+        lessonsPerWeek: 4,
+        minutesPerLesson: 60,
+      },
+    ],
+  }),
 }));
 
 vi.mock("@/lib/staffing-queries", () => ({
@@ -113,6 +127,37 @@ vi.mock("@/lib/staffing-queries", () => ({
     remove: { mutateAsync: vi.fn(), isPending: false },
   }),
   useReplaceTeacherQualifications: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useTeacherDuties: () => ({ data: [], isLoading: false, isError: false }),
+  useTeacherDutyActions: () => ({
+    create: { mutateAsync: vi.fn(), isPending: false },
+    update: { mutateAsync: vi.fn(), isPending: false },
+    remove: { mutateAsync: vi.fn(), isPending: false },
+  }),
+  useSuggestTeachers: (requirementId: string) => ({
+    isLoading: false,
+    isError: false,
+    data: {
+      requirementId,
+      subjectId: "s-no",
+      studentGroupId: "g-7a",
+      gradeSpan: { min: 7, max: 7 },
+      teacherMinutesPerWeek: 120,
+      qualificationsRecorded: false,
+      candidates: [
+        {
+          userId: "t-bo",
+          qualificationKind: null,
+          teachesSubjectAlready: false,
+          teachesGroupAlready: true,
+          currentlyAssigned: false,
+          remainingMinutesPerWeek: -240,
+          wouldExceed: true,
+          status: "OVER",
+        },
+      ],
+    },
+  }),
+  useAssignTeacher: () => ({ mutateAsync: (body: unknown) => state.assign(body), isPending: false }),
 }));
 
 vi.mock("@/i18n/navigation", () => ({
@@ -121,8 +166,14 @@ vi.mock("@/i18n/navigation", () => ({
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
-  useTranslations: () => (key: string, values?: Record<string, unknown>) =>
-    values ? `${key}(${Object.values(values).join("|")})` : key,
+  useTranslations: (namespace: string) => {
+    const t = (key: string, values?: Record<string, unknown>) =>
+      `${namespace === "engineMessages" ? "engine:" : ""}${key}${
+        values ? `(${Object.values(values).join("|")})` : ""
+      }`;
+    t.has = () => true;
+    return t;
+  },
 }));
 
 describe("StaffingPage", () => {
@@ -135,9 +186,67 @@ describe("StaffingPage", () => {
     render(<StaffingPage />);
     const kpiUnstaffed = screen.getByText("kpiUnstaffed").parentElement!;
     expect(within(kpiUnstaffed).getByText("1")).toBeInTheDocument();
-    expect(screen.getByText("kpiUnqualifiedNotRecorded")).toBeInTheDocument();
+    const kpiUnqualified = screen.getByText("kpiUnqualified").parentElement!;
+    expect(within(kpiUnqualified).getByText("kpiUnqualifiedNotRecorded")).toBeInTheDocument();
     const kpiOver = screen.getByText("kpiOverTarget").parentElement!;
     expect(within(kpiOver).getByText("1")).toBeInTheDocument();
+    // Bottlenecks are unknowable without behörigheter: said, not zeroed.
+    const kpiBottlenecks = screen.getByText("kpiBottlenecks").parentElement!;
+    expect(within(kpiBottlenecks).getByText("kpiUnqualifiedNotRecorded")).toBeInTheDocument();
+    expect(screen.getByText("bottlenecksNotComputed")).toBeInTheDocument();
+  });
+
+  it("counts the short subjects in the KPI strip once capacity is known", () => {
+    state.report = {
+      ...report,
+      qualificationsRecorded: true,
+      bottlenecksComputed: true,
+      subjectBottlenecks: [
+        {
+          subjectId: "s-no",
+          subjectName: "NO",
+          unstaffedCount: 1,
+          demandedMinutesPerWeek: 120,
+          qualifiedRemainingMinutesPerWeek: 0,
+          qualifiedTeacherCount: 1,
+          qualifiedNoTargetCount: 0,
+          short: true,
+        },
+      ],
+    };
+    render(<StaffingPage />);
+    const kpiBottlenecks = screen.getByText("kpiBottlenecks").parentElement!;
+    expect(within(kpiBottlenecks).getByText("1")).toBeInTheDocument();
+    expect(screen.getByText("bottleneckShort(120)")).toBeInTheDocument();
+  });
+
+  it("staffs an unstaffed row from the panel and shows WARN's sentence over the matrix", async () => {
+    const user = userEvent.setup();
+    const assigned = vi.fn().mockResolvedValue({
+      id: "r-1",
+      teacherId: "t-bo",
+      warnings: [
+        {
+          code: "STAFF_TEACHER_OVER_TARGET",
+          params: { role: "TEACHER", minutes: 1320, target: 1080, limit: 1188, tolerance: 10 },
+        },
+      ],
+    });
+    state.assign = assigned;
+    render(<StaffingPage />);
+    await user.click(screen.getByRole("button", { name: "suggestTeachers" }));
+    await user.click(screen.getByRole("button", { name: "suggestAssignNamed(Bo Alm)" }));
+    expect(assigned).toHaveBeenCalledWith({ requirementId: "r-1", teacherId: "t-bo" });
+    const sentence = await screen.findByText(
+      "engine:STAFF_TEACHER_OVER_TARGET(TEACHER|1320|1080|1188|10)",
+    );
+    const banner = sentence.closest('[role="status"]')!;
+    expect(banner).toHaveTextContent("warnedTitle");
+    // Above the matrix, where the admin is looking after the click.
+    expect(
+      banner.compareDocumentPosition(screen.getByRole("table", { name: "tableCaption" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("says no riktmärke is set when the school has no policy, and opens the card on request", async () => {
@@ -161,6 +270,7 @@ describe("StaffingPage", () => {
       overAllocationMode: "WARN",
       overAllocationTolerancePercent: 10,
       loadModel: "MINUTES",
+      unstaffedGeneration: "ALLOW",
     };
     render(<StaffingPage />);
     expect(screen.queryByText("noTargetTitle")).not.toBeInTheDocument();
@@ -184,16 +294,25 @@ describe("StaffingPage", () => {
 
   it("lists the unstaffed rows with a link to the timplan", () => {
     render(<StaffingPage />);
-    const link = screen.getByRole("link", { name: "unstaffedRow(7A|NO|120)" });
-    expect(link).toHaveAttribute("href", "/admin/requirements");
+    const row = screen.getByText("unstaffedRow(7A|NO|120)").closest("li")!;
+    expect(within(row).getByRole("link", { name: "openRequirements" })).toHaveAttribute(
+      "href",
+      "/admin/requirements",
+    );
   });
 
   it("opens the drawer for a teacher", async () => {
     const user = userEvent.setup();
     render(<StaffingPage />);
     await user.click(screen.getByRole("button", { name: "openDrawer(Bo Alm)" }));
-    expect(screen.getByRole("dialog")).toHaveTextContent("employmentTitle");
+    // Lazy: the drawer's module is fetched on the first click.
+    expect(await screen.findByRole("dialog")).toHaveTextContent("employmentTitle");
     expect(screen.getByRole("dialog")).toHaveTextContent("qualificationsTitle");
     expect(screen.getByRole("dialog")).toHaveTextContent("drawerSubtitle(111,1|1200|1080)");
+    // Fas 2: the uppdrag and the rows the teacher carries, each one handable on.
+    expect(screen.getByRole("dialog")).toHaveTextContent("dutiesTitle");
+    expect(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "changeTeacherFor(7A · Matematik)" }),
+    ).toBeInTheDocument();
   });
 });
