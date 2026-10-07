@@ -1,34 +1,55 @@
 import type { PrismaClient } from '@prisma/client';
 import { ROLLOVER_STEPS, type StepContext } from './rollover-apply';
 import type { RolloverWrites } from './rollover-plan';
-import { planCohortTimplans, type DefaultTimplanChoice, type SourceTimplanRow } from './rollover-timplans';
+import {
+  planCohortTimplans,
+  type CohortTimplanInput,
+  type DecidedTimplanChoice,
+  type SourceTimplanRow,
+} from './rollover-timplans';
 
 /**
  * The cohort carry of timplan per årskurs, as a pure rule. The scenarios are
  * the schools P2's migration names: an F–9 school mid-way through the
  * SFS 2023:945 change (the new bilaga from åk 1 HT 2024 upwards), a 7–9
- * school, a year with a hole in it, a draft planned in the spring, and a
- * school that has decided nothing.
+ * school (with and without the F–6 rows P2's create gives it), a year with a
+ * hole in it, a draft planned in the spring, and a school that has decided
+ * nothing.
  */
 
-const NEW = { id: 'p-new', name: 'Grundskola 2024', status: 'DECIDED' as const };
-const OLD = { id: 'p-old', name: 'Grundskola 2018', status: 'DECIDED' as const };
-const DRAFT = { id: 'p-draft', name: 'Utkast 2028', status: 'DRAFT' as const };
+type Plan = { id: string; name: string; status: 'DECIDED' | 'DRAFT'; schoolForm?: string };
+const NEW: Plan = { id: 'p-new', name: 'Grundskola 2024', status: 'DECIDED' };
+const OLD: Plan = { id: 'p-old', name: 'Grundskola 2018', status: 'DECIDED' };
+const DRAFT: Plan = { id: 'p-draft', name: 'Utkast 2028', status: 'DRAFT' };
 
-const row = (gradeLevel: number, plan: { id: string; name: string; status: 'DECIDED' | 'DRAFT' }): SourceTimplanRow => ({
+const row = (gradeLevel: number, plan: Plan): SourceTimplanRow => ({
   gradeLevel,
   localTimplanId: plan.id,
   planName: plan.name,
   planStatus: plan.status,
+  planSchoolForm: plan.schoolForm ?? 'GRUNDSKOLA',
 });
-const rows = (grades: number[], plan: Parameters<typeof row>[1]) => grades.map((grade) => row(grade, plan));
+const rows = (grades: number[], plan: Plan) => grades.map((grade) => row(grade, plan));
 const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, index) => from + index);
 
-/** P2's default for a grundskola plan: stadier 1–9, plus F when it plans F. */
-const defaultOf = (plan: typeof NEW, withF = true): DefaultTimplanChoice => ({
-  ...plan,
+/** A decided grundskola plan as readDecidedTimplans gives it: stadier 1–9, plus F when it plans F. */
+const decidedOf = (plan: Plan, withF = true): DecidedTimplanChoice => ({
+  id: plan.id,
+  name: plan.name,
+  status: 'DECIDED',
+  schoolForm: plan.schoolForm ?? 'GRUNDSKOLA',
+  appliesFromCohortTerm: 'HT2024',
   gradeLevels: withF ? range(0, 9) : range(1, 9),
 });
+
+/** Every source grade below G has a class that moves up, unless a test says otherwise. */
+const plan = (input: Partial<CohortTimplanInput> & { source: SourceTimplanRow[] }) =>
+  planCohortTimplans({
+    graduatingGradeLevel: 9,
+    movingCohorts: new Set(range(0, 9)),
+    decided: [],
+    ...input,
+  });
 
 /** [grade, reason, plan id, from] per row, the shape every expectation reads. */
 const summary = (planned: ReturnType<typeof planCohortTimplans>) =>
@@ -38,7 +59,7 @@ describe('planCohortTimplans', () => {
   it('moves an F–9 school’s bilaga line up a grade with its cohort, and gives F the newest decided plan', () => {
     // 2026/27: F–2 on the new bilaga, 3–9 still on the old one.
     const source = [...rows(range(0, 2), NEW), ...rows(range(3, 9), OLD)];
-    const planned = planCohortTimplans(source, 9, defaultOf(NEW));
+    const planned = plan({ source, decided: [decidedOf(NEW), decidedOf(OLD)] });
     expect(summary(planned)).toEqual([
       [0, 'DEFAULT', NEW.id, null],
       [1, 'CARRIED', NEW.id, 0],
@@ -56,7 +77,7 @@ describe('planCohortTimplans', () => {
   });
 
   it('makes åk 1 the entry grade when F follows no plan', () => {
-    const planned = planCohortTimplans(rows(range(1, 9), OLD), 9, defaultOf(NEW, false));
+    const planned = plan({ source: rows(range(1, 9), OLD), decided: [decidedOf(NEW, false), decidedOf(OLD, false)] });
     expect(summary(planned).slice(0, 2)).toEqual([
       [1, 'DEFAULT', NEW.id, null],
       [2, 'CARRIED', OLD.id, 1],
@@ -65,7 +86,7 @@ describe('planCohortTimplans', () => {
   });
 
   it('gives a 7–9 school its own three grades, åk 7 the default, and never åk 1–6 back', () => {
-    const planned = planCohortTimplans(rows([7, 8, 9], OLD), 9, defaultOf(NEW));
+    const planned = plan({ source: rows([7, 8, 9], OLD), movingCohorts: new Set([7, 8]), decided: [decidedOf(NEW)] });
     expect(summary(planned)).toEqual([
       [7, 'DEFAULT', NEW.id, null],
       [8, 'CARRIED', OLD.id, 7],
@@ -73,10 +94,36 @@ describe('planCohortTimplans', () => {
     ]);
   });
 
+  it('reads a cohort off a class that moves up, not off the F–6 rows P2’s create gave a 7–9 school', () => {
+    // The year was created when OLD was the newest decided plan, so P2's
+    // create attached OLD to F–9; the school has classes in åk 7–9 only.
+    // NEW has been decided since. Åk 7 is the intake and takes NEW; no class
+    // moves out of åk 6, so nothing is "carried" from it.
+    const planned = plan({
+      source: rows(range(0, 9), OLD),
+      movingCohorts: new Set([7, 8]),
+      decided: [decidedOf(NEW), decidedOf(OLD)],
+    });
+    expect(summary(planned)).toEqual([
+      ...range(0, 7).map((grade) => [grade, 'DEFAULT', NEW.id, null]),
+      [8, 'CARRIED', OLD.id, 7],
+      [9, 'CARRIED', OLD.id, 8],
+    ]);
+  });
+
+  it('carries nothing out of a grade whose classes stay (CARRY) or are skipped', () => {
+    const planned = plan({ source: rows([7, 8, 9], OLD), movingCohorts: new Set([8]), decided: [decidedOf(NEW)] });
+    expect(summary(planned)).toEqual([
+      [7, 'DEFAULT', NEW.id, null],
+      [8, 'DEFAULT', NEW.id, null],
+      [9, 'CARRIED', OLD.id, 8],
+    ]);
+  });
+
   it('treats the grade above a hole as an entry grade, and still carries the hole’s cohort from below it', () => {
     // Åk 4 was never attached this year.
     const source = [...rows(range(1, 3), NEW), ...rows(range(5, 9), OLD)];
-    const planned = planCohortTimplans(source, 9, defaultOf(NEW, false));
+    const planned = plan({ source, decided: [decidedOf(NEW, false)] });
     const byGrade = new Map(summary(planned).map((entry) => [entry[0], entry]));
     expect(byGrade.get(4)).toEqual([4, 'CARRIED', NEW.id, 3]);
     expect(byGrade.get(5)).toEqual([5, 'DEFAULT', NEW.id, null]);
@@ -84,7 +131,7 @@ describe('planCohortTimplans', () => {
   });
 
   it('carries a draft as a draft', () => {
-    const planned = planCohortTimplans([row(6, DRAFT), row(7, OLD)], 9, defaultOf(NEW));
+    const planned = plan({ source: [row(6, DRAFT), row(7, OLD)], decided: [decidedOf(NEW)] });
     expect(planned.find((entry) => entry.gradeLevel === 7)).toEqual({
       gradeLevel: 7,
       reason: 'CARRIED',
@@ -95,34 +142,69 @@ describe('planCohortTimplans', () => {
     });
   });
 
-  it('leaves an entry grade without a plan when the school has decided none, and still carries the cohorts', () => {
-    const planned = planCohortTimplans(rows([7, 8, 9], DRAFT), 9, null);
+  it('gives F the newest decided plan that plans F, when the newest of all does not', () => {
+    // F follows OLD, which plans förskoleklass; NEW, decided since, does not.
+    const planned = plan({ source: rows(range(0, 9), OLD), decided: [decidedOf(NEW, false), decidedOf(OLD)] });
+    expect(summary(planned)[0]).toEqual([0, 'DEFAULT', OLD.id, null]);
+  });
+
+  it('keeps a grade’s own plan when no decided plan speaks for it, instead of dropping its row', () => {
+    // F follows a draft; the only decided plan plans no förskoleklass.
+    const source = [row(0, DRAFT), ...rows(range(1, 9), OLD)];
+    const planned = plan({ source, decided: [decidedOf(NEW, false)] });
+    expect(planned[0]).toEqual({
+      gradeLevel: 0,
+      reason: 'KEPT',
+      fromGradeLevel: null,
+      localTimplanId: DRAFT.id,
+      planName: 'Utkast 2028',
+      planStatus: 'DRAFT',
+    });
+    expect(planned.map((entry) => entry.gradeLevel)).toEqual(range(0, 9));
+  });
+
+  it('keeps an entry grade’s own plan when the school has decided none, and still carries the cohorts', () => {
+    const planned = plan({ source: rows([7, 8, 9], DRAFT), movingCohorts: new Set([7, 8]) });
     expect(summary(planned)).toEqual([
-      [7, 'NONE', null, null],
+      [7, 'KEPT', DRAFT.id, null],
       [8, 'CARRIED', DRAFT.id, 7],
       [9, 'CARRIED', DRAFT.id, 8],
     ]);
-    expect(planned[0]).toMatchObject({ planName: null, planStatus: null });
   });
 
-  it('leaves an entry grade the decided plan does not speak for without one', () => {
-    // A sameskola-style default (1–6) for a school whose year starts at åk 7.
-    const planned = planCohortTimplans(rows([7, 8], OLD), 9, { ...NEW, gradeLevels: range(1, 6) });
-    expect(summary(planned)[0]).toEqual([7, 'NONE', null, null]);
+  it('defaults a grade only to a plan of its own school form', () => {
+    // Åk 1 follows an anpassad grundskola plan; the newest decided plan is a
+    // grundskola plan, so åk 1 takes the newest decided anpassad one, or
+    // keeps its own when there is none.
+    const ANPASSAD: Plan = { id: 'p-anp', name: 'Anpassad 2023', status: 'DECIDED', schoolForm: 'ANPASSAD_GRUNDSKOLA_AMNEN' };
+    const source = rows(range(1, 9), ANPASSAD);
+    expect(summary(plan({ source, decided: [decidedOf(NEW, false)] }))[0]).toEqual([1, 'KEPT', ANPASSAD.id, null]);
+    expect(summary(plan({ source, decided: [decidedOf(NEW, false), decidedOf(ANPASSAD, false)] }))[0]).toEqual([
+      1,
+      'DEFAULT',
+      ANPASSAD.id,
+      null,
+    ]);
   });
 
   it('stops at the graduating grade the admin chose, and at the table’s åk 10', () => {
     // An F–6 school: åk 6 leaves, so nothing is carried into 7.
-    expect(planCohortTimplans(rows(range(1, 6), OLD), 6, null).map((entry) => entry.gradeLevel)).toEqual(range(1, 6));
+    expect(plan({ source: rows(range(1, 6), OLD), graduatingGradeLevel: 6 }).map((entry) => entry.gradeLevel)).toEqual(
+      range(1, 6),
+    );
     // A grade-10 cohort with G above it would land on 11, which no row may hold.
-    expect(planCohortTimplans([row(10, OLD)], 12, null).map((entry) => entry.gradeLevel)).toEqual([10]);
+    expect(
+      plan({ source: [row(10, OLD)], graduatingGradeLevel: 12, movingCohorts: new Set([10]) }).map(
+        (entry) => entry.gradeLevel,
+      ),
+    ).toEqual([10]);
   });
 
   it('gives a source year with no rows exactly P2’s default for a new year', () => {
-    expect(summary(planCohortTimplans([], 9, defaultOf(NEW)))).toEqual(
+    expect(summary(plan({ source: [], decided: [decidedOf(NEW), decidedOf(OLD)] }))).toEqual(
       range(0, 9).map((grade) => [grade, 'DEFAULT', NEW.id, null]),
     );
-    expect(planCohortTimplans([], 9, null)).toEqual([]);
+    expect(plan({ source: [] })).toEqual([]);
   });
 });
 

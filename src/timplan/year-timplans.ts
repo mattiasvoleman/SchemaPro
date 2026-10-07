@@ -91,41 +91,79 @@ export async function attachDefaultTimplans(
   }));
 }
 
-/** The plan a new year's grades default to, and which grades it speaks for. */
-export interface DefaultTimplan {
+/** A DECIDED plan, and the grades it speaks for by default. */
+export interface DecidedTimplan {
   id: string;
   name: string;
   status: LocalTimplanStatus;
+  /** The plan's own school form (its national version's, by the composite key). */
+  schoolForm: string;
+  /** Its national version's first cohort term, 'HT2024'. */
+  appliesFromCohortTerm: string;
   /** Ascending; empty when the version maps no grade to a stadium. */
   gradeLevels: number[];
 }
 
-/**
- * The school's newest DECIDED plan and the grades it can speak for — the
- * default rule above, read without writing. attachDefaultTimplans writes it
- * into a new year; the läsårsrullning reads it for the grades no cohort
- * carries a plan into (src/year-rollover/rollover-timplans.ts), so the two
- * cannot disagree about which plan is "newest" or which grades it covers.
- */
-export async function readDefaultTimplan(tx: Prisma.TransactionClient): Promise<DefaultTimplan | null> {
-  const plan = await tx.localTimplan.findFirst({
-    where: { status: 'DECIDED' },
-    orderBy: [{ decidedAt: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
-    select: {
-      id: true,
-      name: true,
-      status: true,
-      nationalVersion: { select: { schoolForm: true, appliesFromCohortTerm: true } },
-      entries: { where: { gradeLevel: 0 }, select: { gradeLevel: true }, take: 1 },
-    },
-  });
-  if (!plan) return null;
+/** "Newest" for every reader: decided last, then created last, then by id. */
+const NEWEST_DECIDED_FIRST = [
+  { decidedAt: 'desc' as const },
+  { createdAt: 'desc' as const },
+  { id: 'asc' as const },
+];
+const DECIDED_SELECT = {
+  id: true,
+  name: true,
+  status: true,
+  schoolForm: true,
+  nationalVersion: { select: { schoolForm: true, appliesFromCohortTerm: true } },
+  entries: { where: { gradeLevel: 0 }, select: { gradeLevel: true }, take: 1 },
+} as const;
+
+function decidedTimplanOf(plan: {
+  id: string;
+  name: string;
+  status: LocalTimplanStatus;
+  schoolForm: string;
+  nationalVersion: Pick<CoverageVersion, 'schoolForm' | 'appliesFromCohortTerm'>;
+  entries: unknown[];
+}): DecidedTimplan {
   return {
     id: plan.id,
     name: plan.name,
     status: plan.status,
+    schoolForm: plan.schoolForm,
+    appliesFromCohortTerm: plan.nationalVersion.appliesFromCohortTerm,
     gradeLevels: defaultTimplanGrades(plan.nationalVersion, plan.entries.length > 0),
   };
+}
+
+/**
+ * The school's newest DECIDED plan and the grades it can speak for — the
+ * default rule above, read without writing.
+ */
+export async function readDefaultTimplan(tx: Prisma.TransactionClient): Promise<DecidedTimplan | null> {
+  const plan = await tx.localTimplan.findFirst({
+    where: { status: 'DECIDED' },
+    orderBy: NEWEST_DECIDED_FIRST,
+    select: DECIDED_SELECT,
+  });
+  return plan ? decidedTimplanOf(plan) : null;
+}
+
+/**
+ * Every DECIDED plan of the school, newest first by the same order as
+ * readDefaultTimplan, so its first element IS that default. The
+ * läsårsrullning chooses among them per grade (src/year-rollover/
+ * rollover-timplans.ts): a grade no cohort carries a plan into takes the
+ * newest that speaks for it, which is not always the newest of all.
+ */
+export async function readDecidedTimplans(tx: Prisma.TransactionClient): Promise<DecidedTimplan[]> {
+  const plans = await tx.localTimplan.findMany({
+    where: { status: 'DECIDED' },
+    orderBy: NEWEST_DECIDED_FIRST,
+    select: DECIDED_SELECT,
+  });
+  return (plans ?? []).map(decidedTimplanOf);
 }
 
 /**
