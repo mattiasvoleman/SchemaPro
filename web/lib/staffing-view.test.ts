@@ -101,12 +101,15 @@ describe("loadBarSegments", () => {
   it("fills to the target with the remainder green", () => {
     const segments = loadBarSegments({ assignedMinutesPerWeek: 900, targetMinutesPerWeek: 1080 });
     expect(segments).toEqual({
+      duty: 0,
       teaching: 900 / 1080,
       remaining: 180 / 1080,
       over: 0,
+      dutyMinutes: 0,
       teachingMinutes: 900,
       remainingMinutes: 180,
       overMinutes: 0,
+      countedDutyMinutes: 0,
     });
   });
 
@@ -138,6 +141,64 @@ describe("loadBarSegments", () => {
   });
 });
 
+describe("loadBarSegments with uppdrag", () => {
+  it("draws an uncounted uppdrag before the comparison, widening the bar without moving the target", () => {
+    // 900 teaching, 90 min mentorskap that does not count, target 1080.
+    const segments = loadBarSegments({
+      assignedMinutesPerWeek: 900,
+      targetMinutesPerWeek: 1080,
+      dutyMinutesPerWeek: 90,
+      countedDutyMinutesPerWeek: 0,
+    });
+    expect(segments.dutyMinutes).toBe(90);
+    expect(segments.remainingMinutes).toBe(180);
+    expect(segments.overMinutes).toBe(0);
+    expect(segments.duty).toBeCloseTo(90 / 1170, 10);
+    expect(segments.duty + segments.teaching + segments.remaining).toBeCloseTo(1, 10);
+  });
+
+  it("puts a counted uppdrag inside the teaching segment, where the report's status reads it", () => {
+    // 1000 teaching + 120 pedagogisk lunch that counts = 1120 against 1080.
+    const segments = loadBarSegments({
+      assignedMinutesPerWeek: 1000,
+      targetMinutesPerWeek: 1080,
+      dutyMinutesPerWeek: 150,
+      countedDutyMinutesPerWeek: 120,
+    });
+    expect(segments.countedDutyMinutes).toBe(120);
+    expect(segments.teachingMinutes).toBe(1080);
+    expect(segments.overMinutes).toBe(40);
+    // Only the 30 uncounted minutes are drawn as uppdrag.
+    expect(segments.dutyMinutes).toBe(30);
+    expect(segments.duty + segments.teaching + segments.over).toBeCloseTo(1, 10);
+  });
+
+  it("adds the uppdrag to the peak week too, since they have no week pattern", () => {
+    const segments = loadBarSegments(
+      {
+        assignedMinutesPerWeek: 900,
+        targetMinutesPerWeek: 1080,
+        dutyMinutesPerWeek: 60,
+        countedDutyMinutesPerWeek: 60,
+      },
+      "peak",
+      1050,
+    );
+    expect(segments.overMinutes).toBe(30);
+  });
+
+  it("splits the whole width between uppdrag and teaching without a target", () => {
+    const segments = loadBarSegments({
+      assignedMinutesPerWeek: 300,
+      targetMinutesPerWeek: null,
+      dutyMinutesPerWeek: 100,
+      countedDutyMinutesPerWeek: 0,
+    });
+    expect(segments.duty).toBeCloseTo(0.25, 10);
+    expect(segments.teaching).toBeCloseTo(0.75, 10);
+  });
+});
+
 describe("kpis", () => {
   const report = (overrides: Partial<TeacherLoadReport> = {}): TeacherLoadReport => ({
     teachers: [teacher({ status: "OVER" }), teacher({ userId: "t-2" })],
@@ -162,7 +223,31 @@ describe("kpis", () => {
   });
 
   it("counts, and reads an unchecked school as null rather than zero", () => {
-    expect(kpis(report())).toEqual({ unstaffed: 1, unqualified: null, overTarget: 1 });
+    expect(kpis(report())).toEqual({
+      unstaffed: 1,
+      unqualified: null,
+      overTarget: 1,
+      bottlenecks: null,
+    });
     expect(kpis(report({ qualificationsRecorded: true })).unqualified).toBe(0);
+  });
+
+  it("counts only the short subjects as bottlenecks, and nothing when capacity is unknown", () => {
+    const bottleneck = (subjectId: string, short: boolean) => ({
+      subjectId,
+      subjectName: subjectId,
+      unstaffedCount: 1,
+      demandedMinutesPerWeek: 180,
+      qualifiedRemainingMinutesPerWeek: short ? 60 : 600,
+      qualifiedTeacherCount: 1,
+      qualifiedNoTargetCount: 0,
+      short,
+    });
+    const computed = report({
+      bottlenecksComputed: true,
+      subjectBottlenecks: [bottleneck("s-ma", true), bottleneck("s-no", false)],
+    });
+    expect(kpis(computed).bottlenecks).toBe(1);
+    expect(kpis(report({ bottlenecksComputed: true })).bottlenecks).toBe(0);
   });
 });

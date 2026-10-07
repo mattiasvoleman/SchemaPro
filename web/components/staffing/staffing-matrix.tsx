@@ -45,19 +45,19 @@ export function StatusBadge({ status }: { status: LoadStatus }) {
 
 /**
  * Teachers down the side, subjects across the top, minutes (or the SCB
- * share) in the cells, and the five figures that answer "is this post full"
+ * share) in the cells, and the six figures that answer "is this post full"
  * pinned to the right.
  *
- * READ-ONLY in this phase. A cell cannot be clicked into a staffing change —
- * that still happens in the timplan's own dialog — and the row opens a drawer
- * about the person. The order is the REPORT's order, which the gateway (and
+ * The cells are read-only; the row opens a drawer about the person, and the
+ * drawer is where a row's teacher is changed (Fas 2) — a cell sums several
+ * groups, so it cannot say which timplanspost a click would mean. The order is the REPORT's order, which the gateway (and
  * the mirror) sort OVER first, then UNDER, OK and NO_TARGET, then by id: the
  * matrix is read to find the problem rows, so they are at the top. Nothing
  * here re-sorts, because a second sort would be a second opinion about which
  * row is the problem.
  *
  * STICKY, like the timplan: the container scrolls, the header is pinned to its
- * top, the name column to its left and the five figures to its right, so a
+ * top, the name column to its left and the six figures to its right, so a
  * school with fifteen subjects can scroll sideways without losing whose row
  * it is reading or what the row adds up to. The offsets of the right-hand
  * columns are fixed widths and have to move together — see admin/requirements
@@ -123,18 +123,22 @@ export function StaffingMatrix({
               </th>
             ))}
             {/*
-              Five pinned columns. Widths are the offsets of the ones to their
-              left: bar 11rem (right-0), saldo 5rem (right-44), undervisning
-              6rem (right-64), mål 5rem (right-88), tjänst 5rem (right-108).
+              Six pinned columns. Widths are the offsets of the ones to their
+              left: bar 11rem (right-0), saldo 5rem (right-44), uppdrag 5rem
+              (right-64), undervisning 6rem (right-84), mål 5rem (right-108),
+              tjänst 5rem (right-128).
             */}
-            <th scope="col" className="sticky right-[27rem] top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
+            <th scope="col" className="sticky right-[32rem] top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
               {t("employmentHeader")}
             </th>
-            <th scope="col" className="sticky right-[22rem] top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
+            <th scope="col" className="sticky right-[27rem] top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
               {t("targetHeader")}
             </th>
-            <th scope="col" className="sticky right-64 top-0 z-30 min-w-24 max-w-24 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
+            <th scope="col" className="sticky right-[21rem] top-0 z-30 min-w-24 max-w-24 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
               {week === "peak" ? t("teachingPeakHeader") : t("teachingHeader")}
+            </th>
+            <th scope="col" className="sticky right-64 top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
+              {t("dutyHeader")}
             </th>
             <th scope="col" className="sticky right-44 top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
               {t("balanceHeader")}
@@ -187,18 +191,41 @@ export function StaffingMatrix({
                     </td>
                   );
                 })}
-                <td className="sticky right-[27rem] z-10 min-w-20 max-w-20 border-l bg-card px-2 py-2 text-right tabular-nums text-foreground">
+                <td className="sticky right-[32rem] z-10 min-w-20 max-w-20 border-l bg-card px-2 py-2 text-right tabular-nums text-foreground">
                   {teacher.employment ? (
                     formatPercent(teacher.employment.employmentPercent)
                   ) : (
                     <span className="text-xs text-muted-foreground">{t("noPost")}</span>
                   )}
                 </td>
-                <td className="sticky right-[22rem] z-10 min-w-20 max-w-20 border-l bg-card px-2 py-2 text-right tabular-nums text-foreground">
+                <td className="sticky right-[27rem] z-10 min-w-20 max-w-20 border-l bg-card px-2 py-2 text-right tabular-nums text-foreground">
                   {teacher.targetMinutesPerWeek ?? "—"}
                 </td>
-                <td className="sticky right-64 z-10 min-w-24 max-w-24 border-l bg-card px-2 py-2 text-right font-medium tabular-nums text-foreground">
+                <td className="sticky right-[21rem] z-10 min-w-24 max-w-24 border-l bg-card px-2 py-2 text-right font-medium tabular-nums text-foreground">
                   {teaching(teacher)}
+                </td>
+                <td
+                  className="sticky right-64 z-10 min-w-20 max-w-20 border-l bg-card px-2 py-2 text-right tabular-nums text-foreground"
+                  title={
+                    teacher.countedDutyMinutesPerWeek > 0
+                      ? t("dutyCellCounted", { minutes: teacher.countedDutyMinutesPerWeek })
+                      : undefined
+                  }
+                >
+                  {teacher.dutyMinutesPerWeek > 0 ? (
+                    <>
+                      {teacher.dutyMinutesPerWeek}
+                      {teacher.countedDutyMinutesPerWeek > 0 ? (
+                        <span className="sr-only">
+                          {` (${t("dutyCellCounted", { minutes: teacher.countedDutyMinutesPerWeek })})`}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground" aria-hidden="true">
+                      —
+                    </span>
+                  )}
                 </td>
                 <td className="sticky right-44 z-10 min-w-20 max-w-20 border-l bg-card px-2 py-2 text-right tabular-nums text-foreground">
                   {balanceText(teacher)}

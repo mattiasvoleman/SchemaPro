@@ -91,67 +91,98 @@ export function groupsInSubject(
 }
 
 export interface LoadBarSegments {
-  /** Share of the bar's width, 0..1 each; the three sum to 1 (or to the teaching share alone). */
+  /**
+   * Share of the bar's width, 0..1 each, summing to 1 (or 0 for an empty
+   * week). `duty` is the uppdrag that do NOT count toward the target, drawn
+   * first and outside the comparison; `teaching` is what the target is
+   * compared with — teaching plus the uppdrag that count.
+   */
+  duty: number;
   teaching: number;
   remaining: number;
   over: number;
   /** Minutes behind each segment, for the label. */
+  dutyMinutes: number;
   teachingMinutes: number;
   remainingMinutes: number;
   overMinutes: number;
+  /** Of `teachingMinutes`' week, the uppdrag minutes that count as teaching. */
+  countedDutyMinutes: number;
 }
 
+type BarTeacher = Pick<TeacherLoad, "assignedMinutesPerWeek" | "targetMinutesPerWeek"> &
+  Partial<Pick<TeacherLoad, "dutyMinutesPerWeek" | "countedDutyMinutesPerWeek">>;
+
 /**
- * The Lectio-style bar: undervisning, kvar till mål, över mål.
+ * The Lectio-style bar: uppdrag, undervisning, kvar till mål, över mål.
  *
- * The bar's full width is max(target, assigned), so a teacher at 110 % shows
- * a bar whose last tenth is red rather than a bar that overflows its cell —
- * and two teachers' bars are NOT on the same scale. That is deliberate: the
- * matrix compares each teacher with their own target (an 80 % post fills at
- * 865 minutes, a full one at 1 080), and a shared scale would make every
- * part-timer look under-used. The number beside the bar is what compares
- * across rows.
+ * The comparable part's width is max(target, counted), so a teacher at 110 %
+ * shows a bar whose last tenth is red rather than a bar that overflows its
+ * cell — and two teachers' bars are NOT on the same scale. That is
+ * deliberate: the matrix compares each teacher with their own target (an
+ * 80 % post fills at 865 minutes, a full one at 1 080), and a shared scale
+ * would make every part-timer look under-used. The number beside the bar is
+ * what compares across rows.
  *
- * Without a target there is nothing to be short of or over, so the bar is
- * teaching alone at full width; the label says "inget riktmärke" rather than
- * a percentage of nothing.
+ * COUNTED IS WHAT THE TARGET READS (Fas 2). An uppdrag the school counts as
+ * teaching (countsAsTeaching — pedagogisk lunch, resurstid) is inside the
+ * teaching segment, because the report's status and saldo already include
+ * it; one that does not count is the dark `duty` segment drawn before the
+ * comparison, widening the bar without moving the target, so a mentor's 90
+ * minutes are seen and never read as "over". In the peak week the uppdrag
+ * are the same minutes as in any week: they have no week pattern.
+ *
+ * Without a target there is nothing to be short of or over, so the bar is the
+ * week alone at full width; the label says "inget riktmärke" rather than a
+ * percentage of nothing.
  */
 export function loadBarSegments(
-  teacher: Pick<TeacherLoad, "assignedMinutesPerWeek" | "targetMinutesPerWeek">,
+  teacher: BarTeacher,
   week: WeekView = "standard",
   peakMinutes = teacher.assignedMinutesPerWeek,
 ): LoadBarSegments {
-  const assigned = week === "peak" ? peakMinutes : teacher.assignedMinutesPerWeek;
+  const teaching = week === "peak" ? peakMinutes : teacher.assignedMinutesPerWeek;
+  const countedDuty = teacher.countedDutyMinutesPerWeek ?? 0;
+  const dutyMinutes = Math.max(0, (teacher.dutyMinutesPerWeek ?? 0) - countedDuty);
+  const counted = teaching + countedDuty;
   const target = teacher.targetMinutesPerWeek;
   if (target === null || target <= 0) {
+    const whole = dutyMinutes + counted;
     return {
-      teaching: assigned > 0 ? 1 : 0,
+      duty: whole > 0 ? dutyMinutes / whole : 0,
+      teaching: whole > 0 ? counted / whole : 0,
       remaining: 0,
       over: 0,
-      teachingMinutes: assigned,
+      dutyMinutes,
+      teachingMinutes: counted,
       remainingMinutes: 0,
-      overMinutes: Math.max(0, target === 0 ? assigned : 0),
+      overMinutes: Math.max(0, target === 0 ? counted : 0),
+      countedDutyMinutes: countedDuty,
     };
   }
-  const scale = Math.max(target, assigned);
-  const teachingMinutes = Math.min(assigned, target);
-  const remainingMinutes = Math.max(0, target - assigned);
-  const overMinutes = Math.max(0, assigned - target);
+  const scale = dutyMinutes + Math.max(target, counted);
+  const teachingMinutes = Math.min(counted, target);
+  const remainingMinutes = Math.max(0, target - counted);
+  const overMinutes = Math.max(0, counted - target);
   return {
+    duty: dutyMinutes / scale,
     teaching: teachingMinutes / scale,
     remaining: remainingMinutes / scale,
     over: overMinutes / scale,
+    dutyMinutes,
     teachingMinutes,
     remainingMinutes,
     overMinutes,
+    countedDutyMinutes: countedDuty,
   };
 }
 
-/** The three KPI figures above the matrix. */
+/** The four KPI figures above the matrix. */
 export function kpis(report: TeacherLoadReport): {
   unstaffed: number;
   unqualified: number | null;
   overTarget: number;
+  bottlenecks: number | null;
 } {
   return {
     unstaffed: report.unstaffedRequirements.length,
@@ -159,5 +190,10 @@ export function kpis(report: TeacherLoadReport): {
     // no behörighet rows must not read as "everybody is qualified".
     unqualified: report.qualificationsRecorded ? report.unqualifiedAssignments.length : null,
     overTarget: report.teachers.filter((teacher) => teacher.status === "OVER").length,
+    // Null for the same reason: without a single behörighet the capacity in
+    // a subject is unknown, and "0 flaskhalsar" would be a claim.
+    bottlenecks: report.bottlenecksComputed
+      ? report.subjectBottlenecks.filter((row) => row.short).length
+      : null,
   };
 }

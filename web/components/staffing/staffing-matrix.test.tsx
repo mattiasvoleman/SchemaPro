@@ -161,8 +161,8 @@ describe("StaffingMatrix", () => {
     const cells = within(anna).getAllByRole("cell");
     expect(cells[0]?.textContent).toBe("600");
     expect(cells[1]?.textContent).toBe("300");
-    // Tjänst, mål, undervisning, saldo
-    expect(cells.slice(2, 6).map((cell) => cell.textContent)).toEqual(["80", "865", "900", "-35"]);
+    // Tjänst, mål, undervisning, uppdrag, saldo
+    expect(cells.slice(2, 7).map((cell) => cell.textContent)).toEqual(["80", "865", "900", "—", "-35"]);
   });
 
   it("names the groups behind a cell in its tooltip", () => {
@@ -203,6 +203,30 @@ describe("StaffingMatrix", () => {
     expect(screen.getByText("barLabel(111,1)")).toBeInTheDocument();
     expect(screen.getByText("barLabel(104)")).toBeInTheDocument();
     expect(screen.getByText("barNoTarget")).toBeInTheDocument();
+  });
+
+  it("shows the uppdrag minutes beside the teaching, and says how many of them count", () => {
+    renderMatrix({
+      report: {
+        ...report,
+        teachers: [
+          teacher({
+            dutyMinutesPerWeek: 150,
+            countedDutyMinutesPerWeek: 60,
+            countedMinutesPerWeek: 960,
+            balanceMinutesPerWeek: -95,
+            dutyCount: 2,
+          }),
+        ],
+      },
+    });
+    expect(screen.getByRole("columnheader", { name: "dutyHeader" })).toBeInTheDocument();
+    const anna = screen.getByText("Anna Ek").closest("tr")!;
+    const duty = within(anna).getAllByRole("cell")[5]!;
+    expect(duty.textContent).toBe("150 (dutyCellCounted(60))");
+    expect(duty).toHaveAttribute("title", "dutyCellCounted(60)");
+    // The saldo reads the counted minutes (900 + 60) against 865.
+    expect(within(anna).getAllByRole("cell")[6]?.textContent).toBe("-95");
   });
 
   it("opens the teacher on the row's name", async () => {
