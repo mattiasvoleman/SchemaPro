@@ -408,6 +408,18 @@ describe('YearRolloverService — rollover execute', () => {
    */
   it('writes every COPY column as the source has it, and every NULL column as null (registry against the writes)', async () => {
     const rows = defaultRolloverRows();
+    // A decided plan, so the new year's entry grade (åk 7) is written from
+    // the default rule and not only the cohorts' rows are audited.
+    rows['localTimplan']!.push({
+      id: 'f2000000-0000-4000-8000-0000000000d1',
+      name: 'Grundskola 2024',
+      schoolForm: 'GRUNDSKOLA',
+      status: 'DECIDED',
+      decidedAt: new Date('2024-05-01T00:00:00Z'),
+      createdAt: new Date('2024-04-01T00:00:00Z'),
+      nationalVersion: GRUNDSKOLA_2024,
+      entries: [],
+    });
     Object.assign(rows['teachingRequirement']![0]!, {
       lessonsPerWeek: 2,
       minutesPerLesson: 45,
@@ -453,10 +465,26 @@ describe('YearRolloverService — rollover execute', () => {
         source['availabilityConstraint']!.find(
           (rule) => rule['dayOfWeek'] === row['dayOfWeek'] && rule['studentGroupId'] === sourceGroupOf(row['studentGroupId']),
         ),
-      // The cohort's row: the source grade below the written one.
-      academicYearTimplan: (row) =>
-        source['academicYearTimplan']!.find((attached) => attached['gradeLevel'] === (row['gradeLevel'] as number) - 1),
+      // The source row a written grade comes from (timplanOrigin).
+      academicYearTimplan: (row) => timplanOrigin(row).from,
     };
+    /**
+     * Where a written timplan row must come from, read off the source rows
+     * and not off the planner: CARRIED from the source row below it, or, for
+     * a grade with no row below it, DEFAULT to the school's newest decided
+     * plan (every plan here hangs on GRUNDSKOLA_2024, so it speaks for 1–9).
+     */
+    const timplanOrigin = (row: Row): { kind: 'CARRIED' | 'DEFAULT'; from: Row | undefined; plan: unknown } => {
+      const grade = row['gradeLevel'] as number;
+      const below = source['academicYearTimplan']!.find((attached) => attached['gradeLevel'] === grade - 1);
+      if (below) return { kind: 'CARRIED', from: below, plan: below['localTimplanId'] };
+      const newest = source['localTimplan']!
+        .filter((plan) => plan['status'] === 'DECIDED')
+        .sort((a, b) => String(b['decidedAt']).localeCompare(String(a['decidedAt'])))[0];
+      const own = source['academicYearTimplan']!.find((attached) => attached['gradeLevel'] === grade);
+      return { kind: 'DEFAULT', from: own, plan: newest?.['id'] };
+    };
+    const timplanKinds: string[] = [];
     function findId(row: Row): unknown {
       return world.rows['studentGroup']!.find((group) => group['academicYearId'] === target && group['name'] === row['name'])!['id'];
     }
@@ -485,15 +513,21 @@ describe('YearRolloverService — rollover execute', () => {
           } else if (rule === 'MAP_GROUP') {
             expect({ ...at, continues: sourceGroupOf(row[column]) }).toEqual({ ...at, continues: from![column] });
           } else if (rule === 'COHORT_GRADE') {
-            expect({ ...at, value: row[column] }).toEqual({ ...at, value: (from!['gradeLevel'] as number) + 1 });
+            const origin = timplanOrigin(row);
+            const grade = (from!['gradeLevel'] as number) + (origin.kind === 'CARRIED' ? 1 : 0);
+            expect({ ...at, value: row[column] }).toEqual({ ...at, value: grade });
           } else if (rule === 'COHORT_PLAN') {
-            expect({ ...at, value: row[column] }).toEqual({ ...at, value: from![column] });
+            const origin = timplanOrigin(row);
+            expect({ ...at, kind: origin.kind, value: row[column] }).toEqual({ ...at, kind: origin.kind, value: origin.plan });
+            timplanKinds.push(origin.kind);
             checked++;
           }
         }
       }
     }
     expect(checked).toBeGreaterThan(40);
+    // Both ways a timplan row is written were audited.
+    expect(timplanKinds.sort()).toEqual(['CARRIED', 'CARRIED', 'DEFAULT']);
   });
 
   it('refuses a stale preview with 409 before any write', async () => {
