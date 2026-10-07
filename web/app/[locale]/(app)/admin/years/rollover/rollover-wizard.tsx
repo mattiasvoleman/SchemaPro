@@ -119,8 +119,9 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
   const optionsKey = JSON.stringify(form ? rolloverOptions(form) : null);
   const settledKey = useDebouncedValue(optionsKey, PREVIEW_DEBOUNCE_MS);
   const settledOptions = useMemo(() => JSON.parse(settledKey) as ReturnType<typeof rolloverOptions>, [settledKey]);
-  const preview = useRolloverPreview(source ? source.id : null, settledOptions);
   const execute = useExecuteRollover(source ? source.id : null);
+  // Not after "Skapa" succeeded: the year has a successor now (see the hook).
+  const preview = useRolloverPreview(source ? source.id : null, settledOptions, execute.isSuccess);
   const plan = preview.data;
   /** The preview on screen answers the form as it is now, not as it was. */
   const current =
