@@ -29,7 +29,7 @@
 // can still be deleted, as an explicit act whose confirmation names it a
 // decided plan.
 //
-// The four dialogs of this page are fetched on the click that opens them,
+// The six dialogs of this page are fetched on the click that opens them,
 // through React.lazy — not next/dynamic, whose loader costs 1.4KB of its own
 // on the route (see admin/people). None is reachable during SSR: `dialog`
 // starts null.
@@ -43,12 +43,20 @@
 // here. All five static: 187.3KB here, the layout untouched. ConfirmDialog
 // static (it is Dialog plus two buttons) and the four page dialogs lazy:
 // 185.6KB here and the layout untouched again — the cheapest of the three.
+// P2 added two more on the same terms (Skapa timplansposter, Timplan per
+// årskurs). Measured 2026-10-07: 187.2 → 187.7KB here with both dialogs and
+// their buttons, the layout's chunks untouched.
+//
+// P2 ALSO MADE THIS THE PAGE THE LÄSÅR IS TIED TO THE PLAN FROM: "Timplan per
+// årskurs" (which plan each årskurs follows, per läsår) and "Skapa
+// timplansposter" (the plan's minutes as the posts a year's classes miss, on
+// the plan shown).
 
 import { lazy, Suspense, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Download, FileUp, Plus, Target, TriangleAlert } from "lucide-react";
-import { useNationalTimplans, usePeople, useSubjects } from "@/lib/queries";
+import { CalendarRange, Download, FileUp, ListPlus, Plus, Target, TriangleAlert } from "lucide-react";
+import { useAcademicYears, useNationalTimplans, usePeople, useSubjects } from "@/lib/queries";
 import {
   useLocalTimplan,
   useLocalTimplanActions,
@@ -99,13 +107,21 @@ const DecideDialog = lazy(() =>
 const CopyDialog = lazy(() =>
   import("@/components/timplan/copy-dialog").then((module) => ({ default: module.CopyDialog })),
 );
+const GenerateDialog = lazy(() =>
+  import("@/components/timplan/generate-dialog").then((module) => ({ default: module.GenerateDialog })),
+);
+const YearTimplansDialog = lazy(() =>
+  import("@/components/timplan/year-timplans-dialog").then((module) => ({
+    default: module.YearTimplansDialog,
+  })),
+);
 const TimplanImportDialog = lazy(() =>
   import("@/components/timplan/timplan-import-dialog").then((module) => ({
     default: module.TimplanImportDialog,
   })),
 );
 
-type DialogName = "create" | "decide" | "reopen" | "copy" | "delete" | "import";
+type DialogName = "create" | "decide" | "reopen" | "copy" | "delete" | "import" | "generate" | "yearTimplans";
 
 /** What the admin has changed on one plan and not saved. */
 interface Draft {
@@ -141,6 +157,7 @@ export default function TimplanPage() {
   const { data: national, isLoading: nationalLoading, isError: nationalFailed } = useNationalTimplans();
   const { data: subjects, isLoading: subjectsLoading, isError: subjectsFailed } = useSubjects();
   const { data: people } = usePeople();
+  const { data: years } = useAcademicYears();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const activeId =
@@ -340,6 +357,10 @@ export default function TimplanPage() {
               <Plus />
               {t("newPlan")}
             </Button>
+            <Button variant="outline" onClick={() => setDialog("yearTimplans")} disabled={dirty}>
+              <CalendarRange />
+              {t("yearTimplansButton")}
+            </Button>
           </>
         }
       />
@@ -479,6 +500,14 @@ export default function TimplanPage() {
             <Button variant="outline" onClick={() => setDialog("copy")} disabled={dirty || pending}>
               {t("copy")}
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => setDialog("generate")}
+              disabled={dirty || pending || shown.entries.length === 0}
+            >
+              <ListPlus />
+              {t("generateButton")}
+            </Button>
             <Button variant="outline" onClick={exportCsv} disabled={shown.entries.length === 0}>
               <Download />
               {t("exportCsv")}
@@ -605,6 +634,23 @@ export default function TimplanPage() {
                 toast.success(t(dialog === "reopen" ? "reopened" : "copied"));
               })
             }
+          />
+        ) : null}
+        {dialog === "generate" && shown ? (
+          <GenerateDialog
+            open
+            onOpenChange={(open) => !open && setDialog(null)}
+            plan={{ id: shown.id, name: shown.name, status: shown.status }}
+            years={years ?? []}
+            initialYearId={null}
+          />
+        ) : null}
+        {dialog === "yearTimplans" ? (
+          <YearTimplansDialog
+            open
+            onOpenChange={(open) => !open && setDialog(null)}
+            years={years ?? []}
+            initialYearId={null}
           />
         ) : null}
         {dialog === "import" && shown ? (
