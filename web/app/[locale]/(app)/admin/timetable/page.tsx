@@ -76,9 +76,7 @@ import { FilterPicker } from "@/components/schedule/filter-picker";
  * loadable) into the route, 1.4KB gzipped, most of what the splits save; and
  * once the people page stopped sharing that runtime it sat in a chunk of its
  * own here and compressed worse, 190.0 -> 190.1KB, past the budget by the
- * decimal. With all three splits on lazy() the route measures 188.8KB
- * (2026-10-06). React is in every route already, so lazy() costs nothing on
- * top.
+ * decimal. React is in every route already, so lazy() costs nothing on top.
  * No lazy component is reachable during SSR: every *Used latch below
  * (confirm, edit, create, suggest, versions, rooms, publish) is false at first
  * render, and each lazy dialog is mounted only behind its latch.
@@ -89,11 +87,6 @@ const RoomOptimizationDialog = lazy(() =>
   })),
 );
 import { recurrenceBadge } from "@/components/schedule/recurrence-badge";
-/*
- * Fetched the first time Versioner is pressed, like the room optimisation
- * dialog above and for its reason: the version diff is most of the dialog's
- * code, and nothing on the grid needs it (see versions-dialog.tsx).
- */
 /*
  * Fetched the first time Versioner is pressed, like the room optimisation
  * dialog above and for its reason: the version diff is most of the dialog's
@@ -114,21 +107,32 @@ const VersionsDialog = lazy(() =>
  * draft types are imported as types only, which brings no code with them.
  */
 const loadLessonDialogs = () => import("@/components/schedule/lesson-dialogs");
-const CreateLessonDialog = lazy(() =>
-  loadLessonDialogs().then((module) => ({ default: module.CreateLessonDialog })),
-);
-const LessonEditDialog = lazy(() =>
-  loadLessonDialogs().then((module) => ({ default: module.LessonEditDialog })),
-);
-const PublishDialog = lazy(() =>
-  loadLessonDialogs().then((module) => ({ default: module.PublishDialog })),
-);
-const SharedMoveDialog = lazy(() =>
-  loadLessonDialogs().then((module) => ({ default: module.SharedMoveDialog })),
-);
-const SuggestPlacementsDialog = lazy(() =>
-  loadLessonDialogs().then((module) => ({ default: module.SuggestPlacementsDialog })),
-);
+/*
+ * Made by a function, and made again when one fails: lazy() keeps a rejected
+ * fetch for good and rethrows it on every later render, so retrying a chunk
+ * that did not arrive takes new lazy() wrappers (see lessonDialogsFailed in the
+ * page). Kept at module level between failures so a later visit in the same
+ * tab renders the already resolved ones without suspending.
+ */
+const lazyLessonDialogs = () => ({
+  CreateLessonDialog: lazy(() =>
+    loadLessonDialogs().then((module) => ({ default: module.CreateLessonDialog })),
+  ),
+  LessonEditDialog: lazy(() =>
+    loadLessonDialogs().then((module) => ({ default: module.LessonEditDialog })),
+  ),
+  PublishDialog: lazy(() =>
+    loadLessonDialogs().then((module) => ({ default: module.PublishDialog })),
+  ),
+  SharedMoveDialog: lazy(() =>
+    loadLessonDialogs().then((module) => ({ default: module.SharedMoveDialog })),
+  ),
+  SuggestPlacementsDialog: lazy(() =>
+    loadLessonDialogs().then((module) => ({ default: module.SuggestPlacementsDialog })),
+  ),
+});
+let lessonDialogs = lazyLessonDialogs();
+import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import type { CreateDraft } from "@/components/schedule/create-lesson-dialog";
 import type { LessonEditDraft } from "@/components/schedule/lesson-edit-dialog";
 import type { LessonRecurrence, MasterLesson, StaffingWarning } from "@/lib/types";
@@ -390,10 +394,23 @@ export default function TimetablePage() {
   // Justera and Lägg till are opened all day, so the lesson dialogs' chunk is
   // fetched as soon as the page has mounted rather than on the first click;
   // the click then rarely waits. A failed fetch here is left for the click to
-  // retry and report.
+  // retry, and a click whose fetch fails too is reported by the boundary
+  // around the dialogs (see lessonDialogsFailed).
   useEffect(() => {
     loadLessonDialogs().catch(() => {});
   }, []);
+  // The lazy() wrappers this page renders, and the key of the boundaries that
+  // catch them; both are replaced when a dialog fails to load or draw.
+  const [{ dialogs: lazyDialogs, attempt: dialogsAttempt }, setLessonDialogs] = useState(
+    () => ({ dialogs: lessonDialogs, attempt: 0 }),
+  );
+  const {
+    CreateLessonDialog,
+    LessonEditDialog,
+    PublishDialog,
+    SharedMoveDialog,
+    SuggestPlacementsDialog,
+  } = lazyDialogs;
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
 
   /**
@@ -1050,6 +1067,39 @@ export default function TimetablePage() {
       }
     },
     [t, tCommon, tEngine],
+  );
+
+  /*
+   * A lesson dialog that could not be fetched (or threw while it drew) says so
+   * in a toast instead of taking the page down. Every dialog from the chunk is
+   * closed and unmounted again — none of them can be showing, since they
+   * arrive together — and gets fresh lazy() wrappers, so the next open fetches
+   * again rather than rethrowing the old failure. Resetting the latches is what
+   * keeps a chunk that keeps failing from being retried in a loop: the next
+   * attempt waits for somebody to open a dialog.
+   */
+  const lessonDialogsFailed = useCallback(
+    (error: unknown) => {
+      showError(error);
+      lessonDialogs = lazyLessonDialogs();
+      setLessonDialogs((previous) => ({
+        dialogs: lessonDialogs,
+        attempt: previous.attempt + 1,
+      }));
+      setConfirming(null);
+      setEditing(null);
+      setRemoteEditing(null);
+      setCreating(null);
+      setSlotMatches(null);
+      setSuggesting(null);
+      setPublishOpen(false);
+      setConfirmUsed(false);
+      setEditUsed(false);
+      setCreateUsed(false);
+      setSuggestUsed(false);
+      setPublishUsed(false);
+    },
+    [showError, setRemoteEditing],
   );
 
   /** Applies a patch and registers the inverse operation in history. */
@@ -2242,99 +2292,102 @@ export default function TimetablePage() {
         never unmounted again, like the create, versions and room dialogs:
         closing keeps it in the tree so it animates out as before, and nothing
         is mounted for a dialog nobody opens. Their code is fetched right
-        after the page mounts (see loadLessonDialogs).
+        after the page mounts (see loadLessonDialogs), and a fetch that fails
+        is caught here and reported (see lessonDialogsFailed).
       */}
-      {confirmUsed && (
-        <Suspense fallback={null}>
-          <SharedMoveDialog
-            open={confirming !== null}
-            classNames={(confirming?.classes ?? [])
-              .map((id) => groupById.get(id)?.name ?? id)
-              .join(", ")}
-            onCancel={() => setConfirming(null)}
-            onConfirm={() => {
-              if (!confirming) return;
-              applyGridChange(confirming.lesson, confirming.change);
-              setConfirming(null);
-            }}
-          />
-        </Suspense>
-      )}
+      <DialogLoadBoundary key={`lessons-${dialogsAttempt}`} onError={lessonDialogsFailed}>
+        {confirmUsed && (
+          <Suspense fallback={null}>
+            <SharedMoveDialog
+              open={confirming !== null}
+              classNames={(confirming?.classes ?? [])
+                .map((id) => groupById.get(id)?.name ?? id)
+                .join(", ")}
+              onCancel={() => setConfirming(null)}
+              onConfirm={() => {
+                if (!confirming) return;
+                applyGridChange(confirming.lesson, confirming.change);
+                setConfirming(null);
+              }}
+            />
+          </Suspense>
+        )}
 
-      {editUsed && (
-        <Suspense fallback={null}>
-          <LessonEditDialog
-            open={editing !== null}
-            onOpenChange={(open) => {
-              if (!open) {
+        {editUsed && (
+          <Suspense fallback={null}>
+            <LessonEditDialog
+              open={editing !== null}
+              onOpenChange={(open) => {
+                if (!open) {
+                  setEditing(null);
+                  setRemoteEditing(null);
+                }
+              }}
+              lessonName={editing ? lessonName(editing) : null}
+              draft={editDraft}
+              onDraftChange={setEditDraft}
+              rooms={rooms ?? []}
+              teachers={teachers}
+              onDelete={doDelete}
+              deletePending={deleteLesson.isPending}
+              onDuplicate={doDuplicate}
+              onPark={() => {
+                if (!editing) return;
+                park(editing);
                 setEditing(null);
                 setRemoteEditing(null);
-              }
-            }}
-            lessonName={editing ? lessonName(editing) : null}
-            draft={editDraft}
-            onDraftChange={setEditDraft}
-            rooms={rooms ?? []}
-            teachers={teachers}
-            onDelete={doDelete}
-            deletePending={deleteLesson.isPending}
-            onDuplicate={doDuplicate}
-            onPark={() => {
-              if (!editing) return;
-              park(editing);
-              setEditing(null);
-              setRemoteEditing(null);
-            }}
-            onCancel={() => setEditing(null)}
-            onSave={doSaveEdit}
-            savePending={updateLesson.isPending}
-            none={NONE}
-          />
-        </Suspense>
-      )}
+              }}
+              onCancel={() => setEditing(null)}
+              onSave={doSaveEdit}
+              savePending={updateLesson.isPending}
+              none={NONE}
+            />
+          </Suspense>
+        )}
 
-      {/* ---------------- Create dialog ---------------- */}
-      {/*
-        Mounted from the first lesson added onward, and never unmounted
-        again: closing keeps it in the tree so it animates out as before.
-      */}
-      {createUsed && (
-        <Suspense fallback={null}>
-          <CreateLessonDialog
-            draft={creating}
-            onDraftChange={setCreating}
-            onClose={() => {
-              setCreating(null);
-              setSlotMatches(null);
-            }}
-            subjects={subjects ?? []}
-            groups={yearGroups}
-            rooms={rooms ?? []}
-            teachers={teachers}
-            students={students}
-            groupById={groupById}
-            teacherById={teacherById}
-            slotMatches={slotMatches}
-            onSlotMatchesChange={setSlotMatches}
-            onSearchSlots={runSlotSearch}
-            onCreate={() => void doCreate()}
-            pending={createLesson.isPending}
-            none={NONE}
-          />
-        </Suspense>
-      )}
+        {/* ---------------- Create dialog ---------------- */}
+        {/*
+          Mounted from the first lesson added onward, and never unmounted
+          again: closing keeps it in the tree so it animates out as before.
+        */}
+        {createUsed && (
+          <Suspense fallback={null}>
+            <CreateLessonDialog
+              draft={creating}
+              onDraftChange={setCreating}
+              onClose={() => {
+                setCreating(null);
+                setSlotMatches(null);
+              }}
+              subjects={subjects ?? []}
+              groups={yearGroups}
+              rooms={rooms ?? []}
+              teachers={teachers}
+              students={students}
+              groupById={groupById}
+              teacherById={teacherById}
+              slotMatches={slotMatches}
+              onSlotMatchesChange={setSlotMatches}
+              onSearchSlots={runSlotSearch}
+              onCreate={() => void doCreate()}
+              pending={createLesson.isPending}
+              none={NONE}
+            />
+          </Suspense>
+        )}
 
-      {/* ---------------- Smart placement suggestions ---------------- */}
-      {suggestUsed && (
-        <Suspense fallback={null}>
-          <SuggestPlacementsDialog
-            open={suggesting !== null}
-            options={suggesting?.options ?? []}
-            onPick={(option) => void applySuggestion(option)}
-            onClose={() => setSuggesting(null)}
-          />
-        </Suspense>
-      )}
+        {/* ---------------- Smart placement suggestions ---------------- */}
+        {suggestUsed && (
+          <Suspense fallback={null}>
+            <SuggestPlacementsDialog
+              open={suggesting !== null}
+              options={suggesting?.options ?? []}
+              onPick={(option) => void applySuggestion(option)}
+              onClose={() => setSuggesting(null)}
+            />
+          </Suspense>
+        )}
+      </DialogLoadBoundary>
 
       {/* ---------------- Versions dialog ---------------- */}
       {versionsUsed && (
@@ -2378,21 +2431,23 @@ export default function TimetablePage() {
       )}
 
       {/* ---------------- Publish dialog ---------------- */}
-      {publishUsed && (
-        <Suspense fallback={null}>
-          <PublishDialog
-            open={publishOpen}
-            onOpenChange={setPublishOpen}
-            lunchEnabled={lunchSettings?.lunchEnabled === true}
-            fromDate={fromDate}
-            onFromDateChange={setFromDate}
-            toDate={toDate}
-            onToDateChange={setToDate}
-            onPublish={doPublish}
-            pending={publish.isPending}
-          />
-        </Suspense>
-      )}
+      <DialogLoadBoundary key={`publish-${dialogsAttempt}`} onError={lessonDialogsFailed}>
+        {publishUsed && (
+          <Suspense fallback={null}>
+            <PublishDialog
+              open={publishOpen}
+              onOpenChange={setPublishOpen}
+              lunchEnabled={lunchSettings?.lunchEnabled === true}
+              fromDate={fromDate}
+              onFromDateChange={setFromDate}
+              toDate={toDate}
+              onToDateChange={setToDate}
+              onPublish={doPublish}
+              pending={publish.isPending}
+            />
+          </Suspense>
+        )}
+      </DialogLoadBoundary>
     </div>
   );
 }

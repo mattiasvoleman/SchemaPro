@@ -170,6 +170,25 @@ const toasts = vi.hoisted(() => ({
 }));
 vi.mock("sonner", () => ({ toast: toasts }));
 
+/*
+ * Justera as it really is, unless a row says its chunk did not arrive: then it
+ * throws while it renders, which is what lazy() does with a fetch that failed
+ * (see "a lesson dialog whose code does not arrive").
+ */
+const lessonDialogsLoad = vi.hoisted(() => ({ fail: false }));
+vi.mock("@/components/schedule/lesson-edit-dialog", async (importOriginal) => {
+  const { createElement } = await import("react");
+  const real =
+    await importOriginal<typeof import("@/components/schedule/lesson-edit-dialog")>();
+  return {
+    ...real,
+    LessonEditDialog: (props: Parameters<typeof real.LessonEditDialog>[0]) => {
+      if (lessonDialogsLoad.fail) throw new Error("Failed to load chunk lesson-dialogs");
+      return createElement(real.LessonEditDialog, props);
+    },
+  };
+});
+
 // ---------------------------------------------------------------------------
 // One year group, split the way Swedish schools actually split it.
 //
@@ -1080,6 +1099,51 @@ describe("the dialogs the page lifts out", () => {
         toDate: "2027-06-11",
       }),
     );
+  });
+});
+
+/*
+ * The lesson dialogs' chunk arriving late is one thing; not arriving at all is
+ * another — a dropped connection, or an old tab after a deploy. Justera,
+ * Publicera and the two drag questions used to ship inside the route and could
+ * not fail this way. Now their lazy() rethrows the failed fetch while it
+ * renders, and with no error boundary on the way up (the app has no error.tsx)
+ * Next replaces the whole page with its client-exception screen.
+ *
+ * lazy() hands a failed fetch to React as an error thrown while the dialog
+ * renders; the mock at the top (lessonDialogsLoad) throws the same way from
+ * Justera, the one lifted dialog a row can reach with a single press.
+ */
+describe("a lesson dialog whose code does not arrive", () => {
+  afterEach(() => {
+    lessonDialogsLoad.fail = false;
+  });
+
+  it("says so, keeps the page, and opens the dialog on the next try", async () => {
+    lessonDialogsLoad.fail = true;
+    toasts.error.mockClear();
+    render(<TimetablePage />);
+
+    const openSlojd = () => {
+      const card = screen
+        .queryAllByRole("button")
+        .find((el) => el.textContent?.includes("Slöjd"))!;
+      fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+      fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    };
+
+    openSlojd();
+    await waitFor(() =>
+      expect(toasts.error).toHaveBeenCalledWith("Failed to load chunk lesson-dialogs"),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("button", { name: "timetable.publish" })).toBeInTheDocument();
+
+    // The connection is back: the same press opens Justera this time.
+    lessonDialogsLoad.fail = false;
+    openSlojd();
+    expect((await screen.findByRole("dialog")).textContent).toContain("Slöjd · 5.1 · K. Ek");
+    expect(toasts.error).toHaveBeenCalledTimes(1);
   });
 });
 
