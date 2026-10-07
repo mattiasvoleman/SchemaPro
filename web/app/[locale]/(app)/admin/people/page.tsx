@@ -97,6 +97,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { filterByQuery } from "@/lib/search";
+import { homeClassOptions } from "@/lib/year-scope";
 import {
   taughtGroupsOf,
   teachingGroupsOf,
@@ -420,6 +421,17 @@ export default function PeoplePage() {
   const [importOpen, setImportOpen] = useState(false);
   const [editing, setEditing] = useState<Person | null>(null);
   const [deleting, setDeleting] = useState<Person | null>(null);
+  /**
+   * The home classes the form offers: the active year's classes, plus the
+   * class the pupil is in now when that is elsewhere, named with its year.
+   * Every year's groups would list each name twice between a rollover and
+   * its activation — next year's 8A beside this year's — and a click on the
+   * wrong one puts the pupil in the wrong cohort (lib/year-scope.ts).
+   */
+  const homeClasses = useMemo(
+    () => homeClassOptions(groups, years, activeYearId, editing?.studentGroupId ?? null),
+    [groups, years, activeYearId, editing],
+  );
   const [form, setForm] = useState<PersonForm>(EMPTY_FORM);
   const [sendInvitation, setSendInvitation] = useState(false);
   const invitations = useInvitations();
@@ -916,9 +928,9 @@ export default function PeoplePage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NO_GROUP}>{tCommon("none")}</SelectItem>
-                    {(groups ?? []).map((group) => (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.name}
+                    {homeClasses.map((option) => (
+                      <SelectItem key={option.id} value={option.id}>
+                        {option.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
