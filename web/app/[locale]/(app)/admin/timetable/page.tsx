@@ -27,7 +27,6 @@ import {
   X,
 } from "lucide-react";
 import {
-  useActiveYear,
   useConstraints,
   useCreateMasterLesson,
   useDeleteMasterLesson,
@@ -56,6 +55,12 @@ import {
  * same distance.
  */
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
+import { usePlanningYear } from "@/lib/planning-year";
+import { withProjectedHomes } from "@/lib/projected-rosters";
+import {
+  PlanningYearPicker,
+  ProjectedRostersBanner,
+} from "@/components/schedule/planning-year";
 import { ApiError } from "@/lib/api";
 import type { MessageLookup } from "@/lib/engine-message";
 import { refusalText, savedToast, staffingRefusal } from "@/lib/staffing-warnings";
@@ -246,14 +251,34 @@ export default function TimetablePage() {
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const tDays = useTranslations("days");
-  const { activeYear } = useActiveYear();
-  const { data: lessons, isLoading } = useMasterLessons(activeYear?.id ?? null);
+  /*
+   * The grundschema on screen: this year's, or next year's before its
+   * activation (lib/planning-year.ts). Every year-keyed read and write below
+   * follows it — the lessons, the timplan, the meals, the versions, the room
+   * proposal, publishing.
+   */
+  const planning = usePlanningYear();
+  const shownYear = planning.year;
+  const { data: lessons, isLoading } = useMasterLessons(shownYear?.id ?? null);
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
   const { data: rooms } = useRooms();
-  const { data: people } = usePeople();
+  /*
+   * Next year's classes have no home pupils before its activation, so the
+   * people are read with the class the activation will give each pupil it
+   * moves — the overlay the gateway checks a drag against, laid over the rows
+   * as it comes (lib/projected-rosters.ts). Everything derived from a pupil's
+   * class below — studentGroupOf, the clash map, the grade spans, the roster
+   * index — then sees next year's 8A as the server does. For this year the
+   * same array comes back.
+   */
+  const { data: storedPeople } = usePeople();
+  const people = useMemo(
+    () => withProjectedHomes(storedPeople, planning.rosters),
+    [storedPeople, planning.rosters],
+  );
   const { data: constraints } = useConstraints();
-  const { data: requirements } = useRequirements(activeYear?.id ?? null);
+  const { data: requirements } = useRequirements(shownYear?.id ?? null);
   /**
    * What an edit actually did, including the part that is not reversible by
    * editing back.
@@ -397,12 +422,17 @@ export default function TimetablePage() {
    * have hundreds of teaching groups — Kunskapsskolan has 24 and 300 — so one
    * flat list buries the class a rektor is looking for.
    */
+  /** The groups of the year on screen: a lesson added here belongs to it. */
+  const yearGroups = useMemo(
+    () => (groups ?? []).filter((group) => group.academicYearId === shownYear?.id),
+    [groups, shownYear?.id],
+  );
   const groupSections = useMemo(() => {
     const named = (group: { id: string; name: string }) => ({ id: group.id, name: group.name });
-    // The schedule on screen is the active year's, so its groups are the
-    // filter's: another year's 8A (next year's, after a rollover) has no
-    // lesson here and would only stand beside this year's under one name.
-    const shown = (groups ?? []).filter((group) => group.academicYearId === activeYear?.id);
+    // The schedule on screen is one year's, so its groups are the filter's:
+    // another year's 8A (next year's, after a rollover) has no lesson here
+    // and would only stand beside this year's under one name.
+    const shown = yearGroups;
     return [
       {
         label: t("filterKindClasses"),
@@ -413,7 +443,7 @@ export default function TimetablePage() {
         options: shown.filter((group) => group.kind !== "CLASS").map(named),
       },
     ];
-  }, [groups, activeYear?.id, t]);
+  }, [yearGroups, t]);
 
   const teachers = useMemo(
     () => (people ?? []).filter((person) => person.role === "TEACHER"),
@@ -430,7 +460,7 @@ export default function TimetablePage() {
   );
   const { data: memberships } = useGroupMemberships();
   const { data: frameTimes } = useFrameTimes();
-  const { data: lunchSittings } = useLunchSittings(activeYear?.id ?? null);
+  const { data: lunchSittings } = useLunchSittings(shownYear?.id ?? null);
   const lunchMutations = useLunchSittingMutations();
   /*
    * Placing a lunch by hand. A mode rather than a new gesture: a click on empty
@@ -442,7 +472,7 @@ export default function TimetablePage() {
    */
   const [placingLunch, setPlacingLunch] = useState(false);
   const canPlaceLunch =
-    onlyGroup !== null && lunchSettings?.lunchEnabled === true && activeYear != null;
+    onlyGroup !== null && lunchSettings?.lunchEnabled === true && shownYear != null;
   const lunchMode = placingLunch && canPlaceLunch;
   const { data: roomRules } = useRoomPreferences();
   const { data: rasts } = useRasts();
@@ -1416,10 +1446,10 @@ export default function TimetablePage() {
    * next run places the meal again. A day with no meal goes back to none.
    */
   const placeLunch = async (dayOfWeek: number, startMinutes: number) => {
-    if (!onlyGroup || !activeYear) return;
+    if (!onlyGroup || !shownYear) return;
     const before = sittingOn(dayOfWeek);
     const body = {
-      academicYearId: activeYear.id,
+      academicYearId: shownYear.id,
       studentGroupId: onlyGroup,
       dayOfWeek,
       startTime: minutesToHHMM(startMinutes),
@@ -1483,9 +1513,9 @@ export default function TimetablePage() {
 
   const removeLunch = async (id: string) => {
     const sitting = (lunchSittings ?? []).find((row) => row.id === id);
-    if (!sitting || !activeYear) return;
+    if (!sitting || !shownYear) return;
     const body = {
-      academicYearId: activeYear.id,
+      academicYearId: shownYear.id,
       studentGroupId: sitting.studentGroupId,
       dayOfWeek: sitting.dayOfWeek,
       startTime: sitting.startTime.slice(0, 5),
@@ -1648,10 +1678,10 @@ export default function TimetablePage() {
   };
 
   const doCreate = async () => {
-    if (!creating || !activeYear) return;
+    if (!creating || !shownYear) return;
     try {
       await undoableCreate({
-        academicYearId: activeYear.id,
+        academicYearId: shownYear.id,
         subjectId: creating.subjectId,
         studentGroupId: creating.studentGroupId,
         teacherId: creating.teacherId === NONE ? null : creating.teacherId,
@@ -1679,7 +1709,7 @@ export default function TimetablePage() {
 
 
   const doExportIcs = async () => {
-    if (!activeYear) return;
+    if (!shownYear) return;
     const { buildIcs, downloadIcs } = await import("@/lib/ics");
     const ics = buildIcs(
       filtered.map((lesson) => {
@@ -1723,8 +1753,8 @@ export default function TimetablePage() {
       }),
       {
         calendarName: t("title"),
-        yearStart: activeYear.startDate,
-        yearEnd: activeYear.endDate,
+        yearStart: shownYear.startDate,
+        yearEnd: shownYear.endDate,
       },
     );
     downloadIcs("timetable.ics", ics);
@@ -1735,7 +1765,7 @@ export default function TimetablePage() {
     const { exportTimetablePdf } = await import("@/lib/pdf");
     await exportTimetablePdf({
       title: t("title"),
-      subtitle: activeYear?.name,
+      subtitle: shownYear?.name,
       dayNames: [1, 2, 3, 4, 5, 6, 7].map((day) => tDays(String(day))),
       columnLabels: {
         time: t("editStart"),
@@ -1770,10 +1800,10 @@ export default function TimetablePage() {
   };
 
   const doPublish = async () => {
-    if (!activeYear) return;
+    if (!shownYear) return;
     try {
       const result = await publish.mutateAsync({
-        academicYearId: activeYear.id,
+        academicYearId: shownYear.id,
         ...(fromDate ? { fromDate } : {}),
         ...(toDate ? { toDate } : {}),
       });
@@ -1793,6 +1823,19 @@ export default function TimetablePage() {
         subtitle={t("subtitle")}
         actions={
           <div className="flex items-center gap-2">
+            <PlanningYearPicker
+              {...planning}
+              onChoose={(yearId) => {
+                // What was picked, ticked and undoable belongs to the other
+                // year's grid: its group ids are not this year's, and an undo
+                // would move a lesson nobody can see.
+                setGroupFilters([]);
+                setSelectedIds(new Set());
+                setPlacingLunch(false);
+                history.clear();
+                planning.choose(yearId);
+              }}
+            />
             <Button
               variant="outline"
               size="icon"
@@ -1814,7 +1857,7 @@ export default function TimetablePage() {
             <Button
               variant="outline"
               onClick={() => openCreate(1, 8 * 60)}
-              disabled={!activeYear}
+              disabled={!shownYear}
             >
               <Plus />
               {t("addLesson")}
@@ -1825,7 +1868,7 @@ export default function TimetablePage() {
                 setVersionsUsed(true);
                 setVersionsOpen(true);
               }}
-              disabled={!activeYear}
+              disabled={!shownYear}
             >
               <History />
               {t("versions")}
@@ -1836,7 +1879,7 @@ export default function TimetablePage() {
                 setRoomsUsed(true);
                 setRoomsOpen(true);
               }}
-              disabled={!activeYear || !lessons || lessons.length === 0}
+              disabled={!shownYear || !lessons || lessons.length === 0}
             >
               <Footprints />
               {t("optimizeRooms")}
@@ -1845,7 +1888,7 @@ export default function TimetablePage() {
               variant="outline"
               size="icon"
               onClick={doExportIcs}
-              disabled={!activeYear || filtered.length === 0}
+              disabled={!shownYear || filtered.length === 0}
               title={t("exportIcs")}
             >
               <Download />
@@ -1854,7 +1897,7 @@ export default function TimetablePage() {
               variant="outline"
               size="icon"
               onClick={doExportPdf}
-              disabled={!activeYear || filtered.length === 0}
+              disabled={!shownYear || filtered.length === 0}
               title={t("exportPdf")}
             >
               <FileText />
@@ -1869,8 +1912,8 @@ export default function TimetablePage() {
             </Button>
             <Button
               onClick={() => {
-                setFromDate(activeYear?.startDate ?? "");
-                setToDate(activeYear?.endDate ?? "");
+                setFromDate(shownYear?.startDate ?? "");
+                setToDate(shownYear?.endDate ?? "");
                 setPublishOpen(true);
               }}
               disabled={!lessons || lessons.length === 0}
@@ -1880,6 +1923,12 @@ export default function TimetablePage() {
             </Button>
           </div>
         }
+      />
+      <ProjectedRostersBanner
+        year={shownYear}
+        active={planning.active}
+        rosters={planning.rosters}
+        failed={planning.rostersFailed}
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -1993,7 +2042,11 @@ export default function TimetablePage() {
             <div className="space-y-1">
               <p>{t("noSittingsYear")}</p>
               <Link
-                href="/admin/generate"
+                href={
+                  shownYear && !shownYear.isActive
+                    ? `/admin/generate?year=${shownYear.id}`
+                    : "/admin/generate"
+                }
                 className="font-medium underline underline-offset-4"
               >
                 {t("noSittingsYearLink")}
@@ -2396,7 +2449,7 @@ export default function TimetablePage() {
               setSlotMatches(null);
             }}
             subjects={subjects ?? []}
-            groups={groups ?? []}
+            groups={yearGroups}
             rooms={rooms ?? []}
             teachers={teachers}
             students={students}
@@ -2458,7 +2511,7 @@ export default function TimetablePage() {
           <VersionsDialog
             open={versionsOpen}
             onOpenChange={setVersionsOpen}
-            academicYearId={activeYear?.id ?? null}
+            academicYearId={shownYear?.id ?? null}
             lessons={lessons}
             subjectById={subjectById}
             teacherById={teacherById}
@@ -2484,7 +2537,7 @@ export default function TimetablePage() {
           <RoomOptimizationDialog
             open={roomsOpen}
             onOpenChange={setRoomsOpen}
-            academicYearId={activeYear?.id ?? null}
+            academicYearId={shownYear?.id ?? null}
             rooms={rooms ?? []}
             teachers={teachers}
             groups={groups ?? []}
