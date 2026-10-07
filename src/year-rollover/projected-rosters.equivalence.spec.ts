@@ -2,6 +2,7 @@ import { IDS } from '../../test/utils/rollover-world';
 import { SUCCESSOR, givenSuccessorWorld, schoolAdmin, type SuccessorWorld } from '../../test/utils/successor-world';
 import type { ConfigService } from '@nestjs/config';
 import type { HttpService } from '@nestjs/axios';
+import { CalendarLessonsService } from '../calendar/calendar-lessons.service';
 import { MasterLessonsService } from '../calendar/master-lessons.service';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { OptimizationProxyService } from '../optimization/optimization-proxy.service';
@@ -41,6 +42,13 @@ import { readHomePupils, rostersOfYear, type RosterBasis } from './projected-ros
  */
 
 const CURRENT: RosterBasis = { kind: 'CURRENT' };
+
+/** A 9A lesson on Wednesday that names p8a1 only (P4). */
+const WEDNESDAY_NAMED = 'f3000000-0000-4000-8000-000000000003';
+/** B's 8A svenska on Tuesday 08:00, which the PATCH row drags (P4). */
+const DRAGGED = 'f3000000-0000-4000-8000-000000000004';
+/** A published Ma8 lesson of B, which a vikarie is suggested for (P5). */
+const MA8_CALENDAR = 'f4000000-0000-4000-8000-000000000001';
 
 /** Runs a read and says which bases rostersOfYear handed it; `force` replaces them. */
 async function observed<T>(read: () => Promise<T>, force?: RosterBasis): Promise<{ value: T; kinds: string[] }> {
@@ -115,6 +123,15 @@ describe('förberäknade klasslistor — the oracle', () => {
       '9A': [IDS.p8a1],
     };
     expect(await lists()).toEqual({ basis: 'PROJECTED', ...oracle });
+    // The projection itself sends the graduates and the unplaced to no
+    // class, not to the class they leave: no server reader of B can tell the
+    // two apart (they only look B's own groups up), so it is pinned here.
+    const basis = await rostersOfYear(world.world.tx, schoolAdmin, world.yearB);
+    expect(basis.kind).toBe('PROJECTED');
+    const projectedHome = (basis as projected.ProjectedRosters).homeOf;
+    for (const id of [IDS.p9a1, SUCCESSOR.p8a2, SUCCESSOR.p7b2, SUCCESSOR.p7c2]) {
+      expect([id, projectedHome.has(id), projectedHome.get(id)]).toEqual([id, true, null]);
+    }
     await world.activate();
     expect(await lists()).toEqual({ basis: 'CURRENT', ...oracle });
     // And nobody else's class changed: pGone in A's 7A, the others where they were.
@@ -303,6 +320,10 @@ describe('förberäknade klasslistor — every reader reads the same before and 
           { group: world.b('8A'), dayOfWeek: 2, studentIds: [] },
           // Ma8 naming p8a1 — coming to 9A — against the same lesson (a participant's home class).
           { group: world.b('Ma8 grupp 1'), dayOfWeek: 2, studentIds: [IDS.p8a1] },
+          // 8A against Wednesday's lesson, which names only p8a1 — coming to
+          // 9A, not to 8A. The reverse count asks about the NAMED pupils, so
+          // none of the five coming to 8A may count: no clash.
+          { group: world.b('8A'), dayOfWeek: 3, studentIds: [] },
         ];
         const found = [];
         for (const [index, candidate] of candidates.entries()) {
@@ -329,13 +350,14 @@ describe('förberäknade klasslistor — every reader reads the same before and 
       },
       {
         setup: (world) => {
-          world.world.rows['masterLesson']!.find((lesson) => lesson['id'] === SUCCESSOR.lessonNamed)!['participants'] = [
-            { studentId: IDS.p9a1 },
-            { studentId: IDS.p7a2 },
-          ];
+          const lessons = world.world.rows['masterLesson']!;
+          const named = lessons.find((lesson) => lesson['id'] === SUCCESSOR.lessonNamed)!;
+          named['participants'] = [{ studentId: IDS.p9a1 }, { studentId: IDS.p7a2 }];
+          lessons.push({ ...named, id: WEDNESDAY_NAMED, dayOfWeek: 3, participants: [{ studentId: IDS.p8a1 }] });
         },
       },
     );
+    // Index 3 is absent: Wednesday's lesson names nobody coming to 8A.
     expect(before.conflicts).toEqual([
       [0, 'GROUP', 'Students of this group already have Matematik in this slot.', SUCCESSOR.lessonMa8],
       [1, 'GROUP', 'A student of this class attends Matematik in this slot.', SUCCESSOR.lessonNamed],
@@ -349,6 +371,52 @@ describe('förberäknade klasslistor — every reader reads the same before and 
     expect(roster.get(world.b('8A'))).toEqual([IDS.p7a1, IDS.p7a2, SUCCESSOR.p7b1, SUCCESSOR.p7c1, SUCCESSOR.pNew].sort());
   });
 
+  it('P4 master lessons through the PATCH: dragging 8A’s lesson onto Ma8’s hour is the same 409 before and after, and it lands where nobody is coming', async () => {
+    const { before } = await proveEquivalent(
+      async (world) => {
+        const service = new MasterLessonsService(
+          world.prisma,
+          { notifyMasterTimetableChanged: jest.fn() } as unknown as RealtimeService,
+          { recipientsForGroups: jest.fn(async () => []), notifyUsers: jest.fn() } as unknown as NotificationsService,
+        );
+        const drag = async (dayOfWeek: number): Promise<string> => {
+          try {
+            await service.update(DRAGGED, { dayOfWeek }, schoolAdmin);
+          } catch (error) {
+            return `409 ${(error as Error).message}`;
+          }
+          // Landed: put it back on Tuesday so the next read starts where this one did.
+          await service.update(DRAGGED, { dayOfWeek: 2 }, schoolAdmin);
+          return 'moved';
+        };
+        // Monday 08:00 is Ma8's lesson, and Ma8's p7a1 is coming to 8A;
+        // Thursday 08:00 has nothing.
+        return { onMa8: await drag(1), onThursday: await drag(4) };
+      },
+      {
+        writes: true,
+        setup: (world) => {
+          world.world.rows['school'] = [{ id: IDS.school, timezone: 'Europe/Stockholm' }];
+          const ma8 = world.world.rows['masterLesson']!.find((lesson) => lesson['id'] === SUCCESSOR.lessonMa8)!;
+          world.world.rows['masterLesson']!.push({
+            ...ma8,
+            id: DRAGGED,
+            studentGroupId: world.b('8A'),
+            subjectId: IDS.sv,
+            teacherId: null,
+            dayOfWeek: 2,
+            isLocked: false,
+            subject: { name: 'Svenska', requiredRoomTypeId: null },
+          });
+        },
+      },
+    );
+    expect(before).toEqual({
+      onMa8: '409 Students of this group already have Matematik in this slot.',
+      onThursday: 'moved',
+    });
+  });
+
   it('P5 attendanceSpan (the vikarie badge and warning): Ma8 spans 8–9 from its members’ coming classes', async () => {
     const { before } = await proveEquivalent((world) =>
       attendanceSpan(world.world.tx, {
@@ -358,6 +426,45 @@ describe('förberäknade klasslistor — every reader reads the same before and 
       }),
     );
     expect(before).toEqual({ min: 8, max: 9 });
+  });
+
+  it('P5 the vikarie suggestion for a published Ma8 lesson: Anna, behörig in åk 8 only, is not behörig for its coming 8–9', async () => {
+    const { before } = await proveEquivalent(
+      async (world) => {
+        const service = new CalendarLessonsService(world.prisma, {} as RealtimeService, {} as NotificationsService);
+        const suggestions = await service.suggestSubstitutes(MA8_CALENDAR, schoolAdmin);
+        return sortedBy(
+          suggestions.map((suggestion) => [suggestion.teacherId, suggestion.isPrimary, suggestion.qualificationKind]),
+          (row) => row[0] as string,
+        );
+      },
+      {
+        setup: (world) => {
+          world.world.rows['calendarLesson'] = [
+            {
+              id: MA8_CALENDAR,
+              schoolId: IDS.school,
+              status: 'SCHEDULED',
+              note: null,
+              date: new Date('2027-09-06T00:00:00.000Z'),
+              startsAt: new Date('2027-09-06T06:00:00.000Z'),
+              endsAt: new Date('2027-09-06T07:00:00.000Z'),
+              roomId: null,
+              subjectId: IDS.ma,
+              studentGroupId: world.b('Ma8 grupp 1'),
+              subject: { name: 'Matematik' },
+              teachers: [],
+              extraGroups: [],
+              participants: [],
+            },
+          ];
+        },
+      },
+    );
+    // Anna teaches Ma8's timplanspost (primary), and her 8–8 does not cover
+    // the 8–9 its coming pupils hold, so she carries no behörighet here. On
+    // last year's classes Ma8 would be its own 8–8, and she would.
+    expect(before).toEqual([[IDS.anna, true, null]]);
   });
 
   it('P6 readLoadInput and suggest-teachers: the spans the load report, the picker and the requirement checks judge by', async () => {

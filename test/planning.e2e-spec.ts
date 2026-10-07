@@ -3,7 +3,7 @@ import request from 'supertest';
 import { lockingRead, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './utils/staffing-world';
-import { GRUNDSKOLA_2024, IDS, defaultRolloverRows, givenRolloverWorld } from './utils/rollover-world';
+import { GRUNDSKOLA_2024, IDS, defaultRolloverRows, givenRolloverWorld, type Row } from './utils/rollover-world';
 import type { PrismaMock } from './utils/prisma-mock';
 import { PrismaService } from '../src/database/prisma.service';
 import type { AiEngineScheduleRequest } from '../src/optimization/interfaces/ai-engine-payload.interface';
@@ -3563,6 +3563,107 @@ describe('Planning surface (e2e)', () => {
       expect(await proposal()).toBe(spring);
       // And the active year A — superseded now — reads its own rows.
       await request(http()).get(`/api/v1/academic-years/${IDS.yearA}/rosters`).set('x-test-user', admin()).expect(200);
+    });
+
+    it('judges a PATCH that drags a rolled year’s lesson onto a pupil clash on the projected rosters, the same 409 before the activation as after it (admin round-trips)', async () => {
+      const { world, options } = givenSchool(2020);
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+      const inB = (name: string) =>
+        world.rows['studentGroup']!.find((group) => group['academicYearId'] === yearB && group['name'] === name)!['id'] as string;
+      const lesson = (id: string, academicYearId: string, studentGroupId: string, dayOfWeek: number, subjectId: string, name: string): Row => ({
+        id,
+        schoolId: IDS.school,
+        // The school the PATCH joins, with its count of the lesson's year.
+        school: { id: IDS.school, timezone: 'Europe/Stockholm' },
+        academicYearId,
+        subjectId,
+        studentGroupId,
+        teacherId: null,
+        coTeacherId: null,
+        roomId: null,
+        dayOfWeek,
+        startTime: wallClock('08:00'),
+        endTime: wallClock('09:00'),
+        isLocked: false,
+        isGenerated: false,
+        isParked: false,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        subject: { name },
+        extraGroups: [],
+        participants: [],
+      });
+      const dragged = 'f3000000-0000-4000-8000-0000000000e2';
+      world.rows['masterLesson']!.push(
+        // Ma8 (carried with p7a1, who is coming to 8A) on Monday at 08:00.
+        lesson('f3000000-0000-4000-8000-0000000000e1', yearB, inB('Ma8 grupp 1'), 1, IDS.ma, 'Matematik'),
+        // 8A's svenska on Tuesday, dragged onto Monday below.
+        lesson(dragged, yearB, inB('8A'), 2, IDS.sv, 'Svenska'),
+      );
+      const drag = (id: string, dayOfWeek: number) =>
+        request(http()).patch(`/api/v1/master-lessons/${id}`).set('x-test-user', admin()).send({ dayOfWeek });
+
+      // Before the activation: 8A's coming pupils meet Ma8's p7a1.
+      const spring = await drag(dragged, 1).expect(409);
+      expect(JSON.stringify(spring.body)).toContain('Students of this group already have Matematik in this slot.');
+      // Where nobody is, it lands, and goes back.
+      await drag(dragged, 4).expect(200);
+      await drag(dragged, 2).expect(200);
+
+      await activate(yearB);
+      const autumn = await drag(dragged, 1).expect(409);
+      expect(autumn.body.detail ?? autumn.body.message).toBe(spring.body.detail ?? spring.body.message);
+    });
+
+    it('409s a PATCH of a lesson in a year two steps ahead (R6), naming the predecessor', async () => {
+      const { world, options } = givenSchool(2020);
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+      const yearC = 'a0000000-0000-4000-8000-0000000000cc';
+      world.rows['academicYear']!.push({
+        id: yearC,
+        schoolId: IDS.school,
+        name: 'Tredje läsåret',
+        startDate: new Date('2022-08-15T00:00:00Z'),
+        endDate: new Date('2023-06-09T00:00:00Z'),
+        isActive: false,
+        predecessorId: yearB,
+        graduatingGradeLevel: 9,
+      });
+      const b8a = world.rows['studentGroup']!.find((group) => group['academicYearId'] === yearB && group['name'] === '8A')!;
+      const c9a = 'b0000000-0000-4000-8000-0000000000c9';
+      world.rows['studentGroup']!.push({ id: c9a, academicYearId: yearC, name: '9A', kind: 'CLASS', gradeLevel: 9, predecessorId: b8a['id'] });
+      const inC = 'f3000000-0000-4000-8000-0000000000e3';
+      world.rows['masterLesson']!.push({
+        id: inC,
+        schoolId: IDS.school,
+        school: { id: IDS.school, timezone: 'Europe/Stockholm' },
+        academicYearId: yearC,
+        subjectId: IDS.ma,
+        studentGroupId: c9a,
+        teacherId: null,
+        coTeacherId: null,
+        roomId: null,
+        dayOfWeek: 1,
+        startTime: wallClock('08:00'),
+        endTime: wallClock('09:00'),
+        isLocked: false,
+        isGenerated: false,
+        isParked: false,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        subject: { name: 'Matematik' },
+        extraGroups: [],
+        participants: [],
+      });
+      const refused = await request(http())
+        .patch(`/api/v1/master-lessons/${inC}`)
+        .set('x-test-user', admin())
+        .send({ dayOfWeek: 2 })
+        .expect(409);
+      expect(refused.body).toMatchObject({ code: 'ROLLOVER_NOT_ACTIVATED', params: { year: 'Tredje läsåret', predecessor: 'Nästa läsår' } });
+      expect(world.rows['masterLesson']!.find((row) => row['id'] === inC)!['dayOfWeek']).toBe(1);
     });
 
     it('409s every roster reader of a year whose predecessor is not activated (R6), naming the predecessor, and 404s GET rosters for a year RLS hides', async () => {
