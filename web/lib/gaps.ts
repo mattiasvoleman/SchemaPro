@@ -1,7 +1,7 @@
 // Open questions asked of a timetable that has already been laid.
 //
 // The grid can already answer "where does THIS lesson fit" — findOpenSlots in
-// lib/conflicts.ts — but only from inside the create-lesson dialog, with a
+// lib/placement-search.ts — but only from inside the create-lesson dialog, with a
 // class and a subject already chosen. Finslipning needs the questions asked the
 // other way round, of the schedule itself with no lesson in hand: when are
 // these bodies all free at once, who is free at this moment, and — the number
