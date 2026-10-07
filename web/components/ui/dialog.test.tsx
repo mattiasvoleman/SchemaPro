@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render as renderBare, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { NextIntlClientProvider } from "next-intl";
+import type { ReactNode } from "react";
+import en from "@/messages/en.json";
+import sv from "@/messages/sv.json";
 import {
   Dialog,
   DialogClose,
@@ -11,6 +15,21 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "./dialog";
+
+/**
+ * Rendered inside the app's own provider and catalogue: the built-in X takes
+ * its screen-reader name from common.close, and a test with no provider would
+ * prove nothing about which language that name is in.
+ */
+function render(ui: ReactNode, locale: "sv" | "en" = "sv") {
+  return renderBare(ui, {
+    wrapper: ({ children }) => (
+      <NextIntlClientProvider locale={locale} messages={locale === "sv" ? sv : en} timeZone="Europe/Stockholm">
+        {children}
+      </NextIntlClientProvider>
+    ),
+  });
+}
 
 function ExampleDialog(props: { onOpenChange?: (open: boolean) => void }) {
   return (
@@ -94,11 +113,27 @@ describe("Dialog", () => {
     await user.click(screen.getByRole("button", { name: "Open settings" }));
     expect(onOpenChange).toHaveBeenLastCalledWith(true);
 
-    // The X in the corner carries an sr-only "Close" label.
-    await user.click(screen.getByRole("button", { name: "Close" }));
+    // The X in the corner carries an sr-only label, "Stäng" in Swedish.
+    await user.click(screen.getByRole("button", { name: "Stäng" }));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("names the X in the interface's language, not always in English", async () => {
+    // Walk-through 2026-10-07: every dialog's X read "Close" in the Swedish UI.
+    const user = userEvent.setup();
+    render(<ExampleDialog />);
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    expect(screen.getByRole("button", { name: "Stäng" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close" })).not.toBeInTheDocument();
+  });
+
+  it("names the X 'Close' in the English interface", async () => {
+    const user = userEvent.setup();
+    render(<ExampleDialog />, "en");
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
   it("closes via a DialogClose child", async () => {

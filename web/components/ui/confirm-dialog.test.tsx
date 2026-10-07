@@ -105,7 +105,7 @@ describe("ConfirmDialog", () => {
   // each route is blocked while loading AND shown to dismiss once it is not.
   const dismissals: Array<[string, (user: User) => Promise<void>]> = [
     ["Escape", (user) => user.keyboard("{Escape}")],
-    ["the X", (user) => user.click(screen.getByRole("button", { name: "Close" }))],
+    ["the X", (user) => user.click(screen.getByRole("button", { name: "close" }))],
     [
       "an outside press",
       async () => {
@@ -149,10 +149,10 @@ describe("ConfirmDialog", () => {
 
   it("greys out the X only while loading", () => {
     const { view } = renderDialog({ loading: true });
-    expect(screen.getByRole("button", { name: "Close" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "close" })).toBeDisabled();
 
     view.unmount();
     renderDialog({ loading: false });
-    expect(screen.getByRole("button", { name: "Close" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "close" })).not.toBeDisabled();
   });
 });
