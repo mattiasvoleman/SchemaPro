@@ -11,6 +11,7 @@ import { lockingRead, rawSql, type LockedTable } from '../../test/utils/locking-
 import type { PrismaService } from '../database/prisma.service';
 import { Role } from '../auth/enums/role.enum';
 import { DUTY_SLOT_REASON, TeacherDutiesService, assertDutySlot } from './teacher-duties.service';
+import { dutySlotConstraintData, isOnSolverGrid } from './duty-slot';
 
 const SCHOOL_ID = '33333333-3333-4333-8333-333333333333';
 const ME = '22222222-2222-4222-8222-222222222222';
@@ -180,6 +181,10 @@ describe('TeacherDutiesService', () => {
           schoolId: SCHOOL_ID,
           resourceType: 'TEACHER',
           userId: COLLEAGUE,
+          roomId: null,
+          studentGroupId: null,
+          minGradeLevel: null,
+          maxGradeLevel: null,
           type: 'UNAVAILABLE',
           reason: DUTY_SLOT_REASON,
           dayOfWeek: 2,
@@ -189,6 +194,10 @@ describe('TeacherDutiesService', () => {
         },
         select: { id: true },
       });
+      // The shared builder, which the läsårsrullning writes a carried slot with.
+      expect(tx.availabilityConstraint.create.mock.calls[0]![0].data).toEqual(
+        dutySlotConstraintData(SCHOOL_ID, COLLEAGUE, { dayOfWeek: 2, startTime: '10:00', endTime: '10:20' }),
+      );
       expect(tx.teacherDuty.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ blockedConstraintId: NEW_CONSTRAINT_ID }) }),
       );
@@ -271,6 +280,25 @@ describe('TeacherDutiesService', () => {
     it('accepts a slot on the grid, HH:MM:SS with zero seconds included', () => {
       expect(() => assertDutySlot({ dayOfWeek: 5, startTime: '15:00:00', endTime: '16:30' })).not.toThrow();
     });
+
+    it('answers the same question as the non-throwing isOnSolverGrid the rollover asks', () => {
+      for (const slot of [
+        { dayOfWeek: 2, startTime: '10:00:30', endTime: '10:20' },
+        { dayOfWeek: 2, startTime: '10:00', endTime: '10:22' },
+        { dayOfWeek: 2, startTime: '10:20', endTime: '10:20' },
+        { dayOfWeek: 2, startTime: '11:00', endTime: '10:00' },
+        { dayOfWeek: 5, startTime: '15:00:00', endTime: '16:30' },
+        { dayOfWeek: 1, startTime: '07:55', endTime: '08:10' },
+      ]) {
+        let throws = false;
+        try {
+          assertDutySlot(slot);
+        } catch {
+          throws = true;
+        }
+        expect({ slot, onGrid: isOnSolverGrid(slot) }).toEqual({ slot, onGrid: !throws });
+      }
+    });
   });
 
   describe('update', () => {
@@ -309,14 +337,7 @@ describe('TeacherDutiesService', () => {
       tx.teacherDuty.update.mockResolvedValue(storedDuty());
       await service.update(DUTY_ID, { blockedSlot: { dayOfWeek: 3, startTime: '12:00', endTime: '12:30' } }, testUser());
       expect(tx.availabilityConstraint.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
-          resourceType: 'TEACHER',
-          type: 'UNAVAILABLE',
-          userId: COLLEAGUE,
-          dayOfWeek: 3,
-          date: null,
-          reason: DUTY_SLOT_REASON,
-        }),
+        data: dutySlotConstraintData(SCHOOL_ID, COLLEAGUE, { dayOfWeek: 3, startTime: '12:00', endTime: '12:30' }),
         select: { id: true },
       });
       expect(tx.teacherDuty.update).toHaveBeenCalledWith(
