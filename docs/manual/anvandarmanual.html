@@ -1740,8 +1740,10 @@
     <span class="label">Ångra en rullning</span>
     <p>
       Så länge det nya läsåret inte är aktiverat ångras rullningen genom att
-      det tas bort under <span class="path">Planering › Läsår</span>. Ett
-      läsår som elever har sina klasser i går inte att ta bort. Ett läsår kan
+      det tas bort under <span class="path">Planering › Läsår</span>. Bara
+      ett kommande läsår kan tas bort där: ett avslutat läsår har sin kalender
+      och sin närvaro kvar, och de skulle följa med. Ett läsår som elever —
+      också inaktiva — har sina klasser i går inte att ta bort. Ett läsår kan
       bara rullas vidare en gång; vill du göra om, ta bort det nya först.
     </p>
   </div>
@@ -1775,7 +1777,31 @@
   <p>
     Mellan rullningen och aktiveringen finns varje klassnamn två gånger.
     Klassväljarna visar därför bara det aktiva läsårets klasser, eller namnger
-    läsåret: <em>8A (2027/28)</em>.
+    läsåret: <em>8A (2027/28)</em>. Det kommande läsåret går inte heller att
+    schemalägga innan det är aktiverat: dess klasser har inga elever än, så
+    elevkrockar och salsplatser skulle räknas fel.
+  </p>
+  <p>
+    En elev som var inaktiv vid aktiveringen står kvar i förra årets klass.
+    Blir eleven aktiv igen visar läsårssidan <em>1 elev står kvar i förra
+    årets klass</em> på det aktiva läsåret; tryck
+    <span class="ui">Flytta kvarvarande elever</span>, så flyttas eleven dit
+    klassen gick. Har elever bytt klass mellan rullningen och aktiveringen
+    säger förhandsvisningen hur många gruppmedlemskap som inte längre stämmer
+    — se då över undervisningsgrupperna efteråt.
+  </p>
+  <p>
+    Ett läsår som skapats för hand, utan rullning, flyttar inga elever när det
+    aktiveras: alla stannar i klasser som hör till det gamla läsåret.
+    Förhandsvisningen säger det och ber om en extra bekräftelse — oftast är
+    det <span class="ui">Rulla vidare</span> du vill göra.
+  </p>
+  <p>
+    Synkar ni elever från ett kommunalt elevregister (SS12000) kan registret
+    byta klasser några veckor efter er aktivering. Så länge registret skickar
+    förra årets klassnamn — eller redan nästa års — låter synken eleverna stå
+    kvar i sina klasser och räknar dem som <em>classesKept</em> i stället för
+    att flytta dem bakåt eller hoppa över en årskurs.
   </p>
 
   <div class="check">
@@ -1850,12 +1876,12 @@
       </tr>
       <tr>
         <td class="k">Rulla vidare är avstängd</td>
-        <td>Läsåret är rullat men inte aktiverat, så dess klasser har inga elever än.</td>
-        <td>Aktivera läsåret först (8.2).</td>
+        <td>Läsåret är rullat men inte aktiverat, så dess klasser har inga elever än — eller, på det aktiva läsåret, en elev står kvar i förra årets klass.</td>
+        <td>Aktivera läsåret först, eller tryck <span class="ui">Flytta kvarvarande elever</span> (8.2).</td>
       </tr>
       <tr>
         <td class="k">Ett läsår går inte att ta bort</td>
-        <td>Elever har sina klasser i det.</td>
+        <td>Elever, också inaktiva, har sina klasser i det — eller läsåret är avslutat, och dess närvaro skulle följa med.</td>
         <td>Det skyddar eleverna från att bli utan klass. Före aktiveringen går det nya läsåret att ta bort.</td>
       </tr>
       <tr>
