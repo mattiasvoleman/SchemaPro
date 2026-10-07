@@ -5590,3 +5590,354 @@ BEGIN
     RAISE EXCEPTION 'rollover: % of the two link triggers are present, enabled, SECURITY DEFINER in app and closed to PUBLIC', n;
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 20: a carried tjänst is an ordinary row.
+--
+-- Staffing Fas 5 carries tjänster and uppdrag into the next läsår, inside the
+-- rollover and afterwards into a year rolled without them. It adds no policy,
+-- no trigger and no column: a carried post is a TeacherEmployments row of the
+-- new year, a carried uppdrag a TeacherDuties row linked to a NEW weekly
+-- UNAVAILABLE TEACHER constraint with the reason 'Uppdrag'. Everything this
+-- section asserts is therefore a claim that the arms written for Fas 1 and
+-- Fas 2 already hold for those rows, written as the carry writes them:
+--
+--  - the admin writes them, and the Fas 2 link guard (TD409) refuses the same
+--    duty pointed at a colleague's constraint, carry or not;
+--  - the first teacher reads exactly their own post and uppdrag of the new
+--    year, none of the colleague's, writes no post, and may not move or
+--    delete the slot their carried uppdrag holds (TD403);
+--  - the colleague reads that slot through availability_teacher_select, with
+--    the reason 'Uppdrag' and nothing of the uppdrag behind it, and none of
+--    the first teacher's posts or uppdrag in either year (C20: the HR
+--    argument, made concrete);
+--  - a pupil and a guardian read none of it;
+--  - deleting the new year takes its posts, its uppdrag and the carried slot,
+--    and leaves the source year's uppdrag and slot as they were.
+--
+-- Two years of its own, linked as the rollover links them, with one class in
+-- each, so the seed's active year is untouched and the whole runs in one
+-- transaction that is rolled back.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid; colleague uuid;
+  y1 uuid; y2 uuid; g7 uuid; g8 uuid;
+  s_old uuid; c_new uuid; c_col uuid;
+  n bigint;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'carried: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  -- Section 17's two teachers, by the same ordering.
+  SELECT id INTO me FROM "Users"
+   WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO colleague FROM "Users"
+   WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" OFFSET 1 LIMIT 1;
+  IF me IS NULL OR colleague IS NULL THEN
+    RAISE EXCEPTION 'carried: the seed lacks two teachers (%, %)', me, colleague;
+  END IF;
+
+  -- The source year and its successor, a class in each, linked.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "updatedAt")
+  VALUES (school, 'RLS20 källa', DATE '2089-08-15', DATE '2090-06-10', now()) RETURNING id INTO y1;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "predecessorId", "graduatingGradeLevel", "updatedAt")
+  VALUES (school, 'RLS20 mål', DATE '2090-08-15', DATE '2091-06-10', y1, 9, now()) RETURNING id INTO y2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (school, y1, 'RLS20 7A', 7, now()) RETURNING id INTO g7;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "predecessorId", "updatedAt")
+  VALUES (school, y2, 'RLS20 8A', 8, g7, now()) RETURNING id INTO g8;
+
+  -- The source year's rows: both posts, the first teacher's mentorskap with its slot.
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "reductionPercent", signature, "updatedAt")
+  VALUES (school, me, y1, 100, 10, 'R20A', now()), (school, colleague, y1, 80, 0, 'R20B', now());
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 2, '15:00', '15:30', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id INTO s_old;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek",
+                               "studentGroupId", "blockedConstraintId", "updatedAt")
+  VALUES (school, me, y1, 'MENTORSKAP', 'RLS20 Mentor 7A', 60, g7, s_old, now());
+
+  -- The carry's writes, in its order and shape: the posts (the same
+  -- signatures, which the per-year key allows), a NEW slot from the builder's
+  -- columns (the ones it leaves empty written as NULL), and the uppdrag on
+  -- the successor class, relabelled, linked to the new slot. The colleague
+  -- gets an uppdrag without a slot, so the first teacher's reads below have
+  -- something of theirs to not see.
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "reductionPercent", signature, "updatedAt")
+  VALUES (school, me, y2, 100, 10, 'R20A', now()), (school, colleague, y2, 80, 0, 'R20B', now());
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "roomId", "studentGroupId",
+                                         "minGradeLevel", "maxGradeLevel", "dayOfWeek", "date",
+                                         "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, NULL, NULL, NULL, NULL, 2, NULL, '15:00', '15:30', 'UNAVAILABLE', 'Uppdrag', now())
+  RETURNING id INTO c_new;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek",
+                               "studentGroupId", "blockedConstraintId", "updatedAt")
+  VALUES (school, me, y2, 'MENTORSKAP', 'RLS20 Mentor 8A', 60, g8, c_new, now());
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, colleague, y2, 'RASTVAKT', 'RLS20 Rastvakt', 30, now());
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "academicYearId" = y2;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'carried: an admin could not write the carried uppdrag (% row(s))', n;
+  END IF;
+  IF c_new = s_old THEN
+    RAISE EXCEPTION 'carried: the carried uppdrag shares the source year''s slot';
+  END IF;
+
+  -- The same uppdrag pointed at the colleague's constraint: the Fas 2 guard
+  -- refuses it whoever writes it. Only TD409 is caught.
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', colleague, 2, '15:00', '15:30', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id INTO c_col;
+  BEGIN
+    INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek",
+                                 "studentGroupId", "blockedConstraintId", "updatedAt")
+    VALUES (school, me, y2, 'MENTORSKAP', 'RLS20 Fel lärare', 60, g8, c_col, now());
+    RAISE EXCEPTION 'carried: a carried uppdrag took the colleague''s constraint as its slot';
+  EXCEPTION WHEN SQLSTATE 'TD409' THEN NULL;
+  END;
+  DELETE FROM "AvailabilityConstraints" WHERE id = c_col;
+
+  -- Handed to the blocks below, which act as people who cannot read these.
+  PERFORM set_config('app.test_rls20_y1', y1::text, true);
+  PERFORM set_config('app.test_rls20_y2', y2::text, true);
+  PERFORM set_config('app.test_rls20_me', me::text, true);
+  PERFORM set_config('app.test_rls20_slot', c_new::text, true);
+  PERFORM set_config('app.test_rls20_old_slot', s_old::text, true);
+END
+$$;
+
+-- As the first teacher: their own carried post and uppdrag, nothing of the
+-- colleague's, no post written, and the carried slot not theirs to move.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE
+  me uuid := app.current_user_id();
+  y2 uuid := current_setting('app.test_rls20_y2')::uuid;
+  slot uuid := current_setting('app.test_rls20_slot')::uuid;
+  n bigint;
+BEGIN
+  IF me IS NULL OR app.current_user_role() <> 'TEACHER' OR me <> current_setting('app.test_rls20_me')::uuid THEN
+    RAISE EXCEPTION 'carried: expected to be acting as the first TEACHER of school A, am % (%)',
+      app.current_user_role(), me;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "academicYearId" = y2;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'carried: a teacher reads % posts in the new year, expected exactly their own', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "academicYearId" = y2 AND "userId" = me AND "reductionPercent" = 10;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'carried: a teacher cannot read their own carried post';
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "academicYearId" = y2;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'carried: a teacher reads % uppdrag in the new year, expected exactly their own', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "academicYearId" = y2 AND "blockedConstraintId" = slot;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'carried: a teacher cannot read their own carried uppdrag with its slot';
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "userId" <> me;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'carried: a teacher reads % of a colleague''s uppdrag', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "userId" <> me;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'carried: a teacher reads % of a colleague''s posts', n;
+  END IF;
+
+  -- No post written: not a new one, not their own carried one.
+  BEGIN
+    INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+    VALUES (app.current_school_id(), me, current_setting('app.test_rls20_y1')::uuid, 50, now());
+    RAISE EXCEPTION 'carried: a teacher wrote themselves a post';
+  EXCEPTION WHEN insufficient_privilege OR unique_violation THEN NULL;
+  END;
+  UPDATE "TeacherEmployments" SET "reductionPercent" = 0, "updatedAt" = now() WHERE "academicYearId" = y2;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'carried: a teacher rewrote % carried post(s)', n;
+  END IF;
+  DELETE FROM "TeacherEmployments" WHERE "academicYearId" = y2;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'carried: a teacher deleted % carried post(s)', n;
+  END IF;
+
+  -- The carried slot is their own TEACHER row, which availability_teacher_modify
+  -- admits; the Fas 2 trigger refuses it because a duty holds it.
+  BEGIN
+    UPDATE "AvailabilityConstraints" SET "startTime" = '14:30' WHERE id = slot;
+    RAISE EXCEPTION 'carried: a teacher moved the slot their carried uppdrag holds';
+  EXCEPTION WHEN SQLSTATE 'TD403' THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "AvailabilityConstraints" WHERE id = slot;
+    RAISE EXCEPTION 'carried: a teacher deleted the slot their carried uppdrag holds';
+  EXCEPTION WHEN SQLSTATE 'TD403' THEN NULL;
+  END;
+END
+$$;
+
+-- As the colleague: the carried slot is a time the first teacher is busy,
+-- 'Uppdrag' and nothing more; their post and uppdrag stay theirs.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" OFFSET 1 LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE
+  me uuid := current_setting('app.test_rls20_me')::uuid;
+  y2 uuid := current_setting('app.test_rls20_y2')::uuid;
+  why text; n bigint;
+BEGIN
+  IF app.current_user_role() <> 'TEACHER' OR app.current_user_id() = me THEN
+    RAISE EXCEPTION 'carried: expected to be acting as the colleague, am % (%)', app.current_user_role(), app.current_user_id();
+  END IF;
+  SELECT count(*), max(reason) INTO n, why FROM "AvailabilityConstraints"
+   WHERE id = current_setting('app.test_rls20_slot')::uuid;
+  IF n <> 1 OR why IS DISTINCT FROM 'Uppdrag' THEN
+    RAISE EXCEPTION 'carried: the colleague reads the carried slot % time(s) with reason %, expected once with ''Uppdrag''', n, why;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "userId" = me;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'carried: the colleague reads % of the first teacher''s uppdrag', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "userId" = me;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'carried: the colleague reads % of the first teacher''s posts', n;
+  END IF;
+  -- Not vacuous: the colleague does read their own carried rows.
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "academicYearId" = y2;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'carried: the colleague reads % posts in the new year, expected their own one', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE "academicYearId" = y2;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'carried: the colleague reads % uppdrag in the new year, expected their own one', n;
+  END IF;
+END
+$$;
+
+-- A pupil and a guardian of the same school: none of it.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'carried: expected to be acting as a STUDENT of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT (SELECT count(*) FROM "TeacherEmployments") + (SELECT count(*) FROM "TeacherDuties") INTO n;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'carried: a pupil reads % posts or uppdrag', n;
+  END IF;
+END
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'carried: expected to be acting as a GUARDIAN of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT (SELECT count(*) FROM "TeacherEmployments") + (SELECT count(*) FROM "TeacherDuties") INTO n;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'carried: a guardian reads % posts or uppdrag', n;
+  END IF;
+END
+$$;
+
+-- Back as the admin: the teachers' writes changed nothing, and deleting the
+-- new year takes everything carried into it and nothing of the source.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  y1 uuid := current_setting('app.test_rls20_y1')::uuid;
+  y2 uuid := current_setting('app.test_rls20_y2')::uuid;
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "academicYearId" = y2 AND "reductionPercent" IN (10, 0);
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'carried: % of the two carried posts survive the teachers'' refused writes', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AvailabilityConstraints"
+   WHERE id = current_setting('app.test_rls20_slot')::uuid AND "startTime" = '15:00';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'carried: the carried slot moved or vanished under the teacher''s refused writes';
+  END IF;
+
+  DELETE FROM "AcademicYears" WHERE id = y2;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'carried: an admin could not delete the new year (% row(s))', n;
+  END IF;
+  SELECT (SELECT count(*) FROM "TeacherEmployments" WHERE "academicYearId" = y2)
+       + (SELECT count(*) FROM "TeacherDuties" WHERE "academicYearId" = y2) INTO n;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'carried: a deleted year kept % carried post(s) or uppdrag', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AvailabilityConstraints" WHERE id = current_setting('app.test_rls20_slot')::uuid;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'carried: a deleted year''s carried uppdrag left its slot behind';
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherDuties" d
+    JOIN "AvailabilityConstraints" c ON c.id = d."blockedConstraintId"
+   WHERE d."academicYearId" = y1 AND c.id = current_setting('app.test_rls20_old_slot')::uuid
+     AND c."dayOfWeek" = 2 AND c."startTime" = '15:00';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'carried: deleting the new year touched the source year''s uppdrag or its slot';
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmployments" WHERE "academicYearId" = y1;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'carried: deleting the new year took % of the source year''s two posts', 2 - n;
+  END IF;
+END
+$$;
+ROLLBACK;
