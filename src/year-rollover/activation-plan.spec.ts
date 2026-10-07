@@ -1,8 +1,10 @@
 import {
   MAX_CHAIN_HOPS,
   chainOf,
+  homeClassOverlay,
   pendingMoves,
   planActivation,
+  planMoves,
   type ActivationGroup,
   type ActivationSource,
   type ActivationStudent,
@@ -204,5 +206,48 @@ describe('planActivation', () => {
     expect(chainOf(years, `Y${MAX_CHAIN_HOPS + 2}`)).toHaveLength(MAX_CHAIN_HOPS);
     const cycle = [year('X', 'X', '2000-01-01', '2000-06-01', { predecessorId: 'Z' }), year('Z', 'Z', '2000-01-01', '2000-06-01', { predecessorId: 'X' })];
     expect(chainOf(cycle, 'X').map((previous) => previous.id)).toEqual(['Z']);
+  });
+
+  it('keeps every plan hash it had before planMoves was split out of it (refactor guard)', () => {
+    // The hashes the fixtures above had at f5ff8da, before the walk moved
+    // into planMoves: a preview taken on the old code must still execute.
+    const hashOf = (source: ActivationSource, today: string) => planActivation(source, today).planHash;
+    const b = 'c3a8076a7156ec75bbfc87028b303871e5e606d9a1ecf379ee5c5f9890ddb8d7';
+    expect(hashOf(school(), '2027-06-14')).toBe(b);
+    expect(hashOf(school(), '2027-06-11')).toBe(b);
+    expect(hashOf({ ...school(), yearId: 'C' }, '2028-07-01')).toBe(
+      '8c617fc88dbf65c2fa57c4ade7b41050ebe6dad7f8b3b28fce678c2e85980a56',
+    );
+    const later = school();
+    later.students.push(pupil('p8', 'c9'));
+    expect(hashOf(later, '2027-06-14')).toBe(b);
+    expect(hashOf({ ...school(), yearId: 'A' }, '2027-07-01')).toBe(
+      '6a3b57bc666e7d36550a03bf09246ae6bbe18d54aba6c5d3bb9b5f1c3e1ba925',
+    );
+    expect(hashOf({ ...school(), yearId: 'S' }, '2027-06-14')).toBe(
+      'b75a8820bda19f92751ceafd54388c420fa289143515efd8b3f1c23c5a6c5a8d',
+    );
+  });
+
+  it('plans with the walk planMoves makes, whatever the day, and homeClassOverlay maps exactly its writes', () => {
+    for (const source of [school(), { ...school(), yearId: 'C' }, { ...school(), yearId: 'A' }]) {
+      const moves = planMoves(source);
+      for (const today of ['2000-01-01', '2027-06-14', '9999-12-31']) {
+        const plan = planActivation(source, today);
+        expect(plan.writes).toEqual(moves.writes);
+        expect(plan.graduates.studentIds).toEqual([...moves.graduates].sort());
+        expect(plan.unplaced.studentIds).toEqual(moves.unplaced.map((entry) => entry.studentId).sort());
+        expect(plan).toMatchObject({
+          alreadyInYear: moves.alreadyInYear,
+          inLaterYear: moves.inLaterYear,
+          otherOrNone: moves.otherOrNone,
+          inactiveUntouched: moves.inactiveUntouched,
+        });
+      }
+    }
+    const homeOf = homeClassOverlay(planMoves(school()));
+    expect(Object.fromEntries(homeOf)).toEqual({ p1: 'b8', p2: 'b8', p3: 'b9', p4: null, p5: null, p6: null });
+    // Inactive p11, p7 already in B, p9 in an unrelated year and p10 in none are not in it.
+    for (const id of ['p7', 'p9', 'p10', 'p11']) expect(homeOf.has(id)).toBe(false);
   });
 });

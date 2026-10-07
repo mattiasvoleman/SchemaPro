@@ -195,8 +195,9 @@ function laterYearsOf(years: readonly ActivationYear[], yearId: string): Set<str
 }
 
 /**
- * The activation of `source.yearId` as of `today` (YYYY-MM-DD, Europe/
- * Stockholm). Pure.
+ * Who the activation of `source.yearId` would move, and where. Pure, and
+ * independent of the day: `planActivation` adds what the day decides (too
+ * early) and what the admin is told (superseded, out-of-date memberships).
  *
  * For each active pupil whose home class is in a year of the chain, the
  * successor links are followed into the year. The class reached must be a
@@ -206,8 +207,28 @@ function laterYearsOf(years: readonly ActivationYear[], yearId: string): Set<str
  * at or above the next year's graduatingGradeLevel, unplaced otherwise.
  * Pupils already in the year, in a later year, in an unrelated year or in no
  * class, and inactive pupils, are counted and left alone.
+ *
+ * ONE WALK. The activation writes `writes`, and the projected rosters of a
+ * year not yet activated (projected-rosters.ts) read the same `writes`
+ * through `homeClassOverlay`, so "who would be in 8A" and "who the activation
+ * puts in 8A" are one computation, not two that agree.
  */
-export function planActivation(source: ActivationSource, today: string): ActivationPlan {
+export interface PlannedMoves {
+  /** Every (from, to) pair the execute writes, sorted by that key, ids sorted. */
+  writes: ActivationMove[];
+  graduates: string[];
+  unplaced: ActivationPlan['unplaced']['pupils'];
+  alreadyInYear: number;
+  inLaterYear: number;
+  otherOrNone: number;
+  inactiveUntouched: number;
+  /** The last day of the years whose pupils move: activation waits for it. */
+  runsUntil: { date: string; name: string } | null;
+  /** The later year of the chain holding the most active pupils, and how many they hold in all. */
+  supersededBy: { yearId: string; pupils: number } | null;
+}
+
+export function planMoves(source: ActivationSource): PlannedMoves {
   const yearById = new Map(source.years.map((year) => [year.id, year]));
   const year = yearById.get(source.yearId)!;
   const chain = chainOf(source.years, year.id);
@@ -247,9 +268,7 @@ export function planActivation(source: ActivationSource, today: string): Activat
   let inLaterYear = 0;
   let otherOrNone = 0;
   let inactiveUntouched = 0;
-  // The last day of the years whose pupils move: activation waits for it.
   let runsUntil: { date: string; name: string } | null = null;
-
   for (const student of source.students) {
     const home = student.studentGroupId ? groupById.get(student.studentGroupId) : undefined;
     if (!student.isActive) {
@@ -303,14 +322,6 @@ export function planActivation(source: ActivationSource, today: string): Activat
     }
   }
 
-  const problems: ActivationProblem[] = [];
-  if (runsUntil !== null && today <= runsUntil.date) {
-    problems.push({
-      code: 'YEAR_ACTIVATION_TOO_EARLY',
-      blocking: true,
-      params: { year: runsUntil.name, endDate: runsUntil.date },
-    });
-  }
   // A year that a later year of its own chain already holds the pupils of:
   // activating it again would leave it active with empty classes (and the
   // year that holds them inactive). Any later year counts, not only the
@@ -324,13 +335,76 @@ export function planActivation(source: ActivationSource, today: string): Activat
     const at = yearOfGroup.get(student.studentGroupId);
     if (at !== undefined && later.has(at)) held.set(at, (held.get(at) ?? 0) + 1);
   }
+  let supersededBy: PlannedMoves['supersededBy'] = null;
   if (held.size > 0) {
     const [holderId] = [...held.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]!;
     const pupils = [...held.values()].reduce((sum, count) => sum + count, 0);
+    supersededBy = { yearId: holderId, pupils };
+  }
+
+  const sorted = [...writes.values()]
+    .map((move) => ({ ...move, studentIds: [...move.studentIds].sort() }))
+    .sort((a, b) =>
+      `${a.fromGroupId}>${a.toGroupId ?? ''}` < `${b.fromGroupId}>${b.toGroupId ?? ''}` ? -1 : 1,
+    );
+  return {
+    writes: sorted,
+    graduates,
+    unplaced,
+    alreadyInYear,
+    inLaterYear,
+    otherOrNone,
+    inactiveUntouched,
+    runsUntil,
+    supersededBy,
+  };
+}
+
+/**
+ * Every pupil whose home class the moves change, and the class they get: the
+ * year's class, or null for a graduate and an unplaced pupil. The ONLY place
+ * where the activation's writes become a home-class map — the projected
+ * rosters read through it, so they move exactly the pupils the execute's
+ * `UPDATE … WHERE id IN (…) AND studentGroupId = from` moves.
+ */
+export function homeClassOverlay(moves: Pick<PlannedMoves, 'writes'>): Map<string, string | null> {
+  const homeOf = new Map<string, string | null>();
+  for (const move of moves.writes) {
+    for (const studentId of move.studentIds) homeOf.set(studentId, move.toGroupId);
+  }
+  return homeOf;
+}
+
+/**
+ * The activation of `source.yearId` as of `today` (YYYY-MM-DD, Europe/
+ * Stockholm): planMoves, and what the day and the memberships say about it.
+ * Pure.
+ */
+export function planActivation(source: ActivationSource, today: string): ActivationPlan {
+  const moves = planMoves(source);
+  const yearById = new Map(source.years.map((year) => [year.id, year]));
+  const year = yearById.get(source.yearId)!;
+  const chain = chainOf(source.years, year.id);
+  const groupById = new Map(source.groups.map((group) => [group.id, group]));
+  const successorOf = new Map<string, ActivationGroup>();
+  for (const group of source.groups) {
+    if (group.predecessorId) successorOf.set(group.predecessorId, group);
+  }
+  const { runsUntil, graduates, unplaced } = moves;
+
+  const problems: ActivationProblem[] = [];
+  if (runsUntil !== null && today <= runsUntil.date) {
+    problems.push({
+      code: 'YEAR_ACTIVATION_TOO_EARLY',
+      blocking: true,
+      params: { year: runsUntil.name, endDate: runsUntil.date },
+    });
+  }
+  if (moves.supersededBy) {
     problems.push({
       code: 'YEAR_IS_SUPERSEDED',
       blocking: true,
-      params: { year: year.name, successor: yearById.get(holderId)!.name, pupils },
+      params: { year: year.name, successor: yearById.get(moves.supersededBy.yearId)!.name, pupils: moves.supersededBy.pupils },
     });
   }
 
@@ -352,7 +426,7 @@ export function planActivation(source: ActivationSource, today: string): Activat
   const carriedMembers = new Set((source.members ?? []).map((member) => member.studentGroupId));
   let membershipsMissing = 0;
   let membershipsStale = 0;
-  for (const move of writes.values()) {
+  for (const move of moves.writes) {
     for (const studentId of move.studentIds) {
       const held = new Set(groupsOf.get(studentId) ?? []);
       if (move.toGroupId === null) {
@@ -381,11 +455,7 @@ export function planActivation(source: ActivationSource, today: string): Activat
     });
   }
 
-  const sorted = [...writes.values()]
-    .map((move) => ({ ...move, studentIds: [...move.studentIds].sort() }))
-    .sort((a, b) =>
-      `${a.fromGroupId}>${a.toGroupId ?? ''}` < `${b.fromGroupId}>${b.toGroupId ?? ''}` ? -1 : 1,
-    );
+  const sorted = moves.writes;
   const active = source.years.find((candidate) => candidate.isActive) ?? null;
   const planHash = createHash('sha256')
     .update(
@@ -417,10 +487,10 @@ export function planActivation(source: ActivationSource, today: string): Activat
       studentIds: unplaced.map((pupil) => pupil.studentId).sort(),
       pupils: [...unplaced].sort((a, b) => (a.studentId < b.studentId ? -1 : 1)),
     },
-    alreadyInYear,
-    inLaterYear,
-    otherOrNone,
-    inactiveUntouched,
+    alreadyInYear: moves.alreadyInYear,
+    inLaterYear: moves.inLaterYear,
+    otherOrNone: moves.otherOrNone,
+    inactiveUntouched: moves.inactiveUntouched,
     problems,
     blocking: problems.some((problem) => problem.blocking),
     planHash,
