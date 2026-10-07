@@ -5,11 +5,18 @@
 // Every leader allocates teaching to teachers BEFORE it timetables and shows
 // Soll/Ist — Skola24's Tjänst %/*Planerad tjänst, Untis' Plan/week and Percent
 // of target, Lectio's one bar per teacher. This page is that layer for
-// SchemaPro, read-only in this phase: the numbers come from GET /staffing/load
-// (computed by the gateway in one RLS transaction) and nothing on the matrix
-// writes a requirement. Staffing still happens in the timplan's own dialog,
-// which now shows a behörighet badge and the minutes left per candidate from
-// the same report.
+// SchemaPro. The numbers come from GET /staffing/load (computed by the gateway
+// in one RLS transaction).
+//
+// A WORKSPACE SINCE FAS 2, not a report. An unstaffed row is staffed from the
+// "Obemannade rader" panel (Föreslå lärare: the gateway's ranking, one click
+// assigns), a row is handed on from the teacher's drawer, and the drawer holds
+// the teacher's uppdrag. Every one of those writes is a PATCH of the
+// timplanspost's teacherId, which the gateway checks against the policy in
+// the write's own transaction: WARN saves and comes back with `warnings`,
+// shown in the banner below the KPI strip; REFUSE is a 409 shown where the
+// click was. The matrix itself stays read-only — a cell sums several groups,
+// so it cannot say which row a click would mean.
 //
 // TWO TOGGLES, BOTH ABOUT WHAT A NUMBER MEANS. Standardvecka / Toppvecka
 // because "minutes per week" is two numbers the moment a school has an
@@ -30,10 +37,9 @@
 // it, and the notice about the missing riktmärke has to be able to point at
 // the field without a page change. See staffing-policy-card.tsx.
 
-import { useMemo, useState } from "react";
+import { Suspense, lazy, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Grid3x3, Settings2, TriangleAlert, Users } from "lucide-react";
-import { Link } from "@/i18n/navigation";
 import {
   useAcademicYears,
   useGroups,
@@ -48,10 +54,13 @@ import {
   useTeacherQualifications,
 } from "@/lib/staffing-queries";
 import { kpis, type UnitView, type WeekView } from "@/lib/staffing-view";
+import type { StaffingWarning } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
+import { BottlenecksPanel } from "@/components/staffing/bottlenecks-panel";
+import { WarningsNotice } from "@/components/staffing/staffing-notices";
 import { StaffingMatrix } from "@/components/staffing/staffing-matrix";
+import { UnstaffedPanel } from "@/components/staffing/unstaffed-panel";
 import { StaffingPolicyCard } from "@/components/staffing/staffing-policy-card";
-import { TeacherDrawer } from "@/components/staffing/teacher-drawer";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -63,6 +72,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+/**
+ * The drawer is click-opened, so it is React's lazy() — not next/dynamic,
+ * whose loader runtime costs 1.4KB of its own (see admin/people). Measured
+ * 2026-10-07 with Fas 2's cards in it (uppdrag, timplansposter, the ranked
+ * suggestions): 188.0KB own JS static, 175.6KB lazy, and no other route moved
+ * by more than ±0.1KB — so the re-slicing P1 paid for a lazy dialog did not
+ * happen here. Nothing lazy is reachable during SSR: no teacher is open on
+ * the first render.
+ */
+const TeacherDrawer = lazy(() =>
+  import("@/components/staffing/teacher-drawer").then((module) => ({
+    default: module.TeacherDrawer,
+  })),
+);
 
 export default function StaffingPage() {
   const t = useTranslations("staffing");
@@ -87,6 +111,8 @@ export default function StaffingPage() {
   const [unit, setUnit] = useState<UnitView>("minutes");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openTeacherId, setOpenTeacherId] = useState<string | null>(null);
+  /** What WARN mode said about the last assignment made from the panel. */
+  const [warnings, setWarnings] = useState<StaffingWarning[]>([]);
 
   /**
    * One gate for every query a NUMBER is printed from — the report and the
@@ -108,6 +134,11 @@ export default function StaffingPage() {
   };
   const groupName = (groupId: string) =>
     groups?.find((group) => group.id === groupId)?.name ?? "—";
+  /** The läsår's own groups: two years may both own a "7A". */
+  const yearGroups = useMemo(
+    () => (groups ?? []).filter((group) => group.academicYearId === activeYearId),
+    [groups, activeYearId],
+  );
 
   const figures = report ? kpis(report) : null;
   const noTarget = policy !== undefined && (policy === null || policy.fullTimeTeachingMinutesPerWeek === null);
@@ -184,7 +215,7 @@ export default function StaffingPage() {
           ) : null}
 
           {figures ? (
-            <dl className="grid gap-3 sm:grid-cols-3">
+            <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-lg border bg-card p-4">
                 <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   {t("kpiUnstaffed")}
@@ -209,8 +240,22 @@ export default function StaffingPage() {
                 </dt>
                 <dd className="mt-1 text-2xl font-semibold tabular-nums">{figures.overTarget}</dd>
               </div>
+              <div className="rounded-lg border bg-card p-4">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {t("kpiBottlenecks")}
+                </dt>
+                {figures.bottlenecks === null ? (
+                  <dd className="mt-1 text-sm text-foreground" title={t("kpiBottlenecksNotComputedHint")}>
+                    {t("kpiUnqualifiedNotRecorded")}
+                  </dd>
+                ) : (
+                  <dd className="mt-1 text-2xl font-semibold tabular-nums">{figures.bottlenecks}</dd>
+                )}
+              </div>
             </dl>
           ) : null}
+
+          <WarningsNotice warnings={warnings} onDismiss={() => setWarnings([])} />
 
           <div className="flex flex-wrap items-center gap-3">
             <Tabs value={week} onValueChange={(value) => setWeek(value as WeekView)}>
@@ -246,51 +291,40 @@ export default function StaffingPage() {
             />
           )}
 
-          <section className="rounded-lg border bg-card p-4" aria-labelledby="staffing-unstaffed">
-            <h2 id="staffing-unstaffed" className="font-semibold">
-              {t("unstaffedTitle")}
-            </h2>
-            <p className="mb-2 text-xs text-muted-foreground">{t("unstaffedHint")}</p>
-            {report.unstaffedRequirements.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t("unstaffedEmpty")}</p>
-            ) : (
-              <ul className="space-y-1 text-sm">
-                {report.unstaffedRequirements.map((row) => (
-                  <li key={row.requirementId}>
-                    <Link href="/admin/requirements" className="hover:underline">
-                      {t("unstaffedRow", {
-                        group: row.groupName,
-                        subject: row.subjectName,
-                        minutes: row.minutesPerWeek,
-                      })}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          <UnstaffedPanel
+            rows={report.unstaffedRequirements}
+            teacherName={teacherName}
+            onAssigned={setWarnings}
+          />
+
+          <BottlenecksPanel report={report} />
 
           {settingsOpen ? <StaffingPolicyCard /> : null}
         </div>
       )}
 
       {openTeacher && activeYearId && activeYear ? (
-        <TeacherDrawer
-          key={openTeacher.id}
-          open
-          onOpenChange={(open) => !open && setOpenTeacherId(null)}
-          teacher={openTeacher}
-          load={openLoad}
-          unqualified={(report?.unqualifiedAssignments ?? []).filter(
-            (row) => row.userId === openTeacher.id,
-          )}
-          employment={employments?.find((row) => row.userId === openTeacher.id) ?? null}
-          qualifications={qualifications?.filter((row) => row.userId === openTeacher.id)}
-          policy={policy}
-          subjects={subjects ?? []}
-          academicYearId={activeYearId}
-          academicYearName={activeYear.name}
-        />
+        <Suspense fallback={null}>
+          <TeacherDrawer
+            key={openTeacher.id}
+            open
+            onOpenChange={(open) => !open && setOpenTeacherId(null)}
+            teacher={openTeacher}
+            load={openLoad}
+            unqualified={(report?.unqualifiedAssignments ?? []).filter(
+              (row) => row.userId === openTeacher.id,
+            )}
+            employment={employments?.find((row) => row.userId === openTeacher.id) ?? null}
+            qualifications={qualifications?.filter((row) => row.userId === openTeacher.id)}
+            policy={policy}
+            subjects={subjects ?? []}
+            academicYearId={activeYearId}
+            academicYearName={activeYear.name}
+            requirements={requirements ?? []}
+            groups={yearGroups}
+            teacherName={teacherName}
+          />
+        </Suspense>
       ) : null}
     </div>
   );
