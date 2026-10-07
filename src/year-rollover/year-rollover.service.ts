@@ -51,7 +51,7 @@ export interface RolloverResult {
     predecessorId: string;
     graduatingGradeLevel: number;
   };
-  counts: { groups: number; members: number; requirements: number; breaks: number; classRules: number };
+  counts: { groups: number; members: number; requirements: number; breaks: number; classRules: number; timplans: number };
   planHash: string;
 }
 
@@ -162,7 +162,7 @@ export class YearRolloverService {
       this.logger.log(
         `Läsår rullat [school=${schoolId}, source=${sourceYearId}, target=${result.academicYear.id}, ` +
           `groups=${counts.groups}, members=${counts.members}, requirements=${counts.requirements}, ` +
-          `breaks=${counts.breaks}, classRules=${counts.classRules}]`,
+          `breaks=${counts.breaks}, classRules=${counts.classRules}, timplans=${counts.timplans}]`,
       );
       return result;
     } catch (error) {

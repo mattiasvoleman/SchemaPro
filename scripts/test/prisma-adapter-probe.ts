@@ -1875,7 +1875,7 @@ async function runChecks(
   // (w) and (x) run in a school of their own: the activation hands the
   // active flag over and moves pupils, which in the demo school would move
   // the seed's pupils and take its active year away from every later check.
-  const rull = await givenRolloverSchool(owner);
+  const rull = await givenRolloverSchool(owner, fixture.grundskolaVersionId);
   const rullAdmin: AuthenticatedUser = {
     authId: rull.adminAuthId,
     userId: rull.adminId,
@@ -1939,7 +1939,32 @@ async function runChecks(
 
     const result = await rollover.executeRollover(rull.sourceYearId, execute, rullAdmin);
     targetYearId = result.academicYear.id;
-    assert.deepEqual(result.counts, { groups: 2, members: 1, requirements: 1, breaks: 1, classRules: 1 });
+    assert.deepEqual(result.counts, { groups: 2, members: 1, requirements: 1, breaks: 1, classRules: 1, timplans: 3 });
+    // Timplan per årskurs by cohort, through the adapter's createMany: åk 8
+    // keeps the draft its cohort followed in åk 7; åk 7 (the entry grade) and
+    // åk 9 (no row for åk 8 below it) take the newest decided plan; åk 9's
+    // own cohort graduates and carries nothing. Nothing else: not the grades
+    // 1–6 a new year's create would have defaulted.
+    const carried = (
+      await owner.query<{ grade: number; plan: string }>(
+        `SELECT "gradeLevel" AS grade, "localTimplanId" AS plan FROM "AcademicYearTimplans"
+          WHERE "academicYearId" = $1 ORDER BY "gradeLevel"`,
+        [targetYearId],
+      )
+    ).rows;
+    assert.deepEqual(carried, [
+      { grade: 7, plan: rull.decidedPlanId },
+      { grade: 8, plan: rull.draftPlanId },
+      { grade: 9, plan: rull.decidedPlanId },
+    ]);
+    assert.deepEqual(
+      preview.timplans.map((row) => [row.gradeLevel, row.reason, row.planStatus]),
+      [
+        [7, 'DEFAULT', 'DECIDED'],
+        [8, 'CARRIED', 'DRAFT'],
+        [9, 'DEFAULT', 'DECIDED'],
+      ],
+    );
     const groups = (
       await owner.query<{ name: string; grade: number; predecessor: string | null }>(
         `SELECT name, "gradeLevel" AS grade, "predecessorId" AS predecessor FROM "StudentGroups"
@@ -2250,9 +2275,12 @@ interface RolloverSchool {
   group7a: string;
   groupMa7: string;
   breakId: string;
+  /** Åk 7 of the source year follows this DRAFT, åk 9 the decided plan. */
+  draftPlanId: string;
+  decidedPlanId: string;
 }
 
-async function givenRolloverSchool(owner: Client): Promise<RolloverSchool> {
+async function givenRolloverSchool(owner: Client, grundskolaVersionId: string): Promise<RolloverSchool> {
   const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> =>
     (await owner.query<T>(sql, params)).rows[0];
   const school = await one<{ id: string }>(
@@ -2320,6 +2348,34 @@ async function givenRolloverSchool(owner: Client): Promise<RolloverSchool> {
       },
       principal,
     );
+    // Timplan per årskurs, written after the year exists (so the create's
+    // defaults, with no decided plan yet, attached nothing): åk 7 on a draft,
+    // åk 9 on a decided plan, åk 8 on none.
+    const timplans = new LocalTimplansService(api);
+    const draft = await timplans.create(
+      { name: `${MARKER} rull utkast`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: grundskolaVersionId },
+      principal,
+    );
+    const decided = await timplans.create(
+      { name: `${MARKER} rull beslutad`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: grundskolaVersionId },
+      principal,
+    );
+    await timplans.replaceEntries(
+      decided.id,
+      { entries: [{ subjectId: made.subject.id, gradeLevel: 9, minutesPerWeek: 120 }] },
+      principal,
+    );
+    await timplans.decide(decided.id, { decisionNote: MARKER }, principal);
+    await new AcademicYearTimplansService(api).replace(
+      year.id,
+      {
+        timplans: [
+          { gradeLevel: 7, localTimplanId: draft.id },
+          { gradeLevel: 9, localTimplanId: decided.id },
+        ],
+      },
+      principal,
+    );
     // Pupils: two in 7A, one in 9A (who graduates), and one in Ma7 from 7A
     // and one from 9A (who is not carried into Ma8). p4 is in 7A but inactive.
     const p1 = await person('STUDENT', 'rull-p1', made.g7a.id);
@@ -2341,6 +2397,8 @@ async function givenRolloverSchool(owner: Client): Promise<RolloverSchool> {
       group7a: made.g7a.id,
       groupMa7: made.ma7.id,
       breakId: made.lov.id,
+      draftPlanId: draft.id,
+      decidedPlanId: decided.id,
     };
   } finally {
     await api.$disconnect();
@@ -2358,6 +2416,7 @@ async function sourceChecksum(owner: Client, yearId: string): Promise<string> {
        UNION ALL SELECT to_jsonb(r)::text FROM "TeachingRequirements" r WHERE r."academicYearId" = $1
        UNION ALL SELECT to_jsonb(b)::text FROM "SchoolBreaks" b WHERE b."academicYearId" = $1
        UNION ALL SELECT to_jsonb(c)::text FROM "AvailabilityConstraints" c WHERE c."studentGroupId" IN (SELECT id FROM groups)
+       UNION ALL SELECT to_jsonb(t)::text FROM "AcademicYearTimplans" t WHERE t."academicYearId" = $1
        UNION ALL SELECT to_jsonb(u)::text FROM "Users" u
          WHERE u."schoolId" = (SELECT "schoolId" FROM "AcademicYears" WHERE id = $1)
      ) rows`,

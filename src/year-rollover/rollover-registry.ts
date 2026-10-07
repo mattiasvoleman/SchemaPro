@@ -9,8 +9,9 @@
  * rollover-registry.spec.ts enumerates every model that points at a läsår or a
  * group (from prisma/schema.prisma, and every *YearId column from the
  * generated DMMF) and fails until each one has an entry here. A table added
- * later — timplan P2's AcademicYearTimplans, staffing Fas 5's rolled
- * employments — fails that test until somebody decides, and says why.
+ * later fails that test until somebody decides, and says why — as timplan
+ * P2's AcademicYearTimplans did until it got its entry below (carried by
+ * cohort), and as staffing Fas 5's rolled employments will.
  *
  * DISPOSITIONS.
  *  - ROOT: AcademicYear itself, the row the rollover creates first.
@@ -49,6 +50,18 @@ export type ColumnRule =
   | 'KEEP_TEACHER'
   /** The request: the new year's name, dates and graduating grade. */
   | 'FROM_REQUEST'
+  /**
+   * A grade of the new year's timplan per årskurs: the grade above a source
+   * row whose cohort stays (g−1 → g), or a grade the source attaches with no
+   * row below it (the entry grade). See rollover-timplans.ts.
+   */
+  | 'COHORT_GRADE'
+  /**
+   * The plan that grade follows: the source row's for g−1, kept whatever its
+   * status, or — for an entry grade — the newest DECIDED plan by P2's default
+   * rule (readDefaultTimplan), when that plan speaks for the grade.
+   */
+  | 'COHORT_PLAN'
   /** The column's default (timestamps, isActive false). */
   | 'DEFAULT'
   /**
@@ -66,7 +79,8 @@ export type RolloverStepName =
   | 'members'
   | 'requirements'
   | 'breaks'
-  | 'classRules';
+  | 'classRules'
+  | 'timplans';
 
 export const ROLLOVER_STEP_ORDER: readonly RolloverStepName[] = [
   'year',
@@ -75,6 +89,7 @@ export const ROLLOVER_STEP_ORDER: readonly RolloverStepName[] = [
   'requirements',
   'breaks',
   'classRules',
+  'timplans',
 ];
 
 export type Disposition =
@@ -207,6 +222,21 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       endTime: 'COPY',
       type: 'COPY',
       reason: 'COPY',
+      ...timestamps,
+    },
+  },
+
+  AcademicYearTimplan: {
+    kind: 'PROMOTED',
+    step: 'timplans',
+    reason:
+      'Timplan per årskurs follows the cohort: next year’s åk g follows the plan this year’s åk g−1 follows, ' +
+      'a draft included; an entry grade with no cohort below it takes the newest decided plan, as a new läsår does.',
+    columns: {
+      schoolId: 'COPY',
+      academicYearId: 'TARGET_YEAR',
+      gradeLevel: 'COHORT_GRADE',
+      localTimplanId: 'COHORT_PLAN',
       ...timestamps,
     },
   },
