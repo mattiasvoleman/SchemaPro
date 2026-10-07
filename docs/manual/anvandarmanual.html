@@ -1082,17 +1082,53 @@
     Under <span class="ui">Obemannade rader</span> står varje timplanspost som
     saknar lärare. <span class="ui">Föreslå lärare</span> rangordnar skolans
     lärare: först efter behörighet i ämnet för gruppens årskurser
-    (legitimation före behörig före tillåten), sedan om läraren redan
-    undervisar gruppen, sist efter hur många minuter läraren har kvar till sitt
-    mål <em>efter</em> posten. Varje förslag visar behörigheten,
-    <em>kvar N min/v</em> och om läraren skulle hamna över gränsen.
-    <span class="ui">Tilldela</span> sparar direkt. Har skolan inte registrerat
-    några behörigheter rangordnas listan efter vem som redan undervisar ämnet.
+    (legitimation före behörig före tillåten), sedan om läraren hade gruppen i
+    ämnet förra läsåret, sedan om läraren redan undervisar gruppen, sist efter
+    hur många minuter läraren har kvar till sitt mål <em>efter</em> posten.
+    Varje förslag visar behörigheten, <em>kvar N min/v</em> och om läraren
+    skulle hamna över gränsen. <span class="ui">Tilldela</span> sparar direkt.
+    Har skolan inte registrerat några behörigheter rangordnas listan efter vem
+    som redan undervisar ämnet eller hade gruppen i ämnet förra läsåret.
+  </p>
+  <p>
+    <em>Förra läsåret</em> betyder läraren eller medläraren i samma ämne för
+    den grupp som gruppen rullades från (8.1) — årets 8A:s matematiklärare
+    förra året, när 8A var 7A. Förslaget märks <em>Hade 7A i ämnet
+    2025/26</em>. Behörigheten går alltid först, så en obehörig lärare lyfts
+    aldrig över en behörig för att hen hade klassen förra året. Märket finns
+    i <span class="ui">Föreslå lärare</span> här, inte i timplansposternas
+    dialog (4.2).
   </p>
   <p>
     En post som redan har en lärare byts i lärarens kort, under
     <span class="ui">Timplansposter</span> med <span class="ui">Byt lärare</span>.
     Medlärare ändras i timplansposternas dialog (4.2).
+  </p>
+
+  <h4>Jämför med förra läsåret</h4>
+  <p>
+    Ett läsår som rullats från ett annat (8.1) får växeln
+    <span class="ui">Matris | Jämför med förra läsåret</span>. Jämförelsen
+    visar per lärare tjänst i procent och räknade minuter förra läsåret och i
+    år, och skillnaden. En lärare som slutat eller är ny står med och märks
+    så. <span class="ui">Bara ändrade</span> döljer dem vars tjänst,
+    nedsättning och minuter är oförändrade. Båda åren räknas med skolans
+    inställningar i dag, så ett ändrat riktmärke för heltid ändrar inte
+    jämförelsen av minuterna.
+  </p>
+
+  <h4>Tjänster och uppdrag till ett läsår som rullades utan dem</h4>
+  <p>
+    Rullades läsåret utan tjänster och uppdrag — före den här funktionen fanns,
+    eller med brytaren av — och har det ännu inga tjänster, står en ruta
+    överst: <span class="ui">Ta med tjänster och uppdrag från 2025/26</span>.
+    Den tar med samma sak som rullningen gör (8.1), från läsåret det rullades
+    från. Först visas vad som följer med och vad du bör se över. Ingenting
+    skrivs över: en lärare som redan har en tjänst i läsåret hoppas över helt,
+    med sina uppdrag, och en andra körning skapar ingenting. Har någon ändrat
+    en tjänst eller ett uppdrag sedan förhandsvisningen skapas ingenting, och
+    förhandsvisningen hämtas igen. Är läsåret det aktiva får du bekräfta att
+    spärrade pass kan hamna på lektioner som redan ligger i schemat.
   </p>
 
   <h4>Ämnesflaskhalsar</h4>
@@ -1171,8 +1207,9 @@
     En lärare ser sin egen tjänst under <span class="path">Min tjänst</span>:
     anställning, mål och räknade minuter, samma stapel som du ser,
     undervisningen per ämne med minuter och andel av tjänsten, och sina
-    uppdrag med tiden de blockerar. Läraren ser bara sig själv och kan inte
-    ändra något. Anställningen och behörigheterna är personaluppgifter: en
+    uppdrag med tiden de blockerar. Har läsåret rullats från ett annat står
+    också förra läsårets tjänst och räknade minuter. Läraren ser bara sig
+    själv och kan inte ändra något. Anställningen och behörigheterna är personaluppgifter: en
     lärare ser aldrig en kollegas.
   </p>
 </section>
@@ -1698,8 +1735,8 @@
   <table>
     <thead><tr><th style="width:26%">När</th><th style="width:30%">Moment</th><th>Kommentar</th></tr></thead>
     <tbody>
-      <tr><td class="k">Vårterminen</td><td>Rulla vidare</td><td>Nästa läsår skapas med klasserna uppflyttade, timplansposter och lärare (8.1). Eleverna stannar kvar i sina klasser.</td></tr>
-      <tr><td class="k">Försommar</td><td>Uppdatera grunddata</td><td>Nya salar, ändrade klasser, personal som slutar eller tillkommer. Tjänster och uppdrag för det nya läsåret läggs in på tjänstefördelningssidan.</td></tr>
+      <tr><td class="k">Vårterminen</td><td>Rulla vidare</td><td>Nästa läsår skapas med klasserna uppflyttade, timplansposter och lärare, och lärarnas tjänster och uppdrag (8.1). Eleverna stannar kvar i sina klasser.</td></tr>
+      <tr><td class="k">Försommar</td><td>Uppdatera grunddata</td><td>Nya salar, ändrade klasser, personal som slutar eller tillkommer. Tjänster och uppdrag som ändras till det nya läsåret — en nedsättning som upphör, ett nytt mentorskap — ändras på tjänstefördelningssidan.</td></tr>
       <tr><td class="k">Innan sommaren</td><td>Timplan och tillgänglighet</td><td>Fas 2 i sin helhet, för det nya läsåret. Det tidskrävande momentet — planera in det.</td></tr>
       <tr><td class="k">Innan sommaren</td><td>Generera och granska</td><td>Nästa läsårs schema, på de förberäknade klasslistorna (8.2). Iterera: generera, lås det som är bra, generera om.</td></tr>
       <tr><td class="k">Efter sista skoldagen</td><td>Aktivera det nya läsåret</td><td>Eleverna flyttar till sina nya klasser och nians går ut (8.3).</td></tr>
@@ -1724,9 +1761,9 @@
     <thead><tr><th style="width:24%">Steg</th><th>Vad du gör</th></tr></thead>
     <tbody>
       <tr><td class="k">Nytt läsår</td><td>Namn och datum föreslås ett år fram (samma veckodag som i år). Välj <span class="ui">Årskursen som går ut</span> — förslaget kommer från den senast beslutade lokala timplanen, annars från den högsta klassen. Säger de olika måste du välja.</td></tr>
-      <tr><td class="k">Klasser och grupper</td><td>Varje klass flyttas upp en årskurs och byter namn därefter: <em>7A</em> blir <em>8A</em>, <em>FA</em> blir <em>1A</em>. Den högsta årskursen går ut. Ändra namnet eller utfallet för en enskild grupp (<span class="ui">Följer med oförändrad</span>, <span class="ui">Följer inte med</span>). För den lägsta årskursen kan du välja <span class="ui">Flyttas upp + ny klass för intaget</span>: 7A blir 8A med sina elever, och en ny, tom 7A öppnas med samma timplansposter men utan lärare. Fyra brytare styr om undervisningsgrupper, gruppernas elever, lärarna och klassernas veckoregler följer med.</td></tr>
+      <tr><td class="k">Klasser och grupper</td><td>Varje klass flyttas upp en årskurs och byter namn därefter: <em>7A</em> blir <em>8A</em>, <em>FA</em> blir <em>1A</em>. Den högsta årskursen går ut. Ändra namnet eller utfallet för en enskild grupp (<span class="ui">Följer med oförändrad</span>, <span class="ui">Följer inte med</span>). För den lägsta årskursen kan du välja <span class="ui">Flyttas upp + ny klass för intaget</span>: 7A blir 8A med sina elever, och en ny, tom 7A öppnas med samma timplansposter men utan lärare. Fem brytare styr om undervisningsgrupper, gruppernas elever, lärarna, klassernas veckoregler och tjänster och uppdrag följer med.</td></tr>
       <tr><td class="k">Lov</td><td>Inget lov följer med om du inte bockar för det. Datumen föreslås — jullovet flyttas hela veckor, påsklovet följer påsken, övriga behåller sitt veckonummer — och kan ändras. Ett lov vars vecka inte finns nästa år måste få datum.</td></tr>
-      <tr><td class="k">Granska</td><td>Allt som skapas och allt som lämnas kvar. Läs särskilt lärare som tas bort från en post (inaktiva, eller utan behörighet för nästa årskurs när behörighetskontrollen står på Vägra) och poster vars period hamnar utanför det nya läsåret.</td></tr>
+      <tr><td class="k">Granska</td><td>Allt som skapas och allt som lämnas kvar. Läs särskilt lärare som tas bort från en post (inaktiva, eller utan behörighet för nästa årskurs när behörighetskontrollen står på Vägra), poster vars period hamnar utanför det nya läsåret, och under <span class="ui">Tjänster och uppdrag</span> de lärare vars nedsättning eller eget riktmärke följer med.</td></tr>
     </tbody>
   </table>
   <p>
@@ -1765,11 +1802,35 @@
     och efteråt ändras det under <span class="ui">Timplan per årskurs</span>
     som för vilket läsår som helst.
   </p>
+  <h4>Tjänster och uppdrag</h4>
+  <p>
+    Med <span class="ui">Tjänster och uppdrag följer med</span> påslagen
+    (standard) får varje aktiv lärare och skolledare samma tjänst i det nya
+    läsåret: tjänst i procent, nedsättning, avtal, eget riktmärke, signatur och
+    anteckning, och sina uppdrag med minuter och om de räknas som undervisning.
+    Ett uppdrag som hör till en grupp följer gruppen: <em>Mentor 7B</em> blir
+    mentorskap för 8B och byter namn till <em>Mentor 8B</em>. Ett spärrat pass
+    blir ett nytt pass i det nya läsåret; det gamla stannar i det gamla.
+  </p>
+  <ul>
+    <li>Ett mentorskap för en klass som går ut, inte rullas vidare eller saknar
+      efterföljare följer <strong>inte</strong> med; granska-steget namnger
+      dem. Andra uppdrag för en sådan grupp följer med utan grupp.</li>
+    <li>Inaktiva personer, och personer som inte är lärare eller skolledare,
+      får ingen tjänst i det nya läsåret.</li>
+    <li>En nedsättning och ett eget riktmärke följer med, men gäller ofta bara
+      ett år. Granska-steget namnger lärarna; ändra dem på
+      tjänstefördelningssidan om de upphör.</li>
+    <li>Behörigheter hör inte till något läsår och påverkas inte.</li>
+  </ul>
+  <p>
+    Rullar du utan tjänster kan de tas med senare från tjänstefördelningssidan
+    (4.5).
+  </p>
   <p>
     Följer <strong>inte</strong> med: grundschemat (nästa läsårs schema
     genereras för de nya klasserna, redan före aktiveringen, se 8.2),
-    lunchsittningarna, tjänster och uppdrag
-    — med uppdragens spärrade pass — samt det gamla läsårets historik.
+    lunchsittningarna, samt det gamla läsårets historik.
     Ramtider, raster, lunchflöden, lunchinställningen, regler per årskurs,
     lärarnas arbetstidsregler och salspreferenser hör inte till något läsår;
     de gäller båda läsåren, och en ändring slår igenom i båda direkt.
