@@ -69,7 +69,7 @@ import { ImportService } from '../../src/import/import.service';
 import { SubjectsService } from '../../src/resources/subjects.service';
 import { LocalTimplansService } from '../../src/timplan/local-timplans.service';
 import { AcademicYearTimplansService } from '../../src/timplan/academic-year-timplans.service';
-import { TimplanCoverageService } from '../../src/timplan/timplan-coverage.service';
+import { TimplanCoverageService, readPlannedInput } from '../../src/timplan/timplan-coverage.service';
 import { TimplanRequirementsService } from '../../src/timplan/timplan-requirements.service';
 import {
   decidedTimplanRefusal,
@@ -81,10 +81,16 @@ import {
 import { UsersService } from '../../src/users/users.service';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
 import { TeacherDutiesService } from '../../src/staffing/teacher-duties.service';
-import { lockEmploymentsOf } from '../../src/staffing/staffing-enforcement';
+import { attendanceSpan, lockEmploymentsOf } from '../../src/staffing/staffing-enforcement';
 import { TeachingRequirementsService } from '../../src/resources/teaching-requirements.service';
 import { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
 import { YearRolloverService } from '../../src/year-rollover/year-rollover.service';
+import { countHomePupils, rostersOfYear, type RosterBasis } from '../../src/year-rollover/projected-rosters';
+import { loadRosters } from '../../src/optimization/room-eligibility';
+import { RoomOptimizationService } from '../../src/optimization/room-optimization.service';
+import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
+import type { RealtimeService } from '../../src/realtime/realtime.service';
+import type { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 
 /** Marks every row the probe writes that has a text column to mark. */
 const MARKER = 'prisma-adapter-probe';
@@ -2006,6 +2012,132 @@ async function runChecks(
     );
   });
 
+  /*
+   * FÖRBERÄKNADE KLASSLISTOR, through the real adapter: what each roster
+   * reader computes for the new year before the activation, on the projected
+   * rosters, is what it computes after (x) has really moved the pupils.
+   * Canonical (ids sorted, nothing anonymous), so Postgres moving the updated
+   * tuples cannot make two equal answers look different.
+   */
+  const rullTeacher: AuthenticatedUser = {
+    authId: rull.teacherAuthId,
+    userId: rull.teacherId,
+    schoolId: rull.schoolId,
+    role: Role.TEACHER,
+  };
+  let projectedReads: Record<string, unknown> | null = null;
+  const sortedEntries = (map: Map<string, unknown>) =>
+    [...map].map(([key, value]) => [key, value instanceof Set ? [...value].sort() : value]).sort((a, b) => (String(a[0]) < String(b[0]) ? -1 : 1));
+  const targetGroup = async (name: string) =>
+    (
+      await owner.query<{ id: string }>('SELECT id FROM "StudentGroups" WHERE "academicYearId" = $1 AND name = $2', [targetYearId, `${MARKER} ${name}`])
+    ).rows[0].id;
+  const rosterReads = async (): Promise<{ basis: RosterBasis['kind']; reads: Record<string, unknown> }> => {
+    const groups = (
+      await owner.query<{ id: string; gradeLevel: number | null }>(
+        'SELECT id, "gradeLevel" FROM "StudentGroups" WHERE "academicYearId" = $1 ORDER BY id',
+        [targetYearId],
+      )
+    ).rows;
+    const [g8a, ma8] = [await targetGroup('8A'), await targetGroup('Ma8')];
+    const proxy = new OptimizationProxyService(
+      api,
+      { post: () => { throw new Error('the engine was called'); } } as never,
+      { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1 }) } as never,
+    );
+    const lessons = new MasterLessonsService(api, { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService, {} as NotificationsService);
+    const { basis, reads } = await api.withRls(rullAdmin, async (tx) => {
+      const basis = await rostersOfYear(tx, rullAdmin, targetYearId);
+      const rosters = await loadRosters(tx, basis, groups.map((group) => group.id), groups);
+      const payload = await (
+        proxy as unknown as { fetchAndAnonymize: (...args: unknown[]) => Promise<{ headcountByGroup: Map<string, number> }> }
+      ).fetchAndAnonymize(tx, targetYearId, rull.schoolId, basis);
+      const conflicts = await (
+        lessons as unknown as { findConflicts: (...args: unknown[]) => Promise<{ kind: string; message: string }[]> }
+      ).findConflicts(
+        tx,
+        basis,
+        { id: null, academicYearId: targetYearId, studentGroupId: g8a, subjectId: rull.subjectId },
+        { dayOfWeek: 1, startMinutes: 8 * 60, endMinutes: 9 * 60, teacherId: null, roomId: null },
+      );
+      const planned = await readPlannedInput(tx, rullAdmin, targetYearId, true);
+      return {
+        basis,
+        reads: {
+          rosters: {
+            membersByGroup: sortedEntries(rosters.membersByGroup),
+            groupsByStudent: sortedEntries(rosters.groupsByStudent),
+            homeMembers: [...rosters.homeMembers].sort((a, b) => (a.id < b.id ? -1 : 1)),
+            homeClassOf: sortedEntries(rosters.homeClassOf),
+          },
+          headcountByGroup: sortedEntries(payload.headcountByGroup),
+          conflicts: conflicts.map((conflict) => [conflict.kind, conflict.message]).sort(),
+          span: await attendanceSpan(tx, { academicYearId: targetYearId, groupIds: [ma8], rosters: basis }),
+          pupils: planned!.pupils.map((pupil) => ({ ...pupil, groupIds: [...pupil.groupIds].sort() })).sort((a, b) => (a.id < b.id ? -1 : 1)),
+          count8a: await countHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, g8a),
+        },
+      };
+    });
+    const proposal = await new RoomOptimizationService(
+      api,
+      proxy,
+      {} as ScheduleVersionsService,
+      { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+    ).propose({ academicYearId: targetYearId, walkers: 'BOTH' } as never, rullAdmin);
+    return { basis: basis.kind, reads: { ...reads, roomBasis: proposal.basis } };
+  };
+  const rosterChecksum = async () =>
+    (
+      await owner.query<{ sum: string }>(
+        `SELECT md5(coalesce(string_agg(x, '|' ORDER BY x), '')) AS sum FROM (
+           SELECT to_jsonb(u)::text AS x FROM "Users" u WHERE u."schoolId" = $1
+           UNION ALL SELECT to_jsonb(m)::text FROM "StudentGroupMembers" m WHERE m."schoolId" = $1
+         ) rows`,
+        [rull.schoolId],
+      )
+    ).rows[0].sum;
+
+  await check('(w2) the new year reads the class lists its activation would leave, for the admin and a teacher, writing nothing, and a lesson placed by hand meets the coming pupils', async () => {
+    assert.ok(targetYearId, '(w) did not roll the year');
+    const [g8a, ma8] = [await targetGroup('8A'), await targetGroup('Ma8')];
+    const homes = await api.withRls(rullAdmin, (tx) => rostersOfYear(tx, rullAdmin, targetYearId));
+    assert.equal(homes.kind, 'PROJECTED');
+    const pupilId = async (name: string) =>
+      (await owner.query<{ id: string }>('SELECT id FROM "Users" WHERE email = $1', [`${MARKER}-${name}@example.invalid`])).rows[0].id;
+    const [p1, p2, p3] = [await pupilId('rull-p1'), await pupilId('rull-p2'), await pupilId('rull-p3')];
+    assert.deepEqual(
+      sortedEntries(homes.kind === 'PROJECTED' ? new Map(homes.homeOf) : new Map()),
+      [[p1, g8a], [p2, g8a], [p3, null]].sort((a, b) => (String(a[0]) < String(b[0]) ? -1 : 1)),
+    );
+    // A teacher computes the same projection from rows the staff policies
+    // already let them read.
+    const asTeacher = await api.withRls(rullTeacher, (tx) => rostersOfYear(tx, rullTeacher, targetYearId));
+    assert.equal(asTeacher.kind, 'PROJECTED');
+    assert.deepEqual(sortedEntries(new Map(asTeacher.kind === 'PROJECTED' ? asTeacher.homeOf : [])), sortedEntries(new Map(homes.homeOf)));
+
+    // Ma8 on Monday morning, placed by hand; then 8A at the same hour is a
+    // pupil clash, because p1 will be in both.
+    const lessons = new MasterLessonsService(api, { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService, {} as NotificationsService);
+    await lessons.create({ academicYearId: targetYearId, subjectId: rull.subjectId, studentGroupId: ma8, dayOfWeek: 1, startTime: '08:00', endTime: '09:00' }, rullAdmin);
+    await assert.rejects(
+      lessons.create({ academicYearId: targetYearId, subjectId: rull.subjectId, studentGroupId: g8a, dayOfWeek: 1, startTime: '08:00', endTime: '09:00' }, rullAdmin),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException, summarise(error));
+        assert.match(error.message, /Students of this group already have/);
+        return true;
+      },
+    );
+
+    const before = await rosterChecksum();
+    const read = await rosterReads();
+    assert.equal(read.basis, 'PROJECTED');
+    assert.equal(await rosterChecksum(), before, 'a projected read wrote Users or StudentGroupMembers');
+    assert.equal(read.reads['count8a'], 2);
+    assert.deepEqual(read.reads['span'], { min: 8, max: 8 });
+    assert.equal((read.reads['conflicts'] as unknown[]).length, 1);
+    projectedReads = read.reads;
+  });
+
   await check('(x) the activation moves the planned pupils by id through the real adapter, once, not while the old year runs, and the year form cannot go around it', async () => {
     const homes = async () =>
       Object.fromEntries(
@@ -2055,6 +2187,12 @@ async function runChecks(
       'rull-p3': null,
       'rull-p4': `${MARKER} 7A`,
     });
+    // Every reader reads, on the rows the activation wrote, what (w2) read on
+    // the projection of them.
+    assert.ok(projectedReads, '(w2) did not read the projection');
+    const current = await rosterReads();
+    assert.equal(current.basis, 'CURRENT');
+    assert.deepEqual(current.reads, projectedReads);
     const active = (
       await owner.query<{ id: string }>(`SELECT id FROM "AcademicYears" WHERE "schoolId" = $1 AND "isActive"`, [rull.schoolId])
     ).rows;
@@ -2271,9 +2409,11 @@ interface RolloverSchool {
   adminId: string;
   adminAuthId: string;
   teacherId: string;
+  teacherAuthId: string;
   sourceYearId: string;
   group7a: string;
   groupMa7: string;
+  subjectId: string;
   breakId: string;
   /** Åk 7 of the source year follows this DRAFT, åk 9 the decided plan. */
   draftPlanId: string;
@@ -2393,9 +2533,11 @@ async function givenRolloverSchool(owner: Client, grundskolaVersionId: string): 
       adminId: admin.id,
       adminAuthId: admin.authId,
       teacherId: teacher.id,
+      teacherAuthId: teacher.authId,
       sourceYearId: year.id,
       group7a: made.g7a.id,
       groupMa7: made.ma7.id,
+      subjectId: made.subject.id,
       breakId: made.lov.id,
       draftPlanId: draft.id,
       decidedPlanId: decided.id,
