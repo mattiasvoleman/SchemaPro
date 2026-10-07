@@ -309,3 +309,65 @@ describe("the dialog's and the rows' accessible names", () => {
     expect(screen.getByRole("textbox", { name: "code (optional)" })).toBeInTheDocument();
   });
 });
+
+describe("the national code the school's own code already is", () => {
+  const coded = (id: string, name: string, code: string): Subject => ({ ...subject(id, name, null), code });
+
+  it("is offered on an unmapped subject whose code is a national one, and never saved unasked", async () => {
+    // Local stack and production 2026-10-07: Matematik "MA", Engelska "EN",
+    // Svenska "SV" — every national code empty.
+    state.subjects = [coded("s-1", "Matematik", "MA")];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Matematik)" }));
+
+    expect(screen.getByText("nationalCodeSuggestion(MA|Matematik)")).toBeInTheDocument();
+    expect(nationalPicker()).toHaveTextContent("nationalCodeNone");
+
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ id: "s-1", nationalCode: null }));
+  });
+
+  it("takes a school's SV or SVA for the one national subject SV_SVA", async () => {
+    state.national = {
+      subjects: [...NATIONAL, national("SV_SVA", "Svenska eller svenska som andraspråk")],
+      versions: [],
+    };
+    state.subjects = [coded("s-1", "Svenska", "SV"), coded("s-2", "Svenska som andraspråk", "SvA")];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Svenska)" }));
+    expect(screen.getByText("nationalCodeSuggestion(SV_SVA|Svenska eller svenska som andraspråk)")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+    await user.click(screen.getByRole("button", { name: "editNamed(Svenska som andraspråk)" }));
+    await user.click(screen.getByRole("button", { name: "nationalCodeUseSuggestion(SV_SVA)" }));
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ id: "s-2", nationalCode: "SV_SVA" }));
+  });
+
+  it("is taken with one click, and then no longer offered", async () => {
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await openCreate(user);
+    await user.type(screen.getByLabelText("name"), "Bild");
+    await user.type(screen.getByRole("textbox", { name: "code (optional)" }), "bl");
+
+    await user.click(screen.getByRole("button", { name: "nationalCodeUseSuggestion(BL)" }));
+    expect(nationalPicker()).toHaveTextContent("Bild (BL)");
+    expect(screen.queryByText(/^nationalCodeSuggestion/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ code: "bl", nationalCode: "BL" }));
+  });
+
+  it("is not offered for a code the statute does not have, or a subject already mapped", async () => {
+    state.subjects = [coded("s-1", "Programmering", "PRG"), { ...subject("s-2", "Matte", "MA"), code: "MA" }];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Programmering)" }));
+    expect(screen.queryByText(/^nationalCodeSuggestion/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "cancel" }));
+    await user.click(screen.getByRole("button", { name: "editNamed(Matte)" }));
+    expect(screen.queryByText(/^nationalCodeSuggestion/)).not.toBeInTheDocument();
+  });
+});

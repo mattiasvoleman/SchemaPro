@@ -123,6 +123,8 @@ export default function SubjectsPage() {
   const [editing, setEditing] = useState<Subject | null>(null);
   const [deleting, setDeleting] = useState<Subject | null>(null);
   const [form, setForm] = useState<SubjectForm>(EMPTY_FORM);
+  // Svenska and SvA are ONE national subject, SV_SVA; a school writes SV or SVA.
+  const suggested = nationalByCode.get(form.code.trim().toUpperCase().replace(/^SVA?$/, "SV_SVA"));
 
   const openCreate = () => {
     setEditing(null);
@@ -428,6 +430,24 @@ export default function SubjectsPage() {
               <p className="text-xs text-muted-foreground">
                 {nationalTimplans.isError ? t("nationalCodeUnavailable") : t("nationalCodeHint")}
               </p>
+              {/*
+                Schools often already use the statute's codes as their own (MA,
+                EN, IDH, SV) and leave the mapping empty. Offered, never applied:
+                a school's "NO" may be a local subject that only shares the
+                letters, and Spara is the decision.
+              */}
+              {suggested && form.nationalCode === OUTSIDE_TIMPLAN ? (
+                <p className="text-xs text-muted-foreground">
+                  {t("nationalCodeSuggestion", { code: suggested.code, name: suggested.name })}{" "}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setForm({ ...form, nationalCode: suggested.code })}
+                  >
+                    {t("nationalCodeUseSuggestion", { code: suggested.code })}
+                  </Button>
+                </p>
+              ) : null}
             </div>
             <div className="flex items-start justify-between gap-4 rounded-md border p-3">
               <div className="space-y-1">
