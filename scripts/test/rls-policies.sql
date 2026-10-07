@@ -4454,6 +4454,57 @@ BEGIN
 END
 $$;
 
+-- A slot goes with its uppdrag, however the uppdrag goes. The service deletes
+-- both in one transaction, but a duty also leaves by PostgREST and by the
+-- year's cascade (DELETE /academic-years/:id is tx.academicYear.delete), and
+-- a slot left behind is a weekly UNAVAILABLE row no uppdrag shows any more,
+-- blocking the teacher in every later generation. The AFTER DELETE trigger
+-- takes it; both doors are exercised here, as the admin through RLS.
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  me uuid; year uuid; next_year uuid;
+  c_one uuid; c_next uuid; d_one uuid; d_next uuid;
+  n bigint;
+BEGIN
+  SELECT id INTO me FROM "Users"
+   WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO year FROM "AcademicYears" WHERE "schoolId" = school AND "isActive" LIMIT 1;
+
+  -- A duty deleted on its own, not through the service.
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 1, '07:30', '08:00', 'UNAVAILABLE', 'RLS17 städas', now()) RETURNING id INTO c_one;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+  VALUES (school, me, year, 'RASTVAKT', 'Morgonvakt', 30, c_one, now()) RETURNING id INTO d_one;
+  DELETE FROM "TeacherDuties" WHERE id = d_one;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'duties: an admin could not delete a duty (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "AvailabilityConstraints" WHERE id = c_one;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: a duty deleted outside the service left its slot behind';
+  END IF;
+
+  -- Next year's duty, its year deleted: the duty cascades, and its slot with it.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS17 nästa år', DATE '2098-08-15', DATE '2099-06-10', false, now()) RETURNING id INTO next_year;
+  INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+  VALUES (school, 'TEACHER', me, 3, '15:00', '17:00', 'UNAVAILABLE', 'RLS17 nästa års APT', now()) RETURNING id INTO c_next;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+  VALUES (school, me, next_year, 'APT_KONFERENS', 'APT nästa år', 120, c_next, now()) RETURNING id INTO d_next;
+  DELETE FROM "AcademicYears" WHERE id = next_year;
+  SELECT count(*) INTO n FROM "TeacherDuties" WHERE id = d_next;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: a deleted year kept its duty';
+  END IF;
+  SELECT count(*) INTO n FROM "AvailabilityConstraints" WHERE id = c_next;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'duties: a deleted year''s duty left its slot behind as a plain UNAVAILABLE row';
+  END IF;
+END
+$$;
+
 -- The service principal, user cleared: this school's three, none of B's.
 SELECT set_config('request.jwt.claims', '', true);
 SELECT set_config('app.service_school_id', :'school_a', true);
@@ -4483,7 +4534,7 @@ END
 $$;
 ROLLBACK;
 
--- The catalog half: three arms, both triggers enabled and SECURITY DEFINER,
+-- The catalog half: three arms, the three triggers enabled and SECURITY DEFINER,
 -- and the two new load-percent CHECKs on TeachingRequirements.
 DO $$
 DECLARE n integer;
@@ -4500,9 +4551,10 @@ BEGIN
    WHERE NOT t.tgisinternal AND t.tgenabled = 'O' AND p.prosecdef
      AND (t.tgrelid, t.tgname) IN (
        ('public."TeacherDuties"'::regclass,           'TeacherDuties_block_is_the_teachers'),
+       ('public."TeacherDuties"'::regclass,           'TeacherDuties_take_their_block'),
        ('public."AvailabilityConstraints"'::regclass, 'AvailabilityConstraints_keep_duty_blocks'));
-  IF n <> 2 THEN
-    RAISE EXCEPTION 'duties: % of the two slot-link triggers are present, enabled and SECURITY DEFINER', n;
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'duties: % of the three slot triggers are present, enabled and SECURITY DEFINER', n;
   END IF;
   SELECT count(*) INTO n FROM pg_constraint
    WHERE conrelid = 'public."TeachingRequirements"'::regclass AND contype = 'c'
