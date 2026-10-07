@@ -434,6 +434,11 @@ describe("next year, before its activation", () => {
     expect(apiGet).toHaveBeenCalledWith("/api/v1/academic-years/y-2/rosters");
     expect(state.requirementsFor.at(-1)).toBe("y-2");
     expect(state.historyFor.at(-1)).toBe("y-2");
+    // Not this year's first: the link is read before any year is asked for,
+    // so the active year's timplan and history are never fetched to be
+    // thrown away (and never painted for a frame).
+    expect(state.requirementsFor).not.toContain("y-1");
+    expect(state.historyFor).not.toContain("y-1");
     expect(
       screen.getByRole("button", { name: "planningYear.optionNext(2027/28)", pressed: true }),
     ).toBeInTheDocument();
