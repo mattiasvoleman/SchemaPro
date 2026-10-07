@@ -50,6 +50,7 @@ import { DateField } from "@/components/ui/date-field";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { GROUP_WRITE_KEYS } from "@/lib/projected-rosters";
 import {
   Card,
   CardContent,
@@ -96,7 +97,7 @@ export default function SetupPage() {
   );
   const groupMutations = useCrudMutations<{ name: string; academicYearId: string }>(
     "/api/v1/student-groups",
-    [["groups"]],
+    GROUP_WRITE_KEYS,
   );
 
   const activeYear = years?.find((year) => year.isActive) ?? null;

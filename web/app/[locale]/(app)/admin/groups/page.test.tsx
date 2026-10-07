@@ -64,6 +64,9 @@ const memberships = [
   { studentId: "st-2", studentGroupId: "g-en74" },
 ];
 
+/** What each useCrudMutations was told to invalidate, by path. */
+const crudKeys = vi.hoisted(() => new Map<string, string[][]>());
+
 vi.mock("@/lib/queries", () => ({
   useAcademicYears: () => ({ data: [YEAR] }),
   useGroups: () => ({ data: groups, isLoading: false }),
@@ -71,11 +74,14 @@ vi.mock("@/lib/queries", () => ({
   useGroupMemberships: () => ({ data: memberships }),
   useGroupMembers: () => ({ data: [] }),
   useSetGroupMembers: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useCrudMutations: () => ({
-    create: { mutateAsync: vi.fn(), isPending: false },
-    update: { mutateAsync: vi.fn(), isPending: false },
-    remove: { mutateAsync: vi.fn(), isPending: false },
-  }),
+  useCrudMutations: (path: string, keys: string[][]) => {
+    crudKeys.set(path, keys);
+    return {
+      create: { mutateAsync: vi.fn(), isPending: false },
+      update: { mutateAsync: vi.fn(), isPending: false },
+      remove: { mutateAsync: vi.fn(), isPending: false },
+    };
+  },
 }));
 
 vi.mock("@/components/import/csv-import-dialog", () => ({
@@ -104,6 +110,17 @@ const rowNames = () =>
 describe("Groups page", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("makes next year's projected class lists stale with every group write", () => {
+    // Deleting B's 8A, or making it a teaching group, changes where the
+    // activation sends 7A's pupils (it follows the links and the kinds), so
+    // the overlay the timetable draws must be asked again, not served from
+    // the cache for its staleTime.
+    render(<GroupsPage />);
+    expect(crudKeys.get("/api/v1/student-groups")).toEqual(
+      expect.arrayContaining([["groups"], ["people", "yearRosters"]]),
+    );
   });
 
   it("renders without crashing and lists every group", () => {
