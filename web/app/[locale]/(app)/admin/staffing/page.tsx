@@ -36,10 +36,10 @@
 // year's tjänst and counted minutes beside this year's (year-comparison.tsx).
 // And a year rolled WITHOUT its tjänster — before Fas 5, or with the wizard's
 // switch off — gets one notice offering to carry them from the predecessor
-// (staffing-carry-dialog.tsx), shown only while this year has no post at all
-// and last year has at least one: a school that rolls but never enters
-// tjänster is not nagged forever, and one that has started by hand is not
-// told to start over. Both are React.lazy, as the drawer is.
+// (staffing-carry-dialog.tsx), shown only while this year has no post and no
+// uppdrag at all and last year has at least one of either: a school that
+// rolls but never enters tjänster is not nagged forever, and one that has
+// started by hand is not told to start over. Both are React.lazy, as the drawer is.
 //
 // The settings card lives on THIS page, behind the settings button, rather
 // than on tillgänglighet beside the lunch card it is built like: the lunch
@@ -60,6 +60,7 @@ import {
 import {
   useStaffingLoad,
   useStaffingPolicy,
+  useTeacherDuties,
   useTeacherEmployments,
   useTeacherQualifications,
 } from "@/lib/staffing-queries";
@@ -101,7 +102,8 @@ const TeacherDrawer = lazy(() =>
  * Measured 2026-10-07 against fa4a3d6's 176.5KB own JS: the two lazy imports,
  * the toggle, the notice and the predecessor's employments query cost the
  * page 0.5KB (177.0KB); the dialog, the summary, the comparison and its join
- * load on the click.
+ * load on the click. The two uppdrag reads the notice gained after review
+ * (a school with uppdrag but no tjänster) left it at 177.0KB.
  */
 const StaffingCarryDialog = lazy(() =>
   import("./staffing-carry-dialog").then((module) => ({ default: module.StaffingCarryDialog })),
@@ -132,6 +134,8 @@ export default function StaffingPage() {
   const { data: requirements } = useRequirements(activeYearId);
   const { data: employments } = useTeacherEmployments(activeYearId);
   const { data: predecessorEmployments } = useTeacherEmployments(predecessor?.id ?? null);
+  const { data: duties } = useTeacherDuties(predecessor ? activeYearId : null);
+  const { data: predecessorDuties } = useTeacherDuties(predecessor?.id ?? null);
   const { data: qualifications } = useTeacherQualifications();
 
   const [week, setWeek] = useState<WeekView>("standard");
@@ -141,12 +145,17 @@ export default function StaffingPage() {
   const [chosenView, setView] = useState<PageView>("matrix");
   const [carryOpen, setCarryOpen] = useState(false);
   const view: PageView = predecessor ? chosenView : "matrix";
-  /** Rolled without its tjänster: none here, some last year (C10). */
+  /**
+   * Rolled without its tjänster: no post and no uppdrag here, some of either
+   * last year (C10) — a school that keeps uppdrag but no tjänster is offered
+   * it too, and a year that got one uppdrag (carried, or by hand) is not
+   * offered a second run, which would bring back an uppdrag deleted since.
+   */
   const offerCarry =
     predecessor !== null &&
-    employments !== undefined &&
-    employments.length === 0 &&
-    (predecessorEmployments?.length ?? 0) > 0;
+    employments?.length === 0 &&
+    duties?.length === 0 &&
+    (predecessorEmployments?.length ?? 0) + (predecessorDuties?.length ?? 0) > 0;
 
   /**
    * One gate for every query a NUMBER is printed from — the report and the

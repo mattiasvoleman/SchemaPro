@@ -63,7 +63,9 @@ describe("compareYears", () => {
 
   it("counts a nedsättning that changed as a change, and a target that moved alone as none", () => {
     const reduced = load("t-b", { employment: { ...load("t-b").employment!, reductionPercent: 20 } });
-    expect(compareYears([reduced], [load("t-b")])[0]!.change).toBe("CHANGED");
+    expect(compareYears([reduced], [load("t-b")])[0]!).toMatchObject({ change: "CHANGED", reductionChanged: true });
+    // A changed row says what changed: the nedsättning has no column of its own.
+    expect(compareYears([load("t-b")], [load("t-b")])[0]!.reductionChanged).toBe(false);
     // The school's riktmärke moved: the teacher's own figures did not.
     expect(compareYears([load("t-b", { percentOfTarget: 95 })], [load("t-b")])[0]!.change).toBe("SAME");
   });

@@ -112,6 +112,14 @@ export function YearComparison({
                     {row.employmentDelta ? (
                       <span className="ml-1 text-xs text-muted-foreground">({delta(row.employmentDelta, " %")})</span>
                     ) : null}
+                    {row.reductionChanged ? (
+                      <span className="block text-xs text-muted-foreground">
+                        {t("reductionChange", {
+                          from: formatPercent(row.lastYear!.reductionPercent),
+                          to: formatPercent(row.thisYear!.reductionPercent),
+                        })}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{minutes(row.lastYear?.countedMinutesPerWeek)}</td>
                   <td className="px-3 py-1.5 text-right tabular-nums">{minutes(row.thisYear?.countedMinutesPerWeek)}</td>
