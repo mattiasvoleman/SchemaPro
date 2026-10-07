@@ -51,7 +51,51 @@ describe("importCsvInBatches", () => {
     expect(report).toMatchObject({ created: 3, updated: 6, skipped: 9 });
   });
 
+  it("shifts staffing warnings to the file's own row numbers, and keeps them apart", async () => {
+    // A WARN row was saved: it belongs in warnings, not errors, and its row
+    // number must point at the admin's file like an error's does.
+    post
+      .mockResolvedValueOnce({
+        created: 1,
+        updated: 0,
+        skipped: 0,
+        errors: [],
+        warnings: [{ row: 3, code: "STAFF_TEACHER_OVER_TARGET", params: {}, message: "a" }],
+      })
+      .mockResolvedValueOnce({
+        created: 1,
+        updated: 0,
+        skipped: 0,
+        errors: [],
+        warnings: [{ row: 2, code: "STAFF_TEACHER_NOT_QUALIFIED", params: {}, message: "b" }],
+      });
+
+    const report = await importCsvInBatches({
+      kind: "requirements",
+      academicYearId: YEAR,
+      columns: ["groupName", "subject"],
+      rows: Array.from({ length: 1500 }, (_, i) => ({ groupName: `G${i}`, subject: "MA" })),
+    });
+
+    expect(report.errors).toEqual([]);
+    expect(report.warnings).toEqual([
+      { row: 3, code: "STAFF_TEACHER_OVER_TARGET", message: "a" },
+      { row: 1002, code: "STAFF_TEACHER_NOT_QUALIFIED", message: "b" },
+    ]);
+  });
+
+  it("adds no warnings list to a kind whose answer has none", async () => {
+    const report = await importCsvInBatches({
+      kind: "teachingGroups",
+      academicYearId: YEAR,
+      rows: memberships(3),
+    });
+
+    expect(report).not.toHaveProperty("warnings");
+  });
+
   it("carries the file's column set on every batch", async () => {
+
     // Each batch is validated on its own, so a column set sent only with the
     // first one would let batches two onward clear the fields it protects.
     post.mockResolvedValue({ created: 0, updated: 0, skipped: 0, errors: [] });

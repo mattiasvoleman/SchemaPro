@@ -275,6 +275,12 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
       "veckor",
       "fran",
       "till",
+      // Last, because nearly every school leaves them at 100 and the dialog
+      // keeps them under "Avancerat" for the same reason. What each teacher is
+      // CHARGED of the row in tjänstefördelningen, 0..200 — not the lesson's
+      // length, which the pupils sit through in full either way.
+      "larare_procent",
+      "medlarare_procent",
     ],
     // The examples exist to show the columns nobody guesses right. Row two is
     // 120 minutes on ODD weeks with a second teacher — the slöjd/hemkunskap
@@ -284,9 +290,10 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
     // before and twenty of dusch after, which are minutes OUTSIDE the 60 the
     // same row teaches in. A template of identical "alla veckor, hela läsåret,
     // noll minuter" rows would teach an administrator that the last five
-    // columns are decoration.
+    // columns are decoration. Row two is also the one row whose medlärare is
+    // charged half: two teachers in one slöjdsal, counted as one and a half.
     exampleRows: [
-      ["7A", "MA", "3", "60", "0", "0", "karin.ek@example.com", "", "alla", "", ""],
+      ["7A", "MA", "3", "60", "0", "0", "karin.ek@example.com", "", "alla", "", "", "100", "100"],
       [
         "Sl71",
         "SLTX",
@@ -299,9 +306,11 @@ export const CSV_TEMPLATES: Record<ImportKind, CsvTemplate> = {
         "udda",
         "",
         "",
+        "100",
+        "50",
       ],
-      ["7A", "SV", "2", "45", "0", "0", "", "", "alla", "2026-01-12", "2026-03-27"],
-      ["7A", "IDH", "2", "60", "10", "20", "karin.ek@example.com", "", "alla", "", ""],
+      ["7A", "SV", "2", "45", "0", "0", "", "", "alla", "2026-01-12", "2026-03-27", "100", "100"],
+      ["7A", "IDH", "2", "60", "10", "20", "karin.ek@example.com", "", "alla", "", "", "100", "100"],
     ],
   },
 };
@@ -486,6 +495,8 @@ const FIELD_LABELS: Record<string, string> = {
   minutesAfter: "minutesAfter",
   teacherEmail: "larare",
   coTeacherEmail: "medlarare",
+  teacherLoadPercent: "larare_procent",
+  coTeacherLoadPercent: "medlarare_procent",
   recurrence: "veckor",
   startDate: "fran",
   endDate: "till",
@@ -1204,6 +1215,13 @@ export type RequirementRow = {
   minutesAfter?: number;
   teacherEmail?: string | null;
   coTeacherEmail?: string | null;
+  /**
+   * What the lead and the co-teacher are charged of the row, 0..200. Optional
+   * like the minutes: absent leaves the stored value alone, an empty cell
+   * means 100 — the gateway reads a null the same way (ImportRequirementRowDto).
+   */
+  teacherLoadPercent?: number;
+  coTeacherLoadPercent?: number;
   recurrence: LessonRecurrence;
   /** "yyyy-mm-dd" */
   startDate?: string | null;
@@ -1251,6 +1269,25 @@ const REQUIREMENT_COLUMNS = {
     "larare2",
     "coteacher",
     "coteacheremail",
+  ],
+  // Never a bare "procent": a school's own sheet may carry a tjänstegrad
+  // column under that word, and reading it as a charge would quietly halve
+  // every row. Each spelling names whose percentage it is.
+  teacherLoadPercent: [
+    "larareprocent",
+    "lararprocent",
+    "lararensprocent",
+
+    "raknasforlarare",
+    "raknasforlararen",
+    "teacherloadpercent",
+  ],
+  coTeacherLoadPercent: [
+    "medlararprocent",
+    "medlarareprocent",
+    "raknasformedlarare",
+    "raknasformedlararen",
+    "coteacherloadpercent",
   ],
   recurrence: ["veckor", "vecka", "weeks", "recurrence"],
   // "Fr.o.m." normalizes to "from", not "fom" — the dots are stripped, not the
@@ -1464,6 +1501,30 @@ export function mapRequirementRows(parsed: ParsedCsv): {
     const minutesAfter = pupilMinutes("minutesAfter");
     if (minutesAfter === null) return;
 
+    /*
+     * The charge per teacher, 0..200 as the requirement's CHECK and the DTO
+     * have it. An empty cell is 100 — the row counted in full — which is what
+     * nearly every row is and what the gateway writes for a null. A "%" after
+     * the number is forgiven: it is what a person types in a percent column.
+     */
+    const loadPercent = (
+      field: "teacherLoadPercent" | "coTeacherLoadPercent",
+    ): number | null => {
+      const raw = cell(field).replace(/\s*%$/, "");
+      const percent = raw === "" ? 100 : Number(raw);
+      if (!Number.isInteger(percent) || percent < 0 || percent > 200) {
+        fail(
+          `Rad ${rowNumber}: ${FIELD_LABELS[field]} "${cell(field)}" är inte ett heltal mellan 0 och 200.`,
+        );
+        return null;
+      }
+      return percent;
+    };
+    const teacherLoadPercent = loadPercent("teacherLoadPercent");
+    if (teacherLoadPercent === null) return;
+    const coTeacherLoadPercent = loadPercent("coTeacherLoadPercent");
+    if (coTeacherLoadPercent === null) return;
+
     const rawRecurrence = cell("recurrence");
     const recurrence = RECURRENCE_BY_WORD[normalizeHeader(rawRecurrence)];
     if (recurrence === undefined) {
@@ -1515,6 +1576,12 @@ export function mapRequirementRows(parsed: ParsedCsv): {
     if (columnOf.has("teacherEmail")) row.teacherEmail = cell("teacherEmail") || null;
     if (columnOf.has("coTeacherEmail")) {
       row.coTeacherEmail = cell("coTeacherEmail") || null;
+    }
+    // Absent leaves the stored charge alone, for the reason the minutes do: a
+    // school's own four-column sheet must not reset every 50 % co-teacher.
+    if (columnOf.has("teacherLoadPercent")) row.teacherLoadPercent = teacherLoadPercent;
+    if (columnOf.has("coTeacherLoadPercent")) {
+      row.coTeacherLoadPercent = coTeacherLoadPercent;
     }
     if (columnOf.has("startDate")) row.startDate = rawStart || null;
     if (columnOf.has("endDate")) row.endDate = rawEnd || null;
@@ -1777,6 +1844,8 @@ export function requirementsToCsv(
     minutesPerLesson: number;
     minutesBefore: number;
     minutesAfter: number;
+    teacherLoadPercent: number;
+    coTeacherLoadPercent: number;
     recurrence: LessonRecurrence;
     startDate: string | null;
     endDate: string | null;
@@ -1825,7 +1894,11 @@ export function requirementsToCsv(
       RECURRENCE_WORD[requirement.recurrence],
       requirement.startDate ?? "",
       requirement.endDate ?? "",
+      // Always written, 100 included, for the reason the minutes are.
+      String(requirement.teacherLoadPercent),
+      String(requirement.coTeacherLoadPercent),
     ]);
+
   }
 
   return serializeCsv(CSV_TEMPLATES.requirements.headers, rows);

@@ -265,8 +265,28 @@ export function CsvImportDialog({
                   </ul>
                 </div>
               ) : null}
+              {/*
+                Rows that WERE saved, and that the school's tjänstefördelning
+                policy warns about — an obehörig lärare, a mål passed. Apart
+                from the errors and not in red: nothing here failed, and a
+                list that looks like one would send the admin to fix a file
+                that landed. A refused row is in the errors above instead.
+              */}
+              {report.warnings && report.warnings.length > 0 ? (
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">{t("rowWarnings")}</p>
+                  <ul className="max-h-48 space-y-1 overflow-y-auto text-sm">
+                    {report.warnings.map((warning, index) => (
+                      <li key={`${warning.row}-${index}`}>
+                        {t("rowError", { row: warning.row, message: warning.message })}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
             <DialogFooter>
+
               <Button onClick={() => handleOpenChange(false)}>{tCommon("close")}</Button>
             </DialogFooter>
           </>

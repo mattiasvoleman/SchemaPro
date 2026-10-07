@@ -1112,6 +1112,7 @@
     "updatesNotDeletes": "The import adds new rows and updates the ones already there. Rows you removed from the file are NOT removed from the curriculum, and a column the file does not have is left alone. But an EMPTY cell in a column the file does have clears that field — that is how you remove a teacher or a period. To remove a whole entry, click it in the table.",
     "rowErrors": "Errors per row",
     "rowError": "Row {row}: {message}",
+    "rowWarnings": "Saved, with a staffing warning",
     "exportButton": "Export CSV"
   },
   "grades": {

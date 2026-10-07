@@ -1112,6 +1112,7 @@
     "updatesNotDeletes": "Importen lägger till nya rader och uppdaterar dem som redan finns. Rader du tagit bort ur filen tas INTE bort ur timplanen, och en kolumn som saknas i filen lämnas orörd. Men en TOM cell i en kolumn filen har betyder att fältet töms — så här tar du bort en lärare eller en period. Ta bort en hel post genom att klicka på den i tabellen.",
     "rowErrors": "Fel per rad",
     "rowError": "Rad {row}: {message}",
+    "rowWarnings": "Sparade, med varning från tjänstefördelningen",
     "exportButton": "Exportera CSV"
   },
   "grades": {
