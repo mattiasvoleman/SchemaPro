@@ -1,0 +1,1145 @@
+{
+  "source": {
+    "startDate": "2026-08-17",
+    "endDate": "2027-06-11"
+  },
+  "shift": {
+    "sourceStart": "2026-08-17",
+    "targetStart": "2027-08-16",
+    "dateShiftDays": 364,
+    "crossesIsoWeek53": true
+  },
+  "names": [
+    {
+      "name": "7A",
+      "gradeLevel": 7,
+      "expected": {
+        "name": "8A",
+        "status": "PROMOTED"
+      }
+    },
+    {
+      "name": "Klass 7B",
+      "gradeLevel": 7,
+      "expected": {
+        "name": "Klass 8B",
+        "status": "PROMOTED"
+      }
+    },
+    {
+      "name": "8-2",
+      "gradeLevel": 8,
+      "expected": {
+        "name": "9-2",
+        "status": "PROMOTED"
+      }
+    },
+    {
+      "name": "9",
+      "gradeLevel": 9,
+      "expected": {
+        "name": "10",
+        "status": "PROMOTED"
+      }
+    },
+    {
+      "name": "0A",
+      "gradeLevel": 0,
+      "expected": {
+        "name": "1A",
+        "status": "PROMOTED"
+      }
+    },
+    {
+      "name": "7A7",
+      "gradeLevel": 7,
+      "expected": {
+        "name": "7A7",
+        "status": "KEPT_AMBIGUOUS"
+      }
+    },
+    {
+      "name": "Ma71",
+      "gradeLevel": 7,
+      "expected": {
+        "name": "Ma71",
+        "status": "KEPT_AMBIGUOUS"
+      }
+    },
+    {
+      "name": "17A",
+      "gradeLevel": 1,
+      "expected": {
+        "name": "17A",
+        "status": "KEPT_AMBIGUOUS"
+      }
+    },
+    {
+      "name": "Ugglan",
+      "gradeLevel": 3,
+      "expected": {
+        "name": "Ugglan",
+        "status": "KEPT_NO_GRADE_DIGIT"
+      }
+    },
+    {
+      "name": "FA",
+      "gradeLevel": 0,
+      "expected": {
+        "name": "1A",
+        "status": "F_KLASS"
+      }
+    },
+    {
+      "name": "F-B",
+      "gradeLevel": 0,
+      "expected": {
+        "name": "1B",
+        "status": "F_KLASS"
+      }
+    },
+    {
+      "name": "Fsk C",
+      "gradeLevel": 0,
+      "expected": {
+        "name": "1C",
+        "status": "F_KLASS"
+      }
+    },
+    {
+      "name": "F-klass D",
+      "gradeLevel": 0,
+      "expected": {
+        "name": "1D",
+        "status": "F_KLASS"
+      }
+    },
+    {
+      "name": "FA",
+      "gradeLevel": 1,
+      "expected": {
+        "name": "FA",
+        "status": "KEPT_NO_GRADE_DIGIT"
+      }
+    },
+    {
+      "name": "Fjärilen",
+      "gradeLevel": 0,
+      "expected": {
+        "name": "Fjärilen",
+        "status": "KEPT_NO_GRADE_DIGIT"
+      }
+    },
+    {
+      "name": "Språkval",
+      "gradeLevel": null,
+      "expected": {
+        "name": "Språkval",
+        "status": "KEPT"
+      }
+    },
+    {
+      "name": "Ä7ö",
+      "gradeLevel": 7,
+      "expected": {
+        "name": "Ä8ö",
+        "status": "PROMOTED"
+      }
+    }
+  ],
+  "groups": {
+    "input": [
+      {
+        "id": "7a",
+        "name": "7A",
+        "kind": "CLASS",
+        "gradeLevel": 7
+      },
+      {
+        "id": "7b",
+        "name": "7B",
+        "kind": "CLASS",
+        "gradeLevel": 7
+      },
+      {
+        "id": "8a",
+        "name": "8A",
+        "kind": "CLASS",
+        "gradeLevel": 8
+      },
+      {
+        "id": "9a",
+        "name": "9A",
+        "kind": "CLASS",
+        "gradeLevel": 9
+      },
+      {
+        "id": "ugg",
+        "name": "Ugglan",
+        "kind": "CLASS",
+        "gradeLevel": null
+      },
+      {
+        "id": "ma7",
+        "name": "Ma7 grupp 1",
+        "kind": "TEACHING_GROUP",
+        "gradeLevel": 7
+      },
+      {
+        "id": "sv",
+        "name": "Språkval",
+        "kind": "TEACHING_GROUP",
+        "gradeLevel": null
+      },
+      {
+        "id": "x8a",
+        "name": "8a",
+        "kind": "CLASS",
+        "gradeLevel": null
+      }
+    ],
+    "cases": [
+      {
+        "name": "defaults, carryTeachingGroups=true",
+        "graduatingGradeLevel": 9,
+        "carryTeachingGroups": true,
+        "choices": {},
+        "resolved": [
+          {
+            "sourceGroupId": "7a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8A",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8B",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9A",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ugg",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Ugglan",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Ma8 grupp 1",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "sv",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Språkval",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          },
+          {
+            "sourceGroupId": "x8a",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "8a",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          }
+        ],
+        "collisions": [
+          {
+            "name": "8A / 8a",
+            "sourceGroupIds": [
+              "7a",
+              "x8a"
+            ],
+            "caseOnly": true
+          }
+        ]
+      },
+      {
+        "name": "defaults, carryTeachingGroups=false",
+        "graduatingGradeLevel": 9,
+        "carryTeachingGroups": false,
+        "choices": {},
+        "resolved": [
+          {
+            "sourceGroupId": "7a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8A",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8B",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9A",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ugg",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Ugglan",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "sv",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": true,
+            "error": null
+          },
+          {
+            "sourceGroupId": "x8a",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "8a",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          }
+        ],
+        "collisions": [
+          {
+            "name": "8A / 8a",
+            "sourceGroupIds": [
+              "7a",
+              "x8a"
+            ],
+            "caseOnly": true
+          }
+        ]
+      },
+      {
+        "name": "intakeAndOverrides, carryTeachingGroups=true",
+        "graduatingGradeLevel": 9,
+        "carryTeachingGroups": true,
+        "choices": {
+          "7a": {
+            "outcome": "INTAKE"
+          },
+          "7b": {
+            "outcome": "INTAKE"
+          },
+          "8a": {
+            "outcome": "PROMOTE",
+            "name": " 9 Gul "
+          },
+          "9a": {
+            "outcome": "PROMOTE"
+          },
+          "ugg": {
+            "outcome": "PROMOTE"
+          },
+          "ma7": {
+            "outcome": "INTAKE"
+          },
+          "x8a": {
+            "outcome": "SKIP"
+          }
+        },
+        "resolved": [
+          {
+            "sourceGroupId": "7a",
+            "outcome": "INTAKE",
+            "successor": {
+              "name": "8A",
+              "gradeLevel": 8
+            },
+            "intake": {
+              "name": "7A",
+              "gradeLevel": 7
+            },
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7b",
+            "outcome": "INTAKE",
+            "successor": {
+              "name": "8B",
+              "gradeLevel": 8
+            },
+            "intake": {
+              "name": "7B",
+              "gradeLevel": 7
+            },
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9 Gul",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "OVERRIDDEN",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": "PROMOTE_GRADUATING"
+          },
+          {
+            "sourceGroupId": "ugg",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Ugglan",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": "PROMOTE_WITHOUT_GRADE"
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Ma8 grupp 1",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": "INTAKE_NOT_LOWEST"
+          },
+          {
+            "sourceGroupId": "sv",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Språkval",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          },
+          {
+            "sourceGroupId": "x8a",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": true,
+            "error": null
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "name": "intakeAndOverrides, carryTeachingGroups=false",
+        "graduatingGradeLevel": 9,
+        "carryTeachingGroups": false,
+        "choices": {
+          "7a": {
+            "outcome": "INTAKE"
+          },
+          "7b": {
+            "outcome": "INTAKE"
+          },
+          "8a": {
+            "outcome": "PROMOTE",
+            "name": " 9 Gul "
+          },
+          "9a": {
+            "outcome": "PROMOTE"
+          },
+          "ugg": {
+            "outcome": "PROMOTE"
+          },
+          "ma7": {
+            "outcome": "INTAKE"
+          },
+          "x8a": {
+            "outcome": "SKIP"
+          }
+        },
+        "resolved": [
+          {
+            "sourceGroupId": "7a",
+            "outcome": "INTAKE",
+            "successor": {
+              "name": "8A",
+              "gradeLevel": 8
+            },
+            "intake": {
+              "name": "7A",
+              "gradeLevel": 7
+            },
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7b",
+            "outcome": "INTAKE",
+            "successor": {
+              "name": "8B",
+              "gradeLevel": 8
+            },
+            "intake": {
+              "name": "7B",
+              "gradeLevel": 7
+            },
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9 Gul",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "OVERRIDDEN",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "GRADUATE",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": "PROMOTE_GRADUATING"
+          },
+          {
+            "sourceGroupId": "ugg",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Ugglan",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": "PROMOTE_WITHOUT_GRADE"
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": "INTAKE_NOT_LOWEST"
+          },
+          {
+            "sourceGroupId": "sv",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": true,
+            "error": null
+          },
+          {
+            "sourceGroupId": "x8a",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": true,
+            "error": null
+          }
+        ],
+        "collisions": []
+      },
+      {
+        "name": "carryAndSkip, carryTeachingGroups=true",
+        "graduatingGradeLevel": 9,
+        "carryTeachingGroups": true,
+        "choices": {
+          "9a": {
+            "outcome": "CARRY"
+          },
+          "7a": {
+            "outcome": "SKIP"
+          },
+          "sv": {
+            "outcome": "SKIP"
+          }
+        },
+        "resolved": [
+          {
+            "sourceGroupId": "7a",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8B",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9A",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "9A",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ugg",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Ugglan",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "Ma8 grupp 1",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "sv",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": true,
+            "error": null
+          },
+          {
+            "sourceGroupId": "x8a",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "8a",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          }
+        ],
+        "collisions": [
+          {
+            "name": "9A",
+            "sourceGroupIds": [
+              "8a",
+              "9a"
+            ],
+            "caseOnly": false
+          }
+        ]
+      },
+      {
+        "name": "carryAndSkip, carryTeachingGroups=false",
+        "graduatingGradeLevel": 9,
+        "carryTeachingGroups": false,
+        "choices": {
+          "9a": {
+            "outcome": "CARRY"
+          },
+          "7a": {
+            "outcome": "SKIP"
+          },
+          "sv": {
+            "outcome": "SKIP"
+          }
+        },
+        "resolved": [
+          {
+            "sourceGroupId": "7a",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "7b",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "8B",
+              "gradeLevel": 8
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "8a",
+            "outcome": "PROMOTE",
+            "successor": {
+              "name": "9A",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "PROMOTED",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "9a",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "9A",
+              "gradeLevel": 9
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ugg",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "Ugglan",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          },
+          {
+            "sourceGroupId": "ma7",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": false,
+            "error": null
+          },
+          {
+            "sourceGroupId": "sv",
+            "outcome": "SKIP",
+            "successor": null,
+            "intake": null,
+            "nameStatus": null,
+            "noGrade": true,
+            "error": null
+          },
+          {
+            "sourceGroupId": "x8a",
+            "outcome": "CARRY",
+            "successor": {
+              "name": "8a",
+              "gradeLevel": null
+            },
+            "intake": null,
+            "nameStatus": "KEPT",
+            "noGrade": true,
+            "error": null
+          }
+        ],
+        "collisions": [
+          {
+            "name": "9A",
+            "sourceGroupIds": [
+              "8a",
+              "9a"
+            ],
+            "caseOnly": false
+          }
+        ]
+      }
+    ]
+  },
+  "periods": [
+    {
+      "startDate": null,
+      "endDate": null,
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "startDate": null,
+        "endDate": null,
+        "status": "UNCHANGED"
+      }
+    },
+    {
+      "startDate": "2027-01-11",
+      "endDate": "2027-06-11",
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "startDate": "2028-01-10",
+        "endDate": "2028-06-09",
+        "status": "BOUND_ANCHORED"
+      }
+    },
+    {
+      "startDate": "2026-09-01",
+      "endDate": "2026-12-18",
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "startDate": "2027-08-31",
+        "endDate": "2027-12-17",
+        "status": "SHIFTED"
+      }
+    },
+    {
+      "startDate": "2026-08-17",
+      "endDate": "2026-12-20",
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "startDate": "2027-08-16",
+        "endDate": "2027-12-19",
+        "status": "BOUND_ANCHORED"
+      }
+    },
+    {
+      "startDate": "2027-01-11",
+      "endDate": "2027-06-10",
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-07"
+      },
+      "expected": {
+        "startDate": "2028-01-10",
+        "endDate": "2028-06-08",
+        "status": "DROPPED"
+      }
+    },
+    {
+      "startDate": "2027-01-11",
+      "endDate": "2027-06-11",
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-07"
+      },
+      "expected": {
+        "startDate": "2028-01-10",
+        "endDate": "2028-06-07",
+        "status": "BOUND_ANCHORED"
+      }
+    },
+    {
+      "startDate": null,
+      "endDate": "2026-12-18",
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "startDate": null,
+        "endDate": "2027-12-17",
+        "status": "SHIFTED"
+      }
+    },
+    {
+      "startDate": "2027-05-01",
+      "endDate": null,
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "startDate": "2028-04-29",
+        "endDate": null,
+        "status": "SHIFTED"
+      }
+    }
+  ],
+  "breaks": [
+    {
+      "lov": {
+        "startDate": "2026-10-26",
+        "endDate": "2026-10-30"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2027-11-01",
+        "proposedEnd": "2027-11-05",
+        "anchor": "ISO_WEEK",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2026-12-21",
+        "endDate": "2027-01-06"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2027-12-20",
+        "proposedEnd": "2028-01-05",
+        "anchor": "CHRISTMAS",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-03-29",
+        "endDate": "2027-04-02"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-04-17",
+        "proposedEnd": "2028-04-21",
+        "anchor": "EASTER",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2026-12-28",
+        "endDate": "2026-12-30"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": null,
+        "proposedEnd": null,
+        "anchor": "NONE",
+        "fits": false
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-02-22",
+        "endDate": "2027-02-26"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-02-21",
+        "proposedEnd": "2028-02-25",
+        "anchor": "ISO_WEEK",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-06-07",
+        "endDate": "2027-06-11"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-02"
+      },
+      "expected": {
+        "proposedStart": "2028-06-05",
+        "proposedEnd": "2028-06-09",
+        "anchor": "ISO_WEEK",
+        "fits": false
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2027-04-05",
+        "endDate": "2027-04-05"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2028-04-03",
+        "proposedEnd": "2028-04-03",
+        "anchor": "ISO_WEEK",
+        "fits": true
+      }
+    }
+  ],
+  "easter": [
+    {
+      "year": 2026,
+      "sunday": "2026-04-05"
+    },
+    {
+      "year": 2027,
+      "sunday": "2027-03-28"
+    },
+    {
+      "year": 2028,
+      "sunday": "2028-04-16"
+    },
+    {
+      "year": 2029,
+      "sunday": "2029-04-01"
+    },
+    {
+      "year": 2030,
+      "sunday": "2030-04-21"
+    }
+  ]
+}
