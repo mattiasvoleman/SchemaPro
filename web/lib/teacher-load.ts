@@ -284,6 +284,7 @@ export function targetMinutesPerWeek(
 /**
  * UNDER / OK / OVER against the target with the tolerance on BOTH sides, the
  * edges inclusive: exactly target × (1 + t/100) is OK, one minute more is OVER.
+ * Judged on the whole minutes the page prints beside it, as the gateway does.
  */
 export function loadStatus(
   assigned: number,
@@ -291,9 +292,10 @@ export function loadStatus(
   tolerancePercent: number,
 ): LoadStatus {
   if (target === null) return "NO_TARGET";
+  const minutes = Math.round(assigned);
   const band = (target * tolerancePercent) / 100;
-  if (assigned > target + band) return "OVER";
-  if (assigned < target - band) return "UNDER";
+  if (minutes > target + band) return "OVER";
+  if (minutes < target - band) return "UNDER";
   return "OK";
 }
 

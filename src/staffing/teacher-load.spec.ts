@@ -148,6 +148,16 @@ describe('loadStatus', () => {
     expect(loadStatus(971, 1080, 10)).toBe('UNDER');
   });
 
+  it('judges the whole minutes the report prints beside it', () => {
+    // Load percentages and odd weeks make fractions ordinary; the matrix shows
+    // Math.round(counted), and a status of OVER beside "990" against a
+    // 990 limit would contradict the figure next to it.
+    expect(loadStatus(990.15, 900, 10)).toBe('OK');
+    expect(loadStatus(990.5, 900, 10)).toBe('OVER');
+    expect(loadStatus(809.6, 900, 10)).toBe('OK');
+    expect(loadStatus(809.4, 900, 10)).toBe('UNDER');
+  });
+
   it('with zero tolerance only the exact target is OK', () => {
     expect(loadStatus(1080, 1080, 0)).toBe('OK');
     expect(loadStatus(1081, 1080, 0)).toBe('OVER');

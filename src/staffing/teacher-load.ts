@@ -348,6 +348,14 @@ export function targetMinutesPerWeek(
  * the one that matters: exactly target × (1 + tolerance / 100) is still OK, one
  * minute more is OVER. The same band downward keeps a teacher 3 % under from
  * reading as a problem to fix.
+ *
+ * Judged on the WHOLE minutes, Math.round, the figure every reader prints
+ * beside the status (the matrix's counted minutes, the 409's `minutes`, the
+ * picker's kvar). Load percentages and odd weeks make fractions ordinary, and
+ * judging the unrounded 990.15 against a 990 limit said OVER beside a printed
+ * 990 — a refusal that contradicted its own sentence. The report, the two
+ * write-time checks and the picker all come through here, so the threshold
+ * stays one.
  */
 export function loadStatus(
   assigned: number,
@@ -355,9 +363,10 @@ export function loadStatus(
   tolerancePercent: number,
 ): LoadStatus {
   if (target === null) return 'NO_TARGET';
+  const minutes = Math.round(assigned);
   const band = (target * tolerancePercent) / 100;
-  if (assigned > target + band) return 'OVER';
-  if (assigned < target - band) return 'UNDER';
+  if (minutes > target + band) return 'OVER';
+  if (minutes < target - band) return 'UNDER';
   return 'OK';
 }
 
@@ -737,7 +746,8 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
  * this teacher have left after taking that row" (suggest-teachers) and "would
  * this write put them over" (STAFF_TEACHER_OVER_TARGET). Both add one row's
  * charge to this figure and ask loadStatus, so a candidate the picker calls
- * OVER is exactly the one the write would refuse — no rounding in between.
+ * OVER is exactly the one the write would refuse (loadStatus rounds once,
+ * for all of them).
  * No peaks and no subjects, so it is cheap enough to ask per request.
  *
  * Gateway-only: the browser reads these answers from the endpoints, so the
