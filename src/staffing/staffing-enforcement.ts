@@ -15,6 +15,28 @@ import {
 import type { LoadInput, LoadQualification, LoadRequirement } from './teacher-load';
 import type { YearBounds } from './teaching-weeks';
 
+/**
+ * One person as both of a row's teachers. Nothing in the schema refuses it,
+ * and every reader assumes it cannot happen: the load report charges the
+ * person the lead's share AND the co-teacher's (200 % of a row at 100/100),
+ * judgeRequirementWrite asks the over-target question once per role and so
+ * answers twice for one person, and suggest-teachers drops the co-teacher
+ * from the candidates — the lead with them. So every writer that names
+ * teachers refuses it: the timplanspost's POST and PATCH (as the row will end
+ * up, the stored half included) and the requirements import, per row.
+ * Not a CHECK yet: rows written before this may hold it, and a CHECK on a
+ * table nobody has audited would stop the deploy rather than the mistake.
+ */
+export const SAME_TEACHER_TWICE =
+  'coTeacherId: medläraren kan inte vara samma person som läraren — en lärare står en gång per timplanspost.';
+export const SAME_TEACHER_TWICE_IN_FILE =
+  'Läraren och medläraren är samma person. En lärare står en gång per timplanspost — lämna medlärare tom eller ange en annan.';
+
+export const sameTeacherTwice = (
+  teacherId: string | null | undefined,
+  coTeacherId: string | null | undefined,
+): boolean => Boolean(teacherId) && teacherId === coTeacherId;
+
 /*
  * Where the two staffing questions (staffing-checks.ts) meet the database.
  *

@@ -23,7 +23,11 @@ import {
   unknownNationalCodeMessage,
 } from '../resources/national-codes';
 import { UsersService } from '../users/users.service';
-import { RequirementImportChecks } from '../staffing/staffing-enforcement';
+import {
+  RequirementImportChecks,
+  SAME_TEACHER_TWICE_IN_FILE,
+  sameTeacherTwice,
+} from '../staffing/staffing-enforcement';
 import { staffingSentence } from '../staffing/staffing-checks';
 import type {
   ImportGroupsDto,
@@ -1199,6 +1203,17 @@ export class ImportService {
         };
 
         const current = existingByKey.get(key);
+        // One person as both teachers, in the file or against the stored half
+        // the file leaves untouched: see SAME_TEACHER_TWICE.
+        if (
+          sameTeacherTwice(
+            'teacherId' in values ? values.teacherId : (current?.teacherId ?? null),
+            'coTeacherId' in values ? values.coTeacherId : (current?.coTeacherId ?? null),
+          )
+        ) {
+          report.errors.push({ row: rowNumber, message: SAME_TEACHER_TWICE_IN_FILE });
+          continue;
+        }
         // An untouched row adds no teacher and no minute: nothing to ask.
         const unchanged = current ? this.requirementIsUnchanged(current, values) : false;
         const judged =

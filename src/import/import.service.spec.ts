@@ -2091,6 +2091,27 @@ describe('ImportService', () => {
         expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
       });
 
+      it('one person as both lead and co-teacher is a row error, in the file or against the stored row', async () => {
+        const inFile = await run(
+          row({ teacherEmail: 'karin@example.com', coTeacherEmail: 'KARIN@example.com' }),
+        );
+        expect(inFile.errors).toEqual([
+          { row: 1, message: expect.stringContaining('samma person') },
+        ]);
+        expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+
+        // A file with only the medlärare column, naming the row's stored lead.
+        arrangeRows(tx.teachingRequirement.findMany, [stored({ teacherId: TEACHER_ID })]);
+        const againstStored = await runWithColumns(
+          ['coTeacherEmail'],
+          row({ coTeacherEmail: 'karin@example.com' }),
+        );
+        expect(againstStored.errors).toEqual([
+          { row: 1, message: expect.stringContaining('samma person') },
+        ]);
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+      });
+
       it('an unknown CO-teacher email is a row error that says which column it was', async () => {
         const report = await run(
           row({ teacherEmail: 'karin@example.com', coTeacherEmail: 'ghost@example.com' }),
