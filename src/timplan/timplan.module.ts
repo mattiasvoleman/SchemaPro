@@ -5,6 +5,7 @@ import { LocalTimplansController } from './local-timplans.controller';
 import { LocalTimplansService } from './local-timplans.service';
 import { TimplanCoverageController } from './timplan-coverage.controller';
 import { TimplanCoverageService } from './timplan-coverage.service';
+import { TimplanRequirementsService } from './timplan-requirements.service';
 
 /**
  * Den lokala timplanen: a school's own minutes per week per subject and
@@ -21,6 +22,11 @@ import { TimplanCoverageService } from './timplan-coverage.service';
  */
 @Module({
   controllers: [LocalTimplansController, AcademicYearTimplansController, TimplanCoverageController],
-  providers: [LocalTimplansService, AcademicYearTimplansService, TimplanCoverageService],
+  providers: [
+    LocalTimplansService,
+    AcademicYearTimplansService,
+    TimplanCoverageService,
+    TimplanRequirementsService,
+  ],
 })
 export class TimplanModule {}

@@ -3034,6 +3034,119 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('skapa timplansposter (generate-requirements)', () => {
+    /*
+     * POST /local-timplans/:id/generate-requirements over HTTP: a preview and
+     * an apply that reach the handler, the DTO's lesson bounds and grid with
+     * their field names, the guard for a teacher, and the 404 for a plan RLS
+     * hides.
+     */
+    const PLAN_ID = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
+    const path = `/api/v1/local-timplans/${PLAN_ID}/generate-requirements`;
+    const MODELS = ['localTimplan', 'academicYear', 'academicYearTimplan', 'studentGroup', 'teachingRequirement', 'subject'];
+    const resetModels = () => {
+      for (const model of MODELS) {
+        for (const method of Object.values(harness.tx[model]!)) method.mockReset();
+        harness.tx[model]!['findMany']!.mockResolvedValue([]);
+      }
+    };
+    beforeEach(resetModels);
+    afterEach(resetModels);
+
+    const givenThePlan = () => {
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValue({
+        id: PLAN_ID,
+        name: 'Grundskolan 2024',
+        status: 'DECIDED',
+        entries: [{ subjectId: SUBJECT_ID, gradeLevel: 7, minutesPerWeek: 175 }],
+      });
+      harness.tx['academicYear']!['findUnique']!.mockResolvedValue({ id: YEAR_ID });
+      harness.tx['academicYearTimplan']!['findMany']!.mockResolvedValue([{ gradeLevel: 7 }]);
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([{ id: GROUP_ID, name: '7A', gradeLevel: 7 }]);
+      harness.tx['subject']!['findMany']!.mockResolvedValue([{ id: SUBJECT_ID, name: 'Matematik' }]);
+    };
+
+    it('an admin previews, then applies, and the apply writes the previewed row', async () => {
+      givenThePlan();
+      const preview = await request(http())
+        .post(path)
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, minutesPerLesson: 60, dryRun: true })
+        .expect(200);
+      expect(preview.body).toMatchObject({ dryRun: true, created: 0, gradeLevels: [7] });
+      expect(preview.body.rows).toEqual([
+        expect.objectContaining({ groupName: '7A', subjectName: 'Matematik', lessonsPerWeek: 3, minutesPerLesson: 60, surplusMinutesPerWeek: 5 }),
+      ]);
+      expect(harness.tx['teachingRequirement']!['createManyAndReturn']).not.toHaveBeenCalled();
+
+      harness.tx['teachingRequirement']!['createManyAndReturn']!.mockResolvedValueOnce([
+        { id: TYPE_ID, studentGroupId: GROUP_ID, subjectId: SUBJECT_ID },
+      ]);
+      const applied = await request(http())
+        .post(path)
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, minutesPerLesson: 60, dryRun: false })
+        .expect(200);
+      expect(applied.body).toMatchObject({ dryRun: false, created: 1 });
+      expect(applied.body.rows[0]).toMatchObject({ requirementId: TYPE_ID });
+      expect(harness.tx['teachingRequirement']!['createManyAndReturn']).toHaveBeenCalledWith(
+        expect.objectContaining({ skipDuplicates: true }),
+      );
+    });
+
+    it('400s a length off the grid or out of bounds, a missing dryRun and an override past 40 lessons, naming the field', async () => {
+      const bodies: [object, string][] = [
+        [{ academicYearId: YEAR_ID, minutesPerLesson: 37, dryRun: true }, 'minutesPerLesson: lektionslängden måste vara ett helt antal 5-minutersintervall'],
+        [{ academicYearId: YEAR_ID, minutesPerLesson: 250, dryRun: true }, 'minutesPerLesson: högst 240 minuter per lektion.'],
+        [{ academicYearId: YEAR_ID, minutesPerLesson: 60 }, 'dryRun: anges som true'],
+        [
+          {
+            academicYearId: YEAR_ID,
+            minutesPerLesson: 60,
+            dryRun: false,
+            overrides: [{ studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, lessonsPerWeek: 41, minutesPerLesson: 60 }],
+          },
+          'overrides: högst 40 lektioner per vecka.',
+        ],
+      ];
+      for (const [body, message] of bodies) {
+        const response = await request(http()).post(path).set('x-test-user', admin()).send(body).expect(400);
+        expect(JSON.stringify(response.body)).toContain(message);
+      }
+      expect(harness.tx['localTimplan']!['findUnique']).not.toHaveBeenCalled();
+    });
+
+    it('400s an override for a class and subject the plan gives no row', async () => {
+      givenThePlan();
+      const response = await request(http())
+        .post(path)
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: YEAR_ID,
+          minutesPerLesson: 60,
+          dryRun: false,
+          overrides: [{ studentGroupId: STUDENT_ID, subjectId: SUBJECT_ID, lessonsPerWeek: 2, minutesPerLesson: 60 }],
+        })
+        .expect(400);
+      expect(response.body.detail).toContain('timplanen inte ger någon post');
+      expect(harness.tx['teachingRequirement']!['createManyAndReturn']).not.toHaveBeenCalled();
+    });
+
+    it('stops a teacher at the guard, and 404s a plan RLS hides', async () => {
+      await request(http())
+        .post(path)
+        .set('x-test-user', asUser({ role: 'TEACHER' as never }))
+        .send({ academicYearId: YEAR_ID, minutesPerLesson: 60, dryRun: true })
+        .expect(403);
+      harness.tx['localTimplan']!['findUnique']!.mockResolvedValue(null);
+      await request(http())
+        .post(path)
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, minutesPerLesson: 60, dryRun: true })
+        .expect(404);
+    });
+  });
+
   describe('RBAC', () => {
     const adminOnly = [
       ['POST', '/api/v1/academic-years'],

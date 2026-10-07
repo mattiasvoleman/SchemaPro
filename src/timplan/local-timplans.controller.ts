@@ -12,6 +12,7 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../auth/enums/role.enum';
@@ -33,6 +34,11 @@ import {
   ReplaceLocalTimplanEntriesDto,
   UpdateLocalTimplanDto,
 } from './dto/local-timplan.dto';
+import { GenerateRequirementsDto } from './dto/generate-requirements.dto';
+import {
+  TimplanRequirementsService,
+  type GenerateRequirementsResponse,
+} from './timplan-requirements.service';
 
 const uuid = () => new ParseUUIDPipe({ version: '4' });
 
@@ -57,7 +63,10 @@ const uuid = () => new ParseUUIDPipe({ version: '4' });
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
 export class LocalTimplansController {
-  constructor(private readonly timplans: LocalTimplansService) {}
+  constructor(
+    private readonly timplans: LocalTimplansService,
+    private readonly requirements: TimplanRequirementsService,
+  ) {}
 
   @Get()
   list(@CurrentUser() user: AuthenticatedUser): Promise<LocalTimplanListItem[]> {
@@ -139,6 +148,24 @@ export class LocalTimplansController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<LocalTimplanDetail> {
     return this.timplans.reopen(id, dto, user);
+  }
+
+  /**
+   * Skapa timplansposter for a läsår: dryRun true previews, false creates the
+   * missing rows (idempotent). 200 either way — an apply that creates nothing
+   * is an answer, not a new resource. Throttled like the imports: one call can
+   * write a few hundred rows.
+   */
+  @Post(':id/generate-requirements')
+  @Roles(Role.SCHOOL_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  generateRequirements(
+    @Param('id', uuid()) id: string,
+    @Body() dto: GenerateRequirementsDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<GenerateRequirementsResponse> {
+    return this.requirements.generate(id, dto, user);
   }
 
   @Post(':id/copy')
