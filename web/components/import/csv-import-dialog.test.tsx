@@ -672,7 +672,58 @@ describe("CsvImportDialog for an import that updates", () => {
     ).toBeInTheDocument();
   });
 
+  it("lists rows saved with a staffing warning apart from the errors", async () => {
+    // WARN saves the row; it must not read as a failure the admin has to fix
+    // in the file. A REFUSED row is in errors, and that stays red.
+    mockPost.mockResolvedValue({
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      errors: [{ row: 1, message: "Läraren saknar behörighet i Matematik för åk 7–9." }],
+      warnings: [
+        {
+          row: 1,
+          code: "STAFF_TEACHER_OVER_TARGET",
+          params: { role: "TEACHER", minutes: 1200, target: 1000, limit: 1100, tolerance: 10 },
+          message: "Läraren hamnar på 1200 min/v.",
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["requirements"] });
+
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplansposter.csv");
+    await screen.findByText("rowsReady(count=1)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    expect(await screen.findByText("rowWarnings")).toBeInTheDocument();
+    const warned = screen.getByText("rowError(row=1|message=Läraren hamnar på 1200 min/v.)");
+    expect(warned).not.toHaveClass("text-destructive");
+    expect(warned.closest("ul")).not.toHaveClass("text-destructive");
+    expect(
+      screen.getByText(
+        "rowError(row=1|message=Läraren saknar behörighet i Matematik för åk 7–9.)",
+      ).closest("ul"),
+    ).toHaveClass("text-destructive");
+  });
+
+  it("says nothing about warnings when the report carries none", async () => {
+    mockPost.mockResolvedValue({ created: 1, updated: 0, skipped: 0, errors: [], warnings: [] });
+    const user = userEvent.setup();
+    renderDialog({ kinds: ["requirements"] });
+
+    await uploadCsv(user, REQUIREMENTS_CSV, "timplansposter.csv");
+    await screen.findByText("rowsReady(count=1)");
+    await waitFor(() => expect(importButton()).toBeEnabled());
+    await user.click(importButton());
+
+    await screen.findByText(/resultSummaryUpdated/);
+    expect(screen.queryByText("rowWarnings")).not.toBeInTheDocument();
+  });
+
   it("warns that a row deleted from the file is not deleted from the timplan", async () => {
+
     // The misreading this sentence exists to prevent: an import that updates
     // looks like the file REPLACING what was there, so an admin who uploads
     // only årskurs 7 concludes the rest is gone. It is not, and there is no

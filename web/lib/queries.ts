@@ -247,7 +247,9 @@ export function useRequirements(academicYearId: string | null) {
             // invisible here until it is named — minutesBefore/minutesAfter
             // would have read as `undefined` on every requirement, which the
             // timplan dialog would then have saved back as 0.
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, minutesBefore, minutesAfter, recurrence, startDate, endDate",
+            // The same holds for the two load percentages: left out, the
+            // dialog would save every row back at 100.
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, minutesBefore, minutesAfter, teacherLoadPercent, coTeacherLoadPercent, recurrence, startDate, endDate",
           )
           .eq("academicYearId", academicYearId!)
           .order("id")
@@ -1745,6 +1747,14 @@ export interface ImportReport {
   updated?: number;
   /** 1-based DATA row numbers (the header row is not counted). */
   errors: { row: number; message: string }[];
+  /**
+   * Rows that were SAVED but that the school's tjänstefördelning policy warns
+   * about (src/import/dto/import.dto.ts ImportWarning): an obehörig lärare or
+   * one taken past their mål. Only the timplan import sends it; a row the
+   * policy REFUSES is in `errors` instead, because it was not written.
+   * `message` is the gateway's Swedish sentence, the same voice as `errors`.
+   */
+  warnings?: { row: number; code: string; message: string }[];
 }
 
 const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
@@ -2041,6 +2051,20 @@ export async function importCsvInBatches({
       for (const error of report?.errors ?? []) {
         merged.errors.push({ ...error, row: error.row + offset });
       }
+      // Same shift, and the same "only when it came back" as `updated`: a
+      // students upload has no policy to warn about and must not grow an
+      // empty list in its result.
+      if (Array.isArray(report?.warnings)) {
+        merged.warnings ??= [];
+        for (const warning of report.warnings) {
+          merged.warnings.push({
+            row: warning.row + offset,
+            code: warning.code,
+            message: warning.message,
+          });
+        }
+      }
+
     } catch (error) {
       if (offset === 0) throw error;
       merged.errors.push({

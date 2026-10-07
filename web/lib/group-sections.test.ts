@@ -245,7 +245,10 @@ describe("taughtGroupsOf", () => {
     // what nearly every subject carries and what the column defaults to.
     minutesBefore: 0,
     minutesAfter: 0,
+    teacherLoadPercent: 100,
+    coTeacherLoadPercent: 100,
     // Not what these tests are about, but a requirement carries its own period
+
     // now and the fixture has to be a whole one — see lib/teaching-hours.ts.
     recurrence: "ALL_WEEKS" as const,
     startDate: null,

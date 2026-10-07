@@ -1260,6 +1260,8 @@ describe("teaching requirements", () => {
         minutesAfter: 0,
         teacherEmail: "karin.ek@example.com",
         coTeacherEmail: null,
+        teacherLoadPercent: 100,
+        coTeacherLoadPercent: 100,
         recurrence: "ALL_WEEKS",
         startDate: null,
         endDate: null,
@@ -1273,6 +1275,8 @@ describe("teaching requirements", () => {
         minutesAfter: 0,
         teacherEmail: "karin.ek@example.com",
         coTeacherEmail: "bo.alm@example.com",
+        teacherLoadPercent: 100,
+        coTeacherLoadPercent: 50,
         recurrence: "ODD_WEEKS",
         startDate: null,
         endDate: null,
@@ -1286,6 +1290,8 @@ describe("teaching requirements", () => {
         minutesAfter: 0,
         teacherEmail: null,
         coTeacherEmail: null,
+        teacherLoadPercent: 100,
+        coTeacherLoadPercent: 100,
         recurrence: "ALL_WEEKS",
         startDate: "2026-01-12",
         endDate: "2026-03-27",
@@ -1302,6 +1308,8 @@ describe("teaching requirements", () => {
         minutesAfter: 20,
         teacherEmail: "karin.ek@example.com",
         coTeacherEmail: null,
+        teacherLoadPercent: 100,
+        coTeacherLoadPercent: 100,
         recurrence: "ALL_WEEKS",
         startDate: null,
         endDate: null,
@@ -1668,6 +1676,85 @@ describe("teaching requirements", () => {
     });
   });
 
+  describe("load percentages (Fas 2)", () => {
+    const PERCENT_HEAD =
+      "grupp;amne;lektioner_per_vecka;minuter_per_lektion;larare;medlarare;larare_procent;medlarare_procent\r\n";
+
+    it("reads both charges, and an empty cell as the full 100", () => {
+      const { rows, errors, columns } = mapRequirementRows(
+        parseCsv(PERCENT_HEAD + "Sl71;SLTX;1;120;karin@s.se;bo@s.se;;50\r\n"),
+      );
+
+      expect(errors).toEqual([]);
+      expect(rows[0]).toMatchObject({ teacherLoadPercent: 100, coTeacherLoadPercent: 50 });
+      expect(columns).toEqual(
+        expect.arrayContaining(["teacherLoadPercent", "coTeacherLoadPercent"]),
+      );
+    });
+
+    it("forgives a trailing percent sign and takes both ends of 0..200", () => {
+      const { rows, errors } = mapRequirementRows(
+        parseCsv(PERCENT_HEAD + "7A;MA;3;60;karin@s.se;bo@s.se;200 %;0\r\n"),
+      );
+
+      expect(errors).toEqual([]);
+      expect(rows[0]).toMatchObject({ teacherLoadPercent: 200, coTeacherLoadPercent: 0 });
+    });
+
+    it("refuses a charge outside 0..200 or with a decimal, naming the column", () => {
+      const { rows, errors } = mapRequirementRows(
+        parseCsv(
+          PERCENT_HEAD +
+            "7A;MA;3;60;karin@s.se;;250;\r\n" +
+            "7B;MA;3;60;karin@s.se;;;12.5\r\n",
+        ),
+      );
+
+      expect(rows).toEqual([]);
+      expect(errors).toEqual([
+        { row: 1, message: 'Rad 1: larare_procent "250" är inte ett heltal mellan 0 och 200.' },
+        {
+          row: 2,
+          message: 'Rad 2: medlarare_procent "12.5" är inte ett heltal mellan 0 och 200.',
+        },
+      ]);
+    });
+
+    it("recognises the dialog's own wording as a header", () => {
+      const { rows, columns } = mapRequirementRows(
+        parseCsv(
+          "Grupp;Ämne;Lektioner;Minuter;Räknas för lärare (%);Räknas för medlärare (%)\r\n" +
+            "7A;MA;3;60;80;40\r\n",
+        ),
+      );
+
+      expect(rows[0]).toMatchObject({ teacherLoadPercent: 80, coTeacherLoadPercent: 40 });
+      expect(columns).toContain("coTeacherLoadPercent");
+    });
+
+    it("leaves the stored charge alone when the file has no such column", () => {
+      // The school's own four-column sheet must not reset every 50 % co-teacher
+      // to 100: the import updates, so a written 100 would be an instruction.
+      const { rows, columns } = mapRequirementRows(
+        parseCsv("grupp;amne;lektioner_per_vecka;minuter_per_lektion\r\n7A;MA;3;60\r\n"),
+      );
+
+      expect(rows[0]).not.toHaveProperty("teacherLoadPercent");
+      expect(rows[0]).not.toHaveProperty("coTeacherLoadPercent");
+      expect(columns).not.toContain("teacherLoadPercent");
+    });
+
+    it("does not read a bare procent column as a charge", () => {
+      // A tjänstegrad column is the likeliest "procent" in a school's own sheet.
+      const { rows, columns } = mapRequirementRows(
+        parseCsv("grupp;amne;lektioner;minuter;procent\r\n7A;MA;3;60;75\r\n"),
+      );
+
+      expect(rows[0]).not.toHaveProperty("teacherLoadPercent");
+      expect(columns).not.toContain("teacherLoadPercent");
+    });
+  });
+
   describe("export", () => {
     const groups = [
       { id: "g-7a", name: "7A" },
@@ -1691,6 +1778,8 @@ describe("teaching requirements", () => {
       minutesPerLesson: 60,
       minutesBefore: 0,
       minutesAfter: 0,
+      teacherLoadPercent: 100,
+      coTeacherLoadPercent: 100,
       recurrence: "ALL_WEEKS" as const,
       startDate: null,
       endDate: null,
@@ -1712,11 +1801,11 @@ describe("teaching requirements", () => {
       );
 
       expect(dataLines(csv)).toEqual([
-        "7A;MA;3;60;0;0;;;alla;;",
+        "7A;MA;3;60;0;0;;;alla;;;100;100",
         // A blank code is not a code: writing it would leave the ämne cell
         // empty and the row unimportable.
-        "7A;Textilslöjd;3;60;0;0;;;alla;;",
-        "7A;Bild;3;60;0;0;;;alla;;",
+        "7A;Textilslöjd;3;60;0;0;;;alla;;;100;100",
+        "7A;Bild;3;60;0;0;;;alla;;;100;100",
       ]);
       expect(csv).not.toContain("s-ma");
     });
@@ -1729,7 +1818,7 @@ describe("teaching requirements", () => {
         people,
       );
 
-      expect(dataLines(csv)).toEqual(["7A;MA;3;60;0;0;karin@s.se;bo@s.se;alla;;"]);
+      expect(dataLines(csv)).toEqual(["7A;MA;3;60;0;0;karin@s.se;bo@s.se;alla;;;100;100"]);
     });
 
     it("writes the recurrence as the word the importer reads back", () => {
@@ -1744,15 +1833,15 @@ describe("teaching requirements", () => {
       );
 
       expect(dataLines(csv)).toEqual([
-        "7A;MA;3;60;0;0;;;udda;;",
-        "7A;MA;3;60;0;0;;;jamna;;",
+        "7A;MA;3;60;0;0;;;udda;;;100;100",
+        "7A;MA;3;60;0;0;;;jamna;;;100;100",
       ]);
     });
 
     it("leaves the period columns blank when the requirement has no bounds", () => {
       const csv = requirementsToCsv([requirement()], groups, subjects, people);
 
-      expect(dataLines(csv)).toEqual(["7A;MA;3;60;0;0;;;alla;;"]);
+      expect(dataLines(csv)).toEqual(["7A;MA;3;60;0;0;;;alla;;;100;100"]);
     });
 
     it("writes the pupils' minutes always, zeroes and all", () => {
@@ -1773,10 +1862,26 @@ describe("teaching requirements", () => {
       );
 
       expect(dataLines(csv)).toEqual([
-        "7A;MA;3;60;0;0;;;alla;;",
-        "7A;MA;3;60;10;20;;;alla;;",
+        "7A;MA;3;60;0;0;;;alla;;;100;100",
+        "7A;MA;3;60;10;20;;;alla;;;100;100",
       ]);
     });
+
+    it("writes each teacher's charge, so a 50 % medlärare survives the round trip", () => {
+      const csv = requirementsToCsv(
+        [requirement({ teacherId: "t-karin", coTeacherId: "t-bo", coTeacherLoadPercent: 50 })],
+        groups,
+        subjects,
+        people,
+      );
+
+      expect(dataLines(csv)).toEqual(["7A;MA;3;60;0;0;karin@s.se;bo@s.se;alla;;;100;50"]);
+      expect(mapRequirementRows(parseCsv(csv)).rows[0]).toMatchObject({
+        teacherLoadPercent: 100,
+        coTeacherLoadPercent: 50,
+      });
+    });
+
 
     it("skips a row whose group or subject it cannot name", () => {
       const csv = requirementsToCsv(
@@ -1790,7 +1895,7 @@ describe("teaching requirements", () => {
         people,
       );
 
-      expect(dataLines(csv)).toEqual(["7A;MA;3;60;0;0;;;alla;;"]);
+      expect(dataLines(csv)).toEqual(["7A;MA;3;60;0;0;;;alla;;;100;100"]);
     });
 
     it("skips a row whose teacher it cannot name rather than blanking the cell", () => {
@@ -1811,7 +1916,7 @@ describe("teaching requirements", () => {
       expect(requirementsToCsv([], groups, subjects, people)).toBe(
         "﻿" +
           "grupp;amne;lektioner_per_vecka;minuter_per_lektion;minutesBefore;minutesAfter;" +
-          "larare;medlarare;veckor;fran;till\r\n",
+          "larare;medlarare;veckor;fran;till;larare_procent;medlarare_procent\r\n",
       );
     });
 
@@ -2023,6 +2128,8 @@ describe("export round trips", () => {
           minutesPerLesson: 60,
           minutesBefore: 0,
           minutesAfter: 0,
+          teacherLoadPercent: 100,
+          coTeacherLoadPercent: 100,
           recurrence: "ALL_WEEKS",
           startDate: null,
           endDate: null,
@@ -2036,6 +2143,8 @@ describe("export round trips", () => {
           minutesPerLesson: 120,
           minutesBefore: 0,
           minutesAfter: 0,
+          teacherLoadPercent: 100,
+          coTeacherLoadPercent: 100,
           recurrence: "ODD_WEEKS",
           startDate: "2026-01-12",
           endDate: "2026-03-27",
@@ -2067,6 +2176,8 @@ describe("export round trips", () => {
         minutesAfter: 0,
         teacherEmail: "karin@s.se",
         coTeacherEmail: null,
+        teacherLoadPercent: 100,
+        coTeacherLoadPercent: 100,
         recurrence: "ALL_WEEKS",
         startDate: null,
         endDate: null,
@@ -2082,6 +2193,8 @@ describe("export round trips", () => {
         minutesAfter: 0,
         teacherEmail: "karin@s.se",
         coTeacherEmail: "bo@s.se",
+        teacherLoadPercent: 100,
+        coTeacherLoadPercent: 100,
         recurrence: "ODD_WEEKS",
         startDate: "2026-01-12",
         endDate: "2026-03-27",
@@ -2110,6 +2223,8 @@ describe("export round trips", () => {
           minutesPerLesson: 60,
           minutesBefore: 10,
           minutesAfter: 20,
+          teacherLoadPercent: 100,
+          coTeacherLoadPercent: 100,
           recurrence: "ALL_WEEKS",
           startDate: null,
           endDate: null,
@@ -2123,6 +2238,8 @@ describe("export round trips", () => {
           minutesPerLesson: 60,
           minutesBefore: 0,
           minutesAfter: 60,
+          teacherLoadPercent: 100,
+          coTeacherLoadPercent: 100,
           recurrence: "ALL_WEEKS",
           startDate: null,
           endDate: null,

@@ -255,7 +255,19 @@ export interface TeachingRequirement {
   minutesBefore: number;
   minutesAfter: number;
   /**
-   * Which weeks the subject is read over — said once on the requirement and
+   * How much of the row each teacher is CHARGED in tjänstefördelningen, 0..200
+   * and 100 for nearly every row — Skola24's "Justera längd för lärare (%)".
+   *
+   * A charge, not a length: 50 on a co-teacher who is in the room for every
+   * minute of a lesson says the school counts half of that time against their
+   * post, and the lesson, the pupils' hours and the grid are untouched. Neither
+   * number reaches the schedule engine (ai-engine-contract.spec.ts).
+   */
+  teacherLoadPercent: number;
+  coTeacherLoadPercent: number;
+  /**
+   * Which weeks the subject is read over
+ — said once on the requirement and
    * inherited by every lesson generated from it, rather than corrected lesson
    * by lesson in the master timetable afterwards.
    */
