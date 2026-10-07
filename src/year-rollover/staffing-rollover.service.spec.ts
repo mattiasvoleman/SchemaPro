@@ -114,12 +114,16 @@ describe('StaffingRolloverService — execute', () => {
       world.rows['teacherEmployment']!.filter((row) => row['academicYearId'] === IDS.yearA),
     ))).toBe(sourceBefore);
 
-    // Both teachers now have a post in 2027/28, so every uppdrag of theirs —
-    // Mentor 9A, which never followed, included — is theirs already (C2).
+    // Both teachers now have a post in 2027/28, so every uppdrag of theirs is
+    // theirs already (C2) — except Mentor 9A, which never followed and is
+    // still named as left behind, not counted among the five present.
     const again = await service.preview(yearB, admin);
     expect(again.employments).toMatchObject({ carried: 0, notCarried: expect.arrayContaining([{ userId: IDS.anna, reason: 'ALREADY_PRESENT' }]) });
     expect(again.duties.carried).toBe(0);
-    expect(again.problems).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'STAFFING_ALREADY_PRESENT', params: { teachers: 2, duties: 6 } })]));
+    expect(again.problems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'STAFFING_MENTORSKAP_NOT_CARRIED', params: { duties: 1, groups: ['9A'] } }),
+      expect.objectContaining({ code: 'STAFFING_ALREADY_PRESENT', params: { teachers: 2, duties: 5 } }),
+    ]));
     world.calls.length = 0;
     expect((await service.execute(yearB, again.planHash, admin)).counts).toEqual({ employments: 0, duties: 0, dutySlots: 0 });
     expect(writesOf(world.calls)).toEqual([]);

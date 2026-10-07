@@ -37,11 +37,22 @@ import { minutesOf } from '../common/solver-grid';
  * and uppdrag, because the admin has set them up by hand — and because a
  * duty-by-duty match would bring back every carried uppdrag the admin
  * deleted, the next time the carry ran. A teacher with no post there has
- * their uppdrag matched one to one: a target duty of the same kind on the
- * successor group first, then one of the same kind, groupless or on that
- * successor, whose label (trimmed, lowercased — the uppdrag import's
- * identity) equals the source label or the promoted one. A target duty
- * absorbs one source duty at most, so two "Rastvakt" against one carry one.
+ * their uppdrag matched one to one: a mentorskap by its class (a target
+ * MENTORSKAP of the teacher on the successor group, whatever its label, so a
+ * class renamed between two runs is not mentored twice), then any kind by a
+ * target duty of the same kind, groupless or on that successor, whose label
+ * (trimmed, lowercased — the uppdrag import's identity) equals the source
+ * label or the promoted one. A target duty absorbs one source duty at most,
+ * so two "Rastvakt" against one carry one.
+ *
+ * KNOWN, AND WHY IT STAYS. For a teacher with uppdrag but no post, a carried
+ * uppdrag the admin deleted is carried again by a later run, and one renamed
+ * beyond its label is carried beside it (flagged when the slots overlap):
+ * without a "carried from" column (D1) a deleted row is a never-carried one.
+ * Making any target uppdrag skip the teacher whole would only move the hole
+ * (a teacher whose every row was deleted) while withholding a hand-made
+ * mentorskap's owner's other uppdrag. The page offers the carry only to a
+ * year with no post and no uppdrag, so a second run is an API call.
  *
  * Nothing here knows a name: the preview carries ids, kinds, labels (the
  * admin's to read) and group names.
@@ -302,16 +313,18 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       notCarriedPeople.add(duty.userId);
       continue;
     }
-    if (setUp(duty.userId)) {
-      preview.duties.notCarried.push({ ...ref, groupName: sourceGroupName, reason: 'TEACHER_ALREADY_SET_UP' });
-      continue;
-    }
-
+    // A mentorskap whose class leaves is named as left behind before asking
+    // whether its teacher is set up: it would not be carried either way, and
+    // "already set up" would hide the one hole the admin has to fill.
     const successor = duty.studentGroupId ? input.successorOf(duty.studentGroupId) : null;
     if (duty.studentGroupId && !successor && duty.kind === 'MENTORSKAP') {
       preview.duties.notCarried.push({ ...ref, groupName: sourceGroupName, reason: 'GROUP_LEAVES' });
       leaving.mentorskapDuties++;
       if (sourceGroupName) leaving.mentorskap.add(sourceGroupName);
+      continue;
+    }
+    if (setUp(duty.userId)) {
+      preview.duties.notCarried.push({ ...ref, groupName: sourceGroupName, reason: 'TEACHER_ALREADY_SET_UP' });
       continue;
     }
     const label =
@@ -321,8 +334,13 @@ export function planStaffingCarry(input: StaffingCarryInput): StaffingCarryPlan 
       const same = (candidate: ExistingStaffing['duties'][number]) =>
         !absorbed.has(candidate.id) && candidate.userId === duty.userId && candidate.kind === duty.kind;
       const labels = new Set([normalizeDutyLabel(duty.label), normalizeDutyLabel(label)]);
+      // The successor group alone identifies only a mentorskap — a class has
+      // one per teacher. Any other kind needs its label as well: a teacher's
+      // "Klassresa 8B" is not last year's "Elevrådsansvar 7B".
       const match =
-        (successor ? existing.duties.find((candidate) => same(candidate) && candidate.groupKey === successor.key) : undefined) ??
+        (successor && duty.kind === 'MENTORSKAP'
+          ? existing.duties.find((candidate) => same(candidate) && candidate.groupKey === successor.key)
+          : undefined) ??
         existing.duties.find(
           (candidate) =>
             same(candidate) &&
