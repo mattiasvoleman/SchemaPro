@@ -385,9 +385,10 @@ describe("TimplanPage: the läsår side (P2)", () => {
     expect(screen.getByRole("button", { name: /generateButton/ })).toBeDisabled();
   });
 
-  it("opens Timplan per årskurs", async () => {
+  it("opens Timplan per årskurs and links to Täckning", async () => {
     const user = userEvent.setup();
     render(<TimplanPage />);
+    expect(screen.getByRole("link", { name: /coverageLink/ })).toHaveAttribute("href", "/admin/timplan/tackning");
     await user.click(screen.getByRole("button", { name: /yearTimplansButton/ }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "title" })).toBeInTheDocument();
