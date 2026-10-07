@@ -1014,7 +1014,8 @@ describe("Timplan while its data is still arriving", () => {
     render(<RequirementsPage />);
     const user = await openCell("cellLabel(7A|Bild)");
 
-    fireEvent.change(screen.getByLabelText("periodFrom"), {
+    // The period fields arrive with their own chunk, after the dialog opens.
+    fireEvent.change(await screen.findByLabelText("periodFrom"), {
       target: { value: "2027-01-11" },
     });
     fireEvent.change(screen.getByLabelText("periodTo"), {
@@ -1044,7 +1045,7 @@ describe("Timplan while its data is still arriving", () => {
     render(<RequirementsPage />);
     const user = await openCell("cellLabelPeriod(7A|Samhällsorientering|2|60|badgePeriod)");
 
-    expect((screen.getByLabelText("periodFrom") as HTMLInputElement).value).toBe(
+    expect(((await screen.findByLabelText("periodFrom")) as HTMLInputElement).value).toBe(
       "2027-01-11",
     );
     fireEvent.change(screen.getByLabelText("periodFrom"), { target: { value: "" } });
