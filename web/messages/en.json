@@ -1792,6 +1792,7 @@
     "source": "{group} {minutes}",
     "pupilUnder": "{subject}: {planned} of {target} min/wk, {deficit} below target",
     "pupilLine": "{subject}: {planned} of {target} min/wk",
-    "pupilDouble": "Gets {subjects} from several groups — check that this is intended."
+    "pupilDouble": "Gets {subjects} from several groups — check that this is intended.",
+    "pupilAlternatives": "Gets time in several alternatives ({subjects}) from teaching groups. The timplan counts them as alternatives, so a pupil normally reads one of them — check that this is intended."
   }
 }

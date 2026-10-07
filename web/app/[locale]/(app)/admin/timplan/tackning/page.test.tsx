@@ -1,7 +1,13 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { coverageCase, EMPTY_PLAN, LANGUAGES, UNATTACHED_AND_DRAFT } from "@/lib/__fixtures__/timplan-tackning";
+import {
+  coverageCase,
+  EMPTY_PLAN,
+  LANGUAGES,
+  TWO_ALTERNATIVES,
+  UNATTACHED_AND_DRAFT,
+} from "@/lib/__fixtures__/timplan-tackning";
 import type { TimplanCoverageResponse } from "@/lib/timplan-tackning";
 import TimplanCoveragePage from "./page";
 
@@ -105,6 +111,16 @@ describe("TimplanCoveragePage", () => {
     expect(within(row).queryByText("0/0")).not.toBeInTheDocument();
     // Åk 11 has nothing to attach: no notice asks for it.
     expect(screen.queryByText(/^unattached/)).not.toBeInTheDocument();
+  });
+
+  it("says a pupil on two språkval rosters gets time in several alternatives", async () => {
+    state.case = coverageCase(TWO_ALTERNATIVES) as typeof state.case;
+    const user = userEvent.setup();
+    render(<TimplanCoveragePage />);
+    await user.click(screen.getByRole("button", { name: /8B/ }));
+    const section = screen.getByRole("region", { name: "8B" });
+    expect(within(section).getByText("pupilAlternatives(Spanska / Tyska)")).toBeInTheDocument();
+    expect(within(section).queryByText(/^pupilDouble/)).not.toBeInTheDocument();
   });
 
   it("opens a class's drill-down: per line min / median / max, and its own pupils by name", async () => {

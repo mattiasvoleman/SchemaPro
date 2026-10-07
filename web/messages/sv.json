@@ -1792,6 +1792,7 @@
     "source": "{group} {minutes}",
     "pupilUnder": "{subject}: {planned} av {target} min/v, {deficit} under mål",
     "pupilLine": "{subject}: {planned} av {target} min/v",
-    "pupilDouble": "Får {subjects} från flera grupper — kontrollera att det är avsett."
+    "pupilDouble": "Får {subjects} från flera grupper — kontrollera att det är avsett.",
+    "pupilAlternatives": "Får tid i flera alternativ ({subjects}) från undervisningsgrupper. Timplanen räknar dem som alternativ, så eleven läser normalt ett av dem — kontrollera att det är avsett."
   }
 }

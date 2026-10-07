@@ -416,6 +416,48 @@ describe('computePlannedCoverage', () => {
       ]);
     });
 
+    // Review reproduction (P2 review, lens regler): alternatives were summed
+    // without a check, so a pupil on the roster of two språkval groups read
+    // 200 of 100, MET, and nothing said so.
+    it('flags a pupil reading two språkval, or Svenska and SvA, in two teaching groups', () => {
+      const c = group('8A', 'CLASS', 8);
+      const spanska = group('Spanska 8', 'TEACHING_GROUP', null);
+      const tyska = group('Tyska 8', 'TEACHING_GROUP', null);
+      const svenska = group('Svenska 8 grupp', 'TEACHING_GROUP', null);
+      const sva = group('SvA 8', 'TEACHING_GROUP', null);
+      const twoLanguages = pupil(c, [spanska, tyska]);
+      const both = pupil(c, [svenska, sva]);
+      const fine = pupil(c, [spanska, svenska]);
+      const coverage = computePlannedCoverage(
+        input({
+          plans: [plan([[S.SPA, 8, 100], [S.TY, 8, 100], [S.SV, 8, 200], [S.SVA, 8, 200]])],
+          attachments: [{ gradeLevel: 8, localTimplanId: PLAN }],
+          groups: [c, spanska, tyska, svenska, sva],
+          requirements: [
+            req(spanska, S.SPA, 2, 50),
+            req(tyska, S.TY, 2, 50),
+            req(svenska, S.SV, 4, 50),
+            req(sva, S.SVA, 4, 50),
+          ],
+          pupils: [twoLanguages, both, fine],
+        }),
+      );
+      const doubles = coverage.verdicts.filter((v) => v.code === 'TIMPLAN_PUPIL_DOUBLE_PLANNED');
+      expect(doubles.map((v) => [v.pupilId, v.alternativeCode, v.subjectIds, v.params.groupNames])).toEqual(
+        [
+          [twoLanguages.id, 'M2', [S.SPA, S.TY], 'Spanska 8, Tyska 8'],
+          [both.id, 'SV_SVA', [S.SV, S.SVA], 'SvA 8, Svenska 8 grupp'],
+        ].sort((a, b) => (a[0]! < b[0]! ? -1 : 1)),
+      );
+      const listed = coverage.pupils!.find((p) => p.pupilId === twoLanguages.id)!;
+      expect(listed.lines.find((line) => line.key === 'alt:M2')).toMatchObject({
+        status: 'MET',
+        plannedMinutesPerWeek: 200,
+        alternativeSubjectIds: [S.SPA, S.TY],
+      });
+      expect(coverage.pupils!.some((p) => p.pupilId === fine.id)).toBe(false);
+    });
+
     it('sums a pupil in two teaching groups of different subjects, and keeps quiet when that meets the plan', () => {
       const c = group('8A', 'CLASS', 8);
       const spanska = group('Spanska', 'TEACHING_GROUP', 8);
