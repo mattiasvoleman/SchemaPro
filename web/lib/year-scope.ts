@@ -46,12 +46,24 @@ export function homeClassOptions(
     .map((group) => ({ id: group.id, label: group.name }));
   if (currentGroupId !== null && !options.some((option) => option.id === currentGroupId)) {
     const current = groups?.find((group) => group.id === currentGroupId);
-    if (current) {
-      const year = years?.find((candidate) => candidate.id === current.academicYearId);
-      const label =
-        current.academicYearId !== activeYearId && year ? `${current.name} (${year.name})` : current.name;
-      options.unshift({ id: current.id, label });
-    }
+    if (current) options.unshift({ id: current.id, label: groupLabel(current, years, activeYearId) });
   }
   return options;
+}
+
+/**
+ * A group's name, with its year when that is not the active one: "8A" for
+ * the active year's, "8A (2027/28)" for next year's. For lists that must
+ * offer more than one year — class rules are written for next year's classes
+ * before it is active, and attendance is reported for last year's after —
+ * where filtering would hide what the admin came for.
+ */
+export function groupLabel(
+  group: Pick<StudentGroup, "name" | "academicYearId">,
+  years: readonly Pick<AcademicYear, "id" | "name">[] | undefined,
+  activeYearId: string | null,
+): string {
+  if (group.academicYearId === activeYearId) return group.name;
+  const year = years?.find((candidate) => candidate.id === group.academicYearId);
+  return year ? `${group.name} (${year.name})` : group.name;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupsOfYear, homeClassOptions } from "@/lib/year-scope";
+import { groupLabel, groupsOfYear, homeClassOptions } from "@/lib/year-scope";
 import type { StudentGroup } from "@/lib/types";
 
 const years = [
@@ -48,5 +48,18 @@ describe("homeClassOptions", () => {
 
   it("does not invent an option for a class it cannot see", () => {
     expect(homeClassOptions(groups, years, "y26", "gone")).toHaveLength(2);
+  });
+});
+
+describe("groupLabel", () => {
+  it("names the year of any group but the active year's", () => {
+    expect(groupLabel(groups[1]!, years, "y26")).toBe("8A");
+    expect(groupLabel(groups[3]!, years, "y26")).toBe("8A (2027/28)");
+    // With no active year, every group says which year it is in.
+    expect(groupLabel(groups[1]!, years, null)).toBe("8A (2026/27)");
+  });
+
+  it("falls back to the bare name for a year it cannot see", () => {
+    expect(groupLabel({ name: "6B", academicYearId: "hidden" }, years, "y26")).toBe("6B");
   });
 });

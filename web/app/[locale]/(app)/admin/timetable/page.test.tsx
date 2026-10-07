@@ -142,6 +142,9 @@ const GROUPS = [
     kind: "TEACHING_GROUP",
     gradeLevel: null,
   },
+  // Next year's 5.1: this year's 4.1, rolled over and not yet active. Same
+  // name as this year's 5.1, no lesson in this schedule.
+  { id: "g-next-51", academicYearId: "y-2", name: "5.1", kind: "CLASS", gradeLevel: 5 },
 ];
 
 /** One every-day rast for year four, so the bands have something to draw. */
@@ -423,6 +426,14 @@ describe("the three filters together", () => {
 });
 
 describe("the week of one class", () => {
+  it("offers the groups of the year on screen only", async () => {
+    // Between a rollover and its activation every class name exists twice.
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await user.click(screen.getByRole("button", { name: "timetable.filterGroup" }));
+    expect(await screen.findAllByRole("menuitemcheckbox", { name: "5.1" })).toHaveLength(1);
+  });
+
   it("shows every lesson holding one of the class's pupils", async () => {
     render(<TimetablePage />);
     await filterTo("4.1");

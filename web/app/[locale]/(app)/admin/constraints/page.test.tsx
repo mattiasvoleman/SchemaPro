@@ -29,7 +29,19 @@ vi.mock("@/lib/queries", () => ({
     ],
   }),
   useRooms: () => ({ data: [{ id: "r-1", name: "A12" }] }),
-  useGroups: () => ({ data: [{ id: "g-7a", name: "7A" }] }),
+  useGroups: () => ({
+    data: [
+      { id: "g-7a", academicYearId: "y26", name: "7A" },
+      // Next year's 8A, rolled from 7A and not yet active.
+      { id: "g-next-8a", academicYearId: "y27", name: "8A" },
+    ],
+  }),
+  useAcademicYears: () => ({
+    data: [
+      { id: "y26", name: "2026/27", isActive: true },
+      { id: "y27", name: "2027/28", isActive: false },
+    ],
+  }),
   useCrudMutations: () => ({
     create: { mutateAsync: create, isPending: false },
     update: { mutateAsync: vi.fn(), isPending: false },
@@ -155,6 +167,20 @@ describe("Constraints page — year-range locks", () => {
       minGradeLevel: null,
       maxGradeLevel: null,
     });
+  });
+
+  it("offers every year's classes, naming the year of any but the active one", async () => {
+    // Next year's class rules are written in spring, before it is active.
+    const user = userEvent.setup();
+    render(<ConstraintsPage />);
+
+    await user.click(screen.getByRole("button", { name: "addConstraint" }));
+    await pick(user, "resource", "resourceGroup");
+    await user.click(screen.getByRole("combobox", { name: "name" }));
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "7A",
+      "8A (2027/28)",
+    ]);
   });
 
   it("names the year span in the list instead of a dash", async () => {
