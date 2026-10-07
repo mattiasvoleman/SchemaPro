@@ -93,7 +93,7 @@ export function groupsInSubject(
 export interface LoadBarSegments {
   /**
    * Share of the bar's width, 0..1 each, summing to 1 (or 0 for an empty
-   * week). `duty` is the uppdrag that do NOT count toward the target, drawn
+   * week, and for a teacher with no target). `duty` is the uppdrag that do NOT count toward the target, drawn
    * first and outside the comparison; `teaching` is what the target is
    * compared with — teaching plus the uppdrag that count.
    */
@@ -132,9 +132,13 @@ type BarTeacher = Pick<TeacherLoad, "assignedMinutesPerWeek" | "targetMinutesPer
  * minutes are seen and never read as "over". In the peak week the uppdrag
  * are the same minutes as in any week: they have no week pattern.
  *
- * Without a target there is nothing to be short of or over, so the bar is the
- * week alone at full width; the label says "inget riktmärke" rather than a
- * percentage of nothing.
+ * Without a target there is nothing to be short of or over, and nothing to
+ * be a share OF: the bar is drawn empty, its track alone, and the label beside
+ * it says "inget riktmärke". It used to be the week alone at full width, and a
+ * full bar under the heading "Andel av mål" reads as 100 % of a target the
+ * teacher does not have (webbgenomgången 2026-10-07, /admin/staffing and Min
+ * tjänst). The minutes are still returned, for the sentence a screen reader
+ * gets.
  */
 export function loadBarSegments(
   teacher: BarTeacher,
@@ -147,10 +151,9 @@ export function loadBarSegments(
   const counted = teaching + countedDuty;
   const target = teacher.targetMinutesPerWeek;
   if (target === null || target <= 0) {
-    const whole = dutyMinutes + counted;
     return {
-      duty: whole > 0 ? dutyMinutes / whole : 0,
-      teaching: whole > 0 ? counted / whole : 0,
+      duty: 0,
+      teaching: 0,
       remaining: 0,
       over: 0,
       dutyMinutes,
