@@ -1724,7 +1724,7 @@
     "notRegisteredBody": "Skolledningen har inte lagt in någon anställning, undervisning eller något uppdrag för dig det här läsåret.",
     "noEmployment": "Ingen anställning registrerad. Utan den finns inget mål att jämföra med.",
     "target": "Mål {minutes} min/v",
-    "noTarget": "Inget mål",
+    "countedNoTarget": "Räknad undervisning {minutes} min/v · inget mål att jämföra med",
     "counted": "räknat mot målet {minutes} min/v",
     "annual": "{hours} h undervisning per läsår, med lov och studiedagar avräknade.",
     "lastYear": "Förra läsåret ({year}): tjänst {percent} % · {minutes} min räknad undervisning",

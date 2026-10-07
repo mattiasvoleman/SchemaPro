@@ -150,14 +150,21 @@ export default function MyStaffingPage() {
           )}
           {row ? (
             <>
+              {/* Without a target there is nothing to count AGAINST and no
+                  status but "Inget mål": one sentence with the minutes, not
+                  "Inget mål · räknat mot målet 600 min/v · Inget mål". */}
               <p>
-                {row.targetMinutesPerWeek === null
-                  ? t("noTarget")
-                  : t("target", { minutes: row.targetMinutesPerWeek })}
-                {" · "}
-                {t("counted", { minutes: row.countedMinutesPerWeek })}
-                {" · "}
-                <span className="font-medium">{tStaffing(`status${row.status}`)}</span>
+                {row.targetMinutesPerWeek === null ? (
+                  t("countedNoTarget", { minutes: row.countedMinutesPerWeek })
+                ) : (
+                  <>
+                    {t("target", { minutes: row.targetMinutesPerWeek })}
+                    {" · "}
+                    {t("counted", { minutes: row.countedMinutesPerWeek })}
+                    {" · "}
+                    <span className="font-medium">{tStaffing(`status${row.status}`)}</span>
+                  </>
+                )}
               </p>
               <LoadBar teacher={row} />
               <p>
