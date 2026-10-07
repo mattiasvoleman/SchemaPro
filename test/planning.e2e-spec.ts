@@ -2118,7 +2118,11 @@ describe('Planning surface (e2e)', () => {
       });
 
       it('ranks the staff for one row for an admin; 403 for a teacher, 400 without an id, 404 for a hidden row', async () => {
-        harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({ academicYearId: YEAR_ID });
+        harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({
+          academicYearId: YEAR_ID,
+          subjectId: SUBJECT_ID,
+          studentGroup: { predecessorId: null },
+        });
         harness.tx['user']!['findMany']!.mockResolvedValue([{ id: COLLEAGUE_ID }, { id: TEACHER_ID }]);
         const response = await request(http())
           .get(`/api/v1/staffing/suggest-teachers?requirementId=70707070-7070-4070-8070-707070707070`)
@@ -2149,6 +2153,51 @@ describe('Planning surface (e2e)', () => {
           .get(`/api/v1/staffing/suggest-teachers?requirementId=70707070-7070-4070-8070-707070707070`)
           .set('x-test-user', admin())
           .expect(404);
+      });
+
+      it('names last year’s teacher of the subject, and ranks them before room left', async () => {
+        const PREDECESSOR_GROUP = '80808080-8080-4080-8080-808080808080';
+        harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue({
+          academicYearId: YEAR_ID,
+          subjectId: SUBJECT_ID,
+          studentGroup: { predecessorId: PREDECESSOR_GROUP },
+        });
+        harness.tx['user']!['findMany']!.mockResolvedValue([{ id: COLLEAGUE_ID }, { id: TEACHER_ID }]);
+        const thisYear = [
+          requirementRow(),
+          requirementRow({ id: '60606060-6060-4060-8060-606060606060', teacherId: TEACHER_ID, lessonsPerWeek: 2 }),
+          requirementRow({ id: '70707070-7070-4070-8070-707070707070', teacherId: null, lessonsPerWeek: 3 }),
+        ];
+        harness.tx['teachingRequirement']!['findMany']!.mockImplementation(((args: { where: Record<string, unknown> }) =>
+          Promise.resolve(
+            args.where['studentGroupId'] === PREDECESSOR_GROUP
+              ? [
+                  {
+                    teacherId: null,
+                    coTeacherId: COLLEAGUE_ID,
+                    studentGroup: { name: '6A', academicYear: { name: '2025/26' } },
+                  },
+                ]
+              : thisYear,
+          )) as never);
+
+        const response = await request(http())
+          .get(`/api/v1/staffing/suggest-teachers?requirementId=70707070-7070-4070-8070-707070707070`)
+          .set('x-test-user', admin())
+          .expect(200);
+
+        expect(response.body.lastYear).toEqual({ groupName: '6A', yearName: '2025/26' });
+        // Without continuity the teacher (780 left) leads the colleague (85
+        // left); the colleague co-taught 6A Ma last year, which ranks first.
+        expect(response.body.candidates).toEqual([
+          expect.objectContaining({ userId: COLLEAGUE_ID, taughtLastYear: true, remainingMinutesPerWeek: 85 }),
+          expect.objectContaining({ userId: TEACHER_ID, taughtLastYear: false, remainingMinutesPerWeek: 780 }),
+        ]);
+        expect(harness.tx['teachingRequirement']!['findMany']!).toHaveBeenLastCalledWith(
+          expect.objectContaining({ where: { studentGroupId: PREDECESSOR_GROUP, subjectId: SUBJECT_ID } }),
+        );
+        // Back to the block's own stub, which later blocks have always inherited.
+        harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue(thisYear);
       });
 
       it('lists the unstaffed rows for an admin, and 403s a teacher', async () => {
