@@ -6,6 +6,7 @@ import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './u
 import { GRUNDSKOLA_2024, IDS, defaultRolloverRows, givenRolloverWorld } from './utils/rollover-world';
 import type { PrismaMock } from './utils/prisma-mock';
 import { PrismaService } from '../src/database/prisma.service';
+import type { AiEngineScheduleRequest } from '../src/optimization/interfaces/ai-engine-payload.interface';
 
 /**
  * The Kom igång → Planering surface over HTTP: läsår, salstyper, klasser and
@@ -3435,15 +3436,31 @@ describe('Planning surface (e2e)', () => {
       await request(http()).post(`/api/v1/academic-years/${yearB}/rollover/preview`).set('x-test-user', admin()).send(next).expect(200);
     });
 
-    it('409s generating, room proposals and lesson placement in a rolled year whose pupils have not moved in (the R-4b fallback)', async () => {
-      const { options } = givenSchool(2098);
+    it('starts a job for a rolled year whose pupils have not moved in (projected rosters), and still 409s room proposals and lesson placement there', async () => {
+      const { world, options } = givenSchool(2098);
       const yearB = (await roll(options, 201)).body.academicYear.id as string;
-      const job = await request(http())
+      const started = await request(http())
         .post('/api/v1/optimization/jobs')
         .set('x-test-user', admin())
         .send({ academicYearId: yearB })
-        .expect(409);
-      expect(job.body).toMatchObject({ code: 'ROLLOVER_NOT_ACTIVATED', params: { year: 'Nästa läsår', pupils: 4 } });
+        .expect(202);
+      // The job runs after the answer: wait for it to finish, on this world.
+      const job = () => world.rows['optimizationJob']?.find((row) => row['id'] === started.body.jobId);
+      for (let tick = 0; tick < 500 && !['SUCCEEDED', 'FAILED'].includes(job()?.['status'] as string); tick++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(harness.http.post).toHaveBeenCalledTimes(1);
+      // Finished: the stub answers with no lessons, which the job records as a
+      // failed run and leaves the timetable alone. What it was sent is the point.
+      expect(job()?.['status']).toBe('FAILED');
+      const [, payload] = harness.http.post.mock.calls[0] as [string, AiEngineScheduleRequest];
+      // B's 8A seats 7A's two active pupils, 9A 8A's one; Ma8 (p7a1 and p8a1,
+      // carried) clashes with both, and the hall seats three.
+      const sizes = payload.requirements.map((row) => row.studentGroupSize).sort();
+      expect(sizes).toEqual(expect.arrayContaining([2, 1]));
+      expect(sizes).not.toContain(0);
+      expect(payload.groupConflicts).toHaveLength(2);
+      expect(payload.groups.map((group) => group.lunchHeadcount).sort()).toEqual([1, 2]);
       const rooms = await request(http())
         .post('/api/v1/optimization/rooms/proposal')
         .set('x-test-user', admin())

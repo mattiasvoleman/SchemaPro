@@ -1,5 +1,8 @@
 import { IDS } from '../../test/utils/rollover-world';
 import { SUCCESSOR, givenSuccessorWorld, schoolAdmin, type SuccessorWorld } from '../../test/utils/successor-world';
+import type { ConfigService } from '@nestjs/config';
+import type { HttpService } from '@nestjs/axios';
+import { OptimizationProxyService } from '../optimization/optimization-proxy.service';
 import { LunchSittingsService } from '../resources/lunch-sittings.service';
 import { readLoadInput } from '../staffing/load-input';
 import { attendanceSpan } from '../staffing/staffing-enforcement';
@@ -116,7 +119,93 @@ describe('förberäknade klasslistor — the oracle', () => {
   });
 });
 
+/**
+ * The generator's payload with nothing in it that depends on the order the
+ * rosters were read in. Every anonymous id the proxy hands back a map for is
+ * turned back into the real id; randomUUID is pinned to a counter, so the
+ * ids it keeps to itself (teachers, subjects, a fixed lesson's own) come out
+ * in the order the requirements are read, which the activation does not
+ * change; and every list the rosters order is sorted.
+ */
+async function generatorPayload(world: SuccessorWorld): Promise<unknown> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const nodeCrypto = require('node:crypto') as { randomUUID: () => string };
+  let counter = 0;
+  const pinned = jest
+    .spyOn(nodeCrypto, 'randomUUID')
+    .mockImplementation(() => `anon-${String(++counter).padStart(4, '0')}`);
+  try {
+    const proxy = new OptimizationProxyService(
+      world.prisma,
+      {} as HttpService,
+      { getOrThrow: () => ({ url: 'http://engine.invalid', apiKey: 'k', timeoutMs: 1 }) } as unknown as ConfigService,
+    );
+    // The basis exactly as triggerScheduling asks for it: no flags known.
+    const basis = await rostersOfYear(world.world.tx, schoolAdmin, world.yearB);
+    const data = await (
+      proxy as unknown as {
+        fetchAndAnonymize: (...args: unknown[]) => Promise<Record<string, unknown>>;
+      }
+    ).fetchAndAnonymize(world.world.tx, world.yearB, IDS.school, basis);
+    const real = new Map<string, string>();
+    for (const key of ['groupAnonMap', 'requirementAnonMap', 'roomAnonMap', 'roomTypeAnonMap', 'constraintAnonMap', 'workRuleAnonMap']) {
+      for (const [id, anon] of data[key] as Map<string, string>) real.set(anon, id);
+    }
+    const back = (value: unknown): unknown => {
+      if (typeof value === 'string') return real.get(value) ?? value;
+      if (Array.isArray(value)) return value.map(back);
+      if (value instanceof Map) return [...value].map(back);
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, back(entry)]));
+      }
+      return value;
+    };
+    const payload = back({
+      requirements: data['requirements'],
+      groups: data['groups'],
+      groupConflicts: data['groupConflicts'],
+      fixedLessons: data['fixedLessons'],
+      previousLessons: data['previousLessons'],
+      rooms: data['rooms'],
+      constraints: data['constraints'],
+      frameTimes: data['frameTimes'],
+      rasts: data['rasts'],
+      lunchServings: data['lunchServings'],
+      lunchPlacements: data['lunchPlacements'],
+      teacherWorkRules: data['teacherWorkRules'],
+      storedRules: data['storedRules'],
+    }) as Record<string, unknown[]>;
+    const byKey = (list: unknown[]) => sortedBy(list, (item) => JSON.stringify(item));
+    return {
+      ...payload,
+      requirements: byKey(payload['requirements']!),
+      groups: byKey(payload['groups']!),
+      groupConflicts: byKey((payload['groupConflicts'] as string[][]).map((pair) => [...pair].sort())),
+      fixedLessons: byKey(payload['fixedLessons']!),
+      headcountByGroup: sortedBy([...(data['headcountByGroup'] as Map<string, number>)], ([id]) => id),
+    };
+  } finally {
+    pinned.mockRestore();
+  }
+}
+
 describe('förberäknade klasslistor — every reader reads the same before and after the activation', () => {
+  it('P1 the generator’s payload: group sizes, grade spans, clash pairs and lunch headcounts', async () => {
+    const { before, world } = await proveEquivalent(generatorPayload);
+    const payload = before as {
+      requirements: { id: string; studentGroupId: string; studentGroupSize: number; minGradeLevel: number | null; maxGradeLevel: number | null }[];
+      groupConflicts: string[][];
+      groups: { id: string; lunchHeadcount: number }[];
+      headcountByGroup: [string, number][];
+    };
+    const [g8a, g9a, ma8] = [world.b('8A'), world.b('9A'), world.b('Ma8 grupp 1')];
+    // 8A seats its five coming pupils, Ma8 its four active members over åk 8–9.
+    expect(payload.requirements.find((row) => row.studentGroupId === g8a)).toMatchObject({ studentGroupSize: 5, minGradeLevel: 8, maxGradeLevel: 8 });
+    expect(payload.requirements.find((row) => row.studentGroupId === ma8)).toMatchObject({ studentGroupSize: 4, minGradeLevel: 8, maxGradeLevel: 9 });
+    expect(payload.groupConflicts).toEqual(expect.arrayContaining([[g8a, ma8].sort(), [g9a, ma8].sort()]));
+    expect(payload.headcountByGroup).toEqual(sortedBy([[g8a, 5], [g9a, 1]] as [string, number][], ([id]) => id));
+  });
+
   it('P5 attendanceSpan (the vikarie badge and warning): Ma8 spans 8–9 from its members’ coming classes', async () => {
     const { before } = await proveEquivalent((world) =>
       attendanceSpan(world.world.tx, {
