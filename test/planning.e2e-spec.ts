@@ -3,6 +3,9 @@ import request from 'supertest';
 import { lockingRead, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './utils/staffing-world';
+import { IDS, defaultRolloverRows, givenRolloverWorld } from './utils/rollover-world';
+import type { PrismaMock } from './utils/prisma-mock';
+import { PrismaService } from '../src/database/prisma.service';
 
 /**
  * The Kom igång → Planering surface over HTTP: läsår, salstyper, klasser and
@@ -3149,6 +3152,219 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('year rollover', () => {
+    /*
+     * The four läsårsrullning routes over HTTP, against a small school held
+     * as rows (test/utils/rollover-world.ts) rather than call-by-call stubs:
+     * the rollover reads some twenty tables and plans from all of them. The
+     * harness's PrismaService mock runs each withRls callback on the world's
+     * transaction for the length of a test.
+     */
+    let prisma: PrismaMock;
+    let originalWithRls: ((...args: unknown[]) => unknown) | undefined;
+
+    beforeEach(() => {
+      prisma = harness.app.get(PrismaService) as unknown as PrismaMock;
+      originalWithRls = prisma.withRls.getMockImplementation();
+    });
+    afterEach(() => {
+      prisma.withRls.mockImplementation(originalWithRls);
+    });
+
+    /** The default school, with year A moved to `startYear`/`startYear + 1`. */
+    const givenSchool = (startYear: number) => {
+      const rows = defaultRolloverRows();
+      const shift = (startYear - 2026) * 364;
+      const move = (value: unknown) =>
+        value instanceof Date ? new Date(value.getTime() + shift * 86_400_000) : value;
+      for (const table of ['academicYear', 'teachingRequirement', 'schoolBreak']) {
+        for (const row of rows[table]!) {
+          for (const key of ['startDate', 'endDate']) row[key] = move(row[key]);
+        }
+      }
+      const world = givenRolloverWorld(rows);
+      prisma.withRls.mockImplementation((_user: unknown, fn: (tx: unknown) => unknown) => fn(world.tx));
+      const yearA = rows['academicYear']![0]!;
+      const day = (key: string, days: number) =>
+        new Date((yearA[key] as Date).getTime() + days * 86_400_000).toISOString().slice(0, 10);
+      const options = {
+        name: 'Nästa läsår',
+        startDate: day('startDate', 364),
+        endDate: day('endDate', 364),
+      };
+      return { world, rows, options };
+    };
+    const base = `/api/v1/academic-years/${IDS.yearA}`;
+
+    /** Preview, then execute with the preview's hash, expecting `status`. */
+    const roll = async (options: Record<string, unknown>, status: number) => {
+      const preview = await request(http())
+        .post(`${base}/rollover/preview`)
+        .set('x-test-user', admin())
+        .send(options)
+        .expect(200);
+      return request(http())
+        .post(`${base}/rollover`)
+        .set('x-test-user', admin())
+        .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
+        .expect(status);
+    };
+
+    it('previews and executes a rollover, then previews and executes the activation (admin round-trips)', async () => {
+      // A year that ended long ago, so the activation is not too early.
+      const { world, options } = givenSchool(2020);
+
+      const preview = await request(http()).post(`${base}/rollover/preview`).set('x-test-user', admin()).send(options).expect(200);
+      expect(preview.body).toMatchObject({ graduatingGradeLevel: 9, blocking: false });
+      expect(preview.body.groups.map((group: { targetName: string | null }) => group.targetName)).toEqual(
+        expect.arrayContaining(['8A', '9A', null]),
+      );
+
+      const created = await request(http())
+        .post(`${base}/rollover`)
+        .set('x-test-user', admin())
+        .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
+        .expect(201);
+      expect(created.body).toMatchObject({
+        academicYear: { name: 'Nästa läsår', isActive: false, predecessorId: IDS.yearA, graduatingGradeLevel: 9 },
+        counts: { groups: 3, members: 2 },
+      });
+      const yearB = created.body.academicYear.id as string;
+
+      const activation = await request(http())
+        .post(`/api/v1/academic-years/${yearB}/activation/preview`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(activation.body).toMatchObject({ graduates: { count: 1, studentIds: [IDS.p9a1] }, blocking: false });
+
+      const done = await request(http())
+        .post(`/api/v1/academic-years/${yearB}/activation`)
+        .set('x-test-user', admin())
+        .send({ planHash: activation.body.planHash })
+        .expect(200);
+      expect(done.body).toEqual({ year: { id: yearB, name: 'Nästa läsår', isActive: true }, moved: 3, graduated: 1, unplaced: 0 });
+      expect(world.rows['user']!.find((user) => user['id'] === IDS.p9a1)!['studentGroupId']).toBeNull();
+    });
+
+    it.each([
+      ['a blank name', { name: '   ' }],
+      ['a date that does not exist', { startDate: '2027-02-30' }],
+      ['more than 500 groups', { groups: Array.from({ length: 501 }, () => ({ sourceGroupId: GROUP_ID })) }],
+      ['an outcome that is not one', { groups: [{ sourceGroupId: GROUP_ID, outcome: 'GRADUATE' }] }],
+    ])('400s %s before reading anything', async (_label, change) => {
+      givenSchool(2020);
+      const response = await request(http())
+        .post(`${base}/rollover/preview`)
+        .set('x-test-user', admin())
+        .send({ name: 'x', startDate: '2021-08-16', endDate: '2022-06-10', ...change })
+        .expect(400);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      expect(JSON.stringify(response.body)).toMatch(/name|startDate|groups/);
+    });
+
+    it('400s an execute without G or with a hash that is not one', async () => {
+      const { options } = givenSchool(2020);
+      await request(http()).post(`${base}/rollover`).set('x-test-user', admin()).send({ ...options, planHash: 'a'.repeat(64) }).expect(400);
+      await request(http())
+        .post(`${base}/rollover`)
+        .set('x-test-user', admin())
+        .send({ ...options, graduatingGradeLevel: 9, planHash: 'not-a-hash' })
+        .expect(400);
+      await request(http()).post(`${base}/activation`).set('x-test-user', admin()).send({ planHash: 'nope' }).expect(400);
+    });
+
+    it.each([
+      ['a start before the source ends', (o: Record<string, string>) => ({ ...o, startDate: '2020-01-01' }), 'ROLLOVER_TARGET_DATES'],
+      ['PROMOTE on a graduating group', (o: Record<string, string>) => ({ ...o, groups: [{ sourceGroupId: IDS.g9a, outcome: 'PROMOTE' }] }), 'PROMOTE_GRADUATING'],
+      ['a name collision', (o: Record<string, string>) => ({ ...o, groups: [{ sourceGroupId: IDS.g9a, outcome: 'CARRY' }] }), 'ROLLOVER_NAME_COLLISION'],
+      ['INTAKE on a group that is not the lowest', (o: Record<string, string>) => ({ ...o, groups: [{ sourceGroupId: IDS.g8a, outcome: 'INTAKE' }] }), 'INTAKE_NOT_LOWEST'],
+      ['a lov with no dates and no proposal', (o: Record<string, string>) => ({ ...o, breaks: [{ sourceBreakId: IDS.vecka53 }] }), 'BREAK_NEEDS_DATES'],
+    ])('400s %s, naming it', async (_label, change, code) => {
+      // 2026/27 itself: the week-53 studiedag only has no proposal there.
+      const { options } = givenSchool(2026);
+      const response = await roll(change(options), 400);
+      expect(response.body).toMatchObject({ code });
+    });
+
+    it('404s a year the caller cannot see', async () => {
+      givenSchool(2020);
+      await request(http())
+        .post(`/api/v1/academic-years/${YEAR_ID}/rollover/preview`)
+        .set('x-test-user', admin())
+        .send({ name: 'x', startDate: '2021-08-16', endDate: '2022-06-10' })
+        .expect(404);
+      await request(http()).post(`/api/v1/academic-years/${YEAR_ID}/activation/preview`).set('x-test-user', admin()).expect(404);
+    });
+
+    it('409s a second rollover of a year, naming the successor', async () => {
+      const { options } = givenSchool(2020);
+      await roll(options, 201);
+      const again = await request(http())
+        .post(`${base}/rollover/preview`)
+        .set('x-test-user', admin())
+        .send({ ...options, name: 'Ett till' })
+        .expect(409);
+      expect(again.body).toMatchObject({ code: 'YEAR_HAS_SUCCESSOR' });
+      expect(JSON.stringify(again.body)).toContain('har redan rullats vidare till Nästa läsår');
+    });
+
+    it('409s a stale preview, and writes nothing', async () => {
+      const { world, options } = givenSchool(2020);
+      const preview = await request(http()).post(`${base}/rollover/preview`).set('x-test-user', admin()).send(options).expect(200);
+      world.rows['teachingRequirement']![0]!['lessonsPerWeek'] = 5;
+      const before = world.rows['academicYear']!.length;
+      const stale = await request(http())
+        .post(`${base}/rollover`)
+        .set('x-test-user', admin())
+        .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
+        .expect(409);
+      expect(stale.body).toMatchObject({ code: 'ROLLOVER_PREVIEW_STALE' });
+      expect(world.rows['academicYear']).toHaveLength(before);
+    });
+
+    it('409s rolling a year whose pupils have not moved in, and activating one whose old year still runs', async () => {
+      // A year that ends far in the future: always too early to activate its successor.
+      const { options } = givenSchool(2098);
+      const created = await roll(options, 201);
+      const yearB = created.body.academicYear.id as string;
+
+      const notYet = await request(http())
+        .post(`/api/v1/academic-years/${yearB}/rollover/preview`)
+        .set('x-test-user', admin())
+        .send({ name: 'Året därpå', startDate: '2100-08-16', endDate: '2101-06-10' })
+        .expect(409);
+      expect(notYet.body).toMatchObject({ code: 'ROLLOVER_SOURCE_NOT_ACTIVATED' });
+
+      const preview = await request(http())
+        .post(`/api/v1/academic-years/${yearB}/activation/preview`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(preview.body.problems).toEqual([expect.objectContaining({ code: 'YEAR_ACTIVATION_TOO_EARLY' })]);
+      const early = await request(http())
+        .post(`/api/v1/academic-years/${yearB}/activation`)
+        .set('x-test-user', admin())
+        .send({ planHash: preview.body.planHash })
+        .expect(409);
+      expect(early.body).toMatchObject({ code: 'YEAR_ACTIVATION_TOO_EARLY' });
+    });
+
+    it('409s activating the old year again once its successor holds the pupils', async () => {
+      const { options } = givenSchool(2020);
+      const created = await roll(options, 201);
+      const yearB = created.body.academicYear.id as string;
+      const preview = await request(http()).post(`/api/v1/academic-years/${yearB}/activation/preview`).set('x-test-user', admin()).expect(200);
+      await request(http()).post(`/api/v1/academic-years/${yearB}/activation`).set('x-test-user', admin()).send({ planHash: preview.body.planHash }).expect(200);
+
+      const back = await request(http()).post(`${base}/activation/preview`).set('x-test-user', admin()).expect(200);
+      const refused = await request(http())
+        .post(`${base}/activation`)
+        .set('x-test-user', admin())
+        .send({ planHash: back.body.planHash })
+        .expect(409);
+      expect(refused.body).toMatchObject({ code: 'YEAR_IS_SUPERSEDED' });
+    });
+  });
+
   describe('RBAC', () => {
     const adminOnly = [
       ['POST', '/api/v1/academic-years'],
@@ -3174,6 +3390,11 @@ describe('Planning surface (e2e)', () => {
       ['GET', '/api/v1/staffing/unstaffed'],
       ['GET', '/api/v1/staffing/suggest-teachers'],
       ['POST', '/api/v1/teacher-duties'],
+      // Läsårsrullning: a whole year written at once, and every pupil moved.
+      ['POST', `/api/v1/academic-years/${YEAR_ID}/rollover/preview`],
+      ['POST', `/api/v1/academic-years/${YEAR_ID}/rollover`],
+      ['POST', `/api/v1/academic-years/${YEAR_ID}/activation/preview`],
+      ['POST', `/api/v1/academic-years/${YEAR_ID}/activation`],
     ] as const;
 
     it.each(adminOnly)('denies a teacher on %s %s', async (method, path) => {

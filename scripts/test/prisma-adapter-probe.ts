@@ -83,6 +83,7 @@ import { TeacherDutiesService } from '../../src/staffing/teacher-duties.service'
 import { lockEmploymentsOf } from '../../src/staffing/staffing-enforcement';
 import { TeachingRequirementsService } from '../../src/resources/teaching-requirements.service';
 import { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
+import { YearRolloverService } from '../../src/year-rollover/year-rollover.service';
 
 /** Marks every row the probe writes that has a text column to mark. */
 const MARKER = 'prisma-adapter-probe';
@@ -1870,6 +1871,175 @@ async function runChecks(
     assert.equal(left.rows[0].n, 0, 'a deleted school left years or groups behind');
   });
 
+  // (w) and (x) run in a school of their own: the activation hands the
+  // active flag over and moves pupils, which in the demo school would move
+  // the seed's pupils and take its active year away from every later check.
+  const rull = await givenRolloverSchool(owner);
+  const rullAdmin: AuthenticatedUser = {
+    authId: rull.adminAuthId,
+    userId: rull.adminId,
+    schoolId: rull.schoolId,
+    role: Role.SCHOOL_ADMIN,
+  };
+  const rollover = new YearRolloverService(api);
+  let targetYearId = '';
+  const rolloverOptions = {
+    name: `${MARKER} rull mål`,
+    startDate: '2094-08-16',
+    endDate: '2095-06-11',
+    breaks: [{ sourceBreakId: rull.breakId }],
+  };
+
+  await check('(w) a läsårsrullning writes the new year in one transaction, through the real adapter, and leaves the source untouched', async () => {
+    const before = await sourceChecksum(owner, rull.sourceYearId);
+    const targetRows = async () =>
+      (
+        await owner.query<{ n: number }>(
+          `SELECT ((SELECT count(*) FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2)
+                 + (SELECT count(*) FROM "StudentGroups" g JOIN "AcademicYears" y ON y.id = g."academicYearId"
+                     WHERE y."schoolId" = $1 AND y.name = $2))::int AS n`,
+          [rull.schoolId, rolloverOptions.name],
+        )
+      ).rows[0].n;
+
+    const preview = await rollover.previewRollover(rull.sourceYearId, rolloverOptions, rullAdmin);
+    assert.equal(preview.blocking, false, JSON.stringify(preview.problems));
+    assert.equal(preview.graduatingGradeLevel, 9);
+    const execute = { ...rolloverOptions, graduatingGradeLevel: 9, planHash: preview.planHash };
+
+    // A stale hash: a 409 before anything is written.
+    await assert.rejects(
+      rollover.executeRollover(rull.sourceYearId, { ...execute, planHash: 'f'.repeat(64) }, rullAdmin),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException, summarise(error));
+        assert.equal((error.getResponse() as { code?: string }).code, 'ROLLOVER_PREVIEW_STALE');
+        return true;
+      },
+    );
+    assert.equal(await targetRows(), 0, 'a stale rollover left rows behind');
+
+    // Atomicity: the requirements step fails after the year and the groups
+    // were inserted, and the whole rollover is gone with it.
+    await owner.query(`
+      CREATE FUNCTION public.probe_rull_refuse() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'probe: the requirements step refuses'; END $$`);
+    await owner.query(
+      `CREATE TRIGGER probe_rull_refuse BEFORE INSERT ON "TeachingRequirements"
+         FOR EACH ROW WHEN (NEW."schoolId" = '${rull.schoolId}'::uuid) EXECUTE FUNCTION public.probe_rull_refuse()`,
+    );
+    try {
+      await assert.rejects(rollover.executeRollover(rull.sourceYearId, execute, rullAdmin), /refuses/);
+    } finally {
+      await dropRolloverTrigger(owner);
+    }
+    assert.equal(await targetRows(), 0, 'a rollover that failed half-way left rows behind');
+
+    const result = await rollover.executeRollover(rull.sourceYearId, execute, rullAdmin);
+    targetYearId = result.academicYear.id;
+    assert.deepEqual(result.counts, { groups: 2, members: 1, requirements: 1, breaks: 1, classRules: 1 });
+    const groups = (
+      await owner.query<{ name: string; grade: number; predecessor: string | null }>(
+        `SELECT name, "gradeLevel" AS grade, "predecessorId" AS predecessor FROM "StudentGroups"
+          WHERE "academicYearId" = $1 ORDER BY name`,
+        [targetYearId],
+      )
+    ).rows;
+    assert.deepEqual(groups, [
+      { name: `${MARKER} 8A`, grade: 8, predecessor: rull.group7a },
+      { name: `${MARKER} Ma8`, grade: 8, predecessor: rull.groupMa7 },
+    ]);
+    const year = (
+      await owner.query<{ predecessor: string; grade: number; active: boolean }>(
+        `SELECT "predecessorId" AS predecessor, "graduatingGradeLevel" AS grade, "isActive" AS active FROM "AcademicYears" WHERE id = $1`,
+        [targetYearId],
+      )
+    ).rows[0];
+    assert.deepEqual(year, { predecessor: rull.sourceYearId, grade: 9, active: false });
+    // The vårtermin ended the day the source year ended, and ends the day the new one does.
+    const period = (
+      await owner.query<{ start: string; end: string; teacher: string | null }>(
+        `SELECT "startDate"::text AS start, "endDate"::text AS end, "teacherId" AS teacher
+           FROM "TeachingRequirements" WHERE "academicYearId" = $1`,
+        [targetYearId],
+      )
+    ).rows;
+    assert.deepEqual(period, [{ start: '2095-01-10', end: '2095-06-11', teacher: rull.teacherId }]);
+
+    assert.equal(await sourceChecksum(owner, rull.sourceYearId), before, 'the rollover changed the source year');
+
+    await assert.rejects(
+      rollover.previewRollover(rull.sourceYearId, { ...rolloverOptions, name: `${MARKER} rull igen` }, rullAdmin),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException, summarise(error));
+        assert.equal((error.getResponse() as { code?: string }).code, 'YEAR_HAS_SUCCESSOR');
+        assert.match(error.message, /har redan rullats vidare till prisma-adapter-probe rull mål/);
+        return true;
+      },
+    );
+  });
+
+  await check('(x) the activation moves the planned pupils by id through the real adapter, once, and not while the old year runs', async () => {
+    const homes = async () =>
+      Object.fromEntries(
+        (
+          await owner.query<{ email: string; group: string | null }>(
+            `SELECT u.email, g.name AS "group" FROM "Users" u LEFT JOIN "StudentGroups" g ON g.id = u."studentGroupId"
+              WHERE u."schoolId" = $1 AND u.role = 'STUDENT' ORDER BY u.email`,
+            [rull.schoolId],
+          )
+        ).rows.map((row) => [row.email.replace(`${MARKER}-`, '').replace('@example.invalid', ''), row.group]),
+      );
+
+    const early = await rollover.previewActivation(targetYearId, rullAdmin, { today: '2094-06-12' });
+    await assert.rejects(
+      rollover.executeActivation(targetYearId, { planHash: early.planHash }, rullAdmin, { today: '2094-06-12' }),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException, summarise(error));
+        assert.equal((error.getResponse() as { code?: string }).code, 'YEAR_ACTIVATION_TOO_EARLY');
+        return true;
+      },
+    );
+
+    const today = { today: '2094-06-13' };
+    const preview = await rollover.previewActivation(targetYearId, rullAdmin, today);
+    assert.deepEqual(
+      preview.moves.map((move) => [move.fromGroupName, move.toGroupName, move.count]),
+      [[`${MARKER} 7A`, `${MARKER} 8A`, 2]],
+    );
+    assert.equal(preview.graduates.count, 1);
+    const result = await rollover.executeActivation(targetYearId, { planHash: preview.planHash }, rullAdmin, today);
+    assert.deepEqual(result, { year: { id: targetYearId, name: rolloverOptions.name, isActive: true }, moved: 2, graduated: 1, unplaced: 0 });
+    assert.deepEqual(await homes(), {
+      'rull-p1': `${MARKER} 8A`,
+      'rull-p2': `${MARKER} 8A`,
+      'rull-p3': null,
+      'rull-p4': `${MARKER} 7A`,
+    });
+    const active = (
+      await owner.query<{ id: string }>(`SELECT id FROM "AcademicYears" WHERE "schoolId" = $1 AND "isActive"`, [rull.schoolId])
+    ).rows;
+    assert.deepEqual(active, [{ id: targetYearId }]);
+
+    // Twice is once.
+    const again = await rollover.previewActivation(targetYearId, rullAdmin, today);
+    assert.equal(again.moves.length, 0);
+    assert.deepEqual(
+      await rollover.executeActivation(targetYearId, { planHash: again.planHash }, rullAdmin, today),
+      { year: { id: targetYearId, name: rolloverOptions.name, isActive: true }, moved: 0, graduated: 0, unplaced: 0 },
+    );
+
+    // The old year again: superseded.
+    const back = await rollover.previewActivation(rull.sourceYearId, rullAdmin, today);
+    await assert.rejects(
+      rollover.executeActivation(rull.sourceYearId, { planHash: back.planHash }, rullAdmin, today),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictException, summarise(error));
+        assert.equal((error.getResponse() as { code?: string }).code, 'YEAR_IS_SUPERSEDED');
+        return true;
+      },
+    );
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the
@@ -1922,6 +2092,138 @@ async function runChecks(
     assert.equal((types.amount as Prisma.Decimal).toString(), '1.5');
     assert.deepEqual(types.doc, { a: [1, 'b'] });
   });
+}
+
+
+/** The throwaway school (w) and (x) roll and activate, created as the owner, filled as its admin. */
+interface RolloverSchool {
+  schoolId: string;
+  adminId: string;
+  adminAuthId: string;
+  teacherId: string;
+  sourceYearId: string;
+  group7a: string;
+  groupMa7: string;
+  breakId: string;
+}
+
+async function givenRolloverSchool(owner: Client): Promise<RolloverSchool> {
+  const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> =>
+    (await owner.query<T>(sql, params)).rows[0];
+  const school = await one<{ id: string }>(
+    `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+    [`${MARKER} rullgw`, `${MARKER}-rullgw`],
+  );
+  const person = (role: string, email: string, groupId: string | null = null) =>
+    one<{ id: string; authId: string }>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+       VALUES ($1, $2, 'Probe', 'Rull', $3::"UserRole", gen_random_uuid(), true, $4, now()) RETURNING id, "authId"`,
+      [school.id, `${MARKER}-${email}@example.invalid`, role, groupId],
+    );
+  const admin = await person('SCHOOL_ADMIN', 'rull-admin');
+  const teacher = await person('TEACHER', 'rull-teacher');
+  const principal: AuthenticatedUser = {
+    authId: admin.authId,
+    userId: admin.id,
+    schoolId: school.id,
+    role: Role.SCHOOL_ADMIN,
+  };
+  const api = prismaServiceFor(requiredEnv('DATABASE_URL'));
+  try {
+    const year = await new AcademicYearsService(api).create(
+      { name: `${MARKER} rull källa`, startDate: '2093-08-17', endDate: '2094-06-12', isActive: true },
+      principal,
+    );
+    const made = await api.withRls(principal, async (tx) => {
+      const group = (name: string, gradeLevel: number, kind: 'CLASS' | 'TEACHING_GROUP' = 'CLASS') =>
+        tx.studentGroup.create({ data: { schoolId: school.id, academicYearId: year.id, name, gradeLevel, kind } });
+      const g7a = await group(`${MARKER} 7A`, 7);
+      const g9a = await group(`${MARKER} 9A`, 9);
+      const ma7 = await group(`${MARKER} Ma7`, 7, 'TEACHING_GROUP');
+      const subject = await tx.subject.create({ data: { schoolId: school.id, name: `${MARKER} matematik` } });
+      const lov = await tx.schoolBreak.create({
+        data: {
+          schoolId: school.id,
+          academicYearId: year.id,
+          name: 'Höstlov',
+          startDate: new Date('2093-10-26T00:00:00Z'),
+          endDate: new Date('2093-10-30T00:00:00Z'),
+        },
+      });
+      await tx.availabilityConstraint.create({
+        data: {
+          schoolId: school.id,
+          resourceType: 'STUDENT_GROUP',
+          studentGroupId: g7a.id,
+          dayOfWeek: 5,
+          startTime: new Date('1970-01-01T13:00:00Z'),
+          endTime: new Date('1970-01-01T15:00:00Z'),
+        },
+      });
+      return { g7a, g9a, ma7, subject, lov };
+    });
+    await new TeachingRequirementsService(api).create(
+      {
+        academicYearId: year.id,
+        subjectId: made.subject.id,
+        studentGroupId: made.g7a.id,
+        teacherId: teacher.id,
+        lessonsPerWeek: 2,
+        minutesPerLesson: 60,
+        startDate: '2094-01-11',
+        endDate: '2094-06-12',
+      },
+      principal,
+    );
+    // Pupils: two in 7A, one in 9A (who graduates), and one in Ma7 from 7A
+    // and one from 9A (who is not carried into Ma8). p4 is in 7A but inactive.
+    const p1 = await person('STUDENT', 'rull-p1', made.g7a.id);
+    await person('STUDENT', 'rull-p2', made.g7a.id);
+    const p3 = await person('STUDENT', 'rull-p3', made.g9a.id);
+    const p4 = await person('STUDENT', 'rull-p4', made.g7a.id);
+    await owner.query('UPDATE "Users" SET "isActive" = false WHERE id = $1', [p4.id]);
+    await api.withRls(principal, (tx) =>
+      tx.studentGroupMember.createMany({
+        data: [p1, p3].map((pupil) => ({ schoolId: school.id, studentGroupId: made.ma7.id, studentId: pupil.id })),
+      }),
+    );
+    return {
+      schoolId: school.id,
+      adminId: admin.id,
+      adminAuthId: admin.authId,
+      teacherId: teacher.id,
+      sourceYearId: year.id,
+      group7a: made.g7a.id,
+      groupMa7: made.ma7.id,
+      breakId: made.lov.id,
+    };
+  } finally {
+    await api.$disconnect();
+  }
+}
+
+/** Every row of the source year a rollover could touch, and the school's pupils, as one checksum. */
+async function sourceChecksum(owner: Client, yearId: string): Promise<string> {
+  const { rows } = await owner.query<{ sum: string }>(
+    `WITH groups AS (SELECT id FROM "StudentGroups" WHERE "academicYearId" = $1)
+     SELECT md5(coalesce(string_agg(x, '|' ORDER BY x), '')) AS sum FROM (
+       SELECT to_jsonb(y)::text AS x FROM "AcademicYears" y WHERE y.id = $1
+       UNION ALL SELECT to_jsonb(g)::text FROM "StudentGroups" g WHERE g."academicYearId" = $1
+       UNION ALL SELECT to_jsonb(m)::text FROM "StudentGroupMembers" m WHERE m."studentGroupId" IN (SELECT id FROM groups)
+       UNION ALL SELECT to_jsonb(r)::text FROM "TeachingRequirements" r WHERE r."academicYearId" = $1
+       UNION ALL SELECT to_jsonb(b)::text FROM "SchoolBreaks" b WHERE b."academicYearId" = $1
+       UNION ALL SELECT to_jsonb(c)::text FROM "AvailabilityConstraints" c WHERE c."studentGroupId" IN (SELECT id FROM groups)
+       UNION ALL SELECT to_jsonb(u)::text FROM "Users" u
+         WHERE u."schoolId" = (SELECT "schoolId" FROM "AcademicYears" WHERE id = $1)
+     ) rows`,
+    [yearId],
+  );
+  return rows[0].sum;
+}
+
+async function dropRolloverTrigger(owner: Client): Promise<void> {
+  await owner.query('DROP TRIGGER IF EXISTS probe_rull_refuse ON "TeachingRequirements"');
+  await owner.query('DROP FUNCTION IF EXISTS public.probe_rull_refuse()');
 }
 
 // ---- setup
@@ -2015,6 +2317,9 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // the groups cascade, and the link triggers let the foreign keys clear.
   await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name LIKE $2 || ' rull %'`, [schoolId, MARKER]);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-rullning'`, [MARKER]);
+  // (w)/(x)'s school, whole, and (w)'s temporary trigger if a run died inside it.
+  await dropRolloverTrigger(owner);
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-rullgw'`, [MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-duty@example.invalid'`, [schoolId, MARKER]);
   // (t)'s attachment, for a run that stopped before detaching it: the plan
