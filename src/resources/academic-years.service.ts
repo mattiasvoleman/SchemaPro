@@ -1,5 +1,5 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { Prisma, type AcademicYear } from '@prisma/client';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { Prisma, type AcademicYear, type PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -10,6 +10,13 @@ import type {
   CreateAcademicYearDto,
   UpdateAcademicYearDto,
 } from './dto/academic-year.dto';
+import { pendingMoves, planActivation, readActivationSource } from '../year-rollover/activation-plan';
+import { activationRefusal, todayInStockholm } from '../year-rollover/year-rollover.service';
+
+/** PATCH {isActive: true} on a year whose pupils have not moved in yet. */
+export const YEAR_ACTIVATION_HAS_MOVES = 'YEAR_ACTIVATION_HAS_MOVES';
+/** DELETE of a year whose classes are active pupils' home classes. */
+export const YEAR_HAS_HOME_PUPILS = 'YEAR_HAS_HOME_PUPILS';
 
 /** A created year, with the årskurser it follows a timplan in from the start. */
 export type CreatedAcademicYear = AcademicYear & { timplans: YearTimplanRow[] };
@@ -92,6 +99,13 @@ export class AcademicYearsService {
           await this.assertYearStillHoldsItsPeriods(tx, id, dto);
         }
 
+        // A year activated by its flag alone would leave its classes empty
+        // and its pupils in the year before: activation moves them, so the
+        // flag waits for it. See assertFlagCanBeHandedOver.
+        if (dto.isActive) {
+          await this.assertFlagCanBeHandedOver(tx, id);
+        }
+
         // The same hand-over as in create(), ahead of the write for the same
         // reason: the one-active-year index checks the row as it lands.
         if (dto.isActive) {
@@ -120,13 +134,105 @@ export class AcademicYearsService {
     }
   }
 
+  /**
+   * Deletes the year, unless its classes are somebody's home class.
+   *
+   * WHY. A year's groups cascade with it, and Users.studentGroupId is ON
+   * DELETE SET NULL, so deleting a year that holds pupils' home classes
+   * leaves every one of them without a class — silently, and with nothing in
+   * the app that can say which class each was in. Rollover made that a likely
+   * click: "delete the new year" undoes a rollover, and after its activation
+   * the new year is where the pupils are. The count names the size of it; the
+   * pupils have to be moved (or the year activated away from) first.
+   *
+   * Read in the delete's transaction, before it. A pupil enrolled into one of
+   * its classes in between is the race the SET NULL used to lose silently,
+   * and now loses the same way; the window is one admin enrolling while
+   * another deletes the year, which nobody does on purpose.
+   */
   async remove(id: string, user: AuthenticatedUser): Promise<void> {
     try {
-      await this.prisma.withRls(user, (tx) =>
-        tx.academicYear.delete({ where: { id } }),
-      );
+      await this.prisma.withRls(user, async (tx) => {
+        const pupils = await tx.user.count({
+          where: { role: 'STUDENT', isActive: true, studentGroup: { academicYearId: id } },
+        });
+        if (pupils > 0) {
+          throw new ConflictException({
+            message:
+              `Läsåret har klasser som är hemklass för ${pupils} aktiva elever. ` +
+              'Flytta eleverna, eller aktivera ett annat läsår som tar över dem, innan läsåret tas bort.',
+            code: YEAR_HAS_HOME_PUPILS,
+            params: { pupils },
+          });
+        }
+        await tx.academicYear.delete({ where: { id } });
+      });
     } catch (error) {
       rethrowPrismaError(error);
+    }
+  }
+
+  /**
+   * PATCH {isActive: true}: refused for a year whose pupils have not moved in
+   * (YEAR_ACTIVATION_HAS_MOVES — the activation moves them, with a preview)
+   * and for a year whose successor already holds the pupils
+   * (YEAR_IS_SUPERSEDED, the activation's own refusal). A year outside every
+   * rollover chain plans no moves and flips as it always has.
+   *
+   * `null` from the read is a year RLS hides; the update answers it 404.
+   */
+  private async assertFlagCanBeHandedOver(tx: PrismaClient, id: string): Promise<void> {
+    const source = await readActivationSource(tx, id);
+    if (!source) return;
+    const plan = planActivation(source, todayInStockholm());
+    const superseded = plan.problems.find((problem) => problem.code === 'YEAR_IS_SUPERSEDED');
+    if (superseded) throw activationRefusal(superseded);
+    const moves = pendingMoves(plan);
+    if (moves > 0) {
+      throw new ConflictException({
+        message:
+          `${moves} elever har ännu inte flyttats in i läsåret ${plan.year.name}s klasser. ` +
+          'Aktivera läsåret genom aktiveringen, som visar och gör flytten, i stället för att bara byta aktivt läsår.',
+        code: YEAR_ACTIVATION_HAS_MOVES,
+        params: { pupils: moves },
+      });
+    }
+  }
+
+  /**
+   * A year linked by a rollover stays after its predecessor and before its
+   * successor: activation reads "today is after the old year" off these
+   * dates, and a successor starting before its predecessor ends would make
+   * the two run at once. Checked against the dates the PATCH leaves, not the
+   * ones it sent. Read without a lock: the neighbour's own PATCH is the only
+   * writer, and two admins moving both ends of a chain in the same second is
+   * not a case this guards.
+   */
+  private async assertLinkedYearsStayInOrder(
+    tx: Prisma.TransactionClient,
+    id: string,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<void> {
+    const linked = await tx.academicYear.findUnique({
+      where: { id },
+      select: {
+        predecessor: { select: { name: true, endDate: true } },
+        successor: { select: { name: true, startDate: true } },
+      },
+    });
+    const asDate = (value: Date): string => value.toISOString().slice(0, 10);
+    if (linked?.predecessor && startDate <= linked.predecessor.endDate) {
+      throw new BadRequestException(
+        `startDate: läsåret fortsätter ${linked.predecessor.name} och måste börja efter att det slutar ` +
+          `(${asDate(linked.predecessor.endDate)}).`,
+      );
+    }
+    if (linked?.successor && endDate >= linked.successor.startDate) {
+      throw new BadRequestException(
+        `endDate: läsåret fortsätter i ${linked.successor.name} och måste sluta innan det börjar ` +
+          `(${asDate(linked.successor.startDate)}).`,
+      );
     }
   }
 
@@ -223,6 +329,7 @@ export class AcademicYearsService {
     if (startDate >= endDate) {
       throw new BadRequestException('startDate must be before endDate.');
     }
+    await this.assertLinkedYearsStayInOrder(tx, id, startDate, endDate);
 
     // Only a stated period can fall outside: null means "the year's own
     // boundary", which follows the year wherever it goes. Prisma's comparison

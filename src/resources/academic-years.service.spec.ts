@@ -633,6 +633,90 @@ describe('AcademicYearsService', () => {
     });
   });
 
+  describe('rollover guards', () => {
+    const PREVIOUS_ID = '97979797-9797-4797-8797-979797979797';
+    const day = (value: string) => new Date(`${value}T00:00:00.000Z`);
+    /** 2026/27 (active, 7A with one pupil) rolled into YEAR_ID (8A, linked). */
+    const givenChain = (pupilIn: 'previous' | 'next') => {
+      tx.academicYear.findMany.mockResolvedValue([
+        { id: PREVIOUS_ID, name: '2026/27', startDate: day('2026-08-17'), endDate: day('2027-06-11'), isActive: true, predecessorId: null, graduatingGradeLevel: null },
+        { id: YEAR_ID, name: '2027/28', startDate: day('2027-08-16'), endDate: day('2028-06-09'), isActive: false, predecessorId: PREVIOUS_ID, graduatingGradeLevel: 9 },
+      ]);
+      tx.studentGroup.findMany.mockResolvedValue([
+        { id: 'g7', name: '7A', academicYearId: PREVIOUS_ID, kind: 'CLASS', gradeLevel: 7, predecessorId: null },
+        { id: 'g8', name: '8A', academicYearId: YEAR_ID, kind: 'CLASS', gradeLevel: 8, predecessorId: 'g7' },
+      ]);
+      tx.user.findMany.mockResolvedValue([
+        { id: 'p1', isActive: true, studentGroupId: pupilIn === 'previous' ? 'g7' : 'g8' },
+      ]);
+    };
+
+    it('refuses PATCH {isActive: true} on a year whose pupils have not moved in, pointing at the activation', async () => {
+      givenChain('previous');
+      const refusal = await service.update(YEAR_ID, { isActive: true }, testUser()).catch((e) => e);
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect(refusal.getResponse()).toMatchObject({ code: 'YEAR_ACTIVATION_HAS_MOVES', params: { pupils: 1 } });
+      expect(tx.academicYear.updateMany).not.toHaveBeenCalled();
+      expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses PATCH {isActive: true} on a year its successor has superseded', async () => {
+      givenChain('next');
+      const refusal = await service.update(PREVIOUS_ID, { isActive: true }, testUser()).catch((e) => e);
+      expect(refusal.getResponse()).toMatchObject({ code: 'YEAR_IS_SUPERSEDED' });
+      expect(tx.academicYear.update).not.toHaveBeenCalled();
+    });
+
+    it('lets the flag move once the pupils are in, and never asks when the flag goes off', async () => {
+      givenChain('next');
+      tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
+      await service.update(YEAR_ID, { isActive: true }, testUser());
+      expect(tx.academicYear.update).toHaveBeenCalled();
+      tx.academicYear.findMany.mockClear();
+      await service.update(YEAR_ID, { isActive: false }, testUser());
+      expect(tx.academicYear.findMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses to delete a year whose classes are active pupils’ home classes, naming how many', async () => {
+      tx.user.count.mockResolvedValue(27);
+      const refusal = await service.remove(YEAR_ID, testUser()).catch((e) => e);
+      expect(refusal).toBeInstanceOf(ConflictException);
+      expect(refusal.getResponse()).toMatchObject({ code: 'YEAR_HAS_HOME_PUPILS', params: { pupils: 27 } });
+      expect(tx.user.count).toHaveBeenCalledWith({
+        where: { role: 'STUDENT', isActive: true, studentGroup: { academicYearId: YEAR_ID } },
+      });
+      expect(tx.academicYear.delete).not.toHaveBeenCalled();
+    });
+
+    it('keeps a linked year after its predecessor and before its successor', async () => {
+      const queryRaw = jest.fn((...call: unknown[]) =>
+        Promise.resolve(
+          lockingRead(
+            { name: 'AcademicYears', columns: ['id', 'startDate', 'endDate'], lock: 'FOR NO KEY UPDATE' },
+            [{ id: YEAR_ID, startDate: day('2027-08-16'), endDate: day('2028-06-09') }],
+            call,
+          ),
+        ),
+      );
+      Object.assign(tx, { $queryRaw: queryRaw });
+      tx.academicYear.findUnique.mockResolvedValue({
+        predecessor: { name: '2026/27', endDate: day('2027-06-11') },
+        successor: { name: '2028/29', startDate: day('2028-08-14') },
+      });
+      tx.teachingRequirement.count.mockResolvedValue(0);
+      tx.schoolBreak.count.mockResolvedValue(0);
+
+      await expect(service.update(YEAR_ID, { startDate: '2027-06-11' }, testUser())).rejects.toThrow(
+        new BadRequestException('startDate: läsåret fortsätter 2026/27 och måste börja efter att det slutar (2027-06-11).'),
+      );
+      await expect(service.update(YEAR_ID, { endDate: '2028-08-20' }, testUser())).rejects.toThrow(
+        new BadRequestException('endDate: läsåret fortsätter i 2028/29 och måste sluta innan det börjar (2028-08-14).'),
+      );
+      tx.academicYear.update.mockResolvedValue({ id: YEAR_ID });
+      await expect(service.update(YEAR_ID, { startDate: '2027-08-23' }, testUser())).resolves.toBeDefined();
+    });
+  });
+
   describe('remove', () => {
     it('deletes by id under the caller’s RLS context', async () => {
       tx.academicYear.delete.mockResolvedValue({ id: YEAR_ID });

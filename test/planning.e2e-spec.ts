@@ -3362,6 +3362,27 @@ describe('Planning surface (e2e)', () => {
         .send({ planHash: back.body.planHash })
         .expect(409);
       expect(refused.body).toMatchObject({ code: 'YEAR_IS_SUPERSEDED' });
+      // And through the year form's own PATCH.
+      const patched = await request(http()).patch(base).set('x-test-user', admin()).send({ isActive: true }).expect(409);
+      expect(patched.body).toMatchObject({ code: 'YEAR_IS_SUPERSEDED' });
+    });
+
+    it('409s PATCH {isActive: true} while pupils wait to move, and DELETE of a year that holds home classes', async () => {
+      const { world, options } = givenSchool(2020);
+      const created = await roll(options, 201);
+      const yearB = created.body.academicYear.id as string;
+
+      const patched = await request(http())
+        .patch(`/api/v1/academic-years/${yearB}`)
+        .set('x-test-user', admin())
+        .send({ isActive: true })
+        .expect(409);
+      expect(patched.body).toMatchObject({ code: 'YEAR_ACTIVATION_HAS_MOVES', params: { pupils: 4 } });
+      expect(world.rows['academicYear']!.find((year) => year['id'] === yearB)!['isActive']).toBe(false);
+
+      const removed = await request(http()).delete(base).set('x-test-user', admin()).expect(409);
+      expect(removed.body).toMatchObject({ code: 'YEAR_HAS_HOME_PUPILS' });
+      expect(world.rows['academicYear']!.some((year) => year['id'] === IDS.yearA)).toBe(true);
     });
   });
 
