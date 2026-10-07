@@ -10,7 +10,6 @@ import {
   Prisma,
   type LessonRecurrence,
   type TeacherContractKind,
-  type TeacherDutyKind,
 } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -44,6 +43,7 @@ import type {
   ImportTeachersDto,
   ImportTimplanDto,
 } from './dto/import.dto';
+import { dutyIdentity } from '../staffing/duty-identity';
 
 /**
  * Everything a timplan row states about a requirement — that is, every column
@@ -515,8 +515,8 @@ export class ImportService {
           note: true,
         },
       });
-      const identity = (userId: string, kind: TeacherDutyKind, label: string) =>
-        `${userId}:${kind}:${this.normalizeName(label)}`;
+      // The identity the carry of tjänster into a rolled year uses too (duty-identity.ts).
+      const identity = dutyIdentity;
       const existingByKey = new Map<string, typeof existing>();
       for (const duty of existing) {
         const key = identity(duty.userId, duty.kind, duty.label);

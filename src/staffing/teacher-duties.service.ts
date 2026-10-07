@@ -8,10 +8,11 @@ import type { Prisma, TeacherDuty } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
-import { SLOT_MINUTES, carriesSeconds, minutesOf } from '../common/solver-grid';
+import { SLOT_MINUTES, minutesOf } from '../common/solver-grid';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
-import { parseTimeString, toWallClock } from '../common/utils/time';
+import { toWallClock } from '../common/utils/time';
+import { DUTY_SLOT_REASON, dutySlotConstraintData, dutySlotTimes, slotGridFault } from './duty-slot';
 import { lockStaffRow } from './staff-lock';
 import type {
   CreateTeacherDutyDto,
@@ -67,46 +68,29 @@ function toResponse(row: DutyWithSlot): TeacherDutyResponse {
  * answers.
  */
 export function assertDutySlot(slot: TeacherDutySlotDto): void {
-  for (const field of ['startTime', 'endTime'] as const) {
-    const value = slot[field];
-    if (carriesSeconds(value)) {
-      throw new BadRequestException(
-        `blockedSlot.${field}: anges i hela minuter — schemat räknar inte sekunder.`,
-      );
-    }
-    if (minutesOf(value) % SLOT_MINUTES !== 0) {
-      const below = Math.floor(minutesOf(value) / SLOT_MINUTES) * SLOT_MINUTES;
-      const clock = (minutes: number) =>
-        `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
-      throw new BadRequestException(
-        `blockedSlot.${field}: ${value.slice(0, 5)} ligger inte på schemats ${SLOT_MINUTES}-minutersrutnät. Närmast är ${clock(below)} eller ${clock(below + SLOT_MINUTES)}.`,
-      );
-    }
-  }
-  if (minutesOf(slot.startTime) >= minutesOf(slot.endTime)) {
+  const fault = slotGridFault(slot);
+  if (!fault) return;
+  if (fault.kind === 'SECONDS') {
     throw new BadRequestException(
-      `blockedSlot: starttiden (${slot.startTime.slice(0, 5)}) måste ligga före sluttiden (${slot.endTime.slice(0, 5)}).`,
+      `blockedSlot.${fault.field}: anges i hela minuter — schemat räknar inte sekunder.`,
     );
   }
+  if (fault.kind === 'OFF_GRID') {
+    const value = slot[fault.field];
+    const below = Math.floor(minutesOf(value) / SLOT_MINUTES) * SLOT_MINUTES;
+    const clock = (minutes: number) =>
+      `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+    throw new BadRequestException(
+      `blockedSlot.${fault.field}: ${value.slice(0, 5)} ligger inte på schemats ${SLOT_MINUTES}-minutersrutnät. Närmast är ${clock(below)} eller ${clock(below + SLOT_MINUTES)}.`,
+    );
+  }
+  throw new BadRequestException(
+    `blockedSlot: starttiden (${slot.startTime.slice(0, 5)}) måste ligga före sluttiden (${slot.endTime.slice(0, 5)}).`,
+  );
 }
 
-/**
- * The reason a linked constraint carries: the word, never the uppdrag's label
- * or kind. availability_teacher_select hands every TEACHER of the school every
- * AvailabilityConstraints row, so whatever stands here is read by every
- * colleague — and the label ("Förstelärare matematik", "Mentor 7B") is the HR
- * data teacher_duties_teacher_own_select keeps from them. The admin reads the
- * label from the duty, which the constraint names through blockedConstraintId.
- */
-export const DUTY_SLOT_REASON = 'Uppdrag';
-
-/** The time fields of the constraint that holds a slot. */
-const slotColumns = (slot: TeacherDutySlotDto) => ({
-  dayOfWeek: slot.dayOfWeek,
-  date: null,
-  startTime: parseTimeString(slot.startTime),
-  endTime: parseTimeString(slot.endTime),
-});
+/** Kept here for the callers that import it with the service; see duty-slot.ts. */
+export { DUTY_SLOT_REASON };
 
 /**
  * Lärarnas uppdrag: mentorskap, ämnesansvar, rastvakt, APT — the part of a
@@ -175,14 +159,7 @@ export class TeacherDutiesService {
         await lockStaffRow(tx, dto.userId, 'uppdrag');
         const constraint = slot
           ? await tx.availabilityConstraint.create({
-              data: {
-                schoolId,
-                resourceType: 'TEACHER',
-                userId: dto.userId,
-                type: 'UNAVAILABLE',
-                reason: DUTY_SLOT_REASON,
-                ...slotColumns(slot),
-              },
+              data: dutySlotConstraintData(schoolId, dto.userId, slot),
               select: { id: true },
             })
           : null;
@@ -235,19 +212,12 @@ export class TeacherDutiesService {
           if (current.blockedConstraintId) {
             await tx.availabilityConstraint.update({
               where: { id: current.blockedConstraintId },
-              data: { ...slotColumns(dto.blockedSlot), reason: DUTY_SLOT_REASON },
+              data: { ...dutySlotTimes(dto.blockedSlot), reason: DUTY_SLOT_REASON },
               select: { id: true },
             });
           } else {
             const created = await tx.availabilityConstraint.create({
-              data: {
-                schoolId,
-                resourceType: 'TEACHER',
-                userId: current.userId,
-                type: 'UNAVAILABLE',
-                reason: DUTY_SLOT_REASON,
-                ...slotColumns(dto.blockedSlot),
-              },
+              data: dutySlotConstraintData(schoolId, current.userId, dto.blockedSlot),
               select: { id: true },
             });
             blockedConstraintId = created.id;
