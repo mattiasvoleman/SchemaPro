@@ -35,6 +35,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatTime } from "@/lib/utils";
 import { buildGradeSpans } from "@/lib/grade-span";
+import { useStaffingPolicy } from "@/lib/staffing-queries";
 import {
   Card,
   CardContent,
@@ -55,6 +56,21 @@ export default function GeneratePage() {
   const { data: people } = usePeople();
   const { data: groups } = useGroups();
   const { data: memberships } = useGroupMemberships();
+  /**
+   * Whether the school refuses to generate while a timplanspost has no lärare
+   * (StaffingPolicy.unstaffedGeneration). Read only to say so BEFORE the run:
+   * the gateway's pre-flight is what actually refuses
+   * (OptimizationProxyService.unstaffedRefusal), so a policy that has not
+   * answered yet, or failed, blocks nothing here — the run would come back as
+   * the same refusal, named, in the result card below.
+   */
+  const { data: staffingPolicy } = useStaffingPolicy();
+  const unstaffedCount = useMemo(
+    () => (requirements ?? []).filter((requirement) => requirement.teacherId === null).length,
+    [requirements],
+  );
+  const refusesUnstaffed = staffingPolicy?.unstaffedGeneration === "REFUSE";
+  const blockedByStaffing = refusesUnstaffed && unstaffedCount > 0;
 
   /**
    * Groups the timplan names whose year cannot be derived.
@@ -162,7 +178,14 @@ export default function GeneratePage() {
     [people],
   );
 
-  const prerequisites = [
+  const prerequisites: {
+    label: string;
+    ok: boolean;
+    detail: string;
+    /** Not a gate: shown with a warning sign, and the run stays possible. */
+    warn?: boolean;
+    href?: string;
+  }[] = [
     { label: t("preYear"), ok: activeYear !== null, detail: activeYear?.name ?? "—" },
     {
       label: t("preRequirements"),
@@ -175,9 +198,25 @@ export default function GeneratePage() {
       ok: (rooms?.length ?? 0) > 0,
       detail: String(rooms?.length ?? 0),
     },
+    /*
+     * "Alla timplansposter har lärare (N saknar)". A gate only when the school
+     * has said so (unstaffedGeneration REFUSE); under ALLOW — the default, and
+     * the behaviour every school had before Fas 2 — it is a warning, because
+     * an unstaffed post is scheduled without a teacher and that may be what
+     * the school means while it is still recruiting. Either way it links to
+     * the panel where a post is staffed with one click.
+     */
+    {
+      label: t("preStaffed"),
+      ok: unstaffedCount === 0,
+      warn: unstaffedCount > 0 && !refusesUnstaffed,
+      detail:
+        unstaffedCount === 0 ? "0" : t("preStaffedMissing", { count: unstaffedCount }),
+      href: unstaffedCount > 0 ? "/admin/staffing#unstaffed" : undefined,
+    },
   ];
 
-  const canRun = prerequisites.every((prerequisite) => prerequisite.ok);
+  const canRun = prerequisites.every((prerequisite) => prerequisite.ok || prerequisite.warn);
   const isRunning =
     startOptimization.isPending ||
     job?.status === "PENDING" ||
@@ -202,6 +241,15 @@ export default function GeneratePage() {
   // hint and never claims the requirements are impossible.
   const noScheduleProduced =
     solverStatus === "INFEASIBLE" || solverStatus === "TIMEOUT";
+  /**
+   * The gateway's own pre-flight refusal, which travels as an INFEASIBLE job so
+   * the history and this card treat it like any refusal — but the engine was
+   * never asked, so "the constraints cannot all be met" would be false. It
+   * gets its own status line and a link to where the posts are staffed.
+   */
+  const refusedUnstaffed =
+    solverStatus === "INFEASIBLE" &&
+    job?.conflictSummaryCode === "STAFF_UNSTAFFED_REQUIREMENTS";
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -238,10 +286,21 @@ export default function GeneratePage() {
               <li key={prerequisite.label} className="flex items-center gap-3 text-sm">
                 {prerequisite.ok ? (
                   <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
+                ) : prerequisite.warn ? (
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-warning" />
                 ) : (
                   <XCircle className="h-5 w-5 shrink-0 text-destructive" />
                 )}
-                <span className="flex-1">{prerequisite.label}</span>
+                {prerequisite.href ? (
+                  <Link
+                    href={prerequisite.href}
+                    className="flex-1 underline underline-offset-4"
+                  >
+                    {prerequisite.label}
+                  </Link>
+                ) : (
+                  <span className="flex-1">{prerequisite.label}</span>
+                )}
                 <span className="tabular-nums text-muted-foreground">
                   {prerequisite.detail}
                 </span>
@@ -346,6 +405,7 @@ export default function GeneratePage() {
             size="lg"
             disabled={!canRun || isRunning}
             onClick={run}
+            aria-describedby={blockedByStaffing ? "generate-blocked-unstaffed" : undefined}
           >
             {isRunning ? (
               <>
@@ -359,6 +419,20 @@ export default function GeneratePage() {
               </>
             )}
           </Button>
+          {/*
+            The same sentence as the prerequisite line, under the button it
+            disables — a greyed button with no reason beside it is a button
+            people click at and then call support about.
+          */}
+          {blockedByStaffing ? (
+            <p id="generate-blocked-unstaffed" className="mt-2 text-sm text-foreground">
+              {t("preStaffed")} ({t("preStaffedMissing", { count: unstaffedCount })}).{" "}
+              {t("runBlockedUnstaffed")}{" "}
+              <Link href="/admin/staffing#unstaffed" className="underline underline-offset-4">
+                {t("preStaffedLink")}
+              </Link>
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -382,9 +456,11 @@ export default function GeneratePage() {
                       params: job.errorParams,
                     })
                   : tCommon("error")
-                : solverStatus
-                  ? t(`status${solverStatus}`)
-                  : ""}
+                : refusedUnstaffed
+                  ? t("statusUnstaffed")
+                  : solverStatus
+                    ? t(`status${solverStatus}`)
+                    : ""}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -404,8 +480,18 @@ export default function GeneratePage() {
               </>
             ) : null}
 
-            {solverStatus === "INFEASIBLE" ? (
+            {refusedUnstaffed ? (
+              <p className="text-sm text-muted-foreground">
+                <Link
+                  href="/admin/staffing#unstaffed"
+                  className="font-medium text-foreground underline underline-offset-4"
+                >
+                  {t("preStaffedLink")}
+                </Link>
+              </p>
+            ) : solverStatus === "INFEASIBLE" ? (
               <p className="text-sm text-muted-foreground">{t("infeasibleHint")}</p>
+
             ) : solverStatus === "TIMEOUT" ? (
               <p className="text-sm text-muted-foreground">{t("timeoutHint")}</p>
             ) : null}
