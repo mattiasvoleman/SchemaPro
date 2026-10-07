@@ -30,7 +30,57 @@ const state = vi.hoisted(() => ({
   // compared.
   versions: [] as unknown[],
   snapshot: null as unknown,
+  // Next year's grundschema, which useMasterLessons answers for "y-2".
+  nextLessons: [] as unknown[],
+  /** The year each year-keyed read was last asked for. */
+  askedFor: {} as Record<string, string | null>,
 }));
+
+/**
+ * The year choice (lib/planning-year.ts), as a hook with the real one's
+ * contract: this year unless next year was picked, and the gateway's rosters
+ * only for next year. What the gateway sends is the test's to set; whether
+ * the page lays it over its people is what is under test.
+ */
+const planning = vi.hoisted(() => ({
+  active: {
+    id: "y-1",
+    name: "2026/27",
+    isActive: true,
+    predecessorId: null as string | null,
+    startDate: "2026-08-17",
+    endDate: "2027-06-11",
+  },
+  successor: null as null | {
+    id: string;
+    name: string;
+    isActive: boolean;
+    predecessorId: string | null;
+    startDate: string;
+    endDate: string;
+  },
+  rosters: null as unknown,
+}));
+
+vi.mock("@/lib/planning-year", async () => {
+  const { useState } = await import("react");
+  return {
+    usePlanningYear: () => {
+      const [yearId, setYearId] = useState(planning.active.id);
+      const year =
+        [planning.active, planning.successor].find((entry) => entry?.id === yearId) ??
+        planning.active;
+      return {
+        year,
+        active: planning.active,
+        successor: planning.successor,
+        choose: setYearId,
+        rosters: year.isActive ? null : planning.rosters,
+        rostersFailed: false,
+      };
+    },
+  };
+});
 
 const noMutation = { mutateAsync: vi.fn().mockResolvedValue({ id: "x" }), isPending: false };
 
@@ -48,18 +98,26 @@ const lunch = {
 };
 
 vi.mock("@/lib/queries", () => ({
-  useActiveYear: () => ({ activeYear: { id: "y-1" } }),
-  useMasterLessons: () => ({ data: state.lessons, isLoading: false }),
+  useMasterLessons: (yearId: string | null) => {
+    state.askedFor.lessons = yearId;
+    return { data: yearId === "y-2" ? state.nextLessons : state.lessons, isLoading: false };
+  },
   useGroups: () => ({ data: GROUPS }),
   usePeople: () => ({ data: PEOPLE }),
   useRooms: () => ({ data: ROOMS }),
   useSubjects: () => ({ data: SUBJECTS }),
-  useRequirements: () => ({ data: [] }),
+  useRequirements: (yearId: string | null) => {
+    state.askedFor.requirements = yearId;
+    return { data: [] };
+  },
   useConstraints: () => ({ data: [] }),
   useGroupMemberships: () => ({ data: state.memberships }),
   useFrameTimes: () => ({ data: [] }),
   useLunchSettings: () => ({ data: state.lunchSettings }),
-  useLunchSittings: () => ({ data: state.sittings }),
+  useLunchSittings: (yearId: string | null) => {
+    state.askedFor.sittings = yearId;
+    return { data: state.sittings };
+  },
   useLunchSittingMutations: () => lunch,
   useRoomPreferences: () => ({ data: [] }),
   useRasts: () => ({ data: RASTS }),
@@ -145,6 +203,16 @@ const GROUPS = [
   // Next year's 5.1: this year's 4.1, rolled over and not yet active. Same
   // name as this year's 5.1, no lesson in this schedule.
   { id: "g-next-51", academicYearId: "y-2", name: "5.1", kind: "CLASS", gradeLevel: 5 },
+  // Next year's 5.2 (this year's 4.2), and its maths group, carried at the
+  // rollover with Alva in it.
+  { id: "g-next-52", academicYearId: "y-2", name: "5.2", kind: "CLASS", gradeLevel: 5 },
+  {
+    id: "g-next-5ma",
+    academicYearId: "y-2",
+    name: "5ma1",
+    kind: "TEACHING_GROUP",
+    gradeLevel: null,
+  },
 ];
 
 /** One every-day rast for year four, so the bands have something to draw. */
@@ -323,6 +391,10 @@ beforeEach(() => {
   state.sittings = [];
   state.versions = [];
   state.snapshot = null;
+  state.nextLessons = [];
+  state.askedFor = {};
+  planning.successor = null;
+  planning.rosters = null;
 });
 
 afterEach(() => {
@@ -1612,5 +1684,140 @@ describe("the room optimisation", () => {
 
     const list = await screen.findByRole("list", { name: "roomOptimization.mostImproved" });
     expect(list).toHaveTextContent("Nils Berg");
+  });
+});
+
+/*
+ * Next year before its activation. Its classes have no home pupils until
+ * then — every pupil in PEOPLE sits in a class of this year — so the grid
+ * reads the people with the home class the gateway projects for each pupil the
+ * activation moves. That is what lets a clash on next year's grid be drawn
+ * before anyone has moved, and redrawn when a class change this year moves a
+ * pupil's projected class.
+ */
+describe("next year's grid, before its activation", () => {
+  const NEXT = {
+    id: "y-2",
+    name: "2027/28",
+    isActive: false,
+    predecessorId: "y-1",
+    startDate: "2027-08-16",
+    endDate: "2028-06-09",
+  };
+  const nextLesson = (id: string, subjectId: string, studentGroupId: string, teacherId: string) => ({
+    ...lesson(id, subjectId, studentGroupId, "08:00", { teacherId }),
+    academicYearId: "y-2",
+  });
+  /** What the gateway projects for Alva: the class her class this year rolls into. */
+  const rostersWithAlvaIn = (studentGroupId: string) => ({
+    academicYearId: "y-2",
+    basis: "PROJECTED",
+    homeClasses: [{ studentId: "p-alva", studentGroupId }],
+    counts: { moved: 1, graduates: 0, unplaced: 0 },
+    membershipsOutOfDate: { missing: 0, stale: 0 },
+  });
+
+  beforeEach(() => {
+    planning.successor = NEXT;
+    // Monday 08:00 next year: 5.1 has Slöjd, and 5ma1 — Alva's maths group,
+    // carried at the rollover — has Matematik with another teacher.
+    state.nextLessons = [
+      nextLesson("l-next-slojd", "s-sl", "g-next-51", "t-1"),
+      nextLesson("l-next-ma", "s-ma", "g-next-5ma", "t-2"),
+    ];
+    state.memberships = [...MEMBERSHIPS, { studentId: "p-alva", studentGroupId: "g-next-5ma" }];
+  });
+
+  async function showNextYear() {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await user.click(screen.getByRole("button", { name: "planningYear.optionNext(2027/28)" }));
+    return user;
+  }
+
+  const card = (subject: string) =>
+    screen.queryAllByRole("button").find((el) => el.textContent?.includes(subject));
+  const clashes = (subject: string) => card(subject)?.className.includes("ring-red-500") ?? false;
+
+  it("shows next year's lessons, and every year-keyed read follows the choice", async () => {
+    await showNextYear();
+
+    expect(state.askedFor).toEqual({ lessons: "y-2", requirements: "y-2", sittings: "y-2" });
+    expect(card("Slöjd")).toBeDefined();
+    expect(card("Idrott")).toBeUndefined();
+  });
+
+  it("offers next year's groups in the filter, and not this year's", async () => {
+    const user = await showNextYear();
+    await user.click(screen.getByRole("button", { name: "timetable.filterGroup" }));
+
+    expect(await screen.findByRole("menuitemcheckbox", { name: "5ma1" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitemcheckbox", { name: "4.1" })).toBeNull();
+  });
+
+  it("draws the clash a class change this year creates on next year's grid", async () => {
+    // Alva is in 4.2 this year, so the activation would put her in 5.2: the
+    // two Monday lessons share nobody.
+    planning.rosters = rostersWithAlvaIn("g-next-52");
+    await showNextYear();
+    expect(clashes("Slöjd")).toBe(false);
+    expect(clashes("Matematik")).toBe(false);
+    cleanup();
+
+    // She changes to 4.1 in May; the gateway's projection now puts her in
+    // 5.1, which has Slöjd while her maths group has Matematik.
+    planning.rosters = rostersWithAlvaIn("g-next-51");
+    await showNextYear();
+    expect(clashes("Slöjd")).toBe(true);
+    expect(clashes("Matematik")).toBe(true);
+  });
+
+  it("draws no clash at all without the projection: next year's 5.1 has nobody yet", async () => {
+    planning.rosters = null;
+    await showNextYear();
+
+    expect(clashes("Slöjd")).toBe(false);
+    expect(clashes("Matematik")).toBe(false);
+  });
+
+  it("says the class lists are projected, and only for next year", async () => {
+    planning.rosters = rostersWithAlvaIn("g-next-51");
+    render(<TimetablePage />);
+    expect(screen.queryByText(/planningYear\.bannerTitle/)).toBeNull();
+    cleanup();
+
+    await showNextYear();
+    expect(screen.getByText("planningYear.bannerTitle(2027/28)")).toBeInTheDocument();
+  });
+
+  it("drops the group filter picked on this year's grid", async () => {
+    render(<TimetablePage />);
+    await filterTo("4.1");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "planningYear.optionNext(2027/28)" }));
+
+    // Both of next year's lessons, not the nothing a filter on this year's
+    // 4.1 would leave.
+    expect(card("Slöjd")).toBeDefined();
+    expect(card("Matematik")).toBeDefined();
+  });
+
+  it("adds a lesson to next year, among next year's groups only", async () => {
+    const user = await showNextYear();
+    await user.click(screen.getByRole("button", { name: "timetable.addLesson" }));
+    await user.click(await screen.findByRole("combobox", { name: "timetable.addGroup" }));
+
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "5.1",
+      "5.2",
+      "5ma1",
+    ]);
+  });
+
+  it("offers no choice while there is no next year to plan", () => {
+    planning.successor = null;
+    render(<TimetablePage />);
+
+    expect(screen.queryByRole("group", { name: "planningYear.label" })).toBeNull();
   });
 });
