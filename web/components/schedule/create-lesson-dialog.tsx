@@ -4,23 +4,23 @@
  * The timetable's Lägg till lektion dialog: the new lesson's fields, and the
  * open-slot finder that proposes a time and a teacher for it.
  *
- * Lifted out of app/[locale]/(app)/admin/timetable/page.tsx and fetched the
- * first time a lesson is added, for the reason the versions and room dialogs
- * beside it are: the page carries the most JavaScript in the app, and this is
- * a form that is filled in a handful of times a week while the grid is on
- * screen all day. The draft and the search stay with the page — it opens the
+ * Lifted out of app/[locale]/(app)/admin/timetable/page.tsx and fetched apart
+ * from it, in the lesson dialogs' chunk (lesson-dialogs.ts) that the page asks
+ * for right after it mounts: the page carries the most JavaScript in the app,
+ * and this is a form that is filled in a handful of times a week while the
+ * grid is on screen all day. The draft and the search stay with the page — it opens the
  * dialog from a click on empty time, from Duplicera and from the toolbar, and
  * the search needs the page's placements, rules and rosters — and are passed
  * in. Only the pupil search box is the dialog's own.
  */
 
-import { Suspense, lazy, useState } from "react";
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2, Lock, Sparkles } from "lucide-react";
 import type { OpenSlotMatch } from "@/lib/conflicts";
 import type { LessonRecurrence, Person, Room, StudentGroup, Subject } from "@/lib/types";
+import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -58,16 +58,6 @@ export interface CreateDraft {
   startDate: string;
   endDate: string;
 }
-
-/*
- * Lazily, as the edit dialog on the page has it: the fields carry the 546-line
- * date picker, and the two dialogs then share the one chunk it is fetched in.
- */
-const RecurrenceFields = lazy(() =>
-  import("@/components/schedule/recurrence-fields").then((module) => ({
-    default: module.RecurrenceFields,
-  })),
-);
 
 function minutesToHHMM(minutes: number): string {
   const h = String(Math.floor(minutes / 60)).padStart(2, "0");
@@ -453,24 +443,20 @@ export function CreateLessonDialog({
                 </SelectContent>
               </Select>
             </div>
-            <Suspense
-              fallback={
-                <div className="col-span-2 space-y-3 rounded-md border p-3">
-                  <Skeleton className="h-14" />
-                  <Skeleton className="h-14" />
-                </div>
-              }
-            >
-              <RecurrenceFields
-                idPrefix="create"
-                value={{
-                  recurrence: draft.recurrence,
-                  startDate: draft.startDate,
-                  endDate: draft.endDate,
-                }}
-                onChange={(next) => onDraftChange({ ...draft, ...next })}
-              />
-            </Suspense>
+            {/*
+              Imported statically: the fields carry the 546-line date picker,
+              but this dialog is already fetched apart from the page, in one
+              chunk with Justera, which draws the same fields.
+            */}
+            <RecurrenceFields
+              idPrefix="create"
+              value={{
+                recurrence: draft.recurrence,
+                startDate: draft.startDate,
+                endDate: draft.endDate,
+              }}
+              onChange={(next) => onDraftChange({ ...draft, ...next })}
+            />
             <div className="col-span-2 flex items-center justify-between rounded-md border px-3 py-2">
               <div className="flex items-center gap-2">
                 <Lock className="h-4 w-4 text-muted-foreground" />

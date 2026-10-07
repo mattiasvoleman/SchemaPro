@@ -618,12 +618,13 @@ describe("the week of one class", () => {
 });
 
 describe("moving a lesson that lands on more than one class", () => {
-  it("names the classes before the drag takes effect", () => {
+  it("names the classes before the drag takes effect", async () => {
     render(<TimetablePage />);
     // Not filtered to anything: the question is asked of the LESSON. 4ma1 holds
     // Alva and Bo of 4.1 and Eva of 4.2, so this drag moves 4.2's week too.
     dragToTuesday("Matematik");
-    expect(screen.getByText("timetable.sharedMoveTitle")).toBeInTheDocument();
+    // Awaited: the dialog's code is fetched the first time it is needed.
+    expect(await screen.findByText("timetable.sharedMoveTitle")).toBeInTheDocument();
     expect(screen.getByText(/timetable.sharedMoveBody\(4\.1, 4\.2\)/)).toBeInTheDocument();
     expect(noMutation.mutateAsync).not.toHaveBeenCalled();
   });
@@ -632,7 +633,7 @@ describe("moving a lesson that lands on more than one class", () => {
     const user = userEvent.setup();
     render(<TimetablePage />);
     dragToTuesday("Matematik");
-    await user.click(screen.getByRole("button", { name: "timetable.sharedMoveConfirm" }));
+    await user.click(await screen.findByRole("button", { name: "timetable.sharedMoveConfirm" }));
     expect(noMutation.mutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({ id: "l-ma1" }),
     );
@@ -642,7 +643,7 @@ describe("moving a lesson that lands on more than one class", () => {
     const user = userEvent.setup();
     render(<TimetablePage />);
     dragToTuesday("Matematik");
-    await user.click(screen.getByRole("button", { name: "common.cancel" }));
+    await user.click(await screen.findByRole("button", { name: "common.cancel" }));
     expect(noMutation.mutateAsync).not.toHaveBeenCalled();
     expect(screen.queryByText("timetable.sharedMoveTitle")).toBeNull();
   });
@@ -814,7 +815,7 @@ describe("what a new lesson starts out as", () => {
 });
 
 describe("the edit dialog", () => {
-  it("names the lesson it opened on", () => {
+  it("names the lesson it opened on", async () => {
     // Three maths lessons on a Tuesday all opened on "Justera lektion" and
     // nothing else, and the reader had to remember which one they clicked.
     render(<TimetablePage />);
@@ -824,7 +825,8 @@ describe("the edit dialog", () => {
     fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
     fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
 
-    expect(screen.getByRole("dialog").textContent).toContain("Slöjd · 5.1 · K. Ek");
+    // Awaited: the dialog's code arrives after the click when it is not yet cached.
+    expect((await screen.findByRole("dialog")).textContent).toContain("Slöjd · 5.1 · K. Ek");
   });
 
   it("can set the lesson aside from there", async () => {
@@ -836,7 +838,7 @@ describe("the edit dialog", () => {
     fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
     fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
 
-    await user.click(screen.getByRole("button", { name: "timetable.park" }));
+    await user.click(await screen.findByRole("button", { name: "timetable.park" }));
 
     expect(noMutation.mutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({ id: "l-slojd", isParked: true }),
@@ -863,7 +865,7 @@ describe("a re-teachered lesson under the staffing policy", () => {
       .find((el) => el.textContent?.includes("Slöjd"))!;
     fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
     fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
-    await user.click(screen.getByRole("button", { name: "common.save" }));
+    await user.click(await screen.findByRole("button", { name: "common.save" }));
   };
 
   beforeEach(() => {
@@ -907,50 +909,46 @@ describe("the edit dialog's width", () => {
    * What is asserted is the three tokens that decide it — the same way
    * gaps/page.test.tsx asserts h-11 for a touch target it cannot measure.
    */
-  const openSlojd = () => {
+  const openSlojd = async () => {
     render(<TimetablePage />);
     const card = screen
       .queryAllByRole("button")
       .find((el) => el.textContent?.includes("Slöjd"))!;
     fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
     fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
-    return screen.getByRole("dialog");
+    return screen.findByRole("dialog");
   };
 
-  it("keeps the component's own width rather than narrowing it", () => {
-    const dialog = openSlojd();
+  it("keeps the component's own width rather than narrowing it", async () => {
+    const dialog = await openSlojd();
     expect(dialog.className).toContain("max-w-lg");
     expect(dialog.className).not.toContain("max-w-md");
   });
 
-  it("lets both button groups wrap onto a second row", () => {
-    openSlojd();
+  it("lets both button groups wrap onto a second row", async () => {
+    await openSlojd();
     for (const name of ["timetable.park", "common.cancel"]) {
       const group = screen.getByRole("button", { name }).parentElement!;
       expect(group.className, name).toContain("flex-wrap");
     }
   });
 
-  it("lets a form cell shrink below its content", () => {
+  it("lets a form cell shrink below its content", async () => {
     // A grid child defaults to min-width:auto and will widen the whole grid
     // to fit a long teacher name rather than let the select ellipsize it.
-    const dialog = openSlojd();
+    const dialog = await openSlojd();
     const grid = dialog.querySelector(".grid-cols-2")!;
     expect(grid.className).toContain("[&>*]:min-w-0");
   });
 });
 
 /*
- * The two controls the page fetches only when a dialog opens: the recurrence
- * fields in the edit dialog and the publish dates. Both are React.lazy inside
- * a Suspense boundary with a Skeleton, so a loader that never settled would
- * leave its dialog drawn around the placeholder — and nothing else in this
- * file looks there. Make either
- * import a promise that never resolves and exactly its test below fails, with
- * every other test in this file still green.
- *
- * The switch is imported normally. Waiting for it only confirms the rest of the
- * edit dialog's body was drawn around the fields.
+ * The two dialogs whose deepest controls arrive with the dialog's own code:
+ * the recurrence fields in the edit dialog and the publish dates. Both
+ * dialogs are React.lazy behind a Suspense boundary, and each imports those
+ * controls statically, so a loader that never settled would leave no dialog
+ * at all — waiting for the controls themselves is what proves the whole body
+ * was drawn. The switch sits after the fields in the edit dialog's body.
  */
 describe("the controls a dialog fetches when it opens", () => {
   it("finishes drawing the edit dialog", async () => {
@@ -975,6 +973,94 @@ describe("the controls a dialog fetches when it opens", () => {
 
     expect(await screen.findByLabelText("timetable.publishFrom")).toBeInTheDocument();
     expect(await screen.findByLabelText("timetable.publishTo")).toBeInTheDocument();
+  });
+});
+
+/*
+ * What each lifted dialog DOES, not only that it draws. Justera, Publicera and
+ * the placement suggestions live in their own modules now and take their
+ * values and callbacks from the page, so a prop wired to the wrong setter or
+ * handler would draw a perfectly good dialog that saves nothing. These rows
+ * press the buttons and read what reached the API.
+ */
+describe("the dialogs the page lifts out", () => {
+  afterEach(() => {
+    noMutation.mutateAsync.mockReset().mockResolvedValue({ id: "x" });
+  });
+
+  it("saves what was changed in the edit dialog", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+
+    // Two fields written by different controls: the lock is the Switch, the
+    // end time an input. Both have to reach the page's draft and back.
+    await user.click(await screen.findByRole("switch"));
+    fireEvent.change(screen.getByLabelText("timetable.editEnd"), {
+      target: { value: "12:30" },
+    });
+    await user.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "l-slojd",
+          isLocked: true,
+          startTime: "11:00",
+          endTime: "12:30",
+        }),
+      ),
+    );
+  });
+
+  it("offers the free times when a drop is refused, and moves the lesson to the one picked", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    // Slöjd onto Monday 08:00, which Matematik (4ma1) holds with the same
+    // teacher — the drop "frees the slot a parked lesson remembers" makes
+    // with Matematik parked, made here with it in place.
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 260 });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 100, clientY: 62 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 62 });
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.textContent).toContain("timetable.suggestTitle");
+    const options = Array.from(dialog.querySelectorAll("button")).filter((button) =>
+      button.textContent?.includes("–"),
+    );
+    expect(options.length).toBeGreaterThan(0);
+    await user.click(options[0]!);
+
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "l-slojd" }),
+      ),
+    );
+  });
+
+  it("publishes the year on screen from the publish dialog", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+
+    await user.click(screen.getByRole("button", { name: "timetable.publish" }));
+    await user.click(await screen.findByRole("button", { name: "timetable.publishConfirm" }));
+
+    // The press fills both dates from the year's bounds; they reach the API
+    // through the dialog's fields and back through the page's state.
+    await waitFor(() =>
+      expect(noMutation.mutateAsync).toHaveBeenCalledWith({
+        academicYearId: "y-1",
+        fromDate: "2026-08-17",
+        toDate: "2027-06-11",
+      }),
+    );
   });
 });
 
