@@ -22,6 +22,7 @@ import {
 import { applyRollover } from './rollover-apply';
 import { planRollover, previewOf, type RolloverPlan, type RolloverProblem } from './rollover-plan';
 import { readRolloverSource, type RolloverSource } from './rollover-source';
+import { rostersOfYear } from './projected-rosters';
 import type { ExecuteActivationDto, ExecuteRolloverDto, RolloverOptionsDto } from './dto/year-rollover.dto';
 
 /** The problem codes the rollover and the activation answer with, beside RolloverProblemCode. */
@@ -53,6 +54,22 @@ export interface RolloverResult {
   };
   counts: { groups: number; members: number; requirements: number; breaks: number; classRules: number; timplans: number };
   planHash: string;
+}
+
+/**
+ * The year's class lists as every roster reader reads them: PROJECTED for the
+ * active year's rolled successor, with the home class its activation gives
+ * each pupil it moves; CURRENT for any other year, with nothing overlaid.
+ * Pupil ids only — the web resolves them against the people it already holds.
+ */
+export interface YearRosters {
+  academicYearId: string;
+  basis: 'CURRENT' | 'PROJECTED';
+  /** Only the pupils the projection moves, sorted by id; null is a graduate or an unplaced pupil. */
+  homeClasses: { studentId: string; studentGroupId: string | null }[];
+  counts: { moved: number; graduates: number; unplaced: number };
+  /** Teaching-group memberships the rollover decided on placements that have changed since. */
+  membershipsOutOfDate: { missing: number; stale: number };
 }
 
 export interface ActivationResult {
@@ -275,6 +292,47 @@ export class YearRolloverService {
           `graduated=${result.graduated}, unplaced=${result.unplaced}]`,
       );
       return result;
+    } catch (error) {
+      rethrowPrismaError(error);
+    }
+  }
+
+  /**
+   * The basis the gateway's roster readers use for the year, so the web lays
+   * the same overlay over the people it holds (the grid's clash colours, the
+   * grade spans) as the server does over its rows. 404 when RLS hides the
+   * year; 409 ROLLOVER_NOT_ACTIVATED for a year whose predecessor is not
+   * activated (R6), as every reader answers.
+   */
+  async rosters(yearId: string, user: AuthenticatedUser): Promise<YearRosters> {
+    requireSchoolId(user);
+    try {
+      return await this.prisma.withRls(user, async (tx) => {
+        const year = await tx.academicYear.findUnique({
+          where: { id: yearId },
+          select: { isActive: true, predecessorId: true },
+        });
+        if (!year) throw yearNotFound();
+        const basis = await rostersOfYear(tx, user, yearId, year);
+        if (basis.kind === 'CURRENT') {
+          return {
+            academicYearId: yearId,
+            basis: 'CURRENT' as const,
+            homeClasses: [],
+            counts: { moved: 0, graduates: 0, unplaced: 0 },
+            membershipsOutOfDate: { missing: 0, stale: 0 },
+          };
+        }
+        return {
+          academicYearId: yearId,
+          basis: 'PROJECTED' as const,
+          homeClasses: [...basis.homeOf]
+            .map(([studentId, studentGroupId]) => ({ studentId, studentGroupId }))
+            .sort((a, b) => (a.studentId < b.studentId ? -1 : 1)),
+          counts: basis.counts,
+          membershipsOutOfDate: basis.membershipsOutOfDate,
+        };
+      });
     } catch (error) {
       rethrowPrismaError(error);
     }
