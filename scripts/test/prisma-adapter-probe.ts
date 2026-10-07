@@ -2056,6 +2056,72 @@ async function runChecks(
     );
   });
 
+  await check('(x2) a year two links back stays superseded, a stale activation moves nobody, and an inactive pupil holds the year it is in', async () => {
+    const refusedWith = (code: string) => (error: unknown) => {
+      assert.ok(error instanceof ConflictException, summarise(error));
+      assert.equal((error.getResponse() as { code?: string }).code, code, summarise(error));
+      return true;
+    };
+    const pupil = async (name: string) =>
+      (
+        await owner.query<{ id: string; group: string | null }>(
+          `SELECT u.id, g.name AS "group" FROM "Users" u LEFT JOIN "StudentGroups" g ON g.id = u."studentGroupId"
+            WHERE u.email = $1`,
+          [`${MARKER}-${name}@example.invalid`],
+        )
+      ).rows[0];
+
+    // p4, inactive, was left in the source's 7A by the activation: the source
+    // is still somebody's year, and deleting it would clear that silently.
+    await assert.rejects(rullYears.remove(rull.sourceYearId, rullAdmin), (error: unknown) => {
+      refusedWith('YEAR_HAS_HOME_PUPILS')(error);
+      assert.deepEqual((error as ConflictException).getResponse(), {
+        message:
+          'Läsåret har klasser som är hemklass för 1 elever, varav 1 inaktiva. ' +
+          'Flytta eleverna, eller aktivera ett annat läsår som tar över dem, innan läsåret tas bort.',
+        code: 'YEAR_HAS_HOME_PUPILS',
+        params: { pupils: 1, inactive: 1 },
+      });
+      return true;
+    });
+
+    // Roll the new year on: A → B → C.
+    const third = { name: `${MARKER} rull tre`, startDate: '2095-08-15', endDate: '2096-06-10', graduatingGradeLevel: 9 };
+    const rolled = await rollover.previewRollover(targetYearId, third, rullAdmin);
+    assert.equal(rolled.blocking, false, JSON.stringify(rolled.problems));
+    const yearC = (await rollover.executeRollover(targetYearId, { ...third, planHash: rolled.planHash }, rullAdmin)).academicYear.id;
+
+    // A stale activation: p2 leaves B's 8A between the preview and the
+    // execute. Nobody moves, the flag stays, and a fresh preview moves both.
+    const today = { today: '2095-06-12' };
+    const preview = await rollover.previewActivation(yearC, rullAdmin, today);
+    const p2 = await pupil('rull-p2');
+    const b8a = (await owner.query<{ id: string }>('SELECT "studentGroupId" AS id FROM "Users" WHERE id = $1', [p2.id])).rows[0].id;
+    await owner.query('UPDATE "Users" SET "studentGroupId" = NULL WHERE id = $1', [p2.id]);
+    await assert.rejects(
+      rollover.executeActivation(yearC, { planHash: preview.planHash }, rullAdmin, today),
+      refusedWith('ACTIVATION_PREVIEW_STALE'),
+    );
+    assert.equal((await pupil('rull-p1')).group, `${MARKER} 8A`, 'a stale activation moved a pupil');
+    const stillActive = (await owner.query<{ id: string }>(`SELECT id FROM "AcademicYears" WHERE "schoolId" = $1 AND "isActive"`, [rull.schoolId])).rows;
+    assert.deepEqual(stillActive, [{ id: targetYearId }], 'a stale activation handed the flag over');
+    await owner.query('UPDATE "Users" SET "studentGroupId" = $2 WHERE id = $1', [p2.id, b8a]);
+    const fresh = await rollover.previewActivation(yearC, rullAdmin, today);
+    assert.deepEqual(
+      (await rollover.executeActivation(yearC, { planHash: fresh.planHash }, rullAdmin, today)).moved,
+      2,
+    );
+
+    // A, two links back from where the pupils are, with B empty: superseded.
+    await assert.rejects(rullYears.update(rull.sourceYearId, { isActive: true }, rullAdmin), refusedWith('YEAR_IS_SUPERSEDED'));
+    const back = await rollover.previewActivation(rull.sourceYearId, rullAdmin, today);
+    assert.deepEqual(
+      back.problems.map((problem) => [problem.code, problem.params['successor']]),
+      [['YEAR_IS_SUPERSEDED', third.name]],
+    );
+
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the

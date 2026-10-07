@@ -120,6 +120,27 @@ describe('planActivation', () => {
     ]);
   });
 
+  it('refuses a year two links back when a later year of its chain holds the pupils, naming that year', () => {
+    // A → B → C, everyone already in C, B empty: A looked one link ahead,
+    // found B empty, and could be activated back with no pupils at all.
+    const source = school();
+    source.yearId = 'A';
+    source.years = source.years.map((candidate) => ({ ...candidate, isActive: candidate.id === 'C' }));
+    source.students = [pupil('q1', 'c9'), pupil('q2', 'c9'), pupil('q3', 'a7', false)];
+    const plan = planActivation(source, '2029-07-01');
+    expect(plan.inLaterYear).toBe(2);
+    expect(plan.problems).toEqual([
+      { code: 'YEAR_IS_SUPERSEDED', blocking: true, params: { year: '2026/27', successor: '2028/29', pupils: 2 } },
+    ]);
+    // B, between them, is refused for the same reason.
+    expect(planActivation({ ...source, yearId: 'B' }, '2029-07-01').problems).toEqual([
+      expect.objectContaining({ code: 'YEAR_IS_SUPERSEDED', params: { year: '2027/28', successor: '2028/29', pupils: 2 } }),
+    ]);
+    // An inactive pupil in a later year supersedes nothing.
+    source.students = [pupil('q1', 'c9', false)];
+    expect(planActivation(source, '2029-07-01').problems).toEqual([]);
+  });
+
   it('is a no-op the second time: the same pupils are already in the year', () => {
     const source = school();
     const first = planActivation(source, '2027-06-14');

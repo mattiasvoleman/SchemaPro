@@ -145,6 +145,13 @@ export class AcademicYearsService {
    * the new year is where the pupils are. The count names the size of it; the
    * pupils have to be moved (or the year activated away from) first.
    *
+   * Every pupil counts, active or not. The activation leaves an inactive
+   * pupil where they are (inactiveUntouched), so last year's 7A can still be
+   * the home class of a pupil on leave; deleting the year would clear it with
+   * no trace, and nothing could say where they belong when they come back.
+   * The inactive ones are named separately, since they are the ones an admin
+   * does not see in the class lists.
+   *
    * Read in the delete's transaction, before it. A pupil enrolled into one of
    * its classes in between is the race the SET NULL used to lose silently,
    * and now loses the same way; the window is one admin enrolling while
@@ -154,15 +161,19 @@ export class AcademicYearsService {
     try {
       await this.prisma.withRls(user, async (tx) => {
         const pupils = await tx.user.count({
-          where: { role: 'STUDENT', isActive: true, studentGroup: { academicYearId: id } },
+          where: { role: 'STUDENT', studentGroup: { academicYearId: id } },
         });
         if (pupils > 0) {
+          const inactive = await tx.user.count({
+            where: { role: 'STUDENT', isActive: false, studentGroup: { academicYearId: id } },
+          });
           throw new ConflictException({
             message:
-              `Läsåret har klasser som är hemklass för ${pupils} aktiva elever. ` +
-              'Flytta eleverna, eller aktivera ett annat läsår som tar över dem, innan läsåret tas bort.',
+              `Läsåret har klasser som är hemklass för ${pupils} elever` +
+              (inactive > 0 ? `, varav ${inactive} inaktiva` : '') +
+              '. Flytta eleverna, eller aktivera ett annat läsår som tar över dem, innan läsåret tas bort.',
             code: YEAR_HAS_HOME_PUPILS,
-            params: { pupils },
+            params: { pupils, inactive },
           });
         }
         await tx.academicYear.delete({ where: { id } });

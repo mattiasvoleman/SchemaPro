@@ -677,14 +677,45 @@ describe('AcademicYearsService', () => {
       expect(tx.academicYear.findMany).not.toHaveBeenCalled();
     });
 
-    it('refuses to delete a year whose classes are active pupils’ home classes, naming how many', async () => {
-      tx.user.count.mockResolvedValue(27);
+    it('refuses to delete a year whose classes are pupils’ home classes, inactive ones included, naming how many', async () => {
+      // 26 active pupils and one on leave, whom the activation left in last
+      // year's 7A: the count is run BY the filter the service builds.
+      const pupils = [
+        ...Array.from({ length: 26 }, () => ({ role: 'STUDENT', isActive: true, academicYearId: YEAR_ID })),
+        { role: 'STUDENT', isActive: false, academicYearId: YEAR_ID },
+        { role: 'STUDENT', isActive: true, academicYearId: OTHER_YEAR_ID },
+      ];
+      tx.user.count.mockImplementation(((args: { where: Record<string, unknown> }) => {
+        const { role, isActive, studentGroup, ...rest } = args.where as {
+          role: string;
+          isActive?: boolean;
+          studentGroup: { academicYearId: string };
+        };
+        expect(rest).toEqual({});
+        return Promise.resolve(
+          pupils.filter(
+            (pupil) =>
+              pupil.role === role &&
+              (isActive === undefined || pupil.isActive === isActive) &&
+              pupil.academicYearId === studentGroup.academicYearId,
+          ).length,
+        );
+      }) as never);
       const refusal = await service.remove(YEAR_ID, testUser()).catch((e) => e);
       expect(refusal).toBeInstanceOf(ConflictException);
-      expect(refusal.getResponse()).toMatchObject({ code: 'YEAR_HAS_HOME_PUPILS', params: { pupils: 27 } });
-      expect(tx.user.count).toHaveBeenCalledWith({
-        where: { role: 'STUDENT', isActive: true, studentGroup: { academicYearId: YEAR_ID } },
+      expect(refusal.getResponse()).toMatchObject({
+        code: 'YEAR_HAS_HOME_PUPILS',
+        params: { pupils: 27, inactive: 1 },
+        message:
+          'Läsåret har klasser som är hemklass för 27 elever, varav 1 inaktiva. ' +
+          'Flytta eleverna, eller aktivera ett annat läsår som tar över dem, innan läsåret tas bort.',
       });
+      expect(tx.academicYear.delete).not.toHaveBeenCalled();
+
+      // Only the pupil on leave left: still refused.
+      pupils.splice(0, 26);
+      const leave = await service.remove(YEAR_ID, testUser()).catch((e) => e);
+      expect(leave.getResponse()).toMatchObject({ code: 'YEAR_HAS_HOME_PUPILS', params: { pupils: 1, inactive: 1 } });
       expect(tx.academicYear.delete).not.toHaveBeenCalled();
     });
 
