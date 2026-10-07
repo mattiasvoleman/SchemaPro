@@ -1419,240 +1419,7 @@
       "status": "MET"
      }
     ],
-    "pupils": [
-     {
-      "pupilId": "00000000-0000-4000-8000-000000000903",
-      "homeGroupId": "00000000-0000-4000-8000-000000000301",
-      "gradeLevel": 7,
-      "lines": [
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000108",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000108"
-        ],
-        "targetMinutesPerWeek": 60,
-        "plannedMinutesPerWeek": 120,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000108",
-          "minutesPerWeek": 120
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000104",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000104"
-        ],
-        "targetMinutesPerWeek": 160,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000101",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000101"
-        ],
-        "targetMinutesPerWeek": 180,
-        "plannedMinutesPerWeek": 120,
-        "status": "UNDER",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000101",
-          "minutesPerWeek": 120
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000107",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000107"
-        ],
-        "targetMinutesPerWeek": 80,
-        "plannedMinutesPerWeek": 90,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000107",
-          "minutesPerWeek": 90
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:M2",
-        "alternativeCode": "M2",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000105",
-         "00000000-0000-4000-8000-000000000106"
-        ],
-        "targetMinutesPerWeek": 90,
-        "plannedMinutesPerWeek": 120,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000105",
-          "minutesPerWeek": 90
-         },
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000106",
-          "minutesPerWeek": 30
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:SV_SVA",
-        "alternativeCode": "SV_SVA",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000102",
-         "00000000-0000-4000-8000-000000000103"
-        ],
-        "targetMinutesPerWeek": 200,
-        "plannedMinutesPerWeek": 200,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000102",
-          "minutesPerWeek": 200
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       }
-      ]
-     },
-     {
-      "pupilId": "00000000-0000-4000-8000-000000000904",
-      "homeGroupId": "00000000-0000-4000-8000-000000000301",
-      "gradeLevel": 7,
-      "lines": [
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000108",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000108"
-        ],
-        "targetMinutesPerWeek": 60,
-        "plannedMinutesPerWeek": 120,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000108",
-          "minutesPerWeek": 120
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000104",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000104"
-        ],
-        "targetMinutesPerWeek": 160,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000101",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000101"
-        ],
-        "targetMinutesPerWeek": 180,
-        "plannedMinutesPerWeek": 120,
-        "status": "UNDER",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000101",
-          "minutesPerWeek": 120
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000107",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000107"
-        ],
-        "targetMinutesPerWeek": 80,
-        "plannedMinutesPerWeek": 90,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000107",
-          "minutesPerWeek": 90
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:M2",
-        "alternativeCode": "M2",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000105",
-         "00000000-0000-4000-8000-000000000106"
-        ],
-        "targetMinutesPerWeek": 90,
-        "plannedMinutesPerWeek": 120,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000105",
-          "minutesPerWeek": 90
-         },
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000106",
-          "minutesPerWeek": 30
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:SV_SVA",
-        "alternativeCode": "SV_SVA",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000102",
-         "00000000-0000-4000-8000-000000000103"
-        ],
-        "targetMinutesPerWeek": 200,
-        "plannedMinutesPerWeek": 200,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000301",
-          "subjectId": "00000000-0000-4000-8000-000000000102",
-          "minutesPerWeek": 200
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       }
-      ]
-     }
-    ],
+    "pupils": [],
     "pupilCount": 2,
     "pupilsBelowTarget": 2,
     "pupilsOutsideClasses": 0,
@@ -2939,42 +2706,6 @@
       "gradeLevel": 8,
       "lines": [
        {
-        "key": "subject:00000000-0000-4000-8000-000000000108",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000108"
-        ],
-        "targetMinutesPerWeek": 60,
-        "plannedMinutesPerWeek": 60,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000108",
-          "minutesPerWeek": 60
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000104",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000104"
-        ],
-        "targetMinutesPerWeek": 160,
-        "plannedMinutesPerWeek": 160,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000104",
-          "minutesPerWeek": 160
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
         "key": "subject:00000000-0000-4000-8000-000000000101",
         "alternativeCode": null,
         "subjectIds": [
@@ -2998,62 +2729,6 @@
         "doublePlannedSubjectIds": [
          "00000000-0000-4000-8000-000000000101"
         ]
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000107",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000107"
-        ],
-        "targetMinutesPerWeek": 80,
-        "plannedMinutesPerWeek": 80,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000107",
-          "minutesPerWeek": 80
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:M2",
-        "alternativeCode": "M2",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000105",
-         "00000000-0000-4000-8000-000000000106"
-        ],
-        "targetMinutesPerWeek": 90,
-        "plannedMinutesPerWeek": 90,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000304",
-          "subjectId": "00000000-0000-4000-8000-000000000105",
-          "minutesPerWeek": 90
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:SV_SVA",
-        "alternativeCode": "SV_SVA",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000102",
-         "00000000-0000-4000-8000-000000000103"
-        ],
-        "targetMinutesPerWeek": 200,
-        "plannedMinutesPerWeek": 200,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000102",
-          "minutesPerWeek": 200
-         }
-        ],
-        "doublePlannedSubjectIds": []
        }
       ]
      },
@@ -3062,78 +2737,6 @@
       "homeGroupId": "00000000-0000-4000-8000-000000000303",
       "gradeLevel": 8,
       "lines": [
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000108",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000108"
-        ],
-        "targetMinutesPerWeek": 60,
-        "plannedMinutesPerWeek": 60,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000108",
-          "minutesPerWeek": 60
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000104",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000104"
-        ],
-        "targetMinutesPerWeek": 160,
-        "plannedMinutesPerWeek": 160,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000104",
-          "minutesPerWeek": 160
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000101",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000101"
-        ],
-        "targetMinutesPerWeek": 180,
-        "plannedMinutesPerWeek": 180,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000101",
-          "minutesPerWeek": 180
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000107",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000107"
-        ],
-        "targetMinutesPerWeek": 80,
-        "plannedMinutesPerWeek": 80,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000107",
-          "minutesPerWeek": 80
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
        {
         "key": "alt:M2",
         "alternativeCode": "M2",
@@ -3146,25 +2749,6 @@
         "status": "UNDER",
         "sources": [],
         "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:SV_SVA",
-        "alternativeCode": "SV_SVA",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000102",
-         "00000000-0000-4000-8000-000000000103"
-        ],
-        "targetMinutesPerWeek": 200,
-        "plannedMinutesPerWeek": 200,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000102",
-          "minutesPerWeek": 200
-         }
-        ],
-        "doublePlannedSubjectIds": []
        }
       ]
      },
@@ -3173,78 +2757,6 @@
       "homeGroupId": "00000000-0000-4000-8000-000000000303",
       "gradeLevel": 8,
       "lines": [
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000108",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000108"
-        ],
-        "targetMinutesPerWeek": 60,
-        "plannedMinutesPerWeek": 60,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000108",
-          "minutesPerWeek": 60
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000104",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000104"
-        ],
-        "targetMinutesPerWeek": 160,
-        "plannedMinutesPerWeek": 160,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000104",
-          "minutesPerWeek": 160
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000101",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000101"
-        ],
-        "targetMinutesPerWeek": 180,
-        "plannedMinutesPerWeek": 180,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000101",
-          "minutesPerWeek": 180
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000107",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000107"
-        ],
-        "targetMinutesPerWeek": 80,
-        "plannedMinutesPerWeek": 80,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000107",
-          "minutesPerWeek": 80
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
        {
         "key": "alt:M2",
         "alternativeCode": "M2",
@@ -3270,25 +2782,6 @@
         "doublePlannedSubjectIds": [
          "00000000-0000-4000-8000-000000000105"
         ]
-       },
-       {
-        "key": "alt:SV_SVA",
-        "alternativeCode": "SV_SVA",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000102",
-         "00000000-0000-4000-8000-000000000103"
-        ],
-        "targetMinutesPerWeek": 200,
-        "plannedMinutesPerWeek": 200,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000303",
-          "subjectId": "00000000-0000-4000-8000-000000000102",
-          "minutesPerWeek": 200
-         }
-        ],
-        "doublePlannedSubjectIds": []
        }
       ]
      }
@@ -4437,51 +3930,7 @@
       "status": "UNDER"
      }
     ],
-    "pupils": [
-     {
-      "pupilId": "00000000-0000-4000-8000-000000000910",
-      "homeGroupId": "00000000-0000-4000-8000-000000000311",
-      "gradeLevel": 9,
-      "lines": [
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000101",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000101"
-        ],
-        "targetMinutesPerWeek": 175,
-        "plannedMinutesPerWeek": 180,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000311",
-          "subjectId": "00000000-0000-4000-8000-000000000101",
-          "minutesPerWeek": 180
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:SV_SVA",
-        "alternativeCode": "SV_SVA",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000102"
-        ],
-        "targetMinutesPerWeek": 200,
-        "plannedMinutesPerWeek": 180,
-        "status": "UNDER",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000311",
-          "subjectId": "00000000-0000-4000-8000-000000000102",
-          "minutesPerWeek": 180
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       }
-      ]
-     }
-    ],
+    "pupils": [],
     "pupilCount": 2,
     "pupilsBelowTarget": 1,
     "pupilsOutsideClasses": 0,
@@ -5186,156 +4635,7 @@
       "status": "UNPLANNED"
      }
     ],
-    "pupils": [
-     {
-      "pupilId": "00000000-0000-4000-8000-000000000912",
-      "homeGroupId": "00000000-0000-4000-8000-000000000312",
-      "gradeLevel": 2,
-      "lines": [
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000101",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000101"
-        ],
-        "targetMinutesPerWeek": 200,
-        "plannedMinutesPerWeek": 61,
-        "status": "UNDER",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000312",
-          "subjectId": "00000000-0000-4000-8000-000000000101",
-          "minutesPerWeek": 61
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000107",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000107"
-        ],
-        "targetMinutesPerWeek": 0,
-        "plannedMinutesPerWeek": 40,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000312",
-          "subjectId": "00000000-0000-4000-8000-000000000107",
-          "minutesPerWeek": 40
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:SV_SVA",
-        "alternativeCode": "SV_SVA",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000102"
-        ],
-        "targetMinutesPerWeek": 300,
-        "plannedMinutesPerWeek": 300,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000312",
-          "subjectId": "00000000-0000-4000-8000-000000000102",
-          "minutesPerWeek": 300
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       }
-      ]
-     },
-     {
-      "pupilId": "00000000-0000-4000-8000-000000000913",
-      "homeGroupId": "00000000-0000-4000-8000-000000000313",
-      "gradeLevel": 7,
-      "lines": [
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000108",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000108"
-        ],
-        "targetMinutesPerWeek": 60,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000104",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000104"
-        ],
-        "targetMinutesPerWeek": 160,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000101",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000101"
-        ],
-        "targetMinutesPerWeek": 180,
-        "plannedMinutesPerWeek": 62,
-        "status": "UNDER",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000313",
-          "subjectId": "00000000-0000-4000-8000-000000000101",
-          "minutesPerWeek": 62
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000107",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000107"
-        ],
-        "targetMinutesPerWeek": 80,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:M2",
-        "alternativeCode": "M2",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000105",
-         "00000000-0000-4000-8000-000000000106"
-        ],
-        "targetMinutesPerWeek": 90,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:SV_SVA",
-        "alternativeCode": "SV_SVA",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000102",
-         "00000000-0000-4000-8000-000000000103"
-        ],
-        "targetMinutesPerWeek": 200,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       }
-      ]
-     }
-    ],
+    "pupils": [],
     "pupilCount": 2,
     "pupilsBelowTarget": 2,
     "pupilsOutsideClasses": 0,
@@ -6097,30 +5397,6 @@
       "gradeLevel": 7,
       "lines": [
        {
-        "key": "subject:00000000-0000-4000-8000-000000000108",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000108"
-        ],
-        "targetMinutesPerWeek": 60,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000104",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000104"
-        ],
-        "targetMinutesPerWeek": 160,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
         "key": "subject:00000000-0000-4000-8000-000000000101",
         "alternativeCode": null,
         "subjectIds": [
@@ -6144,50 +5420,6 @@
         "doublePlannedSubjectIds": [
          "00000000-0000-4000-8000-000000000101"
         ]
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000107",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000107"
-        ],
-        "targetMinutesPerWeek": 80,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:M2",
-        "alternativeCode": "M2",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000105",
-         "00000000-0000-4000-8000-000000000106"
-        ],
-        "targetMinutesPerWeek": 90,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:SV_SVA",
-        "alternativeCode": "SV_SVA",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000102",
-         "00000000-0000-4000-8000-000000000103"
-        ],
-        "targetMinutesPerWeek": 200,
-        "plannedMinutesPerWeek": 200,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000315",
-          "subjectId": "00000000-0000-4000-8000-000000000102",
-          "minutesPerWeek": 200
-         }
-        ],
-        "doublePlannedSubjectIds": []
        }
       ]
      },
@@ -6196,30 +5428,6 @@
       "homeGroupId": "00000000-0000-4000-8000-000000000315",
       "gradeLevel": 7,
       "lines": [
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000108",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000108"
-        ],
-        "targetMinutesPerWeek": 60,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000104",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000104"
-        ],
-        "targetMinutesPerWeek": 160,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
        {
         "key": "subject:00000000-0000-4000-8000-000000000101",
         "alternativeCode": null,
@@ -6234,50 +5442,6 @@
           "studentGroupId": "00000000-0000-4000-8000-000000000315",
           "subjectId": "00000000-0000-4000-8000-000000000101",
           "minutesPerWeek": 120
-         }
-        ],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "subject:00000000-0000-4000-8000-000000000107",
-        "alternativeCode": null,
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000107"
-        ],
-        "targetMinutesPerWeek": 80,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:M2",
-        "alternativeCode": "M2",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000105",
-         "00000000-0000-4000-8000-000000000106"
-        ],
-        "targetMinutesPerWeek": 90,
-        "plannedMinutesPerWeek": 0,
-        "status": "UNDER",
-        "sources": [],
-        "doublePlannedSubjectIds": []
-       },
-       {
-        "key": "alt:SV_SVA",
-        "alternativeCode": "SV_SVA",
-        "subjectIds": [
-         "00000000-0000-4000-8000-000000000102",
-         "00000000-0000-4000-8000-000000000103"
-        ],
-        "targetMinutesPerWeek": 200,
-        "plannedMinutesPerWeek": 200,
-        "status": "MET",
-        "sources": [
-         {
-          "studentGroupId": "00000000-0000-4000-8000-000000000315",
-          "subjectId": "00000000-0000-4000-8000-000000000102",
-          "minutesPerWeek": 200
          }
         ],
         "doublePlannedSubjectIds": []

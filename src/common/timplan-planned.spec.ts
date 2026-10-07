@@ -361,15 +361,16 @@ describe('computePlannedCoverage', () => {
       expect(coverage.groups[0]).toMatchObject({ linesWithTarget: 2, linesCovered: 2 });
     });
 
-    it('does not repeat a short class once per pupil: the class verdict says it, the pupils are listed', () => {
+    it('does not repeat a short class once per pupil: the class verdict says it, the pupils are counted', () => {
       const c = group('7A');
       const pupils = [pupil(c), pupil(c), pupil(c)];
       const coverage = computePlannedCoverage(
         input({ groups: [c], requirements: [req(c, S.MA, 2, 60)], pupils }),
       );
       expect(coverage.verdicts.map((v) => v.code)).toEqual(['TIMPLAN_GROUP_UNDERPLANNED']);
-      expect(coverage.pupils).toHaveLength(3);
+      expect(coverage.pupils).toEqual([]);
       expect(coverage.pupilsBelowTarget).toBe(3);
+      expect(coverage.groups[0]!.lines[0]!.pupils).toEqual({ min: 120, median: 120, max: 120, below: 3 });
     });
 
     it('counts pupils without a class this year, and judges nobody without an årskurs', () => {

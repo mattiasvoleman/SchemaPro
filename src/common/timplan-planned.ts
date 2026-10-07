@@ -84,12 +84,15 @@ import { TIMPLAN_ALTERNATIVE_CODES } from './timplan-coverage';
  * TEACHING_GROUP the pupil is a member of, against the targets of the home
  * class's årskurs. A pupil getting the SAME subject from two groups (7A
  * matematik and Ma-fördjupning) is TIMPLAN_PUPIL_DOUBLE_PLANNED rather than
- * silently summed into "on target". A pupil below target is listed; the
- * verdict TIMPLAN_PUPIL_UNDERPLANNED is raised only where the class's own
- * verdict does not already say it (class line not UNDER/UNPLANNED), so a short
- * 7A reads as one finding, not as one per pupil — the pupils are still in the
- * list. Pupils whose home class is not a CLASS group of this year are counted,
- * not judged.
+ * silently summed into "on target". TIMPLAN_PUPIL_UNDERPLANNED, and a place
+ * in the pupil list, are for a pupil's OWN finding: below target where the
+ * class's line is not already UNDER/UNPLANNED (the språkval pupil in no
+ * group, the nivågrupp that took minutes the class did not give back). A
+ * pupil short only because 7A is short is counted — pupilsBelowTarget, and
+ * the class line's `below` — but not listed line by line: a short 7A is one
+ * finding, and repeating it per pupil made a 600-pupil answer 2,3 MB of the
+ * same sentence. Pupils whose home class is not a CLASS group of this year
+ * are counted, not judged.
  *
  * The answer carries pupil IDS only. Names are the web's to resolve from data
  * it already holds; a pupil-level answer is for the admin, and `includePupils`
@@ -253,7 +256,11 @@ export interface PlannedCoverage {
   pupilLevel: boolean;
   groups: PlannedGroupSummary[];
   cells: PlannedCell[];
-  /** Pupils below target or double planned, with every line: the drill-down. */
+  /**
+   * The drill-down: pupils with a finding of their OWN — below target where
+   * their class is not already flagged, or double planned — each with just
+   * those lines and where their minutes come from.
+   */
   pupils: PlannedPupil[] | null;
   pupilCount: number;
   pupilsBelowTarget: number | null;
@@ -694,7 +701,6 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     const flagged = flaggedClassLines.get(classId)!;
     for (const result of pupilResults.get(classId) ?? []) {
       let isBelow = false;
-      let isDouble = false;
       const lines: PupilLine[] = [];
       for (const draft of [...result.lines.values()].sort(lineOrder)) {
         const planned = Math.round(draft.week);
@@ -717,7 +723,6 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
           }
           if (groupIds.length > 1) {
             doubles.push(subjectId);
-            isDouble = true;
             verdicts.push({
               code: 'TIMPLAN_PUPIL_DOUBLE_PLANNED',
               severity: 'warning',
@@ -736,9 +741,12 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
             });
           }
         }
+        // Short because the class is short: the class verdict and its pupil
+        // statistics say it, and the line is not repeated per pupil.
+        const ownFinding = status === 'UNDER' && !flagged.has(draft.key);
         if (status === 'UNDER') {
           isBelow = true;
-          if (!flagged.has(draft.key)) {
+          if (ownFinding) {
             verdicts.push({
               code: 'TIMPLAN_PUPIL_UNDERPLANNED',
               severity: 'warning',
@@ -757,6 +765,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
             });
           }
         }
+        if (!ownFinding && doubles.length === 0) continue;
         lines.push({
           key: draft.key,
           alternativeCode: draft.alternativeCode,
@@ -769,7 +778,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
         });
       }
       if (isBelow) pupilsBelow += 1;
-      if (isBelow || isDouble) {
+      if (lines.length > 0) {
         listed.push({ pupilId: result.pupil.id, homeGroupId: classId, gradeLevel: result.grade, lines });
       }
     }
