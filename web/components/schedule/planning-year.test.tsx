@@ -95,6 +95,38 @@ describe("the förberäknade klasslistor banner", () => {
     ).toBeInTheDocument();
   });
 
+  it("leaves a count out at zero instead of printing it, in both languages", () => {
+    // Webbgenomgången 2026-10-07: the banner said "… och 0 elever blir utan klass".
+    const { unmount } = inLocale(
+      "sv",
+      <ProjectedRostersBanner
+        year={B}
+        active={A}
+        rosters={projected({ counts: { moved: 70, graduates: 10, unplaced: 0 }, membershipsOutOfDate: { missing: 0, stale: 2 } })}
+        failed={false}
+      />,
+    );
+    const sv = screen.getByRole("status");
+    expect(sv).toHaveTextContent("klasslistorna som aktiveringen ger: 70 elever flyttar in i sin nya klass och 10 elever går ut.");
+    expect(sv).toHaveTextContent("sedan dess: 2 medlemskap hör till elever som går ut eller blir utan klass.");
+    expect(sv.textContent).not.toMatch(/(^|\D)0 (elev|medlemskap)/);
+    unmount();
+
+    inLocale(
+      "en",
+      <ProjectedRostersBanner
+        year={B}
+        active={A}
+        rosters={projected({ counts: { moved: 0, graduates: 0, unplaced: 3 } })}
+        failed={false}
+      />,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "the class lists the activation will give: 3 pupils are left without a class.",
+    );
+    expect(screen.getByRole("status").textContent).not.toMatch(/(^|\D)0 pupils/);
+  });
+
   it("names the teaching-group memberships the activation preview calls out of date", () => {
     inLocale(
       "sv",
