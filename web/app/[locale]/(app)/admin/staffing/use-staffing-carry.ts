@@ -16,9 +16,6 @@ import type { StaffingRolloverPreview, StaffingRolloverResult } from "@/lib/type
  * page and /teacher/tjanst too.
  */
 
-/** The gateway's code for a carry whose preview moved: nothing was written. */
-export const STAFFING_ROLLOVER_STALE = "STAFFING_ROLLOVER_PREVIEW_STALE";
-
 /** The preview's own key: per target year, and refetched after a stale 409. */
 export const STAFFING_CARRY_PREVIEW_KEY = ["staffingCarryPreview"] as const;
 

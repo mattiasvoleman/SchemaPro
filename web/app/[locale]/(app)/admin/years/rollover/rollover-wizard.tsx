@@ -159,7 +159,9 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
         planHash: plan.planHash,
       });
       toast.success(
-        result.staffing
+        // The switch is on by default, so a school without tjänster gets
+        // staffing {0, 0, 0}: the plain sentence, not "0 tjänster och 0 uppdrag".
+        result.staffing && result.staffing.employments + result.staffing.duties > 0
           ? t("createdWithStaffing", {
               name: result.academicYear.name,
               groups: result.counts.groups,
