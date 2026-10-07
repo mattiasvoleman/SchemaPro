@@ -113,15 +113,25 @@ describe.each([
     expect(Object.values(errors[0]!.constraints ?? {})).toEqual(['teacherLoadPercent: högst 200 %.']);
   });
 
-  it('lets a null buffer through as @IsOptional reads it: absence', async () => {
-    // Not an endorsement, a record. `@IsOptional` skips every validator for
-    // null as well as undefined, so null passes the DTO here exactly as it
-    // already does on lessonsPerWeek and minutesPerLesson — the two fields
-    // these sit beside. The service is where that distinction is spent: it
-    // spreads on `!== undefined`, so null would reach a NOT NULL column, and
-    // its own spec pins the behaviour against those same neighbours rather
-    // than letting this pair drift away from them.
-    await expect(failing(cls, { ...base, minutesBefore: null })).resolves.toEqual([]);
-    await expect(failing(cls, { ...base, lessonsPerWeek: null })).resolves.toEqual([]);
+  it.each([
+    'teacherLoadPercent',
+    'coTeacherLoadPercent',
+    'lessonsPerWeek',
+    'minutesPerLesson',
+    'minutesBefore',
+    'minutesAfter',
+    'recurrence',
+  ])('refuses null for the NOT NULL %s instead of waving it through', async (field) => {
+    // @IsOptional skips every validator for null as well as undefined. On
+    // create the service wrote `?? default` while the staffing check judged
+    // null as 0 — a REFUSE bypass; on update null reached the NOT NULL
+    // column and came back as an unnamed 400. Omitted is still allowed.
+    await expect(failing(cls, { ...base, [field]: null })).resolves.toEqual([field]);
+    await expect(failing(cls, { ...base })).resolves.toEqual([]);
+  });
+
+  it('names the field in Swedish when a load percentage is null', async () => {
+    const errors = await validate(plainToInstance(cls, { ...base, teacherLoadPercent: null }));
+    expect(Object.values(errors[0]!.constraints ?? {})).toContain('teacherLoadPercent: anges som ett heltal i procent.');
   });
 });

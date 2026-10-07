@@ -105,6 +105,23 @@ export class TeachingRequirementsService {
           this.assertPeriodFitsYear(year, startDate, endDate);
         }
 
+        // The figures the row is written with, defaults filled in ONCE, so
+        // the staffing check below judges exactly what the insert writes. It
+        // used to be handed the raw DTO: a null that reached it read as 0
+        // minutes while the insert wrote `?? 1` lessons or `?? 100` %, and a
+        // REFUSE passed a row that put the teacher over.
+        const charged = {
+          teacherId: dto.teacherId ?? null,
+          coTeacherId: dto.coTeacherId ?? null,
+          // Stated, like the buffers below, so the row answered back is the
+          // row the request described rather than what the default filled in.
+          teacherLoadPercent: dto.teacherLoadPercent ?? 100,
+          coTeacherLoadPercent: dto.coTeacherLoadPercent ?? 100,
+          lessonsPerWeek: dto.lessonsPerWeek ?? 1,
+          minutesPerLesson: dto.minutesPerLesson ?? 60,
+          recurrence: dto.recurrence ?? 'ALL_WEEKS',
+        } as const;
+
         // The staffing policy's two questions, asked of the row as it is about
         // to be written and before it is — see staffing-enforcement.ts. A
         // REFUSE throws here and nothing is written.
@@ -116,13 +133,7 @@ export class TeachingRequirementsService {
           studentGroupId: dto.studentGroupId,
           before: null,
           patch: {
-            teacherId: dto.teacherId ?? null,
-            coTeacherId: dto.coTeacherId ?? null,
-            lessonsPerWeek: dto.lessonsPerWeek,
-            minutesPerLesson: dto.minutesPerLesson,
-            teacherLoadPercent: dto.teacherLoadPercent,
-            coTeacherLoadPercent: dto.coTeacherLoadPercent,
-            recurrence: dto.recurrence,
+            ...charged,
             startDate: dto.startDate || null,
             endDate: dto.endDate || null,
           },
@@ -134,14 +145,12 @@ export class TeachingRequirementsService {
             academicYearId: dto.academicYearId,
             subjectId: dto.subjectId,
             studentGroupId: dto.studentGroupId,
-            teacherId: dto.teacherId ?? null,
-            coTeacherId: dto.coTeacherId ?? null,
-            // Stated, like the buffers below, so the row answered back is the
-            // row the request described rather than what the default filled in.
-            teacherLoadPercent: dto.teacherLoadPercent ?? 100,
-            coTeacherLoadPercent: dto.coTeacherLoadPercent ?? 100,
-            lessonsPerWeek: dto.lessonsPerWeek ?? 1,
-            minutesPerLesson: dto.minutesPerLesson ?? 60,
+            teacherId: charged.teacherId,
+            coTeacherId: charged.coTeacherId,
+            teacherLoadPercent: charged.teacherLoadPercent,
+            coTeacherLoadPercent: charged.coTeacherLoadPercent,
+            lessonsPerWeek: charged.lessonsPerWeek,
+            minutesPerLesson: charged.minutesPerLesson,
             // The pupil buffers, stated here rather than left to the column
             // default for the same reason every other figure above is: the
             // created row is answered back to the caller, and a field the
@@ -149,7 +158,7 @@ export class TeachingRequirementsService {
             // request. Zero is the school that has not asked for ombyte.
             minutesBefore: dto.minutesBefore ?? 0,
             minutesAfter: dto.minutesAfter ?? 0,
-            recurrence: dto.recurrence ?? 'ALL_WEEKS',
+            recurrence: charged.recurrence,
             startDate,
             endDate,
           },
