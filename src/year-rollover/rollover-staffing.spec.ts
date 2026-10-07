@@ -232,6 +232,46 @@ describe('planStaffingCarry — into a year that already has rows (2)', () => {
     expect(plan.writes.duties).toEqual([expect.objectContaining({ label: 'Mentor', groupKey: G7B })]);
   });
 
+  it('takes a target uppdrag on the successor group for another kind’s source only when the label matches too: a mentorskap is its class, an "Elevrådsansvar" is not a "Klassresa"', () => {
+    const existing = {
+      ...none(),
+      duties: [{ id: 't-resa', userId: T1, kind: 'ANNAT' as const, label: 'Klassresa 8B', groupKey: G7B, slot: null }],
+    };
+    const plan = planStaffingCarry(
+      input([], [duty(T1, 'ANNAT', 'Elevrådsansvar 7B', { studentGroupId: G7B }), duty(T1, 'ANNAT', 'Klassresa 7B', { studentGroupId: G7B })], existing),
+    );
+    expect(plan.writes.duties).toEqual([expect.objectContaining({ label: 'Elevrådsansvar 8B', groupKey: G7B })]);
+    expect(plan.preview.duties.notCarried).toEqual([expect.objectContaining({ label: 'Klassresa 7B', reason: 'ALREADY_PRESENT' })]);
+  });
+
+  it('names a graduating class’s mentorskap as left behind even for a teacher who is already set up, and does not count it as already present', () => {
+    const existing = { ...none(), employmentUserIds: new Set([T1]) };
+    const plan = planStaffingCarry(
+      input([post(T1)], [duty(T1, 'MENTORSKAP', 'Mentor 9A', { studentGroupId: G9A }), duty(T1, 'RASTVAKT', 'Rastvakt')], existing),
+    );
+    expect(plan.preview.duties.notCarried.map((row) => [row.label, row.reason])).toEqual([
+      ['Mentor 9A', 'GROUP_LEAVES'],
+      ['Rastvakt', 'TEACHER_ALREADY_SET_UP'],
+    ]);
+    expect(plan.problems).toEqual([
+      { code: 'STAFFING_MENTORSKAP_NOT_CARRIED', blocking: false, params: { duties: 1, groups: ['9A'] } },
+      { code: 'STAFFING_ALREADY_PRESENT', blocking: false, params: { teachers: 1, duties: 1 } },
+    ]);
+  });
+
+  it('carries again an uppdrag the admin deleted, for a teacher with no post in the target: known, D1 keeps no "carried from" (the page offers the carry only to a year with no post and no uppdrag)', () => {
+    const source = input([], [duty(T1, 'APT_KONFERENS', 'APT'), duty(T1, 'RASTVAKT', 'Rastvakt')], none());
+    const first = planStaffingCarry(source);
+    expect(first.writes.duties).toHaveLength(2);
+    const keptRastvakt: ExistingStaffing = {
+      ...none(),
+      duties: [{ id: 't1', userId: T1, kind: 'RASTVAKT', label: 'Rastvakt', groupKey: null, slot: null }],
+    };
+    expect(planStaffingCarry({ ...source, existing: keptRastvakt }).writes.duties).toEqual([
+      expect.objectContaining({ label: 'APT' }),
+    ]);
+  });
+
   it('matches a promoted label too: "Mentor 7B" against a groupless "Mentor 8B"', () => {
     const existing = { ...none(), duties: [{ id: 't1', userId: T1, kind: 'MENTORSKAP' as const, label: 'Mentor 8B', groupKey: null, slot: null }] };
     expect(planStaffingCarry(input([], [duty(T1, 'MENTORSKAP', 'Mentor 7B', { studentGroupId: G7B })], existing)).writes.duties).toEqual([]);
