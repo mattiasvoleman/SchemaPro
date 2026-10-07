@@ -1759,7 +1759,14 @@ export interface ImportReport {
    * policy REFUSES is in `errors` instead, because it was not written.
    * `message` is the gateway's Swedish sentence, the same voice as `errors`.
    */
-  warnings?: { row: number; code: string; message: string }[];
+  warnings?: {
+    row: number;
+    code: string;
+    /** The catalogue's arguments, so the sentence renders in the reader's language. */
+    params?: Record<string, string | number>;
+    /** The gateway's Swedish sentence: the fallback for a code the web lacks. */
+    message: string;
+  }[];
 }
 
 const IMPORT_ENDPOINTS: Record<ImportKind, string> = {
@@ -2065,6 +2072,7 @@ export async function importCsvInBatches({
           merged.warnings.push({
             row: warning.row + offset,
             code: warning.code,
+            params: warning.params ?? {},
             message: warning.message,
           });
         }

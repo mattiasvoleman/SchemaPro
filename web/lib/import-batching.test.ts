@@ -78,9 +78,11 @@ describe("importCsvInBatches", () => {
     });
 
     expect(report.errors).toEqual([]);
+    // `params` kept: the dialog renders the sentence from the catalogue in
+    // the reader's language, `message` (the gateway's Swedish) its fallback.
     expect(report.warnings).toEqual([
-      { row: 3, code: "STAFF_TEACHER_OVER_TARGET", message: "a" },
-      { row: 1002, code: "STAFF_TEACHER_NOT_QUALIFIED", message: "b" },
+      { row: 3, code: "STAFF_TEACHER_OVER_TARGET", params: {}, message: "a" },
+      { row: 1002, code: "STAFF_TEACHER_NOT_QUALIFIED", params: {}, message: "b" },
     ]);
   });
 
