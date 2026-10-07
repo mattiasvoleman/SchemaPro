@@ -299,6 +299,12 @@ const freshState = () => ({
    */
   requirementsByYear: null as Record<string, RequirementFixture[]> | null,
   /**
+   * GET /academic-years/:id/rosters as the page receives it, and the years it
+   * was asked for. Null (nothing to lay over) unless a test plans next year.
+   */
+  rosters: null as unknown,
+  rostersAskedFor: [] as (string | null)[],
+  /**
    * Mål mode's two reads: which plan each årskurs follows this year, and
    * those plans with their entries. Nothing reads them until the toggle is
    * pressed; the Mål tests set them.
@@ -367,6 +373,17 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
   // test does not set up. What it POSTs is csv-import-dialog.test.tsx's
   // subject; here the dialog only has to open.
   useImportCsv: () => ({ mutateAsync: importMock, isPending: false }),
+}));
+
+// Next year's förberäknade klasslistor. The overlay itself (withProjectedHomes)
+// is the real one; only the request is replaced — and recorded, so a test can
+// say which year the page asked about.
+vi.mock("@/lib/planning-year", () => ({
+  useYearRosters: (year: { id: string } | null, active: { id: string } | null) => {
+    const projectable = year !== null && active !== null && year.id !== active.id;
+    state.rostersAskedFor.push(projectable ? year.id : null);
+    return { data: projectable ? state.rosters : undefined };
+  },
 }));
 
 // The two staffing reads the teacher picker's badges need, from the module
@@ -1639,6 +1656,66 @@ describe("Timplan cell dialog candidates", () => {
 
     expect(optionNamed("Anna Svensson")?.textContent).toContain("kindLEGITIMATION");
     expect(optionNamed("Bo Lind")?.textContent).toContain("candidateUnqualified");
+  });
+
+  /*
+   * Next year before its activation. Ma81 is a teaching group of next year
+   * whose one member still has this year's 7A as home class — the activation
+   * moves her to next year's 8A, and the gateway's load report already reads
+   * her there. Without the overlay Ma81 has no member in any class of its
+   * year, so it gets no span and every behörighet in SO covers it: Bo's 1–6
+   * would read as fine for an åk 8 group.
+   */
+  describe("next year, before its activation", () => {
+    const nextYear = {
+      id: "y2",
+      name: "2027/2028",
+      isActive: false,
+      predecessorId: "y1",
+      startDate: "2027-08-16",
+      endDate: "2028-06-09",
+    };
+    beforeEach(() => {
+      state.years = loaded([{ ...year, predecessorId: null }, nextYear] as never);
+      state.groups = loaded([
+        ...groups,
+        { id: "g-8a", academicYearId: "y2", name: "8A", kind: "CLASS", gradeLevel: 8 },
+        { id: "g-ma81", academicYearId: "y2", name: "Ma81", kind: "TEACHING_GROUP", gradeLevel: null },
+      ]);
+      state.memberships = loaded([{ studentGroupId: "g-ma81", studentId: "p-1" }] as never);
+      state.requirementsByYear = { y1: requirements, y2: [] };
+      state.rosters = {
+        academicYearId: "y2",
+        basis: "PROJECTED",
+        homeClasses: [{ studentId: "p-1", studentGroupId: "g-8a" }],
+        counts: { moved: 1, graduates: 0, unplaced: 0 },
+        membershipsOutOfDate: { missing: 0, stale: 0 },
+      };
+      window.history.replaceState(null, "", "/?year=y2");
+    });
+    afterEach(() => window.history.replaceState(null, "", "/"));
+
+    it("gives a teaching group the span of the class its members move into", async () => {
+      await openTeacherPicker("cellLabel(Ma81|Samhällsorientering)");
+
+      expect(state.rostersAskedFor).toContain("y2");
+      expect(optionNamed("Anna Svensson")?.textContent).toContain("kindLEGITIMATION");
+      expect(optionNamed("Bo Lind")?.textContent).toContain("candidateUnqualified");
+    });
+
+    it("reads Ma81 as yearless without the overlay — the case the overlay exists for", async () => {
+      state.rosters = null;
+      await openTeacherPicker("cellLabel(Ma81|Samhällsorientering)");
+
+      expect(optionNamed("Bo Lind")?.textContent).toContain("kindBEHORIG");
+    });
+
+    it("asks for no rosters while this year is on screen", () => {
+      window.history.replaceState(null, "", "/");
+      render(<RequirementsPage />);
+
+      expect(state.rostersAskedFor.every((id) => id === null)).toBe(true);
+    });
   });
 
   it("shows no behörighet badge at all for a school that has recorded none, but still the minutes", async () => {
