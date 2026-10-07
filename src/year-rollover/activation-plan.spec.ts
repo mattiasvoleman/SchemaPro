@@ -63,6 +63,7 @@ function school(): ActivationSource {
       pupil('p10', null),
       pupil('p11', 'a7', false),
     ],
+    members: [],
   };
 }
 
@@ -139,6 +140,30 @@ describe('planActivation', () => {
     // An inactive pupil in a later year supersedes nothing.
     source.students = [pupil('q1', 'c9', false)];
     expect(planActivation(source, '2029-07-01').problems).toEqual([]);
+  });
+
+  it('counts teaching-group memberships the rollover decided on placements that have changed since, without blocking', () => {
+    const source = school();
+    // A teaching group Ma7 in A, carried into B as Ma8 with p1 (copied at the rollover).
+    source.groups.push(group('aMa', 'A', 7, null, 'TEACHING_GROUP'), group('bMa', 'B', 8, 'aMa', 'TEACHING_GROUP'));
+    source.members = [
+      { studentGroupId: 'aMa', studentId: 'p1' },
+      { studentGroupId: 'bMa', studentId: 'p1' },
+      // p2 was in a skipped class at the rollover and was re-placed into 7A since: not copied.
+      { studentGroupId: 'aMa', studentId: 'p2' },
+      // p4 graduates, but someone had added them to next year's Ma8.
+      { studentGroupId: 'bMa', studentId: 'p4' },
+    ];
+    const plan = planActivation(source, '2027-06-14');
+    expect(plan.problems).toEqual([
+      { code: 'MEMBERSHIPS_OUT_OF_DATE', blocking: false, params: { missing: 1, stale: 1 } },
+    ]);
+    expect(plan.blocking).toBe(false);
+    // The hash is the writes', not the warnings'.
+    expect(plan.planHash).toBe(planActivation({ ...source, members: [] }, '2027-06-14').planHash);
+    // With no member carried into Ma8 at all (carryTeachingGroupMembers off), nothing is missing.
+    source.members = [{ studentGroupId: 'aMa', studentId: 'p1' }, { studentGroupId: 'aMa', studentId: 'p2' }];
+    expect(planActivation(source, '2027-06-14').problems).toEqual([]);
   });
 
   it('is a no-op the second time: the same pupils are already in the year', () => {
