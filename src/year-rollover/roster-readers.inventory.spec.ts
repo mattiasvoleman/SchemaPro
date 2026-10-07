@@ -23,7 +23,13 @@ import * as ts from 'typescript';
  *     year without anybody deciding so;
  *  4. a controller route that reaches rostersOfYear whose roles are not
  *     within SCHOOL_ADMIN and TEACHER: under a pupil's or a guardian's RLS
- *     the projection's school-wide reads degenerate to the caller's own row.
+ *     the projection's school-wide reads degenerate to the caller's own row;
+ *  5. a change in the set of routes that reach rostersOfYear. Each of them
+ *     answers R6's 409 ROLLOVER_NOT_ACTIVATED for a year two steps ahead, or
+ *     for a rolled year in a school with no active year — reports and the
+ *     staffing checks too, not only the six sites that refused before the
+ *     projection. A route that joins the list starts refusing, and one that
+ *     leaves it stops; either is a decision, so the list is written out.
  */
 
 const ROOT = join(__dirname, '..', '..');
@@ -287,6 +293,32 @@ describe('the roster-reader inventory', () => {
           'YearRolloverController.rosters',
         ]),
       );
+    });
+
+    it('is exactly the routes that answer R6’s 409 (the decision, written out)', () => {
+      // Some answer it only when they compute a basis: a timplanspost or an
+      // import when the staffing checks run, a vikarie when behörighet is
+      // asked. StaffingLoadController.unstaffed reads the load input like
+      // the report it is opened from.
+      expect(reached.map((entry) => entry.route).sort()).toEqual([
+        'CalendarLessonsController.assignSubstitute',
+        'CalendarLessonsController.suggestSubstitutes',
+        'ImportController.importRequirements',
+        'LunchSittingsController.place',
+        'MasterLessonsController.create',
+        'MasterLessonsController.update',
+        'OptimizationController.applyRooms',
+        'OptimizationController.proposeRooms',
+        'OptimizationController.startJob',
+        'OptimizationController.trigger',
+        'StaffingLoadController.load',
+        'StaffingLoadController.suggestTeachers',
+        'StaffingLoadController.unstaffed',
+        'TeachingRequirementsController.create',
+        'TeachingRequirementsController.update',
+        'TimplanCoverageController.get',
+        'YearRolloverController.rosters',
+      ]);
     });
 
     it('admits only SCHOOL_ADMIN and TEACHER on every one of them', () => {

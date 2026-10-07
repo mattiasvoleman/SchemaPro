@@ -3702,10 +3702,51 @@ describe('Planning surface (e2e)', () => {
       expect(lesson.body).toMatchObject(refused);
       const listed = await request(http()).get(`/api/v1/academic-years/${yearC}/rosters`).set('x-test-user', admin()).expect(409);
       expect(listed.body).toMatchObject(refused);
+      // Not only the sites that refused before the projection: every reader
+      // of C's class lists answers the same, the reports and the staffing
+      // checks too (roster-readers.inventory.spec.ts names the routes).
+      // A timplanspost of C's 9A, so the load report has a group to span.
+      const c9aRequirement = { ...world.rows['teachingRequirement']![0]!, id: '00000000-0000-4000-8000-0000000000c1', academicYearId: yearC, studentGroupId: 'b0000000-0000-4000-8000-0000000000c9' };
+      world.rows['teachingRequirement']!.push(c9aRequirement);
+      const teacher = asUser({ role: 'TEACHER' as never });
+      for (const [who, user] of [['admin', admin()], ['teacher', teacher]] as const) {
+        const load = await request(http()).get(`/api/v1/staffing/load?academicYearId=${yearC}`).set('x-test-user', user).expect(409);
+        expect([who, load.body]).toMatchObject([who, refused]);
+        const coverage = await request(http()).get(`/api/v1/timplan-coverage?academicYearId=${yearC}`).set('x-test-user', user).expect(409);
+        expect([who, coverage.body]).toMatchObject([who, refused]);
+      }
+      world.rows['lunchSetting'] = [{ schoolId: IDS.school, lunchEnabled: true, lunchMinutes: 30 }];
+      const meal = await request(http())
+        .post('/api/v1/lunch-sittings')
+        .set('x-test-user', admin())
+        .send({ academicYearId: yearC, studentGroupId: 'b0000000-0000-4000-8000-0000000000c9', dayOfWeek: 1, startTime: '11:00' })
+        .expect(409);
+      expect(meal.body).toMatchObject(refused);
+      const requirement = await request(http())
+        .post('/api/v1/teaching-requirements')
+        .set('x-test-user', admin())
+        .send({ academicYearId: yearC, subjectId: IDS.ma, studentGroupId: 'b0000000-0000-4000-8000-0000000000c9', teacherId: IDS.anna, lessonsPerWeek: 2, minutesPerLesson: 60 })
+        .expect(409);
+      expect(requirement.body).toMatchObject(refused);
       // B itself, the active year's successor, is not refused.
       await request(http()).get(`/api/v1/academic-years/${yearB}/rosters`).set('x-test-user', admin()).expect(200);
 
       await request(http()).get(`/api/v1/academic-years/${YEAR_ID}/rosters`).set('x-test-user', admin()).expect(404);
+    });
+
+    it('409s the rolled year’s readers once the school has no active year (R6), naming the year to activate again', async () => {
+      const { options } = givenSchool(2020);
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+      // The year form has no guard against switching the active year off.
+      await request(http()).patch(`/api/v1/academic-years/${IDS.yearA}`).set('x-test-user', admin()).send({ isActive: false }).expect(200);
+      const refused = { code: 'ROLLOVER_NOT_ACTIVATED', params: { year: 'Nästa läsår', predecessor: '2026/27' } };
+      const load = await request(http()).get(`/api/v1/staffing/load?academicYearId=${yearB}`).set('x-test-user', admin()).expect(409);
+      expect(load.body).toMatchObject(refused);
+      const listed = await request(http()).get(`/api/v1/academic-years/${yearB}/rosters`).set('x-test-user', admin()).expect(409);
+      expect(listed.body).toMatchObject(refused);
+      // A itself, with no predecessor (R2), still reads its own rows.
+      const own = await request(http()).get(`/api/v1/academic-years/${IDS.yearA}/rosters`).set('x-test-user', admin()).expect(200);
+      expect(own.body).toMatchObject({ basis: 'CURRENT', homeClasses: [] });
     });
 
     it('stops a student at the guard on GET rosters', async () => {
