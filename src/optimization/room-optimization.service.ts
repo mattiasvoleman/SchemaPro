@@ -37,6 +37,7 @@ import type {
 } from './interfaces/room-walks.interface';
 import { OptimizationProxyService, type AnonMaps } from './optimization-proxy.service';
 import { loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
+import { refuseRostersNotActivated } from '../year-rollover/rosters-current';
 
 /** The code a stale apply answers with, so the page recomputes rather than guesses. */
 export const ROOM_PROPOSAL_STALE = 'ROOM_PROPOSAL_STALE';
@@ -204,9 +205,11 @@ export class RoomOptimizationService {
    */
   async propose(dto: RoomProposalDto, user: AuthenticatedUser): Promise<RoomProposal> {
     const requestId = randomUUID();
-    const state = await this.prisma.withRls(user, (tx) =>
-      this.readYear(tx, dto.academicYearId),
-    );
+    const state = await this.prisma.withRls(user, async (tx) => {
+      // A rolled year not yet activated has no pupils in its classes.
+      await refuseRostersNotActivated(tx, dto.academicYearId);
+      return this.readYear(tx, dto.academicYearId);
+    });
 
     const basis = basisOf(state);
     const roomsTotal = state.rooms.length;
@@ -270,6 +273,7 @@ export class RoomOptimizationService {
       // editing one slot. The from-room on every UPDATE below still refuses a
       // hand edit of a lesson this moves.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('room-optimization'), hashtext(${dto.academicYearId}))`;
+      await refuseRostersNotActivated(tx, dto.academicYearId);
 
       const state = await this.readYear(tx, dto.academicYearId);
       // Everything the proposal read, re-read here and compared whole. A

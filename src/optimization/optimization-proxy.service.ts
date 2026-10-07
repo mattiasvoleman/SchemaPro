@@ -43,6 +43,7 @@ import type {
   ScheduleRules,
 } from './interfaces/ai-engine-payload.interface';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
+import { refuseRostersNotActivated } from '../year-rollover/rosters-current';
 
 /**
  * Masking proxy between NestJS and the Python AI engine.
@@ -174,6 +175,8 @@ export class OptimizationProxyService {
     // before the payload is built, the engine is never called, and nothing is
     // written — see unstaffedRefusal.
     const fetched = await this.prisma.withRls(user, async (tx) => {
+      // A rolled year not yet activated has no pupils in its classes.
+      await refuseRostersNotActivated(tx, academicYearId);
       const refusal = await this.unstaffedRefusal(tx, academicYearId, requireSchoolId(user), requestId);
       if (refusal) return { refusal, data: null };
       return {

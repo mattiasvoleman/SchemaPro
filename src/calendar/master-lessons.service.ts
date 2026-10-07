@@ -22,6 +22,7 @@ import {
   type StaffingWarning,
 } from '../staffing/staffing-checks';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
+import { refuseRostersNotActivated } from '../year-rollover/rosters-current';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -149,6 +150,9 @@ export class MasterLessonsService {
       if (!year) {
         throw new NotFoundException('Academic year not found.');
       }
+      // A rolled year not yet activated has no pupils in its classes, so
+      // the pupil clashes below would be judged on nobody.
+      await refuseRostersNotActivated(tx, year.id);
 
       const candidate = {
         dayOfWeek: dto.dayOfWeek,
@@ -269,6 +273,7 @@ export class MasterLessonsService {
       if (!lesson) {
         throw new NotFoundException('Master lesson not found.');
       }
+      await refuseRostersNotActivated(tx, lesson.academicYearId);
 
       // Merge the patch onto the current slot.
       const candidate = {
