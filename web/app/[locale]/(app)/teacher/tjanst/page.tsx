@@ -18,6 +18,13 @@
 // theirs: the same bar the admin sees, so a conversation about the tjänst
 // starts from one picture.
 //
+// LAST YEAR, ONE LINE (staffing Fas 5). A year rolled from another shows the
+// teacher's own tjänst % and counted minutes of the year before, under this
+// year's — the question every teacher asks in the tjänstefördelning talk, and
+// one the gateway already answers (GET /staffing/load with the predecessor's
+// id, cut to their own row). Absent without a predecessor or without a row
+// there: a missing comparison is not a zero.
+//
 // Bundle: core tier (170KB). It reuses lib/staffing-queries.ts and the
 // LoadBar the admin page draws — two small modules — and nothing from the
 // admin drawer, whose cards carry forms this page has no use for.
@@ -28,6 +35,7 @@ import { CalendarClock, Scale } from "lucide-react";
 import { useProfile } from "@/components/profile-context";
 import { useActiveYear, useGroups, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
+import { useLastYearTjanst } from "./use-last-year-tjanst";
 import { formatPercent } from "@/lib/staffing-view";
 import { LoadBar } from "@/components/staffing/load-bar";
 import { PageHeader } from "@/components/layout/page-header";
@@ -41,12 +49,13 @@ export default function MyStaffingPage() {
   const tStaffing = useTranslations("staffing");
   const tDays = useTranslations("days");
   const { profile } = useProfile();
-  const { activeYear, isLoading: yearLoading } = useActiveYear();
+  const { data: years, activeYear, isLoading: yearLoading } = useActiveYear();
   const yearId = activeYear?.id ?? null;
   const load = useStaffingLoad(yearId);
   const duties = useTeacherDuties(yearId, profile.id);
   const { data: subjects } = useSubjects();
   const { data: groups } = useGroups();
+  const lastYear = useLastYearTjanst(years, activeYear, profile.id);
 
   const row = useMemo(
     () => load.data?.teachers.find((teacher) => teacher.userId === profile.id) ?? null,
@@ -155,6 +164,17 @@ export default function MyStaffingPage() {
                 {t("annual", { hours: formatPercent(row.annual.assignedHoursPerYear) })}
               </p>
             </>
+          ) : null}
+          {lastYear ? (
+            <p className="text-muted-foreground">
+              {lastYear.row.employment
+                ? t("lastYear", {
+                    year: lastYear.yearName,
+                    percent: formatPercent(lastYear.row.employment.employmentPercent),
+                    minutes: lastYear.row.countedMinutesPerWeek,
+                  })
+                : t("lastYearNoPost", { year: lastYear.yearName, minutes: lastYear.row.countedMinutesPerWeek })}
+            </p>
           ) : null}
         </CardContent>
       </Card>
