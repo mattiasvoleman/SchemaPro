@@ -9,7 +9,7 @@ import type {
 } from '@prisma/client';
 import type { FrameWindow } from '../common/year-rollover';
 import type { LoadQualification } from '../staffing/teacher-load';
-import { readDefaultTimplan, type DefaultTimplan } from '../timplan/year-timplans';
+import { readDecidedTimplans, type DecidedTimplan } from '../timplan/year-timplans';
 import { pendingMoves, planActivation, readActivationSource } from './activation-plan';
 import type { SourceTimplanRow } from './rollover-timplans';
 
@@ -117,8 +117,8 @@ export interface RolloverSource {
   decidedPlans: DecidedPlan[];
   /** Timplan per årskurs of the source year (AcademicYearTimplans), by grade. */
   timplans: SourceTimplanRow[];
-  /** The newest DECIDED plan and its grades: P2's default for a new year. */
-  defaultTimplan: DefaultTimplan | null;
+  /** Every DECIDED plan and its grades, newest first; the first is P2's default for a new year. */
+  decidedTimplans: DecidedTimplan[];
   /** planId → entries, for every plan the new year can follow (attached or decided). */
   planEntries: Map<string, { subjectId: string; gradeLevel: number; minutesPerWeek: number }[]>;
   subjectNames: Map<string, string>;
@@ -274,12 +274,13 @@ export async function readRolloverSource(
         select: {
           name: true,
           status: true,
+          schoolForm: true,
           entries: { select: { subjectId: true, gradeLevel: true, minutesPerWeek: true } },
         },
       },
     },
   });
-  const defaultTimplan = await readDefaultTimplan(tx);
+  const decidedTimplans = await readDecidedTimplans(tx);
   const planEntries = new Map<string, { subjectId: string; gradeLevel: number; minutesPerWeek: number }[]>();
   for (const plan of plans ?? []) planEntries.set(plan.id, plan.entries);
   for (const row of attached ?? []) planEntries.set(row.localTimplanId, row.localTimplan.entries);
@@ -403,8 +404,9 @@ export async function readRolloverSource(
       localTimplanId: row.localTimplanId,
       planName: row.localTimplan.name,
       planStatus: row.localTimplan.status,
+      planSchoolForm: row.localTimplan.schoolForm,
     })),
-    defaultTimplan,
+    decidedTimplans,
     planEntries,
     subjectNames: new Map((subjects ?? []).map((subject) => [subject.id, subject.name])),
     activeTeacherIds: new Set((activeTeachers ?? []).map((teacher) => teacher.id)),

@@ -65,7 +65,8 @@ export const GRUNDSKOLA_2024 = { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm
  * left, one with Anna twice, a vårtermin teknik that ends the day the year
  * ends), four lov and a weekly class rule. Its åk 7–9 follow a DRAFT local
  * timplan (no entries, no decided plan in the school), so the rollover
- * carries two timplan rows and the G default still comes from the classes.
+ * carries two timplan rows with the 7A and 8A cohorts, åk 7 keeps its own,
+ * and the G default still comes from the classes.
  */
 export function defaultRolloverRows(): Record<string, Row[]> {
   const subject = (id: string, name: string) => ({ id, name });

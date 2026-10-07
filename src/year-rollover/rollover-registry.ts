@@ -52,14 +52,15 @@ export type ColumnRule =
   | 'FROM_REQUEST'
   /**
    * A grade of the new year's timplan per årskurs: the grade above a source
-   * row whose cohort stays (g−1 → g), or a grade the source attaches with no
-   * row below it (the entry grade). See rollover-timplans.ts.
+   * row whose class moves up (g−1 → g), or a grade the source attaches. See
+   * rollover-timplans.ts.
    */
   | 'COHORT_GRADE'
   /**
-   * The plan that grade follows: the source row's for g−1, kept whatever its
-   * status, or — for an entry grade — the newest DECIDED plan by P2's default
-   * rule (readDefaultTimplan), when that plan speaks for the grade.
+   * The plan that grade follows: the source row's for g−1 when a class moves
+   * up from g−1, kept whatever its status; otherwise the newest DECIDED plan
+   * that speaks for the grade, of the form of the grade's own source row, or
+   * that own row's plan when no decided plan does.
    */
   | 'COHORT_PLAN'
   /** The column's default (timestamps, isActive false). */
@@ -230,8 +231,9 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     kind: 'PROMOTED',
     step: 'timplans',
     reason:
-      'Timplan per årskurs follows the cohort: next year’s åk g follows the plan this year’s åk g−1 follows, ' +
-      'a draft included; an entry grade with no cohort below it takes the newest decided plan, as a new läsår does.',
+      'Timplan per årskurs follows the cohort: next year’s åk g follows the plan this year’s åk g−1 follows when a class ' +
+      'moves up from it, a draft included; a grade no class moves into takes the newest decided plan that speaks for it, ' +
+      'as a new läsår does, or keeps its own plan when no decided plan does.',
     columns: {
       schoolId: 'COPY',
       academicYearId: 'TARGET_YEAR',

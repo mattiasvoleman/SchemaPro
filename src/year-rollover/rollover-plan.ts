@@ -125,7 +125,7 @@ export interface RolloverWrites {
     minGradeLevel: number | null;
     maxGradeLevel: number | null;
   }[];
-  /** Timplan per årskurs of the new year: the cohort rows, then the entry grades' default. */
+  /** Timplan per årskurs of the new year: the cohorts' plans, and each other grade's default or own plan. */
   timplans: { gradeLevel: number; localTimplanId: string }[];
 }
 
@@ -187,8 +187,9 @@ export interface RolloverPlan {
   classRules: { sourceConstraintId: string; sourceGroupName: string; targetGroupName: string; dayOfWeek: number; startTime: string; endTime: string; stageChange: boolean }[];
   /**
    * Per årskurs of the new year, the plan it will follow and why: carried
-   * from the cohort's grade below, the entry grade's default (the newest
-   * decided plan), or none. See rollover-timplans.ts.
+   * from the grade a class moves up from, a grade with no cohort below it
+   * defaulting to the newest decided plan that speaks for it, or keeping its
+   * own when none does. See rollover-timplans.ts.
    */
   timplans: PlannedTimplan[];
   skipped: { model: string; reason: string; count: number | null }[];
@@ -588,11 +589,22 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   }
 
   // ---- timplan per årskurs, by cohort
-  const timplans = planCohortTimplans(source.timplans, g, source.defaultTimplan);
-  for (const row of timplans) {
-    if (row.localTimplanId !== null) {
-      writes.timplans.push({ gradeLevel: row.gradeLevel, localTimplanId: row.localTimplanId });
+  // A cohort is a class that moves up a grade, not an attachment row.
+  const movingCohorts = new Set<number>();
+  for (const row of resolved) {
+    const group = groupById.get(row.sourceGroupId)!;
+    if (group.kind === 'CLASS' && group.gradeLevel !== null && row.successor?.gradeLevel === group.gradeLevel + 1) {
+      movingCohorts.add(group.gradeLevel);
     }
+  }
+  const timplans = planCohortTimplans({
+    source: source.timplans,
+    graduatingGradeLevel: g,
+    movingCohorts,
+    decided: source.decidedTimplans,
+  });
+  for (const row of timplans) {
+    writes.timplans.push({ gradeLevel: row.gradeLevel, localTimplanId: row.localTimplanId });
   }
 
   // ---- volume against the plan the target grade will follow
@@ -602,9 +614,9 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
   const followed = new Map(timplans.map((row) => [row.gradeLevel, row]));
   const planFor = (grade: number) => {
     const row = followed.get(grade);
-    if (!row || row.localTimplanId === null) return null;
+    if (!row) return null;
     const entries = (source.planEntries.get(row.localTimplanId) ?? []).filter((entry) => entry.gradeLevel === grade);
-    return entries.length > 0 ? { name: row.planName as string, entries } : null;
+    return entries.length > 0 ? { name: row.planName, entries } : null;
   };
   const volumeOf = new Map<string, { findings: PlannedGroup['volumeFindings']; planName: string | null }>();
   for (const row of resolved) {
