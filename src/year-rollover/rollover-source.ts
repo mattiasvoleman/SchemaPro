@@ -9,7 +9,9 @@ import type {
 } from '@prisma/client';
 import type { FrameWindow } from '../common/year-rollover';
 import type { LoadQualification } from '../staffing/teacher-load';
+import { readDefaultTimplan, type DefaultTimplan } from '../timplan/year-timplans';
 import { pendingMoves, planActivation, readActivationSource } from './activation-plan';
+import type { SourceTimplanRow } from './rollover-timplans';
 
 /**
  * Everything the rollover plan is computed from, read in the caller's
@@ -113,6 +115,12 @@ export interface RolloverSource {
   classRules: SourceClassRule[];
   frames: FrameWindow[];
   decidedPlans: DecidedPlan[];
+  /** Timplan per årskurs of the source year (AcademicYearTimplans), by grade. */
+  timplans: SourceTimplanRow[];
+  /** The newest DECIDED plan and its grades: P2's default for a new year. */
+  defaultTimplan: DefaultTimplan | null;
+  /** planId → entries, for every plan the new year can follow (attached or decided). */
+  planEntries: Map<string, { subjectId: string; gradeLevel: number; minutesPerWeek: number }[]>;
   subjectNames: Map<string, string>;
   /** Users who may teach a row: TEACHER or SCHOOL_ADMIN, and active. */
   activeTeacherIds: Set<string>;
@@ -256,6 +264,25 @@ export async function readRolloverSource(
     },
   });
   const subjects = await tx.subject.findMany({ select: { id: true, name: true } });
+  const attached = await tx.academicYearTimplan.findMany({
+    where: { academicYearId: sourceYearId },
+    orderBy: { gradeLevel: 'asc' },
+    select: {
+      gradeLevel: true,
+      localTimplanId: true,
+      localTimplan: {
+        select: {
+          name: true,
+          status: true,
+          entries: { select: { subjectId: true, gradeLevel: true, minutesPerWeek: true } },
+        },
+      },
+    },
+  });
+  const defaultTimplan = await readDefaultTimplan(tx);
+  const planEntries = new Map<string, { subjectId: string; gradeLevel: number; minutesPerWeek: number }[]>();
+  for (const plan of plans ?? []) planEntries.set(plan.id, plan.entries);
+  for (const row of attached ?? []) planEntries.set(row.localTimplanId, row.localTimplan.entries);
 
   const teacherIds = [
     ...new Set(
@@ -371,6 +398,14 @@ export async function readRolloverSource(
       decidedAt: plan.decidedAt ? plan.decidedAt.toISOString() : '',
       entries: plan.entries,
     })),
+    timplans: (attached ?? []).map((row) => ({
+      gradeLevel: row.gradeLevel,
+      localTimplanId: row.localTimplanId,
+      planName: row.localTimplan.name,
+      planStatus: row.localTimplan.status,
+    })),
+    defaultTimplan,
+    planEntries,
     subjectNames: new Map((subjects ?? []).map((subject) => [subject.id, subject.name])),
     activeTeacherIds: new Set((activeTeachers ?? []).map((teacher) => teacher.id)),
     qualificationMode: policy?.qualificationMode ?? 'WARN',

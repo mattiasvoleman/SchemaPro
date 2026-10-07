@@ -53,13 +53,19 @@ export const IDS = {
   pasklov: 'f0000000-0000-4000-8000-000000000003',
   vecka53: 'f0000000-0000-4000-8000-000000000004',
   rule7a: 'f1000000-0000-4000-8000-000000000001',
+  draftPlan: 'f2000000-0000-4000-8000-000000000001',
 } as const;
+
+/** The national grundskola version P2's plans hang on: stadier 1–3, 4–6, 7–9. */
+export const GRUNDSKOLA_2024 = { schoolForm: 'GRUNDSKOLA', appliesFromCohortTerm: 'HT2024' } as const;
 
 /**
  * 2026/27, active: 7A, 8A and 9A with pupils, a teaching group Ma7 with a 7A,
  * an 8A and a 9A pupil, timplansposter (one taught by Anna, one by Bo who has
  * left, one with Anna twice, a vårtermin teknik that ends the day the year
- * ends), four lov and a weekly class rule.
+ * ends), four lov and a weekly class rule. Its åk 7–9 follow a DRAFT local
+ * timplan (no entries, no decided plan in the school), so the rollover
+ * carries two timplan rows and the G default still comes from the classes.
  */
 export function defaultRolloverRows(): Record<string, Row[]> {
   const subject = (id: string, name: string) => ({ id, name });
@@ -132,7 +138,24 @@ export function defaultRolloverRows(): Record<string, Row[]> {
     frameTime: [
       { minGradeLevel: 7, maxGradeLevel: 9, dayOfWeek: null, startTime: clock('08:00'), endTime: clock('15:30') },
     ],
-    localTimplan: [],
+    localTimplan: [
+      {
+        id: IDS.draftPlan,
+        name: 'Utkast 2027',
+        schoolForm: 'GRUNDSKOLA',
+        status: 'DRAFT',
+        decidedAt: null,
+        createdAt: new Date('2027-02-01T00:00:00Z'),
+        nationalVersion: GRUNDSKOLA_2024,
+        entries: [],
+      },
+    ],
+    academicYearTimplan: [7, 8, 9].map((gradeLevel) => ({
+      schoolId: IDS.school,
+      academicYearId: IDS.yearA,
+      gradeLevel,
+      localTimplanId: IDS.draftPlan,
+    })),
     subject: [subject(IDS.ma, 'Matematik'), subject(IDS.sv, 'Svenska'), subject(IDS.tk, 'Teknik')],
     staffingPolicy: [],
     teacherSubjectQualification: [],
@@ -177,9 +200,13 @@ export function defaultRolloverRows(): Record<string, Row[]> {
   }
 }
 
-function matches(row: Row, where: Row | undefined): boolean {
+export function matches(row: Row, where: Row | undefined): boolean {
   if (!where) return true;
   return Object.entries(where).every(([key, wanted]) => {
+    // A compound unique (`academicYearId_gradeLevel: { … }`): every part must match.
+    if (!(key in row) && key.includes('_') && wanted !== null && typeof wanted === 'object' && !(wanted instanceof Date)) {
+      return matches(row, wanted as Row);
+    }
     const value = row[key];
     if (wanted === null) return value === null || value === undefined;
     if (wanted instanceof Date) return value instanceof Date && value.getTime() === wanted.getTime();
@@ -234,21 +261,48 @@ export function givenRolloverWorld(rows: Record<string, Row[]> = defaultRollover
             calls.push({ model: name, method, args });
             const where = args['where'] as Row | undefined;
             // The two relations the readers select, joined from the rows as they are now.
+            // A selected to-many relation with its own `where`/`take` (a plan's
+            // grade-0 entries): filtered here, as the database would.
+            const project = (row: Row): Row => {
+              const select = args['select'] as Row | undefined;
+              if (!select) return row;
+              const out = { ...row };
+              for (const [field, spec] of Object.entries(select)) {
+                if (!Array.isArray(out[field]) || spec === null || typeof spec !== 'object') continue;
+                const { where: inner, take } = spec as { where?: Row; take?: number };
+                let list = (out[field] as Row[]).filter((item) => matches(item, inner));
+                if (take !== undefined) list = list.slice(0, take);
+                out[field] = list;
+              }
+              return out;
+            };
             const joined = (row: Row): Row =>
-              name === 'studentGroupMember'
-                ? { ...row, student: { studentGroupId: table('user').find((user) => user['id'] === row['studentId'])?.['studentGroupId'] ?? null } }
-                : name === 'teachingRequirement'
-                  ? { ...row, subject: { name: table('subject').find((subject) => subject['id'] === row['subjectId'])?.['name'] } }
-                  : row;
+              project(
+                name === 'studentGroupMember'
+                  ? { ...row, student: { studentGroupId: table('user').find((user) => user['id'] === row['studentId'])?.['studentGroupId'] ?? null } }
+                  : name === 'teachingRequirement'
+                    ? { ...row, subject: { name: table('subject').find((subject) => subject['id'] === row['subjectId'])?.['name'] } }
+                    : name === 'academicYearTimplan'
+                      ? { ...row, localTimplan: table('localTimplan').find((plan) => plan['id'] === row['localTimplanId']) }
+                      : row,
+              );
             const found = table(name).filter((row) => matches(row, where));
-            const order = args['orderBy'] as Record<string, 'asc' | 'desc'> | undefined;
-            const [field, direction] = Object.entries(order ?? {})[0] ?? [];
-            if (field) {
-              const key = (row: Row) => {
+            // orderBy as one object or a list of them, the first key of each.
+            const orders = [args['orderBy'] ?? []].flat() as Record<string, 'asc' | 'desc'>[];
+            const keys = orders.map((order) => Object.entries(order)[0]!).filter(Boolean);
+            if (keys.length > 0) {
+              const key = (row: Row, field: string): string | number => {
                 const value = row[field];
-                return value instanceof Date ? value.toISOString() : String(value);
+                if (typeof value === 'number') return value;
+                return value instanceof Date ? value.toISOString() : value === null || value === undefined ? '' : String(value);
               };
-              found.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) * (direction === 'desc' ? -1 : 1));
+              found.sort((a, b) => {
+                for (const [field, direction] of keys) {
+                  const [x, y] = [key(a, field), key(b, field)];
+                  if (x !== y) return (x < y ? -1 : 1) * (direction === 'desc' ? -1 : 1);
+                }
+                return 0;
+              });
             }
             switch (method) {
               case 'findMany':
@@ -276,6 +330,10 @@ export function givenRolloverWorld(rows: Record<string, Row[]> = defaultRollover
               }
               case 'updateMany': {
                 for (const row of found) Object.assign(row, args['data']);
+                return { count: found.length };
+              }
+              case 'deleteMany': {
+                rows[name] = table(name).filter((row) => !found.includes(row));
                 return { count: found.length };
               }
               default:

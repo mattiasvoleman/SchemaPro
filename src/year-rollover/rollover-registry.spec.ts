@@ -116,7 +116,7 @@ describe('the rollover registry', () => {
     // A failure here is a new per-year table nobody has decided about. Add it
     // to ROLLOVER_REGISTRY as PROMOTED/COPIED (with columns and a step) or
     // SKIPPED/FOLLOWS/AT_ACTIVATION with the reason a schemaläggare would ask
-    // for. P2's AcademicYearTimplans: PROMOTED by cohort, see the R-0 spec §3.
+    // for. P2's AcademicYearTimplans is PROMOTED by cohort (rollover-timplans.ts).
     expect(unclassified).toEqual([]);
   });
 

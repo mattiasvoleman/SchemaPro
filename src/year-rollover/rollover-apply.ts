@@ -25,7 +25,7 @@ export interface StepContext {
   writes: RolloverWrites;
   targetYearId: string | null;
   groupIdByKey: Map<string, string>;
-  counts: { groups: number; members: number; requirements: number; breaks: number; classRules: number };
+  counts: { groups: number; members: number; requirements: number; breaks: number; classRules: number; timplans: number };
 }
 
 const day = (value: string | null): Date | null => (value === null ? null : parseDateString(value));
@@ -150,6 +150,27 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
     });
     context.counts.classRules = count;
   },
+
+  async timplans(context) {
+    if (context.writes.timplans.length === 0) return;
+    // The cohort rows are the year's whole mapping, never added to P2's
+    // defaults: the year step writes none, and a year that somehow has
+    // rows already (a future year step routed through
+    // AcademicYearsService.create) is refused here rather than mixed.
+    const existing = await context.tx.academicYearTimplan.count({
+      where: { academicYearId: context.targetYearId as string },
+    });
+    if (existing > 0) throw new Error('Rollover: the new year already has a timplan per årskurs.');
+    const { count } = await context.tx.academicYearTimplan.createMany({
+      data: context.writes.timplans.map((row) => ({
+        schoolId: context.schoolId,
+        academicYearId: context.targetYearId as string,
+        gradeLevel: row.gradeLevel,
+        localTimplanId: row.localTimplanId,
+      })),
+    });
+    context.counts.timplans = count;
+  },
 };
 
 /** Runs every step in order; returns the new year's id and what was written. */
@@ -164,7 +185,7 @@ export async function applyRollover(
     writes,
     targetYearId: null,
     groupIdByKey: new Map(),
-    counts: { groups: 0, members: 0, requirements: 0, breaks: 0, classRules: 0 },
+    counts: { groups: 0, members: 0, requirements: 0, breaks: 0, classRules: 0, timplans: 0 },
   };
   for (const step of ROLLOVER_STEP_ORDER) {
     await ROLLOVER_STEPS[step](context);

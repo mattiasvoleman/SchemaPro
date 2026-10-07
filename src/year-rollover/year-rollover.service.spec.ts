@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../database/prisma.service';
 import { testUser } from '../../test/utils/prisma-mock';
 import {
+  GRUNDSKOLA_2024,
   IDS,
   defaultRolloverRows,
   givenRolloverWorld,
@@ -197,6 +198,10 @@ describe('YearRolloverService — rollover preview', () => {
       { minGradeLevel: 7, maxGradeLevel: 7, dayOfWeek: null, startTime: new Date('1970-01-01T08:00:00Z'), endTime: new Date('1970-01-01T14:00:00Z') },
       { minGradeLevel: 8, maxGradeLevel: 9, dayOfWeek: null, startTime: new Date('1970-01-01T08:00:00Z'), endTime: new Date('1970-01-01T15:30:00Z') },
     ];
+    // No timplan per årskurs in the source year (a year from before P2): the
+    // new year's grades take the decided plan by P2's default rule, and the
+    // carried volume is measured against it.
+    rows['academicYearTimplan'] = [];
     rows['localTimplan'] = [
       {
         id: 'plan',
@@ -204,6 +209,7 @@ describe('YearRolloverService — rollover preview', () => {
         schoolForm: 'GRUNDSKOLA',
         status: 'DECIDED',
         decidedAt: new Date('2026-05-01T00:00:00Z'),
+        nationalVersion: GRUNDSKOLA_2024,
         entries: [
           { subjectId: IDS.ma, gradeLevel: 8, minutesPerWeek: 180 },
           { subjectId: IDS.sv, gradeLevel: 8, minutesPerWeek: 200 },
@@ -230,7 +236,8 @@ describe('YearRolloverService — rollover preview', () => {
   it('asks for G when the timplan and the classes disagree, and blocks until it is given', async () => {
     const rows = defaultRolloverRows();
     rows['localTimplan'] = [
-      { id: 'p', name: 'F–6', schoolForm: 'GRUNDSKOLA', status: 'DECIDED', decidedAt: new Date(), entries: [{ subjectId: IDS.ma, gradeLevel: 6, minutesPerWeek: 60 }] },
+      ...rows['localTimplan']!,
+      { id: 'p', name: 'F–6', schoolForm: 'GRUNDSKOLA', status: 'DECIDED', decidedAt: new Date(), nationalVersion: GRUNDSKOLA_2024, entries: [{ subjectId: IDS.ma, gradeLevel: 6, minutesPerWeek: 60 }] },
     ];
     const { service } = setup(rows);
     const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
@@ -305,7 +312,8 @@ describe('YearRolloverService — rollover execute', () => {
       graduatingGradeLevel: 9,
     });
     // 8A, 9A, Ma8 and the intake 7A; two members; r1 r2 r3 r5 r6 plus r1 r2 r6 for the intake 7A.
-    expect(result.counts).toEqual({ groups: 4, members: 2, requirements: 8, breaks: 2, classRules: 1 });
+    // And åk 8 and 9 on the draft their cohorts follow (åk 7 has no decided plan to default to).
+    expect(result.counts).toEqual({ groups: 4, members: 2, requirements: 8, breaks: 2, classRules: 1, timplans: 2 });
     expect(result.planHash).toBe(preview.planHash);
 
     const groups = world.rows['studentGroup']!.filter((group) => group['academicYearId'] === result.academicYear.id);
@@ -376,6 +384,7 @@ describe('YearRolloverService — rollover execute', () => {
     const created = new Set(world.calls.filter((call) => call.method.startsWith('create')).map((call) => call.model));
     expect([...created].sort()).toEqual([
       'academicYear',
+      'academicYearTimplan',
       'availabilityConstraint',
       'schoolBreak',
       'studentGroup',
@@ -444,6 +453,9 @@ describe('YearRolloverService — rollover execute', () => {
         source['availabilityConstraint']!.find(
           (rule) => rule['dayOfWeek'] === row['dayOfWeek'] && rule['studentGroupId'] === sourceGroupOf(row['studentGroupId']),
         ),
+      // The cohort's row: the source grade below the written one.
+      academicYearTimplan: (row) =>
+        source['academicYearTimplan']!.find((attached) => attached['gradeLevel'] === (row['gradeLevel'] as number) - 1),
     };
     function findId(row: Row): unknown {
       return world.rows['studentGroup']!.find((group) => group['academicYearId'] === target && group['name'] === row['name'])!['id'];
@@ -472,6 +484,11 @@ describe('YearRolloverService — rollover execute', () => {
             expect({ ...at, value: row[column] }).toEqual({ ...at, value: target });
           } else if (rule === 'MAP_GROUP') {
             expect({ ...at, continues: sourceGroupOf(row[column]) }).toEqual({ ...at, continues: from![column] });
+          } else if (rule === 'COHORT_GRADE') {
+            expect({ ...at, value: row[column] }).toEqual({ ...at, value: (from!['gradeLevel'] as number) + 1 });
+          } else if (rule === 'COHORT_PLAN') {
+            expect({ ...at, value: row[column] }).toEqual({ ...at, value: from![column] });
+            checked++;
           }
         }
       }
@@ -564,6 +581,82 @@ describe('YearRolloverService — rollover execute', () => {
       .executeRollover(IDS.yearA, { ...OPTIONS, graduatingGradeLevel: 9, planHash: preview.planHash }, admin)
       .catch((e) => e);
     expect(refusal.getResponse()).toMatchObject({ code: 'YEAR_NAME_TAKEN' });
+  });
+});
+
+describe('YearRolloverService — timplan per årskurs by cohort', () => {
+  /** A decided plan the school adopted in 2024, P2's default for new years. */
+  const decided = (): Row => ({
+    id: 'f2000000-0000-4000-8000-0000000000d1',
+    name: 'Grundskola 2024',
+    schoolForm: 'GRUNDSKOLA',
+    status: 'DECIDED',
+    decidedAt: new Date('2024-05-01T00:00:00Z'),
+    createdAt: new Date('2024-04-01T00:00:00Z'),
+    nationalVersion: GRUNDSKOLA_2024,
+    entries: [],
+  });
+
+  it('previews per grade the plan it will follow and why, and says a carried draft is a draft', async () => {
+    const { service } = setup();
+    const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    expect(preview.timplans).toEqual([
+      { gradeLevel: 7, reason: 'NONE', fromGradeLevel: null, localTimplanId: null, planName: null, planStatus: null },
+      { gradeLevel: 8, reason: 'CARRIED', fromGradeLevel: 7, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT' },
+      { gradeLevel: 9, reason: 'CARRIED', fromGradeLevel: 8, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT' },
+    ]);
+  });
+
+  it('writes the cohort rows and the entry grade’s default, and none of the grades P2’s create would add (never a mix)', async () => {
+    const rows = defaultRolloverRows();
+    rows['localTimplan']!.push(decided());
+    const { world, service } = setup(rows);
+    const { preview, result } = await previewAndExecute(world, service);
+    expect(preview.timplans.map((row) => [row.gradeLevel, row.reason, row.planName])).toEqual([
+      [7, 'DEFAULT', 'Grundskola 2024'],
+      [8, 'CARRIED', 'Utkast 2027'],
+      [9, 'CARRIED', 'Utkast 2027'],
+    ]);
+    const written = world.rows['academicYearTimplan']!
+      .filter((row) => row['academicYearId'] === result.academicYear.id)
+      .map((row) => [row['gradeLevel'], row['localTimplanId']]);
+    // A 7–9 school: åk 1–6, which the default plan speaks for, are not added.
+    expect(written).toEqual([
+      [7, 'f2000000-0000-4000-8000-0000000000d1'],
+      [8, IDS.draftPlan],
+      [9, IDS.draftPlan],
+    ]);
+    expect(result.counts.timplans).toBe(3);
+    // The source year's own rows are untouched.
+    expect(world.rows['academicYearTimplan']!.filter((row) => row['academicYearId'] === IDS.yearA)).toHaveLength(3);
+  });
+
+  it('makes the preview stale when the source year’s mapping changes before the execute', async () => {
+    const { world, service } = setup();
+    const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    world.rows['localTimplan']!.push(decided());
+    world.rows['academicYearTimplan']!.find((row) => row['gradeLevel'] === 8)!['localTimplanId'] =
+      'f2000000-0000-4000-8000-0000000000d1';
+    await expect(
+      service.executeRollover(IDS.yearA, { ...OPTIONS, graduatingGradeLevel: 9, planHash: preview.planHash }, admin),
+    ).rejects.toMatchObject({ response: expect.objectContaining({ code: 'ROLLOVER_PREVIEW_STALE' }) });
+  });
+
+  it('measures a carried class against the plan its grade will follow, not the newest decided one', async () => {
+    const rows = defaultRolloverRows();
+    // 7A follows an older decided plan with åk 8 minutes; the newest decided
+    // plan has other minutes for åk 8. The cohort keeps the older one.
+    rows['localTimplan']!.push(
+      { ...decided(), id: 'f2000000-0000-4000-8000-0000000000d2', name: 'Grundskola 2018', decidedAt: new Date('2018-05-01T00:00:00Z'),
+        entries: [{ subjectId: IDS.ma, gradeLevel: 8, minutesPerWeek: 180 }, { subjectId: IDS.sv, gradeLevel: 8, minutesPerWeek: 180 }, { subjectId: IDS.tk, gradeLevel: 8, minutesPerWeek: 0 }] },
+      { ...decided(), entries: [{ subjectId: IDS.ma, gradeLevel: 8, minutesPerWeek: 240 }] },
+    );
+    rows['academicYearTimplan']!.find((row) => row['gradeLevel'] === 7)!['localTimplanId'] = 'f2000000-0000-4000-8000-0000000000d2';
+    const { service } = setup(rows);
+    const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    const eighth = preview.groups.find((group) => group.targetName === '8A')!;
+    expect(eighth.volumePlanName).toBe('Grundskola 2018');
+    expect(eighth.volumeFindings.map((finding) => finding.subjectId)).not.toContain(IDS.ma);
   });
 });
 

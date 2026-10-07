@@ -24,6 +24,7 @@ import { qualificationFinding } from '../staffing/staffing-checks';
 import type { GradeSpan } from '../staffing/teacher-load';
 import { skippedModels } from './rollover-registry';
 import type { RolloverSource, SourceGroup } from './rollover-source';
+import { planCohortTimplans, type PlannedTimplan } from './rollover-timplans';
 
 /**
  * The rollover as a plan: every row it would write, every row it leaves
@@ -124,6 +125,8 @@ export interface RolloverWrites {
     minGradeLevel: number | null;
     maxGradeLevel: number | null;
   }[];
+  /** Timplan per årskurs of the new year: the cohort rows, then the entry grades' default. */
+  timplans: { gradeLevel: number; localTimplanId: string }[];
 }
 
 export interface PlannedGroup {
@@ -182,6 +185,12 @@ export interface RolloverPlan {
     endDateToWrite: string | null;
   }[];
   classRules: { sourceConstraintId: string; sourceGroupName: string; targetGroupName: string; dayOfWeek: number; startTime: string; endTime: string; stageChange: boolean }[];
+  /**
+   * Per årskurs of the new year, the plan it will follow and why: carried
+   * from the cohort's grade below, the entry grade's default (the newest
+   * decided plan), or none. See rollover-timplans.ts.
+   */
+  timplans: PlannedTimplan[];
   skipped: { model: string; reason: string; count: number | null }[];
   problems: RolloverProblem[];
   blocking: boolean;
@@ -303,6 +312,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     requirements: [],
     breaks: [],
     classRules: [],
+    timplans: [],
   };
   for (const row of resolved) {
     const group = groupById.get(row.sourceGroupId)!;
@@ -577,11 +587,25 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     }
   }
 
-  // ---- volume against the newest decided plan for the target grade
-  const planFor = (grade: number) =>
-    [...source.decidedPlans]
-      .filter((plan) => plan.entries.some((entry) => entry.gradeLevel === grade))
-      .sort((a, b) => (a.decidedAt < b.decidedAt ? 1 : -1))[0] ?? null;
+  // ---- timplan per årskurs, by cohort
+  const timplans = planCohortTimplans(source.timplans, g, source.defaultTimplan);
+  for (const row of timplans) {
+    if (row.localTimplanId !== null) {
+      writes.timplans.push({ gradeLevel: row.gradeLevel, localTimplanId: row.localTimplanId });
+    }
+  }
+
+  // ---- volume against the plan the target grade will follow
+  // That is the new year's timplan row for the grade (carried or default),
+  // a draft included — the plan the coverage report will measure the class
+  // against — and only when the plan gives the grade any minutes at all.
+  const followed = new Map(timplans.map((row) => [row.gradeLevel, row]));
+  const planFor = (grade: number) => {
+    const row = followed.get(grade);
+    if (!row || row.localTimplanId === null) return null;
+    const entries = (source.planEntries.get(row.localTimplanId) ?? []).filter((entry) => entry.gradeLevel === grade);
+    return entries.length > 0 ? { name: row.planName as string, entries } : null;
+  };
   const volumeOf = new Map<string, { findings: PlannedGroup['volumeFindings']; planName: string | null }>();
   for (const row of resolved) {
     const group = groupById.get(row.sourceGroupId)!;
@@ -677,6 +701,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     requirements: requirementStats,
     breaks,
     classRules,
+    timplans,
     skipped,
     problems,
     blocking: problems.some((problem) => problem.blocking),
@@ -704,6 +729,7 @@ export function hashWrites(writes: RolloverWrites): string {
     classRules: [...writes.classRules]
       .sort((a, b) => (a.sourceConstraintId < b.sourceConstraintId ? -1 : 1))
       .map((rule) => ({ ...rule, startTime: clock(rule.startTime), endTime: clock(rule.endTime) })),
+    timplans: [...writes.timplans].sort((a, b) => a.gradeLevel - b.gradeLevel),
   };
   return createHash('sha256').update(JSON.stringify(ordered)).digest('hex');
 }

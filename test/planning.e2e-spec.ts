@@ -3,7 +3,7 @@ import request from 'supertest';
 import { lockingRead, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './utils/staffing-world';
-import { IDS, defaultRolloverRows, givenRolloverWorld } from './utils/rollover-world';
+import { GRUNDSKOLA_2024, IDS, defaultRolloverRows, givenRolloverWorld } from './utils/rollover-world';
 import type { PrismaMock } from './utils/prisma-mock';
 import { PrismaService } from '../src/database/prisma.service';
 
@@ -3480,6 +3480,63 @@ describe('Planning surface (e2e)', () => {
       const removed = await request(http()).delete(base).set('x-test-user', admin()).expect(409);
       expect(removed.body).toMatchObject({ code: 'YEAR_HAS_HOME_PUPILS' });
       expect(world.rows['academicYear']!.some((year) => year['id'] === IDS.yearA)).toBe(true);
+    });
+
+    it('carries timplan per årskurs by cohort, and the new year’s rows are read and replaced through GET/PUT timplans', async () => {
+      const { world, rows, options } = givenSchool(2020);
+      const decidedId = 'f2000000-0000-4000-8000-0000000000d1';
+      rows['localTimplan']!.push({
+        id: decidedId,
+        name: 'Grundskola 2024',
+        schoolForm: 'GRUNDSKOLA',
+        status: 'DECIDED',
+        decidedAt: new Date('2024-05-01T00:00:00Z'),
+        createdAt: new Date('2024-04-01T00:00:00Z'),
+        nationalVersion: GRUNDSKOLA_2024,
+        entries: [],
+      });
+
+      const preview = await request(http()).post(`${base}/rollover/preview`).set('x-test-user', admin()).send(options).expect(200);
+      expect(preview.body.timplans).toEqual([
+        expect.objectContaining({ gradeLevel: 7, reason: 'DEFAULT', planName: 'Grundskola 2024', planStatus: 'DECIDED' }),
+        expect.objectContaining({ gradeLevel: 8, reason: 'CARRIED', fromGradeLevel: 7, planStatus: 'DRAFT' }),
+        expect.objectContaining({ gradeLevel: 9, reason: 'CARRIED', fromGradeLevel: 8, planStatus: 'DRAFT' }),
+      ]);
+      const created = await request(http())
+        .post(`${base}/rollover`)
+        .set('x-test-user', admin())
+        .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
+        .expect(201);
+      expect(created.body.counts).toMatchObject({ timplans: 3 });
+      const successor = `/api/v1/academic-years/${created.body.academicYear.id}/timplans`;
+
+      const read = await request(http()).get(successor).set('x-test-user', admin()).expect(200);
+      expect(read.body).toEqual([
+        { gradeLevel: 7, localTimplanId: decidedId, planName: 'Grundskola 2024', planStatus: 'DECIDED' },
+        { gradeLevel: 8, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT' },
+        { gradeLevel: 9, localTimplanId: IDS.draftPlan, planName: 'Utkast 2027', planStatus: 'DRAFT' },
+      ]);
+
+      // The admin decides åk 8 should follow the decided plan after all, and drops åk 9.
+      const replaced = await request(http())
+        .put(successor)
+        .set('x-test-user', admin())
+        .send({
+          timplans: [
+            { gradeLevel: 7, localTimplanId: decidedId },
+            { gradeLevel: 8, localTimplanId: decidedId },
+            { gradeLevel: 9, localTimplanId: null },
+          ],
+        })
+        .expect(200);
+      expect(replaced.body.map((row: { gradeLevel: number; planName: string }) => [row.gradeLevel, row.planName])).toEqual([
+        [7, 'Grundskola 2024'],
+        [8, 'Grundskola 2024'],
+      ]);
+      const again = await request(http()).get(successor).set('x-test-user', admin()).expect(200);
+      expect(again.body).toEqual(replaced.body);
+      // The source year's mapping is the cohort's record and did not move.
+      expect(world.rows['academicYearTimplan']!.filter((row) => row['academicYearId'] === IDS.yearA)).toHaveLength(3);
     });
   });
 
