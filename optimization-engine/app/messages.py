@@ -577,10 +577,11 @@ MESSAGES: dict[str, str] = {
         "other {The teacher}} would carry {minutes} minutes a week against a target of "
         "{target} (the limit is {limit} with the {tolerance} % tolerance)."
     ),
+    # "Curriculum entry", the English the web's nav uses for a timplanspost.
     "STAFF_UNSTAFFED_REQUIREMENTS": (
-        "{count, plural, one {# requirement has} other {# requirements have}} no teacher, and "
-        "the school's staffing policy refuses to generate a timetable until every requirement "
-        "has one. Staff the requirements named here, or allow generation without a teacher in "
+        "{count, plural, one {# curriculum entry has} other {# curriculum entries have}} no "
+        "teacher, and the school's staffing policy refuses to generate a timetable until every "
+        "entry has one. Staff the entries named here, or allow generation without a teacher in "
         "the staffing settings."
     ),
 }

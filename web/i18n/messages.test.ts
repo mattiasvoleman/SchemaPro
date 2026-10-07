@@ -80,6 +80,21 @@ describe("translation files", () => {
     expect(mismatched).toEqual([]);
   });
 
+  it("call a timplanspost a curriculum entry in English, as the nav does", () => {
+    // nav.requirements is "Curriculum entries"; the staffing workspace and its
+    // engine sentence said "Requirements" for the same rows, so one English
+    // screen named one thing twice. Scoped to the namespaces that name a
+    // TeachingRequirement as a row a person staffs; the engine's older
+    // "requirement" sentences (lesson length, rooms) are another matter.
+    const english = en as Messages;
+    const named = [
+      ...flatten(lookup(english, "staffing") as Messages, "staffing."),
+      "engineMessages.STAFF_UNSTAFFED_REQUIREMENTS",
+    ].filter((key) => /requirement/i.test(String(lookup(english, key))));
+    expect(named).toEqual([]);
+    expect(String(lookup(english, "nav.requirements"))).toBe("Curriculum entries");
+  });
+
   it("leave no message empty in either language", () => {
     // Checked per language, not per key: reading sv ?? en would let a blank
     // English string hide behind its Swedish counterpart, which is exactly the
