@@ -1747,6 +1747,17 @@ describe("next year's grid, before its activation", () => {
     expect(card("Idrott")).toBeUndefined();
   });
 
+  it("puts the year choice in a row of its own, not among the header's actions", async () => {
+    // jsdom does no layout, so the width is measured elsewhere (the commit);
+    // what this pins is where the choice sits. Beside nine buttons it ran
+    // past a 1440 px screen and pushed Publicera out of sight.
+    render(<TimetablePage />);
+    const choice = screen.getByRole("group", { name: "planningYear.label" });
+    const actions = screen.getByRole("button", { name: /timetable\.publish/ }).parentElement!;
+    expect(actions.contains(choice)).toBe(false);
+    expect(choice.closest("h1")).toBeNull();
+  });
+
   it("offers next year's groups in the filter, and not this year's", async () => {
     const user = await showNextYear();
     await user.click(screen.getByRole("button", { name: "timetable.filterGroup" }));
