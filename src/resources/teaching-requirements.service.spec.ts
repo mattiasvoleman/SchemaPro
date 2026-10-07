@@ -862,6 +862,26 @@ describe('TeachingRequirementsService', () => {
         expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
       });
 
+      it.each<[string, object, number]>([
+        // 960 + 3 × 60 × 100 % = 1 140: judged at the 100 it is written at, not at 0.
+        ['a null load percentage', { lessonsPerWeek: 3, teacherLoadPercent: null }, 1140],
+        // 960 + 1 × 150 = 1 110: judged at the 1 lesson it is written at.
+        ['a null lesson count', { lessonsPerWeek: null, minutesPerLesson: 150 }, 1110],
+      ])('REFUSE judges the row it writes: %s is judged at its default', async (_case, body, minutes) => {
+        // The DTO refuses null for these NOT NULL figures now; this is the
+        // service's own half, for a caller that reaches it another way. The
+        // check used to read null as 0 while the insert wrote `?? default`.
+        arrange({ policy: { overAllocationMode: 'REFUSE' } });
+
+        const refused = service.create(dto({ teacherId: ANNA, ...body } as never), testUser());
+
+        await refused.catch(() => undefined);
+        await expect(refused).rejects.toMatchObject({
+          response: { code: 'STAFF_TEACHER_OVER_TARGET', params: expect.objectContaining({ minutes }) },
+        });
+        expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+      });
+
       it('WARN over target: saves, and the warning carries the same params', async () => {
         arrange();
 

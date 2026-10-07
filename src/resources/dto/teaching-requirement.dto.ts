@@ -6,8 +6,20 @@ import {
   IsUUID,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { IsCalendarDate } from './is-calendar-date';
+
+/**
+ * For the NOT NULL figures: omitted is allowed (the column's default, or the
+ * stored value on a PATCH), null is validated — and refused — like any other
+ * value. @IsOptional skips every validator for null as well as undefined, and
+ * that let null through to two different readings: the create wrote
+ * `?? default` while the staffing check judged it as 0 (a REFUSE bypass), and
+ * the update sent it to the NOT NULL column for an unnamed 400. The duties'
+ * and the lokal timplan's DTOs refuse null the same way.
+ */
+const presentOrNull = (_: object, value: unknown): boolean => value !== undefined;
 
 export class CreateTeachingRequirementDto {
   @IsUUID('4')
@@ -41,25 +53,25 @@ export class CreateTeachingRequirementDto {
    * 0..200 mirrors TeachingRequirements_*_load_percent_is_sane, so the
    * number the table would refuse is refused here with the field named.
    */
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt({ message: 'teacherLoadPercent: anges som ett heltal i procent.' })
   @Min(0, { message: 'teacherLoadPercent: kan inte vara negativ.' })
   @Max(200, { message: 'teacherLoadPercent: högst 200 %.' })
   teacherLoadPercent?: number;
 
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt({ message: 'coTeacherLoadPercent: anges som ett heltal i procent.' })
   @Min(0, { message: 'coTeacherLoadPercent: kan inte vara negativ.' })
   @Max(200, { message: 'coTeacherLoadPercent: högst 200 %.' })
   coTeacherLoadPercent?: number;
 
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt()
   @Min(1)
   @Max(40)
   lessonsPerWeek?: number;
 
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt()
   @Min(15)
   @Max(240)
@@ -79,13 +91,13 @@ export class CreateTeachingRequirementDto {
    * 0..60 mirrors the CHECK constraints on the columns, so a number the
    * database would refuse is refused here instead — with the field named.
    */
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt()
   @Min(0)
   @Max(60)
   minutesBefore?: number;
 
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt()
   @Min(0)
   @Max(60)
@@ -96,7 +108,7 @@ export class CreateTeachingRequirementDto {
    * every lesson generated from the requirement, instead of once per lesson in
    * the master timetable after the lessons already exist.
    */
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsEnum(LessonRecurrence)
   recurrence?: LessonRecurrence;
 
@@ -133,44 +145,44 @@ export class UpdateTeachingRequirementDto {
   coTeacherId?: string | null;
 
   /** What each teacher is charged, 0..200 %; see the create DTO. */
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt({ message: 'teacherLoadPercent: anges som ett heltal i procent.' })
   @Min(0, { message: 'teacherLoadPercent: kan inte vara negativ.' })
   @Max(200, { message: 'teacherLoadPercent: högst 200 %.' })
   teacherLoadPercent?: number;
 
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt({ message: 'coTeacherLoadPercent: anges som ett heltal i procent.' })
   @Min(0, { message: 'coTeacherLoadPercent: kan inte vara negativ.' })
   @Max(200, { message: 'coTeacherLoadPercent: högst 200 %.' })
   coTeacherLoadPercent?: number;
 
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt()
   @Min(1)
   @Max(40)
   lessonsPerWeek?: number;
 
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt()
   @Min(15)
   @Max(240)
   minutesPerLesson?: number;
 
   /** Pupil buffers around the lesson; see the create DTO for what they mean. */
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt()
   @Min(0)
   @Max(60)
   minutesBefore?: number;
 
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsInt()
   @Min(0)
   @Max(60)
   minutesAfter?: number;
 
-  @IsOptional()
+  @ValidateIf(presentOrNull)
   @IsEnum(LessonRecurrence)
   recurrence?: LessonRecurrence;
 
