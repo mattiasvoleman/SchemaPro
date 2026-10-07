@@ -29,11 +29,21 @@ import { Prisma } from '@prisma/client';
  * and TD403 — a teacher writing the slot an uppdrag holds. The first is a 409
  * TEACHER_DUTY_BLOCK_MISMATCH, met by an admin's constraint PATCH that would
  * move a linked slot; the second a 403. See teacherDutyBlockRefusal.
+ *
+ * Deleting a lokal timplan that a läsår's årskurs follows is refused by the
+ * ON DELETE RESTRICT key of AcademicYearTimplans (migration 20261007130000),
+ * and that refusal is a 409 TIMPLAN_IN_USE — the answer the timplan service
+ * gives itself when it finds the years first — not the generic "references
+ * a record that does not exist", which would be false. See
+ * isTimplanInUseRefusal.
  */
 export function rethrowPrismaError(error: unknown): never {
   const decided = decidedTimplanRefusal(error);
   if (decided) {
     throw decidedTimplanConflict(decided.planName === null ? [] : [decided.planName]);
+  }
+  if (isTimplanInUseRefusal(error)) {
+    throw timplanInUseConflict([]);
   }
   const dutyBlock = teacherDutyBlockRefusal(error);
   if (dutyBlock) {
@@ -138,6 +148,63 @@ export function decidedTimplanConflict(planNames: string[]): ConflictException {
   });
 }
 
+/** The problem `code` of a refused delete of a plan some läsår follows. */
+export const TIMPLAN_IN_USE = 'TIMPLAN_IN_USE';
+
+/** The key that refuses deleting a plan a (läsår, årskurs) follows. */
+const YEAR_TIMPLAN_PLAN_KEY = 'AcademicYearTimplans_localTimplanId_schoolId_fkey';
+
+/**
+ * Recognises the ON DELETE RESTRICT refusal of AcademicYearTimplans' plan key
+ * (migration 20261007130000): a DELETE on LocalTimplans that a year still
+ * points at. @prisma/adapter-pg reports it as P2003 with the constraint under
+ * meta.driverAdapterError.cause.constraint.index and the driver's message
+ * "update or delete on table "LocalTimplans" violates foreign key constraint
+ * …" — measured against PostgreSQL 16 through the real adapter for delete and
+ * deleteMany alike.
+ *
+ * The SAME constraint also refuses the other direction — an attachment
+ * INSERTed or UPDATEd to name a plan that does not exist ("insert or update
+ * on table "AcademicYearTimplans" …") — and that one is NOT in use: it is the
+ * generic P2003. So the side is read off the message, and when the cause is
+ * gone, off meta.modelName (the model whose operation failed: LocalTimplan
+ * for the delete, AcademicYearTimplan for the write).
+ */
+export function isTimplanInUseRefusal(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  if (error.code !== 'P2003') return false;
+  const meta = error.meta as
+    | { modelName?: unknown; driverAdapterError?: { cause?: DriverCause & { constraint?: { index?: unknown } } } }
+    | undefined;
+  const cause = meta?.driverAdapterError?.cause;
+  const constraint =
+    typeof cause?.constraint?.index === 'string'
+      ? cause.constraint.index
+      : (/constraint: `([^`]+)`/.exec(error.message)?.[1] ?? null);
+  if (constraint !== YEAR_TIMPLAN_PLAN_KEY) return false;
+  if (typeof cause?.originalMessage === 'string') {
+    return cause.originalMessage.startsWith('update or delete on table "LocalTimplans"');
+  }
+  return meta?.modelName === 'LocalTimplan';
+}
+
+/**
+ * The 409 for deleting a plan some läsår follows, naming the years when the
+ * caller knows them (the service asks first; the key's refusal does not say).
+ */
+export function timplanInUseConflict(yearNames: string[]): ConflictException {
+  const which =
+    yearNames.length === 0
+      ? 'Den lokala timplanen följs av minst ett läsår'
+      : yearNames.length === 1
+        ? `Den lokala timplanen följs av läsåret ${listNames(yearNames)}`
+        : `Den lokala timplanen följs av läsåren ${listNames(yearNames)}`;
+  return new ConflictException({
+    message: `${which} och kan inte tas bort. Välj en annan timplan för de årskurserna under läsårets "Timplan per årskurs" först.`,
+    code: TIMPLAN_IN_USE,
+  });
+}
+
 /** The problem `code` of a write the database aborted for a concurrent one. */
 export const WRITE_CONFLICT = 'WRITE_CONFLICT';
 
@@ -167,12 +234,13 @@ export function writeConflict(): ConflictException {
 }
 
 /**
- * The lokal timplan CHECKs (migration 20261006120000) and the Fas 2
- * tjänstefördelning CHECKs (20261007090000) by constraint name, as the field
- * and the bound a 400 should state. The DTOs mirror each bound, so this is the
- * second line: a value a DTO counted differently from the column (lengths are
- * code points on both sides now, but the next difference will not announce
- * itself) answers 400 naming the field rather than 500.
+ * The lokal timplan CHECKs (migrations 20261006120000 and 20261007130000)
+ * and the Fas 2 tjänstefördelning CHECKs (20261007090000) by constraint
+ * name, as the field and the bound a 400 should state. The DTOs mirror each
+ * bound, so this is the second line: a value a DTO counted differently from
+ * the column (lengths are code points on both sides now, but the next
+ * difference will not announce itself) answers 400 naming the field rather
+ * than 500.
  */
 const NAMED_CHECKS: Record<string, string> = {
   LocalTimplans_name_is_sane: 'name: timplanen behöver ett namn på högst 100 tecken.',
@@ -182,6 +250,7 @@ const NAMED_CHECKS: Record<string, string> = {
   LocalTimplanEntries_gradeLevel_is_sane: 'gradeLevel: årskursen är 0 (förskoleklass) till 10.',
   LocalTimplanEntries_minutesPerWeek_is_sane: 'minutesPerWeek: 0 till 1200 minuter per vecka.',
   LocalTimplanEntries_note_is_sane: 'note: anteckningen kan vara högst 500 tecken.',
+  AcademicYearTimplans_gradeLevel_is_sane: 'gradeLevel: årskursen är 0 (förskoleklass) till 10.',
   TeachingRequirements_teacher_load_percent_is_sane:
     'teacherLoadPercent: andelen som räknas för läraren är 0 till 200 %.',
   TeachingRequirements_co_teacher_load_percent_is_sane:

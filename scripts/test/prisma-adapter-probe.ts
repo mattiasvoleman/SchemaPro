@@ -68,6 +68,7 @@ import { SubjectsService } from '../../src/resources/subjects.service';
 import { LocalTimplansService } from '../../src/timplan/local-timplans.service';
 import {
   decidedTimplanRefusal,
+  isTimplanInUseRefusal,
   rethrowPrismaError,
   teacherDutyBlockRefusal,
 } from '../../src/common/utils/prisma-errors';
@@ -1484,6 +1485,80 @@ async function runChecks(
     await duties.remove(thisYears.id, admin);
   });
 
+  // ---- (t) a plan a läsår follows, refused by its key, answers 4xx through the adapter
+  await check('(t) deleting a plan a läsår follows is a 409 TIMPLAN_IN_USE through the real adapter, and the attachment CHECK a 400', async () => {
+    const timplans = new LocalTimplansService(api);
+    const plan = await timplans.create(
+      { name: `${MARKER} följd`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
+      admin,
+    );
+    // The attachment, as an admin's own write under RLS (the year dialog's
+    // PUT is P2's next stage; the key does not care who wrote the row).
+    await api.withRls(admin, (tx) =>
+      tx.academicYearTimplan.create({
+        data: { schoolId: fixture.schoolId, academicYearId: fixture.activeYearId, gradeLevel: 4, localTimplanId: plan.id },
+      }),
+    );
+    const isInUse = (error: unknown) => {
+      assert.ok(error instanceof ConflictException, `expected ConflictException, got ${summarise(error)}`);
+      const body = error.getResponse() as { code?: string };
+      assert.equal(body.code, 'TIMPLAN_IN_USE', summarise(error));
+      return true;
+    };
+
+    // The raw refusal first: 23503 on the plan key, recognised as in use.
+    try {
+      await api.withRls(admin, (tx) => tx.localTimplan.delete({ where: { id: plan.id } }));
+      assert.fail('an attached plan was deleted');
+    } catch (error) {
+      assert.equal(sqlStateOf(error), '23503', summarise(error));
+      assert.ok(isTimplanInUseRefusal(error), `not recognised as in use: ${summarise(error)}`);
+    }
+    // Through the service, whichever line answers.
+    await assert.rejects(timplans.remove(plan.id, admin), isInUse);
+    assert.equal((await owner.query('SELECT 1 FROM "LocalTimplans" WHERE id = $1', [plan.id])).rowCount, 1);
+
+    // The same key's other direction — another school's year under a row
+    // stamped with this one — is a missing reference, not a plan in use.
+    try {
+      await api.withRls(admin, (tx) =>
+        tx.academicYearTimplan.create({
+          data: { schoolId: fixture.schoolId, academicYearId: fixture.foreignYearId, gradeLevel: 4, localTimplanId: plan.id },
+        }),
+      );
+      assert.fail('an attachment named another school’s year');
+    } catch (error) {
+      assert.equal(sqlStateOf(error), '23503', summarise(error));
+      assert.equal(isTimplanInUseRefusal(error), false, summarise(error));
+      assert.throws(() => rethrowPrismaError(error), (thrown: unknown) => {
+        assert.ok(thrown instanceof ConflictException, summarise(thrown));
+        assert.notEqual((thrown.getResponse() as { code?: string }).code, 'TIMPLAN_IN_USE');
+        return true;
+      });
+    }
+
+    // The CHECK a DTO bound did not foresee: a 400 naming gradeLevel.
+    try {
+      await api.withRls(admin, (tx) =>
+        tx.academicYearTimplan.create({
+          data: { schoolId: fixture.schoolId, academicYearId: fixture.activeYearId, gradeLevel: 11, localTimplanId: plan.id },
+        }),
+      );
+      assert.fail('årskurs 11 was attached');
+    } catch (error) {
+      assert.throws(() => rethrowPrismaError(error), (thrown: unknown) => {
+        assert.ok(thrown instanceof BadRequestException, summarise(thrown));
+        assert.ok(thrown.message.startsWith('gradeLevel: '), thrown.message);
+        return true;
+      });
+    }
+
+    // Detached, the plan goes.
+    await api.withRls(admin, (tx) => tx.academicYearTimplan.deleteMany({ where: { localTimplanId: plan.id } }));
+    await timplans.remove(plan.id, admin);
+    assert.equal((await owner.query('SELECT 1 FROM "LocalTimplans" WHERE id = $1', [plan.id])).rowCount, 0);
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the
@@ -1633,6 +1708,13 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
     schoolId,
     PROBE_ANNUAL_HOURS,
   ]);
+  // (t)'s attachment, for a run that stopped before detaching it: the plan
+  // key is ON DELETE RESTRICT, so the plans below would not go while it stands.
+  await owner.query(
+    `DELETE FROM "AcademicYearTimplans" a USING "LocalTimplans" p
+      WHERE p.id = a."localTimplanId" AND p."schoolId" = $1 AND p.name LIKE $2 || '%'`,
+    [schoolId, MARKER],
+  );
   // Plans before the subject: a decided plan's entries refuse the subject's
   // cascade, and the plans' own cascade passes the trigger.
   await owner.query(`DELETE FROM "LocalTimplans" WHERE "schoolId" = $1 AND name LIKE $2 || '%'`, [schoolId, MARKER]);
