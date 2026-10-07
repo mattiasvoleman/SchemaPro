@@ -44,18 +44,20 @@
 // static (it is Dialog plus two buttons) and the four page dialogs lazy:
 // 185.6KB here and the layout untouched again — the cheapest of the three.
 // P2 added two more on the same terms (Skapa timplansposter, Timplan per
-// årskurs). Measured 2026-10-07: 187.2 → 187.7KB here with both dialogs and
-// their buttons, the layout's chunks untouched.
+// årskurs). Measured 2026-10-07: 187.2 → 187.7KB here with both dialogs, the
+// three buttons and the Täckning link, the layout's chunks untouched.
 //
 // P2 ALSO MADE THIS THE PAGE THE LÄSÅR IS TIED TO THE PLAN FROM: "Timplan per
-// årskurs" (which plan each årskurs follows, per läsår) and "Skapa
+// årskurs" (which plan each årskurs follows, per läsår), "Skapa
 // timplansposter" (the plan's minutes as the posts a year's classes miss, on
-// the plan shown).
+// the plan shown) and a link to Täckning, where the posts are held against
+// the plan per class and pupil.
 
 import { lazy, Suspense, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { CalendarRange, Download, FileUp, ListPlus, Plus, Target, TriangleAlert } from "lucide-react";
+import { Link } from "@/i18n/navigation";
 import { useAcademicYears, useNationalTimplans, usePeople, useSubjects } from "@/lib/queries";
 import {
   useLocalTimplan,
@@ -360,6 +362,12 @@ export default function TimplanPage() {
             <Button variant="outline" onClick={() => setDialog("yearTimplans")} disabled={dirty}>
               <CalendarRange />
               {t("yearTimplansButton")}
+            </Button>
+            <Button asChild variant="ghost">
+              <Link href="/admin/timplan/tackning">
+                <Target />
+                {t("coverageLink")}
+              </Link>
             </Button>
           </>
         }
