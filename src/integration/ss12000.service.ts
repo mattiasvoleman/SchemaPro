@@ -123,7 +123,13 @@ export class Ss12000Service {
   async groups(schoolId: string, limit?: string, offset?: string) {
     const { take, skip } = this.page(limit, offset);
     return this.prisma.withServicePrincipal(schoolId, async (tx) => {
-      const where = { schoolId };
+      // The active läsår's groups only. After a läsårsrullning the school
+      // holds next year's classes beside this year's — "8A" twice, one of
+      // them the promoted 7A with no pupils yet — and a kommun reading both
+      // under one name cannot tell which roster is the one in session. The
+      // pupils' own groupMemberships (persons) already point into the active
+      // year only, so this keeps the two exports talking about the same year.
+      const where = { schoolId, academicYear: { isActive: true } };
       const [totalCount, groups] = await Promise.all([
         tx.studentGroup.count({ where }),
         tx.studentGroup.findMany({
@@ -326,8 +332,14 @@ export class Ss12000Service {
         // Group membership (students only), creating the class if unknown.
         let studentGroupId: string | undefined;
         if (person.groupDisplayName && user.role === 'STUDENT' && activeYear) {
+          // Matched within the active läsår, where the class is created too.
+          // Group names are unique per (school, year), not per school: after
+          // a läsårsrullning "8A" is both this year's 8A and next year's (the
+          // promoted 7A), and a name match across years could put this
+          // year's 8A pupil into next year's 8A — where activation counts
+          // them as already placed, so they never reach 9A.
           const existing = await tx.studentGroup.findFirst({
-            where: { schoolId, name: person.groupDisplayName },
+            where: { schoolId, academicYearId: activeYear.id, name: person.groupDisplayName },
             select: { id: true },
           });
           if (existing) {
