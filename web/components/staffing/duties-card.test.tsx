@@ -131,6 +131,26 @@ describe("DutiesCard", () => {
     expect(create.mock.calls[0]?.[0]).not.toHaveProperty("blockedConstraintId");
   });
 
+  it("says nothing is wrong with a form nobody has typed in yet, and keeps Save off until it is whole", async () => {
+    // Opening "Lägg till uppdrag" used to announce a role="alert" for the
+    // empty label at once, and the minutes error as soon as the label was typed.
+    const user = userEvent.setup();
+    renderCard();
+    await user.click(screen.getByRole("button", { name: "addDuty" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+
+    type("dutyLabel", "Mentor 7B");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+
+    type("dutyMinutesLabel", "0");
+    expect(screen.getByRole("alert")).toHaveTextContent("problem_dutyMinutesOutOfRange");
+    type("dutyMinutesLabel", "90");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "save" })).toBeEnabled();
+  });
+
   it("refuses a slot off the five-minute grid before anything is sent", async () => {
     const user = userEvent.setup();
     renderCard();
