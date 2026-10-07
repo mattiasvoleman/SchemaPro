@@ -1823,19 +1823,6 @@ export default function TimetablePage() {
         subtitle={t("subtitle")}
         actions={
           <div className="flex items-center gap-2">
-            <PlanningYearPicker
-              {...planning}
-              onChoose={(yearId) => {
-                // What was picked, ticked and undoable belongs to the other
-                // year's grid: its group ids are not this year's, and an undo
-                // would move a lesson nobody can see.
-                setGroupFilters([]);
-                setSelectedIds(new Set());
-                setPlacingLunch(false);
-                history.clear();
-                planning.choose(yearId);
-              }}
-            />
             <Button
               variant="outline"
               size="icon"
@@ -1923,6 +1910,24 @@ export default function TimetablePage() {
             </Button>
           </div>
         }
+      />
+      {/* In a row of its own, above the banner it explains, and not in the
+          header's actions: that row is nine buttons already, and with the
+          choice beside them it ran past a 1440 px screen and put Publicera
+          out of sight for the whole planning window. */}
+      <PlanningYearPicker
+        {...planning}
+        className="mb-4"
+        onChoose={(yearId) => {
+          // What was picked, ticked and undoable belongs to the other
+          // year's grid: its group ids are not this year's, and an undo
+          // would move a lesson nobody can see.
+          setGroupFilters([]);
+          setSelectedIds(new Set());
+          setPlacingLunch(false);
+          history.clear();
+          planning.choose(yearId);
+        }}
       />
       <ProjectedRostersBanner
         year={shownYear}

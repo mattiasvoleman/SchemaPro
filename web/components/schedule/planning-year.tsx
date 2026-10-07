@@ -26,11 +26,14 @@ export function PlanningYearPicker({
   active,
   successor,
   onChoose,
+  className,
 }: {
   year: AcademicYear | null;
   active: AcademicYear | null;
   successor: AcademicYear | null;
   onChoose: (yearId: string) => void;
+  /** Spacing from the page: it sits in a header's actions on one page and in a row of its own on another. */
+  className?: string;
 }) {
   const t = useTranslations("planningYear");
   if (!active || !successor || !year) return null;
@@ -45,7 +48,7 @@ export function PlanningYearPicker({
     </Button>
   );
   return (
-    <div role="group" aria-label={t("label")} className="flex gap-1">
+    <div role="group" aria-label={t("label")} className={className ? `flex gap-1 ${className}` : "flex gap-1"}>
       {option(active, t("optionActive", { name: active.name }))}
       {option(successor, t("optionNext", { name: successor.name }))}
     </div>
