@@ -384,6 +384,25 @@ describe('CalendarLessonsService', () => {
         expect(tx.calendarLessonTeacher.create).toHaveBeenCalledTimes(1);
       });
 
+      it('asks about the lesson’s whole attendance: an extra åk 7 group widens the class’s 5 to 5–7', async () => {
+        // A combined lesson. The master-lesson PATCH already derived the span
+        // from every group and named pupil; the vikarie path read the main
+        // group alone, so a 4–6 behörighet passed for åk 7 pupils unsaid.
+        const EXTRA_GROUP = '15151515-1515-4515-8515-151515151515';
+        arrangeAssign({ extraGroups: [{ studentGroupId: EXTRA_GROUP }], participants: [] });
+        arrangePolicy('WARN', [held()]);
+        tx.studentGroup.findMany.mockResolvedValue([
+          { id: GROUP_ID, gradeLevel: 5 },
+          { id: EXTRA_GROUP, gradeLevel: 7 },
+        ]);
+
+        const result = await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+        expect(result.warnings).toEqual([
+          { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: { role: 'SUBSTITUTE', subject: 'Engelska', grades: '5–7' } },
+        ]);
+      });
+
       it('reads validity on the lesson’s date, not over the year', async () => {
         arrangeAssign();
         // Valid from the day after the lesson (2026-08-10).
@@ -786,7 +805,11 @@ describe('CalendarLessonsService', () => {
         tx.teacherSubjectQualification.count.mockResolvedValue(3);
         // The lesson's class is a plain åk 7 class with no roster rows, so its
         // span is its own year, 7-7 — derived through the proxy's helper.
-        tx.studentGroup.findUnique.mockImplementation(answerById([{ id: GROUP_ID, gradeLevel: 7 }]));
+        tx.studentGroup.findUnique.mockImplementation(
+          answerById([{ id: GROUP_ID, gradeLevel: 7, academicYearId: 'year-1' }]),
+        );
+        // The year's groups, which the span is derived over (attendanceSpan).
+        tx.studentGroup.findMany.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 7 }]);
         tx.studentGroupMember.findMany.mockResolvedValue([]);
         tx.teachingRequirement.findMany.mockResolvedValue([
           // Teaches this class, no behörighet recorded.
@@ -853,6 +876,29 @@ describe('CalendarLessonsService', () => {
         await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
           { teacherId: OTHER_ID, isPrimary: false, qualificationKind: 'BEHORIG' },
           { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+        ]);
+      });
+
+      it('reads the span from the lesson’s whole attendance, as the vikarie warning does', async () => {
+        // An extra åk 9 group on an åk 7 lesson: a 7–7 behörighet does not
+        // cover it, a 7–9 one does. The picker's badge and the warning the
+        // assignment answers with must read the same span.
+        storeLesson({ extraGroups: [{ studentGroupId: OTHER_GROUP_ID }], participants: [] });
+        tx.studentGroup.findMany.mockResolvedValue([
+          { id: GROUP_ID, gradeLevel: 7 },
+          { id: OTHER_GROUP_ID, gradeLevel: 9 },
+        ]);
+        tx.teacherSubjectQualification.findMany.mockImplementation(
+          answerRows([
+            qualification({ userId: LEGIT_ID, minGradeLevel: 7, maxGradeLevel: 7 }),
+            qualification({ userId: TILLATEN_ID, kind: 'TILLATEN' }),
+          ]),
+        );
+
+        await expect(service.suggestSubstitutes(LESSON_ID, testUser())).resolves.toEqual([
+          { teacherId: TILLATEN_ID, isPrimary: false, qualificationKind: 'TILLATEN' },
+          { teacherId: PRIMARY_ID, isPrimary: true, qualificationKind: null },
+          { teacherId: OTHER_ID, isPrimary: false, qualificationKind: null },
         ]);
       });
 

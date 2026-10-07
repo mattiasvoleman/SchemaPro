@@ -9,12 +9,11 @@ import type { PrismaClient, TeacherQualificationKind } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
-import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import {
   NotificationsService,
   type NotificationKind,
 } from '../notifications/notifications.service';
-import { lessonQualificationFindings } from '../staffing/staffing-enforcement';
+import { attendanceSpan, lessonQualificationFindings } from '../staffing/staffing-enforcement';
 import { settleFindings, type StaffingWarning } from '../staffing/staffing-checks';
 import type {
   AssignSubstituteDto,
@@ -75,7 +74,17 @@ interface LessonForAction {
   studentGroupId: string;
   subject: { name: string };
   teachers: { teacherId: string }[];
+  /** The lesson's attendance beyond its class, for the grade span a vikarie is asked about. */
+  extraGroups: { studentGroupId: string }[];
+  participants: { studentId: string }[];
 }
+
+const lessonGroupIds = (lesson: LessonForAction): string[] => [
+  lesson.studentGroupId,
+  ...(lesson.extraGroups ?? []).map((row) => row.studentGroupId),
+];
+const lessonStudentIds = (lesson: LessonForAction): string[] =>
+  (lesson.participants ?? []).map((row) => row.studentId);
 
 /**
  * Day-to-day operations on individual calendar lessons: cancellations,
@@ -199,7 +208,9 @@ export class CalendarLessonsService {
               schoolId: lesson.schoolId,
               academicYearId: group.academicYearId,
               subjectId: lesson.subjectId,
-              groupIds: [lesson.studentGroupId],
+              // The whole attendance, as the master-lesson PATCH asks it.
+              groupIds: lessonGroupIds(lesson),
+              studentIds: lessonStudentIds(lesson),
               assignees: [{ userId: dto.teacherId, role: 'SUBSTITUTE' }],
               window: { startDate: lessonDay, endDate: lessonDay },
             }),
@@ -376,7 +387,7 @@ export class CalendarLessonsService {
       const qualificationOf = new Map<string, TeacherQualificationKind>();
       const recorded = await tx.teacherSubjectQualification.count();
       if (recorded > 0) {
-        const span = await this.gradeSpanOfLesson(tx, lesson.studentGroupId);
+        const span = await this.gradeSpanOfLesson(tx, lesson);
         const held = await tx.teacherSubjectQualification.findMany({
           where: { subjectId: lesson.subjectId },
           select: {
@@ -449,15 +460,20 @@ export class CalendarLessonsService {
    */
   private async gradeSpanOfLesson(
     tx: PrismaClient,
-    studentGroupId: string,
+    lesson: LessonForAction,
   ): Promise<{ min: number; max: number } | null> {
     const group = await tx.studentGroup.findUnique({
-      where: { id: studentGroupId },
-      select: { id: true, gradeLevel: true },
+      where: { id: lesson.studentGroupId },
+      select: { academicYearId: true },
     });
     if (!group) return null;
-    const rosters = await loadRosters(tx, [group.id], [group]);
-    return gradeSpanOf(rosters, [group.id]);
+    // The derivation the assignment's own warning uses (attendanceSpan), so
+    // the badge here and the warning after the click read one span.
+    return attendanceSpan(tx, {
+      academicYearId: group.academicYearId,
+      groupIds: lessonGroupIds(lesson),
+      studentIds: lessonStudentIds(lesson),
+    });
   }
 
   /** True when the teacher already teaches another scheduled lesson that overlaps. */
@@ -498,6 +514,8 @@ export class CalendarLessonsService {
         studentGroupId: true,
         subject: { select: { name: true } },
         teachers: { select: { teacherId: true } },
+        extraGroups: { select: { studentGroupId: true } },
+        participants: { select: { studentId: true } },
       },
     });
     if (!lesson) {
