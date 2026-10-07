@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import GeneratePage from "./page";
 
@@ -17,6 +17,8 @@ const state = vi.hoisted(() => ({
   groups: [] as unknown[],
   memberships: [] as unknown[],
   people: [] as unknown[],
+  /** StaffingPolicy as GET /staffing-policy answers; undefined = not answered yet. */
+  policy: undefined as unknown,
 }));
 
 const noMutation = { mutateAsync: vi.fn(), isPending: false };
@@ -32,6 +34,10 @@ vi.mock("@/lib/queries", () => ({
   useOptimizationJob: () => ({ data: state.job }),
   useOptimizationHistory: () => ({ data: [] }),
   useLunchSettings: () => ({ data: null }),
+}));
+
+vi.mock("@/lib/staffing-queries", () => ({
+  useStaffingPolicy: () => ({ data: state.policy }),
 }));
 
 vi.mock("@/i18n/navigation", () => ({
@@ -77,6 +83,8 @@ const pupil = (id: string, studentGroupId: string) => ({
 beforeEach(() => {
   cleanup();
   state.job = undefined;
+  state.policy = undefined;
+  state.untranslated = [];
   state.groups = [
     { id: "g-41", academicYearId: "y-1", name: "4.1", kind: "CLASS", gradeLevel: 4 },
     { id: "g-sl1", academicYearId: "y-1", name: "4sl1", kind: "TEACHING_GROUP", gradeLevel: null },
@@ -116,7 +124,115 @@ describe("groups the timplan names but whose year cannot be derived", () => {
   });
 });
 
+describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
+  const unstaffed = (studentGroupId: string) => ({ ...requirement(studentGroupId), teacherId: null });
+  const runButton = () => screen.getByRole("button", { name: /generate\.run/ });
+  const staffedLine = () => screen.getByText("generate.preStaffed").closest("li") as HTMLElement;
+
+  // Every other prerequisite met, so the button's state is this line's alone.
+  beforeEach(() => {
+    state.people.push({ ...pupil("t-1", "g-41"), role: "TEACHER", studentGroupId: null });
+  });
+
+
+  it("passes quietly when every post has a teacher", () => {
+    state.policy = { unstaffedGeneration: "REFUSE" };
+    render(<GeneratePage />);
+
+    expect(within(staffedLine()).getByText("0")).toBeInTheDocument();
+    expect(within(staffedLine()).queryByRole("link")).toBeNull();
+    expect(runButton()).toBeEnabled();
+    expect(screen.queryByText("generate.runBlockedUnstaffed")).toBeNull();
+  });
+
+  it("warns under ALLOW, links to the unstaffed panel and still lets the school run", () => {
+    state.policy = { unstaffedGeneration: "ALLOW" };
+    state.requirements = [unstaffed("g-41"), unstaffed("g-ma1"), requirement("g-sl1")];
+    render(<GeneratePage />);
+
+    expect(within(staffedLine()).getByText("generate.preStaffedMissing(2)")).toBeInTheDocument();
+    expect(within(staffedLine()).getByRole("link", { name: "generate.preStaffed" })).toHaveAttribute(
+      "href",
+      "/admin/staffing#unstaffed",
+    );
+    expect(runButton()).toBeEnabled();
+    expect(screen.queryByText(/generate\.runBlockedUnstaffed/)).toBeNull();
+  });
+
+  it("disables the run under REFUSE and says why beside the button", () => {
+    state.policy = { unstaffedGeneration: "REFUSE" };
+    state.requirements = [unstaffed("g-41"), requirement("g-sl1"), requirement("g-ma1")];
+    render(<GeneratePage />);
+
+    const button = runButton();
+    expect(button).toBeDisabled();
+    const reason = document.getElementById(button.getAttribute("aria-describedby") ?? "");
+    expect(reason).not.toBeNull();
+    expect(reason?.textContent).toContain("generate.preStaffed (generate.preStaffedMissing(1))");
+    expect(reason?.textContent).toContain("generate.runBlockedUnstaffed");
+    expect(within(reason!).getByRole("link")).toHaveAttribute("href", "/admin/staffing#unstaffed");
+  });
+
+  it("blocks nothing while the policy has not answered: the gateway's pre-flight decides", () => {
+    state.requirements = [unstaffed("g-41")];
+    render(<GeneratePage />);
+
+    expect(runButton()).toBeEnabled();
+    expect(within(staffedLine()).getByText("generate.preStaffedMissing(1)")).toBeInTheDocument();
+  });
+
+  it("reads the pre-flight refusal as unstaffed posts, not as an impossible timetable", () => {
+    state.job = {
+      id: "job-5",
+      status: "SUCCEEDED",
+      solverStatus: "INFEASIBLE",
+      conflictSummary: "2 requirements have no teacher.",
+      conflictSummaryCode: "STAFF_UNSTAFFED_REQUIREMENTS",
+      conflictSummaryParams: { count: 2 },
+      conflicts: [
+        {
+          category: "INSUFFICIENT_RESOURCES",
+          code: "STAFF_UNSTAFFED_REQUIREMENTS",
+          params: { count: 2 },
+          message: "2 requirements have no teacher.",
+          resourceNames: ["Matematik för 7A", "Svenska för 7B"],
+        },
+      ],
+      createdAt: "2026-10-07T10:00:00.000Z",
+    };
+    render(<GeneratePage />);
+
+    expect(screen.getByText("generate.statusUnstaffed")).toBeInTheDocument();
+    expect(screen.queryByText("generate.infeasibleHint")).toBeNull();
+    expect(screen.queryByText("generate.statusINFEASIBLE")).toBeNull();
+    expect(screen.getAllByText("engineMessages.STAFF_UNSTAFFED_REQUIREMENTS(2)").length).toBe(2);
+    expect(screen.getByText("Matematik för 7A, Svenska för 7B")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "generate.preStaffedLink" })).toHaveAttribute(
+      "href",
+      "/admin/staffing#unstaffed",
+    );
+  });
+
+  it("keeps the engine's own INFEASIBLE hint for every other refusal", () => {
+    state.job = {
+      id: "job-6",
+      status: "SUCCEEDED",
+      solverStatus: "INFEASIBLE",
+      conflictSummary: "x",
+      conflictSummaryCode: "LUNCH_HALL_CANNOT_SEAT_CLASSES",
+      conflictSummaryParams: { seats: 1, classes: 2 },
+      conflicts: [],
+      createdAt: "2026-10-07T10:00:00.000Z",
+    };
+    render(<GeneratePage />);
+
+    expect(screen.getByText("generate.infeasibleHint")).toBeInTheDocument();
+    expect(screen.queryByText("generate.statusUnstaffed")).toBeNull();
+  });
+});
+
 describe("a run that hit the time limit", () => {
+
   it("shows what the probe measured, with its own label", () => {
     // A TIMEOUT used to be a bare status. The engine now switches one rule off
     // at a time and reports which relaxation let the week solve; that reaches
