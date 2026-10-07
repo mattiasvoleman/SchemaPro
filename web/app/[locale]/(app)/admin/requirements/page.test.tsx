@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
-import { downloadCsv } from "@/lib/csv";
+import { downloadCsv } from "@/lib/csv-export";
 import RequirementsPage from "./page";
 
 // Radix needs these in jsdom to open a Select or a Dialog — environment, not
@@ -402,8 +402,8 @@ vi.mock("@/lib/year-timplan-queries", () => ({
 
 // The real requirementsToCsv runs — the file's CONTENTS are what the export
 // tests assert. Only the browser download is stubbed.
-vi.mock("@/lib/csv", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/csv")>()),
+vi.mock("@/lib/csv-export", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/csv-export")>()),
   downloadCsv: vi.fn(),
 }));
 

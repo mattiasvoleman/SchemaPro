@@ -14,7 +14,7 @@ import {
 import type { NationalSubject, RoomType, Subject } from "@/lib/types";
 import { sectionNationalSubjects } from "@/lib/national-subjects";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
-import { subjectsToCsv } from "@/lib/csv";
+import { subjectsToCsv } from "@/lib/csv-export";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import {
   Select,
