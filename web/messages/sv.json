@@ -1758,7 +1758,7 @@
     "colYear": "Läsår",
     "colPeriod": "Period",
     "colStatus": "Status",
-    "colPupils": "Elever",
+    "colMoves": "Elevflytt",
     "status": {
       "ACTIVE": "Aktivt",
       "UPCOMING": "Kommande",

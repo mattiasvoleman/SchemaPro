@@ -147,7 +147,10 @@ export default function YearsPage() {
               <TableHead>{t("colYear")}</TableHead>
               <TableHead>{t("colPeriod")}</TableHead>
               <TableHead>{t("colStatus")}</TableHead>
-              <TableHead>{t("colPupils")}</TableHead>
+              {/* What the cells hold: the moves the activation will make (or
+                  the stragglers it left), never the year's pupil count — a
+                  column called "Elever" read "—" for an active year of 80. */}
+              <TableHead>{t("colMoves")}</TableHead>
               <TableHead className="text-right">
                 <span className="sr-only">{tCommon("actions")}</span>
               </TableHead>
