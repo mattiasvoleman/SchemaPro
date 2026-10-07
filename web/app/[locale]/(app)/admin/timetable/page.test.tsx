@@ -1062,7 +1062,8 @@ describe("comparing a version with the timetable", () => {
     const user = userEvent.setup();
     render(<TimetablePage />);
     await user.click(screen.getByRole("button", { name: "timetable.versions" }));
-    await user.click(screen.getByRole("button", { name: "timetable.versionCompare" }));
+    // The dialog's code arrives on that first press (versions-dialog.tsx).
+    await user.click(await screen.findByRole("button", { name: "timetable.versionCompare" }));
     return screen.getByText("timetable.diffTitle(Före bytet)").parentElement!;
   }
 
