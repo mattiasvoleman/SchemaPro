@@ -93,6 +93,7 @@ const state = vi.hoisted(() => ({
   /** Per year id: the load report, or an Error the read failed with. */
   reports: {} as Record<string, unknown>,
   employments: {} as Record<string, unknown[]>,
+  duties: {} as Record<string, unknown[]>,
   assign: null as unknown as (body: unknown) => Promise<unknown>,
 }));
 
@@ -147,7 +148,11 @@ vi.mock("@/lib/staffing-queries", () => ({
     remove: { mutateAsync: vi.fn(), isPending: false },
   }),
   useReplaceTeacherQualifications: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useTeacherDuties: () => ({ data: [], isLoading: false, isError: false }),
+  useTeacherDuties: (yearId: string | null, userId?: string | null) => ({
+    data: yearId === null ? undefined : userId ? [] : (state.duties[yearId] ?? []),
+    isLoading: false,
+    isError: false,
+  }),
   useTeacherDutyActions: () => ({
     create: { mutateAsync: vi.fn(), isPending: false },
     update: { mutateAsync: vi.fn(), isPending: false },
@@ -204,6 +209,7 @@ describe("StaffingPage", () => {
     state.years = [year];
     state.reports = {};
     state.employments = {};
+    state.duties = {};
   });
 
   it("shows the KPI strip, reading an unchecked school as 'not recorded' rather than zero", () => {
@@ -444,6 +450,37 @@ describe("StaffingPage", () => {
       state.employments = {};
       render(<StaffingPage />);
       expect(screen.queryByText(/carry.noticeTitle/)).toBeNull();
+    });
+
+    it("offers the carry to a school that keeps uppdrag but no tjänster, until this year has an uppdrag", () => {
+      state.years = [rolledYear, lastYear];
+      state.duties = { y0: [{ id: "d0", userId: "t-bo", kind: "APT_KONFERENS", label: "APT" }] };
+      const { unmount } = render(<StaffingPage />);
+      expect(screen.getByText("carry.noticeTitle(2025/2026)")).toBeInTheDocument();
+      unmount();
+
+      // Carried once (or started by hand): an uppdrag here ends the offer, so
+      // the page never runs the carry a second time.
+      state.duties = { ...state.duties, y1: [{ id: "d1", userId: "t-bo", kind: "APT_KONFERENS", label: "APT" }] };
+      render(<StaffingPage />);
+      expect(screen.queryByText(/carry.noticeTitle/)).toBeNull();
+    });
+
+    it("shows a nedsättning that moved, so a row 'Bara ändrade' keeps has the change on it", async () => {
+      const user = userEvent.setup();
+      const reduced = (percent: number) => ({
+        ...report.teachers[0]!,
+        userId: "t-red",
+        employment: { ...report.teachers[0]!.employment!, reductionPercent: percent },
+      });
+      state.years = [rolledYear, lastYear];
+      state.report = { ...report, teachers: [reduced(20)] };
+      state.reports = { y0: { ...lastReport, teachers: [reduced(0)] } };
+      render(<StaffingPage />);
+      await user.click(screen.getByRole("tab", { name: "compare.withLastYear" }));
+      await user.click(await screen.findByRole("checkbox", { name: "changedOnly" }));
+      const row = screen.getByText("t-red").closest("tr")!;
+      expect(row).toHaveTextContent("reductionChange(0|20)");
     });
   });
 });

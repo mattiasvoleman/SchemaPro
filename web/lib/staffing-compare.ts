@@ -32,6 +32,8 @@ export interface ComparisonRow {
   countedDelta: number | null;
   /** this − last tjänst %; null when either side has no post. */
   employmentDelta: number | null;
+  /** The nedsättning moved, both years having a row: the table has no column for it, so the row says it. */
+  reductionChanged: boolean;
   change: ComparisonChange;
 }
 
@@ -70,16 +72,16 @@ export function compareYears(
       current?.employmentPercent != null && previous?.employmentPercent != null
         ? Math.round((current.employmentPercent - previous.employmentPercent) * 1000) / 1000
         : null;
+    const reductionChanged =
+      current !== null && previous !== null && !samePercent(current.reductionPercent, previous.reductionPercent);
     let change: ComparisonChange;
     if (!previous) change = "NEW";
     else if (!current) change = "LEFT";
     else
       change =
-        countedDelta !== 0 ||
-        !samePercent(current.employmentPercent, previous.employmentPercent) ||
-        !samePercent(current.reductionPercent, previous.reductionPercent)
+        countedDelta !== 0 || !samePercent(current.employmentPercent, previous.employmentPercent) || reductionChanged
           ? "CHANGED"
           : "SAME";
-    return { userId, lastYear: previous, thisYear: current, countedDelta, employmentDelta, change };
+    return { userId, lastYear: previous, thisYear: current, countedDelta, employmentDelta, reductionChanged, change };
   });
 }

@@ -1698,6 +1698,7 @@
       "changeNEW": "ny",
       "changeLEFT": "inte kvar",
       "changedOnly": "Bara ändrade",
+      "reductionChange": "nedsättning {from} → {to} %",
       "noChanges": "Ingen lärare har ändrad tjänst eller ändrade minuter.",
       "footnote": "Räknad undervisning är timplansposternas minuter en standardvecka plus uppdrag som räknas som undervisning. Båda läsåren räknas med skolans inställningar i dag.",
       "failed": "Tjänstefördelningen för {year} kunde inte läsas, så ingen jämförelse visas.",
