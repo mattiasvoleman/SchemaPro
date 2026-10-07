@@ -61,6 +61,7 @@ import type { CreateRastDto } from '../../src/resources/dto/rast.dto';
 import { FrameTimesService } from '../../src/resources/frame-times.service';
 import { LunchServingsService } from '../../src/resources/lunch-servings.service';
 import { RastsService } from '../../src/resources/rasts.service';
+import { StudentGroupsService } from '../../src/resources/student-groups.service';
 import type { CreateRoomBookingDto } from '../../src/room-bookings/dto/room-booking.dto';
 import { RoomBookingsService } from '../../src/room-bookings/room-bookings.service';
 import { ImportService } from '../../src/import/import.service';
@@ -73,6 +74,7 @@ import {
   decidedTimplanRefusal,
   isTimplanInUseRefusal,
   rethrowPrismaError,
+  rolloverLinkRefusal,
   teacherDutyBlockRefusal,
 } from '../../src/common/utils/prisma-errors';
 import { UsersService } from '../../src/users/users.service';
@@ -1710,6 +1712,164 @@ async function runChecks(
     await timplans.remove(plan.id, admin);
   });
 
+  await check('(v) a läsårsrullning link the database refuses is a 409 through the real adapter, and the deletes that clear one pass', async () => {
+    const years = new AcademicYearsService(api);
+    const groups = new StudentGroupsService(api);
+    const isCode = (code: string) => (error: unknown) => {
+      assert.ok(error instanceof ConflictException, `expected ConflictException, got ${summarise(error)}`);
+      assert.equal((error.getResponse() as { code?: string }).code, code, summarise(error));
+      return true;
+    };
+    /** A write past every service, as PostgREST would send it, mapped as a service maps it. */
+    const direct = async (state: string, write: (tx: PrismaClient) => Promise<unknown>) => {
+      try {
+        await api.withRls(admin, write);
+      } catch (error) {
+        assert.equal(sqlStateOf(error), state, summarise(error));
+        rethrowPrismaError(error);
+      }
+      assert.fail('the write went through');
+    };
+
+    // A year and its successor, a class and its successor, as the rollover
+    // will write them: the link columns through the model API, under RLS.
+    const first = await years.create(
+      { name: `${MARKER} rull 1`, startDate: '2095-08-15', endDate: '2096-06-10' },
+      admin,
+    );
+    const second = await api.withRls(admin, (tx) =>
+      tx.academicYear.create({
+        data: {
+          schoolId: fixture.schoolId,
+          name: `${MARKER} rull 2`,
+          startDate: new Date('2096-08-15T00:00:00Z'),
+          endDate: new Date('2097-06-10T00:00:00Z'),
+          predecessorId: first.id,
+          graduatingGradeLevel: 9,
+        },
+      }),
+    );
+    assert.equal(second.predecessorId, first.id);
+    assert.equal(second.graduatingGradeLevel, 9);
+    const seventh = await groups.create({ academicYearId: first.id, name: `${MARKER} 7A`, gradeLevel: 7 }, admin);
+    const eighth = await api.withRls(admin, (tx) =>
+      tx.studentGroup.create({
+        data: {
+          schoolId: fixture.schoolId,
+          academicYearId: second.id,
+          name: `${MARKER} 8A`,
+          gradeLevel: 8,
+          predecessorId: seventh.id,
+        },
+      }),
+    );
+    assert.equal(eighth.predecessorId, seventh.id);
+
+    // The groups PATCH takes academicYearId: moving a linked group is the
+    // service's own rethrowPrismaError answering the trigger's LR409.
+    await assert.rejects(
+      groups.update(eighth.id, { academicYearId: first.id }, admin),
+      isCode('ROLLOVER_GROUP_IS_LINKED'),
+    );
+    await assert.rejects(
+      groups.update(seventh.id, { academicYearId: second.id }, admin),
+      isCode('ROLLOVER_GROUP_IS_LINKED'),
+    );
+    // Past every service: clearing a standing link, and a predecessor outside
+    // the year before. DETAIL carries the written row's own id.
+    await assert.rejects(
+      direct('LR409', (tx) => tx.academicYear.update({ where: { id: second.id }, data: { predecessorId: null } })),
+      isCode('ROLLOVER_LINK_IS_FIXED'),
+    );
+    const parallel = await groups.create({ academicYearId: first.id, name: `${MARKER} 7B`, gradeLevel: 7 }, admin);
+    const mismatch = await api
+      .withRls(admin, (tx) =>
+        tx.studentGroup.create({
+          data: { schoolId: fixture.schoolId, academicYearId: first.id, name: `${MARKER} fel år`, predecessorId: parallel.id },
+        }),
+      )
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    assert.equal(rolloverLinkRefusal(mismatch)?.reason, 'ROLLOVER_LINK_MISMATCH', summarise(mismatch));
+    assert.match(String(rolloverLinkRefusal(mismatch)?.studentGroupId), /^[0-9a-f-]{36}$/);
+    assert.throws(() => rethrowPrismaError(mismatch), isCode('ROLLOVER_LINK_MISMATCH'));
+
+    // A second successor is the unique key's P2002, which the rollover will
+    // turn into YEAR_HAS_SUCCESSOR; pinned here so it can rely on the target.
+    const twice = await api
+      .withRls(admin, (tx) =>
+        tx.academicYear.create({
+          data: {
+            schoolId: fixture.schoolId,
+            name: `${MARKER} rull 2 igen`,
+            startDate: new Date('2096-08-15T00:00:00Z'),
+            endDate: new Date('2097-06-10T00:00:00Z'),
+            predecessorId: first.id,
+          },
+        }),
+      )
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    assert.ok(twice instanceof Prisma.PrismaClientKnownRequestError && twice.code === 'P2002', summarise(twice));
+    assert.match(JSON.stringify(twice.meta), /predecessorId/, `the P2002 did not name the predecessor key: ${summarise(twice)}`);
+
+    // The predecessor year deleted as the gateway deletes it: its class
+    // cascades, the successor year and class stand with the links cleared.
+    await years.remove(first.id, admin);
+    const after = await owner.query<{ year: string | null; group: string | null; grade: number | null }>(
+      `SELECT y."predecessorId" AS year, g."predecessorId" AS "group", y."graduatingGradeLevel" AS grade
+         FROM "AcademicYears" y JOIN "StudentGroups" g ON g."academicYearId" = y.id
+        WHERE y.id = $1 AND g.id = $2`,
+      [second.id, eighth.id],
+    );
+    assert.deepEqual(after.rows, [{ year: null, group: null, grade: 9 }]);
+    await years.remove(second.id, admin);
+
+    // A school with a three-year chain, deleted whole as the owner (the API
+    // has no DELETE on Schools; prisma/seed.ts --reset and a leaving tenant
+    // do this): every SET NULL the cascade provokes reaches a row already
+    // gone or a parent already gone, and nothing raises.
+    const [school] = (
+      await owner.query<{ id: string }>(
+        `INSERT INTO "Schools" (name, slug, timezone, "updatedAt")
+         VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+        [`${MARKER} rullning`, `${MARKER}-rullning`],
+      )
+    ).rows;
+    let previousYear: string | null = null;
+    let previousGroup: string | null = null;
+    for (const [index, grade] of [7, 8, 9].entries()) {
+      const [year]: { id: string }[] = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "predecessorId", "updatedAt")
+           VALUES ($1, $2, make_date(2095 + $3::int, 8, 15), make_date(2096 + $3::int, 6, 10), $4, now()) RETURNING id`,
+          [school.id, `År ${index + 1}`, index, previousYear],
+        )
+      ).rows;
+      const [group]: { id: string }[] = (
+        await owner.query<{ id: string }>(
+          `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "predecessorId", "updatedAt")
+           VALUES ($1, $2, $3, $4, $5, now()) RETURNING id`,
+          [school.id, year.id, `${grade}A`, grade, previousGroup],
+        )
+      ).rows;
+      previousYear = year.id;
+      previousGroup = group.id;
+    }
+    const removed = await owner.query('DELETE FROM "Schools" WHERE id = $1', [school.id]);
+    assert.equal(removed.rowCount, 1);
+    const left = await owner.query<{ n: number }>(
+      `SELECT ((SELECT count(*) FROM "AcademicYears" WHERE "schoolId" = $1)
+             + (SELECT count(*) FROM "StudentGroups" WHERE "schoolId" = $1))::int AS n`,
+      [school.id],
+    );
+    assert.equal(left.rows[0].n, 0, 'a deleted school left years or groups behind');
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the
@@ -1851,6 +2011,10 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2 || ' nästa år'`, [schoolId, MARKER]);
   // (u)'s year, for a run that stopped first: its groups, rows and attachments go with it.
   await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2 || ' p2'`, [schoolId, MARKER]);
+  // (v)'s chain and its throwaway school, for a run that stopped half-way;
+  // the groups cascade, and the link triggers let the foreign keys clear.
+  await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name LIKE $2 || ' rull %'`, [schoolId, MARKER]);
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-rullning'`, [MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-duty@example.invalid'`, [schoolId, MARKER]);
   // (t)'s attachment, for a run that stopped before detaching it: the plan

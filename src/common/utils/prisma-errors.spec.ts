@@ -6,6 +6,9 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  ROLLOVER_GROUP_IS_LINKED,
+  ROLLOVER_LINK_IS_FIXED,
+  ROLLOVER_LINK_MISMATCH,
   TEACHER_DUTY_BLOCK_IS_THE_ADMINS,
   TEACHER_DUTY_BLOCK_MISMATCH,
   TIMPLAN_IN_USE,
@@ -16,6 +19,7 @@ import {
   isTimplanInUseRefusal,
   listNames,
   rethrowPrismaError,
+  rolloverLinkRefusal,
   teacherDutyBlockRefusal,
   timplanInUseConflict,
 } from './prisma-errors';
@@ -444,5 +448,83 @@ describe('rethrowPrismaError and a plan a läsår follows', () => {
     );
     expect(thrown).toBeInstanceOf(BadRequestException);
     expect((thrown as BadRequestException).message).toMatch(/^gradeLevel: /);
+  });
+});
+
+/**
+ * The läsårsrullning link triggers' refusal as @prisma/adapter-pg delivers it:
+ * P2039 with the driver's SQLSTATE, message and DETAIL under the cause.
+ */
+const GROUP_ID = '5a0c1e7e-2b7d-4c3a-9e51-3f2a8d6b1c33';
+const linkRefusal = (message: string, options: { meta?: boolean } = {}) =>
+  new Prisma.PrismaClientKnownRequestError(
+    `Database error. Code: \`LR409\`. Message: \`${message}\``,
+    {
+      code: 'P2039',
+      clientVersion: Prisma.prismaVersion.client,
+      meta:
+        options.meta === false
+          ? { modelName: 'StudentGroup' }
+          : {
+              modelName: 'StudentGroup',
+              driverAdapterError: {
+                name: 'DriverAdapterError',
+                cause: {
+                  originalCode: 'LR409',
+                  originalMessage: message,
+                  kind: 'postgres',
+                  detail: `studentGroupId=${GROUP_ID}`,
+                },
+              },
+            },
+    },
+  );
+
+describe('rethrowPrismaError and a läsårsrullning link', () => {
+  const answer = (error: unknown) => {
+    try {
+      rethrowPrismaError(error);
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  };
+
+  it.each([
+    [ROLLOVER_LINK_IS_FIXED, 'ROLLOVER_LINK_IS_FIXED: en grupps föregångare sätts när läsåret rullas vidare'],
+    [ROLLOVER_LINK_MISMATCH, 'ROLLOVER_LINK_MISMATCH: en grupps föregångare ligger i läsåret före gruppens eget läsår'],
+    [ROLLOVER_GROUP_IS_LINKED, 'ROLLOVER_GROUP_IS_LINKED: en grupp som är kopplad flyttas inte till ett annat läsår'],
+  ])('answers the %s token with a 409 of that code', (code, message) => {
+    const conflict = answer(linkRefusal(message));
+    expect(conflict).toBeInstanceOf(ConflictException);
+    expect((conflict as ConflictException).getResponse()).toMatchObject({ code });
+    expect(rolloverLinkRefusal(linkRefusal(message))).toEqual({
+      reason: code,
+      academicYearId: null,
+      studentGroupId: GROUP_ID,
+    });
+  });
+
+  it('reads the reason off the rendered message when the driver cause is gone', () => {
+    expect(
+      rolloverLinkRefusal(linkRefusal('ROLLOVER_GROUP_IS_LINKED: flyttas inte', { meta: false })),
+    ).toEqual({ reason: ROLLOVER_GROUP_IS_LINKED, academicYearId: null, studentGroupId: null });
+  });
+
+  it('is still a 409 when no reason can be read', () => {
+    const conflict = answer(linkRefusal('något annat', { meta: false }));
+    expect(conflict).toBeInstanceOf(ConflictException);
+    expect((conflict as ConflictException).getResponse()).toMatchObject({ code: ROLLOVER_LINK_IS_FIXED });
+  });
+
+  it('is not fooled by another trigger, another database error, nor a lookalike', () => {
+    expect(rolloverLinkRefusal(knownError('P2039'))).toBeNull();
+    expect(rolloverLinkRefusal(driverError('TD409', 'TEACHER_DUTY_BLOCK_MISMATCH'))).toBeNull();
+    expect(rolloverLinkRefusal(dutyRefusal('TD409'))).toBeNull();
+    expect(rolloverLinkRefusal(Object.assign(new Error('Code: `LR409`'), { code: 'P2039' }))).toBeNull();
+    expect(answer(dutyRefusal('TD409'))).toBeInstanceOf(ConflictException);
+    expect(((answer(dutyRefusal('TD409')) as ConflictException).getResponse() as { code: string }).code).toBe(
+      'TEACHER_DUTY_BLOCK_MISMATCH',
+    );
   });
 });

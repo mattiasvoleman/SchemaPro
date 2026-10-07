@@ -260,6 +260,24 @@ if [ -z "$year_b" ]; then
   exit 1
 fi
 
+# One of the second school's classes, in that same year. Section 19 has school
+# A's admin link a group to it (a cross-school predecessor, which only the
+# composite (predecessorId, schoolId) keys can refuse), and file a linked group
+# of its own under school B's year (which the plain academicYearId key lets
+# through and the link trigger must refuse without naming school B's rows).
+# The year is the one read just above: the fixtures' 'RLS Fixture Year' is the
+# only year school B has, and section 18's attachments hang on it.
+group_b="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT id FROM \"StudentGroups\" WHERE \"schoolId\" = '${school_b}' AND \"academicYearId\" = '${year_b}' AND name = 'RLS Fixture Class'" \
+  | tr -d '[:space:]'
+)"
+if [ -z "$group_b" ]; then
+  echo "FAIL: could not read the second school's class in its year; fixtures did not run." >&2
+  exit 1
+fi
+
 if [ -z "$admin_auth_id" ]; then
   echo "FAIL: no SCHOOL_ADMIN with an authId in the primary school." >&2
   exit 1
@@ -271,7 +289,7 @@ compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -v "admin_auth_id=${admin_auth_id}" \
   -v "student_b=${student_b}" -v "inactive_user_id=${inactive_user_id}" \
   -v "plan_b=${plan_b}" -v "subject_b=${subject_b}" -v "school_b=${school_b}" \
-  -v "constraint_b=${constraint_b}" -v "year_b=${year_b}" \
+  -v "constraint_b=${constraint_b}" -v "year_b=${year_b}" -v "group_b=${group_b}" \
   -v "inactive_auth_id=00000000-0000-4000-8000-000000000003" -tA -f /dev/stdin \
   < scripts/test/rls-policies.sql
 
