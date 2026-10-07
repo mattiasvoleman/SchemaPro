@@ -1724,6 +1724,10 @@ export function useSetGroupMembers() {
       void queryClient.invalidateQueries({ queryKey: ["groupMemberships"] });
       void queryClient.invalidateQueries({ queryKey: ["groups"] });
       void queryClient.invalidateQueries({ queryKey: ["lessonRoster"] });
+      // Next year's förberäknade klasslistor count the teaching-group rows that
+      // no longer fit (YEAR_ROSTERS_KEY in lib/projected-rosters.ts, spelled
+      // out here so this module does not import that one).
+      void queryClient.invalidateQueries({ queryKey: ["people", "yearRosters"] });
     },
   });
 }

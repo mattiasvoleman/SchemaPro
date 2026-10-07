@@ -16,7 +16,6 @@ import {
 import { Link } from "@/i18n/navigation";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import {
-  useActiveYear,
   useGroupMemberships,
   useGroups,
   useLunchSettings,
@@ -36,6 +35,12 @@ import { Badge } from "@/components/ui/badge";
 import { formatTime } from "@/lib/utils";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { useStaffingPolicy } from "@/lib/staffing-queries";
+import { usePlanningYear } from "@/lib/planning-year";
+import { withProjectedHomes } from "@/lib/projected-rosters";
+import {
+  PlanningYearPicker,
+  ProjectedRostersBanner,
+} from "@/components/schedule/planning-year";
 import {
   Card,
   CardContent,
@@ -50,10 +55,22 @@ export default function GeneratePage() {
   const tConflicts = useTranslations("conflictCategories");
   const tEngine = useTranslations("engineMessages");
   const tCommon = useTranslations("common");
-  const { activeYear } = useActiveYear();
-  const { data: requirements } = useRequirements(activeYear?.id ?? null);
+  /*
+   * The year generated for: this one, or next year before its activation.
+   * Next year's classes have no home pupils until then, so the people are
+   * read with the class the activation will give each pupil it moves — the
+   * overlay the gateway's generation itself reads (lib/projected-rosters.ts).
+   * The warning below is derived from them, and must say what the run will do.
+   */
+  const planning = usePlanningYear();
+  const { year } = planning;
+  const { data: requirements } = useRequirements(year?.id ?? null);
   const { data: rooms } = useRooms();
-  const { data: people } = usePeople();
+  const { data: storedPeople } = usePeople();
+  const people = useMemo(
+    () => withProjectedHomes(storedPeople, planning.rosters),
+    [storedPeople, planning.rosters],
+  );
   const { data: groups } = useGroups();
   const { data: memberships } = useGroupMemberships();
   /**
@@ -112,7 +129,7 @@ export default function GeneratePage() {
   const startOptimization = useStartOptimization();
   const [jobId, setJobId] = useState<string | null>(null);
   const { data: job } = useOptimizationJob(jobId);
-  const { data: history } = useOptimizationHistory(activeYear?.id ?? null);
+  const { data: history } = useOptimizationHistory(year?.id ?? null);
 
   // Optimization profile — persisted locally per browser.
   const [weights, setWeights] = useState<Required<ObjectiveWeights>>({
@@ -186,7 +203,7 @@ export default function GeneratePage() {
     warn?: boolean;
     href?: string;
   }[] = [
-    { label: t("preYear"), ok: activeYear !== null, detail: activeYear?.name ?? "—" },
+    { label: t("preYear"), ok: year !== null, detail: year?.name ?? "—" },
     {
       label: t("preRequirements"),
       ok: (requirements?.length ?? 0) > 0,
@@ -223,10 +240,10 @@ export default function GeneratePage() {
     job?.status === "RUNNING";
 
   const run = async () => {
-    if (!activeYear) return;
+    if (!year) return;
     try {
       const { jobId: newJobId } = await startOptimization.mutateAsync({
-        academicYearId: activeYear.id,
+        academicYearId: year.id,
         weights,
       });
       setJobId(newJobId);
@@ -253,7 +270,26 @@ export default function GeneratePage() {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title={t("title")} subtitle={t("subtitle")} />
+      <PageHeader
+        title={t("title")}
+        subtitle={t("subtitle")}
+        actions={
+          <PlanningYearPicker
+            {...planning}
+            onChoose={(yearId) => {
+              // The last run's card is that year's; it must not stand under the other.
+              setJobId(null);
+              planning.choose(yearId);
+            }}
+          />
+        }
+      />
+      <ProjectedRostersBanner
+        year={year}
+        active={planning.active}
+        rosters={planning.rosters}
+        failed={planning.rostersFailed}
+      />
 
       {/* A warning, not a gate: the run is legal, and the school may mean it.
           What it must not be is a surprise. */}
@@ -471,7 +507,13 @@ export default function GeneratePage() {
                 </Badge>
                 <div>
                   <Button asChild variant="outline">
-                    <Link href="/admin/timetable">
+                    <Link
+                      href={
+                        year && !year.isActive
+                          ? `/admin/timetable?year=${year.id}`
+                          : "/admin/timetable"
+                      }
+                    >
                       {t("viewTimetable")}
                       <ArrowRight />
                     </Link>
