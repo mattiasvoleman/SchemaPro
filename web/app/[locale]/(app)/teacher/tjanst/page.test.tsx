@@ -151,6 +151,25 @@ describe("Min tjänst", () => {
     expect(screen.queryByText("staffing.statusNO_TARGET")).toBeNull();
   });
 
+  it("leaves 'no target' to the missing post's own sentence, and prints only the counted minutes", () => {
+    // Review: a teacher with no post read "Utan den finns inget mål att
+    // jämföra med" and on the next line "… · inget mål att jämföra med".
+    state.load = {
+      data: {
+        teachers: [
+          row({ employment: null, targetMinutesPerWeek: null, status: "NO_TARGET", countedMinutesPerWeek: 600 }),
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    };
+    render(<MyStaffingPage />);
+
+    expect(screen.getByText("myStaffing.noEmployment")).toBeInTheDocument();
+    expect(screen.getByText("myStaffing.countedOnly(600)")).toBeInTheDocument();
+    expect(screen.queryByText(/myStaffing\.countedNoTarget/)).toBeNull();
+  });
+
   it("lists each subject with its minutes and its share of the post", () => {
     render(<MyStaffingPage />);
 
@@ -188,7 +207,7 @@ describe("Min tjänst", () => {
     render(<MyStaffingPage />);
 
     expect(screen.getByText("myStaffing.noEmployment")).toBeInTheDocument();
-    expect(screen.getByText(/myStaffing\.countedNoTarget/)).toBeInTheDocument();
+    expect(screen.getByText(/myStaffing\.countedOnly/)).toBeInTheDocument();
     expect(screen.getByText("—")).toBeInTheDocument();
     expect(screen.queryByText("0 %")).toBeNull();
   });

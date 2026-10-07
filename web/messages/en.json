@@ -1727,6 +1727,7 @@
     "noEmployment": "No employment registered. Without one there is no target to compare with.",
     "target": "Target {minutes} min/wk",
     "countedNoTarget": "Counted teaching {minutes} min/wk · no target to compare it with",
+    "countedOnly": "Counted teaching {minutes} min/wk",
     "counted": "counted against the target {minutes} min/wk",
     "annual": "{hours} h of teaching per school year, with holidays and staff days deducted.",
     "lastYear": "Last year ({year}): post {percent} % · {minutes} min counted teaching",
