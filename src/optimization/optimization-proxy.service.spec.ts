@@ -105,6 +105,17 @@ const matchesWhere = (row: Row, where: Row = {}): boolean =>
       case 'isGenerated':
       case 'kind':
         return row[key] === filter;
+      case 'AND':
+        return (filter as Row[]).every((part) => matchesWhere(row, part));
+      case 'OR':
+        return (filter as Row[]).some((part) => matchesWhere(row, part));
+      case 'teacherDuty': {
+        // The 1:0..1 back-relation, by `is`: null, or the duty's year.
+        const duty = (row['teacherDuty'] ?? null) as Row | null;
+        const is = (filter as { is?: Row | null }).is;
+        if (is === null) return duty === null;
+        return duty !== null && Object.entries(is ?? {}).every(([field, value]) => duty[field] === value);
+      }
       default:
         throw new Error(`unexpected filter ${key}`);
     }
@@ -2527,6 +2538,24 @@ describe('OptimizationProxyService', () => {
       await service.triggerScheduling(ACADEMIC_YEAR, testUser());
 
       expect(postedPayload().requirements[0].studentGroupSize).toBe(3);
+    });
+
+    it('sends an uppdrag’s slot only to its own läsår, and every slot no uppdrag holds', async () => {
+      // A duty is per läsår and its weekly UNAVAILABLE row is not: next
+      // year's APT recorded in May must not block this year's re-generation,
+      // and last year's rastvakt must not block this one.
+      arrange({
+        constraints: [
+          constraintRow({ id: 'c-plain', userId: TEACHER_ID, dayOfWeek: 1 }),
+          constraintRow({ id: 'c-this', userId: TEACHER_ID, dayOfWeek: 2, teacherDuty: { academicYearId: ACADEMIC_YEAR } }),
+          constraintRow({ id: 'c-next', userId: TEACHER_ID, dayOfWeek: 3, teacherDuty: { academicYearId: 'next-year' } }),
+        ],
+      });
+      echoEngine();
+
+      await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+      expect(postedPayload().constraints.map((c: { dayOfWeek: number }) => c.dayOfWeek).sort()).toEqual([1, 2]);
     });
 
     it('formats date-bound constraints as YYYY-MM-DD', async () => {

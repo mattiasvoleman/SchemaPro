@@ -21,6 +21,7 @@ import {
   type StaffingRole,
   type StaffingWarning,
 } from '../staffing/staffing-checks';
+import { constraintsOfYear } from '../staffing/duty-slot-year';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -1004,6 +1005,8 @@ export class MasterLessonsService {
             studentGroupId: { in: [...candidateGroups] },
           },
         ],
+        // An uppdrag's slot blocks only its own läsår.
+        AND: [constraintsOfYear(lesson.academicYearId)],
       },
       select: { resourceType: true, startTime: true, endTime: true },
     });

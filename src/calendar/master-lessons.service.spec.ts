@@ -747,6 +747,15 @@ describe('MasterLessonsService', () => {
             { resourceType: 'ROOM', roomId: ROOM_ID },
             { resourceType: 'STUDENT_GROUP', studentGroupId: { in: [GROUP_ID] } },
           ],
+          // An uppdrag's slot blocks only its own läsår.
+          AND: [
+            {
+              OR: [
+                { teacherDuty: { is: null } },
+                { teacherDuty: { is: { academicYearId: YEAR_ID } } },
+              ],
+            },
+          ],
         },
         select: { resourceType: true, startTime: true, endTime: true },
       });

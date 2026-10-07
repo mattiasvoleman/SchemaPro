@@ -42,6 +42,7 @@ import type {
   ResourceKind,
   ScheduleRules,
 } from './interfaces/ai-engine-payload.interface';
+import { constraintsOfYear } from '../staffing/duty-slot-year';
 
 /**
  * Masking proxy between NestJS and the Python AI engine.
@@ -1165,12 +1166,14 @@ export class OptimizationProxyService {
       };
     });
 
-    // Fetch availability constraints (drop reason text field).
+    // Fetch availability constraints (drop reason text field). An uppdrag's
+    // slot only in its own läsår — see constraintsOfYear.
     const rawConstraints = await tx.availabilityConstraint.findMany({
       where: {
         school: {
           academicYears: { some: { id: academicYearId } },
         },
+        AND: [constraintsOfYear(academicYearId)],
       },
       select: {
         id: true,
