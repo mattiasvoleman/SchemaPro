@@ -1054,6 +1054,7 @@ export class ImportService {
         if (stored?.coTeacherId) touchedTeacherIds.add(stored.coTeacherId);
       }
       const checks = await RequirementImportChecks.open(tx, {
+        viewer: user,
         schoolId,
         academicYearId: dto.academicYearId,
         teacherIds: [...touchedTeacherIds],

@@ -139,7 +139,7 @@ export class StaffingLoadService {
     academicYearId: string,
     user: AuthenticatedUser,
   ): Promise<{ year: YearBounds; input: LoadInput }> {
-    const read = await readLoadInput(tx, academicYearId, requireSchoolId(user));
+    const read = await readLoadInput(tx, user, academicYearId, requireSchoolId(user));
     if (!read) {
       throw new NotFoundException('Academic year not found.');
     }

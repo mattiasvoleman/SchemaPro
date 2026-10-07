@@ -14,6 +14,7 @@ import {
   type NotificationKind,
 } from '../notifications/notifications.service';
 import { attendanceSpan, lessonQualificationFindings } from '../staffing/staffing-enforcement';
+import type { RosterViewer } from '../year-rollover/projected-rosters';
 import { settleFindings, type StaffingWarning } from '../staffing/staffing-checks';
 import type {
   AssignSubstituteDto,
@@ -199,7 +200,7 @@ export class CalendarLessonsService {
 
       const group = await tx.studentGroup.findUnique({
         where: { id: lesson.studentGroupId },
-        select: { academicYearId: true },
+        select: { academicYearId: true, academicYear: { select: { isActive: true, predecessorId: true } } },
       });
       const lessonDay = lesson.date.toISOString().slice(0, 10);
       const warnings = group
@@ -213,6 +214,10 @@ export class CalendarLessonsService {
               studentIds: lessonStudentIds(lesson),
               assignees: [{ userId: dto.teacherId, role: 'SUBSTITUTE' }],
               window: { startDate: lessonDay, endDate: lessonDay },
+              // The year's roster basis from the flags just read: a lesson of
+              // a rolled year not yet activated spans the grades its
+              // activation would place (projected-rosters.ts).
+              rosters: { viewer: user, known: group.academicYear },
             }),
             { downgrade: true },
           )
@@ -387,7 +392,7 @@ export class CalendarLessonsService {
       const qualificationOf = new Map<string, TeacherQualificationKind>();
       const recorded = await tx.teacherSubjectQualification.count();
       if (recorded > 0) {
-        const span = await this.gradeSpanOfLesson(tx, lesson);
+        const span = await this.gradeSpanOfLesson(tx, user, lesson);
         const held = await tx.teacherSubjectQualification.findMany({
           where: { subjectId: lesson.subjectId },
           select: {
@@ -460,11 +465,12 @@ export class CalendarLessonsService {
    */
   private async gradeSpanOfLesson(
     tx: PrismaClient,
+    viewer: RosterViewer,
     lesson: LessonForAction,
   ): Promise<{ min: number; max: number } | null> {
     const group = await tx.studentGroup.findUnique({
       where: { id: lesson.studentGroupId },
-      select: { academicYearId: true },
+      select: { academicYearId: true, academicYear: { select: { isActive: true, predecessorId: true } } },
     });
     if (!group) return null;
     // The derivation the assignment's own warning uses (attendanceSpan), so
@@ -473,6 +479,7 @@ export class CalendarLessonsService {
       academicYearId: group.academicYearId,
       groupIds: lessonGroupIds(lesson),
       studentIds: lessonStudentIds(lesson),
+      rosters: { viewer, known: group.academicYear },
     });
   }
 

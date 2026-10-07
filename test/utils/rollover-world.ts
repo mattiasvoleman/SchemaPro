@@ -10,8 +10,11 @@ import type { PrismaMock } from './prisma-mock';
  * and computes its plan from all of them, so stubbing them one by one would
  * test the stubs. This answers each read from the rows, with a `where`
  * matcher just wide enough for the shapes the readers use (equality, `in`,
- * `not`, null; relation filters are not evaluated), and keeps every call —
- * which is what year-rollover.service.spec.ts's write audit inspects.
+ * `not`, the comparisons, null, AND/OR/NOT, and the relations the roster
+ * readers filter through: a pupil's `studentGroup`, a membership's `student`,
+ * a year-scoped read's `school`, a row's own to-many list), and keeps every
+ * call — which is what year-rollover.service.spec.ts's write audit inspects.
+ * Any other relation filter passes the row, or throws in a strict world.
  *
  * Writes are recorded, and the creates are also applied, so a second read
  * sees them (an activation after a rollover).
@@ -201,23 +204,136 @@ export function defaultRolloverRows(): Record<string, Row[]> {
   }
 }
 
-export function matches(row: Row, where: Row | undefined): boolean {
+/** How `matches` resolves a relation filter: the row's model and the world's tables. */
+export interface MatchContext {
+  model: string;
+  table: (model: string) => Row[];
+  /**
+   * Throw on a filter that cannot be evaluated instead of letting the row
+   * through. The equivalence world runs strict: a relation filter the fake
+   * silently passed is a reader's filter that no test exercised.
+   */
+  strict: boolean;
+}
+
+const OPERATORS = new Set(['in', 'notIn', 'not', 'gt', 'gte', 'lt', 'lte', 'equals']);
+
+const comparable = (value: unknown): unknown => (value instanceof Date ? value.getTime() : value);
+
+function scalarMatches(value: unknown, filter: Row): boolean {
+  return Object.entries(filter).every(([operator, operand]) => {
+    const [x, y] = [comparable(value), comparable(operand)];
+    switch (operator) {
+      case 'in':
+        return (operand as unknown[]).map(comparable).includes(x);
+      case 'notIn':
+        return !(operand as unknown[]).map(comparable).includes(x);
+      case 'equals':
+        return operand === null ? value === null || value === undefined : x === y;
+      case 'not':
+        if (operand === null) return value !== null && value !== undefined;
+        if (typeof operand === 'object' && !(operand instanceof Date)) return !scalarMatches(value, operand as Row);
+        return x !== y;
+      case 'gt':
+        return x !== null && x !== undefined && (x as number) > (y as number);
+      case 'gte':
+        return x !== null && x !== undefined && (x as number) >= (y as number);
+      case 'lt':
+        return x !== null && x !== undefined && (x as number) < (y as number);
+      case 'lte':
+        return x !== null && x !== undefined && (x as number) <= (y as number);
+      default:
+        return true;
+    }
+  });
+}
+
+/**
+ * The one-to-one relations the roster readers filter through, joined from
+ * the rows as they are now: a pupil's home class (`studentGroup`), a
+ * membership's pupil (`student`), and the school of a year-scoped read
+ * (`school: { academicYears: { some } }`), which in this one-school world is
+ * "the year exists".
+ */
+function relationMatches(row: Row, key: string, wanted: unknown, context: MatchContext): boolean | undefined {
+  const nested = (model: string, target: Row | undefined): boolean => {
+    if (wanted === null) return target === undefined;
+    if (wanted === undefined) return true;
+    return target !== undefined && matches(target, wanted as Row, { ...context, model });
+  };
+  if (context.model === 'user' && key === 'studentGroup') {
+    return nested('studentGroup', context.table('studentGroup').find((group) => group['id'] === row['studentGroupId']));
+  }
+  if (context.model === 'studentGroupMember' && key === 'student') {
+    return nested('user', context.table('user').find((user) => user['id'] === row['studentId']));
+  }
+  if (key === 'school' && wanted !== null && typeof wanted === 'object') {
+    const filter = wanted as Row;
+    const keys = Object.keys(filter);
+    if (keys.length === 1 && keys[0] === 'academicYears') {
+      const some = (filter['academicYears'] as Row | undefined)?.['some'] as Row | undefined;
+      if (some !== undefined && Object.keys(filter['academicYears'] as Row).length === 1) {
+        return context.table('academicYear').some((year) => matches(year, some, { ...context, model: 'academicYear' }));
+      }
+    }
+  }
+  // A to-one relation by `is`/`isNot`: forward through `${key}Id`, or one of
+  // the back-relations a year-scoped read filters on (a duty's blocked slot).
+  if (wanted !== null && typeof wanted === 'object' && ('is' in (wanted as Row) || 'isNot' in (wanted as Row))) {
+    const filter = wanted as Row;
+    const back: Record<string, (subject: Row) => Row | undefined> = {
+      'availabilityConstraint.teacherDuty': (subject) =>
+        context.table('teacherDuty').find((duty) => duty['blockedConstraintId'] === subject['id']),
+    };
+    const resolve = back[`${context.model}.${key}`];
+    const forward = typeof row[`${key}Id`] === 'string' || row[`${key}Id`] === null;
+    if (resolve || forward) {
+      const target = resolve ? resolve(row) : context.table(key).find((candidate) => candidate['id'] === row[`${key}Id`]);
+      const test = (inner: unknown) =>
+        inner === null ? target === undefined : target !== undefined && matches(target, inner as Row, { ...context, model: key });
+      return ('is' in filter ? test(filter['is']) : true) && ('isNot' in filter ? !test(filter['isNot']) : true);
+    }
+  }
+  // A to-many relation held on the row itself (a lesson's extraGroups).
+  if (wanted !== null && typeof wanted === 'object' && Array.isArray(row[key] ?? [])) {
+    const filter = wanted as Row;
+    const list = (row[key] ?? []) as Row[];
+    const keys = Object.keys(filter);
+    if (keys.length === 1 && (keys[0] === 'some' || keys[0] === 'none' || keys[0] === 'every')) {
+      const inner = filter[keys[0]] as Row;
+      const hit = (item: Row) => matches(item, inner, { ...context, model: key });
+      if (keys[0] === 'some') return list.some(hit);
+      if (keys[0] === 'none') return !list.some(hit);
+      return list.every(hit);
+    }
+  }
+  return undefined;
+}
+
+export function matches(row: Row, where: Row | undefined, context?: MatchContext): boolean {
   if (!where) return true;
   return Object.entries(where).every(([key, wanted]) => {
+    if (key === 'AND') return [wanted].flat().every((part) => matches(row, part as Row, context));
+    if (key === 'OR') return (wanted as Row[]).some((part) => matches(row, part, context));
+    if (key === 'NOT') return ![wanted].flat().some((part) => matches(row, part as Row, context));
     // A compound unique (`academicYearId_gradeLevel: { … }`): every part must match.
     if (!(key in row) && key.includes('_') && wanted !== null && typeof wanted === 'object' && !(wanted instanceof Date)) {
-      return matches(row, wanted as Row);
+      return matches(row, wanted as Row, context);
+    }
+    if (context) {
+      const joined = relationMatches(row, key, wanted, context);
+      if (joined !== undefined) return joined;
     }
     const value = row[key];
     if (wanted === null) return value === null || value === undefined;
     if (wanted instanceof Date) return value instanceof Date && value.getTime() === wanted.getTime();
     if (typeof wanted === 'object') {
       const filter = wanted as Row;
-      if ('in' in filter) return (filter['in'] as unknown[]).includes(value);
-      if ('not' in filter) {
-        return filter['not'] === null ? value !== null && value !== undefined : value !== filter['not'];
+      if (Object.keys(filter).every((operator) => OPERATORS.has(operator))) return scalarMatches(value, filter);
+      // A relation filter this fake does not model.
+      if (context?.strict) {
+        throw new Error(`rollover world: cannot evaluate ${context.model}.${key} ${JSON.stringify(filter)}`);
       }
-      // A relation filter (`student: { role }`): not evaluated here.
       return true;
     }
     return value === wanted;
@@ -236,7 +352,10 @@ export interface RolloverWorld {
   queryRaw: (sql: string, values: unknown[]) => unknown[];
 }
 
-export function givenRolloverWorld(rows: Record<string, Row[]> = defaultRolloverRows()): RolloverWorld {
+export function givenRolloverWorld(
+  rows: Record<string, Row[]> = defaultRolloverRows(),
+  options: { strict?: boolean } = {},
+): RolloverWorld {
   const calls: RecordedCall[] = [];
   const world: RolloverWorld = {
     rows,
@@ -264,16 +383,27 @@ export function givenRolloverWorld(rows: Record<string, Row[]> = defaultRollover
             // The two relations the readers select, joined from the rows as they are now.
             // A selected to-many relation with its own `where`/`take` (a plan's
             // grade-0 entries): filtered here, as the database would.
-            const project = (row: Row): Row => {
-              const select = args['select'] as Row | undefined;
+            const project = (row: Row, select = args['select'] as Row | undefined): Row => {
               if (!select) return row;
               const out = { ...row };
               for (const [field, spec] of Object.entries(select)) {
+                // A strict world joins a selected to-one relation the row
+                // names by `${field}Id` (a lesson's or a group's academicYear).
+                if (options.strict && out[field] === undefined && typeof out[`${field}Id`] === 'string' && spec !== null && typeof spec === 'object') {
+                  const target = table(field).find((candidate) => candidate['id'] === out[`${field}Id`]);
+                  out[field] = target ? project(target, (spec as Row)['select'] as Row | undefined) : null;
+                  continue;
+                }
                 if (!Array.isArray(out[field]) || spec === null || typeof spec !== 'object') continue;
                 const { where: inner, take } = spec as { where?: Row; take?: number };
-                let list = (out[field] as Row[]).filter((item) => matches(item, inner));
+                let list = (out[field] as Row[]).filter((item) => matches(item, inner, { model: field, table, strict: options.strict === true }));
                 if (take !== undefined) list = list.slice(0, take);
                 out[field] = list;
+              }
+              // And hands back only what was selected, as the database does: a
+              // reader that uses a column it never asked for fails here.
+              if (options.strict) {
+                for (const key of Object.keys(out)) if (!(key in select)) delete out[key];
               }
               return out;
             };
@@ -287,7 +417,8 @@ export function givenRolloverWorld(rows: Record<string, Row[]> = defaultRollover
                       ? { ...row, localTimplan: table('localTimplan').find((plan) => plan['id'] === row['localTimplanId']) }
                       : row,
               );
-            const found = table(name).filter((row) => matches(row, where));
+            const context: MatchContext = { model: name, table, strict: options.strict === true };
+            const found = table(name).filter((row) => matches(row, where, context));
             // orderBy as one object or a list of them, the first key of each.
             const orders = [args['orderBy'] ?? []].flat() as Record<string, 'asc' | 'desc'>[];
             const keys = orders.map((order) => Object.entries(order)[0]!).filter(Boolean);
@@ -328,6 +459,16 @@ export function givenRolloverWorld(rows: Record<string, Row[]> = defaultRollover
                 const [row] = found;
                 Object.assign(row!, args['data']);
                 return row;
+              }
+              case 'upsert': {
+                const [row] = found;
+                if (row) {
+                  Object.assign(row, args['update']);
+                  return row;
+                }
+                const created = { id: freshId(), ...(args['create'] as Row) };
+                table(name).push(created);
+                return created;
               }
               case 'updateMany': {
                 for (const row of found) Object.assign(row, args['data']);

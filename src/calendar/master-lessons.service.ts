@@ -23,6 +23,13 @@ import {
 } from '../staffing/staffing-checks';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
 import { refuseRostersNotActivated } from '../year-rollover/rosters-current';
+import {
+  countHomePupils,
+  readHomeClassesOf,
+  readHomePupils,
+  rostersOfYear,
+  type RosterBasis,
+} from '../year-rollover/projected-rosters';
 
 export interface MasterLessonConflict {
   kind: 'TEACHER' | 'ROOM' | 'GROUP' | 'AVAILABILITY';
@@ -145,7 +152,7 @@ export class MasterLessonsService {
     return this.prisma.withRls(user, async (tx) => {
       const year = await tx.academicYear.findUnique({
         where: { id: dto.academicYearId },
-        select: { id: true, schoolId: true },
+        select: { id: true, schoolId: true, isActive: true, predecessorId: true },
       });
       if (!year) {
         throw new NotFoundException('Academic year not found.');
@@ -153,6 +160,9 @@ export class MasterLessonsService {
       // A rolled year not yet activated has no pupils in its classes, so
       // the pupil clashes below would be judged on nobody.
       await refuseRostersNotActivated(tx, year.id);
+      // Whose classes these are (projected-rosters.ts), from the flags just
+      // read: nothing more is asked of the active year.
+      const rosters = await rostersOfYear(tx, user, year.id, year);
 
       const candidate = {
         dayOfWeek: dto.dayOfWeek,
@@ -183,6 +193,7 @@ export class MasterLessonsService {
 
       const conflicts = await this.findConflicts(
         tx,
+        rosters,
         {
           id: null,
           academicYearId: dto.academicYearId,
@@ -268,12 +279,17 @@ export class MasterLessonsService {
         select: {
           ...LESSON_SELECT,
           school: { select: { id: true, timezone: true } },
+          // The year's flags ride on the read the PATCH makes anyway, so a
+          // lesson dragged in the active year asks nothing more for its
+          // roster basis.
+          academicYear: { select: { isActive: true, predecessorId: true } },
         },
       });
       if (!lesson) {
         throw new NotFoundException('Master lesson not found.');
       }
       await refuseRostersNotActivated(tx, lesson.academicYearId);
+      const rosters = await rostersOfYear(tx, user, lesson.academicYearId, lesson.academicYear);
 
       // Merge the patch onto the current slot.
       const candidate = {
@@ -326,6 +342,7 @@ export class MasterLessonsService {
         ? []
         : await this.findConflicts(
             tx,
+            rosters,
             {
               id: lesson.id,
               academicYearId: lesson.academicYearId,
@@ -368,6 +385,7 @@ export class MasterLessonsService {
                 groupIds: [lesson.studentGroupId, ...candidate.extraGroupIds],
                 studentIds: candidate.studentIds,
                 assignees,
+                rosters,
               }),
             )
           : [];
@@ -560,6 +578,7 @@ export class MasterLessonsService {
    */
   private async rosterOf(
     tx: PrismaClient,
+    basis: RosterBasis,
     groupIds: Set<string>,
   ): Promise<Map<string, Set<string>>> {
     const membersOf = new Map<string, Set<string>>();
@@ -571,11 +590,10 @@ export class MasterLessonsService {
       else membersOf.set(groupId, new Set([studentId]));
     };
 
+    // The home side through the year's basis (projected-rosters.ts), with
+    // this reader's own filter — none: every pupil whose class it is counts.
     const [homeClass, teachingGroups] = await Promise.all([
-      tx.user.findMany({
-        where: { studentGroupId: { in: ids } },
-        select: { id: true, studentGroupId: true },
-      }),
+      readHomePupils(tx, basis, {}, ids),
       tx.studentGroupMember.findMany({
         where: { studentGroupId: { in: ids } },
         select: { studentId: true, studentGroupId: true },
@@ -637,6 +655,8 @@ export class MasterLessonsService {
 
   private async findConflicts(
     tx: PrismaClient,
+    /** The year's roster basis: every pupil read below is read through it. */
+    basis: RosterBasis,
     lesson: {
       /** Null when validating a brand-new lesson. */
       id: string | null;
@@ -675,10 +695,7 @@ export class MasterLessonsService {
     // whenever their own class has a lesson.
     const studentGroupOf = new Map<string, string | null>();
     if (candidateStudents.length > 0) {
-      const students = await tx.user.findMany({
-        where: { id: { in: candidateStudents } },
-        select: { id: true, studentGroupId: true },
-      });
+      const students = await readHomeClassesOf(tx, basis, candidateStudents);
       for (const student of students) {
         studentGroupOf.set(student.id, student.studentGroupId);
       }
@@ -832,7 +849,7 @@ export class MasterLessonsService {
             ...candidateGroups,
             ...clashing.flatMap(groupsAttending),
           ]);
-    const membersOf = await this.rosterOf(tx, groupsInPlay);
+    const membersOf = await this.rosterOf(tx, basis, groupsInPlay);
     const candidatePupils = new Set<string>();
     for (const groupId of candidateGroups) {
       for (const studentId of membersOf.get(groupId) ?? []) {
@@ -962,12 +979,12 @@ export class MasterLessonsService {
       // Symmetric: students individually attending the other lesson whose
       // home class is one of the candidate's classes.
       if (other.participants.length > 0 && !busyStudent) {
-        const reverse = await tx.user.count({
-          where: {
-            id: { in: other.participants.map((entry) => entry.studentId) },
-            studentGroupId: { in: [...candidateGroups] },
-          },
-        });
+        const reverse = await countHomePupils(
+          tx,
+          basis,
+          { id: { in: other.participants.map((entry) => entry.studentId) } },
+          [...candidateGroups],
+        );
         if (reverse > 0) {
           conflicts.push({
             kind: 'GROUP',

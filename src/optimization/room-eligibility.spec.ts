@@ -1,5 +1,9 @@
 import type { PrismaClient } from '@prisma/client';
 import { gradeSpanOf, loadRosters, roomNeedsOf, type Rosters } from './room-eligibility';
+import type { RosterBasis } from '../year-rollover/projected-rosters';
+
+/** The active year's basis: the rows as they are. */
+const CURRENT: RosterBasis = { kind: 'CURRENT' };
 
 /*
  * Who counts for a room: the one derivation both the generator and the room
@@ -158,7 +162,7 @@ const MEMBERSHIPS: Membership[] = [
 ];
 
 const rostersFor = (groupIds: string[], named: string[] = []): Promise<Rosters> =>
-  loadRosters(schoolOf(PEOPLE, MEMBERSHIPS).tx, groupIds, GROUPS, named);
+  loadRosters(schoolOf(PEOPLE, MEMBERSHIPS).tx, CURRENT, groupIds, GROUPS, named);
 
 describe('loadRosters', () => {
   it('seats the active pupils of the groups asked about, from both membership kinds', async () => {
@@ -224,6 +228,7 @@ describe('gradeSpanOf', () => {
     // years 7 is right for it, and a room for year 9 alone is not.
     const rosters = await loadRosters(
       schoolOf(PEOPLE, [{ studentId: pupil(2), studentGroupId: MA }]).tx,
+      CURRENT,
       [MA],
       GROUPS.map((group) => (group.id === MA ? { ...group, gradeLevel: 9 } : group)),
     );
@@ -237,7 +242,7 @@ describe('gradeSpanOf', () => {
     expect(gradeSpanOf(rosters, [EMPTY])).toBeNull();
     expect(
       gradeSpanOf(
-        await loadRosters(schoolOf([], []).tx, [CLASS_8A], GROUPS),
+        await loadRosters(schoolOf([], []).tx, CURRENT, [CLASS_8A], GROUPS),
         [CLASS_8A],
       ),
     ).toEqual({ min: 8, max: 8 });

@@ -38,6 +38,7 @@ import type {
 import { OptimizationProxyService, type AnonMaps } from './optimization-proxy.service';
 import { loadRosters, roomNeedsOf, type RoomNeeds } from './room-eligibility';
 import { refuseRostersNotActivated } from '../year-rollover/rosters-current';
+import { rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
 
 /** The code a stale apply answers with, so the page recomputes rather than guesses. */
 export const ROOM_PROPOSAL_STALE = 'ROOM_PROPOSAL_STALE';
@@ -208,7 +209,7 @@ export class RoomOptimizationService {
     const state = await this.prisma.withRls(user, async (tx) => {
       // A rolled year not yet activated has no pupils in its classes.
       await refuseRostersNotActivated(tx, dto.academicYearId);
-      return this.readYear(tx, dto.academicYearId);
+      return this.readYear(tx, user, dto.academicYearId);
     });
 
     const basis = basisOf(state);
@@ -275,7 +276,7 @@ export class RoomOptimizationService {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('room-optimization'), hashtext(${dto.academicYearId}))`;
       await refuseRostersNotActivated(tx, dto.academicYearId);
 
-      const state = await this.readYear(tx, dto.academicYearId);
+      const state = await this.readYear(tx, user, dto.academicYearId);
       // Everything the proposal read, re-read here and compared whole. A
       // teacher moved, a room renumbered to another floor, a lesson locked —
       // any of them changes what the best rooms are, and a proposal applied
@@ -387,14 +388,19 @@ export class RoomOptimizationService {
 
   // ---------------------------------------------------------------------------
 
-  private async readYear(tx: PrismaClient, academicYearId: string): Promise<YearState> {
+  private async readYear(tx: PrismaClient, viewer: RosterViewer, academicYearId: string): Promise<YearState> {
     const year = await tx.academicYear.findUnique({
       where: { id: academicYearId },
-      select: { id: true, schoolId: true },
+      select: { id: true, schoolId: true, isActive: true, predecessorId: true },
     });
     // Without this, an unknown year reads as an empty timetable and the page
     // is told its rooms are already as good as they get.
     if (!year) throw new NotFoundException('Academic year not found.');
+    // Whose classes these are, from the flags just read: the active year
+    // costs nothing more, and a rolled year not yet activated reads the
+    // pupils its activation would place — in propose and in apply alike, so a
+    // proposal made in spring still matches the basis after the activation.
+    const basis = await rostersOfYear(tx, viewer, academicYearId, year);
 
     // School-scoped rows through the year -> school hop, as the generator
     // reads them, so a request for another school's year pulls nothing.
@@ -428,6 +434,7 @@ export class RoomOptimizationService {
     });
     const rosters = await loadRosters(
       tx,
+      basis,
       [...new Set(placed.flatMap(groupsOf))],
       groups,
       placed.flatMap((lesson) => lesson.participants.map((entry) => entry.studentId)),

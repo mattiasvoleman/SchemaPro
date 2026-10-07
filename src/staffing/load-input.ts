@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
+import { rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
 import type { GradeSpan, LoadInput } from './teacher-load';
 import type { YearBounds } from './teaching-weeks';
 
@@ -30,6 +31,9 @@ export interface LoadRead {
  * that would put her over asks. Null when RLS hides the year — the report turns
  * that into its 404, a write lets its own statement answer.
  *
+ * `viewer` is whoever asks, for the year's roster basis (projected-rosters.ts):
+ * staff only, as every route reaching this is.
+ *
  * GRADE SPANS OVER EVERY GROUP OF THE YEAR. The years a teaching group holds are
  * its members' home classes' years, and room-eligibility reads a home class's
  * year from the groups it is HANDED. The report used to hand it only the groups
@@ -39,13 +43,14 @@ export interface LoadRead {
  */
 export async function readLoadInput(
   tx: PrismaClient,
+  viewer: RosterViewer,
   academicYearId: string,
   schoolId: string,
   options: { alsoGroupIds?: string[]; studentIds?: string[] } = {},
 ): Promise<LoadRead | null> {
   const yearRow = await tx.academicYear.findUnique({
     where: { id: academicYearId },
-    select: { startDate: true, endDate: true },
+    select: { startDate: true, endDate: true, isActive: true, predecessorId: true },
   });
   if (!yearRow) return null;
   const year: YearBounds = { startDate: asDay(yearRow.startDate), endDate: asDay(yearRow.endDate) };
@@ -132,9 +137,18 @@ export async function readLoadInput(
       ...(options.alsoGroupIds ?? []),
     ]),
   ];
+  // A rolled year not yet activated spans the grades its activation would
+  // place (projected-rosters.ts); the flags come from the year row above, so
+  // the active year's report costs nothing more.
   const rosters =
     asked.length > 0
-      ? await loadRosters(tx, asked, [...groups.values()], options.studentIds ?? [])
+      ? await loadRosters(
+          tx,
+          await rostersOfYear(tx, viewer, academicYearId, yearRow),
+          asked,
+          [...groups.values()],
+          options.studentIds ?? [],
+        )
       : null;
   const spanOf = (groupIds: string[], studentIds: string[] = []): GradeSpan | null =>
     rosters ? gradeSpanOf(rosters, groupIds, studentIds) : null;

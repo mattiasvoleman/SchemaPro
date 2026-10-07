@@ -1,4 +1,9 @@
 import type { PrismaClient } from '@prisma/client';
+import {
+  readHomeClassesOf,
+  readHomePupils,
+  type RosterBasis,
+} from '../year-rollover/projected-rosters';
 
 /**
  * What a lesson asks of a room: how many bodies, which years, which kind.
@@ -36,22 +41,21 @@ export interface Rosters {
  * `namedStudentIds` are pupils a lesson names one by one. They sit in no group
  * the lesson carries, so their home class has to be read here too, or a pupil
  * on a lesson alone would have no year at all.
+ *
+ * `basis` is the year's (projected-rosters.ts): for a rolled year not yet
+ * activated the home classes are the ones its activation would write, so 8A
+ * holds 7A's pupils and Ma8's members have 8A as their home class. Required,
+ * never defaulted — a forgotten basis would silently read empty classes.
  */
 export async function loadRosters(
   tx: PrismaClient,
+  basis: RosterBasis,
   groupIds: string[],
   groups: { id: string; gradeLevel: number | null }[],
   namedStudentIds: Iterable<string> = [],
 ): Promise<Rosters> {
   const [homeMembers, teachingMembers] = await Promise.all([
-    tx.user.findMany({
-      where: {
-        role: 'STUDENT',
-        isActive: true,
-        studentGroupId: { in: groupIds },
-      },
-      select: { id: true, studentGroupId: true },
-    }),
+    readHomePupils(tx, basis, { role: 'STUDENT', isActive: true }, groupIds),
     tx.studentGroupMember.findMany({
       where: {
         studentGroupId: { in: groupIds },
@@ -80,10 +84,7 @@ export async function loadRosters(
   ];
   const studentHomeClasses =
     involvedStudentIds.length > 0
-      ? await tx.user.findMany({
-          where: { id: { in: involvedStudentIds } },
-          select: { id: true, studentGroupId: true },
-        })
+      ? await readHomeClassesOf(tx, basis, involvedStudentIds)
       : ([] as { id: string; studentGroupId: string | null }[]);
 
   return {
