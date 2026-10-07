@@ -1890,7 +1890,7 @@
       "ROLLOVER_PREVIEW_STALE": "Läsåret ändrades efter förhandsvisningen. Inget skapades — granska den nya förhandsvisningen och försök igen.",
       "ACTIVATION_PREVIEW_STALE": "Elevernas klasser ändrades efter förhandsvisningen. Ingen flyttades — granska igen.",
       "YEAR_NAME_TAKEN": "Det finns redan ett läsår med det namnet.",
-      "YEAR_HAS_HOME_PUPILS": "{pupils} aktiva elever har sina klasser i läsåret. Flytta dem, eller aktivera ett läsår som tar över dem, innan läsåret tas bort.",
+      "YEAR_HAS_HOME_PUPILS": "{pupils, plural, one {# elev har sin klass} other {# elever har sina klasser}} i läsåret{inactive, plural, =0 {} one {, varav # inaktiv} other {, varav # inaktiva}}. Flytta dem, eller aktivera ett läsår som tar över dem, innan läsåret tas bort.",
       "YEAR_ACTIVATION_TOO_EARLY": "{year} pågår till och med {endDate}. Eleverna flyttas när det har slutat.",
       "YEAR_IS_SUPERSEDED": "{year} har efterträtts av {successor}, där {pupils} elever redan har sina klasser.",
       "YEAR_ACTIVATION_HAS_MOVES": "{pupils} elever har ännu inte flyttats in. Aktivera läsåret här, så visas och görs flytten.",

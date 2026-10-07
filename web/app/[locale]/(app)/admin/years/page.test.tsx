@@ -204,18 +204,24 @@ describe("YearsPage", () => {
 
   it("refuses to delete a year that holds pupils' classes, in the reader's language", async () => {
     post.mockResolvedValue(plan());
-    del.mockRejectedValue(new ApiError(409, "Läsåret har klasser …", "YEAR_HAS_HOME_PUPILS", { pupils: 34 }));
+    del.mockRejectedValue(new ApiError(409, "Läsåret har klasser …", "YEAR_HAS_HOME_PUPILS", { pupils: 34, inactive: 1 }));
     const user = userEvent.setup();
     renderPage();
-    await user.click(within(rowOf("2025/26")).getByRole("button", { name: "Ta bort 2025/26" }));
+    await user.click(within(rowOf("2027/28")).getByRole("button", { name: "Ta bort 2027/28" }));
     await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Ta bort" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "34 aktiva elever har sina klasser i läsåret. Flytta dem, eller aktivera ett läsår som tar över dem, innan läsåret tas bort.",
+        "34 elever har sina klasser i läsåret, varav 1 inaktiv. Flytta dem, eller aktivera ett läsår som tar över dem, innan läsåret tas bort.",
       ),
     );
-    expect(del).toHaveBeenCalledWith("/api/v1/academic-years/y25");
-    // The active year cannot be deleted from here at all.
+    expect(del).toHaveBeenCalledWith("/api/v1/academic-years/y27");
+  });
+
+  it("offers delete only for a coming year: a finished one takes its calendar and närvaro with it", () => {
+    post.mockResolvedValue(plan());
+    renderPage();
+    expect(within(rowOf("2027/28")).getByRole("button", { name: "Ta bort 2027/28" })).toBeInTheDocument();
+    expect(within(rowOf("2025/26")).queryByRole("button", { name: "Ta bort 2025/26" })).toBeNull();
     expect(within(rowOf("2026/27")).queryByRole("button", { name: "Ta bort 2026/27" })).toBeNull();
   });
 });
