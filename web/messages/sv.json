@@ -160,8 +160,7 @@
     "myChildren": "Mina barn",
     "integrations": "Integrationer",
     "rasts": "Raster",
-    "staffing": "Tjänstefördelning",
-    "requirementsFormerly": "Hette tidigare Timplan"
+    "staffing": "Tjänstefördelning"
   },
   "dashboard": {
     "title": "Översikt",
@@ -195,7 +194,7 @@
     "stepGroups": "Klasser",
     "stepPeople": "Personer",
     "yearTitle": "Skapa läsåret",
-    "yearHint": "Det aktiva läsåret samlar klasser, timplan och det genererade schemat.",
+    "yearHint": "Det aktiva läsåret samlar klasser, timplansposter och det genererade schemat.",
     "yearName": "Namn",
     "yearNamePlaceholder": "2026/2027",
     "startDate": "Startdatum",
@@ -369,9 +368,7 @@
     "memberCount": "{count} elever",
     "cellLabel": "{subject} för {group}",
     "cellLabelSet": "{subject} för {group}: {lessons} lektioner à {minutes} minuter",
-    "cellLabelPeriod": "{subject} för {group}: {lessons} lektioner à {minutes} minuter, {note}",
-    "formerlyHint": "Den här sidan hette tidigare Timplan. Timplan är nu skolans lokala timplan — målet i minuter per vecka och årskurs, som posterna här lägger ut.",
-    "formerlyLink": "Till Timplan"
+    "cellLabelPeriod": "{subject} för {group}: {lessons} lektioner à {minutes} minuter, {note}"
   },
   "timplan": {
     "title": "Timplan",
@@ -634,7 +631,7 @@
   },
   "breaks": {
     "title": "Lov och studiedagar",
-    "intro": "Dagarna läsåret har men schemat inte. De dras av från timplanens timtal, och när ett lov sparas tas publicerade lektioner i perioden bort ur kalendern.",
+    "intro": "Dagarna läsåret har men schemat inte. De dras av från timplansposternas timtal, och när ett lov sparas tas publicerade lektioner i perioden bort ur kalendern.",
     "yearLabel": "Läsår",
     "addBreak": "Lägg till lov",
     "editBreak": "Redigera lov",
@@ -658,16 +655,16 @@
     "deletesWarning": "När du sparar tas publicerade lektioner i perioden bort ur kalendern. Lektioner som redan varit, som ställts in eller som har närvaro registrerad rörs inte. Att korta ned eller ta bort lovet ger inte tillbaka lektioner som redan tagits bort.",
     "removedLessons": "{name} sparades. {count, plural, =1 {1 publicerad lektion togs bort ur kalendern.} other {# publicerade lektioner togs bort ur kalendern.}}",
     "removedNone": "{name} sparades. Inga publicerade lektioner behövde tas bort.",
-    "deleteBody": "Lovet försvinner ur listan och timplanens timtal räknar veckan som undervisad igen. Lektionerna som togs bort när lovet lades in kommer inte tillbaka.",
-    "empty": "Inga lov är inlagda för det här läsåret. Timplanens timtal räknar då varje kalendervecka som undervisad, vilket ligger ungefär 8–10 veckor för högt över ett svenskt läsår.",
+    "deleteBody": "Lovet försvinner ur listan och timplansposternas timtal räknar veckan som undervisad igen. Lektionerna som togs bort när lovet lades in kommer inte tillbaka.",
+    "empty": "Inga lov är inlagda för det här läsåret. Timplansposternas timtal räknar då varje kalendervecka som undervisad, vilket ligger ungefär 8–10 veckor för högt över ett svenskt läsår.",
     "noYear": "Skapa och aktivera ett läsår först.",
     "loadFailed": "Listan över lov kunde inte hämtas.",
     "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att skolan inte har några lov alls. Byt läsår i väljaren ovan för att försöka igen.",
-    "tableCaption": "Läsårets lov och studiedagar, tidigast först. Varje rad är en period då skolan inte undervisar, och timplanens timtal drar av den."
+    "tableCaption": "Läsårets lov och studiedagar, tidigast först. Varje rad är en period då skolan inte undervisar, och timplansposternas timtal drar av den."
   },
   "generate": {
     "title": "Generera schema",
-    "subtitle": "AI-motorn bygger ett optimalt veckoschema utifrån timplan och tillgänglighet",
+    "subtitle": "AI-motorn bygger ett optimalt veckoschema utifrån timplansposter och tillgänglighet",
     "prerequisites": "Förutsättningar",
     "preYear": "Aktivt läsår",
     "preRequirements": "Timplansposter",
@@ -705,7 +702,7 @@
     "rulesHint": "Reglerna gäller hela skolan och ställs in under Tillgänglighet.",
     "ruleMaxPerDay": "Max lektioner per dag och klass",
     "rulesEdit": "Ändra",
-    "noYearTitle": "{count, plural, one {En grupp} other {# grupper}} i timplanen saknar årskurs",
+    "noYearTitle": "{count, plural, one {En grupp} other {# grupper}} i timplansposterna saknar årskurs",
     "noYearBody": "Motorn läser ”ingen årskurs” som ”obegränsad”: ramtider och raster gäller inte för dessa gruppers lektioner, så de kan hamna rakt över en rast. Årskursen härleds ur medlemmarnas hemklasser, eller ur gruppens egen årskurs om den saknar medlemmar.",
     "noYearLink": "Lägg till medlemmar eller årskurs under Klasser"
   },
@@ -850,7 +847,7 @@
     "placeLunchHint": "Klicka där klassens lunch ska ligga. Måltiden är {minutes} minuter, skolans lunchlängd. En lunch du lägger själv ligger kvar när du genererar om, och motorn lägger lektionerna runt den.",
     "placeLunchOn": "Klar med lunchen",
     "placeLunch": "Placera lunch",
-    "noSittingsGroup": "Ingen lunch är lagd för {group}. Motorn lägger lunch bara för klasser som har egna lektioner i timplanen att lägga den runt.",
+    "noSittingsGroup": "Ingen lunch är lagd för {group}. Motorn lägger lunch bara för klasser som har egna lektioner i timplansposterna att lägga den runt.",
     "optimizeRooms": "Optimera salar"
   },
   "roomOptimization": {
@@ -1120,7 +1117,7 @@
     "importing": "Importerar…",
     "resultSummary": "{created} skapade, {skipped} överhoppade",
     "resultSummaryUpdated": "{created} skapade, {updated} uppdaterade, {skipped} överhoppade",
-    "updatesNotDeletes": "Importen lägger till nya rader och uppdaterar dem som redan finns. Rader du tagit bort ur filen tas INTE bort ur timplanen, och en kolumn som saknas i filen lämnas orörd. Men en TOM cell i en kolumn filen har betyder att fältet töms — så här tar du bort en lärare eller en period. Ta bort en hel post genom att klicka på den i tabellen.",
+    "updatesNotDeletes": "Importen lägger till nya rader och uppdaterar dem som redan finns. Rader du tagit bort ur filen tas INTE bort ur timplansposterna, och en kolumn som saknas i filen lämnas orörd. Men en TOM cell i en kolumn filen har betyder att fältet töms — så här tar du bort en lärare eller en period. Ta bort en hel post genom att klicka på den i tabellen.",
     "rowErrors": "Fel per rad",
     "rowError": "Rad {row}: {message}",
     "rowWarnings": "Sparade, med varning från tjänstefördelningen",
@@ -1189,7 +1186,7 @@
     "idleHint": "En håltimme är en lucka mellan dagens första och sista lektion — tid någon sitter av på skolan. Den räknas per elev, så en lucka kan gälla halva klassen medan den andra halvan har lektion. Tiden före första och efter sista lektionen räknas inte, då är man inte här. Tyngsta veckan först.",
     "idleLunchWindow": "{minutes} min lunch dras av en gång per dag, från den första lucka i fönstret som rymmer den.",
     "idleLunchOff": "Ingen lunchtid är inställd, så ingen lucka får avdrag för mat.",
-    "idlePupilTime": "Timplanen ger några lektioner extra tid för eleverna — ombyte före och dusch efter. Den tiden räknas som upptagen, så en lucka som ser tom ut i rutnätet kan saknas här: klassen står i omklädningsrummet, och schemaeditorn släpper inte in en lektion där heller.",
+    "idlePupilTime": "Timplansposterna ger några lektioner extra tid för eleverna — ombyte före och dusch efter. Den tiden räknas som upptagen, så en lucka som ser tom ut i rutnätet kan saknas här: klassen står i omklädningsrummet, och schemaeditorn släpper inte in en lektion där heller.",
     "idleMinimum": "Räkna luckor från",
     "idleScope": "Visa",
     "idleScopeAll": "Klasser och lärare",
@@ -1288,7 +1285,7 @@
     "yearLabel": "Läsår",
     "settings": "Inställningar",
     "noYear": "Skapa och aktivera ett läsår först.",
-    "empty": "Inga lärare med tjänst eller timplanspost för det här läsåret. Ange tjänster i lärarnas rader under Personer, eller sätt lärare på timplanens poster.",
+    "empty": "Inga lärare med tjänst eller timplanspost för det här läsåret. Ange tjänster i lärarnas rader under Personer, eller sätt lärare på timplansposterna.",
     "loadFailed": "Rapporten kunde inte hämtas",
     "loadFailedHint": "Inga siffror visas, eftersom de skulle bli noll av fel skäl. Byt läsår i väljaren ovan för att försöka igen.",
     "noTargetTitle": "Inget riktmärke satt",
@@ -1385,7 +1382,7 @@
     "selectSubject": "Välj ämne…",
     "unstaffedTitle": "Obemannade rader",
     "unstaffedHint": "Timplansposter utan lärare. Föreslå lärare rangordnar skolans lärare efter behörighet, om de redan undervisar gruppen och hur mycket plats de har kvar — ett klick tilldelar.",
-    "unstaffedEmpty": "Alla timplansrader har en lärare.",
+    "unstaffedEmpty": "Alla timplansposter har en lärare.",
     "unstaffedRow": "{group} · {subject} · {minutes} min/v",
     "openRequirements": "Öppna timplansposterna",
     "policyTitle": "Inställningar för tjänstefördelning",
@@ -1512,7 +1509,7 @@
     "dutyBlocks": "Blockerar {day} {start}–{end}",
     "dutiesTotal": "{count, plural, one {# uppdrag} other {# uppdrag}}, {minutes} min/v sammanlagt",
     "teacherRowsTitle": "Timplansposter",
-    "teacherRowsHint": "Raderna läraren har i timplanen. Byt lärare på en rad hen leder; medlärarrader ändras i timplanens ruta.",
+    "teacherRowsHint": "Läraren har de här timplansposterna. Byt lärare på en post hen leder; en post där hen är medlärare ändras i postens ruta under Timplansposter.",
     "teacherRowsEmpty": "Läraren har inga timplansposter det här läsåret.",
     "teacherRowLessons": "{lessons} × {minutes} min",
     "teacherRowCoTeacher": "medlärare",

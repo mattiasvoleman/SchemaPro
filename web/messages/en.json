@@ -160,8 +160,7 @@
     "myChildren": "My children",
     "integrations": "Integrations",
     "rasts": "Breaks",
-    "staffing": "Staffing",
-    "requirementsFormerly": "Formerly called Curriculum"
+    "staffing": "Staffing"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -369,9 +368,7 @@
     "memberCount": "{count} students",
     "cellLabel": "{subject} for {group}",
     "cellLabelSet": "{subject} for {group}: {lessons} lessons of {minutes} minutes",
-    "cellLabelPeriod": "{subject} for {group}: {lessons} lessons of {minutes} minutes, {note}",
-    "formerlyHint": "This page was formerly called Curriculum. Timplan is now the school's local timplan — the target in minutes per week and year that the entries here lay out.",
-    "formerlyLink": "Go to Timplan"
+    "cellLabelPeriod": "{subject} for {group}: {lessons} lessons of {minutes} minutes, {note}"
   },
   "timplan": {
     "title": "Timplan",
@@ -705,7 +702,7 @@
     "rulesHint": "The rules apply to the whole school and are set under Availability.",
     "ruleMaxPerDay": "Max lessons per day per class",
     "rulesEdit": "Change",
-    "noYearTitle": "{count, plural, one {One group} other {# groups}} in the timplan has no year",
+    "noYearTitle": "{count, plural, one {One group} other {# groups}} in the curriculum entries has no year",
     "noYearBody": "The solver reads “no year” as “unrestricted”: frame times and breaks do not apply to these groups’ lessons, so they can land straight across a break. The year is derived from the members’ home classes, or from the group’s own year when it has no members.",
     "noYearLink": "Add members or a year under Classes"
   },
@@ -1512,7 +1509,7 @@
     "dutyBlocks": "Blocks {day} {start}–{end}",
     "dutiesTotal": "{count, plural, one {# duty} other {# duties}}, {minutes} min/wk in all",
     "teacherRowsTitle": "Curriculum entries",
-    "teacherRowsHint": "The curriculum entries the teacher carries. Change the teacher on an entry they lead; co-teaching entries are changed in the curriculum entry's own cell.",
+    "teacherRowsHint": "The curriculum entries the teacher carries. Change the teacher on an entry they lead; an entry they co-teach is changed in its own cell under Curriculum entries.",
     "teacherRowsEmpty": "The teacher has no curriculum entries this year.",
     "teacherRowLessons": "{lessons} × {minutes} min",
     "teacherRowCoTeacher": "co-teacher",
