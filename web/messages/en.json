@@ -1414,6 +1414,8 @@
     "candidateUnqualified": "Not qualified",
     "candidateRemaining": "left: {minutes} min/wk",
     "candidateOver": "{minutes} min/wk over target",
+    "candidateRemainingAfter": "left after this row: {minutes} min/wk",
+    "candidateOverAfter": "{minutes} min/wk over target with this row",
     "candidateNoTarget": "no target",
     "candidateHint": "Qualification and remaining minutes per teacher, from the staffing. The school's settings decide whether an assignment is warned about or refused when it is saved.",
     "problem_percentRequired": "Enter the employment percentage. A post without a percentage is no post.",

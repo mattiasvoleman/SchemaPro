@@ -1414,6 +1414,8 @@
     "candidateUnqualified": "Saknar behörighet",
     "candidateRemaining": "kvar: {minutes} min/v",
     "candidateOver": "{minutes} min/v över mål",
+    "candidateRemainingAfter": "kvar efter raden: {minutes} min/v",
+    "candidateOverAfter": "{minutes} min/v över mål med raden",
     "candidateNoTarget": "inget mål",
     "candidateHint": "Behörighet och kvarvarande minuter per lärare, från tjänstefördelningen. Skolans inställningar avgör om en tilldelning varnar eller vägras när den sparas.",
     "problem_percentRequired": "Ange tjänstgöringsgraden. En tjänst utan procent är ingen tjänst.",
