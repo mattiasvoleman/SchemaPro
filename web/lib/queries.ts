@@ -184,7 +184,7 @@ export function useAcademicYears() {
     queryFn: () =>
       selectAll<AcademicYear>(
         "AcademicYears",
-        "id, name, startDate, endDate, isActive",
+        "id, name, startDate, endDate, isActive, predecessorId, graduatingGradeLevel",
         "startDate",
       ),
   });

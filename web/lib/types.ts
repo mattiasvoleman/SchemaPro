@@ -161,6 +161,19 @@ export interface AcademicYear {
   startDate: string;
   endDate: string;
   isActive: boolean;
+  /**
+   * The läsår this one was rolled from (2026/27 → 2027/28), or null for a
+   * year created by hand. Written once, by the rollover, and held by the
+   * database: a year has at most one successor, and the link is never
+   * re-pointed (migration 20261007150000).
+   */
+  predecessorId: string | null;
+  /**
+   * The årskurs that left school when this year was rolled into: activation
+   * calls a pupil whose class has no successor a graduate at or above it and
+   * unplaced below it. A label only — nothing is moved on its account.
+   */
+  graduatingGradeLevel: number | null;
 }
 
 /**
@@ -642,4 +655,166 @@ export interface TeacherSuggestions {
   qualificationsRecorded: boolean;
   /** Ranked: qualification, teaches the group, room left. */
   candidates: TeacherCandidate[];
+}
+
+// ---------------------------------------------------------------------------
+// Läsårsrullning (src/year-rollover)
+//
+// The answers of POST /academic-years/:id/rollover/preview and
+// /activation/preview, as the gateway's planners shape them
+// (src/year-rollover/rollover-plan.ts, RolloverPlan without `writes`, and
+// activation-plan.ts, ActivationPlan without `writes`). Codes are English
+// tokens the web translates (years.problems.*, years.reasons.*); names of
+// groups, subjects and years arrive as written; pupils and teachers arrive
+// as ids only, and the page names them from usePeople.
+// ---------------------------------------------------------------------------
+
+export type RolloverOutcomeCode = "PROMOTE" | "CARRY" | "SKIP" | "GRADUATE" | "INTAKE";
+
+export interface RolloverProblem {
+  code: string;
+  blocking: boolean;
+  params: Record<string, string | number | string[]>;
+}
+
+export interface RolloverPlannedGroup {
+  sourceGroupId: string;
+  sourceName: string;
+  kind: StudentGroupKind;
+  sourceGradeLevel: number | null;
+  outcome: RolloverOutcomeCode;
+  targetName: string | null;
+  targetGradeLevel: number | null;
+  /** INTAKE: the new class opened beside the promotion, same name and grade. */
+  intakeName: string | null;
+  nameStatus: string | null;
+  noGrade: boolean;
+  error: string | null;
+  collision: boolean;
+  caseCollision: boolean;
+  homePupils: number;
+  membersCopied: number;
+  membersExcluded: { graduating: number; noSuccessor: number };
+  membersStranded: number;
+  requirementsCarried: number;
+  volumeFindings: { subjectId: string; subjectName: string; carried: number; planned: number }[];
+  volumePlanName: string | null;
+}
+
+export interface RolloverRequirementRow {
+  sourceRequirementId: string;
+  subjectName: string;
+  groupName: string;
+}
+
+export interface RolloverPreview {
+  source: { id: string; name: string; startDate: string; endDate: string };
+  target: {
+    name: string;
+    startDate: string;
+    endDate: string;
+    dateShiftDays: number;
+    crossesIsoWeek53: boolean;
+  };
+  graduatingGradeLevel: number | null;
+  graduatingGradeSource: "REQUEST" | "TIMPLAN" | "CLASSES" | "NONE";
+  graduatingGradeConflict: { timplan: number[]; classes: number | null } | null;
+  groups: RolloverPlannedGroup[];
+  requirements: {
+    carried: number;
+    notCarried: number;
+    periodShifted: number;
+    periodBoundAnchored: number;
+    periodDropped: (RolloverRequirementRow & { startDate: string | null; endDate: string | null })[];
+    teachersCleared: (RolloverRequirementRow & {
+      role: "TEACHER" | "CO_TEACHER";
+      teacherId: string;
+      reason: "INACTIVE" | "SAME_TEACHER_TWICE" | "NOT_QUALIFIED";
+    })[];
+    qualificationWarnings: (RolloverRequirementRow & {
+      role: "TEACHER" | "CO_TEACHER";
+      teacherId: string;
+      grades: string;
+    })[];
+    oddEvenRows: number;
+  };
+  breaks: {
+    sourceBreakId: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+    proposedStart: string | null;
+    proposedEnd: string | null;
+    anchor: "CHRISTMAS" | "EASTER" | "ISO_WEEK" | "NONE";
+    fits: boolean;
+    selected: boolean;
+    startDateToWrite: string | null;
+    endDateToWrite: string | null;
+  }[];
+  classRules: {
+    sourceConstraintId: string;
+    sourceGroupName: string;
+    targetGroupName: string;
+    dayOfWeek: number;
+    startTime: string;
+    endTime: string;
+    stageChange: boolean;
+  }[];
+  skipped: { model: string; reason: string; count: number | null }[];
+  problems: RolloverProblem[];
+  blocking: boolean;
+  planHash: string;
+}
+
+/** The request of both rollover calls; execute adds G (required) and planHash. */
+export interface RolloverOptions {
+  name: string;
+  startDate: string;
+  endDate: string;
+  graduatingGradeLevel?: number;
+  groups?: { sourceGroupId: string; outcome?: "PROMOTE" | "CARRY" | "SKIP" | "INTAKE"; name?: string }[];
+  carryTeachingGroups?: boolean;
+  carryTeachingGroupMembers?: boolean;
+  keepTeachers?: boolean;
+  carryClassRules?: boolean;
+  breaks?: { sourceBreakId: string; startDate?: string; endDate?: string }[];
+}
+
+export interface RolloverResult {
+  academicYear: AcademicYear;
+  counts: { groups: number; members: number; requirements: number; breaks: number; classRules: number };
+  planHash: string;
+}
+
+export interface ActivationProblem {
+  code: "YEAR_ACTIVATION_TOO_EARLY" | "YEAR_IS_SUPERSEDED";
+  blocking: true;
+  params: Record<string, string | number>;
+}
+
+export interface ActivationPreview {
+  year: { id: string; name: string; isActive: boolean };
+  currentlyActive: { id: string; name: string } | null;
+  chain: { id: string; name: string; endDate: string }[];
+  moves: { fromGroupId: string; fromGroupName: string; toGroupId: string; toGroupName: string; count: number }[];
+  graduates: { count: number; studentIds: string[] };
+  unplaced: {
+    count: number;
+    studentIds: string[];
+    pupils: { studentId: string; fromGroupId: string; reason: "NO_SUCCESSOR" | "SUCCESSOR_NOT_A_CLASS" }[];
+  };
+  alreadyInYear: number;
+  inLaterYear: number;
+  otherOrNone: number;
+  inactiveUntouched: number;
+  problems: ActivationProblem[];
+  blocking: boolean;
+  planHash: string;
+}
+
+export interface ActivationResult {
+  year: { id: string; name: string; isActive: true };
+  moved: number;
+  graduated: number;
+  unplaced: number;
 }

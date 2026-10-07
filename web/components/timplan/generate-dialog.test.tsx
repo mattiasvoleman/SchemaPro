@@ -42,7 +42,7 @@ vi.mock("next-intl", () => ({
 }));
 
 const YEARS: AcademicYear[] = [
-  { id: "y-1", name: "2026/27", startDate: "2026-08-17", endDate: "2027-06-11", isActive: true },
+  { id: "y-1", name: "2026/27", startDate: "2026-08-17", endDate: "2027-06-11", isActive: true, predecessorId: null, graduatingGradeLevel: null },
 ];
 const PLAN = { id: "p-1", name: "Grundskola 2026", status: "DECIDED" as const };
 
