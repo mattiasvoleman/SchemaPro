@@ -1,11 +1,30 @@
 "use client";
 
-import { useState } from "react";
+// Kom igång. The läsår step also opens "Timplan per årskurs" for each year
+// (components/timplan/year-timplans-dialog.tsx): which lokal timplan every
+// årskurs follows. A year created here already follows the school's newest
+// decided plan in that plan's årskurser — the gateway attaches them in the
+// same transaction — and the toast says so, so the admin knows where the
+// targets came from and where to change them.
+//
+// The dialog is fetched on the click that opens it (React.lazy), and the
+// reason is every other route, not this one. Measured 2026-10-07 (`npm run
+// build`, scripts/bench/bundle-size.mjs, own JS gzip): imported statically,
+// it put the Dialog and Select internals in this route's graph next to the
+// (app) layout's, Turbopack re-sliced the layout's chunks, and EVERY app route
+// grew 1.2 KB — /admin/timetable 189.4 → 190.6 against its 190 budget,
+// /guardian 166.0 → 167.2. Lazy: this route 161.7 → 162.2, the layout's
+// chunks untouched, and /admin/timetable 10 bytes heavier from a re-slice of
+// three of its own chunks. (admin/timplan's header records the opposite case,
+// where five lazy dialogs and no static one moved the layout instead.)
+
+import { lazy, Suspense, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import {
   ArrowRight,
   BookOpen,
+  CalendarRange,
   Check,
   GraduationCap,
   MapPin,
@@ -23,6 +42,7 @@ import {
   useSubjects,
 } from "@/lib/queries";
 import { cn } from "@/lib/utils";
+import { TIMPLAN_COVERAGE_KEYS, YEAR_TIMPLAN_KEYS } from "@/lib/year-timplan-keys";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,6 +57,12 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+
+const YearTimplansDialog = lazy(() =>
+  import("@/components/timplan/year-timplans-dialog").then((module) => ({
+    default: module.YearTimplansDialog,
+  })),
+);
 
 type StepId = "year" | "subjects" | "rooms" | "groups" | "people";
 
@@ -55,7 +81,12 @@ export default function SetupPage() {
     startDate: string;
     endDate: string;
     isActive?: boolean;
-  }>("/api/v1/academic-years", [["academicYears"]]);
+  }>("/api/v1/academic-years", [
+    ["academicYears"],
+    // A new year follows the newest decided plan from its first answer.
+    [...YEAR_TIMPLAN_KEYS.all],
+    [...TIMPLAN_COVERAGE_KEYS.all],
+  ]);
   const subjectMutations = useCrudMutations<{ name: string }>("/api/v1/subjects", [
     ["subjects"],
   ]);
@@ -127,16 +158,27 @@ export default function SetupPage() {
     isActive: true,
   });
   const [quickName, setQuickName] = useState("");
+  const [timplanYearId, setTimplanYearId] = useState<string | null>(null);
 
   const addYear = async () => {
     try {
-      await yearMutations.create.mutateAsync({
+      const created = (await yearMutations.create.mutateAsync({
         name: yearForm.name.trim(),
         startDate: yearForm.startDate,
         endDate: yearForm.endDate,
         isActive: yearForm.isActive,
-      });
+      })) as { name?: string; timplans?: { planName: string }[] } | undefined;
       toast.success(tCommon("created"));
+      const attached = created?.timplans ?? [];
+      if (attached.length > 0) {
+        toast.info(
+          t("yearTimplansDefaulted", {
+            year: created?.name ?? yearForm.name.trim(),
+            plan: attached[0].planName,
+            count: attached.length,
+          }),
+        );
+      }
       setYearForm({ name: "", startDate: "", endDate: "", isActive: true });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : tCommon("error"));
@@ -169,9 +211,9 @@ export default function SetupPage() {
       title: t("yearTitle"),
       hint: t("yearHint"),
       href: "/admin/requirements",
-      items: (years ?? []).map(
-        (year) => `${year.name}${year.isActive ? " ✓" : ""}`,
-      ),
+      // Listed as rows of their own below the form, each with its
+      // "Timplan per årskurs" button, rather than as badges.
+      items: [],
     },
     subjects: {
       title: t("subjectsTitle"),
@@ -302,6 +344,31 @@ export default function SetupPage() {
                   {tCommon("create")}
                 </Button>
               </div>
+              {(years ?? []).length > 0 ? (
+                <ul className="divide-y rounded-md border">
+                  {(years ?? []).map((year) => (
+                    <li key={year.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                      <span className="font-medium">
+                        {year.name}
+                        {year.isActive ? (
+                          <Badge variant="secondary" className="ml-2">
+                            {t("active")}
+                          </Badge>
+                        ) : null}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setTimplanYearId(year.id)}
+                        aria-label={t("yearTimplansFor", { year: year.name })}
+                      >
+                        <CalendarRange />
+                        {t("yearTimplansButton")}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           ) : currentStep === "people" ? (
             <Button asChild>
@@ -355,6 +422,17 @@ export default function SetupPage() {
           </div>
         </CardContent>
       </Card>
+
+      <Suspense fallback={null}>
+        {timplanYearId !== null ? (
+          <YearTimplansDialog
+            open
+            onOpenChange={(open) => !open && setTimplanYearId(null)}
+            years={years ?? []}
+            initialYearId={timplanYearId}
+          />
+        ) : null}
+      </Suspense>
 
       {allDone ? (
         <Card className="mt-6 border-success/40 bg-success/5">

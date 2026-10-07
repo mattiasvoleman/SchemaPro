@@ -100,7 +100,14 @@ const state = vi.hoisted(() => ({
   download: vi.fn(),
 }));
 
+const YEARS = [
+  { id: "y-1", name: "2026/27", startDate: "2026-08-17", endDate: "2027-06-11", isActive: true },
+];
+
 vi.mock("@/lib/queries", () => ({
+  useAcademicYears: () => ({ data: YEARS }),
+  useRequirements: () => ({ data: [] }),
+  useGroups: () => ({ data: [], isLoading: false, isError: false }),
   useNationalTimplans: () => ({ data: NATIONAL, isLoading: false, isError: false }),
   useSubjects: () => ({ data: SUBJECTS, isLoading: false, isError: false }),
   usePeople: () => ({
@@ -114,6 +121,20 @@ vi.mock("@/lib/timplan-queries", () => ({
   useLocalTimplanCheck: () => ({ data: state.check }),
   useLocalTimplanActions: () => state.actions,
   useImportTimplan: () => mutation(),
+  useGenerateRequirements: () => state.actions.generate,
+}));
+
+vi.mock("@/lib/year-timplan-queries", () => ({
+  useYearTimplans: () => ({ data: [], isLoading: false, isError: false }),
+  useSaveYearTimplans: () => mutation(),
+}));
+
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
 }));
 
 vi.mock("@/lib/csv", async (importOriginal) => ({
@@ -148,6 +169,7 @@ beforeEach(() => {
     reopen: mutation(),
     copy: mutation(),
     remove: mutation(),
+    generate: mutation(),
   };
   state.download.mockReset();
   show(planOf());
@@ -344,5 +366,30 @@ describe("TimplanPage: files and the 2028 lydelse", () => {
     render(<TimplanPage />);
     expect(screen.getByText("noPlansTitle")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "newPlan" }).length).toBeGreaterThan(0);
+  });
+});
+
+describe("TimplanPage: the läsår side (P2)", () => {
+  it("opens Skapa timplansposter for the plan on screen, and not while cells are unsaved", async () => {
+    const user = userEvent.setup();
+    render(<TimplanPage />);
+    await user.click(screen.getByRole("button", { name: /generateButton/ }));
+    expect(await screen.findByText("body(Grundskola 2026)")).toBeInTheDocument();
+  });
+
+  it("keeps Skapa timplansposter shut while the grid has unsaved cells", async () => {
+    const user = userEvent.setup();
+    render(<TimplanPage />);
+    await user.clear(input("s-ma", 3));
+    await user.type(input("s-ma", 3), "200");
+    expect(screen.getByRole("button", { name: /generateButton/ })).toBeDisabled();
+  });
+
+  it("opens Timplan per årskurs", async () => {
+    const user = userEvent.setup();
+    render(<TimplanPage />);
+    await user.click(screen.getByRole("button", { name: /yearTimplansButton/ }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "title" })).toBeInTheDocument();
   });
 });

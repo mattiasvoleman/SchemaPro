@@ -1,0 +1,227 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { GenerateBody, GenerateRequirementsResponse } from "@/lib/timplan-generate";
+import type { AcademicYear } from "@/lib/types";
+import { GenerateDialog } from "./generate-dialog";
+
+Element.prototype.hasPointerCapture ??= () => false;
+Element.prototype.setPointerCapture ??= () => {};
+Element.prototype.releasePointerCapture ??= () => {};
+Element.prototype.scrollIntoView ??= () => {};
+globalThis.ResizeObserver ??= class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+
+/**
+ * "Skapa timplansposter": preview before apply, the suggested length, the
+ * edited rows sent as overrides and only those. What a proposal contains is
+ * the gateway's (generate-requirements.spec.ts); here the gateway is a stub
+ * answering the 175 → 3 × 60 (+5) example.
+ */
+
+const state = vi.hoisted(() => ({
+  requirements: [] as { minutesPerLesson: number }[],
+  generate: { mutateAsync: vi.fn(), isPending: false },
+}));
+
+vi.mock("@/lib/queries", () => ({
+  useRequirements: () => ({ data: state.requirements }),
+}));
+vi.mock("@/lib/timplan-queries", () => ({
+  useGenerateRequirements: () => state.generate,
+}));
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
+}));
+vi.mock("next-intl", () => ({
+  useTranslations: () => (key: string, values?: Record<string, unknown>) =>
+    values ? `${key}(${Object.values(values).join("|")})` : key,
+}));
+
+const YEARS: AcademicYear[] = [
+  { id: "y-1", name: "2026/27", startDate: "2026-08-17", endDate: "2027-06-11", isActive: true },
+];
+const PLAN = { id: "p-1", name: "Grundskola 2026", status: "DECIDED" as const };
+
+function answer(body: GenerateBody & { planId: string }): GenerateRequirementsResponse {
+  const created = body.dryRun ? 0 : 2;
+  const rows = [
+    { subjectId: "s-ma", subjectName: "Matematik", target: 175 },
+    { subjectId: "s-sv", subjectName: "Svenska", target: 200 },
+  ].map(({ subjectId, subjectName, target }) => {
+    const override = body.overrides?.find((entry) => entry.subjectId === subjectId);
+    const minutes = override?.minutesPerLesson ?? body.minutesPerLesson;
+    const lessons = override?.lessonsPerWeek ?? Math.ceil(target / minutes);
+    return {
+      studentGroupId: "g-7a",
+      groupName: "7A",
+      subjectId,
+      subjectName,
+      gradeLevel: 7,
+      targetMinutesPerWeek: target,
+      lessonsPerWeek: lessons,
+      minutesPerLesson: minutes,
+      plannedMinutesPerWeek: lessons * minutes,
+      surplusMinutesPerWeek: lessons * minutes - target,
+      overridden: override !== undefined,
+      capped: false,
+    };
+  });
+  return {
+    localTimplanId: body.planId,
+    planName: PLAN.name,
+    planStatus: "DECIDED",
+    academicYearId: body.academicYearId,
+    gradeLevels: [7],
+    minutesPerLesson: body.minutesPerLesson,
+    dryRun: body.dryRun,
+    created,
+    rows,
+    skipped: [
+      {
+        studentGroupId: "g-7a",
+        groupName: "7A",
+        subjectId: "s-en",
+        subjectName: "Engelska",
+        gradeLevel: 7,
+        reason: "EXISTS",
+      },
+    ],
+  };
+}
+
+const renderDialog = (plan: { id: string; name: string; status: "DRAFT" | "DECIDED" } = PLAN) =>
+  render(<GenerateDialog open onOpenChange={() => {}} plan={plan} years={YEARS} initialYearId={null} />);
+
+beforeEach(() => {
+  state.requirements = [];
+  state.generate = {
+    mutateAsync: vi.fn(async (body: GenerateBody & { planId: string }) => answer(body)),
+    isPending: false,
+  };
+});
+
+describe("GenerateDialog", () => {
+  it("suggests 60 for a year without posts, and the year's most common length otherwise", () => {
+    const { unmount } = renderDialog();
+    expect(screen.getByLabelText("lengthLabel")).toHaveValue("60");
+    expect(screen.getByText("lengthHintDefault(60)")).toBeInTheDocument();
+    unmount();
+
+    state.requirements = [{ minutesPerLesson: 50 }, { minutesPerLesson: 50 }, { minutesPerLesson: 60 }];
+    renderDialog();
+    expect(screen.getByLabelText("lengthLabel")).toHaveValue("50");
+    expect(screen.getByText("lengthHintCommon(50)")).toBeInTheDocument();
+  });
+
+  it("creates nothing before a preview, and previews with dryRun true", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    expect(screen.getByRole("button", { name: /^apply/ })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    expect(state.generate.mutateAsync).toHaveBeenCalledWith({
+      planId: "p-1",
+      academicYearId: "y-1",
+      minutesPerLesson: 60,
+      dryRun: true,
+    });
+    expect(await screen.findByText("summary(2|1|1|grade(7))")).toBeInTheDocument();
+    const ma = screen.getByRole("row", { name: /Matematik/ });
+    expect(within(ma).getByText("+5")).toBeInTheDocument();
+    expect(screen.getByText("skippedRow(7A|Engelska)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "apply(2)" })).toBeEnabled();
+  });
+
+  it("throws the preview away when the length changes", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    await screen.findByText(/^summary/);
+    await user.clear(screen.getByLabelText("lengthLabel"));
+    await user.type(screen.getByLabelText("lengthLabel"), "45");
+    expect(screen.queryByText(/^summary/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^apply/ })).toBeDisabled();
+  });
+
+  it("refuses a length off the five-minute grid before asking the gateway", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.clear(screen.getByLabelText("lengthLabel"));
+    await user.type(screen.getByLabelText("lengthLabel"), "47");
+    expect(screen.getByText("length.grid")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "preview" })).toBeDisabled();
+  });
+
+  it("sends the edited row as an override, and only that row, then shows what was created", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    await screen.findByText(/^summary/);
+
+    const lessons = screen.getByLabelText("lessonsFor(7A Matematik)");
+    const minutes = screen.getByLabelText("minutesFor(7A Matematik)");
+    await user.clear(lessons);
+    await user.type(lessons, "5");
+    await user.clear(minutes);
+    await user.type(minutes, "35");
+    // 5 × 35 = 175: exactly the target.
+    expect(within(screen.getByRole("row", { name: /Matematik/ })).getByText("0")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "apply(2)" }));
+    expect(state.generate.mutateAsync).toHaveBeenLastCalledWith({
+      planId: "p-1",
+      academicYearId: "y-1",
+      minutesPerLesson: 60,
+      dryRun: false,
+      overrides: [{ studentGroupId: "g-7a", subjectId: "s-ma", lessonsPerWeek: 5, minutesPerLesson: 35 }],
+    });
+    expect(await screen.findByText("resultCreated(2|2026/27)")).toBeInTheDocument();
+    expect(screen.getByText("resultSkipped(1)")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "openRequirements" })).toHaveAttribute("href", "/admin/requirements");
+  });
+
+  it("will not apply while an edited row holds a figure the gateway refuses", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    await screen.findByText(/^summary/);
+    const lessons = screen.getByLabelText("lessonsFor(7A Svenska)");
+    await user.clear(lessons);
+    await user.type(lessons, "41");
+    expect(screen.getByRole("alert")).toHaveTextContent("invalidRows");
+    expect(screen.getByRole("button", { name: "apply(2)" })).toBeDisabled();
+  });
+
+  it("says so when no årskurs of the year follows the plan", async () => {
+    const user = userEvent.setup();
+    state.generate.mutateAsync = vi.fn(async (body: GenerateBody & { planId: string }) => ({
+      ...answer(body),
+      gradeLevels: [],
+      rows: [],
+      skipped: [],
+    }));
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    expect(await screen.findByText("noGrades(2026/27|Grundskola 2026)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^apply/ })).toBeDisabled();
+  });
+
+  it("marks a draft plan before anything is created from it", () => {
+    renderDialog({ ...PLAN, status: "DRAFT" });
+    expect(screen.getByText("draft")).toBeInTheDocument();
+  });
+
+  it("shows the gateway's refusal and stays open", async () => {
+    const user = userEvent.setup();
+    state.generate.mutateAsync = vi.fn(async () => {
+      throw new Error("Läsåret finns inte.");
+    });
+    renderDialog();
+    await user.click(screen.getByRole("button", { name: "preview" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Läsåret finns inte.");
+  });
+});
