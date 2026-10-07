@@ -11,7 +11,7 @@ import {
   type RolloverWorld,
   type Row,
 } from '../../test/utils/rollover-world';
-import { carriedModels } from './rollover-registry';
+import { ROLLOVER_REGISTRY, carriedModels, type ColumnRule } from './rollover-registry';
 import type { ExecuteRolloverDto, RolloverOptionsDto } from './dto/year-rollover.dto';
 import { YearRolloverService } from './year-rollover.service';
 
@@ -387,6 +387,96 @@ describe('YearRolloverService — rollover execute', () => {
       .map(({ model }) => model[0]!.toLowerCase() + model.slice(1))
       .sort();
     expect([...created].sort()).toEqual(carried);
+  });
+
+  /**
+   * Test 2 holds the registry's columns to the DMMF; this holds the writes to
+   * the registry. Every source row carries a value no default would give, so
+   * a column the planner or the apply step forgets (or fills with a constant)
+   * differs from its source. COPY must equal the source row's value, NULL
+   * must be null on both sides, TARGET_YEAR is the new year and MAP_GROUP a
+   * new group that continues the source row's group.
+   */
+  it('writes every COPY column as the source has it, and every NULL column as null (registry against the writes)', async () => {
+    const rows = defaultRolloverRows();
+    Object.assign(rows['teachingRequirement']![0]!, {
+      lessonsPerWeek: 2,
+      minutesPerLesson: 45,
+      minutesBefore: 5,
+      minutesAfter: 10,
+      teacherLoadPercent: 60,
+      coTeacherLoadPercent: 40,
+      recurrence: 'EVEN_WEEKS',
+    });
+    Object.assign(rows['schoolBreak']![0]!, { kind: 'STAFF_DAY', minGradeLevel: 7, maxGradeLevel: 8 });
+    Object.assign(rows['availabilityConstraint']![0]!, { type: 'PREFERRED_FREE', minGradeLevel: 7, maxGradeLevel: 9, userId: null, roomId: null });
+    const { world, service } = setup(rows);
+    const source = JSON.parse(JSON.stringify(rows)) as Record<string, Row[]>;
+    const { result } = await previewAndExecute(world, service, {
+      ...OPTIONS,
+      breaks: [{ sourceBreakId: IDS.hostlov }],
+      groups: [{ sourceGroupId: IDS.g7a, outcome: 'INTAKE' }],
+    });
+    const target = result.academicYear.id;
+    const created = (id: unknown) => world.rows['studentGroup']!.find((group) => group['id'] === id)!;
+    // The source group a new group continues: its link, or (the intake twin) its name.
+    const sourceGroupOf = (id: unknown): unknown => {
+      const group = created(id);
+      return (
+        group['predecessorId'] ??
+        source['studentGroup']!.find((candidate) => candidate['name'] === group['name'])!['id']
+      );
+    };
+    const sourceRowOf: Record<string, (row: Row) => Row | undefined> = {
+      academicYear: () => source['academicYear']![0],
+      studentGroup: (row) => source['studentGroup']!.find((group) => group['id'] === sourceGroupOf(row['id'] ?? findId(row))),
+      studentGroupMember: (row) =>
+        source['studentGroupMember']!.find(
+          (member) => member['studentId'] === row['studentId'] && member['studentGroupId'] === sourceGroupOf(row['studentGroupId']),
+        ),
+      teachingRequirement: (row) =>
+        source['teachingRequirement']!.find(
+          (requirement) =>
+            requirement['subjectId'] === row['subjectId'] && requirement['studentGroupId'] === sourceGroupOf(row['studentGroupId']),
+        ),
+      schoolBreak: (row) => source['schoolBreak']!.find((lov) => lov['name'] === row['name']),
+      availabilityConstraint: (row) =>
+        source['availabilityConstraint']!.find(
+          (rule) => rule['dayOfWeek'] === row['dayOfWeek'] && rule['studentGroupId'] === sourceGroupOf(row['studentGroupId']),
+        ),
+    };
+    function findId(row: Row): unknown {
+      return world.rows['studentGroup']!.find((group) => group['academicYearId'] === target && group['name'] === row['name'])!['id'];
+    }
+    const comparable = (value: unknown) => (value instanceof Date ? value.toISOString() : value ?? null);
+
+    let checked = 0;
+    for (const call of world.calls) {
+      if (!call.method.startsWith('create')) continue;
+      const modelName = call.model[0]!.toUpperCase() + call.model.slice(1);
+      const disposition = ROLLOVER_REGISTRY[modelName] as { columns: Record<string, ColumnRule> };
+      const data = (call.args as { data: Row | Row[] }).data;
+      for (const row of Array.isArray(data) ? data : [data]) {
+        const from = sourceRowOf[call.model]!(row);
+        expect({ model: call.model, found: from !== undefined }).toEqual({ model: call.model, found: true });
+        for (const [column, rule] of Object.entries(disposition.columns)) {
+          const at = { model: call.model, column, rule };
+          if (rule === 'COPY') {
+            const expected = column === 'schoolId' ? admin.schoolId : comparable(from![column]);
+            expect({ ...at, written: column in row, value: comparable(row[column]) }).toEqual({ ...at, written: true, value: expected });
+            checked++;
+          } else if (rule === 'NULL') {
+            expect({ ...at, written: column in row, value: row[column], source: from![column] ?? null }).toEqual({ ...at, written: true, value: null, source: null });
+            checked++;
+          } else if (rule === 'TARGET_YEAR') {
+            expect({ ...at, value: row[column] }).toEqual({ ...at, value: target });
+          } else if (rule === 'MAP_GROUP') {
+            expect({ ...at, continues: sourceGroupOf(row[column]) }).toEqual({ ...at, continues: from![column] });
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(40);
   });
 
   it('refuses a stale preview with 409 before any write', async () => {
