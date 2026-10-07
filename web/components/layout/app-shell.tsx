@@ -138,7 +138,12 @@ const TEACHER_NAV: NavSection[] = [
       { labelKey: "mySchedule", href: "/teacher", icon: CalendarDays },
       { labelKey: "attendance", href: "/teacher/attendance", icon: ClipboardCheck },
       { labelKey: "roomBooking", href: "/teacher/rooms", icon: MapPin },
+      // The teacher's own tjänst, read-only. The admin's Tjänstefördelning
+      // icon, already in this module: the same thing seen from the other side,
+      // and a second glyph would be bytes on every route for nothing.
+      { labelKey: "myStaffing", href: "/teacher/tjanst", icon: Scale },
     ],
+
   },
 ];
 
