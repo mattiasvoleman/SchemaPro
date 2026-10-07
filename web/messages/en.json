@@ -1716,6 +1716,8 @@
     "noTarget": "No target",
     "counted": "counted against the target {minutes} min/wk",
     "annual": "{hours} h of teaching per school year, with holidays and staff days deducted.",
+    "lastYear": "Last year ({year}): post {percent} % · {minutes} min counted teaching",
+    "lastYearNoPost": "Last year ({year}): no post registered · {minutes} min counted teaching",
     "teachingTitle": "Teaching",
     "teachingCaption": "Your teaching per subject: minutes per week and share of your post.",
     "subjectHeader": "Subject",

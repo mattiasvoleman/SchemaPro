@@ -1716,6 +1716,8 @@
     "noTarget": "Inget mål",
     "counted": "räknat mot målet {minutes} min/v",
     "annual": "{hours} h undervisning per läsår, med lov och studiedagar avräknade.",
+    "lastYear": "Förra läsåret ({year}): tjänst {percent} % · {minutes} min räknad undervisning",
+    "lastYearNoPost": "Förra läsåret ({year}): ingen tjänst registrerad · {minutes} min räknad undervisning",
     "teachingTitle": "Undervisning",
     "teachingCaption": "Din undervisning per ämne: minuter per vecka och andel av tjänsten.",
     "subjectHeader": "Ämne",

@@ -13,7 +13,10 @@ const ME = "t-me";
 
 const state = vi.hoisted(() => ({
   year: { id: "y-1", name: "2026/27", isActive: true } as unknown,
+  years: [] as unknown[],
   yearLoading: false,
+  /** The predecessor y-0's report (staffing Fas 5). */
+  lastLoad: { data: undefined as unknown, isLoading: false, isError: false },
   load: { data: undefined as unknown, isLoading: false, isError: false },
   duties: { data: undefined as unknown, isLoading: false, isError: false },
   loadYear: [] as (string | null)[],
@@ -24,14 +27,14 @@ vi.mock("@/components/profile-context", () => ({
   useProfile: () => ({ profile: { id: "t-me", role: "TEACHER" } }),
 }));
 vi.mock("@/lib/queries", () => ({
-  useActiveYear: () => ({ activeYear: state.year, isLoading: state.yearLoading }),
+  useActiveYear: () => ({ data: state.years, activeYear: state.year, isLoading: state.yearLoading }),
   useSubjects: () => ({ data: [{ id: "s-ma", name: "Matematik" }] }),
   useGroups: () => ({ data: [{ id: "g-7b", name: "7B" }] }),
 }));
 vi.mock("@/lib/staffing-queries", () => ({
   useStaffingLoad: (yearId: string | null) => {
     state.loadYear.push(yearId);
-    return state.load;
+    return yearId === "y-0" ? state.lastLoad : state.load;
   },
   useTeacherDuties: (...args: unknown[]) => {
     state.dutyArgs.push(args);
@@ -103,7 +106,9 @@ const duty = (overrides: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  state.year = { id: "y-1", name: "2026/27", isActive: true };
+  state.year = { id: "y-1", name: "2026/27", isActive: true, predecessorId: null };
+  state.years = [state.year];
+  state.lastLoad = { data: undefined, isLoading: false, isError: false };
   state.yearLoading = false;
   state.load = { data: { teachers: [row()] }, isLoading: false, isError: false };
   state.duties = { data: [duty()], isLoading: false, isError: false };
@@ -245,6 +250,65 @@ describe("Min tjänst", () => {
     render(<MyStaffingPage />);
 
     expect(screen.getByText("myStaffing.noYear")).toBeInTheDocument();
-    expect(state.loadYear).toEqual([null]);
+    // This year's report and last year's: neither asked for.
+    expect(state.loadYear.every((yearId) => yearId === null)).toBe(true);
+  });
+
+  describe("last year (staffing Fas 5)", () => {
+    const rolled = () => {
+      state.year = { id: "y-1", name: "2026/27", isActive: true, predecessorId: "y-0" };
+      state.years = [state.year, { id: "y-0", name: "2025/26", isActive: false, predecessorId: null }];
+    };
+
+    it("states last year's post and counted minutes beside this year's, from the teacher's own row", () => {
+      rolled();
+      state.lastLoad = {
+        data: {
+          teachers: [
+            row({ userId: "t-colleague", countedMinutesPerWeek: 1500 }),
+            row({
+              countedMinutesPerWeek: 840,
+              employment: { ...row().employment, employmentPercent: 80 },
+            }),
+          ],
+        },
+        isLoading: false,
+        isError: false,
+      };
+      render(<MyStaffingPage />);
+
+      expect(state.loadYear).toContain("y-0");
+      expect(screen.getByText("myStaffing.lastYear(2025/26|80|840)")).toBeInTheDocument();
+      expect(screen.queryByText(/1500/)).toBeNull();
+    });
+
+    it("says last year had no post rather than 0 %", () => {
+      rolled();
+      state.lastLoad = {
+        data: { teachers: [row({ employment: null, countedMinutesPerWeek: 300 })] },
+        isLoading: false,
+        isError: false,
+      };
+      render(<MyStaffingPage />);
+      expect(screen.getByText("myStaffing.lastYearNoPost(2025/26|300)")).toBeInTheDocument();
+    });
+
+    it("has no line without a predecessor, without a row there, or when last year cannot be read", () => {
+      const { unmount } = render(<MyStaffingPage />);
+      expect(screen.queryByText(/myStaffing\.lastYear/)).toBeNull();
+      unmount();
+
+      rolled();
+      state.lastLoad = { data: { teachers: [] }, isLoading: false, isError: false };
+      const second = render(<MyStaffingPage />);
+      expect(screen.queryByText(/myStaffing\.lastYear/)).toBeNull();
+      second.unmount();
+
+      state.lastLoad = { data: undefined, isLoading: false, isError: true };
+      render(<MyStaffingPage />);
+      expect(screen.queryByText(/myStaffing\.lastYear/)).toBeNull();
+      // And this year's figures stand.
+      expect(screen.getByText(/myStaffing\.counted\(960\)/)).toBeInTheDocument();
+    });
   });
 });
