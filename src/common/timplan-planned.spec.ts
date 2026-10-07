@@ -312,6 +312,80 @@ describe('computePlannedCoverage', () => {
     });
   });
 
+  describe('a teaching group that reaches a few pupils of a short class', () => {
+    // Review reproduction (P2 review, lens regler): one pupil of 25 in an SvA
+    // group, or in anpassad idrott, turned the whole class's shortfall into
+    // PUPILS — no class verdict, a neutral cell, 24 pupil verdicts for the
+    // admin and nothing at all for the teacher.
+    it('keeps the class verdict for Svenska 180 of 200 when one pupil of 25 reads SvA in a group', () => {
+      const c = group('7A');
+      const sva = group('SvA 7', 'TEACHING_GROUP', null);
+      const reader = pupil(c, [sva]);
+      const rest = Array.from({ length: 24 }, () => pupil(c));
+      const world = input({
+        plans: [plan([[S.SV, 7, 200], [S.SVA, 7, 200]])],
+        groups: [c, sva],
+        requirements: [req(c, S.SV, 3, 60), req(sva, S.SVA, 3, 60)],
+        pupils: [reader, ...rest],
+      });
+      const coverage = computePlannedCoverage(world);
+      expect(lineOf(coverage, c.id, 'alt:SV_SVA')).toMatchObject({
+        status: 'UNDER',
+        teachingGroupIds: [sva.id],
+        pupils: { below: 24 },
+      });
+      expect(coverage.verdicts.map((v) => v.code)).toEqual(['TIMPLAN_GROUP_UNDERPLANNED']);
+      expect(coverage.pupils).toEqual([]);
+      expect(coverage.pupilsBelowTarget).toBe(24);
+      expect(coverage.cells.map((cell) => cell.status)).toEqual(['UNDER', 'UNDER']);
+      const teacher = computePlannedCoverage({ ...world, includePupils: false });
+      expect(teacher.verdicts.map((v) => v.code)).toEqual(['TIMPLAN_GROUP_UNDERPLANNED']);
+    });
+
+    it('says UNPLANNED for a class with no Idrott when one pupil of 25 has anpassad idrott in a group', () => {
+      const c = group('7A');
+      const anpassad = group('Anpassad idrott', 'TEACHING_GROUP', null);
+      const IDH = id(8);
+      const world = input({
+        subjects: [...SUBJECTS, { id: IDH, name: 'Idrott och hälsa', nationalCode: 'IDH', countsTowardTimplan: true }],
+        plans: [plan([[IDH, 7, 100]])],
+        groups: [c, anpassad],
+        requirements: [req(anpassad, IDH, 2, 50)],
+        pupils: [pupil(c, [anpassad]), ...Array.from({ length: 24 }, () => pupil(c))],
+      });
+      const coverage = computePlannedCoverage(world);
+      expect(lineOf(coverage, c.id, `subject:${IDH}`)).toMatchObject({
+        status: 'UNPLANNED',
+        plannedMinutesPerWeek: 0,
+        teachingGroupIds: [anpassad.id],
+      });
+      expect(coverage.verdicts.map((v) => v.code)).toEqual(['TIMPLAN_GROUP_UNPLANNED']);
+      expect(coverage.pupils).toEqual([]);
+      const teacher = computePlannedCoverage({ ...world, includePupils: false });
+      expect(teacher.verdicts.map((v) => v.code)).toEqual(['TIMPLAN_GROUP_UNPLANNED']);
+    });
+
+    it('still judges through the pupils when the groups reach half the class or more', () => {
+      const c = group('8A', 'CLASS', 8);
+      const spanska = group('Spanska 8', 'TEACHING_GROUP', null);
+      const pupils = [pupil(c, [spanska]), pupil(c, [spanska]), pupil(c, [spanska]), pupil(c), pupil(c)];
+      const coverage = computePlannedCoverage(
+        input({
+          plans: [plan([[S.SPA, 8, 90], [S.TY, 8, 90]])],
+          attachments: [{ gradeLevel: 8, localTimplanId: PLAN }],
+          groups: [c, spanska],
+          requirements: [req(spanska, S.SPA, 3, 30)],
+          pupils,
+        }),
+      );
+      expect(lineOf(coverage, c.id, 'alt:M2')).toMatchObject({ status: 'PUPILS', pupils: { below: 2 } });
+      expect(coverage.verdicts.map((v) => [v.code, v.pupilId])).toEqual([
+        ['TIMPLAN_PUPIL_UNDERPLANNED', pupils[3]!.id],
+        ['TIMPLAN_PUPIL_UNDERPLANNED', pupils[4]!.id],
+      ].sort((a, b) => (a[1]! < b[1]! ? -1 : 1)));
+    });
+  });
+
   describe('the pupil', () => {
     it('flags the same subject from the class and a group, and from two groups, with the groups named', () => {
       const c = group('7A');

@@ -12,10 +12,10 @@
 // What the numbers mean — the standardvecka weight at the årskurs of whoever
 // is judged, whole minutes compared with the integer target, Svenska/SvA and
 // språkval as one line met at the highest target, OVER only past one lesson of
-// surplus, a class carried by teaching groups judged through its pupils, a
-// pupil verdict only where the class's own does not already say it, pupil ids
-// and never names — is argued in the gateway file's header and not repeated
-// here. The body below is that file with the quotes this package's style
+// surplus, a class whose teaching groups reach at least half of its pupils
+// judged through them, a pupil verdict only where the class's own does not
+// already say it, pupil ids and never names — is argued in the gateway file's
+// header and not repeated here. The body below is that file with the quotes this package's style
 // uses; keep it that way, so a diff of the two shows only the header.
 
 import { standardWeekWeight } from "@/lib/teacher-load";
@@ -384,6 +384,8 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
   interface PupilResult {
     pupil: PlannedPupilInput;
     grade: number | null;
+    /** The pupil's teaching groups of this year. */
+    teachingGroupIds: string[];
     lines: Map<string, LineDraft>;
     perSource: Map<string, Map<string, number>>; // subjectId → groupId → week minutes
   }
@@ -399,8 +401,9 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     const carriers = new Set<string>();
     const ordered = [...(pupilsByClass.get(classId) ?? [])].sort((a, b) => byCode(a.id, b.id));
     for (const pupil of ordered) {
-      const groups = [classId, ...teachingGroupsOf(pupil).sort(groupOrder)];
-      for (const id of groups.slice(1)) carriers.add(id);
+      const own = teachingGroupsOf(pupil).sort(groupOrder);
+      const groups = [classId, ...own];
+      for (const id of own) carriers.add(id);
       const rows = groups.flatMap((id) => rowsByGroup.get(id) ?? []);
       const perSource = new Map<string, Map<string, number>>();
       for (const row of rows) {
@@ -411,7 +414,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
         );
         perSource.set(row.subjectId, bySubject);
       }
-      results.push({ pupil, grade, lines: buildLines(targets, rows, grade), perSource });
+      results.push({ pupil, grade, teachingGroupIds: own, lines: buildLines(targets, rows, grade), perSource });
     }
     pupilResults.set(classId, results);
     carriersByClass.set(classId, carriers);
@@ -499,13 +502,20 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
           (rowsByGroup.get(id) ?? []).some((row) => lineKeyOf(row.subjectId).key === draft.key),
         )
         .sort(groupOrder);
+      // Pupils of the class a carrying group reaches: the class stops being
+      // the measure only when that is at least half of it.
+      const reached =
+        carriedBy.length === 0
+          ? 0
+          : results.filter((result) => result.teachingGroupIds.some((id) => carriedBy.includes(id)))
+              .length;
       let status: PlannedStatus;
       if (target === null) status = "NO_TARGET";
       else if (planned >= target) {
         const surplus = planned - target;
         status =
           surplus > 0 && (target === 0 || surplus >= Math.round(draft.smallestLesson)) ? "OVER" : "MET";
-      } else if (carriedBy.length > 0) status = "PUPILS";
+      } else if (reached > 0 && reached * 2 >= results.length) status = "PUPILS";
       else status = planned === 0 ? "UNPLANNED" : "UNDER";
 
       const values = results.map((result) => Math.round(result.lines.get(draft.key)?.week ?? 0));
