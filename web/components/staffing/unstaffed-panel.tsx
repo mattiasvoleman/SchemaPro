@@ -38,6 +38,8 @@ export function UnstaffedPanel({
   return (
     <section
       id={UNSTAFFED_ANCHOR}
+      // Focusable by script only: a link to #unstaffed lands focus here.
+      tabIndex={-1}
       className="scroll-mt-4 rounded-lg border bg-card p-4"
       aria-labelledby="staffing-unstaffed"
     >

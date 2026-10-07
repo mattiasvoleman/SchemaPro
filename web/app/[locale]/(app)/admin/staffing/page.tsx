@@ -37,7 +37,7 @@
 // it, and the notice about the missing riktmärke has to be able to point at
 // the field without a page change. See staffing-policy-card.tsx.
 
-import { Suspense, lazy, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Grid3x3, Settings2, TriangleAlert, Users } from "lucide-react";
 import {
@@ -139,6 +139,26 @@ export default function StaffingPage() {
     () => (groups ?? []).filter((group) => group.academicYearId === activeYearId),
     [groups, activeYearId],
   );
+
+  /*
+   * A link INTO the page (/admin/generate's "N saknar" → #unstaffed) names a
+   * section that only exists once the report has drawn. Next handles the hash
+   * when the segment commits — over the skeleton — finds no target and gives
+   * the hash up for good, so the admin landed at the top with the panel below
+   * the whole matrix. Once, when the report first arrives: scroll there and
+   * put focus on it, so a keyboard reader starts where the link said.
+   */
+  const hashHandled = useRef(false);
+  useEffect(() => {
+    if (!report || hashHandled.current) return;
+    hashHandled.current = true;
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    if (!id) return;
+    const target = document.getElementById(id);
+    if (!target) return;
+    target.scrollIntoView({ block: "start" });
+    target.focus({ preventScroll: true });
+  }, [report]);
 
   const figures = report ? kpis(report) : null;
   const noTarget = policy !== undefined && (policy === null || policy.fullTimeTeachingMinutesPerWeek === null);
