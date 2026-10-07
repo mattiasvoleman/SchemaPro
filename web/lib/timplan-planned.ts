@@ -184,7 +184,11 @@ export interface PlannedCoverage {
   pupilLevel: boolean;
   groups: PlannedGroupSummary[];
   cells: PlannedCell[];
-  /** Pupils below target or double planned, with every line: the drill-down. */
+  /**
+   * The drill-down: pupils with a finding of their OWN — below target where
+   * their class is not already flagged, or double planned — each with just
+   * those lines and where their minutes come from.
+   */
   pupils: PlannedPupil[] | null;
   pupilCount: number;
   pupilsBelowTarget: number | null;
@@ -625,7 +629,6 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     const flagged = flaggedClassLines.get(classId)!;
     for (const result of pupilResults.get(classId) ?? []) {
       let isBelow = false;
-      let isDouble = false;
       const lines: PupilLine[] = [];
       for (const draft of [...result.lines.values()].sort(lineOrder)) {
         const planned = Math.round(draft.week);
@@ -648,7 +651,6 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
           }
           if (groupIds.length > 1) {
             doubles.push(subjectId);
-            isDouble = true;
             verdicts.push({
               code: "TIMPLAN_PUPIL_DOUBLE_PLANNED",
               severity: "warning",
@@ -667,9 +669,12 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
             });
           }
         }
+        // Short because the class is short: the class verdict and its pupil
+        // statistics say it, and the line is not repeated per pupil.
+        const ownFinding = status === "UNDER" && !flagged.has(draft.key);
         if (status === "UNDER") {
           isBelow = true;
-          if (!flagged.has(draft.key)) {
+          if (ownFinding) {
             verdicts.push({
               code: "TIMPLAN_PUPIL_UNDERPLANNED",
               severity: "warning",
@@ -688,6 +693,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
             });
           }
         }
+        if (!ownFinding && doubles.length === 0) continue;
         lines.push({
           key: draft.key,
           alternativeCode: draft.alternativeCode,
@@ -700,7 +706,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
         });
       }
       if (isBelow) pupilsBelow += 1;
-      if (isBelow || isDouble) {
+      if (lines.length > 0) {
         listed.push({ pupilId: result.pupil.id, homeGroupId: classId, gradeLevel: result.grade, lines });
       }
     }
