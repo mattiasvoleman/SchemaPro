@@ -61,8 +61,15 @@ export function RolloverYearStep({
             value={form.name}
             maxLength={60}
             placeholder={t("yearNamePlaceholder")}
+            aria-invalid={form.name.trim() === "" ? true : undefined}
+            aria-describedby={form.name.trim() === "" ? "rollover-name-error" : undefined}
             onChange={(event) => update({ name: event.target.value })}
           />
+          {form.name.trim() === "" ? (
+            <p id="rollover-name-error" className="text-xs text-destructive">
+              {t("yearNameRequired")}
+            </p>
+          ) : null}
         </div>
         <div className="space-y-2">
           <Label htmlFor="rollover-start">{t("startDate")}</Label>

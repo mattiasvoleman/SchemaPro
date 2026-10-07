@@ -23,7 +23,7 @@
 // (its registry), so the admin knows what to set up again: the schedule
 // itself, lunch sittings, tjänster and uppdrag, the old year's history.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ArrowLeft, ArrowRight, CalendarRange, Check } from "lucide-react";
@@ -57,6 +57,15 @@ const STEPS: RolloverStep[] = ["year", "groups", "breaks", "review"];
 /** How long the form rests before it is previewed again. */
 const PREVIEW_DEBOUNCE_MS = 400;
 
+/**
+ * How long Skapa stays disabled after the review step appears. "Nästa" on
+ * the lov step and "Skapa" sit in the same place, so the second click of a
+ * double click (or a second Enter) would otherwise create the year on a
+ * review nobody saw. Distinct keys make React replace the button, but a real
+ * second click lands on whatever is under the pointer — the new button.
+ */
+const REVIEW_ARMING_MS = 600;
+
 function initialForm(source: { name: string; startDate: string; endDate: string }): RolloverFormState {
   return {
     ...defaultTarget(source),
@@ -81,6 +90,21 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
 
   const [edited, setEdited] = useState<RolloverFormState | null>(null);
   const [step, setStep] = useState<RolloverStep>("year");
+  const [reviewArmed, setReviewArmed] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const firstStep = useRef(true);
+  useEffect(() => {
+    // Focus follows the step (and a screen reader hears its name); not on
+    // the first render, which would pull focus from wherever the page put it.
+    if (firstStep.current) firstStep.current = false;
+    else headingRef.current?.focus();
+    if (step !== "review") {
+      setReviewArmed(false);
+      return;
+    }
+    const timer = setTimeout(() => setReviewArmed(true), REVIEW_ARMING_MS);
+    return () => clearTimeout(timer);
+  }, [step]);
   const form = edited ?? (source ? initialForm(source) : null);
   const update = (patch: Partial<RolloverFormState>) => {
     if (form) setEdited({ ...form, ...patch });
@@ -176,7 +200,10 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
   const refusedWhole = preview.error instanceof ApiError && [404, 409].includes(preview.error.status);
   const stepIndex = STEPS.indexOf(step);
   const stepProblems = plan ? problemsOfStep(plan.problems, step) : [];
-  const canCreate = current && plan !== undefined && !plan.blocking && graduatingGrade !== null && !execute.isPending;
+  const canCreate =
+    reviewArmed && current && plan !== undefined && !plan.blocking && graduatingGrade !== null && !execute.isPending;
+  /** The form cannot be previewed at all: a blank name or a date that is not one. */
+  const incomplete = rolloverOptions(form) === null;
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -232,6 +259,9 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
       {refusedWhole ? null : (
         <Card>
           <CardContent className="space-y-6 pt-6">
+            <h2 ref={headingRef} tabIndex={-1} className="sr-only">
+              {t(`step.${step}`)}
+            </h2>
             {step === "year" ? (
               <RolloverYearStep form={form} update={update} plan={plan} graduatingGrade={graduatingGrade} />
             ) : step === "groups" ? (
@@ -255,8 +285,15 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
             {stepProblems.length > 0 ? <ProblemList problems={stepProblems} /> : null}
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4">
-              <span className="text-xs text-muted-foreground" aria-live="polite">
-                {preview.isFetching || !current ? t("previewUpdating") : t("previewCurrent")}
+              <span
+                className={cn("text-xs", incomplete ? "text-destructive" : "text-muted-foreground")}
+                aria-live="polite"
+              >
+                {incomplete
+                  ? t("previewNeedsInput")
+                  : preview.isFetching || !current
+                    ? t("previewUpdating")
+                    : t("previewCurrent")}
               </span>
               <div className="flex gap-2">
                 {stepIndex > 0 ? (
@@ -266,12 +303,12 @@ export function RolloverWizard({ sourceYearId }: { sourceYearId: string | null }
                   </Button>
                 ) : null}
                 {step !== "review" ? (
-                  <Button onClick={() => setStep(STEPS[stepIndex + 1]!)}>
+                  <Button key="next" onClick={() => setStep(STEPS[stepIndex + 1]!)}>
                     {tCommon("next")}
                     <ArrowRight />
                   </Button>
                 ) : (
-                  <Button onClick={() => void create()} disabled={!canCreate}>
+                  <Button key="create" onClick={() => void create()} disabled={!canCreate}>
                     {execute.isPending ? tCommon("saving") : t("createYear", { name: form.name.trim() })}
                   </Button>
                 )}
