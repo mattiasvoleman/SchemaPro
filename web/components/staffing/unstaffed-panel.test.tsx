@@ -77,7 +77,6 @@ describe("UnstaffedPanel", () => {
       <UnstaffedPanel
         rows={[row({}), row({ requirementId: "r-7b-no", subjectName: "NO", groupName: "7B", teacherMinutesPerWeek: 90 })]}
         teacherName={(id) => id}
-        onAssigned={vi.fn()}
       />,
     );
     expect(container.querySelector(`#${UNSTAFFED_ANCHOR}`)).not.toBeNull();
@@ -87,19 +86,22 @@ describe("UnstaffedPanel", () => {
     expect(asked.ids).toEqual([]);
   });
 
-  it("opens one row's suggestions, assigns in one click, and passes WARN's findings up", async () => {
+  it("opens one row's suggestions, assigns in one click, and says WARN in the panel, naming the row, with focus on it", async () => {
+    /*
+     * The panel sits under the whole matrix. Its WARN used to be handed up to
+     * a banner above the matrix — off-screen, without saying which row — and
+     * the focused button unmounted with the list, dropping focus to <body>.
+     */
     const user = userEvent.setup();
-    const onAssigned = vi.fn();
     const warning = {
       code: "STAFF_TEACHER_NOT_QUALIFIED",
       params: { role: "TEACHER", subject: "Matematik", grades: "7" },
     };
     assign.mockResolvedValue({ id: "r-7a-ma", warnings: [warning] });
-    render(
+    const { container } = render(
       <UnstaffedPanel
         rows={[row({}), row({ requirementId: "r-7b-no", groupName: "7B" })]}
         teacherName={(id) => (id === "t-anna" ? "Anna Ek" : id)}
-        onAssigned={onAssigned}
       />,
     );
     const first = screen.getByText("unstaffedRow(7A|Matematik|180)").closest("li")!;
@@ -112,13 +114,35 @@ describe("UnstaffedPanel", () => {
 
     await user.click(within(first).getByRole("button", { name: "suggestAssignNamed(Anna Ek)" }));
     expect(assign).toHaveBeenCalledWith({ requirementId: "r-7a-ma", teacherId: "t-anna" });
-    expect(onAssigned).toHaveBeenCalledWith([warning]);
     // The list closes; the row itself leaves when the report refetches.
     expect(within(first).queryByRole("list")).toBeNull();
+
+    const panel = container.querySelector(`#${UNSTAFFED_ANCHOR}`)!;
+    const notice = within(panel as HTMLElement).getByText(
+      "STAFF_TEACHER_NOT_QUALIFIED(TEACHER|Matematik|7)",
+    );
+    const live = notice.closest("[aria-live]")!;
+    // Which row: group · subject, never the teacher.
+    expect(live).toHaveTextContent("warnedTitle 7A · Matematik");
+    expect(document.activeElement).toBe(live);
+
+    // Dismissed, focus stays in the panel rather than falling to <body>.
+    await user.click(within(panel as HTMLElement).getByRole("button", { name: "warnedDismiss" }));
+    expect(within(panel as HTMLElement).queryByText("warnedTitle 7A · Matematik")).toBeNull();
+    expect(panel.contains(document.activeElement)).toBe(true);
+  });
+
+  it("puts focus back on the panel after an assignment that drew no warning", async () => {
+    const user = userEvent.setup();
+    assign.mockResolvedValue({ id: "r-7a-ma", warnings: [] });
+    const { container } = render(<UnstaffedPanel rows={[row({})]} teacherName={(id) => id} />);
+    await user.click(screen.getByRole("button", { name: "suggestTeachers" }));
+    await user.click(screen.getByRole("button", { name: "suggestAssignNamed(t-anna)" }));
+    expect(document.activeElement).toBe(container.querySelector(`#${UNSTAFFED_ANCHOR}`));
   });
 
   it("says when every row has a teacher", () => {
-    render(<UnstaffedPanel rows={[]} teacherName={(id) => id} onAssigned={vi.fn()} />);
+    render(<UnstaffedPanel rows={[]} teacherName={(id) => id} />);
     expect(screen.getByText("unstaffedEmpty")).toBeInTheDocument();
   });
 });

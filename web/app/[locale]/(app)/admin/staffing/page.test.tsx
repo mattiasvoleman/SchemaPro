@@ -254,7 +254,7 @@ describe("StaffingPage", () => {
     }
   });
 
-  it("staffs an unstaffed row from the panel and shows WARN's sentence over the matrix", async () => {
+  it("staffs an unstaffed row from the panel and shows WARN's sentence in the panel, naming the row", async () => {
     const user = userEvent.setup();
     const assigned = vi.fn().mockResolvedValue({
       id: "r-1",
@@ -274,13 +274,11 @@ describe("StaffingPage", () => {
     const sentence = await screen.findByText(
       "engine:STAFF_TEACHER_OVER_TARGET(TEACHER|1320|1080|1188|10)",
     );
-    const banner = sentence.closest('[role="status"]')!;
-    expect(banner).toHaveTextContent("warnedTitle");
-    // Above the matrix, where the admin is looking after the click.
-    expect(
-      banner.compareDocumentPosition(screen.getByRole("table", { name: "tableCaption" })) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    const banner = sentence.closest("[aria-live]")!;
+    expect(banner).toHaveTextContent("warnedTitle 7A · NO");
+    // In the panel the click was made in, which sits below the matrix — not
+    // above the matrix, off-screen from the admin after the click.
+    expect(document.getElementById("unstaffed")!.contains(banner)).toBe(true);
   });
 
   it("says no riktmärke is set when the school has no policy, and opens the card on request", async () => {
