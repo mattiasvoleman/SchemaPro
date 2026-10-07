@@ -151,7 +151,7 @@ import {
 } from "@/lib/staffing-warnings";
 import type { MessageLookup } from "@/lib/engine-message";
 import { CsvExportButton } from "@/components/import/csv-export-button";
-import { CsvImportDialog } from "@/components/import/csv-import-dialog";
+import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { Link } from "@/i18n/navigation";
 import {
   annualMinutes,
@@ -1211,7 +1211,7 @@ export default function RequirementsPage() {
         has a page of its own, and an import of elever launched from here would
         land somewhere the admin cannot see the result.
       */}
-      <CsvImportDialog
+      <LazyCsvImportDialog
         kinds={["requirements"]}
         // The year the matrix, the hours and the export are all showing. Left
         // to itself the dialog would find the ACTIVE year instead, which is a

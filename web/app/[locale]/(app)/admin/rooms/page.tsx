@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { MapPin, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import { useCrudMutations, useRooms , useRoomTypes } from "@/lib/queries";
-import { CsvImportDialog } from "@/components/import/csv-import-dialog";
+import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import { roomTypesToCsv } from "@/lib/csv";
 import { SCHOOL_STAGES, gradeRangeLabel, stageOf } from "@/lib/school-stages";
@@ -522,7 +522,7 @@ export default function RoomsPage() {
         </DialogContent>
       </Dialog>
 
-      <CsvImportDialog
+      <LazyCsvImportDialog
         kinds={["roomTypes"]}
         open={importOpen}
         onOpenChange={setImportOpen}

@@ -15,7 +15,7 @@ import {
   Upload,
   UserCheck,
 } from "lucide-react";
-import { CsvImportDialog } from "@/components/import/csv-import-dialog";
+import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { CsvExportButton } from "@/components/import/csv-export-button";
 import {
   TeacherWorkTimeDialog,
@@ -1104,7 +1104,7 @@ export default function PeoplePage() {
         />
       ) : null}
 
-      <CsvImportDialog
+      <LazyCsvImportDialog
         kinds={["students", "teachers", "teacherQualifications", "teacherDuties"]}
         open={importOpen}
         onOpenChange={setImportOpen}
