@@ -12,6 +12,7 @@ import {
   type RolloverWorld,
   type Row,
 } from '../../test/utils/rollover-world';
+import { rolloverRowsAtFa4a3d6 } from '../../test/utils/rollover-rows-fa4a3d6';
 import { ROLLOVER_REGISTRY, carriedModels, type ColumnRule } from './rollover-registry';
 import type { ExecuteRolloverDto, RolloverOptionsDto } from './dto/year-rollover.dto';
 import { YearRolloverService } from './year-rollover.service';
@@ -123,6 +124,20 @@ describe('YearRolloverService — rollover preview', () => {
     world.rows['teachingRequirement']![0]!['lessonsPerWeek'] = 4;
     const third = await service.previewRollover(IDS.yearA, OPTIONS, admin);
     expect(third.planHash).not.toBe(first.planHash);
+  });
+
+  /**
+   * The promise a deploy keeps: a rollover planned before it executes after
+   * it. The literal is this school's planHash at fa4a3d6, computed over a
+   * frozen copy of its rows (rollover-rows-fa4a3d6.ts) so that a row added to
+   * the live fixture for another test cannot move it. A change here is a
+   * change to what a rollover writes or how its hash is serialized, and every
+   * preview open in a browser at the deploy would answer 409 stale.
+   */
+  it('hashes a rollover exactly as fa4a3d6 did (the pin, over a frozen copy of the school)', async () => {
+    const { service } = setup(rolloverRowsAtFa4a3d6());
+    const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    expect(preview.planHash).toBe('ad548651574bc2a534bab3564dded501c71d6cb1c549fb935de895e610a0a621');
   });
 
   it('404s a year RLS hides', async () => {

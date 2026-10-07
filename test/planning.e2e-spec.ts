@@ -4,6 +4,7 @@ import { lockingRead, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './utils/staffing-world';
 import { GRUNDSKOLA_2024, IDS, defaultRolloverRows, givenRolloverWorld, type Row } from './utils/rollover-world';
+import { rolloverRowsAtFa4a3d6 } from './utils/rollover-rows-fa4a3d6';
 import type { PrismaMock } from './utils/prisma-mock';
 import { PrismaService } from '../src/database/prisma.service';
 import type { AiEngineScheduleRequest } from '../src/optimization/interfaces/ai-engine-payload.interface';
@@ -3246,6 +3247,20 @@ describe('Planning surface (e2e)', () => {
         .expect(200);
       expect(done.body).toEqual({ year: { id: yearB, name: 'Nästa läsår', isActive: true }, moved: 3, graduated: 1, unplaced: 0 });
       expect(world.rows['user']!.find((user) => user['id'] === IDS.p9a1)!['studentGroupId']).toBeNull();
+    });
+
+    it('answers a rollover request without the staffing option with fa4a3d6’s planHash, over HTTP (the deploy keeps an open preview executable)', async () => {
+      const world = givenRolloverWorld(rolloverRowsAtFa4a3d6());
+      prisma.withRls.mockImplementation((_user: unknown, fn: (tx: unknown) => unknown) => fn(world.tx));
+      const options = { name: '2027/28', startDate: '2027-08-16', endDate: '2028-06-09' };
+      const preview = await request(http()).post(`${base}/rollover/preview`).set('x-test-user', admin()).send(options).expect(200);
+      expect(preview.body.planHash).toBe('ad548651574bc2a534bab3564dded501c71d6cb1c549fb935de895e610a0a621');
+      const created = await request(http())
+        .post(`${base}/rollover`)
+        .set('x-test-user', admin())
+        .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
+        .expect(201);
+      expect(created.body.planHash).toBe(preview.body.planHash);
     });
 
     it.each([
