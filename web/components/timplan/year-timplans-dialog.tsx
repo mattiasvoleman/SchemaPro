@@ -69,9 +69,12 @@ export function YearTimplansDialog({ open, onOpenChange, years, initialYearId }:
   const tCommon = useTranslations("common");
   const tPlan = useTranslations("timplan");
 
-  const [yearId, setYearId] = useState<string | null>(
-    initialYearId ?? years.find((year) => year.isActive)?.id ?? years[0]?.id ?? null,
-  );
+  // The picked year is derived, not frozen at mount: the dialog can open
+  // before the years have loaded, and a one-year school has no picker to
+  // recover with (the coverage page's rule).
+  const [chosenYearId, setYearId] = useState<string | null>(null);
+  const yearId =
+    chosenYearId ?? initialYearId ?? years.find((year) => year.isActive)?.id ?? years[0]?.id ?? null;
   const year = years.find((entry) => entry.id === yearId) ?? null;
 
   const plans = useLocalTimplans();

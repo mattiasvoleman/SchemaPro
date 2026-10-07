@@ -143,6 +143,19 @@ describe("YearTimplansDialog", () => {
     expect(screen.getByText("yearLocked")).toBeInTheDocument();
   });
 
+  // Review reproduction (P2 review, lens webb): opened before the years had
+  // loaded, the dialog froze "no year" in its initial state, and a school
+  // with one year has no picker to get out of it.
+  it("takes the year when the years arrive after it opened", () => {
+    const { rerender } = render(
+      <YearTimplansDialog open onOpenChange={() => {}} years={[]} initialYearId={null} />,
+    );
+    expect(screen.getByText("noYear")).toBeInTheDocument();
+    rerender(<YearTimplansDialog open onOpenChange={() => {}} years={[YEARS[1]!]} initialYearId={null} />);
+    expect(screen.queryByText("noYear")).not.toBeInTheDocument();
+    expect(select(7)).toBeInTheDocument();
+  });
+
   it("points to Timplan when the school has no plan to choose", () => {
     state.plans = [];
     state.saved = [];
