@@ -48,6 +48,17 @@ export interface DutiesCardProps {
   groups: { id: string; name: string }[];
 }
 
+/** Which fields a problem is about: it is said once one of them is touched. */
+const PROBLEM_FIELDS: Record<DutyProblem["reason"], (keyof DutyDraft)[]> = {
+  dutyLabelRequired: ["label"],
+  dutyLabelTooLong: ["label"],
+  dutyMinutesOutOfRange: ["minutesPerWeek"],
+  dutyNoteTooLong: ["note"],
+  slotTimeRequired: ["startTime", "endTime"],
+  slotOffGrid: ["startTime", "endTime"],
+  slotReversed: ["startTime", "endTime"],
+};
+
 /**
  * A teacher's övriga uppdrag for one läsår: mentorskap, ämnesansvar, APT,
  * rastvakt — and, for an uppdrag with a fixed time, the time it keeps free.
@@ -85,8 +96,20 @@ export function DutiesCard({
   const [draft, setDraft] = useState<DutyDraft>(EMPTY_DUTY_DRAFT);
   const [removing, setRemoving] = useState<TeacherDuty | null>(null);
 
-  const patch = (change: Partial<DutyDraft>) => setDraft((previous) => ({ ...previous, ...change }));
+  /**
+   * The fields the admin has changed since the form opened. The draft is
+   * validated whole (Save stays off until it is), but a problem is SAID only
+   * for a field already touched: an empty add form used to open with a
+   * role="alert" for the label, and the minutes' error the moment the label
+   * was typed — an announcement for every field nobody had reached yet.
+   */
+  const [touched, setTouched] = useState<ReadonlySet<keyof DutyDraft>>(new Set());
+  const patch = (change: Partial<DutyDraft>) => {
+    setDraft((previous) => ({ ...previous, ...change }));
+    setTouched((previous) => new Set([...previous, ...(Object.keys(change) as (keyof DutyDraft)[])]));
+  };
   const problem: DutyProblem | null = editing ? validateDutyDraft(draft) : null;
+  const shownProblem = problem && PROBLEM_FIELDS[problem.reason].some((field) => touched.has(field)) ? problem : null;
   const problemText = (p: DutyProblem) => {
     const { reason, ...values } = p;
     return t(`problem_${reason}`, values as Record<string, string | number>);
@@ -100,10 +123,12 @@ export function DutiesCard({
 
   const openNew = () => {
     setDraft(EMPTY_DUTY_DRAFT);
+    setTouched(new Set());
     setEditing("new");
   };
   const openEdit = (duty: TeacherDuty) => {
     setDraft(dutyToDraft(duty));
+    setTouched(new Set());
     setEditing(duty.id);
   };
 
@@ -385,9 +410,9 @@ export function DutiesCard({
             />
           </div>
 
-          {problem ? (
+          {shownProblem ? (
             <p role="alert" className="text-sm text-destructive">
-              {problemText(problem)}
+              {problemText(shownProblem)}
             </p>
           ) : null}
 
