@@ -3367,6 +3367,55 @@ describe('Planning surface (e2e)', () => {
       expect(patched.body).toMatchObject({ code: 'YEAR_IS_SUPERSEDED' });
     });
 
+    /** Preview and execute the activation of `yearId`. */
+    const activate = async (yearId: string) => {
+      const preview = await request(http()).post(`/api/v1/academic-years/${yearId}/activation/preview`).set('x-test-user', admin()).expect(200);
+      return request(http())
+        .post(`/api/v1/academic-years/${yearId}/activation`)
+        .set('x-test-user', admin())
+        .send({ planHash: preview.body.planHash })
+        .expect(200);
+    };
+
+    it('409s an activation whose pupils changed class after the preview, moving nobody', async () => {
+      const { world, options } = givenSchool(2020);
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+      const preview = await request(http()).post(`/api/v1/academic-years/${yearB}/activation/preview`).set('x-test-user', admin()).expect(200);
+      world.rows['user']!.find((user) => user['id'] === IDS.p7a2)!['studentGroupId'] = IDS.g8a;
+      const stale = await request(http())
+        .post(`/api/v1/academic-years/${yearB}/activation`)
+        .set('x-test-user', admin())
+        .send({ planHash: preview.body.planHash })
+        .expect(409);
+      expect(stale.body).toMatchObject({ code: 'ACTIVATION_PREVIEW_STALE' });
+      expect(world.rows['user']!.find((user) => user['id'] === IDS.p7a1)!['studentGroupId']).toBe(IDS.g7a);
+      expect(world.rows['academicYear']!.find((year) => year['id'] === yearB)!['isActive']).toBe(false);
+    });
+
+    it('409s a year two links back once a later year holds the pupils', async () => {
+      const { options } = givenSchool(2020);
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+      await activate(yearB);
+      const created = await request(http())
+        .post(`/api/v1/academic-years/${yearB}/rollover/preview`)
+        .set('x-test-user', admin())
+        .send({ name: 'Tredje läsåret', startDate: '2022-08-15', endDate: '2023-06-09', graduatingGradeLevel: 9 })
+        .expect(200);
+      const yearC = (
+        await request(http())
+          .post(`/api/v1/academic-years/${yearB}/rollover`)
+          .set('x-test-user', admin())
+          .send({ name: 'Tredje läsåret', startDate: '2022-08-15', endDate: '2023-06-09', graduatingGradeLevel: 9, planHash: created.body.planHash })
+          .expect(201)
+      ).body.academicYear.id as string;
+      await activate(yearC);
+
+      // A → B → C with everyone in C: A is superseded although B is empty.
+      const patched = await request(http()).patch(base).set('x-test-user', admin()).send({ isActive: true }).expect(409);
+      expect(patched.body).toMatchObject({ code: 'YEAR_IS_SUPERSEDED', params: { successor: 'Tredje läsåret' } });
+
+    });
+
     it('409s PATCH {isActive: true} while pupils wait to move, and DELETE of a year that holds home classes', async () => {
       const { world, options } = givenSchool(2020);
       const created = await roll(options, 201);

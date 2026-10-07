@@ -291,24 +291,27 @@ export function planActivation(source: ActivationSource, today: string): Activat
       params: { year: runsUntil.name, endDate: runsUntil.date },
     });
   }
-  // A year whose successor already holds the pupils: activating it again
-  // would leave it active with empty classes (and its successor inactive with
-  // all of them).
-  const successorYear = source.years.find((candidate) => candidate.predecessorId === year.id);
-  if (successorYear) {
-    const successorGroups = new Set(
-      source.groups.filter((group) => group.academicYearId === successorYear.id).map((group) => group.id),
-    );
-    const held = source.students.filter(
-      (student) => student.isActive && student.studentGroupId !== null && successorGroups.has(student.studentGroupId),
-    ).length;
-    if (held > 0) {
-      problems.push({
-        code: 'YEAR_IS_SUPERSEDED',
-        blocking: true,
-        params: { year: year.name, successor: successorYear.name, pupils: held },
-      });
-    }
+  // A year that a later year of its own chain already holds the pupils of:
+  // activating it again would leave it active with empty classes (and the
+  // year that holds them inactive). Any later year counts, not only the
+  // direct successor — after A → B → C with everyone in C, B is empty, and
+  // looking one link ahead from A found nothing to refuse. The year named is
+  // the one holding the most of them.
+  const held = new Map<string, number>();
+  const yearOfGroup = new Map(source.groups.map((group) => [group.id, group.academicYearId]));
+  for (const student of source.students) {
+    if (!student.isActive || student.studentGroupId === null) continue;
+    const at = yearOfGroup.get(student.studentGroupId);
+    if (at !== undefined && later.has(at)) held.set(at, (held.get(at) ?? 0) + 1);
+  }
+  if (held.size > 0) {
+    const [holderId] = [...held.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]!;
+    const pupils = [...held.values()].reduce((sum, count) => sum + count, 0);
+    problems.push({
+      code: 'YEAR_IS_SUPERSEDED',
+      blocking: true,
+      params: { year: year.name, successor: yearById.get(holderId)!.name, pupils },
+    });
   }
 
   const sorted = [...writes.values()]
