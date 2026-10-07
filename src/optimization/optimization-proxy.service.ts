@@ -43,7 +43,6 @@ import type {
   ScheduleRules,
 } from './interfaces/ai-engine-payload.interface';
 import { constraintsOfYear } from '../staffing/duty-slot-year';
-import { refuseRostersNotActivated } from '../year-rollover/rosters-current';
 import { rostersOfYear, type RosterBasis } from '../year-rollover/projected-rosters';
 
 /**
@@ -176,10 +175,11 @@ export class OptimizationProxyService {
     // before the payload is built, the engine is never called, and nothing is
     // written — see unstaffedRefusal.
     const fetched = await this.prisma.withRls(user, async (tx) => {
-      // A rolled year not yet activated has no pupils in its classes.
-      await refuseRostersNotActivated(tx, academicYearId);
       // Whose classes these are: for a rolled year not yet activated, the
-      // pupils its activation would place (projected-rosters.ts).
+      // pupils its activation would place (projected-rosters.ts), so next
+      // year's timetable can be generated in spring. A year two steps ahead
+      // is still refused there (ROLLOVER_NOT_ACTIVATED, R6): walking straight
+      // through an unactivated year is not what activating it does.
       const basis = await rostersOfYear(tx, user, academicYearId);
       const refusal = await this.unstaffedRefusal(tx, academicYearId, requireSchoolId(user), requestId);
       if (refusal) return { refusal, data: null };

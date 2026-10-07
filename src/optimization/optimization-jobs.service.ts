@@ -8,7 +8,7 @@ import type {
   ObjectiveWeights,
   ScheduleRules,
 } from './interfaces/ai-engine-payload.interface';
-import { refuseRostersNotActivated } from '../year-rollover/rosters-current';
+import { rostersOfYear } from '../year-rollover/projected-rosters';
 
 /**
  * A stored params blob, read back as the scalars the engine promised.
@@ -157,9 +157,11 @@ export class OptimizationJobsService {
     }
 
     const job = await this.prisma.withRls(user, async (tx) => {
-      // Answered here, not in the job: a rolled year not yet activated has
-      // no pupils in its classes, and the admin should hear that at the click.
-      await refuseRostersNotActivated(tx, academicYearId);
+      // Nothing here reads a roster — run() does, through the proxy, on the
+      // year's projected rosters (projected-rosters.ts). The basis is asked
+      // for only for its refusal: a year two steps ahead of the active one
+      // (R6) is answered at the click, not in a job that fails later.
+      await rostersOfYear(tx, user, academicYearId);
       return tx.optimizationJob.create({
         data: {
           schoolId: user.schoolId as string,
