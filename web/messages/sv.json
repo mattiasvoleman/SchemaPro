@@ -1864,6 +1864,15 @@
     "reviewQualification": "{count, plural, one {# lärare står kvar utan registrerad behörighet} other {# lärare står kvar utan registrerad behörighet}}:",
     "qualificationLine": "{teacher} — {subject}, {group} (åk {grades})",
     "unknownTeacher": "Okänd lärare",
+    "reviewTimplans": "Timplan per årskurs",
+    "reviewTimplansNone": "Det nya läsåret följer ingen lokal timplan i någon årskurs: läsåret som rullas har ingen, och skolan har ingen beslutad plan. Välj under Timplan per årskurs när läsåret finns.",
+    "reviewTimplansHint": "Årskullen behåller timplanen den började under. Ändra under Timplan per årskurs när läsåret är skapat.",
+    "timplanLine": {
+      "CARRIED": "{grade, select, 0 {Förskoleklass} other {Åk {grade}}}: {plan} — årskullen följde den i {from, select, 0 {förskoleklass} other {åk {from}}}",
+      "DEFAULT": "{grade, select, 0 {Förskoleklass} other {Åk {grade}}}: {plan} — den senast beslutade timplanen, eftersom ingen årskull flyttar upp hit",
+      "NONE": "{grade, select, 0 {Förskoleklass} other {Åk {grade}}}: ingen timplan — skolan har ingen beslutad plan för årskursen"
+    },
+    "timplanDraft": "utkast — inte beslutad",
     "reviewClassRules": "{count, plural, =0 {Inga klassregler följer med} one {# klassregel följer med} other {# klassregler följer med}}",
     "classRuleLine": "{from} → {to}: {day} {start}–{end}",
     "reviewBreaks": "{count, plural, =0 {Inga lov följer med} one {# lov följer med} other {# lov följer med}}",

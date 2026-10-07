@@ -128,6 +128,11 @@ function previewFor(body: RolloverOptions, overrides: Partial<RolloverPreview> =
       },
     ],
     classRules: [],
+    timplans: [
+      { gradeLevel: 7, reason: "DEFAULT", fromGradeLevel: null, localTimplanId: "p-24", planName: "Grundskola 2024", planStatus: "DECIDED" },
+      { gradeLevel: 8, reason: "CARRIED", fromGradeLevel: 7, localTimplanId: "p-utkast", planName: "Utkast 2027", planStatus: "DRAFT" },
+      { gradeLevel: 9, reason: "CARRIED", fromGradeLevel: 8, localTimplanId: "p-18", planName: "Grundskola 2018", planStatus: "DECIDED" },
+    ],
     skipped: [
       { model: "MasterLesson", reason: "…", count: 140 },
       { model: "CalendarLesson", reason: "…", count: null },
@@ -222,6 +227,31 @@ describe("RolloverWizard", () => {
 
     await user.click(screen.getByRole("button", { name: /Granska/ }));
     expect(await screen.findByText("Vid aktiveringen går 25 elever ut och blir 0 elever utan klass.")).toBeInTheDocument();
+  });
+
+  it("shows in the review which timplan each grade will follow and why, and marks a carried draft", async () => {
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    const section = (await screen.findByRole("heading", { name: "Timplan per årskurs" })).closest("section")!;
+    const items = within(section).getAllByRole("listitem").map((item) => item.textContent);
+    expect(items).toEqual([
+      "Åk 7: Grundskola 2024 — den senast beslutade timplanen, eftersom ingen årskull flyttar upp hit",
+      "Åk 8: Utkast 2027 — årskullen följde den i åk 7utkast — inte beslutad",
+      "Åk 9: Grundskola 2018 — årskullen följde den i åk 8",
+    ]);
+  });
+
+  it("says in the review when the new year follows no timplan at all", async () => {
+    post.mockImplementation(async (path: string, body: RolloverOptions) =>
+      path.endsWith("/preview") ? previewFor(body, { timplans: [] }) : { planHash: HASH },
+    );
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    expect(await screen.findByText(/Det nya läsåret följer ingen lokal timplan i någon årskurs/)).toBeInTheDocument();
   });
 
   it("offers a new intake class beside the promotion, for the lowest grade only", async () => {

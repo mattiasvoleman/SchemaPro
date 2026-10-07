@@ -1864,6 +1864,15 @@
     "reviewQualification": "{count, plural, one {# teacher stays without a recorded qualification} other {# teachers stay without a recorded qualification}}:",
     "qualificationLine": "{teacher} — {subject}, {group} (grade {grades})",
     "unknownTeacher": "Unknown teacher",
+    "reviewTimplans": "Timplan per grade",
+    "reviewTimplansNone": "The new school year follows no local timplan in any grade: the year being rolled over has none, and the school has no decided plan. Choose under Timplan per year once the year exists.",
+    "reviewTimplansHint": "Each cohort keeps the timplan it started under. Change it under Timplan per year once the year is created.",
+    "timplanLine": {
+      "CARRIED": "{grade, select, 0 {Preschool class} other {Grade {grade}}}: {plan} — the cohort followed it in {from, select, 0 {preschool class} other {grade {from}}}",
+      "DEFAULT": "{grade, select, 0 {Preschool class} other {Grade {grade}}}: {plan} — the most recently decided timplan, as no cohort moves up into this grade",
+      "NONE": "{grade, select, 0 {Preschool class} other {Grade {grade}}}: no timplan — the school has no decided plan for this grade"
+    },
+    "timplanDraft": "draft — not decided",
     "reviewClassRules": "{count, plural, =0 {No class rules are carried over} one {# class rule is carried over} other {# class rules are carried over}}",
     "classRuleLine": "{from} → {to}: {day} {start}–{end}",
     "reviewBreaks": "{count, plural, =0 {No holidays are carried over} one {# holiday is carried over} other {# holidays are carried over}}",

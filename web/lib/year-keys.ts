@@ -1,3 +1,5 @@
+import { TIMPLAN_COVERAGE_KEYS, YEAR_TIMPLAN_KEYS } from "./year-timplan-keys";
+
 /**
  * The react-query keys the läsår pages read under and invalidate, and nothing
  * else — the staffing-keys.ts pattern.
@@ -33,9 +35,16 @@ export const YEAR_KEYS = {
   rolloverPreview: ["yearRolloverPreview"],
   /** POST …/activation/preview, per year. */
   activationPreview: ["yearActivationPreview"],
+  /**
+   * Timplan per årskurs (lib/year-timplan-keys.ts): the rollover writes the
+   * new year's, carried by cohort; the coverage measures the classes and
+   * pupils that the rollover creates and the activation moves.
+   */
+  yearTimplans: YEAR_TIMPLAN_KEYS.all,
+  timplanCoverage: TIMPLAN_COVERAGE_KEYS.all,
 } as const;
 
-/** What a rollover writes: a year, its groups, members, rows, lov and rules. */
+/** What a rollover writes: a year, its groups, members, rows, lov, rules and timplan per årskurs. */
 export const AFTER_ROLLOVER = [
   YEAR_KEYS.years,
   YEAR_KEYS.groups,
@@ -44,6 +53,8 @@ export const AFTER_ROLLOVER = [
   YEAR_KEYS.requirements,
   YEAR_KEYS.breaks,
   YEAR_KEYS.constraints,
+  YEAR_KEYS.yearTimplans,
+  YEAR_KEYS.timplanCoverage,
   YEAR_KEYS.rolloverPreview,
   YEAR_KEYS.activationPreview,
 ] as const;
@@ -57,6 +68,8 @@ export const AFTER_ACTIVATION = [
   YEAR_KEYS.members,
   YEAR_KEYS.lessonRoster,
   YEAR_KEYS.groupStudents,
+  YEAR_KEYS.yearTimplans,
+  YEAR_KEYS.timplanCoverage,
   YEAR_KEYS.rolloverPreview,
   YEAR_KEYS.activationPreview,
 ] as const;
