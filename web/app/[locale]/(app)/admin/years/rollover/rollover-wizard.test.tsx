@@ -379,6 +379,35 @@ describe("RolloverWizard", () => {
     expect(toast.success).toHaveBeenCalledWith("2027/28 skapades med 3 grupper och 24 timplansposter.");
   });
 
+  it("does not preview again once the year is created, where the gateway would answer that it already has a successor", async () => {
+    // Webbgenomgången 2026-10-07: after "Skapa" the invalidation refetched
+    // the wizard's own preview and the console showed a 409 before the page
+    // moved on.
+    let created = false;
+    post.mockImplementation(async (path: string, body: RolloverOptions) => {
+      if (!path.endsWith("/preview")) {
+        created = true;
+        return { academicYear: { name: body.name }, counts: { groups: 3, requirements: 24 }, planHash: HASH };
+      }
+      if (created) throw new ApiError(409, "Läsåret 2026/27 har redan rullats vidare till 2027/28.", "YEAR_HAS_SUCCESSOR");
+      return previewFor(body);
+    });
+    const user = userEvent.setup();
+    renderWizard();
+    await waitFor(() => expect(previewCalls().length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    const create = await screen.findByRole("button", { name: "Skapa 2027/28" });
+    await waitFor(() => expect(create).toBeEnabled());
+    const before = previewCalls().length;
+
+    await user.click(create);
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/admin/years"));
+    // Let any refetch the success started reach the mock.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(previewCalls()).toHaveLength(before);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("carries tjänster och uppdrag by default, and previews again without them when switched off", async () => {
     const user = userEvent.setup();
     renderWizard();
