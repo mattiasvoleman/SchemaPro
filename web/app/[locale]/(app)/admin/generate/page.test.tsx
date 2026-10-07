@@ -1,6 +1,18 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render as renderPlain, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import GeneratePage from "./page";
+
+/**
+ * With a real react-query client: the year choice's rosters request goes
+ * through useQuery (lib/planning-year.ts), and whether it is MADE is one of
+ * the things asserted below. Only the gateway call itself is a spy.
+ */
+function render(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return renderPlain(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 /**
  * The first test file this page has had. The warning it covers is the only
@@ -19,20 +31,54 @@ const state = vi.hoisted(() => ({
   people: [] as unknown[],
   /** StaffingPolicy as GET /staffing-policy answers; undefined = not answered yet. */
   policy: undefined as unknown,
+  years: [] as unknown[],
+  /** The year each year-keyed read was asked for, in order. */
+  requirementsFor: [] as (string | null)[],
+  historyFor: [] as (string | null)[],
+}));
+
+const ACTIVE = {
+  id: "y-1",
+  name: "2026/27",
+  isActive: true,
+  predecessorId: null,
+  startDate: "2026-08-17",
+  endDate: "2027-06-11",
+};
+const NEXT = {
+  id: "y-2",
+  name: "2027/28",
+  isActive: false,
+  predecessorId: "y-1",
+  startDate: "2027-08-16",
+  endDate: "2028-06-09",
+};
+
+/** GET /academic-years/:id/rosters, and every other gateway read, as one spy. */
+const apiGet = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  api: { get: apiGet },
 }));
 
 const noMutation = { mutateAsync: vi.fn(), isPending: false };
 
 vi.mock("@/lib/queries", () => ({
-  useActiveYear: () => ({ activeYear: { id: "y-1", name: "2026/27" } }),
-  useRequirements: () => ({ data: state.requirements }),
+  useAcademicYears: () => ({ data: state.years }),
+  useRequirements: (yearId: string | null) => {
+    state.requirementsFor.push(yearId);
+    return { data: state.requirements };
+  },
   useRooms: () => ({ data: [{ id: "r-1" }] }),
   usePeople: () => ({ data: state.people }),
   useGroups: () => ({ data: state.groups }),
   useGroupMemberships: () => ({ data: state.memberships }),
   useStartOptimization: () => noMutation,
   useOptimizationJob: () => ({ data: state.job }),
-  useOptimizationHistory: () => ({ data: [] }),
+  useOptimizationHistory: (yearId: string | null) => {
+    state.historyFor.push(yearId);
+    return { data: [] };
+  },
   useLunchSettings: () => ({ data: null }),
 }));
 
@@ -82,6 +128,10 @@ const pupil = (id: string, studentGroupId: string) => ({
 
 beforeEach(() => {
   cleanup();
+  apiGet.mockReset();
+  state.years = [ACTIVE];
+  state.requirementsFor = [];
+  state.historyFor = [];
   state.job = undefined;
   state.policy = undefined;
   state.untranslated = [];
@@ -342,3 +392,159 @@ describe("a refusal the engine named", () => {
   });
 });
 
+
+/*
+ * Next year before its activation. A rolled year's classes have no home
+ * pupils until it is activated — the people list still has every pupil in this
+ * year's classes — so the page reads the people with the class the activation
+ * will give each pupil it moves, from the gateway's own projection, and
+ * generates for the year picked.
+ */
+describe("next year, before its activation", () => {
+  const PROJECTED = {
+    academicYearId: "y-2",
+    basis: "PROJECTED",
+    // p-1 sits in this year's 4.1 and moves up into next year's 5.1.
+    homeClasses: [{ studentId: "p-1", studentGroupId: "g-next-51" }],
+    counts: { moved: 1, graduates: 3, unplaced: 2 },
+    membershipsOutOfDate: { missing: 0, stale: 0 },
+  };
+
+  beforeEach(() => {
+    state.years = [ACTIVE, NEXT];
+    state.groups = [
+      ...state.groups,
+      { id: "g-next-51", academicYearId: "y-2", name: "5.1", kind: "CLASS", gradeLevel: 5 },
+      // Next year's maths group, carried with p-1 in it: its årskurs comes
+      // from p-1's home class, which is this year's 4.1 until the activation.
+      { id: "g-next-ma", academicYearId: "y-2", name: "5ma1", kind: "TEACHING_GROUP", gradeLevel: null },
+    ];
+    state.memberships = [{ studentId: "p-1", studentGroupId: "g-next-ma" }];
+    state.requirements = [requirement("g-next-ma"), requirement("g-next-51")];
+    state.people.push({ ...pupil("t-1", "g-41"), role: "TEACHER", studentGroupId: null });
+    apiGet.mockResolvedValue(PROJECTED);
+    window.history.replaceState(null, "", "/?year=y-2");
+  });
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("generates for next year when the Läsår page links to it", async () => {
+    render(<GeneratePage />);
+    await screen.findByText("planningYear.bannerTitle(2027/28)");
+
+    expect(apiGet).toHaveBeenCalledWith("/api/v1/academic-years/y-2/rosters");
+    expect(state.requirementsFor.at(-1)).toBe("y-2");
+    expect(state.historyFor.at(-1)).toBe("y-2");
+    expect(
+      screen.getByRole("button", { name: "planningYear.optionNext(2027/28)", pressed: true }),
+    ).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("button", { name: /generate\.run/ }));
+    expect(noMutation.mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ academicYearId: "y-2" }),
+    );
+  });
+
+  it("says the class lists are projected, with the counts the gateway sent", async () => {
+    render(<GeneratePage />);
+
+    const banner = (await screen.findByText("planningYear.bannerTitle(2027/28)")).closest(
+      "[role=status]",
+    ) as HTMLElement;
+    expect(banner.textContent).toContain("planningYear.bannerBody(2027/28|2026/27|1|3|2)");
+    expect(banner.textContent).toContain("planningYear.bannerChanges(2026/27)");
+    // No membership sentence when none is out of date.
+    expect(banner.textContent).not.toContain("planningYear.bannerMemberships");
+    expect(within(banner).getByRole("link")).toHaveAttribute("href", "/admin/years");
+  });
+
+  it("names the teaching-group memberships that no longer fit, as the activation preview does", async () => {
+    apiGet.mockResolvedValue({ ...PROJECTED, membershipsOutOfDate: { missing: 2, stale: 1 } });
+    render(<GeneratePage />);
+
+    expect(await screen.findByText("planningYear.bannerMemberships(2|1)")).toBeInTheDocument();
+  });
+
+  /*
+   * The warning is the one place this page derives a year from home classes,
+   * so it is where the overlay shows: 5ma1 was carried with p-1 in it, and p-1
+   * is in this year's 4.1 — a class with a year. If the activation takes p-1
+   * out of every class (graduating, or a class not rolled over), next year's
+   * 5ma1 has no member with a class and the engine gets no year for it.
+   */
+  it("warns about a carried group whose only member leaves at the activation", async () => {
+    apiGet.mockResolvedValue({
+      ...PROJECTED,
+      homeClasses: [{ studentId: "p-1", studentGroupId: null }],
+    });
+    render(<GeneratePage />);
+
+    const warning = (await screen.findByText("generate.noYearTitle(1)")).closest("[role=status]");
+    expect(warning?.textContent).toContain("5ma1");
+  });
+
+  it("would not warn about it on this year's rows — the case the overlay exists for", async () => {
+    apiGet.mockResolvedValue({ ...PROJECTED, basis: "CURRENT", homeClasses: [] });
+    render(<GeneratePage />);
+    await waitFor(() => expect(apiGet).toHaveBeenCalled());
+    await Promise.resolve();
+
+    expect(screen.queryByText(/generate\.noYearTitle/)).toBeNull();
+  });
+
+  it("says so when the class lists could not be fetched, instead of planning on empty classes", async () => {
+    apiGet.mockRejectedValue(new Error("503"));
+    render(<GeneratePage />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "planningYear.rostersFailed(2027/28)",
+    );
+  });
+
+  it("points the result's link at next year's grid", async () => {
+    state.job = {
+      id: "job-9",
+      status: "SUCCEEDED",
+      solverStatus: "OPTIMAL",
+      lessonsGenerated: 12,
+      conflicts: [],
+      createdAt: "2026-10-07T10:00:00.000Z",
+    };
+    render(<GeneratePage />);
+    await screen.findByText("planningYear.bannerTitle(2027/28)");
+
+    expect(screen.getByRole("link", { name: /generate\.viewTimetable/ })).toHaveAttribute(
+      "href",
+      "/admin/timetable?year=y-2",
+    );
+  });
+
+  it("asks for no rosters, and shows no banner, for this year", async () => {
+    window.history.replaceState(null, "", "/");
+    render(<GeneratePage />);
+    // The choice is there, on this year; nothing was fetched for it.
+    expect(
+      screen.getByRole("button", { name: "planningYear.optionActive(2026/27)", pressed: true }),
+    ).toBeInTheDocument();
+    await Promise.resolve();
+
+    expect(apiGet).not.toHaveBeenCalled();
+    expect(state.requirementsFor.at(-1)).toBe("y-1");
+    expect(screen.queryByText(/planningYear\.bannerTitle/)).toBeNull();
+  });
+
+  it("switches to next year from the choice, and the run follows it", async () => {
+    window.history.replaceState(null, "", "/");
+    render(<GeneratePage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "planningYear.optionNext(2027/28)" }));
+
+    expect(await screen.findByText("planningYear.bannerTitle(2027/28)")).toBeInTheDocument();
+    expect(state.requirementsFor.at(-1)).toBe("y-2");
+  });
+
+  it("offers no choice while there is no next year to plan", () => {
+    state.years = [ACTIVE];
+    render(<GeneratePage />);
+
+    expect(screen.queryByRole("group", { name: "planningYear.label" })).toBeNull();
+  });
+});

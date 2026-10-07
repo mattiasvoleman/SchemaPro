@@ -1667,6 +1667,17 @@
     "noTeaching": "No teaching has been allocated to you yet.",
     "noDuties": "No duties registered."
   },
+  "planningYear": {
+    "label": "Year to plan",
+    "optionActive": "{name} (active)",
+    "optionNext": "{name} (next, not activated)",
+    "bannerTitle": "{year} is planned on projected class lists",
+    "bannerBody": "{year} has not been activated, and pupils stay in the classes of {active} until it is. The schedule is therefore computed on the class lists the activation will give: {moved, plural, one {# pupil moves} other {# pupils move}} into their new class, {graduates, plural, one {# pupil graduates} other {# pupils graduate}} and {unplaced, plural, one {# pupil is} other {# pupils are}} left without a class. Pupils move in at the activation.",
+    "bannerMemberships": "The teaching groups’ members were set at the rollover, and some pupils have changed class since: {missing, plural, one {# membership is} other {# memberships are}} missing for pupils moving in, and {stale, plural, one {# membership belongs} other {# memberships belong}} to pupils left without a class. The schedule is computed with the groups as they stand.",
+    "bannerChanges": "A class change in {active} changes the lists at once, and a clash it causes shows in the timetable.",
+    "bannerLink": "Activate the year on the School years page",
+    "rostersFailed": "The class lists for {year} could not be fetched, so the clashes and grades on this page are computed as if no pupil had moved. Reload the page before planning."
+  },
   "years": {
     "title": "School years",
     "subtitle": "The school’s years, which one is active, and the hand-over to the next",

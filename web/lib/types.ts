@@ -847,6 +847,26 @@ export interface ActivationPreview {
   planHash: string;
 }
 
+/**
+ * GET /academic-years/:id/rosters — the förberäknade klasslistor the gateway's
+ * roster readers use for the year (src/year-rollover/projected-rosters.ts).
+ *
+ * PROJECTED for a rolled year whose predecessor is the active year and whose
+ * activation would move somebody: `homeClasses` holds exactly the pupils that
+ * activation moves, each with the class it would give them — null for one who
+ * graduates or is left without a class — sorted by id. Everyone else keeps the
+ * studentGroupId they have. CURRENT for every other readable year, with an
+ * empty list: its rows already are its rosters.
+ */
+export interface YearRosters {
+  academicYearId: string;
+  basis: "CURRENT" | "PROJECTED";
+  homeClasses: { studentId: string; studentGroupId: string | null }[];
+  counts: { moved: number; graduates: number; unplaced: number };
+  /** planActivation's MEMBERSHIPS_OUT_OF_DATE for the same plan; zeros when none. */
+  membershipsOutOfDate: { missing: number; stale: number };
+}
+
 export interface ActivationResult {
   year: { id: string; name: string; isActive: true };
   moved: number;

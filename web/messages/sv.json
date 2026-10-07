@@ -1667,6 +1667,17 @@
     "noTeaching": "Ingen undervisning är fördelad till dig ännu.",
     "noDuties": "Inga uppdrag registrerade."
   },
+  "planningYear": {
+    "label": "Läsår att planera",
+    "optionActive": "{name} (aktivt)",
+    "optionNext": "{name} (nästa, inte aktiverat)",
+    "bannerTitle": "{year} planeras på förberäknade klasslistor",
+    "bannerBody": "{year} är inte aktiverat, och eleverna går kvar i klasserna i {active} tills det aktiveras. Schemat räknas därför på klasslistorna som aktiveringen ger: {moved, plural, one {# elev flyttar} other {# elever flyttar}} in i sin nya klass, {graduates, plural, one {# elev går} other {# elever går}} ut och {unplaced, plural, one {# elev blir} other {# elever blir}} utan klass. Eleverna flyttar in vid aktiveringen.",
+    "bannerMemberships": "Undervisningsgruppernas medlemmar bestämdes vid rullningen, och några elever har bytt klass sedan dess: {missing, plural, one {# medlemskap saknas} other {# medlemskap saknas}} för elever som flyttar in, och {stale, plural, one {# medlemskap hör} other {# medlemskap hör}} till elever som blir utan klass. Schemat räknas med grupperna som de står.",
+    "bannerChanges": "Byter en elev klass i {active} ändras listorna direkt, och en krock som det ger visas i schemat.",
+    "bannerLink": "Aktivera läsåret på sidan Läsår",
+    "rostersFailed": "Klasslistorna för {year} kunde inte hämtas, så krockarna och årskurserna på sidan räknas som om ingen elev hade flyttat. Ladda om sidan innan du planerar."
+  },
   "years": {
     "title": "Läsår",
     "subtitle": "Skolans läsår, vilket som är aktivt och övergången till nästa",
