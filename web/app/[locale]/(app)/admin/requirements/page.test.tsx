@@ -1902,6 +1902,18 @@ describe("Timplansposter in Mål mode", () => {
     expect(screen.getByText("target.pillNoPlan")).toBeInTheDocument();
   });
 
+  it("links the no-plan notice to the Timplan page, where a plan is chosen, rather than naming it", async () => {
+    // Webbgenomgången 2026-10-07: "Välj en under Timplan per årskurs på
+    // sidan Timplan" was plain text.
+    state.yearTimplans = loaded([]);
+    state.planDetails = { data: [], isError: false };
+    render(<RequirementsPage />);
+    await enterTargetMode();
+
+    const notice = screen.getByText("target.unattached(target.grade(7))");
+    expect(within(notice).getByRole("link", { name: "target.choosePlan" })).toHaveAttribute("href", "/admin/timplan");
+  });
+
   it("waits for the roster before it judges a class by its pupils", async () => {
     state.people = pending();
     render(<RequirementsPage />);

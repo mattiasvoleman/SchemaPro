@@ -150,12 +150,19 @@ export function TargetHost({ academicYearId, sources, onState }: TargetHostProps
     );
   }
   const { view } = state;
+  const choosePlan = (
+    <Link href="/admin/timplan" className="underline underline-offset-4">
+      {t("target.choosePlan")}
+    </Link>
+  );
   return (
     <div className="mb-3 space-y-1 text-sm text-foreground">
       <p>{t("target.legend")}</p>
+      {/* The way to a plan is a link, not a sentence naming a page: Timplan
+          per årskurs is a dialog on /admin/timplan (webbgenomgången). */}
       {view.unattachedGrades.length > 0 ? (
         <p className="rounded-md bg-muted px-3 py-2">
-          {t("target.unattached", { grades: view.unattachedGrades.map(grade).join(", ") })}
+          {t("target.unattached", { grades: view.unattachedGrades.map(grade).join(", ") })} {choosePlan}
         </p>
       ) : null}
       {view.draftPlans.map((plan) => (
@@ -165,7 +172,7 @@ export function TargetHost({ academicYearId, sources, onState }: TargetHostProps
       ))}
       {view.emptyPlanGrades.map((entry) => (
         <p key={entry.gradeLevel} className="rounded-md bg-muted px-3 py-2">
-          {t("target.emptyPlan", { name: entry.planName, grade: grade(entry.gradeLevel) })}
+          {t("target.emptyPlan", { name: entry.planName, grade: grade(entry.gradeLevel) })} {choosePlan}
         </p>
       ))}
       <p role="status" aria-live="polite" aria-atomic="true" className="font-medium">
