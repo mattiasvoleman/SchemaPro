@@ -167,6 +167,29 @@ describe("TimplanCoveragePage", () => {
     expect(screen.getByRole("button", { name: /9A/ })).toHaveTextContent("draftShort");
   });
 
+  it("says there is no target to compare with when the year follows no plan in any årskurs", () => {
+    // Seen 2026-10-07: "80 elever i läsårets klasser; ingen är under mål" for
+    // a year attached to no plan — true, and read as all is well.
+    const response = state.case.response;
+    state.case = {
+      ...state.case,
+      response: {
+        ...response,
+        groups: response.groups.map((group) => ({
+          ...group,
+          localTimplanId: null,
+          planStatus: null,
+          linesWithTarget: 0,
+          linesCovered: 0,
+        })),
+        pupilsBelowTarget: 0,
+      },
+    };
+    render(<TimplanCoveragePage />);
+    expect(screen.getByText("pupilsNoTarget(5)")).toBeInTheDocument();
+    expect(screen.queryByText(/^pupilsBelow/)).not.toBeInTheDocument();
+  });
+
   it("asks for the year chosen in the picker", async () => {
     const user = userEvent.setup();
     render(<TimplanCoveragePage />);

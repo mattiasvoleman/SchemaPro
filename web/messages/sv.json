@@ -2110,6 +2110,7 @@
     "layerPlanned": "Planerat mot timplan",
     "pupilsTotal": "{pupils, plural, one {# elev} other {# elever}} i läsårets klasser.",
     "pupilsBelow": "{pupils, plural, one {# elev} other {# elever}} i läsårets klasser; {below, plural, =0 {ingen är under mål} one {# är under mål i minst ett ämne} other {# är under mål i minst ett ämne}}.",
+    "pupilsNoTarget": "{pupils, plural, one {# elev} other {# elever}} i läsårets klasser, men ingen klass har något mål att jämföra med.",
     "pupilsOutside": "{count, plural, one {# aktiv elev har ingen klass i läsåret och räknas inte.} other {# aktiva elever har ingen klass i läsåret och räknas inte.}}",
     "grade": "{grade, select, 0 {förskoleklass} other {åk {grade}}}",
     "noGrade": "ingen årskurs",

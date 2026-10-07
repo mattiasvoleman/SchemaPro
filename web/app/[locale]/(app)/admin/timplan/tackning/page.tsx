@@ -196,7 +196,11 @@ export default function TimplanCoveragePage() {
           <section className="space-y-2 text-sm text-foreground" aria-label={t("summaryLabel")}>
             <p className="text-xs uppercase tracking-wide text-muted-foreground">{t("layerPlanned")}</p>
             <p role="status" className="font-medium">
-              {matrix.coverage.pupilsBelowTarget === null
+              {/* "ingen är under mål" is true of a year with no targets at
+                  all, and read as all is well; the notices below say why. */}
+              {matrix.classes.every((row) => row.summary.linesWithTarget === 0)
+                ? t("pupilsNoTarget", { pupils: matrix.coverage.pupilCount })
+                : matrix.coverage.pupilsBelowTarget === null
                 ? t("pupilsTotal", { pupils: matrix.coverage.pupilCount })
                 : t("pupilsBelow", {
                     pupils: matrix.coverage.pupilCount,
