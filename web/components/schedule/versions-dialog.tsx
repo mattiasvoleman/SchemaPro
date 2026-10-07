@@ -109,6 +109,16 @@ export function VersionsDialog({
   const { data: versions } = useScheduleVersions(open ? academicYearId : null);
   const versionActions = useScheduleVersionActions();
   const [comparingId, setComparingId] = useState<string | null>(null);
+  // A comparison belongs to the läsår it was picked in. The dialog stays
+  // mounted while the page switches between this year and next, and a
+  // version of one diffed against the other's grid lists every lesson as
+  // added or removed — so a new year drops it (reset during render, as
+  // React has it for state that follows a prop).
+  const [comparedYear, setComparedYear] = useState(academicYearId);
+  if (comparedYear !== academicYearId) {
+    setComparedYear(academicYearId);
+    setComparingId(null);
+  }
   const { data: comparing } = useScheduleVersionDetail(comparingId);
 
   const doSaveVersion = async () => {
