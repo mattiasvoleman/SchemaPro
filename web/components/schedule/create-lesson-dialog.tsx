@@ -17,7 +17,7 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2, Lock, Sparkles } from "lucide-react";
-import type { OpenSlotMatch } from "@/lib/conflicts";
+import type { OpenSlotMatch } from "@/lib/placement-search";
 import type { LessonRecurrence, Person, Room, StudentGroup, Subject } from "@/lib/types";
 import { RecurrenceFields } from "@/components/schedule/recurrence-fields";
 import { Button } from "@/components/ui/button";

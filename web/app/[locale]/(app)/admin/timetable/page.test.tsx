@@ -1045,6 +1045,25 @@ describe("the dialogs the page lifts out", () => {
     );
   });
 
+  it("searches the week for a free time from Lägg till", async () => {
+    // The slot finder's search is awaited from the lesson dialogs' chunk now,
+    // not called in the page; its answer has to reach the dialog all the same.
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    // Duplicera fills Lägg till with Slöjd and 5.1, which the search needs.
+    await user.click(await screen.findByRole("button", { name: "timetable.duplicateLesson" }));
+    await user.click(await screen.findByRole("button", { name: "timetable.slotFinderSearch" }));
+
+    expect(
+      await screen.findAllByText(/timetable\.slotFinder(Assigned|Fallback|None)/),
+    ).not.toHaveLength(0);
+  });
+
   it("publishes the year on screen from the publish dialog", async () => {
     const user = userEvent.setup();
     render(<TimetablePage />);

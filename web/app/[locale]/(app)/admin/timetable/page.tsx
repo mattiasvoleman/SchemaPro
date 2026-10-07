@@ -145,16 +145,13 @@ import {
   buildGroupConflictMap,
   buildPupilBufferMap,
   detectConflicts,
-  findOpenSlots,
   pupilBufferOf,
-  suggestPlacements,
   teacherIdsOf,
   toPlacement,
   validatePlacement,
-  type OpenSlotMatch,
   type Placement,
-  type PlacementSuggestion,
 } from "@/lib/conflicts";
+import type { OpenSlotMatch, PlacementSuggestion } from "@/lib/placement-search";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { restorableInput } from "@/lib/lesson-restore";
 import { breaksRoomLock } from "@/lib/room-locks";
@@ -1284,11 +1281,15 @@ export default function TimetablePage() {
         toast.info(t("pupilTimeRefused"));
       }
       const hasWeekend = (lessons ?? []).some((l) => l.dayOfWeek > 5);
-      const options = suggestPlacements(candidate, placements, constraints ?? [], {
-        days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
-        studentGroupOf,
-      });
-      setSuggesting({ lesson, options });
+      // The search lives in the lesson dialogs' chunk, fetched when the page
+      // mounted, so this await is normally a resolved promise.
+      loadLessonDialogs().then(({ suggestPlacements }) => {
+        const options = suggestPlacements(candidate, placements, constraints ?? [], {
+          days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
+          studentGroupOf,
+        });
+        setSuggesting({ lesson, options });
+      }, showError);
     },
     [
       lessonById,
@@ -1301,6 +1302,7 @@ export default function TimetablePage() {
       frameTimes,
       lunchOf,
       pupilBuffers,
+      showError,
       t,
     ],
   );
@@ -1667,19 +1669,22 @@ export default function TimetablePage() {
     const duration = endMin > startMin ? endMin - startMin : 60;
     const hasWeekend = (lessons ?? []).some((lesson) => lesson.dayOfWeek > 5);
 
-    setSlotMatches(
-      findOpenSlots({
-        studentGroupIds: groupIds,
-        participantStudentIds: creating.studentIds,
-        studentGroupOf,
-        durationMinutes: duration,
-        primaryTeacherIds,
-        fallbackTeacherIds,
-        placements,
-        constraints: constraints ?? [],
-        days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
-      }),
-    );
+    // Pressed inside Lägg till, whose chunk carries the search: loaded by now.
+    loadLessonDialogs().then(({ findOpenSlots }) => {
+      setSlotMatches(
+        findOpenSlots({
+          studentGroupIds: groupIds,
+          participantStudentIds: creating.studentIds,
+          studentGroupOf,
+          durationMinutes: duration,
+          primaryTeacherIds,
+          fallbackTeacherIds,
+          placements,
+          constraints: constraints ?? [],
+          days: hasWeekend ? [1, 2, 3, 4, 5, 6, 7] : [1, 2, 3, 4, 5],
+        }),
+      );
+    }, showError);
   };
 
   const doCreate = async () => {

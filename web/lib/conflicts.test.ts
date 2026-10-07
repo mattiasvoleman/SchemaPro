@@ -5,9 +5,7 @@ import {
   buildPupilBufferMap,
   conflictKinds,
   detectConflicts,
-  findOpenSlots,
   pupilBufferOf,
-  suggestPlacements,
   teacherIdsOf,
   toPlacement,
   weeksCanOverlap,
@@ -15,6 +13,9 @@ import {
   type Placement,
   type RoomLockCheck,
 } from "./conflicts";
+// The two free-time searches moved to their own module (see its header); the
+// tests below still exercise them against the same placements.
+import { findOpenSlots, suggestPlacements } from "./placement-search";
 
 // ---------------------------------------------------------------------------
 // Factories. Placements default to the SAME slot (Monday 09:00–10:00) so that
