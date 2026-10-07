@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv";
@@ -1206,6 +1206,29 @@ const twoYears = () => {
 };
 
 const exportButton = () => screen.getByRole("button", { name: "exportButton" });
+
+// Review reproduction (P2 review, lens webb): Skapa timplansposter's
+// "Öppna Timplansposter" after generating next year's posts opened the ACTIVE
+// year, which shows none of them. The link carries ?year=, read once after
+// mount; an id that is no year of the school is ignored.
+describe("the ?year= deep link", () => {
+  afterEach(() => window.history.replaceState(null, "", "/"));
+
+  it("opens the linked läsår rather than the active one", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?year=y2");
+    render(<RequirementsPage />);
+    expect(await screen.findByText("8B")).toBeInTheDocument();
+    expect(screen.queryByText("7A")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the active läsår for an id that is no year", async () => {
+    twoYears();
+    window.history.replaceState(null, "", "/?year=nope");
+    render(<RequirementsPage />);
+    expect(await screen.findByText("7A")).toBeInTheDocument();
+  });
+});
 
 describe("Timplan CSV", () => {
   it("has nothing to hand over when the timplan is empty", async () => {

@@ -284,8 +284,16 @@ export default function RequirementsPage() {
     isError: yearsFailed,
   } = useAcademicYears();
   const [selectedYearId, setSelectedYearId] = useState<string | null>(null);
+  // ?year= from Skapa timplansposter's result link, read once after mount
+  // (not useSearchParams, which would opt the route out of static rendering).
+  const [linkedYearId, setLinkedYearId] = useState<string | null>(null);
+  useEffect(() => setLinkedYearId(new URLSearchParams(window.location.search).get("year")), []);
   const activeYearId =
-    selectedYearId ?? years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
+    selectedYearId ??
+    years?.find((year) => year.id === linkedYearId)?.id ??
+    years?.find((year) => year.isActive)?.id ??
+    years?.[0]?.id ??
+    null;
 
   const {
     data: subjects,

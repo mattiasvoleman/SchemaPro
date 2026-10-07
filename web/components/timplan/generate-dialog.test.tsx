@@ -207,7 +207,8 @@ describe("GenerateDialog", () => {
     });
     expect(await screen.findByText("resultCreated(2|2026/27)")).toBeInTheDocument();
     expect(screen.getByText("resultSkipped(1)")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "openRequirements" })).toHaveAttribute("href", "/admin/requirements");
+    // The result link opens the year the posts were made in, not the active one.
+    expect(screen.getByRole("link", { name: "openRequirements" })).toHaveAttribute("href", "/admin/requirements?year=y-1");
   });
 
   it("will not apply while an edited row holds a figure the gateway refuses", async () => {
