@@ -1,6 +1,6 @@
 import request from 'supertest';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
-import { forgetStaffingWorld } from './utils/staffing-world';
+import { forgetStaffingWorld, givenStaffingWorld } from './utils/staffing-world';
 
 /**
  * Generation and day-to-day schedule editing over HTTP: optimization jobs,
@@ -235,6 +235,84 @@ describe('Scheduling surface (e2e)', () => {
           isLocked: true,
         })
         .expect(201);
+    });
+
+    /*
+     * Re-teachering a lesson under the staffing policy, through the handler:
+     * WARN is a 200 whose body still carries `warnings` after serialisation,
+     * REFUSE a 409 problem with the code and the params the web renders its
+     * sentence from, and the lesson untouched.
+     */
+    describe('re-teachered under the staffing policy', () => {
+      const NEW_TEACHER = '1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a';
+      const stored = {
+        id: LESSON_ID,
+        academicYearId: YEAR_ID,
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: TEACHER_ID,
+        coTeacherId: null,
+        roomId: null,
+        dayOfWeek: 2,
+        startTime: new Date('1970-01-01T08:20:00.000Z'),
+        endTime: new Date('1970-01-01T09:20:00.000Z'),
+        isLocked: true,
+        isParked: false,
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        extraGroups: [],
+        participants: [],
+        school: { id: '33333333-3333-4333-8333-333333333333', timezone: 'Europe/Stockholm' },
+      };
+      const arrange = (qualificationMode: 'WARN' | 'REFUSE') => {
+        givenStaffingWorld(harness.tx, {
+          year: { id: YEAR_ID, startDate: new Date('2026-08-17'), endDate: new Date('2027-06-11') },
+          policy: { qualificationMode },
+          groups: [{ id: GROUP_ID, name: '8A', gradeLevel: 8 }],
+          subjects: [{ id: SUBJECT_ID, name: 'Matematik' }],
+          // Somebody holds a behörighet, so the question is asked; not the new teacher.
+          qualifications: [{ userId: TEACHER_ID, subjectId: SUBJECT_ID, minGradeLevel: 7, maxGradeLevel: 9 }],
+        });
+        harness.tx['masterLesson']!['findUnique']!.mockResolvedValue(stored);
+        harness.tx['masterLesson']!['findMany']!.mockResolvedValue([]);
+        harness.tx['masterLesson']!['update']!.mockResolvedValue({ ...stored, teacherId: NEW_TEACHER });
+      };
+      const patch = () =>
+        request(http())
+          .patch(`/api/v1/master-lessons/${LESSON_ID}`)
+          .set('x-test-user', admin())
+          .send({ teacherId: NEW_TEACHER });
+
+      afterEach(() => {
+        forgetStaffingWorld(harness.tx);
+        harness.tx['masterLesson']!['findUnique']!.mockReset();
+      });
+
+      it('WARN: 200, the lesson re-teachered, and the finding in `warnings`', async () => {
+        arrange('WARN');
+
+        const response = await patch().expect(200);
+
+        expect(response.body.warnings).toEqual([
+          { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: { role: 'TEACHER', subject: 'Matematik', grades: '8' } },
+        ]);
+        expect(harness.tx['masterLesson']!['update']).toHaveBeenCalledTimes(1);
+      });
+
+      it('REFUSE: 409 with the code, the params and the Swedish — and the lesson untouched', async () => {
+        arrange('REFUSE');
+
+        const response = await patch().expect(409);
+
+        expect(response.body).toMatchObject({
+          status: 409,
+          code: 'STAFF_TEACHER_NOT_QUALIFIED',
+          params: { role: 'TEACHER', subject: 'Matematik', grades: '8' },
+          detail: 'Läraren saknar behörighet i Matematik för åk 8.',
+        });
+        expect(harness.tx['masterLesson']!['update']).not.toHaveBeenCalled();
+      });
     });
 
     it('rejects a time that is not HH:MM, naming the field', async () => {

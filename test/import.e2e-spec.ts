@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
+import { forgetStaffingWorld, givenStaffingWorld } from './utils/staffing-world';
 
 /**
  * CSV import over HTTP.
@@ -176,6 +177,70 @@ describe('CSV import (e2e)', () => {
       expect(response.body).toMatchObject({ created: 1, errors: [] });
       const { data } = harness.tx['teachingRequirement']!['create']!.mock.calls[0]?.[0] as { data: Record<string, unknown> };
       expect(data).toMatchObject({ teacherLoadPercent: 150, coTeacherLoadPercent: 100 });
+    });
+
+    it('reports a REFUSE row as an error and a WARN row as a warning, and writes the rest', async () => {
+      // qualificationMode REFUSE, overAllocationMode WARN. Bo holds no
+      // behörighet: his row is an error. Karin is behörig but goes past her
+      // limit: her row is saved with a warning. The third row is written as is.
+      const KARIN = '1b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b';
+      const BO = '1c1c1c1c-1c1c-4c1c-8c1c-1c1c1c1c1c1c';
+      const GROUP_7B = '1d1d1d1d-1d1d-4d1d-8d1d-1d1d1d1d1d1d';
+      const GROUP_7C = '1f1f1f1f-1f1f-4f1f-8f1f-1f1f1f1f1f1f';
+      givenStaffingWorld(harness.tx, {
+        year: { id: YEAR_ID, startDate: new Date('2026-08-17'), endDate: new Date('2027-06-11') },
+        policy: { qualificationMode: 'REFUSE', overAllocationMode: 'WARN' },
+        groups: [
+          { id: GROUP_ID, name: '7A', gradeLevel: 7 },
+          { id: GROUP_7B, name: '7B', gradeLevel: 7 },
+          { id: GROUP_7C, name: '7C', gradeLevel: 7 },
+        ],
+        subjects: [{ id: 'sub-ma', name: 'Matematik', code: 'MA' }],
+        employments: [{ id: '1e1e1e1e-1e1e-4e1e-8e1e-1e1e1e1e1e1e', userId: KARIN, teachingTargetMinutesPerWeek: 100 }],
+        qualifications: [{ userId: KARIN, subjectId: 'sub-ma', minGradeLevel: 7, maxGradeLevel: 9 }],
+      });
+      harness.tx['subject']!['findMany']!.mockResolvedValue([{ id: 'sub-ma', name: 'Matematik', code: 'MA' }]);
+      harness.tx['user']!['findMany']!.mockResolvedValue([
+        { id: KARIN, email: 'karin.ek@example.com' },
+        { id: BO, email: 'bo.ek@example.com' },
+      ]);
+      harness.tx['teachingRequirement']!['create']!.mockResolvedValue({ id: 'r-1' });
+
+      try {
+        const response = await post(harness, 'requirements')
+          .send({
+            academicYearId: YEAR_ID,
+            columns: ['groupName', 'subject', 'lessonsPerWeek', 'minutesPerLesson', 'teacherEmail'],
+            rows: [
+              { groupName: '7A', subject: 'MA', lessonsPerWeek: 3, minutesPerLesson: 60, teacherEmail: 'bo.ek@example.com', recurrence: 'ALL_WEEKS' },
+              { groupName: '7B', subject: 'MA', lessonsPerWeek: 3, minutesPerLesson: 60, teacherEmail: 'karin.ek@example.com', recurrence: 'ALL_WEEKS' },
+              { groupName: '7C', subject: 'Matematik', lessonsPerWeek: 2, minutesPerLesson: 60, teacherEmail: null, recurrence: 'ALL_WEEKS' },
+            ],
+          })
+          .expect(201);
+
+        expect(response.body.errors).toEqual([
+          { row: 1, message: 'Läraren saknar behörighet i Matematik för åk 7.' },
+        ]);
+        expect(response.body.warnings).toEqual([
+          {
+            row: 2,
+            code: 'STAFF_TEACHER_OVER_TARGET',
+            params: { role: 'TEACHER', minutes: 180, target: 100, limit: 110, tolerance: 10 },
+            message: expect.stringContaining('180 min/v'),
+          },
+        ]);
+        // Bo's row is not written; Karin's and the unstaffed one are.
+        const written = harness.tx['teachingRequirement']!['create']!.mock.calls.map(
+          (call) => (call[0] as { data: { studentGroupId: string; teacherId: string | null } }).data,
+        );
+        expect(written).toEqual([
+          expect.objectContaining({ studentGroupId: GROUP_7B, teacherId: KARIN }),
+          expect.objectContaining({ studentGroupId: GROUP_7C, teacherId: null }),
+        ]);
+      } finally {
+        forgetStaffingWorld(harness.tx);
+      }
     });
 
     it('imports behörigheter, resolving teacher by email and subject by code', async () => {
