@@ -121,9 +121,12 @@ describe("loadBarSegments", () => {
     expect(segments.teaching + segments.over).toBeCloseTo(1, 10);
   });
 
-  it("is teaching alone without a target", () => {
+  it("draws nothing without a target, so the bar is not read as 100 % of one, but keeps the minutes", () => {
+    // Webbgenomgången 2026-10-07: the week alone at full width, under
+    // "Andel av mål", read as a full post for a teacher with no target.
     expect(loadBarSegments({ assignedMinutesPerWeek: 300, targetMinutesPerWeek: null })).toMatchObject({
-      teaching: 1,
+      duty: 0,
+      teaching: 0,
       remaining: 0,
       over: 0,
       teachingMinutes: 300,
@@ -187,15 +190,17 @@ describe("loadBarSegments with uppdrag", () => {
     expect(segments.overMinutes).toBe(30);
   });
 
-  it("splits the whole width between uppdrag and teaching without a target", () => {
+  it("draws no uppdrag either without a target, and still names its minutes", () => {
     const segments = loadBarSegments({
       assignedMinutesPerWeek: 300,
       targetMinutesPerWeek: null,
       dutyMinutesPerWeek: 100,
       countedDutyMinutesPerWeek: 0,
     });
-    expect(segments.duty).toBeCloseTo(0.25, 10);
-    expect(segments.teaching).toBeCloseTo(0.75, 10);
+    expect(segments.duty).toBe(0);
+    expect(segments.teaching).toBe(0);
+    expect(segments.dutyMinutes).toBe(100);
+    expect(segments.teachingMinutes).toBe(300);
   });
 });
 

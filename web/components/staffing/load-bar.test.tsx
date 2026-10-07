@@ -65,7 +65,9 @@ describe("LoadBar", () => {
       />,
     );
     expect(screen.getByText("barNoTarget")).toBeInTheDocument();
-    expect(segment("teaching")?.style.width).toBe("100%");
+    // An empty track, not a full one: a full bar under "Andel av mål" reads
+    // as 100 % of a target this teacher does not have.
+    for (const name of ["duty", "teaching", "remaining", "over"]) expect(segment(name)).toBeNull();
     expect(screen.getByRole("img")).toHaveAttribute(
       "aria-label",
       "barTeaching(300) · barNoTarget",
