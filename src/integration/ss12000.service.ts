@@ -309,12 +309,32 @@ export class Ss12000Service {
     return this.prisma.withServicePrincipal(schoolId, async (tx) => {
       const activeYear = await tx.academicYear.findFirst({
         where: { schoolId, isActive: true },
-        select: { id: true },
+        select: { id: true, predecessorId: true, graduatingGradeLevel: true },
       });
+      // Last year's classes that graduated into no successor (9A when G = 9):
+      // a pupil with no class whom the roster still lists in one of them is
+      // a graduate the source system has not rolled yet, not a new 9A pupil.
+      const graduatedNames = new Set(
+        activeYear?.predecessorId && activeYear.graduatingGradeLevel != null
+          ? (
+              await tx.studentGroup.findMany({
+                where: {
+                  schoolId,
+                  academicYearId: activeYear.predecessorId,
+                  kind: 'CLASS',
+                  gradeLevel: { gte: activeYear.graduatingGradeLevel },
+                  successor: { is: null },
+                },
+                select: { name: true },
+              })
+            ).map((group) => group.name)
+          : [],
+      );
 
       let updated = 0;
       let groupsCreated = 0;
       let guardianLinks = 0;
+      let classesKept = 0;
       const needsProvisioning: string[] = [];
 
       for (const person of persons) {
@@ -331,7 +351,14 @@ export class Ss12000Service {
 
         // Group membership (students only), creating the class if unknown.
         let studentGroupId: string | undefined;
-        if (person.groupDisplayName && user.role === 'STUDENT' && activeYear) {
+        if (
+          person.groupDisplayName &&
+          user.role === 'STUDENT' &&
+          activeYear &&
+          (await this.namesAnotherYearsClass(tx, schoolId, user.id, person.groupDisplayName, graduatedNames))
+        ) {
+          classesKept++;
+        } else if (person.groupDisplayName && user.role === 'STUDENT' && activeYear) {
           // Matched within the active läsår, where the class is created too.
           // Group names are unique per (school, year), not per school: after
           // a läsårsrullning "8A" is both this year's 8A and next year's (the
@@ -422,15 +449,64 @@ export class Ss12000Service {
       }
 
       this.logger.log(
-        `SS12000 import [school=${schoolId}, updated=${updated}, groupsCreated=${groupsCreated}]`,
+        `SS12000 import [school=${schoolId}, updated=${updated}, groupsCreated=${groupsCreated}, classesKept=${classesKept}]`,
       );
       return {
         updated,
         groupsCreated,
         guardianLinks,
+        classesKept,
         needsProvisioning: [...new Set(needsProvisioning)],
       };
     });
+  }
+
+  /**
+   * Whether the roster names the pupil's class by its name in the year
+   * before or after — the source system and SchemaPro rolling the läsår on
+   * different days. Then the class is kept and counted (classesKept), not
+   * moved.
+   *
+   * WHY. The sync matches a class by name within the active läsår, and
+   * names repeat across years by design: next year's 8A is the promoted 7A.
+   * A municipal register usually switches its placements on 1 July or in
+   * August, while SchemaPro activates the new year the day after the old one
+   * ends. In between, a nightly sync sends last year's names:
+   *  - a pupil now in B's 8A (promoted from A's 7A) arrives as "7A", and the
+   *    sync put them in B's intake 7A — or created an ungraded "7A" — one
+   *    grade down;
+   *  - a graduate (no class since the activation) arrives as "9A", and was
+   *    put in B's 9A, the promoted 8A.
+   * The other way round, a register that switched before the activation
+   * sends A's 7A pupil as "8A", which in the active year A is the outgoing
+   * cohort; the activation then follows A-8A → B-9A, and the pupil skips a
+   * grade. Each silently undoes the activation for that pupil.
+   *
+   * The rule: the name sent is the name of the pupil's current class's
+   * predecessor or successor (and not the class's own name), or the pupil
+   * has no class and the name is one of last year's graduated classes. A
+   * pupil genuinely moved back into a class named like their old one in the
+   * same window is kept too, and shows in classesKept for the admin to move
+   * on the people page.
+   */
+  private async namesAnotherYearsClass(
+    tx: PrismaClient,
+    schoolId: string,
+    userId: string,
+    name: string,
+    graduatedNames: ReadonlySet<string>,
+  ): Promise<boolean> {
+    const current = await tx.studentGroup.findFirst({
+      where: { schoolId, members: { some: { id: userId } } },
+      select: {
+        name: true,
+        predecessor: { select: { name: true } },
+        successor: { select: { name: true } },
+      },
+    });
+    if (!current) return graduatedNames.has(name);
+    if (current.name === name) return false;
+    return current.predecessor?.name === name || current.successor?.name === name;
   }
 }
 

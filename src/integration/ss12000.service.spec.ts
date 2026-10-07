@@ -625,6 +625,7 @@ describe('Ss12000Service', () => {
         updated: 0,
         groupsCreated: 0,
         guardianLinks: 0,
+        classesKept: 0,
         needsProvisioning: [],
       });
       expect(tx.user.findFirst).not.toHaveBeenCalled();
@@ -751,6 +752,97 @@ describe('Ss12000Service', () => {
       expect(tx.studentGroup.create).not.toHaveBeenCalled();
     });
 
+    describe('around a läsår hand-over, when the roster still names last year’s classes (or already next year’s)', () => {
+      const PREVIOUS_YEAR_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+      // B (active) was rolled from A: A-7A → B-8A, A-8A → B-9A, A-9A graduated.
+      // B also opened an intake 7A. The table answers by the where it gets.
+      const classes = [
+        { id: 'a-7a', academicYearId: PREVIOUS_YEAR_ID, name: '7A', kind: 'CLASS', gradeLevel: 7, successor: 'b-8a', predecessor: null },
+        { id: 'a-8a', academicYearId: PREVIOUS_YEAR_ID, name: '8A', kind: 'CLASS', gradeLevel: 8, successor: 'b-9a', predecessor: null },
+        { id: 'a-9a', academicYearId: PREVIOUS_YEAR_ID, name: '9A', kind: 'CLASS', gradeLevel: 9, successor: null, predecessor: null },
+        { id: 'b-7a', academicYearId: YEAR_ID, name: '7A', kind: 'CLASS', gradeLevel: 7, successor: null, predecessor: null },
+        { id: 'b-8a', academicYearId: YEAR_ID, name: '8A', kind: 'CLASS', gradeLevel: 8, successor: null, predecessor: 'a-7a' },
+        { id: 'b-9a', academicYearId: YEAR_ID, name: '9A', kind: 'CLASS', gradeLevel: 9, successor: null, predecessor: 'a-8a' },
+      ];
+      const nameOf = (id: string | null) => (id ? { name: classes.find((group) => group.id === id)!.name } : null);
+      let homeOf: string | null = null;
+
+      beforeEach(() => {
+        tx.academicYear.findFirst.mockImplementation(({ select }: { select?: Record<string, unknown> }) =>
+          Promise.resolve(
+            asSelected({ id: YEAR_ID, name: '2027/28', isActive: true, predecessorId: PREVIOUS_YEAR_ID, graduatingGradeLevel: 9 }, select),
+          ),
+        );
+        tx.studentGroup.findMany.mockImplementation(
+          ({ where }: { where: { academicYearId: string; kind: string; gradeLevel: { gte: number }; successor: { is: null } } }) =>
+            Promise.resolve(
+              classes
+                .filter(
+                  (group) =>
+                    group.academicYearId === where.academicYearId &&
+                    group.kind === where.kind &&
+                    group.gradeLevel >= where.gradeLevel.gte &&
+                    group.successor === null,
+                )
+                .map((group) => ({ name: group.name })),
+            ),
+        );
+        tx.studentGroup.findFirst.mockImplementation(
+          ({ where }: { where: { name?: string; academicYearId?: string; members?: unknown } }) => {
+            if (where.members !== undefined) {
+              const home = classes.find((group) => group.id === homeOf);
+              return Promise.resolve(
+                home ? { name: home.name, predecessor: nameOf(home.predecessor), successor: nameOf(home.successor) } : null,
+              );
+            }
+            return Promise.resolve(
+              classes.find((group) => group.name === where.name && group.academicYearId === where.academicYearId) ?? null,
+            );
+          },
+        );
+        arrangeUsers({ id: STUDENT_ID, role: 'STUDENT' });
+      });
+
+      it('keeps a promoted pupil in 8A when the roster still says 7A, instead of the intake 7A', async () => {
+        homeOf = 'b-8a';
+        const result = await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', groupDisplayName: '7A' }]);
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+        expect(tx.studentGroup.create).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ updated: 1, classesKept: 1, groupsCreated: 0 });
+      });
+
+      it('keeps a graduate without a class when the roster still says 9A, instead of the promoted 9A', async () => {
+        homeOf = null;
+        const result = await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', groupDisplayName: '9A' }]);
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ classesKept: 1 });
+      });
+
+      it('keeps a pupil not yet moved when the roster already says next year’s name', async () => {
+        // The register rolled first: A-7A's pupil (A still active here) arrives as 8A.
+        homeOf = 'a-7a';
+        const result = await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', groupDisplayName: '8A' }]);
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ classesKept: 1 });
+      });
+
+      it('still moves a pupil whose roster names an unrelated class, and leaves a matching one where it is', async () => {
+        homeOf = 'b-8a';
+        await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', groupDisplayName: '9A' }]);
+        expect(tx.user.updateMany).toHaveBeenCalledWith({
+          where: { id: STUDENT_ID, role: 'STUDENT' },
+          data: { studentGroupId: 'b-9a' },
+        });
+        tx.user.updateMany.mockClear();
+        const same = await service.importPersons(SCHOOL_ID, [{ email: 'karin@example.test', groupDisplayName: '8A' }]);
+        expect(tx.user.updateMany).toHaveBeenCalledWith({
+          where: { id: STUDENT_ID, role: 'STUDENT' },
+          data: { studentGroupId: 'b-8a' },
+        });
+        expect(same).toMatchObject({ classesKept: 0 });
+      });
+    });
+
     it('gives a person made a teacher mid-sync their names and no class', async () => {
       // Read as a student; an admin's PATCH commits before the write, so the
       // role-keyed UPDATE matches no row.
@@ -778,6 +870,7 @@ describe('Ss12000Service', () => {
         updated: 1,
         groupsCreated: 0,
         guardianLinks: 0,
+        classesKept: 0,
         needsProvisioning: [],
       });
     });
