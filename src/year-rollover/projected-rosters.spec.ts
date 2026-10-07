@@ -190,7 +190,7 @@ describe('rostersOfYear', () => {
     const refusal = await rostersOfYear(world.tx, admin, 'C').catch((error: unknown) => error);
     expect(refusal).toBeInstanceOf(ConflictException);
     expect((refusal as ConflictException).getResponse()).toEqual({
-      message: '2028/29 kan inte schemaläggas ännu: föregående läsår 2027/28 är inte aktiverat. Aktivera 2027/28 först.',
+      message: 'Klasslistorna för 2028/29 kan inte räknas fram ännu: föregående läsår 2027/28 är inte aktiverat. Aktivera 2027/28 först.',
       code: ROLLOVER_NOT_ACTIVATED,
       params: { year: '2028/29', predecessor: '2027/28' },
     });

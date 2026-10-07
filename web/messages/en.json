@@ -1923,7 +1923,7 @@
       "YEAR_HAS_SUCCESSOR_UNNAMED": "This year has already been rolled over.",
       "ROLLOVER_SOURCE_NOT_ACTIVATED": "This year is not activated: {pupils, plural, one {# pupil is} other {# pupils are}} waiting to move into its classes. Activate it before rolling it over.",
       "ROLLOVER_SOURCE_HAS_STRAGGLERS": "{pupils, plural, one {# pupil is} other {# pupils are}} still in classes from a year before {year}. Move them on the years page (Move remaining pupils), then roll over.",
-      "ROLLOVER_NOT_ACTIVATED": "{year} cannot be scheduled yet: the previous year, {predecessor}, has not been activated. Activate {predecessor} first.",
+      "ROLLOVER_NOT_ACTIVATED": "The class lists of {year} cannot be worked out yet: the previous year, {predecessor}, has not been activated. Activate {predecessor} first.",
       "ROLLOVER_PREVIEW_STALE": "The year changed after the preview. Nothing was created — review the new preview and try again.",
       "ACTIVATION_PREVIEW_STALE": "Pupils’ classes changed after the preview. Nobody was moved — review it again.",
       "YEAR_NAME_TAKEN": "There is already a year with that name.",

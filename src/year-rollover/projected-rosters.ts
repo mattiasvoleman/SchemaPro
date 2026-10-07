@@ -176,11 +176,24 @@ export async function rostersOfYear(
   };
 }
 
-/** R6's 409, the same at every site and on the GET. */
+/**
+ * R6's 409, the same at every site and on the GET.
+ *
+ * Every reader of the year's rosters answers it, not only the six that
+ * refused before the projection: generation, room proposals and their
+ * apply, master lessons, but also the load report, the unstaffed list,
+ * suggest-teachers, timplan coverage, a meal placed by hand, a timplanspost
+ * written or imported under the staffing checks, and a vikarie assigned or
+ * suggested under them (roster-readers.inventory.spec.ts names the routes).
+ * Read on CURRENT instead, those would judge last year's empty classes and
+ * say so as if it were the year's answer — the very thing the projection
+ * exists to stop. So the sentence names the class lists, not scheduling:
+ * it is a load report's answer as much as the generator's.
+ */
 export function notActivated(year: string, predecessor: string): ConflictException {
   return new ConflictException({
     message:
-      `${year} kan inte schemaläggas ännu: föregående läsår ${predecessor} är inte aktiverat. ` +
+      `Klasslistorna för ${year} kan inte räknas fram ännu: föregående läsår ${predecessor} är inte aktiverat. ` +
       `Aktivera ${predecessor} först.`,
     code: ROLLOVER_NOT_ACTIVATED,
     params: { year, predecessor },
