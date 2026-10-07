@@ -263,7 +263,8 @@ describe('Scheduling surface (e2e)', () => {
         endDate: null,
         extraGroups: [],
         participants: [],
-        school: { id: '33333333-3333-4333-8333-333333333333', timezone: 'Europe/Stockholm' },
+        // The school read also counts the lesson's year when R1 or R2 settles it.
+        school: { id: '33333333-3333-4333-8333-333333333333', timezone: 'Europe/Stockholm', _count: { academicYears: 1 } },
       };
       const arrange = (qualificationMode: 'WARN' | 'REFUSE') => {
         givenStaffingWorld(harness.tx, {
@@ -406,7 +407,8 @@ describe('Scheduling surface (e2e)', () => {
         { userId: TEACHER_ID, subjectId: SUBJECT_ID, minGradeLevel: 7, maxGradeLevel: 9, kind: 'LEGITIMATION', validFrom: null, validTo: null },
       ]);
       harness.tx['subject']!['findUnique']!.mockResolvedValue({ name: 'Matematik' });
-      harness.tx['studentGroup']!['findUnique']!.mockResolvedValue({ academicYearId: YEAR_ID });
+      // The lesson's year, asked with its class as a relation filter.
+      harness.tx['academicYear']!['findFirst']!.mockResolvedValue({ id: YEAR_ID, isActive: true, predecessorId: null });
       harness.tx['studentGroup']!['findMany']!.mockResolvedValue([{ id: GROUP_ID, gradeLevel: 8 }]);
       harness.tx['studentGroupMember']!['findMany']!.mockResolvedValue([]);
       harness.tx['guardianStudent']!['findMany']!.mockResolvedValue([]);

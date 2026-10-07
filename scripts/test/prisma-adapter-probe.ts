@@ -89,6 +89,8 @@ import { countHomePupils, rostersOfYear, type RosterBasis } from '../../src/year
 import { loadRosters } from '../../src/optimization/room-eligibility';
 import { RoomOptimizationService } from '../../src/optimization/room-optimization.service';
 import { MasterLessonsService } from '../../src/calendar/master-lessons.service';
+import { CalendarLessonsService } from '../../src/calendar/calendar-lessons.service';
+import { LunchSittingsService } from '../../src/resources/lunch-sittings.service';
 import type { RealtimeService } from '../../src/realtime/realtime.service';
 import type { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 
@@ -2348,6 +2350,78 @@ async function runChecks(
     assert.equal(await home(), `${MARKER} 9A`);
   });
 
+  await check('(z) the active year\'s hot paths send Postgres exactly f5ff8da\'s statements, the PATCH one fewer: the roster basis rides on reads they already make', async () => {
+    // A school of its own, swept whole: an active year with 7A and 8A at the
+    // same hour (no shared pupil or teacher), a published lesson, behörighet,
+    // employments, a policy and lunch switched on.
+    const budget = await givenBudgetSchool(owner);
+    try {
+      const admin = budget.admin;
+      const notifications = {
+        recipientsForGroups: async () => [],
+        notifyUsers: async () => undefined,
+      } as unknown as NotificationsService;
+      const lessons = new MasterLessonsService(
+        api,
+        { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+        notifications,
+      );
+      const calendar = new CalendarLessonsService(
+        api,
+        { notifyLessonChanged: async () => undefined } as unknown as RealtimeService,
+        notifications,
+      );
+      const sent: Record<string, string[]> = {};
+      const count = async (name: string, body: () => Promise<unknown>) => {
+        sent[name] = await statementsDuring(body);
+      };
+      await count('suggest a substitute', () => calendar.suggestSubstitutes(budget.calendarLesson, admin));
+      await count('assign a substitute', () =>
+        calendar.assignSubstitute(budget.calendarLesson, { teacherId: budget.teachers[3] }, admin),
+      );
+      await count('PATCH a new teacher', () => lessons.update(budget.lesson7a, { teacherId: budget.teachers[1] }, admin));
+      await count('PATCH a drag', () => lessons.update(budget.lesson7a, { dayOfWeek: 1 }, admin));
+      await count('PATCH a drag back beside 8A', () => lessons.update(budget.lesson7a, { dayOfWeek: 3 }, admin));
+      await count('place a meal', () =>
+        new LunchSittingsService(api).place(
+          { academicYearId: budget.yearId, studentGroupId: budget.class7a, dayOfWeek: 3, startTime: '11:30' },
+          admin,
+        ),
+      );
+      await count('give a timplanspost a teacher', () =>
+        new TeachingRequirementsService(api).update(budget.requirement8a, { teacherId: budget.teachers[1] }, admin),
+      );
+      // Counted at pg's Client.query, BEGIN, set_config and COMMIT included.
+      // The same steps against the services of f5ff8da (a git archive of it,
+      // run on the same database) sent 20, 21, 34, 21, 24, 7 and 22: the
+      // refusal's scan of every läsår was the PATCH's one statement more. A
+      // year's flags read as a SELECTED relation (a group's or a lesson's
+      // `academicYear`) is a statement of its own under Prisma 7, and was +1
+      // on the substitute paths and on every meal placed, until they asked
+      // the year with a relation filter or counted it with `_count`.
+      assert.deepEqual(
+        Object.fromEntries(Object.entries(sent).map(([name, statements]) => [name, statements.length])),
+        {
+          'suggest a substitute': 20,
+          'assign a substitute': 21,
+          'PATCH a new teacher': 33,
+          'PATCH a drag': 20,
+          'PATCH a drag back beside 8A': 23,
+          'place a meal': 7,
+          'give a timplanspost a teacher': 22,
+        },
+        JSON.stringify(sent, null, 1),
+      );
+      // A drag reads no läsår row at all: no scan, no relation load.
+      for (const name of ['PATCH a drag', 'PATCH a drag back beside 8A']) {
+        const years = sent[name].filter((statement) => /^SELECT "public"\."AcademicYears"/.test(statement));
+        assert.deepEqual(years, [], `${name} read AcademicYears`);
+      }
+    } finally {
+      await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
+    }
+  });
+
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
     // truth, so a 'f' string would refuse every boot, and it compares the
@@ -2666,6 +2740,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // (w)/(x)'s school, whole, and (w)'s temporary trigger if a run died inside it.
   await dropRolloverTrigger(owner);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-rullgw'`, [MARKER]);
+  // (z)'s school, whole, for a run that stopped inside it.
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-duty@example.invalid'`, [schoolId, MARKER]);
   // (t)'s attachment, for a run that stopped before detaching it: the plan
@@ -2731,6 +2807,125 @@ function requiredEnv(name: string): string {
 }
 
 /** A PrismaService built as Nest builds it — from DATABASE_URL — for this URL. */
+
+/** (z)'s school: one active year, the rows its hot paths read, and their ids. */
+interface BudgetSchool {
+  schoolId: string;
+  admin: AuthenticatedUser;
+  teachers: string[];
+  lesson7a: string;
+  requirement8a: string;
+  class7a: string;
+  calendarLesson: string;
+  yearId: string;
+}
+
+/** (z)'s school, as the owner: the paths it counts write nothing it needs again. */
+async function givenBudgetSchool(owner: Client): Promise<BudgetSchool> {
+  const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> =>
+    (await owner.query<T>(sql, params)).rows[0];
+  const school = await one<{ id: string }>(
+    `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+    [`${MARKER} budget`, `${MARKER}-budget`],
+  );
+  const person = (role: string, email: string, groupId: string | null = null) =>
+    one<{ id: string; authId: string }>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+       VALUES ($1, $2, 'Probe', 'Budget', $3::"UserRole", gen_random_uuid(), true, $4, now()) RETURNING id, "authId"`,
+      [school.id, `${MARKER}-budget-${email}@example.invalid`, role, groupId],
+    );
+  const admin = await person('SCHOOL_ADMIN', 'admin');
+  const teachers = [await person('TEACHER', 't1'), await person('TEACHER', 't2'), await person('TEACHER', 't3'), await person('TEACHER', 't4')];
+  const year = await one<{ id: string }>(
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+     VALUES ($1, $2, '2096-08-13', '2097-06-11', true, now()) RETURNING id`,
+    [school.id, `${MARKER} budget`],
+  );
+  const group = (name: string, grade: number) =>
+    one<{ id: string }>(
+      `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", kind, "updatedAt")
+       VALUES ($1, $2, $3, $4, 'CLASS', now()) RETURNING id`,
+      [school.id, year.id, `${MARKER} ${name}`, grade],
+    );
+  const g7a = await group('7A', 7);
+  const g8a = await group('8A', 8);
+  for (const [n, g] of [[1, g7a], [2, g7a], [3, g8a], [4, g8a]] as const) await person('STUDENT', `p${n}`, g.id);
+  const subject = await one<{ id: string }>(
+    `INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES ($1, $2, now()) RETURNING id`,
+    [school.id, `${MARKER} budget matematik`],
+  );
+  await owner.query(
+    `INSERT INTO "LunchSettings" ("schoolId", "lunchEnabled", "lunchStartTime", "lunchEndTime", "lunchMinutes", "updatedAt")
+     VALUES ($1, true, '11:00', '13:00', 30, now())`,
+    [school.id],
+  );
+  await owner.query(`INSERT INTO "StaffingPolicies" ("schoolId", "updatedAt") VALUES ($1, now())`, [school.id]);
+  for (const teacher of teachers) {
+    await owner.query(
+      `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+       VALUES ($1, $2, $3, 100, now())`,
+      [school.id, teacher.id, year.id],
+    );
+    await owner.query(
+      `INSERT INTO "TeacherSubjectQualifications" ("schoolId", "userId", "subjectId", "minGradeLevel", "maxGradeLevel", kind, "updatedAt")
+       VALUES ($1, $2, $3, 7, 9, 'BEHORIG', now())`,
+      [school.id, teacher.id, subject.id],
+    );
+  }
+  const requirement = await one<{ id: string }>(
+    `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, 2, 60, now()) RETURNING id`,
+    [school.id, year.id, subject.id, g8a.id, teachers[0].id],
+  );
+  // 7A and 8A at the same hour, sharing no pupil and no teacher: a PATCH of
+  // either reads both rosters and lands.
+  const lesson = (groupId: string, teacherId: string) =>
+    one<{ id: string }>(
+      `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, 3, '08:00', '09:00', now()) RETURNING id`,
+      [school.id, year.id, subject.id, groupId, teacherId],
+    );
+  const l7a = await lesson(g7a.id, teachers[0].id);
+  await lesson(g8a.id, teachers[2].id);
+  const calendar = await one<{ id: string }>(
+    `INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+     VALUES ($1, $2, $3, $4, '2096-10-17', '2096-10-17T06:00:00Z', '2096-10-17T07:00:00Z', now()) RETURNING id`,
+    [school.id, l7a.id, subject.id, g7a.id],
+  );
+  await owner.query(
+    `INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES ($1, $2, $3, 'LEAD')`,
+    [school.id, calendar.id, teachers[0].id],
+  );
+  return {
+    schoolId: school.id,
+    admin: { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN },
+    teachers: teachers.map((teacher) => teacher.id),
+    lesson7a: l7a.id,
+    requirement8a: requirement.id,
+    class7a: g7a.id,
+    calendarLesson: calendar.id,
+    yearId: year.id,
+  };
+}
+
+/** Every statement pg sends while `body` runs, counted at Client.query: what reaches Postgres. */
+async function statementsDuring(body: () => Promise<unknown>): Promise<string[]> {
+  const sent: string[] = [];
+  const prototype = Client.prototype as unknown as { query: (...args: unknown[]) => unknown };
+  const query = prototype.query;
+  prototype.query = function (this: Client, ...args: unknown[]) {
+    const text = typeof args[0] === 'string' ? args[0] : (args[0] as { text?: string } | undefined)?.text;
+    sent.push(String(text).replace(/\s+/g, ' ').trim().slice(0, 120));
+    return query.apply(this, args);
+  };
+  try {
+    await body();
+  } finally {
+    prototype.query = query;
+  }
+  return sent;
+}
+
 function prismaServiceFor(databaseUrl: string): PrismaService {
   const previous = process.env.DATABASE_URL;
   process.env.DATABASE_URL = databaseUrl;

@@ -88,6 +88,26 @@ const lessonStudentIds = (lesson: LessonForAction): string[] =>
   (lesson.participants ?? []).map((row) => row.studentId);
 
 /**
+ * The läsår of the lesson's class, with the flags its roster basis is decided
+ * from (projected-rosters.ts). Null when the group is gone or hidden.
+ *
+ * Asked of the YEAR, with the group as a relation filter, so it is one
+ * statement: Prisma 7 loads a selected relation (the group's `academicYear`)
+ * in a statement of its own, and a substitute assigned or suggested in the
+ * active year would otherwise make one more round-trip than it did before the
+ * flags were needed.
+ */
+function yearOfLessonGroup(
+  tx: PrismaClient,
+  studentGroupId: string,
+): Promise<{ id: string; isActive: boolean; predecessorId: string | null } | null> {
+  return tx.academicYear.findFirst({
+    where: { studentGroups: { some: { id: studentGroupId } } },
+    select: { id: true, isActive: true, predecessorId: true },
+  });
+}
+
+/**
  * Day-to-day operations on individual calendar lessons: cancellations,
  * reinstatements, substitute-teacher assignments and room changes. These are
  * the "something changed today" workflows, so every mutation broadcasts a
@@ -198,16 +218,13 @@ export class CalendarLessonsService {
         );
       }
 
-      const group = await tx.studentGroup.findUnique({
-        where: { id: lesson.studentGroupId },
-        select: { academicYearId: true, academicYear: { select: { isActive: true, predecessorId: true } } },
-      });
+      const year = await yearOfLessonGroup(tx, lesson.studentGroupId);
       const lessonDay = lesson.date.toISOString().slice(0, 10);
-      const warnings = group
+      const warnings = year
         ? settleFindings(
             await lessonQualificationFindings(tx, {
               schoolId: lesson.schoolId,
-              academicYearId: group.academicYearId,
+              academicYearId: year.id,
               subjectId: lesson.subjectId,
               // The whole attendance, as the master-lesson PATCH asks it.
               groupIds: lessonGroupIds(lesson),
@@ -217,7 +234,7 @@ export class CalendarLessonsService {
               // The year's roster basis from the flags just read: a lesson of
               // a rolled year not yet activated spans the grades its
               // activation would place (projected-rosters.ts).
-              rosters: { viewer: user, known: group.academicYear },
+              rosters: { viewer: user, known: year },
             }),
             { downgrade: true },
           )
@@ -468,18 +485,15 @@ export class CalendarLessonsService {
     viewer: RosterViewer,
     lesson: LessonForAction,
   ): Promise<{ min: number; max: number } | null> {
-    const group = await tx.studentGroup.findUnique({
-      where: { id: lesson.studentGroupId },
-      select: { academicYearId: true, academicYear: { select: { isActive: true, predecessorId: true } } },
-    });
-    if (!group) return null;
+    const year = await yearOfLessonGroup(tx, lesson.studentGroupId);
+    if (!year) return null;
     // The derivation the assignment's own warning uses (attendanceSpan), so
     // the badge here and the warning after the click read one span.
     return attendanceSpan(tx, {
-      academicYearId: group.academicYearId,
+      academicYearId: year.id,
       groupIds: lessonGroupIds(lesson),
       studentIds: lessonStudentIds(lesson),
-      rosters: { viewer, known: group.academicYear },
+      rosters: { viewer, known: year },
     });
   }
 

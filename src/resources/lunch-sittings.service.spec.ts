@@ -74,22 +74,23 @@ describe('LunchSittingsService', () => {
         );
       },
     );
-    tx.studentGroup.findFirst.mockImplementation(
+    // The class check is asked of the year, with the class as a relation
+    // filter, so the year's flags for the roster basis come in the same
+    // statement (lunch-sittings.service.ts, assertIsAClassOf).
+    tx.academicYear.findFirst.mockImplementation(
       ({
         where,
         select,
       }: {
-        where: { id?: string; academicYearId?: string; kind?: string };
+        where: { id?: string; studentGroups?: { some?: { id?: string; kind?: string } } };
         select?: Record<string, boolean>;
       }) => {
         if (select && !Object.values(select).some(Boolean)) {
           throw new Error('Prisma: a `select` needs at least one truthy value.');
         }
-        const isTheClass =
-          where.id === CLASS_ID &&
-          where.academicYearId === YEAR_ID &&
-          where.kind === 'CLASS';
-        return Promise.resolve(isTheClass ? { id: CLASS_ID } : null);
+        const some = where.studentGroups?.some;
+        const isTheClass = where.id === YEAR_ID && some?.id === CLASS_ID && some?.kind === 'CLASS';
+        return Promise.resolve(isTheClass ? { isActive: true, predecessorId: null } : null);
       },
     );
     tx.user.count.mockResolvedValue(24);
@@ -225,15 +226,17 @@ describe('LunchSittingsService', () => {
 
     it('refuses a group that is not a class of the year', async () => {
       // A teaching group's pupils eat with their home class.
-      tx.studentGroup.findFirst.mockResolvedValue(null);
+      tx.academicYear.findFirst.mockResolvedValue(null);
 
       await expect(place()).rejects.toThrow(
         new BadRequestException(
           'A meal can only be placed for a class of this academic year.',
         ),
       );
-      expect(tx.studentGroup.findFirst).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: CLASS_ID, academicYearId: YEAR_ID, kind: 'CLASS' } }),
+      expect(tx.academicYear.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: YEAR_ID, studentGroups: { some: { id: CLASS_ID, kind: 'CLASS' } } },
+        }),
       );
     });
 

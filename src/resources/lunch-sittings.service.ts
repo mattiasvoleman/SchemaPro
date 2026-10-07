@@ -179,22 +179,28 @@ async function lunchMinutesOf(tx: Tx, schoolId: string): Promise<number> {
 
 /**
  * Only a home class eats: a teaching group's pupils eat with their class.
- * Returns the year's flags, read on the same row, for the roster basis — so
- * the active year's meal costs no statement more than it did.
+ * Returns the year's flags for the roster basis.
+ *
+ * Asked of the YEAR, with the class as a relation filter, so the check and the
+ * flags are one statement: Prisma 7 loads a selected relation (the group's
+ * `academicYear`) in a statement of its own, and that one more round-trip
+ * for every meal placed in the active year is what this avoids. The class
+ * condition becomes an EXISTS in the year's WHERE, so a group that is not a
+ * class of this year still finds nothing and is the same 400.
  */
 async function assertIsAClassOf(
   tx: Tx,
   studentGroupId: string,
   academicYearId: string,
-): Promise<{ isActive: boolean; predecessorId: string | null } | undefined> {
-  const group = await tx.studentGroup.findFirst({
-    where: { id: studentGroupId, academicYearId, kind: 'CLASS' },
-    select: { id: true, academicYear: { select: { isActive: true, predecessorId: true } } },
+): Promise<{ isActive: boolean; predecessorId: string | null }> {
+  const year = await tx.academicYear.findFirst({
+    where: { id: academicYearId, studentGroups: { some: { id: studentGroupId, kind: 'CLASS' } } },
+    select: { isActive: true, predecessorId: true },
   });
-  if (!group) {
+  if (!year) {
     throw new BadRequestException('A meal can only be placed for a class of this academic year.');
   }
-  return group.academicYear;
+  return year;
 }
 
 /**

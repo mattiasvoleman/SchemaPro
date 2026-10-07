@@ -1045,7 +1045,8 @@ describe('Planning surface (e2e)', () => {
         lunchEnabled: true,
         lunchMinutes: 30,
       });
-      harness.tx['studentGroup']!['findFirst']!.mockResolvedValue({ id: GROUP_ID });
+      // The class check is asked of the year, with the class as a relation filter.
+      harness.tx['academicYear']!['findFirst']!.mockResolvedValue({ isActive: true, predecessorId: null });
       harness.tx['user']!['count']!.mockResolvedValue(24);
     });
 
@@ -1053,7 +1054,7 @@ describe('Planning surface (e2e)', () => {
     // every describe below this one.
     afterEach(() => {
       harness.tx['lunchSetting']!['findUnique']!.mockReset();
-      harness.tx['studentGroup']!['findFirst']!.mockReset();
+      harness.tx['academicYear']!['findFirst']!.mockReset();
       harness.tx['user']!['count']!.mockReset();
     });
 

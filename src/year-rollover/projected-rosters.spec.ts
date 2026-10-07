@@ -113,6 +113,30 @@ describe('rostersOfYear', () => {
     expect(world.calls).toEqual([]);
   });
 
+  it('a relation count over SETTLED_CURRENT settles R1 and R2 with no statement; a zero count asks the year', async () => {
+    // What the master-lesson PATCH hands over: its school read counts the
+    // lesson's year when it is active or outside every chain.
+    for (const [yearId, inSettled] of [['A', true], ['S', true], ['B', false]] as const) {
+      const world = givenRolloverWorld(rows(), { strict: true });
+      const counted = world.rows['academicYear']!.filter(
+        (candidate) => candidate['id'] === yearId && (candidate['isActive'] === true || candidate['predecessorId'] === null),
+      ).length;
+      expect(counted > 0).toBe(inSettled);
+      const basis = await rostersOfYear(world.tx, admin, yearId, { settledCurrent: counted > 0 });
+      if (inSettled) {
+        expect(basis).toEqual({ kind: 'CURRENT' });
+        expect(world.calls).toEqual([]);
+      } else {
+        // B: the flags are read, then the chain, as without `known`.
+        expect(projected(basis).counts.moved).toBeGreaterThan(0);
+        expect(world.calls[0]).toMatchObject({ model: 'academicYear', method: 'findUnique' });
+      }
+    }
+    // The role is checked before the count is trusted.
+    const world = givenRolloverWorld(rows(), { strict: true });
+    await expect(rostersOfYear(world.tx, { role: 'STUDENT' }, 'A', { settledCurrent: true })).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('R3: a year RLS hides is CURRENT, and the reader answers its own 404', async () => {
     const world = givenRolloverWorld(rows(), { strict: true });
     expect(await rostersOfYear(world.tx, admin, 'hidden')).toEqual({ kind: 'CURRENT' });

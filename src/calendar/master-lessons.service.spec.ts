@@ -1474,10 +1474,13 @@ describe('MasterLessonsService', () => {
   // -------------------------------------------------------------------
 
   describe('update', () => {
-    /** LESSON_SELECT + the school join the update path selects. */
+    /**
+     * LESSON_SELECT + the school join the update path selects, with its
+     * count of the lesson's year when R1 or R2 settles it: 1, the active year.
+     */
     const storedLesson = (overrides: Record<string, unknown> = {}) => ({
       ...lessonRecord(),
-      school: { id: SCHOOL_ID, timezone: 'Europe/Stockholm' },
+      school: { id: SCHOOL_ID, timezone: 'Europe/Stockholm', _count: { academicYears: 1 } },
       ...overrides,
     });
 
