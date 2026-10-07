@@ -153,6 +153,8 @@ import { useStaffingLoad, useTeacherQualifications } from "@/lib/staffing-querie
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { requirementsToCsv } from "@/lib/csv";
 import { buildGradeSpans } from "@/lib/grade-span";
+import { useYearRosters } from "@/lib/planning-year";
+import { withProjectedHomes } from "@/lib/projected-rosters";
 import { candidateQualification, candidateRemaining } from "@/lib/staffing-candidates";
 import { CandidateBadge } from "@/components/staffing/candidate-badge";
 import { RefusalNotice, WarningsNotice } from "@/components/staffing/staffing-notices";
@@ -305,7 +307,23 @@ export default function RequirementsPage() {
     isLoading: groupsLoading,
     isError: groupsFailed,
   } = useGroups();
-  const { data: people } = usePeople();
+  const { data: storedPeople } = usePeople();
+  /*
+   * Next year before its activation: its classes have no home pupils yet, so
+   * the people are read with the class the activation will give each pupil it
+   * moves (lib/projected-rosters.ts) — the rosters the gateway's load report
+   * and behörighet check read the year through. Without them a teaching group
+   * of next year's 8A pupils derives no årskurs here while the report beside
+   * it does. Asked for only for that year; any other is its own rows.
+   */
+  const { data: yearRosters } = useYearRosters(
+    years?.find((year) => year.id === activeYearId) ?? null,
+    years?.find((year) => year.isActive) ?? null,
+  );
+  const people = useMemo(
+    () => withProjectedHomes(storedPeople, yearRosters),
+    [storedPeople, yearRosters],
+  );
   const {
     data: memberships,
     isLoading: membershipsLoading,
