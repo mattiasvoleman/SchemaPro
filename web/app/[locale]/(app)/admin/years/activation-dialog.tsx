@@ -53,6 +53,22 @@ export function ActivationDialog({ year, onOpenChange }: ActivationDialogProps) 
   const activate = useActivateYear();
   const pending = activate.isPending;
   const plan = preview.data;
+  // A year that takes the flag but no pupils: made by hand on Kom igång, or
+  // with a chain nobody's class is in. Its activation leaves every pupil in
+  // the classes of a year that stops being the active one — their rosters,
+  // their schedule, what guardians see — which is C1's harm without the
+  // date check (no chain, no "too early"). Said in so many words, and
+  // confirmed separately; rolling the active year over is usually what was
+  // meant.
+  const strands =
+    plan !== undefined &&
+    !plan.year.isActive &&
+    plan.currentlyActive !== null &&
+    plan.moves.length === 0 &&
+    plan.graduates.count === 0 &&
+    plan.unplaced.count === 0 &&
+    plan.otherOrNone > 0;
+  const [understood, setUnderstood] = useState(false);
 
   const confirm = async () => {
     if (!year || !plan) return;
@@ -90,7 +106,13 @@ export function ActivationDialog({ year, onOpenChange }: ActivationDialogProps) 
             {plan
               ? plan.year.isActive
                 ? t("activationAlreadyActive", { name: plan.year.name })
-                : plan.currentlyActive
+                : strands && plan.currentlyActive
+                  ? t("activationStrands", {
+                      name: plan.year.name,
+                      from: plan.currentlyActive.name,
+                      count: plan.otherOrNone,
+                    })
+                  : plan.currentlyActive
                   ? t("activationHandOver", { name: plan.year.name, from: plan.currentlyActive.name })
                   : t("activationFirst", { name: plan.year.name })
               : t("activationIntro")}
@@ -110,13 +132,26 @@ export function ActivationDialog({ year, onOpenChange }: ActivationDialogProps) 
           <ActivationPlanView plan={plan} problemText={(problem) => problemText(tProblems, problem)} />
         ) : null}
 
+        {strands ? (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+            <input
+              id="activation-strands"
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-primary"
+              checked={understood}
+              onChange={(event) => setUnderstood(event.target.checked)}
+            />
+            <label htmlFor="activation-strands">{t("activationStrandsConfirm", { count: plan!.otherOrNone })}</label>
+          </div>
+        ) : null}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
             {tCommon("cancel")}
           </Button>
           <Button
             onClick={() => void confirm()}
-            disabled={!plan || plan.blocking || pending || preview.isFetching}
+            disabled={!plan || plan.blocking || pending || preview.isFetching || (strands && !understood)}
           >
             {pending
               ? tCommon("saving")
