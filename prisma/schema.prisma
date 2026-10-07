@@ -160,6 +160,7 @@ model School {
   teacherDuties           TeacherDuty[]
   localTimplans           LocalTimplan[]
   localTimplanEntries     LocalTimplanEntry[]
+  academicYearTimplans    AcademicYearTimplan[]
 
   @@map("Schools")
 }
@@ -543,6 +544,9 @@ model LocalTimplan {
   copiedFrom      LocalTimplan?          @relation("LocalTimplanCopy", fields: [copiedFromId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
   copies          LocalTimplan[]         @relation("LocalTimplanCopy")
   entries         LocalTimplanEntry[]
+  /// The (läsår, årskurs) pairs that follow this plan. ON DELETE RESTRICT:
+  /// a plan a year follows cannot be deleted (409 TIMPLAN_IN_USE).
+  academicYears   AcademicYearTimplan[]
 
   @@unique([schoolId, name])
   /// The target of the composite keys entries and copies use; see User.
@@ -578,6 +582,33 @@ model LocalTimplanEntry {
   @@map("LocalTimplanEntries")
 }
 
+/// Which lokal timplan one årskurs follows in one läsår — the statute's
+/// cohort-scoped versioning (in 2024/25 åk 1-6 follow SFS 2023:945, åk 7-9
+/// the older bilaga). One row per (year, grade); "no plan" is the absence of a
+/// row. A DRAFT plan may be attached (next year is planned in spring); every
+/// reader marks it, and the family arm shows pupils and guardians only rows
+/// whose plan is DECIDED. A plain per-year table, so läsårsrullning can copy
+/// it with INSERT ... SELECT. See migration 20261007130000.
+model AcademicYearTimplan {
+  schoolId       String   @db.Uuid
+  /// Composite (academicYearId, schoolId) key; cascades with the year.
+  academicYearId String   @db.Uuid
+  /// 0..10, the bound LocalTimplanEntry.gradeLevel has (DB CHECK).
+  gradeLevel     Int
+  /// Composite (localTimplanId, schoolId) key, ON DELETE RESTRICT.
+  localTimplanId String   @db.Uuid
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  localTimplan LocalTimplan @relation(fields: [localTimplanId, schoolId], references: [id, schoolId], onDelete: Restrict)
+
+  @@id([academicYearId, gradeLevel])
+  @@index([localTimplanId, schoolId])
+  @@map("AcademicYearTimplans")
+}
+
 model AcademicYear {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId  String   @db.Uuid
@@ -596,6 +627,8 @@ model AcademicYear {
   lunchSittings        LunchSitting[]
   teacherEmployments   TeacherEmployment[]
   teacherDuties        TeacherDuty[]
+  /// Which lokal timplan each årskurs follows this year.
+  timplans             AcademicYearTimplan[]
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.

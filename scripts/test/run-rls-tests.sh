@@ -229,6 +229,37 @@ if [ -z "$constraint_b" ]; then
   exit 1
 fi
 
+# The second school's year attachments, one to a plan of each status. Section
+# 18 asserts that school A's admin, teacher, pupil and guardian see none of
+# them and that school B's admin sees both; with nothing planted there each
+# half passes while proving nothing. Also read: that year's id, which section
+# 18 names in a composite-key refusal a policy alone cannot make.
+for status in DRAFT DECIDED; do
+  foreign_attachments="$(
+    compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+      -v ON_ERROR_STOP=1 -tAc \
+      "SELECT count(*) FROM \"AcademicYearTimplans\" a \
+         JOIN \"LocalTimplans\" p ON p.id = a.\"localTimplanId\" \
+        WHERE a.\"schoolId\" <> '${school_a}' AND p.status = '${status}'" \
+    | tr -d '[:space:]'
+  )"
+  if [ "${foreign_attachments:-0}" = "0" ]; then
+    echo "FAIL: no year attached to a ${status} local timplan in the second school; fixtures did not run." >&2
+    exit 1
+  fi
+done
+
+year_b="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT \"academicYearId\" FROM \"AcademicYearTimplans\" WHERE \"schoolId\" <> '${school_a}' LIMIT 1" \
+  | tr -d '[:space:]'
+)"
+if [ -z "$year_b" ]; then
+  echo "FAIL: could not read the second school's attached year; fixtures did not run." >&2
+  exit 1
+fi
+
 if [ -z "$admin_auth_id" ]; then
   echo "FAIL: no SCHOOL_ADMIN with an authId in the primary school." >&2
   exit 1
@@ -240,7 +271,7 @@ compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   -v ON_ERROR_STOP=1 -v "school_a=${school_a}" -v "admin_auth_id=${admin_auth_id}" \
   -v "student_b=${student_b}" -v "inactive_user_id=${inactive_user_id}" \
   -v "plan_b=${plan_b}" -v "subject_b=${subject_b}" -v "school_b=${school_b}" \
-  -v "constraint_b=${constraint_b}" \
+  -v "constraint_b=${constraint_b}" -v "year_b=${year_b}" \
   -v "inactive_auth_id=00000000-0000-4000-8000-000000000003" -tA -f /dev/stdin \
   < scripts/test/rls-policies.sql
 
