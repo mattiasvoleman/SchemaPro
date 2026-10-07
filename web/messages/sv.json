@@ -1681,7 +1681,7 @@
   "years": {
     "title": "Läsår",
     "subtitle": "Skolans läsår, vilket som är aktivt och övergången till nästa",
-    "cycleHint": "Varje vår rullas det aktiva läsåret vidare: nästa läsår skapas med klasserna uppflyttade en årskurs (7A blir 8A) och med deras timplansposter, lärare och klassregler. Eleverna stannar i sina klasser tills det nya läsåret aktiveras, vilket går först när det gamla har slutat.",
+    "cycleHint": "Varje vår rullas det aktiva läsåret vidare: nästa läsår skapas med klasserna uppflyttade en årskurs (7A blir 8A) och med deras timplansposter, lärare och klassregler. Nästa läsårs schema kan genereras direkt, på de klasslistor som aktiveringen ger. Eleverna stannar i sina klasser tills det nya läsåret aktiveras, vilket går först när det gamla har slutat.",
     "emptyTitle": "Inga läsår ännu",
     "emptyBody": "Skapa skolans första läsår under Kom igång.",
     "emptyAction": "Till Kom igång",
@@ -1701,6 +1701,7 @@
     "stragglers": "{count, plural, one {# elev står kvar i förra årets klass} other {# elever står kvar i förra årets klasser}}",
     "activatableAfter": "Kan aktiveras när {year} har slutat ({date})",
     "rollover": "Rulla vidare",
+    "planSchedule": "Generera schema",
     "rolloverNeedsActivation": "Aktivera läsåret innan det rullas vidare",
     "rolloverNeedsStragglers": "Flytta de kvarvarande eleverna innan läsåret rullas vidare",
     "activate": "Aktivera",
@@ -1891,7 +1892,7 @@
     "breakLine": "{name}: {start} – {end}",
     "reviewLeftOut": "Följer inte med",
     "skipped": {
-      "MasterLesson": "Grundschemat ({count, plural, one {# lektion} other {# lektioner}}) — nästa läsårs schema genereras för de nya klasserna.",
+      "MasterLesson": "Grundschemat ({count, plural, one {# lektion} other {# lektioner}}) — nästa läsårs schema genereras för de nya klasserna, och det går direkt när läsåret är skapat, före aktiveringen.",
       "LunchSitting": "Lunchsittningarna ({count}) — de läggs mot det nya schemat.",
       "TeacherEmployment": "Tjänsterna ({count}) — läggs in för det nya läsåret på tjänstefördelningssidan.",
       "TeacherDuty": "Uppdragen ({count}), med sina spärrade pass och mentorskap."
