@@ -240,6 +240,8 @@
     "nationalCodeNone": "Utanför timplanen",
     "nationalCodeHint": "Kopplingen avgör vilken rad i den nationella timplanen ämnets timmar räknas mot. Lågstadiets NO och SO kan kopplas till hela ämnesgruppen.",
     "nationalCodeUnavailable": "Listan över nationella ämneskoder kunde inte hämtas. Ämnet kan sparas utan koppling och kopplas senare.",
+    "nationalCodeSuggestion": "Skolans kod {code} är också den nationella koden för {name}.",
+    "nationalCodeUseSuggestion": "Använd {code}",
     "countsTowardTimplan": "Räknas som undervisningstid",
     "countsTowardTimplanHint": "Stäng av för mentorstid och resurs, så att tiden hålls utanför varje timplansumma.",
     "notTeachingTime": "Ej undervisningstid"
