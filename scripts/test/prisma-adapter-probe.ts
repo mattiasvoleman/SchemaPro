@@ -85,6 +85,10 @@ import { attendanceSpan, lockEmploymentsOf } from '../../src/staffing/staffing-e
 import { TeachingRequirementsService } from '../../src/resources/teaching-requirements.service';
 import { OptimizationProxyService } from '../../src/optimization/optimization-proxy.service';
 import { YearRolloverService } from '../../src/year-rollover/year-rollover.service';
+import { StaffingRolloverService } from '../../src/year-rollover/staffing-rollover.service';
+import { TeacherEmploymentsService } from '../../src/staffing/teacher-employments.service';
+import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
+import { lockStaffRow } from '../../src/staffing/staff-lock';
 import { countHomePupils, rostersOfYear, type RosterBasis } from '../../src/year-rollover/projected-rosters';
 import { loadRosters } from '../../src/optimization/room-eligibility';
 import { RoomOptimizationService } from '../../src/optimization/room-optimization.service';
@@ -2325,6 +2329,386 @@ async function runChecks(
     assert.equal((await rollover.previewRollover(thirdYearId, fourth, rullAdmin)).blocking, false);
   });
 
+  /*
+   * TJÄNSTER OCH UPPDRAG FÖLJER MED (staffing Fas 5), through the real
+   * adapter, in a school of their own: (å) the rollover with the option, (ä)
+   * the carry into a year rolled without it. The school has three teachers
+   * with posts in the source year (the third deactivated after their rows
+   * were written), a fourth with none, and two classes: 7A, which continues,
+   * and 9A, which graduates.
+   */
+  const tj = await givenStaffingSchool(owner);
+  const tjAdmin: AuthenticatedUser = { authId: tj.adminAuthId, userId: tj.adminId, schoolId: tj.schoolId, role: Role.SCHOOL_ADMIN };
+  const tjTeacher = (who: { id: string; authId: string }): AuthenticatedUser => ({
+    authId: who.authId,
+    userId: who.id,
+    schoolId: tj.schoolId,
+    role: Role.TEACHER,
+  });
+  const tjYears = new AcademicYearsService(api);
+  const tjOptions = { name: `${MARKER} tj mål`, startDate: '2094-08-16', endDate: '2095-06-11', graduatingGradeLevel: 9 };
+  const schoolConstraints = async () =>
+    (await owner.query<{ n: number }>('SELECT count(*)::int AS n FROM "AvailabilityConstraints" WHERE "schoolId" = $1', [tj.schoolId])).rows[0].n;
+  const staffingOf = async (yearId: string) => ({
+    employments: (
+      await owner.query<Record<string, unknown>>(
+        `SELECT "userId", "employmentPercent"::text AS percent, "reductionPercent"::text AS reduction, "contractKind"::text AS kind,
+                "teachingTargetMinutesPerWeek" AS target, signature, note
+           FROM "TeacherEmployments" WHERE "academicYearId" = $1 ORDER BY "userId"`,
+        [yearId],
+      )
+    ).rows,
+    duties: (
+      await owner.query<Record<string, unknown>>(
+        `SELECT d."userId", d.kind::text AS kind, d.label, d."minutesPerWeek" AS minutes, d."countsAsTeaching" AS counts,
+                d.note, g.name AS "group", c.id AS "slotId", c."resourceType"::text AS "slotKind", c.type::text AS "slotType",
+                c."userId" AS "slotUser", c."dayOfWeek" AS day, c."startTime"::text AS start, c."endTime"::text AS "end",
+                c.reason, c."roomId" AS room, c."studentGroupId" AS "slotGroup", c.date
+           FROM "TeacherDuties" d
+           LEFT JOIN "StudentGroups" g ON g.id = d."studentGroupId"
+           LEFT JOIN "AvailabilityConstraints" c ON c.id = d."blockedConstraintId"
+          WHERE d."academicYearId" = $1 ORDER BY d.kind, d.label`,
+        [yearId],
+      )
+    ).rows,
+  });
+  /** The TEACHER rows the engine is handed for a year, at one weekday and start. */
+  const enginesTeacherSlots = async (yearId: string, day: number, start: string) =>
+    api.withRls(tjAdmin, async (tx) => {
+      const proxy = new OptimizationProxyService(
+        api,
+        { post: () => { throw new Error('the engine was called'); } } as never,
+        { getOrThrow: () => ({ baseUrl: 'http://engine.invalid', apiKey: 'k'.repeat(32), timeoutMs: 1 }) } as never,
+      );
+      const basis = await rostersOfYear(tx, tjAdmin, yearId);
+      const payload = await (
+        proxy as unknown as {
+          fetchAndAnonymize: (...args: unknown[]) => Promise<{ constraints: { resourceKind: string; dayOfWeek: number | null; startTime: string }[] }>;
+        }
+      ).fetchAndAnonymize(tx, yearId, tj.schoolId, basis);
+      return payload.constraints.filter((c) => c.resourceKind === 'TEACHER' && c.dayOfWeek === day && c.startTime.startsWith(start)).length;
+    });
+  const tjRefusedWith = (code: string) => (error: unknown) => {
+    assert.ok(error instanceof ConflictException, summarise(error));
+    assert.equal((error.getResponse() as { code?: string }).code, code, summarise(error));
+    return true;
+  };
+
+  await check('(å) a läsårsrullning with tjänster carries posts, uppdrag and NEW slots through the real adapter, in one transaction, and leaves the source untouched', async () => {
+    const rollover = new YearRolloverService(api);
+    const before = await sourceChecksum(owner, tj.sourceYearId);
+    const sourceSlots = (await staffingOf(tj.sourceYearId)).duties.map((duty) => duty.slotId).filter((id) => id !== null);
+    assert.equal(sourceSlots.length, 2, 'the fixture lost a slot');
+    const constraintsBefore = await schoolConstraints();
+    const leftBehind = async () =>
+      (
+        await owner.query<{ n: number }>(
+          `SELECT ((SELECT count(*) FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2)
+                 + (SELECT count(*) FROM "TeacherEmployments" WHERE "schoolId" = $1 AND "academicYearId" <> $3)
+                 + (SELECT count(*) FROM "TeacherDuties" WHERE "schoolId" = $1 AND "academicYearId" <> $3))::int AS n`,
+          [tj.schoolId, tjOptions.name, tj.sourceYearId],
+        )
+      ).rows[0].n + ((await schoolConstraints()) - constraintsBefore);
+
+    // Without the option the preview is today's: no staffing, the old skip.
+    const without = await rollover.previewRollover(tj.sourceYearId, tjOptions, tjAdmin);
+    assert.equal(without.staffing, null);
+    assert.ok(without.problems.some((problem) => problem.code === 'DUTY_SLOTS_NOT_CARRIED'));
+
+    const preview = await rollover.previewRollover(tj.sourceYearId, { ...tjOptions, carryStaffing: true }, tjAdmin);
+    assert.equal(preview.blocking, false, JSON.stringify(preview.problems));
+    assert.notEqual(preview.planHash, without.planHash, 'the option did not reach the hash');
+    const staffing = preview.staffing!;
+    assert.equal(staffing.employments.carried, 2);
+    assert.deepEqual(staffing.employments.notCarried, [{ userId: tj.t3.id, reason: 'INACTIVE' }]);
+    assert.deepEqual(staffing.employments.withReduction, [tj.t1.id]);
+    assert.deepEqual(staffing.employments.withTargetOverride, [tj.t2.id]);
+    assert.equal(staffing.duties.carried, 2);
+    assert.equal(staffing.duties.slots, 2);
+    assert.equal(staffing.duties.followedGroup, 1);
+    assert.deepEqual(
+      staffing.duties.relabelled.map((row) => [row.from, row.to]),
+      [[`Mentor ${MARKER} 7A`, `Mentor ${MARKER} 8A`]],
+    );
+    assert.deepEqual(
+      staffing.duties.notCarried.map((row) => [row.userId, row.kind, row.reason]).sort(),
+      [
+        [tj.t2.id, 'MENTORSKAP', 'GROUP_LEAVES'],
+        [tj.t3.id, 'ANNAT', 'TEACHER_NOT_CARRIED'],
+      ].sort(),
+    );
+    const codes = preview.problems.map((problem) => problem.code);
+    for (const code of ['STAFFING_MENTORSKAP_NOT_CARRIED', 'STAFFING_TEACHERS_NOT_CARRIED', 'STAFFING_PER_YEAR_TERMS_CARRIED']) {
+      assert.ok(codes.includes(code as never), `${code} missing from ${JSON.stringify(codes)}`);
+    }
+    assert.ok(!codes.includes('DUTY_SLOTS_NOT_CARRIED'), 'the old skip warning stayed with the option on');
+    const execute = { ...tjOptions, carryStaffing: true, planHash: preview.planHash };
+
+    // A hash from the preview without tjänster does not execute with them.
+    await assert.rejects(
+      rollover.executeRollover(tj.sourceYearId, { ...execute, planHash: without.planHash }, tjAdmin),
+      tjRefusedWith('ROLLOVER_PREVIEW_STALE'),
+    );
+    assert.equal(await leftBehind(), 0, 'a stale rollover left rows behind');
+
+    // Atomicity: the uppdrag step fails after the year, the groups, the posts
+    // and the slots were inserted, and all of it is gone.
+    await owner.query(`
+      CREATE FUNCTION public.probe_tj_refuse() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'probe: the duties step refuses'; END $$`);
+    await owner.query(
+      `CREATE TRIGGER probe_tj_refuse BEFORE INSERT ON "TeacherDuties"
+         FOR EACH ROW WHEN (NEW."schoolId" = '${tj.schoolId}'::uuid) EXECUTE FUNCTION public.probe_tj_refuse()`,
+    );
+    try {
+      await assert.rejects(rollover.executeRollover(tj.sourceYearId, execute, tjAdmin), /refuses/);
+    } finally {
+      await dropStaffingTriggers(owner);
+    }
+    assert.equal(await leftBehind(), 0, 'a rollover that failed in its uppdrag step left rows behind');
+
+    // The Fas 2 guard, met by the carry: a slot that is no longer the duty
+    // teacher's own when the duty lands (re-pointed after its insert, so the
+    // RETURNING the carry pairs on is the row it wrote) is TD409, a 409, and
+    // the whole rollover goes.
+    await owner.query(`
+      CREATE FUNCTION public.probe_tj_repoint() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
+      BEGIN
+        UPDATE "AvailabilityConstraints" SET "userId" = '${tj.t2.id}'::uuid WHERE id = NEW.id;
+        RETURN NULL;
+      END $$`);
+    await owner.query(
+      `CREATE TRIGGER probe_tj_repoint AFTER INSERT ON "AvailabilityConstraints"
+         FOR EACH ROW WHEN (NEW."schoolId" = '${tj.schoolId}'::uuid AND NEW."userId" = '${tj.t1.id}'::uuid AND NEW.reason = 'Uppdrag')
+         EXECUTE FUNCTION public.probe_tj_repoint()`,
+    );
+    try {
+      await assert.rejects(rollover.executeRollover(tj.sourceYearId, execute, tjAdmin), tjRefusedWith('TEACHER_DUTY_BLOCK_MISMATCH'));
+    } finally {
+      await dropStaffingTriggers(owner);
+    }
+    assert.equal(await leftBehind(), 0, 'a rollover refused by TD409 left rows behind');
+
+    const result = await rollover.executeRollover(tj.sourceYearId, execute, tjAdmin);
+    tj.targetYearId = result.academicYear.id;
+    assert.deepEqual(result.staffing, { employments: 2, duties: 2, dutySlots: 2 });
+    assert.equal(result.counts.groups, 1);
+
+    const target = await staffingOf(tj.targetYearId);
+    const source = await staffingOf(tj.sourceYearId);
+    assert.deepEqual(target.employments, [
+      { userId: tj.t1.id, percent: '100.000', reduction: '10.000', kind: 'FERIE', target: null, signature: 'TJ1', note: 'probe tj ett' },
+      { userId: tj.t2.id, percent: '80.000', reduction: '0.000', kind: 'SEMESTER', target: 900, signature: 'TJ2', note: null },
+    ].sort((a, b) => (a.userId < b.userId ? -1 : 1)));
+    const slotShape = { slotKind: 'TEACHER', slotType: 'UNAVAILABLE', slotUser: tj.t1.id, reason: 'Uppdrag', room: null, slotGroup: null, date: null };
+    assert.deepEqual(
+      target.duties.map(({ slotId: _slotId, ...duty }) => duty),
+      [
+        { userId: tj.t1.id, kind: 'MENTORSKAP', label: `Mentor ${MARKER} 8A`, minutes: 60, counts: false, note: null, group: `${MARKER} 8A`, ...slotShape, day: 2, start: '15:00:00', end: '15:30:00' },
+        { userId: tj.t1.id, kind: 'RASTVAKT', label: 'Rastvakt', minutes: 30, counts: true, note: 'probe tj vakt', group: null, ...slotShape, day: 4, start: '12:00:00', end: '12:30:00' },
+      ],
+    );
+    for (const duty of target.duties) {
+      assert.ok(!sourceSlots.includes(duty.slotId as string), 'a carried uppdrag holds the source year’s slot');
+    }
+    assert.equal(source.duties.filter((duty) => duty.slotId !== null).length, 2, 'the source year lost a slot');
+    assert.equal(await sourceChecksum(owner, tj.sourceYearId), before, 'the rollover changed the source year');
+
+    // The engine: each year blocks the teacher with its own slot only.
+    assert.equal(await enginesTeacherSlots(tj.sourceYearId, 2, '15:00'), 1, 'the source year’s payload has not exactly its own APT slot');
+    assert.equal(await enginesTeacherSlots(tj.targetYearId, 2, '15:00'), 1, 'the new year’s payload has not exactly its carried slot');
+    assert.equal(await enginesTeacherSlots(tj.targetYearId, 4, '12:00'), 1);
+
+    // The year deleted as the gateway deletes it: its posts and uppdrag go,
+    // and the carried slots with them; the source keeps its own.
+    await tjYears.remove(tj.targetYearId, tjAdmin);
+    const carriedSlots = target.duties.map((duty) => duty.slotId);
+    assert.equal(
+      (await owner.query('SELECT 1 FROM "AvailabilityConstraints" WHERE id = ANY($1::uuid[])', [carriedSlots])).rowCount,
+      0,
+      'a deleted year’s carried uppdrag left their slots behind',
+    );
+    assert.equal(await schoolConstraints(), constraintsBefore);
+    assert.equal(await sourceChecksum(owner, tj.sourceYearId), before, 'deleting the new year changed the source year');
+    tj.targetYearId = '';
+  });
+
+  await check('(ä) a year rolled without tjänster gets them once, through the real adapter: a post written first makes it stale, a carry locked first is updated after, a signature taken meanwhile is a 409', async () => {
+    const rollover = new YearRolloverService(api);
+    const plain = await rollover.previewRollover(tj.sourceYearId, tjOptions, tjAdmin);
+    const yearId = (await rollover.executeRollover(tj.sourceYearId, { ...tjOptions, planHash: plain.planHash }, tjAdmin)).academicYear.id;
+    tj.targetYearId = yearId;
+    const before = await sourceChecksum(owner, tj.sourceYearId);
+    const constraintsBefore = await schoolConstraints();
+    assert.deepEqual(await staffingOf(yearId), { employments: [], duties: [] }, 'a rollover without the option carried tjänster');
+
+    const carry = new StaffingRolloverService(api);
+    const other = open(withConnectionLimit(appUrl, 1));
+    await other.onModuleInit();
+    const rivalCarry = new StaffingRolloverService(other);
+    const clearTarget = async () => {
+      await owner.query('DELETE FROM "TeacherDuties" WHERE "academicYearId" = $1', [yearId]);
+      await owner.query('DELETE FROM "TeacherEmployments" WHERE "academicYearId" = $1', [yearId]);
+      assert.equal(await schoolConstraints(), constraintsBefore, 'clearing the target left carried slots');
+    };
+    /** Polls until some backend waits on `pid`; returns the waiting backend's pid. */
+    const waiterOn = async (pid: number, what: string): Promise<number> => {
+      for (let tries = 0; ; tries++) {
+        const { rows } = await owner.query<{ pid: number }>(
+          'SELECT pid FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid)) LIMIT 1',
+          [pid],
+        );
+        if (rows[0]) return rows[0].pid;
+        if (tries > 500) throw new Error(`${what} never waited`);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    };
+
+    // The preview: the same carry the rollover would have made.
+    const preview = await carry.preview(yearId, tjAdmin);
+    assert.deepEqual(preview.source, { id: tj.sourceYearId, name: `${MARKER} tj källa` });
+    assert.equal(preview.employments.carried, 2);
+    assert.equal(preview.duties.carried, 2);
+    assert.equal(preview.duties.slots, 2);
+    assert.deepEqual(preview.duties.relabelled.map((row) => row.to), [`Mentor ${MARKER} 8A`]);
+
+    // (a) A post written first, under the person's lock: the carry waits on
+    // that lock, then plans again, finds the post, and is stale with nothing written.
+    const touched = deferred<number>();
+    const release = deferred<void>();
+    const holder = api.withRls(tjAdmin, async (tx) => {
+      await lockStaffRow(tx, tj.t1.id, 'tjänst');
+      await tx.teacherEmployment.create({ data: { schoolId: tj.schoolId, userId: tj.t1.id, academicYearId: yearId, employmentPercent: 60 } });
+      const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      touched.resolve(pid);
+      await release.promise;
+    });
+    const holderSettled = holder.then(() => null, (error: unknown) => error);
+    const holderPid = await Promise.race([
+      touched.promise,
+      holderSettled.then((error) => {
+        throw error ?? new Error('the holder committed before it parked');
+      }),
+    ]);
+    const staleSettled = rivalCarry.execute(yearId, preview.planHash, tjAdmin).then(() => null, (error: unknown) => error);
+    await waiterOn(holderPid, 'the carry, on the post writer’s lock of the teacher,');
+    release.resolve();
+    const [holderError, staleError] = await Promise.all([holderSettled, staleSettled]);
+    assert.equal(holderError, null, `the holder failed: ${summarise(holderError)}`);
+    tjRefusedWith('STAFFING_ROLLOVER_PREVIEW_STALE')(staleError);
+    const afterA = await staffingOf(yearId);
+    assert.deepEqual(afterA.employments.map((row) => [row.userId, row.percent]), [[tj.t1.id, '60.000']]);
+    assert.deepEqual(afterA.duties, [], 'a stale carry wrote uppdrag');
+    assert.equal(await schoolConstraints(), constraintsBefore, 'a stale carry wrote slots');
+    await clearTarget();
+
+    // (b) The carry locks first, held at its uppdrag lock by a table lock
+    // of the owner's; the real upsert of the same teacher waits on the carry's
+    // lock of the person, and after the carry commits it updates the carried
+    // post by its own key: no P2002, and the stored row is the upsert's.
+    const fresh = await carry.preview(yearId, tjAdmin);
+    const blocker = new Client({ connectionString: ownerUrl });
+    await blocker.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('LOCK TABLE "TeacherDuties" IN EXCLUSIVE MODE');
+      const [{ pid: blockerPid }] = (await blocker.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows;
+      const carried = carry.execute(yearId, fresh.planHash, tjAdmin).then(
+        (value) => ({ value, error: null as unknown }),
+        (error: unknown) => ({ value: null, error }),
+      );
+      const carryPid = await waiterOn(blockerPid, 'the carry, on the owner’s lock of TeacherDuties,');
+      const upserted = new TeacherEmploymentsService(other)
+        .upsert(tj.t1.id, yearId, { employmentPercent: 60, note: 'probe tj upsert' }, tjAdmin)
+        .then(() => null, (error: unknown) => error);
+      await waiterOn(carryPid, 'the upsert, on the carry’s lock of the teacher,');
+      await blocker.query('COMMIT');
+      const carriedResult = await carried;
+      assert.equal(carriedResult.error, null, `the carry failed: ${summarise(carriedResult.error)}`);
+      assert.deepEqual(carriedResult.value?.counts, { employments: 2, duties: 2, dutySlots: 2 });
+      assert.equal(await upserted, null, 'the upsert after the carry failed');
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.end();
+    }
+    const afterB = await staffingOf(yearId);
+    const t1Post = afterB.employments.find((row) => row.userId === tj.t1.id);
+    assert.deepEqual(
+      t1Post && { percent: t1Post.percent, reduction: t1Post.reduction, signature: t1Post.signature, note: t1Post.note },
+      { percent: '60.000', reduction: '0.000', signature: null, note: 'probe tj upsert' },
+    );
+    assert.equal(afterB.employments.length, 2);
+    assert.equal(afterB.duties.length, 2);
+
+    // Twice is once: everybody is set up, the second run writes nothing.
+    const again = await carry.preview(yearId, tjAdmin);
+    assert.equal(again.employments.carried, 0);
+    assert.equal(again.duties.carried, 0);
+    assert.deepEqual(
+      again.employments.notCarried.map((row) => [row.userId, row.reason]).sort(),
+      [
+        [tj.t1.id, 'ALREADY_PRESENT'],
+        [tj.t2.id, 'ALREADY_PRESENT'],
+        [tj.t3.id, 'INACTIVE'],
+      ].sort(),
+    );
+    assert.deepEqual(
+      (await carry.execute(yearId, again.planHash, tjAdmin)).counts,
+      { employments: 0, duties: 0, dutySlots: 0 },
+    );
+    assert.equal((await staffingOf(yearId)).duties.length, 2, 'a second carry wrote uppdrag');
+
+    // HR stays HR: each teacher reads their own carried rows and nothing of a
+    // colleague's, and the load report cuts to their own row.
+    for (const [who, duties] of [[tj.t1, 2], [tj.t2, 0]] as const) {
+      const principal = tjTeacher(who);
+      const seen = await api.withRls(principal, async (tx) => ({
+        employments: await tx.teacherEmployment.findMany({ where: { academicYearId: yearId }, select: { userId: true } }),
+        duties: await tx.teacherDuty.findMany({ where: { academicYearId: yearId }, select: { userId: true } }),
+      }));
+      assert.deepEqual(seen.employments.map((row) => row.userId), [who.id]);
+      assert.deepEqual(seen.duties.map((row) => row.userId), Array(duties).fill(who.id));
+      const load = await new StaffingLoadService(api).load(yearId, 'planned', principal);
+      assert.deepEqual(load.teachers.map((row) => row.userId), [who.id]);
+    }
+    await clearTarget();
+
+    // (c) A signature taken in the target by a teacher outside the carried
+    // set, after the carry read and before it inserted: the insert meets the
+    // uncommitted row on the per-year signature key, waits, and once that
+    // commits gets a P2002, which is the stale 409 with nothing written.
+    const third = await carry.preview(yearId, tjAdmin);
+    const blocker2 = new Client({ connectionString: ownerUrl });
+    await blocker2.connect();
+    try {
+      await blocker2.query('BEGIN');
+      await blocker2.query(
+        `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt")
+         VALUES ($1, $2, $3, 100, 'TJ1', now())`,
+        [tj.schoolId, tj.t4.id, yearId],
+      );
+      const [{ pid: blockerPid }] = (await blocker2.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows;
+      const taken = carry.execute(yearId, third.planHash, tjAdmin).then(() => null, (error: unknown) => error);
+      await waiterOn(blockerPid, 'the carry, on the signature the other insert holds,');
+      await blocker2.query('COMMIT');
+      tjRefusedWith('STAFFING_ROLLOVER_PREVIEW_STALE')(await taken);
+    } finally {
+      await blocker2.query('ROLLBACK').catch(() => undefined);
+      await blocker2.end();
+    }
+    const afterC = await staffingOf(yearId);
+    assert.deepEqual(afterC.employments.map((row) => [row.userId, row.signature]), [[tj.t4.id, 'TJ1']]);
+    assert.deepEqual(afterC.duties, [], 'a carry refused on a signature wrote uppdrag');
+    assert.equal(await schoolConstraints(), constraintsBefore, 'a carry refused on a signature wrote slots');
+
+    // The re-preview shows the signature taken, and carries the post without it.
+    const dropped = await carry.preview(yearId, tjAdmin);
+    assert.deepEqual(dropped.employments.signaturesDropped, [{ userId: tj.t1.id, signature: 'TJ1' }]);
+    assert.ok(dropped.problems.some((problem) => problem.code === 'STAFFING_SIGNATURE_TAKEN'));
+    assert.deepEqual((await carry.execute(yearId, dropped.planHash, tjAdmin)).counts, { employments: 2, duties: 2, dutySlots: 2 });
+    assert.equal(await sourceChecksum(owner, tj.sourceYearId), before, 'the carry changed the source year');
+  });
+
   await check('(y) the SS12000 sync keeps a pupil whose roster still names last year\'s class, under the service principal', async () => {
     // After (x2)/(x3): C is active, rolled from B; p1 is in C's 9A, the
     // promoted B-8A. A register that has not rolled yet still sends "8A".
@@ -2478,6 +2862,113 @@ async function runChecks(
 
 
 /** The throwaway school (w) and (x) roll and activate, created as the owner, filled as its admin. */
+interface StaffingSchool {
+  schoolId: string;
+  adminId: string;
+  adminAuthId: string;
+  /** Posts in the source year: t1 with a nedsättning, t2 with a target override, t3 deactivated after. t4 has none. */
+  t1: { id: string; authId: string };
+  t2: { id: string; authId: string };
+  t3: { id: string; authId: string };
+  t4: { id: string; authId: string };
+  sourceYearId: string;
+  /** Set by (å) and (ä) while a successor exists, for the sweep's sake. */
+  targetYearId: string;
+}
+
+/**
+ * (å) and (ä)'s school: an active source year with 7A (continues) and 9A
+ * (graduates), a pupil in each, and its staffing written through the real
+ * services — so the slots are the builder's: t1 a mentorskap of 7A with an
+ * APT-like Tuesday slot and a rastvakt with a Thursday slot, t2 a mentorskap
+ * of 9A, t3 an ANNAT and then deactivated.
+ */
+async function givenStaffingSchool(owner: Client): Promise<StaffingSchool> {
+  const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> =>
+    (await owner.query<T>(sql, params)).rows[0];
+  const school = await one<{ id: string }>(
+    `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+    [`${MARKER} rulltj`, `${MARKER}-rulltj`],
+  );
+  const person = (role: string, email: string, groupId: string | null = null) =>
+    one<{ id: string; authId: string }>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+       VALUES ($1, $2, 'Probe', 'Tjänst', $3::"UserRole", gen_random_uuid(), true, $4, now()) RETURNING id, "authId"`,
+      [school.id, `${MARKER}-${email}@example.invalid`, role, groupId],
+    );
+  const admin = await person('SCHOOL_ADMIN', 'tj-admin');
+  const t1 = await person('TEACHER', 'tj-t1');
+  const t2 = await person('TEACHER', 'tj-t2');
+  const t3 = await person('TEACHER', 'tj-t3');
+  const t4 = await person('TEACHER', 'tj-t4');
+  const principal: AuthenticatedUser = { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN };
+  const api = prismaServiceFor(requiredEnv('DATABASE_URL'));
+  try {
+    const year = await new AcademicYearsService(api).create(
+      { name: `${MARKER} tj källa`, startDate: '2093-08-17', endDate: '2094-06-12', isActive: true },
+      principal,
+    );
+    const groups = await api.withRls(principal, async (tx) => ({
+      g7a: await tx.studentGroup.create({ data: { schoolId: school.id, academicYearId: year.id, name: `${MARKER} 7A`, gradeLevel: 7 } }),
+      g9a: await tx.studentGroup.create({ data: { schoolId: school.id, academicYearId: year.id, name: `${MARKER} 9A`, gradeLevel: 9 } }),
+    }));
+    await person('STUDENT', 'tj-p1', groups.g7a.id);
+    await person('STUDENT', 'tj-p2', groups.g9a.id);
+
+    const employments = new TeacherEmploymentsService(api);
+    await employments.upsert(t1.id, year.id, { employmentPercent: 100, reductionPercent: 10, signature: 'TJ1', note: 'probe tj ett' }, principal);
+    await employments.upsert(
+      t2.id,
+      year.id,
+      { employmentPercent: 80, contractKind: 'SEMESTER', teachingTargetMinutesPerWeek: 900, signature: 'TJ2' },
+      principal,
+    );
+    await employments.upsert(t3.id, year.id, { employmentPercent: 50, signature: 'TJ3' }, principal);
+    const duties = new TeacherDutiesService(api);
+    await duties.create(
+      {
+        userId: t1.id,
+        academicYearId: year.id,
+        kind: 'MENTORSKAP',
+        label: `Mentor ${MARKER} 7A`,
+        minutesPerWeek: 60,
+        studentGroupId: groups.g7a.id,
+        blockedSlot: { dayOfWeek: 2, startTime: '15:00', endTime: '15:30' },
+      },
+      principal,
+    );
+    await duties.create(
+      {
+        userId: t1.id,
+        academicYearId: year.id,
+        kind: 'RASTVAKT',
+        label: 'Rastvakt',
+        minutesPerWeek: 30,
+        countsAsTeaching: true,
+        note: 'probe tj vakt',
+        blockedSlot: { dayOfWeek: 4, startTime: '12:00', endTime: '12:30' },
+      },
+      principal,
+    );
+    await duties.create(
+      { userId: t2.id, academicYearId: year.id, kind: 'MENTORSKAP', label: `Mentor ${MARKER} 9A`, minutesPerWeek: 60, studentGroupId: groups.g9a.id },
+      principal,
+    );
+    await duties.create({ userId: t3.id, academicYearId: year.id, kind: 'ANNAT', label: 'Bibliotek', minutesPerWeek: 30 }, principal);
+    await owner.query('UPDATE "Users" SET "isActive" = false WHERE id = $1', [t3.id]);
+    return { schoolId: school.id, adminId: admin.id, adminAuthId: admin.authId, t1, t2, t3, t4, sourceYearId: year.id, targetYearId: '' };
+  } finally {
+    await api.$disconnect();
+  }
+}
+
+async function dropStaffingTriggers(owner: Client): Promise<void> {
+  await owner.query('DROP TRIGGER IF EXISTS probe_tj_refuse ON "TeacherDuties"');
+  await owner.query('DROP FUNCTION IF EXISTS public.probe_tj_refuse()');
+  await owner.query('DROP TRIGGER IF EXISTS probe_tj_repoint ON "AvailabilityConstraints"');
+  await owner.query('DROP FUNCTION IF EXISTS public.probe_tj_repoint()');
+}
+
 interface RolloverSchool {
   schoolId: string;
   adminId: string;
@@ -2633,6 +3124,10 @@ async function sourceChecksum(owner: Client, yearId: string): Promise<string> {
        UNION ALL SELECT to_jsonb(b)::text FROM "SchoolBreaks" b WHERE b."academicYearId" = $1
        UNION ALL SELECT to_jsonb(c)::text FROM "AvailabilityConstraints" c WHERE c."studentGroupId" IN (SELECT id FROM groups)
        UNION ALL SELECT to_jsonb(t)::text FROM "AcademicYearTimplans" t WHERE t."academicYearId" = $1
+       UNION ALL SELECT to_jsonb(e)::text FROM "TeacherEmployments" e WHERE e."academicYearId" = $1
+       UNION ALL SELECT to_jsonb(d)::text FROM "TeacherDuties" d WHERE d."academicYearId" = $1
+       UNION ALL SELECT to_jsonb(c)::text FROM "AvailabilityConstraints" c
+         WHERE c.id IN (SELECT "blockedConstraintId" FROM "TeacherDuties" WHERE "academicYearId" = $1)
        UNION ALL SELECT to_jsonb(u)::text FROM "Users" u
          WHERE u."schoolId" = (SELECT "schoolId" FROM "AcademicYears" WHERE id = $1)
      ) rows`,
@@ -2740,6 +3235,9 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // (w)/(x)'s school, whole, and (w)'s temporary trigger if a run died inside it.
   await dropRolloverTrigger(owner);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-rullgw'`, [MARKER]);
+  // (å)/(ä)'s school, whole, and their temporary triggers if a run died inside one.
+  await dropStaffingTriggers(owner);
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-rulltj'`, [MARKER]);
   // (z)'s school, whole, for a run that stopped inside it.
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
