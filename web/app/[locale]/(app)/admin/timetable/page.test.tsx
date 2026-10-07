@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TimetablePage from "./page";
 import { buildIcs } from "@/lib/ics";
 import { exportTimetablePdf } from "@/lib/pdf";
+import { ApiError } from "@/lib/api";
 
 /**
  * Whose week is on screen.
@@ -93,12 +94,23 @@ vi.mock("@/lib/pdf", () => ({ exportTimetablePdf: vi.fn() }));
 
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
-  useTranslations:
-    (namespace: string) => (key: string, values?: Record<string, unknown>) =>
-      values
-        ? `${namespace}.${key}(${Object.values(values).join("|")})`
-        : `${namespace}.${key}`,
+  useTranslations: (namespace: string) =>
+    Object.assign(
+      (key: string, values?: Record<string, unknown>) =>
+        values
+          ? `${namespace}.${key}(${Object.values(values).join("|")})`
+          : `${namespace}.${key}`,
+      // engineMessage asks before it renders a code; every key exists here.
+      { has: () => true },
+    ),
 }));
+
+const toasts = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  warning: vi.fn(),
+}));
+vi.mock("sonner", () => ({ toast: toasts }));
 
 // ---------------------------------------------------------------------------
 // One year group, split the way Swedish schools actually split it.
@@ -745,6 +757,63 @@ describe("the edit dialog", () => {
     expect(noMutation.mutateAsync).toHaveBeenCalledWith(
       expect.objectContaining({ id: "l-slojd", isParked: true }),
     );
+  });
+});
+
+describe("a re-teachered lesson under the staffing policy", () => {
+  /*
+   * PATCH /master-lessons/:id answers a new teacher with the policy's verdict:
+   * WARN as `warnings` beside the saved lesson, REFUSE as a 409 with a STAFF_*
+   * code. Both used to vanish here — the warning was never read, and the
+   * refusal was toasted as "Schemakonflikt: …" in the gateway's Swedish.
+   */
+  const NOT_QUALIFIED = {
+    code: "STAFF_TEACHER_NOT_QUALIFIED",
+    params: { role: "TEACHER", subject: "Slöjd", grades: "5" },
+  };
+  const saveSlojd = async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    const card = screen
+      .queryAllByRole("button")
+      .find((el) => el.textContent?.includes("Slöjd"))!;
+    fireEvent.pointerDown(card, { pointerId: 1, button: 0, clientX: 100, clientY: 60 });
+    fireEvent.pointerUp(window, { pointerId: 1, clientX: 100, clientY: 60 });
+    await user.click(screen.getByRole("button", { name: "common.save" }));
+  };
+
+  beforeEach(() => {
+    toasts.success.mockClear();
+    toasts.error.mockClear();
+    toasts.warning.mockClear();
+  });
+  afterEach(() => {
+    noMutation.mutateAsync.mockReset().mockResolvedValue({ id: "x" });
+  });
+
+  it("says a WARN out loud: saved, with the policy's sentence", async () => {
+    noMutation.mutateAsync.mockResolvedValue({ id: "l-slojd", propagatedLessons: 2, warnings: [NOT_QUALIFIED] });
+
+    await saveSlojd();
+
+    await waitFor(() => expect(toasts.warning).toHaveBeenCalledTimes(1));
+    const [title, options] = toasts.warning.mock.calls[0]!;
+    expect(title).toBe("timetable.editSaved(2)");
+    expect(options.description).toBe("engineMessages.STAFF_TEACHER_NOT_QUALIFIED(TEACHER|Slöjd|5)");
+    expect(toasts.success).not.toHaveBeenCalled();
+  });
+
+  it("shows a REFUSE as the policy's sentence, not as a schedule clash", async () => {
+    noMutation.mutateAsync.mockRejectedValue(
+      new ApiError(409, "Läraren saknar behörighet i Slöjd för åk 5.", NOT_QUALIFIED.code, NOT_QUALIFIED.params),
+    );
+
+    await saveSlojd();
+
+    await waitFor(() => expect(toasts.error).toHaveBeenCalledTimes(1));
+    const [text] = toasts.error.mock.calls[0]!;
+    expect(text).toContain("engineMessages.STAFF_TEACHER_NOT_QUALIFIED(TEACHER|Slöjd|5)");
+    expect(text).not.toContain("timetable.editConflict");
   });
 });
 

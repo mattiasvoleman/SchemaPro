@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
+import type { MessageLookup } from "@/lib/engine-message";
+import { savedToast } from "@/lib/staffing-warnings";
 import {
   CalendarX2,
   Loader2,
@@ -77,6 +79,7 @@ export default function TeacherAbsencePage() {
   const t = useTranslations("teacherAbsence");
   const tDay = useTranslations("dayPlanner");
   const tCommon = useTranslations("common");
+  const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
 
   const today = toDateInput(new Date());
   const [teacherId, setTeacherId] = useState("");
@@ -151,12 +154,14 @@ export default function TeacherAbsencePage() {
   const doSubstitute = async () => {
     if (!subTarget || !subTeacher) return;
     try {
-      await substitute.mutateAsync({
+      const result = await substitute.mutateAsync({
         id: subTarget.id,
         teacherId: subTeacher,
         ...(subNote ? { note: subNote } : {}),
       });
-      toast.success(tDay("substitutedToast"));
+      // A vikarie is never refused, only warned: the warning is the rektor's
+      // one signal that the cover lacks behörighet, so it is said here.
+      savedToast(tEngine, tDay("substitutedToast"), result.warnings);
       setSubTarget(null);
       setSubTeacher("");
       setSubNote("");

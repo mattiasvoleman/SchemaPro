@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { ApiError } from "@/lib/api";
 import { engineMessage, type MessageLookup } from "@/lib/engine-message";
 import type { StaffingWarning } from "@/lib/types";
@@ -56,4 +57,27 @@ export function staffingRefusal(error: unknown): StaffingRefusal | null {
 
 export function refusalText(t: MessageLookup, refusal: StaffingRefusal): string {
   return engineMessage(t, refusal);
+}
+
+/**
+ * A save's toast: "saved", or — when the staffing policy warned — the same
+ * line as a warning with the policy's sentences under it, held longer than a
+ * plain save because it names a behörighet or a limit the admin may want to
+ * act on. For the writes that answer 200 with `warnings` and have no notice
+ * of their own: the vikarie (never refused, only warned) and a lesson given
+ * a new teacher.
+ */
+export function savedToast(
+  t: MessageLookup,
+  title: string,
+  warnings: StaffingWarning[] | undefined,
+): void {
+  if (!warnings || warnings.length === 0) {
+    toast.success(title);
+    return;
+  }
+  toast.warning(title, {
+    description: warnings.map((warning) => warningText(t, warning)).join(" "),
+    duration: 12_000,
+  });
 }

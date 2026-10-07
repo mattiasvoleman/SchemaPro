@@ -38,6 +38,7 @@ import type {
   CalendarRast,
   TeacherWorkRule,
   TeacherQualificationKind,
+  StaffingWarning,
 } from "@/lib/types";
 import type { WorkRuleBody } from "@/lib/teacher-work-rules";
 
@@ -1103,6 +1104,8 @@ export function useUpdateMasterLesson() {
         MasterLessonResponse & {
           propagatedLessons: number;
           removedCalendarLessons: number;
+          /** The staffing policy's WARN for a new teacher (staffing-warnings.ts). */
+          warnings?: StaffingWarning[];
         }
       >(
         `/api/v1/master-lessons/${id}`,
@@ -1175,7 +1178,9 @@ export function useLessonActions() {
   });
   const substitute = useMutation({
     mutationFn: ({ id, teacherId, note }: { id: string; teacherId: string; note?: string }) =>
-      api.patch(`/api/v1/calendar-lessons/${id}/substitute`, {
+      // `warnings`: the staffing policy's behörighet question, asked of the
+      // vikarie on the lesson's date. Never a refusal — see the gateway.
+      api.patch<{ warnings?: StaffingWarning[] }>(`/api/v1/calendar-lessons/${id}/substitute`, {
         teacherId,
         ...(note ? { note } : {}),
       }),

@@ -62,6 +62,8 @@ import {
  */
 import { useTimetableRealtime } from "@/lib/use-timetable-realtime";
 import { ApiError } from "@/lib/api";
+import type { MessageLookup } from "@/lib/engine-message";
+import { refusalText, savedToast, staffingRefusal } from "@/lib/staffing-warnings";
 import { FilterPicker } from "@/components/schedule/filter-picker";
 /*
  * Fetched when the school asks to optimise rooms, not when the page loads.
@@ -111,7 +113,7 @@ function RecurrenceFieldsFallback() {
     </div>
   );
 }
-import type { LessonRecurrence, MasterLesson } from "@/lib/types";
+import type { LessonRecurrence, MasterLesson, StaffingWarning } from "@/lib/types";
 import { cn, subjectColor, timeToMinutes } from "@/lib/utils";
 import { rastWindows } from "@/lib/rasts";
 import {
@@ -274,6 +276,7 @@ export default function TimetablePage() {
   const t = useTranslations("timetable");
   const tLunch = useTranslations("lunch");
   const tCommon = useTranslations("common");
+  const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
   const tDays = useTranslations("days");
   const { activeYear } = useActiveYear();
   const { data: lessons, isLoading } = useMasterLessons(activeYear?.id ?? null);
@@ -301,6 +304,17 @@ export default function TimetablePage() {
       ? `${saved} ${t("editRemoved", { count: result.removedCalendarLessons })}`
       : saved;
   };
+  /**
+   * The saved toast, or — when a new teacher drew the staffing policy's WARN —
+   * the same line as a warning with the policy's sentence under it, rendered
+   * from the engine catalogue so an English reader gets English. Held longer
+   * than a plain save: it names a behörighet the admin may want to undo.
+   */
+  const announceSaved = (result: {
+    propagatedLessons: number;
+    removedCalendarLessons?: number;
+    warnings?: StaffingWarning[];
+  }): void => savedToast(tEngine, editSavedMessage(result), result.warnings);
 
   const publish = usePublishSchedule();
   const { data: lunchSettings } = useLunchSettings();
@@ -1022,13 +1036,18 @@ export default function TimetablePage() {
 
   const showError = useCallback(
     (error: unknown) => {
-      if (error instanceof ApiError && error.status === 409) {
+      // The staffing policy's REFUSE is a 409 too, but no clash: its own
+      // sentence, from the catalogue, without "Schemakonflikt" in front.
+      const refusal = staffingRefusal(error);
+      if (refusal) {
+        toast.error(refusalText(tEngine, refusal));
+      } else if (error instanceof ApiError && error.status === 409) {
         toast.error(`${t("editConflict")}: ${error.message}`);
       } else {
         toast.error(error instanceof Error ? error.message : tCommon("error"));
       }
     },
-    [t, tCommon],
+    [t, tCommon, tEngine],
   );
 
   /** Applies a patch and registers the inverse operation in history. */
@@ -1134,7 +1153,7 @@ export default function TimetablePage() {
         ...(lesson.isParked ? { isParked: false } : {}),
       })
         .then((result) =>
-          toast.success(editSavedMessage(result)),
+          announceSaved(result),
         )
         .catch(showError);
     },
@@ -1289,7 +1308,7 @@ export default function TimetablePage() {
         startTime: minutesToHHMM(suggestion.startMinutes),
         endTime: minutesToHHMM(suggestion.endMinutes),
       });
-      toast.success(editSavedMessage(result));
+      announceSaved(result);
       setSuggesting(null);
     } catch (error) {
       showError(error);
@@ -1591,7 +1610,7 @@ export default function TimetablePage() {
         startDate: editStartDate === "" ? null : editStartDate,
         endDate: editEndDate === "" ? null : editEndDate,
       });
-      toast.success(editSavedMessage(result));
+      announceSaved(result);
       setEditing(null);
       setRemoteEditing(null);
     } catch (error) {
