@@ -8,13 +8,16 @@ import { Prisma } from '@prisma/client';
 import {
   TEACHER_DUTY_BLOCK_IS_THE_ADMINS,
   TEACHER_DUTY_BLOCK_MISMATCH,
+  TIMPLAN_IN_USE,
   TIMPLAN_IS_DECIDED,
   WRITE_CONFLICT,
   decidedTimplanConflict,
   decidedTimplanRefusal,
+  isTimplanInUseRefusal,
   listNames,
   rethrowPrismaError,
   teacherDutyBlockRefusal,
+  timplanInUseConflict,
 } from './prisma-errors';
 
 const knownError = (code: string): Prisma.PrismaClientKnownRequestError =>
@@ -337,5 +340,109 @@ describe('rethrowPrismaError and a duty’s slot link', () => {
     expect(teacherDutyBlockRefusal(knownError('P2039'))).toBeNull();
     expect(teacherDutyBlockRefusal(driverError('TP409', 'TIMPLAN_IS_DECIDED'))).toBeNull();
     expect(teacherDutyBlockRefusal(Object.assign(new Error('Code: `TD409`'), { code: 'P2039' }))).toBeNull();
+  });
+});
+
+/**
+ * The plan key's refusal as @prisma/adapter-pg delivered it against
+ * PostgreSQL 16 (migration 20261007130000): P2003, the constraint under
+ * cause.constraint.index, and the driver's message telling which side failed.
+ */
+const yearKeyViolation = (
+  side: 'delete' | 'write',
+  options: { meta?: boolean; constraint?: string } = {},
+): Prisma.PrismaClientKnownRequestError => {
+  const constraint = options.constraint ?? 'AcademicYearTimplans_localTimplanId_schoolId_fkey';
+  const modelName = side === 'delete' ? 'LocalTimplan' : 'AcademicYearTimplan';
+  const originalMessage =
+    side === 'delete'
+      ? `update or delete on table "LocalTimplans" violates foreign key constraint "${constraint}" on table "AcademicYearTimplans"`
+      : `insert or update on table "AcademicYearTimplans" violates foreign key constraint "${constraint}"`;
+  return new Prisma.PrismaClientKnownRequestError(
+    `Foreign key constraint violated on the constraint: \`${constraint}\``,
+    {
+      code: 'P2003',
+      clientVersion: Prisma.prismaVersion.client,
+      meta:
+        options.meta === false
+          ? { modelName }
+          : {
+              modelName,
+              driverAdapterError: {
+                name: 'DriverAdapterError',
+                cause: {
+                  originalCode: '23503',
+                  originalMessage,
+                  kind: 'ForeignKeyConstraintViolation',
+                  constraint: { index: constraint },
+                },
+              },
+            },
+    },
+  );
+};
+
+describe('rethrowPrismaError and a plan a läsår follows', () => {
+  const answer = (error: unknown) => {
+    try {
+      rethrowPrismaError(error);
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  };
+
+  it('recognises the plan key refusing a delete, from the cause and from the model alone', () => {
+    expect(isTimplanInUseRefusal(yearKeyViolation('delete'))).toBe(true);
+    expect(isTimplanInUseRefusal(yearKeyViolation('delete', { meta: false }))).toBe(true);
+  });
+
+  it('leaves the same key refusing an attachment to a missing plan to the generic 409', () => {
+    // The other direction of the one constraint: the plan does not exist, so
+    // it is not "in use", and saying so would send the admin looking for years.
+    expect(isTimplanInUseRefusal(yearKeyViolation('write'))).toBe(false);
+    expect(isTimplanInUseRefusal(yearKeyViolation('write', { meta: false }))).toBe(false);
+    const thrown = answer(yearKeyViolation('write'));
+    expect(thrown).toBeInstanceOf(ConflictException);
+    expect((thrown as ConflictException).message).toBe(
+      'The operation references a record that does not exist.',
+    );
+  });
+
+  it('is not fooled by another key, another code, or a plain error', () => {
+    expect(
+      isTimplanInUseRefusal(yearKeyViolation('delete', { constraint: 'Rooms_roomTypeId_fkey' })),
+    ).toBe(false);
+    expect(isTimplanInUseRefusal(knownError('P2003'))).toBe(false);
+    expect(isTimplanInUseRefusal(knownError('P2039'))).toBe(false);
+    expect(isTimplanInUseRefusal(new Error('AcademicYearTimplans_localTimplanId_schoolId_fkey'))).toBe(false);
+  });
+
+  it('answers the refused delete with 409 TIMPLAN_IN_USE, never a 500 or the generic sentence', () => {
+    const thrown = answer(yearKeyViolation('delete'));
+    expect(thrown).toBeInstanceOf(ConflictException);
+    expect((thrown as ConflictException).getResponse()).toMatchObject({ code: TIMPLAN_IN_USE });
+    expect((thrown as ConflictException).message).toMatch(/^Den lokala timplanen följs av minst ett läsår/);
+  });
+
+  it('names one or several years in Swedish when the caller knows them', () => {
+    expect(timplanInUseConflict(['2026/27']).message).toBe(
+      'Den lokala timplanen följs av läsåret "2026/27" och kan inte tas bort. ' +
+        'Välj en annan timplan för de årskurserna under läsårets "Timplan per årskurs" först.',
+    );
+    expect(timplanInUseConflict(['2025/26', '2026/27']).message).toMatch(
+      /^Den lokala timplanen följs av läsåren "2025\/26" och "2026\/27" och kan inte tas bort\./,
+    );
+  });
+
+  it('answers the attachment gradeLevel CHECK with a 400 naming the field', () => {
+    const thrown = answer(
+      driverError(
+        '23514',
+        'new row for relation "AcademicYearTimplans" violates check constraint "AcademicYearTimplans_gradeLevel_is_sane"',
+      ),
+    );
+    expect(thrown).toBeInstanceOf(BadRequestException);
+    expect((thrown as BadRequestException).message).toMatch(/^gradeLevel: /);
   });
 });
