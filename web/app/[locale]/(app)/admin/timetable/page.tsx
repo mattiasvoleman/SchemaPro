@@ -431,17 +431,21 @@ export default function TimetablePage() {
    */
   const groupSections = useMemo(() => {
     const named = (group: { id: string; name: string }) => ({ id: group.id, name: group.name });
+    // The schedule on screen is the active year's, so its groups are the
+    // filter's: another year's 8A (next year's, after a rollover) has no
+    // lesson here and would only stand beside this year's under one name.
+    const shown = (groups ?? []).filter((group) => group.academicYearId === activeYear?.id);
     return [
       {
         label: t("filterKindClasses"),
-        options: (groups ?? []).filter((group) => group.kind === "CLASS").map(named),
+        options: shown.filter((group) => group.kind === "CLASS").map(named),
       },
       {
         label: t("filterKindTeachingGroups"),
-        options: (groups ?? []).filter((group) => group.kind !== "CLASS").map(named),
+        options: shown.filter((group) => group.kind !== "CLASS").map(named),
       },
     ];
-  }, [groups, t]);
+  }, [groups, activeYear?.id, t]);
 
   const teachers = useMemo(
     () => (people ?? []).filter((person) => person.role === "TEACHER"),

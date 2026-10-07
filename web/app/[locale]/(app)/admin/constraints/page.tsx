@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Pencil, Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import {
+  useAcademicYears,
   useConstraints,
   useCrudMutations,
   useGroups,
@@ -17,6 +18,7 @@ import type {
   ConstraintType,
 } from "@/lib/types";
 import { formatTime } from "@/lib/utils";
+import { groupLabel } from "@/lib/year-scope";
 import { PageHeader } from "@/components/layout/page-header";
 import { LunchSettingsCard } from "@/components/schedule/lunch-settings-card";
 import { RoomPreferencesCard } from "@/components/schedule/room-preferences-card";
@@ -100,6 +102,12 @@ export default function ConstraintsPage() {
   const { data: people } = usePeople();
   const { data: rooms } = useRooms();
   const { data: groups } = useGroups();
+  // Groups of every year, each named with its year unless it is the active
+  // one's: class rules are written for next year's classes in spring, before
+  // that year is active, so a filter would hide them — but between a
+  // rollover and its activation every class name exists twice.
+  const { data: years } = useAcademicYears();
+  const activeYearId = years?.find((year) => year.isActive)?.id ?? null;
 
   const mutations = useCrudMutations<{
     resourceType: ConstraintResource;
@@ -131,7 +139,10 @@ export default function ConstraintsPage() {
       case "ROOM":
         return (rooms ?? []).map((room) => ({ id: room.id, label: room.name }));
       case "STUDENT_GROUP":
-        return (groups ?? []).map((group) => ({ id: group.id, label: group.name }));
+        return (groups ?? []).map((group) => ({
+          id: group.id,
+          label: groupLabel(group, years, activeYearId),
+        }));
       case "GRADE_LEVEL":
         // A year range names nothing in any table, so there is no list to pick
         // from — the form shows two year selects instead of this one.
@@ -148,7 +159,8 @@ export default function ConstraintsPage() {
       return rooms?.find((room) => room.id === constraint.roomId)?.name ?? "—";
     }
     if (constraint.studentGroupId) {
-      return groups?.find((group) => group.id === constraint.studentGroupId)?.name ?? "—";
+      const group = groups?.find((candidate) => candidate.id === constraint.studentGroupId);
+      return group ? groupLabel(group, years, activeYearId) : "—";
     }
     if (constraint.resourceType === "GRADE_LEVEL") {
       return gradeRangeLabel(constraint.minGradeLevel, constraint.maxGradeLevel);

@@ -403,9 +403,14 @@ export default function GapsPage() {
     ],
   );
 
+  /** The active year's groups: the schedule searched is the active year's (see the timetable). */
+  const yearGroups = useMemo(
+    () => (groups ?? []).filter((group) => group.academicYearId === activeYear?.id),
+    [groups, activeYear?.id],
+  );
   const groupOptions: Option[] = useMemo(
-    () => (groups ?? []).map((group) => ({ id: group.id, label: group.name })),
-    [groups],
+    () => yearGroups.map((group) => ({ id: group.id, label: group.name })),
+    [yearGroups],
   );
   const teacherOptions: Option[] = useMemo(
     () =>
@@ -546,8 +551,8 @@ export default function GapsPage() {
    * håltimme twice and rank a school's own duplicates above its worst days.
    */
   const classIds = useMemo(
-    () => (groups ?? []).filter((group) => group.kind === "CLASS").map((group) => group.id),
-    [groups],
+    () => yearGroups.filter((group) => group.kind === "CLASS").map((group) => group.id),
+    [yearGroups],
   );
 
   const lunchWindow = useMemo(() => lunchWindowOf(lunchSettings), [lunchSettings]);

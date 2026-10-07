@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { compareSwedish } from "@/lib/sorting";
+import { groupLabel } from "@/lib/year-scope";
 import { useTranslations } from "next-intl";
 import { BarChart3, Download } from "lucide-react";
 import {
+  useAcademicYears,
   useGroupAttendance,
   useGroups,
   usePeople,
@@ -84,6 +86,12 @@ export default function ReportsPage() {
   const [toDate, setToDate] = useState(() => toDateInput(new Date()));
 
   const { data: groups } = useGroups();
+  // Every year's classes, named with their year unless it is the active
+  // one's: last year's attendance is reported after the activation, so a
+  // filter would hide it, and between a rollover and its activation every
+  // class name exists twice.
+  const { data: years } = useAcademicYears();
+  const activeYearId = years?.find((year) => year.isActive)?.id ?? null;
   const { data: people } = usePeople();
   const { data: records, isLoading } = useGroupAttendance(groupId, fromDate, toDate);
 
@@ -228,7 +236,7 @@ export default function ReportsPage() {
             <SelectContent>
               {(groups ?? []).map((group) => (
                 <SelectItem key={group.id} value={group.id}>
-                  {group.name}
+                  {groupLabel(group, years, activeYearId)}
                 </SelectItem>
               ))}
             </SelectContent>
