@@ -243,7 +243,7 @@ describe("YearsPage", () => {
     renderPage();
     await user.click(within(rowOf("2027/28")).getByRole("button", { name: "Aktivera" }));
     const dialog = await screen.findByRole("dialog");
-    expect(await within(dialog).findByText(/2 medlemskap saknas för elever som flyttar in, och 1 medlemskap hör till elever som blir utan klass/)).toBeInTheDocument();
+    expect(await within(dialog).findByText(/2 medlemskap saknas för elever som flyttar in, och 1 medlemskap hör till elever som går ut eller blir utan klass/)).toBeInTheDocument();
     expect(within(dialog).queryByRole("alert")).toBeNull();
     expect(within(dialog).getByRole("button", { name: "Aktivera 2027/28" })).toBeEnabled();
   });
