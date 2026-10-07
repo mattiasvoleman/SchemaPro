@@ -247,7 +247,18 @@ function PlannedCounts({
 }) {
   const t = useTranslations("years");
   const lines: string[] = [];
-  if (planned.kind === "CLASS") lines.push(t("count.homePupils", { count: planned.homePupils }));
+  // What happens to the class's pupils at the activation follows the outcome:
+  // a promoted, carried or intake class has a successor to move into; a
+  // graduating class's pupils leave; a skipped class's are left with none.
+  if (planned.kind === "CLASS") {
+    const fate =
+      outcome === "GRADUATE" || (outcome === "INTAKE" && planned.targetName === null)
+        ? "count.homePupilsGraduate"
+        : outcome === "SKIP"
+          ? "count.homePupilsUnplaced"
+          : "count.homePupils";
+    lines.push(t(fate, { count: planned.homePupils }));
+  }
   if (planned.kind === "TEACHING_GROUP" && outcome !== "SKIP" && outcome !== "GRADUATE") {
     lines.push(t("count.membersCopied", { count: planned.membersCopied }));
   }
