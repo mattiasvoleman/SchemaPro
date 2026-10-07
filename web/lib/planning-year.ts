@@ -31,7 +31,11 @@ export function useYearRosters(year: AcademicYear | null, active: AcademicYear |
 }
 
 export interface PlanningYear {
-  /** The year on screen: the one chosen, else ?year=, else the active year. */
+  /**
+   * The year on screen: the one chosen, else ?year=, else the active year.
+   * Null on the first render, before ?year= has been read, so no year-keyed
+   * read starts for a year the link is about to replace.
+   */
   year: AcademicYear | null;
   active: AcademicYear | null;
   /** Next year while it is not activated; null when there is none to plan. */
@@ -48,13 +52,16 @@ export function usePlanningYear(): PlanningYear {
   const [chosenId, setChosenId] = useState<string | null>(null);
   // ?year= from the Läsår page's link, read once after mount — as the
   // requirements page reads it, and not with useSearchParams, which would opt
-  // the route out of static rendering.
-  const [linkedId, setLinkedId] = useState<string | null>(null);
-  useEffect(() => setLinkedId(new URLSearchParams(window.location.search).get("year")), []);
+  // the route out of static rendering. Until it has been read there is no
+  // year at all: resolving to the active year first would start its
+  // timplan, history and grundschema reads (and paint them for a frame) only
+  // for the link to replace them a render later.
+  const [linked, setLinked] = useState<{ id: string | null } | null>(null);
+  useEffect(() => setLinked({ id: new URLSearchParams(window.location.search).get("year") }), []);
   const { active, successor } = useMemo(() => planningChoices(years), [years]);
   const pick = (id: string | null) =>
     id === null ? null : ([active, successor].find((year) => year?.id === id) ?? null);
-  const year = pick(chosenId) ?? pick(linkedId) ?? active;
+  const year = linked === null ? null : (pick(chosenId) ?? pick(linked.id) ?? active);
   const rosters = useYearRosters(year, active);
   return {
     year,
