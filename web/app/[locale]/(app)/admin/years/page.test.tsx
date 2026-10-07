@@ -137,6 +137,35 @@ describe("YearsPage", () => {
     expect(within(rowOf("2025/26")).queryByText("Rulla vidare")).toBeNull();
   });
 
+  it("links the year rolled from the active one to generating its schedule, before its activation", async () => {
+    post.mockResolvedValue(plan());
+    renderPage();
+    expect(within(rowOf("2027/28")).getByRole("link", { name: /Generera schema/ })).toHaveAttribute(
+      "href",
+      "/admin/generate?year=y27",
+    );
+    // Not the active year (its own page is that), nor a finished one.
+    expect(within(rowOf("2026/27")).queryByRole("link", { name: /Generera schema/ })).toBeNull();
+    expect(within(rowOf("2025/26")).queryByRole("link", { name: /Generera schema/ })).toBeNull();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+  });
+
+  it("offers no schedule for a year two steps ahead: the gateway refuses it until its predecessor is active", async () => {
+    // Only reachable by an INSERT past the API (ROLLOVER_SOURCE_NOT_ACTIVATED).
+    const y28: AcademicYear = { ...y27, id: "y28", name: "2028/29", startDate: "2028-08-14", endDate: "2029-06-08", predecessorId: "y27" };
+    state.years = [y25, y26, y27, y28];
+    post.mockResolvedValue(plan());
+    renderPage();
+    expect(within(rowOf("2028/29")).queryByRole("link", { name: /Generera schema/ })).toBeNull();
+    expect(within(rowOf("2027/28")).getByRole("link", { name: /Generera schema/ })).toBeInTheDocument();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+  });
+
+  it("says in the cycle hint that next year's schedule need not wait for the activation", () => {
+    renderPage();
+    expect(screen.getByText(/Nästa läsårs schema kan genereras direkt, på de klasslistor som aktiveringen ger\./)).toBeInTheDocument();
+  });
+
   it("links the active year to the wizard when it has no successor yet", () => {
     state.years = [{ ...y26, predecessorId: null }];
     renderPage();

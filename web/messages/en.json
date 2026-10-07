@@ -1681,7 +1681,7 @@
   "years": {
     "title": "School years",
     "subtitle": "The school’s years, which one is active, and the hand-over to the next",
-    "cycleHint": "Each spring the active year is rolled over: next year is created with its classes promoted one grade (7A becomes 8A), carrying their teaching requirements, teachers and class rules. Pupils stay in their classes until the new year is activated, which is possible only once the old one has ended.",
+    "cycleHint": "Each spring the active year is rolled over: next year is created with its classes promoted one grade (7A becomes 8A), carrying their teaching requirements, teachers and class rules. Next year’s schedule can be generated straight away, on the class lists the activation will give. Pupils stay in their classes until the new year is activated, which is possible only once the old one has ended.",
     "emptyTitle": "No school years yet",
     "emptyBody": "Create the school’s first year under Get started.",
     "emptyAction": "Go to Get started",
@@ -1701,6 +1701,7 @@
     "stragglers": "{count, plural, one {# pupil is still in last year’s class} other {# pupils are still in last year’s classes}}",
     "activatableAfter": "Can be activated once {year} has ended ({date})",
     "rollover": "Roll over",
+    "planSchedule": "Generate schedule",
     "rolloverNeedsActivation": "Activate this year before rolling it over",
     "rolloverNeedsStragglers": "Move the remaining pupils before rolling the year over",
     "activate": "Activate",
@@ -1891,7 +1892,7 @@
     "breakLine": "{name}: {start} – {end}",
     "reviewLeftOut": "Not carried over",
     "skipped": {
-      "MasterLesson": "The base schedule ({count, plural, one {# lesson} other {# lessons}}) — next year’s schedule is generated for the new classes.",
+      "MasterLesson": "The base schedule ({count, plural, one {# lesson} other {# lessons}}) — next year’s schedule is generated for the new classes, and that can be done as soon as the year is created, before its activation.",
       "LunchSitting": "The lunch sittings ({count}) — they are placed against the new schedule.",
       "TeacherEmployment": "The teaching posts ({count}) — entered for the new year on the staffing page.",
       "TeacherDuty": "The duties ({count}), with their blocked slots and mentorships."

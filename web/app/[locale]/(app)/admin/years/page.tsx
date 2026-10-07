@@ -17,6 +17,13 @@
 // in and from which date it can be activated, read from the activation's own
 // preview so the number is the one the dialog will show.
 //
+// Between the two, next year is planned. Its schedule is generated, laid and
+// checked on the class lists its activation will give (the gateway's
+// förberäknade klasslistor, src/year-rollover/projected-rosters.ts), so the
+// year rolled from the active one links straight to Generera schema with
+// itself chosen. Only that one: a year two steps ahead is refused by every
+// roster reader until its predecessor is activated.
+//
 // Creating a year by hand stays on Kom igång (/admin/setup), which a school
 // uses once; deleting one is here, because the undo of a rollover — before
 // its activation — is deleting the year it made, and the gateway refuses the
@@ -219,6 +226,14 @@ export default function YearsPage() {
                             </Link>
                           </Button>
                         )
+                      ) : null}
+                      {status === "UPCOMING" && active !== null && year.predecessorId === active.id ? (
+                        <Button size="sm" variant="outline" asChild>
+                          <Link href={`/admin/generate?year=${year.id}`}>
+                            {t("planSchedule")}
+                            <ArrowRight />
+                          </Link>
+                        </Button>
                       ) : null}
                       {status === "UPCOMING" ? (
                         <Button size="sm" onClick={() => setActivating(year)}>
