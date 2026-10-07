@@ -962,8 +962,8 @@
       },
       "expected": {
         "startDate": "2028-01-10",
-        "endDate": "2028-06-08",
-        "status": "DROPPED"
+        "endDate": "2028-06-07",
+        "status": "BOUND_ANCHORED"
       }
     },
     {
@@ -1003,6 +1003,32 @@
         "startDate": "2028-04-29",
         "endDate": null,
         "status": "SHIFTED"
+      }
+    },
+    {
+      "startDate": "2027-01-11",
+      "endDate": "2027-06-10",
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-01"
+      },
+      "expected": {
+        "startDate": "2028-01-10",
+        "endDate": "2028-06-08",
+        "status": "DROPPED"
+      }
+    },
+    {
+      "startDate": "2026-08-18",
+      "endDate": "2027-01-15",
+      "target": {
+        "startDate": "2027-08-18",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "startDate": "2027-08-18",
+        "endDate": "2028-01-14",
+        "status": "BOUND_ANCHORED"
       }
     }
   ],
@@ -1116,6 +1142,38 @@
         "proposedStart": "2028-04-03",
         "proposedEnd": "2028-04-03",
         "anchor": "ISO_WEEK",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2026-12-21",
+        "endDate": "2027-01-08"
+      },
+      "target": {
+        "startDate": "2027-08-23",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2027-12-20",
+        "proposedEnd": "2028-01-07",
+        "anchor": "CHRISTMAS",
+        "fits": true
+      }
+    },
+    {
+      "lov": {
+        "startDate": "2026-12-17",
+        "endDate": "2026-12-24"
+      },
+      "target": {
+        "startDate": "2027-08-16",
+        "endDate": "2028-06-09"
+      },
+      "expected": {
+        "proposedStart": "2027-12-23",
+        "proposedEnd": "2027-12-30",
+        "anchor": "CHRISTMAS",
         "fits": true
       }
     }
