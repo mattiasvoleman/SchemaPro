@@ -24,19 +24,20 @@ function leaves(messages: Messages, prefix = ""): [string, string][] {
   );
 }
 
-/** The top-level argument names of an ICU message (see messages.test.ts). */
+/**
+ * Every argument name of an ICU message, nested ones too.
+ *
+ * messages.test.ts compares only the top level, where a plural's branches are
+ * prose. Here the names are values to fill, and a sentence that leaves a
+ * clause out at zero names its next count INSIDE a branch ("3 följer med{
+ * notCarried, plural, =0 {.} other { och # stannar.}}"), which formats only
+ * if that count is given. So every `{name` or `{name,` at any depth is
+ * filled; a prose branch that happens to look like one (`{Förskoleklass}`)
+ * only adds a value nothing reads.
+ */
 function argumentsOf(message: string): string[] {
   const names = new Set<string>();
-  let depth = 0;
-  for (let i = 0; i < message.length; i++) {
-    if (message[i] === "}") depth--;
-    if (message[i] !== "{") continue;
-    depth++;
-    if (depth === 1) {
-      const name = /^\w+/.exec(message.slice(i + 1))?.[0];
-      if (name) names.add(name);
-    }
-  }
+  for (const match of message.matchAll(/\{\s*(\w+)\s*[,}]/g)) names.add(match[1]);
   return [...names];
 }
 
@@ -80,6 +81,34 @@ describe("the läsår sentences that count", () => {
     expect(tSv("reviewRequirementsCounts", { carried: 3, notCarried: 0, shifted: 1, anchored: 0 })).toContain("1 period flyttas");
     expect(tEn("reviewRequirementsCounts", { carried: 3, notCarried: 0, shifted: 1, anchored: 0 })).toContain("1 period moves");
     expect(tEn("errors.YEAR_ACTIVATION_HAS_MOVES", { pupils: 1 })).toMatch(/^1 pupil has not/);
+  });
+
+  it("leave a count out at zero instead of printing it, in both languages", () => {
+    // Webbgenomgången 2026-10-07: "0 perioder flyttas hela veckor och 0
+    // följer läsårets början eller slut", and "blir 0 elever utan klass".
+    const tSv = translate(sv as Messages, "sv");
+    const tEn = translate(en as Messages, "en");
+    const none = { carried: 24, notCarried: 0, shifted: 0, anchored: 0 };
+    expect(tSv("reviewRequirementsCounts", none)).toBe("24 följer med.");
+    expect(tEn("reviewRequirementsCounts", none)).toBe("24 carried over.");
+    expect(tSv("reviewRequirementsCounts", { carried: 24, notCarried: 12, shifted: 2, anchored: 0 })).toBe(
+      "24 följer med och 12 stannar. 2 perioder flyttas hela veckor.",
+    );
+    expect(tSv("reviewRequirementsCounts", { carried: 24, notCarried: 12, shifted: 0, anchored: 1 })).toBe(
+      "24 följer med och 12 stannar. 1 period följer läsårets början eller slut.",
+    );
+    expect(tSv("reviewRequirementsCounts", { carried: 0, notCarried: 0, shifted: 0, anchored: 0 })).toBe(
+      "Läsåret har inga timplansposter att föra över.",
+    );
+    expect(tSv("reviewLeaving", { graduating: 25, unplaced: 0 })).toBe("Vid aktiveringen går 25 elever ut.");
+    expect(tSv("reviewLeaving", { graduating: 0, unplaced: 2 })).toBe("Vid aktiveringen blir 2 elever utan klass.");
+    expect(tEn("reviewLeaving", { graduating: 0, unplaced: 1 })).toBe("At the activation 1 pupil is left without a class.");
+    expect(tSv("problems.MEMBERSHIPS_OUT_OF_DATE", { missing: 0, stale: 2 })).toMatch(
+      /sedan dess: 2 medlemskap hör till elever som går ut eller blir utan klass\. Se över/,
+    );
+    expect(tEn("problems.MEMBERSHIPS_OUT_OF_DATE", { missing: 3, stale: 0 })).toMatch(
+      /since: 3 memberships are missing for pupils moving in\. Review/,
+    );
   });
 
   it("translate every refusal the rollover's execute answers with a code, so English never shows the gateway's Swedish", () => {

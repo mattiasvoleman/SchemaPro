@@ -253,7 +253,8 @@ describe("RolloverWizard", () => {
     expect(within(rowOfGroup("9A")).queryByText(/flyttar vid aktiveringen/)).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /Granska/ }));
-    expect(await screen.findByText("Vid aktiveringen går 25 elever ut och blir 0 elever utan klass.")).toBeInTheDocument();
+    // No pupil is left without a class here, so that clause is left out, not "blir 0 elever".
+    expect(await screen.findByText("Vid aktiveringen går 25 elever ut.")).toBeInTheDocument();
   });
 
   it("shows in the review which timplan each grade will follow and why, and marks a carried draft", async () => {
