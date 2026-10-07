@@ -178,6 +178,14 @@ describe('overTargetFinding', () => {
     expect(ask({ after: 1100.5 })).not.toBeNull();
   });
 
+  it('judges the whole minutes it prints, so it never says "1 100 against a limit of 1 100"', () => {
+    // 1 060 + 1 × 45 min at 89 % = 1 100.05: printed as 1 100, which is the
+    // limit and not past it. It used to refuse here with minutes: 1100,
+    // limit: 1100 — a sentence that contradicts itself.
+    expect(ask({ before: 1060, after: 1100.05 })).toBeNull();
+    expect(ask({ before: 1060, after: 1100.5 })?.params).toMatchObject({ minutes: 1101, limit: 1100 });
+  });
+
   it('is inert for a teacher with no target', () => {
     expect(ask({ employment: null })).toBeNull();
     expect(ask({ policy: policy({ fullTimeTeachingMinutesPerWeek: null }) })).toBeNull();

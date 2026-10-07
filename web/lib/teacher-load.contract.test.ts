@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import fixture from "../../src/staffing/__fixtures__/teacher-load-cases.json";
 import {
   buildTeacherLoadReport,
+  loadStatus,
   type LoadInput,
   type TeacherLoadReport,
 } from "@/lib/teacher-load";
@@ -46,5 +47,16 @@ describe("the load report agrees with the gateway's fixture", () => {
 
   it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, entry) => {
     expect(buildTeacherLoadReport(entry.input)).toEqual(entry.report);
+  });
+});
+
+describe("loadStatus", () => {
+  it("judges the whole minutes the report prints, as the gateway does", () => {
+    // The gateway's teacher-load.spec pins the same four edges; the fixture
+    // has no fractional case on a band edge, so the mirror is pinned here.
+    expect(loadStatus(990.15, 900, 10)).toBe("OK");
+    expect(loadStatus(990.5, 900, 10)).toBe("OVER");
+    expect(loadStatus(809.6, 900, 10)).toBe("OK");
+    expect(loadStatus(809.4, 900, 10)).toBe("UNDER");
   });
 });

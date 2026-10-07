@@ -30,8 +30,9 @@ import type { YearBounds } from './teaching-weeks';
  *
  *   STAFF_TEACHER_OVER_TARGET — would the write put the teacher past target ×
  *     (1 + tolerance / 100)? loadStatus over countedMinutesByTeacher, the
- *     figures the matrix's status and the picker's wouldExceed read, unrounded,
- *     so the threshold here is the threshold there.
+ *     figures the matrix's status and the picker's wouldExceed read — loadStatus
+ *     judging their whole minutes, as all three print them — so the threshold
+ *     here is the threshold there, and `minutes` is never at or under `limit`.
  *
  * Each is governed by its own policy mode. OFF asks nothing; WARN lets the write
  * through and hands back `warnings: [{ code, params }]`; REFUSE answers 409 with
