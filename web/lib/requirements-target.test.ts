@@ -178,9 +178,23 @@ describe("buildTargetView", () => {
       target: 355,
       plannedHours: 301,
       targetHours: 254.4,
+      countedWith: null,
     });
-    // SvA is one cell, 7A's own: the teaching group's 180 is not a class's.
-    expect(view.subjectTotals.get("s-sva")).toMatchObject({ planned: 0, target: 180 });
+    // Review reproduction (P2 review, lens webb): SvA's column added its own
+    // 180 target although the class meets SV_SVA through Svenska, so the row
+    // read "0 / 180" for SvA and the columns summed to more than the total.
+    // An alternative line is totalled once, in its first column; the
+    // partner column says it is counted there.
+    expect(view.subjectTotals.get("s-sv")).toMatchObject({ planned: 180, target: 180, countedWith: null });
+    expect(view.subjectTotals.get("s-sva")).toEqual({
+      planned: 0,
+      target: null,
+      plannedHours: 0,
+      targetHours: null,
+      countedWith: "s-sv",
+    });
+    const columnTargets = [...view.subjectTotals.values()].reduce((sum, total) => sum + (total.target ?? 0), 0);
+    expect(columnTargets).toBe(view.total.target);
     expect(view.total).toEqual({
       planned: 640,
       target: 595,
@@ -236,7 +250,36 @@ describe("draftHint", () => {
       lessonsPerWeek: 3,
       minutesPerLesson: 60,
       partnerSubjectIds: [],
+      carriedBy: [],
     });
+  });
+
+  // Review reproduction (P2 review, lens webb): a class cell whose subject
+  // the pupils read in teaching groups is drawn 'i grupp', yet the dialog
+  // opened from it said "2 × 60 täcker det" — and saving that post gives
+  // those pupils the time twice.
+  it("says a subject read in teaching groups is carried there, not that a class post covers it", () => {
+    const withLanguages: TargetSources = {
+      ...sources,
+      subjects: [...subjects, { id: "s-es", name: "Spanska", nationalCode: "M2", countsTowardTimplan: true }],
+      plans: [
+        { ...plans[0]!, entries: [...plans[0]!.entries, { subjectId: "s-es", gradeLevel: 7, minutesPerWeek: 120 }] },
+        plans[1]!,
+      ],
+      groups: [...groups, { id: "g-es7", name: "Spanska 7", kind: "TEACHING_GROUP" as const, gradeLevel: null }],
+      requirements: [...requirements, row("r-es7", "g-es7", "s-es", 2, 60)],
+      memberships: [...memberships, { studentId: "u-1", studentGroupId: "g-es7" }, { studentId: "u-2", studentGroupId: "g-es7" }],
+    };
+    const languages = targetInput(withLanguages);
+    const view = buildTargetView(computePlannedCoverage(languages), withLanguages.plans);
+    expect(view.cell("g-7a", "s-es")).toMatchObject({ tone: "pupils" });
+    expect(draftHint(languages, "g-7a", "s-es", fields({ lessonsPerWeek: "2" }))).toMatchObject({
+      kind: "target",
+      target: 120,
+      carriedBy: ["g-es7"],
+    });
+    // Matematik is the class's own: no group carries it.
+    expect(draftHint(languages, "g-7a", "s-ma", fields())).toMatchObject({ status: "MET", carriedBy: [] });
   });
 
   it("follows the fields: the edited post replaces the stored one", () => {
@@ -253,8 +296,8 @@ describe("draftHint", () => {
 
   it("counts odd weeks by their share of the year, not at face value", () => {
     const hint = draftHint(input, "g-7a", "s-ma", fields({ recurrence: "ODD_WEEKS" }));
-    expect(hint).toMatchObject({ status: "UNDER" });
-    expect(hint && hint.kind === "target" ? hint.planned : null).toBeLessThan(100);
+    // An undated odd-weeks post weighs exactly half: 3 × 60 is 90 a standardvecka.
+    expect(hint).toMatchObject({ status: "UNDER", planned: 90, delta: -85 });
   });
 
   it("states the target alone while the fields hold no post the API would take", () => {

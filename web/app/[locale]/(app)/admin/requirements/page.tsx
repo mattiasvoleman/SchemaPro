@@ -1287,7 +1287,7 @@ export default function RequirementsPage() {
                             }
                           >
                             {targetCell && target ? (
-                              <target.module.TargetCellBody cell={targetCell} />
+                              <target.module.TargetCellBody cell={targetCell} badge={badge} />
                             ) : requirement ? (
                               <>
                                 <span className="text-sm font-semibold tabular-nums">
