@@ -3505,6 +3505,114 @@ describe('Planning surface (e2e)', () => {
         .expect((response) => expect(response.body?.code).not.toBe('ROLLOVER_NOT_ACTIVATED'));
     });
 
+    it('answers GET rosters with the projection before the activation and CURRENT after it, stores the projected lunch headcount, and keeps a room proposal’s basis across the activation (admin round-trips)', async () => {
+      const { world, options } = givenSchool(2020);
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+      const inB = (name: string) =>
+        world.rows['studentGroup']!.find((group) => group['academicYearId'] === yearB && group['name'] === name)!['id'] as string;
+      const rosters = `/api/v1/academic-years/${yearB}/rosters`;
+
+      const projected = await request(http()).get(rosters).set('x-test-user', admin()).expect(200);
+      expect(projected.body).toEqual({
+        academicYearId: yearB,
+        basis: 'PROJECTED',
+        homeClasses: [
+          { studentId: IDS.p7a1, studentGroupId: inB('8A') },
+          { studentId: IDS.p7a2, studentGroupId: inB('8A') },
+          { studentId: IDS.p8a1, studentGroupId: inB('9A') },
+          { studentId: IDS.p9a1, studentGroupId: null },
+        ],
+        counts: { moved: 3, graduates: 1, unplaced: 0 },
+        membershipsOutOfDate: { missing: 0, stale: 0 },
+      });
+
+      // A meal placed by hand for B's 8A seats its two coming pupils.
+      world.rows['lunchSetting'] = [{ schoolId: IDS.school, lunchEnabled: true, lunchMinutes: 30 }];
+      const meal = await request(http())
+        .post('/api/v1/lunch-sittings')
+        .set('x-test-user', admin())
+        .send({ academicYearId: yearB, studentGroupId: inB('8A'), dayOfWeek: 1, startTime: '11:00' })
+        .expect(201);
+      expect(meal.body).toMatchObject({ headcount: 2 });
+
+      const proposal = async () =>
+        (
+          await request(http())
+            .post('/api/v1/optimization/rooms/proposal')
+            .set('x-test-user', admin())
+            .send({ academicYearId: yearB, walkers: 'BOTH' })
+            .expect(200)
+        ).body.basis as string;
+      const spring = await proposal();
+
+      await activate(yearB);
+      const current = await request(http()).get(rosters).set('x-test-user', admin()).expect(200);
+      expect(current.body).toEqual({
+        academicYearId: yearB,
+        basis: 'CURRENT',
+        homeClasses: [],
+        counts: { moved: 0, graduates: 0, unplaced: 0 },
+        membershipsOutOfDate: { missing: 0, stale: 0 },
+      });
+      // What the projection said is what the activation did.
+      for (const { studentId, studentGroupId } of projected.body.homeClasses as { studentId: string; studentGroupId: string | null }[]) {
+        expect(world.rows['user']!.find((user) => user['id'] === studentId)!['studentGroupId']).toBe(studentGroupId);
+      }
+      // A proposal made in spring would apply now: the basis is the same.
+      expect(await proposal()).toBe(spring);
+      // And the active year A — superseded now — reads its own rows.
+      await request(http()).get(`/api/v1/academic-years/${IDS.yearA}/rosters`).set('x-test-user', admin()).expect(200);
+    });
+
+    it('409s every roster reader of a year whose predecessor is not activated (R6), naming the predecessor, and 404s GET rosters for a year RLS hides', async () => {
+      const { world, options } = givenSchool(2020);
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+      // C, inserted through PostgREST with B as its predecessor (the API
+      // refuses to roll B while its pupils wait to move).
+      const yearC = 'a0000000-0000-4000-8000-0000000000cc';
+      world.rows['academicYear']!.push({
+        id: yearC,
+        schoolId: IDS.school,
+        name: 'Tredje läsåret',
+        startDate: new Date('2022-08-15T00:00:00Z'),
+        endDate: new Date('2023-06-09T00:00:00Z'),
+        isActive: false,
+        predecessorId: yearB,
+        graduatingGradeLevel: 9,
+      });
+      const b8a = world.rows['studentGroup']!.find((group) => group['academicYearId'] === yearB && group['name'] === '8A')!;
+      world.rows['studentGroup']!.push({ id: 'b0000000-0000-4000-8000-0000000000c9', academicYearId: yearC, name: '9A', kind: 'CLASS', gradeLevel: 9, predecessorId: b8a['id'] });
+      const refused = { code: 'ROLLOVER_NOT_ACTIVATED', params: { year: 'Tredje läsåret', predecessor: 'Nästa läsår' } };
+
+      const job = await request(http()).post('/api/v1/optimization/jobs').set('x-test-user', admin()).send({ academicYearId: yearC }).expect(409);
+      expect(job.body).toMatchObject(refused);
+      const rooms = await request(http())
+        .post('/api/v1/optimization/rooms/proposal')
+        .set('x-test-user', admin())
+        .send({ academicYearId: yearC, walkers: 'BOTH' })
+        .expect(409);
+      expect(rooms.body).toMatchObject(refused);
+      const lesson = await request(http())
+        .post('/api/v1/master-lessons')
+        .set('x-test-user', admin())
+        .send({ academicYearId: yearC, subjectId: IDS.ma, studentGroupId: 'b0000000-0000-4000-8000-0000000000c9', dayOfWeek: 1, startTime: '08:00', endTime: '09:00' })
+        .expect(409);
+      expect(lesson.body).toMatchObject(refused);
+      const listed = await request(http()).get(`/api/v1/academic-years/${yearC}/rosters`).set('x-test-user', admin()).expect(409);
+      expect(listed.body).toMatchObject(refused);
+      // B itself, the active year's successor, is not refused.
+      await request(http()).get(`/api/v1/academic-years/${yearB}/rosters`).set('x-test-user', admin()).expect(200);
+
+      await request(http()).get(`/api/v1/academic-years/${YEAR_ID}/rosters`).set('x-test-user', admin()).expect(404);
+    });
+
+    it('stops a student at the guard on GET rosters', async () => {
+      await request(http())
+        .get(`/api/v1/academic-years/${YEAR_ID}/rosters`)
+        .set('x-test-user', asUser({ role: 'STUDENT' as never }))
+        .expect(403);
+    });
+
     it('409s PATCH {isActive: true} while pupils wait to move, and DELETE of a year that holds home classes', async () => {
       const { world, options } = givenSchool(2020);
       const created = await roll(options, 201);
@@ -3611,6 +3719,8 @@ describe('Planning surface (e2e)', () => {
       ['POST', `/api/v1/academic-years/${YEAR_ID}/rollover`],
       ['POST', `/api/v1/academic-years/${YEAR_ID}/activation/preview`],
       ['POST', `/api/v1/academic-years/${YEAR_ID}/activation`],
+      // Next year's class lists, pupil by pupil: the admin's.
+      ['GET', `/api/v1/academic-years/${YEAR_ID}/rosters`],
     ] as const;
 
     it.each(adminOnly)('denies a teacher on %s %s', async (method, path) => {

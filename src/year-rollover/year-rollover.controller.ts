@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
@@ -24,6 +25,11 @@ import { YearRolloverService } from './year-rollover.service';
  *
  * Each operation is a POST preview, which writes nothing and answers 200 with
  * a plan and its planHash, and a POST execute that takes the hash back.
+ *
+ * GET :id/rosters is the year's förberäknade klasslistor: the home class its
+ * activation would give each pupil it moves (projected-rosters.ts). Pupil ids
+ * only, and the admin's: the class lists of next year are not a teacher's to
+ * browse, although the teacher-facing reports compute from them.
  */
 @Controller('api/v1/academic-years')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -48,6 +54,14 @@ export class YearRolloverController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.rollover.executeRollover(id, dto, user);
+  }
+
+  @Get(':id/rosters')
+  rosters(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.rollover.rosters(id, user);
   }
 
   @Post(':id/activation/preview')

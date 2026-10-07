@@ -14,6 +14,7 @@ import { attendanceSpan } from '../staffing/staffing-enforcement';
 import { StaffingLoadService } from '../staffing/staffing-load.service';
 import { readPlannedInput } from '../timplan/timplan-coverage.service';
 import * as projected from './projected-rosters';
+import { YearRolloverService } from './year-rollover.service';
 import { readHomePupils, rostersOfYear, type RosterBasis } from './projected-rosters';
 
 /**
@@ -401,6 +402,22 @@ describe('förberäknade klasslistor — every reader reads the same before and 
     // p8a2 graduates but is still in Ma8: a member with no class, as after.
     expect(before.find((pupil) => pupil.id === SUCCESSOR.p8a2)).toMatchObject({ homeGroupId: null });
     expect(before.filter((pupil) => pupil.homeGroupId !== null)).toHaveLength(6);
+  });
+});
+
+describe('förberäknade klasslistor — the overlay the web lays over its people', () => {
+  it('P9 GET rosters: the people list with the overlay laid over it before the activation is the people list after it', async () => {
+    const { before } = await proveEquivalent(async (world) => {
+      const rosters = await new YearRolloverService(world.prisma).rosters(world.yearB, schoolAdmin);
+      // What the web does (withProjectedHomes): the server's rows, unchanged,
+      // over each pupil's studentGroupId.
+      const overlay = new Map(rosters.homeClasses.map((row) => [row.studentId, row.studentGroupId]));
+      return sortedBy(
+        world.world.rows['user']!.filter((user) => user['role'] === 'STUDENT'),
+        (user) => user['id'] as string,
+      ).map((user) => [user['id'], overlay.has(user['id'] as string) ? overlay.get(user['id'] as string) : user['studentGroupId']]);
+    });
+    expect(before).toHaveLength(13);
   });
 });
 
