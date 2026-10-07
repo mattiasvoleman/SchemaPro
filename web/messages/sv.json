@@ -1821,8 +1821,8 @@
       "homePupilsGraduate": "{count, plural, one {# elev} other {# elever}} (går ut vid aktiveringen)",
       "homePupilsUnplaced": "{count, plural, one {# elev} other {# elever}} (blir utan klass vid aktiveringen)",
       "membersCopied": "{count, plural, one {# medlem} other {# medlemmar}}",
-      "membersExcluded": "{count} utanför ({graduating} går ut, {noSuccessor} klass rullas inte)",
-      "membersStranded": "{count} medlemmar blir utan grupp",
+      "membersExcluded": "{count} utanför ({graduating} går ut, {noSuccessor} vars klass inte rullas)",
+      "membersStranded": "{count, plural, one {# medlem blir} other {# medlemmar blir}} utan grupp",
       "requirements": "{count, plural, one {# timplanspost} other {# timplansposter}}",
       "volume": "Skiljer sig från {plan} i {count, plural, one {# ämne} other {# ämnen}}"
     },
@@ -1851,7 +1851,7 @@
     "reviewMembers": "{count, plural, one {# medlemskap} other {# medlemskap}} i undervisningsgrupper följer med.",
     "reviewLeaving": "Vid aktiveringen {graduating, plural, one {går # elev ut} other {går # elever ut}} och {unplaced, plural, one {blir # elev utan klass} other {blir # elever utan klass}}.",
     "reviewRequirements": "Timplansposter",
-    "reviewRequirementsCounts": "{carried} följer med och {notCarried} stannar. {shifted} perioder flyttas hela veckor och {anchored} följer läsårets början eller slut.",
+    "reviewRequirementsCounts": "{carried} följer med och {notCarried} stannar. {shifted, plural, one {# period flyttas} other {# perioder flyttas}} hela veckor och {anchored} följer läsårets början eller slut.",
     "reviewDropped": "{count, plural, one {# post följer inte med} other {# poster följer inte med}} — perioden hamnar utanför det nya läsåret:",
     "droppedLine": "{subject}, {group} ({start} – {end})",
     "reviewCleared": "{count, plural, one {# lärare tas bort från sin post} other {# lärare tas bort från sina poster}}:",
@@ -1870,7 +1870,7 @@
     "breakLine": "{name}: {start} – {end}",
     "reviewLeftOut": "Följer inte med",
     "skipped": {
-      "MasterLesson": "Grundschemat ({count} lektioner) — nästa läsårs schema genereras för de nya klasserna.",
+      "MasterLesson": "Grundschemat ({count, plural, one {# lektion} other {# lektioner}}) — nästa läsårs schema genereras för de nya klasserna.",
       "LunchSitting": "Lunchsittningarna ({count}) — de läggs mot det nya schemat.",
       "TeacherEmployment": "Tjänsterna ({count}) — läggs in för det nya läsåret på tjänstefördelningssidan.",
       "TeacherDuty": "Uppdragen ({count}), med sina spärrade pass och mentorskap."
@@ -1879,7 +1879,7 @@
     "sharedSettings": "Ramtider, raster, lunchsittningarnas flöden, lunchinställningen, regler per årskurs, lärarnas arbetstidsregler och salspreferenser hör inte till något läsår: de gäller båda läsåren, och en ändring slår igenom i båda direkt.",
     "problems": {
       "YEAR_ACTIVATION_TOO_EARLY": "{year} pågår till och med {endDate}. Eleverna flyttas när det har slutat — annars blir närvarolistorna för de sista veckornas lektioner tomma.",
-      "YEAR_IS_SUPERSEDED": "{year} har efterträtts av {successor}, där {pupils} elever redan har sina klasser. Att aktivera det igen skulle lämna det utan elever.",
+      "YEAR_IS_SUPERSEDED": "{year} har efterträtts av {successor}, där {pupils, plural, one {# elev redan har sin klass} other {# elever redan har sina klasser}}. Att aktivera det igen skulle lämna det utan elever.",
       "MEMBERSHIPS_OUT_OF_DATE": "Undervisningsgruppernas medlemmar bestämdes vid rullningen, och några elever har bytt klass sedan dess: {missing, plural, one {# medlemskap saknas} other {# medlemskap saknas}} för elever som flyttar in, och {stale, plural, one {# medlemskap hör} other {# medlemskap hör}} till elever som blir utan klass. Se över grupperna efter aktiveringen.",
       "GRADUATING_GRADE_REQUIRED": "Välj vilken årskurs som går ut.",
       "ROLLOVER_NAME_COLLISION": "Nästa läsår skulle få flera grupper som heter {names}. Byt namn på någon av dem.",
@@ -1894,12 +1894,12 @@
       "BREAK_OUTSIDE_YEAR": "{name} ({startDate} – {endDate}) ligger utanför det nya läsåret.",
       "DUTY_SLOTS_NOT_CARRIED": "Uppdragen följer inte med: {duties} uppdrag, {blockedSlots} spärrade pass och {mentorskap} mentorskap. Det nya läsåret har inga förrän de läggs in, och ett schema som genereras innan dess räknar inte med dem.",
       "VOLUME_DIFFERS_FROM_TIMPLAN": "Timplansposterna för {groups} skiljer sig från den beslutade timplanen för den årskurs de flyttas upp till.",
-      "ISO_WEEK_53_CROSSED": "Rullningen passerar en vecka 53: {rows} poster på udda eller jämna veckor byter till den andra veckotypen. Kontrollera dem."
+      "ISO_WEEK_53_CROSSED": "Rullningen passerar en vecka 53: {rows, plural, one {# post} other {# poster}} på udda eller jämna veckor byter till den andra veckotypen. Kontrollera dem."
     },
     "errors": {
       "YEAR_HAS_SUCCESSOR": "Läsåret har redan rullats vidare till {successor}.",
       "YEAR_HAS_SUCCESSOR_UNNAMED": "Läsåret har redan rullats vidare.",
-      "ROLLOVER_SOURCE_NOT_ACTIVATED": "Läsåret är inte aktiverat: {pupils} elever väntar på att flyttas in i dess klasser. Aktivera det innan det rullas vidare.",
+      "ROLLOVER_SOURCE_NOT_ACTIVATED": "Läsåret är inte aktiverat: {pupils, plural, one {# elev väntar} other {# elever väntar}} på att flyttas in i dess klasser. Aktivera det innan det rullas vidare.",
       "ROLLOVER_SOURCE_HAS_STRAGGLERS": "{pupils, plural, one {# elev står} other {# elever står}} kvar i klasser från ett tidigare läsår än {year}. Flytta dem på läsårssidan (Flytta kvarvarande elever) och rulla sedan vidare.",
       "ROLLOVER_NOT_ACTIVATED": "{year} är inte aktiverat: {pupils, plural, one {# elev går} other {# elever går}} fortfarande i förra årets klasser. Läsåret kan schemaläggas först när det har aktiverats.",
       "ROLLOVER_PREVIEW_STALE": "Läsåret ändrades efter förhandsvisningen. Inget skapades — granska den nya förhandsvisningen och försök igen.",
@@ -1907,9 +1907,18 @@
       "YEAR_NAME_TAKEN": "Det finns redan ett läsår med det namnet.",
       "YEAR_HAS_HOME_PUPILS": "{pupils, plural, one {# elev har sin klass} other {# elever har sina klasser}} i läsåret{inactive, plural, =0 {} one {, varav # inaktiv} other {, varav # inaktiva}}. Flytta dem, eller aktivera ett läsår som tar över dem, innan läsåret tas bort.",
       "YEAR_ACTIVATION_TOO_EARLY": "{year} pågår till och med {endDate}. Eleverna flyttas när det har slutat.",
-      "YEAR_IS_SUPERSEDED": "{year} har efterträtts av {successor}, där {pupils} elever redan har sina klasser.",
-      "YEAR_ACTIVATION_HAS_MOVES": "{pupils} elever har ännu inte flyttats in. Aktivera läsåret här, så visas och görs flytten.",
+      "YEAR_IS_SUPERSEDED": "{year} har efterträtts av {successor}, där {pupils, plural, one {# elev redan har sin klass} other {# elever redan har sina klasser}}.",
+      "YEAR_ACTIVATION_HAS_MOVES": "{pupils, plural, one {# elev har} other {# elever har}} ännu inte flyttats in. Aktivera läsåret här, så visas och görs flytten.",
       "ROLLOVER_NAME_COLLISION": "Nästa läsår skulle få flera grupper med samma namn. Byt namn på någon av dem.",
+      "BREAK_OUTSIDE_YEAR": "Ett valt lov ligger utanför det nya läsåret. Ändra dess datum.",
+      "BREAK_NEEDS_DATES": "Ett valt lov har inget datumförslag nästa år. Ange första och sista dag.",
+      "ROLLOVER_UNKNOWN_BREAK": "Ett valt lov finns inte längre i läsåret. Ladda om sidan.",
+      "GRADUATING_GRADE_REQUIRED": "Välj vilken årskurs som går ut.",
+      "INTAKE_NOT_LOWEST": "En ny klass för intaget går bara att öppna bredvid en klass i den lägsta årskursen.",
+      "PROMOTE_WITHOUT_GRADE": "En grupp utan årskurs kan inte flyttas upp.",
+      "PROMOTE_GRADUATING": "En grupp som går ut kan inte flyttas upp.",
+      "ROLLOVER_UNKNOWN_GROUP": "En vald grupp finns inte längre i läsåret. Ladda om sidan.",
+      "ROLLOVER_TARGET_DATES": "Det nya läsåret ska börja efter att det gamla slutar och sluta efter att det börjar.",
       "ROLLOVER_LINK_IS_FIXED": "Kopplingen till förra läsåret sätts när läsåret rullas vidare och kan inte ändras.",
       "ROLLOVER_LINK_MISMATCH": "En grupps föregångare måste ligga i läsåret före gruppens eget.",
       "ROLLOVER_GROUP_IS_LINKED": "Gruppen är kopplad till en grupp i förra eller nästa läsår och kan inte flyttas till ett annat läsår."
