@@ -16,7 +16,8 @@ import { ROLLOVER_REGISTRY, ROLLOVER_STEP_ORDER, type Disposition } from './roll
  *  (i)   every model holding a `fields:` relation to AcademicYear or
  *        StudentGroup, parsed from prisma/schema.prisma (the `fields:` side
  *        is the child);
- *  (ii)  every model with a scalar named like *YearId, from the DMMF;
+ *  (ii)  every model with a scalar named like *YearId or yearId, from the
+ *        DMMF (the case-sensitive /Year\w*Id$/ missed a bare `yearId`);
  *  (iii) every model holding a `fields:` relation to a model the rollover
  *        writes (PROMOTED or COPIED) — a child of a carried row would
  *        otherwise be dropped silently when its parent is copied without it.
@@ -43,6 +44,10 @@ function relationParents(): Map<string, Set<string>> {
 }
 
 const models = Prisma.dmmf.datamodel.models;
+type DmmfModel = { name: string; fields: readonly { kind: string; name: string }[] };
+
+/** A scalar that names a läsår: academicYearId, sourceYearId — and a bare yearId. */
+const YEAR_KEY = /(?:^y|Y)ear\w*Id$/;
 const scalarColumns = (model: string): string[] =>
   models
     .find((candidate) => candidate.name === model)!
@@ -53,14 +58,14 @@ const scalarColumns = (model: string): string[] =>
 const isCarried = (disposition: Disposition) =>
   disposition.kind === 'ROOT' || disposition.kind === 'PROMOTED' || disposition.kind === 'COPIED';
 
-function yearScopedModels(): Set<string> {
+function yearScopedModels(dmmfModels: readonly DmmfModel[] = models): Set<string> {
   const parents = relationParents();
   const found = new Set<string>();
   for (const [child, of] of parents) {
     if (of.has('AcademicYear') || of.has('StudentGroup')) found.add(child);
   }
-  for (const model of models) {
-    if (model.fields.some((field) => field.kind === 'scalar' && /Year\w*Id$/.test(field.name))) {
+  for (const model of dmmfModels) {
+    if (model.fields.some((field) => field.kind === 'scalar' && YEAR_KEY.test(field.name))) {
       found.add(model.name);
     }
   }
@@ -94,6 +99,15 @@ describe('the rollover registry', () => {
     expect(set.has('ScheduleChangeLog')).toBe(true); // (ii), no relation at all
     expect(set.has('TeacherDuty')).toBe(true);
     expect(set.size).toBeGreaterThanOrEqual(19);
+  });
+
+  it('catches a year key with no relation whatever its case: academicYearId, sourceYearId and a bare yearId', () => {
+    expect(['academicYearId', 'sourceYearId', 'yearId'].every((name) => YEAR_KEY.test(name))).toBe(true);
+    expect(['predecessorId', 'studentGroupId', 'yearly', 'yearIds'].some((name) => YEAR_KEY.test(name))).toBe(false);
+    // A future table keyed by a bare `yearId` with no @relation, like
+    // ScheduleVersion today: it must land in the set, and so fail completeness.
+    const fake = { name: 'FakeYearSnapshot', fields: [{ kind: 'scalar', name: 'id' }, { kind: 'scalar', name: 'yearId' }] };
+    expect(yearScopedModels([...models, fake]).has('FakeYearSnapshot')).toBe(true);
   });
 
   it('classifies every table that belongs to a läsår or a group (completeness)', () => {
