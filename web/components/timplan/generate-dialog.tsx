@@ -34,6 +34,7 @@ import {
   editedRow,
   lessonLengthProblem,
   overridesFrom,
+  existingCount,
   rowKey,
   suggestLessonLength,
   type GenerateRequirementsResponse,
@@ -174,7 +175,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
             <p className="font-medium">
               {t("resultCreated", { count: result.created, year: years.find((y) => y.id === result.academicYearId)?.name ?? "" })}
             </p>
-            {result.skipped.length > 0 ? <p>{t("resultSkipped", { count: result.skipped.length })}</p> : null}
+            {existingCount(result) > 0 ? <p>{t("resultSkipped", { count: existingCount(result) })}</p> : null}
             <p>{t("resultNext")}</p>
             <Link href="/admin/requirements" className="font-medium underline underline-offset-2">
               {t("openRequirements")}
@@ -308,10 +309,13 @@ function PreviewBody({ preview, edits, classCount, yearName, planName, onEdit }:
           : t("summary", {
               rows: preview.rows.length,
               classes: classCount,
-              skipped: preview.skipped.length,
+              skipped: existingCount(preview),
               grades: preview.gradeLevels.map((value) => grade(t, value)).join(", "),
             })}
       </p>
+      {preview.skipped.some((row) => row.reason === "ALTERNATIVE") ? (
+        <p className="text-sm text-foreground">{t("alternativesNote")}</p>
+      ) : null}
 
       {preview.rows.length > 0 ? (
         <div className="max-h-[45vh] overflow-auto rounded-md border">
@@ -383,7 +387,17 @@ function PreviewBody({ preview, edits, classCount, yearName, planName, onEdit }:
           <summary className="cursor-pointer font-medium">{t("skippedTitle", { count: preview.skipped.length })}</summary>
           <ul className="mt-2 space-y-0.5 text-foreground">
             {preview.skipped.map((row) => (
-              <li key={rowKey(row)}>{t("skippedRow", { group: row.groupName, subject: row.subjectName })}</li>
+              <li key={rowKey(row)}>
+                {row.reason === "EXISTS"
+                  ? t("skippedRow", { group: row.groupName, subject: row.subjectName })
+                  : row.alternativeTo === null
+                    ? t("skippedLanguage", { group: row.groupName, subject: row.subjectName })
+                    : t("skippedAlternative", {
+                        group: row.groupName,
+                        subject: row.subjectName,
+                        other: row.alternativeTo,
+                      })}
+              </li>
             ))}
           </ul>
         </details>

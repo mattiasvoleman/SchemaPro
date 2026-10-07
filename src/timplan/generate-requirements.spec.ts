@@ -29,6 +29,12 @@ const input = (over: Partial<GenerateInput> = {}): GenerateInput => ({
     [EN, 'Engelska'],
     [BL, 'Bild'],
   ]),
+  nationalCodes: new Map([
+    [MA, 'MA'],
+    [SV, 'SV_SVA'],
+    [EN, 'EN'],
+    [BL, 'BL'],
+  ]),
   existing: [],
   minutesPerLesson: 60,
   overrides: [],
@@ -61,7 +67,7 @@ describe('proposeRequirements', () => {
   it('skips a (class, subject) the year already has, naming it, and never proposes to change it', () => {
     const { rows, skipped } = proposeRequirements(input({ existing: [{ studentGroupId: A7, subjectId: MA }] }));
     expect(skipped).toEqual([
-      { studentGroupId: A7, groupName: '7A', subjectId: MA, subjectName: 'Matematik', gradeLevel: 7, reason: 'EXISTS' },
+      { studentGroupId: A7, groupName: '7A', subjectId: MA, subjectName: 'Matematik', gradeLevel: 7, reason: 'EXISTS', alternativeCode: null, alternativeTo: null },
     ]);
     expect(rows.some((row) => row.studentGroupId === A7 && row.subjectId === MA)).toBe(false);
   });
@@ -111,5 +117,79 @@ describe('proposeRequirements', () => {
 
   it('proposes nothing for a year that attaches no årskurs to the plan', () => {
     expect(proposeRequirements(input({ gradeLevels: [] }))).toEqual({ rows: [], skipped: [] });
+  });
+
+  describe('alternatives (SV_SVA, M2)', () => {
+    // Review reproduction (P2 review, all three lenses): every alternative
+    // subject became a class post — Svenska AND SvA, Spanska AND Tyska AND
+    // Franska on 7A — 900 min/week for a pupil's 480, which the coverage
+    // then read as OVER twice.
+    const SVA = 'd5d5d5d5-d5d5-4d5d-8d5d-d5d5d5d5d5d5';
+    const ES = 'd6d6d6d6-d6d6-4d6d-8d6d-d6d6d6d6d6d6';
+    const DE = 'd7d7d7d7-d7d7-4d7d-8d7d-d7d7d7d7d7d7';
+    const alternatives = (over: Partial<GenerateInput> = {}): GenerateInput =>
+      input({
+        classes: [{ id: A7, name: '7A', gradeLevel: 7 }],
+        entries: [
+          { subjectId: MA, gradeLevel: 7, minutesPerWeek: 180 },
+          { subjectId: SV, gradeLevel: 7, minutesPerWeek: 180 },
+          { subjectId: SVA, gradeLevel: 7, minutesPerWeek: 180 },
+          { subjectId: ES, gradeLevel: 7, minutesPerWeek: 120 },
+          { subjectId: DE, gradeLevel: 7, minutesPerWeek: 120 },
+        ],
+        subjectNames: new Map([
+          [MA, 'Matematik'],
+          [SV, 'Svenska'],
+          [SVA, 'Svenska som andraspråk'],
+          [ES, 'Spanska'],
+          [DE, 'Tyska'],
+        ]),
+        nationalCodes: new Map([
+          [MA, 'MA'],
+          [SV, 'SV_SVA'],
+          [SVA, 'SV_SVA'],
+          [ES, 'M2'],
+          [DE, 'M2'],
+        ]),
+        ...over,
+      });
+
+    it('gives the class one subject of SV_SVA and no språkval, and names the rest as alternatives', () => {
+      const { rows, skipped } = proposeRequirements(alternatives());
+      expect(rows.map((row) => [row.subjectName, row.lessonsPerWeek])).toEqual([
+        ['Matematik', 3],
+        ['Svenska', 3],
+      ]);
+      expect(skipped.map((row) => [row.subjectName, row.reason, row.alternativeCode, row.alternativeTo])).toEqual([
+        ['Spanska', 'ALTERNATIVE', 'M2', null],
+        ['Svenska som andraspråk', 'ALTERNATIVE', 'SV_SVA', 'Svenska'],
+        ['Tyska', 'ALTERNATIVE', 'M2', null],
+      ]);
+    });
+
+    it('takes the SV_SVA subject with the highest target when the plan gives them different minutes', () => {
+      const { rows } = proposeRequirements(
+        alternatives({
+          entries: [
+            { subjectId: SV, gradeLevel: 7, minutesPerWeek: 160 },
+            { subjectId: SVA, gradeLevel: 7, minutesPerWeek: 200 },
+          ],
+        }),
+      );
+      expect(rows.map((row) => [row.subjectName, row.targetMinutesPerWeek])).toEqual([
+        ['Svenska som andraspråk', 200],
+      ]);
+    });
+
+    it('proposes nothing in SV_SVA when the class already has either subject', () => {
+      const { rows, skipped } = proposeRequirements(
+        alternatives({ existing: [{ studentGroupId: A7, subjectId: SVA }] }),
+      );
+      expect(rows.map((row) => row.subjectName)).toEqual(['Matematik']);
+      expect(skipped.filter((row) => row.alternativeCode === 'SV_SVA').map((row) => [row.subjectName, row.reason, row.alternativeTo])).toEqual([
+        ['Svenska', 'ALTERNATIVE', 'Svenska som andraspråk'],
+        ['Svenska som andraspråk', 'EXISTS', null],
+      ]);
+    });
   });
 });
