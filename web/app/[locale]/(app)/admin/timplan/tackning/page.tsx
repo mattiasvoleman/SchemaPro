@@ -560,6 +560,11 @@ function PupilLineItem({
           {t("pupilDouble", { subjects: subjectNames(line.doublePlannedSubjectIds) })}
         </span>
       ) : null}
+      {line.alternativeSubjectIds.length > 0 ? (
+        <span className="block text-xs text-foreground">
+          {t("pupilAlternatives", { subjects: subjectNames(line.alternativeSubjectIds) })}
+        </span>
+      ) : null}
     </li>
   );
 }

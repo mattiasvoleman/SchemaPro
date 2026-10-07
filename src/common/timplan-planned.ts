@@ -96,7 +96,13 @@ import { TIMPLAN_ALTERNATIVE_CODES } from './timplan-coverage';
  * TEACHING_GROUP the pupil is a member of, against the targets of the home
  * class's årskurs. A pupil getting the SAME subject from two groups (7A
  * matematik and Ma-fördjupning) is TIMPLAN_PUPIL_DOUBLE_PLANNED rather than
- * silently summed into "on target". TIMPLAN_PUPIL_UNDERPLANNED, and a place
+ * silently summed into "on target" — and so, with the alternativeCode set, is
+ * a pupil getting two DIFFERENT subjects of an alternative line from their
+ * teaching groups (Spanska 8 and Tyska 8, a Svenska group and an SvA group):
+ * the line is met on the sum, but the pupil reads one OR the other. The home
+ * class's rows are not counted there — class Svenska with an SvA-grupp on top
+ * is the support model, and two alternatives on the class are the class's
+ * OVER. TIMPLAN_PUPIL_UNDERPLANNED, and a place
  * in the pupil list, are for a pupil's OWN finding: below target where the
  * class's line is not already UNDER/UNPLANNED (the språkval pupil in no
  * group, the nivågrupp that took minutes the class did not give back). A
@@ -256,6 +262,12 @@ export interface PupilLine {
   status: 'MET' | 'UNDER' | 'NO_TARGET';
   sources: PupilSource[];
   doublePlannedSubjectIds: string[];
+  /**
+   * An alternative line (SV_SVA, M2) whose DIFFERENT subjects reach the pupil
+   * through two or more of their teaching groups — two språkval, or a
+   * Svenska group and an SvA group; empty otherwise.
+   */
+  alternativeSubjectIds: string[];
 }
 
 export interface PlannedPupil {
@@ -794,6 +806,42 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
             });
           }
         }
+        // An alternative is read INSTEAD of its partner: two of its subjects
+        // from the pupil's teaching groups (Spanska 8 and Tyska 8 on one
+        // roster) is a roster to check, not a pupil comfortably on target.
+        // The home class's rows are left out: a class Svenska with an
+        // SvA-grupp on top is the support model the plan allows ("Svenska 200
+        // + SvA-grupp 60"), and a class planning two alternatives is the
+        // class's own OVER.
+        const alternatives: string[] = [];
+        if (draft.alternativeCode !== null) {
+          const fromGroups = new Map<string, string[]>();
+          for (const subjectId of subjectIds) {
+            const groupIds = [...(result.perSource.get(subjectId)?.entries() ?? [])]
+              .filter(([groupId, minutes]) => groupId !== classId && Math.round(minutes) > 0)
+              .map(([groupId]) => groupId);
+            if (groupIds.length > 0) fromGroups.set(subjectId, groupIds);
+          }
+          if (fromGroups.size > 1) {
+            alternatives.push(...fromGroups.keys());
+            const groupIds = [...new Set([...fromGroups.values()].flat())].sort(groupOrder);
+            verdicts.push({
+              code: 'TIMPLAN_PUPIL_DOUBLE_PLANNED',
+              severity: 'warning',
+              pupilId: result.pupil.id,
+              studentGroupId: classId,
+              studentGroupIds: groupIds,
+              subjectIds: alternatives,
+              alternativeCode: draft.alternativeCode,
+              params: {
+                groupName: group.name,
+                subjectName: nameOf(alternatives),
+                groupNames: groupIds.map((id) => groupsById.get(id)!.name).join(', '),
+                plannedMinutesPerWeek: planned,
+              },
+            });
+          }
+        }
         // Short because the class is short: the class verdict and its pupil
         // statistics say it, and the line is not repeated per pupil.
         const ownFinding = status === 'UNDER' && !flagged.has(draft.key);
@@ -818,7 +866,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
             });
           }
         }
-        if (!ownFinding && doubles.length === 0) continue;
+        if (!ownFinding && doubles.length === 0 && alternatives.length === 0) continue;
         lines.push({
           key: draft.key,
           alternativeCode: draft.alternativeCode,
@@ -828,6 +876,7 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
           status,
           sources,
           doublePlannedSubjectIds: doubles,
+          alternativeSubjectIds: alternatives,
         });
       }
       if (isBelow) pupilsBelow += 1;

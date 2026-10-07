@@ -36,5 +36,7 @@ export const LANGUAGES = "språkval and SvA in teaching groups";
 export const UNATTACHED_AND_DRAFT = "an årskurs with classes and no plan";
 /** Åk 3 attached to a plan with no minutes for it, and an åk 11 class. */
 export const EMPTY_PLAN = "åk 3 attached to a plan that gives it no minutes";
+/** A pupil on two språkval rosters (8B). */
+export const TWO_ALTERNATIVES = "a pupil on two språkval rosters";
 /** Unplanned, under and over in one class (7B). */
 export const MIXED = "unplanned, underplanned and overplanned";

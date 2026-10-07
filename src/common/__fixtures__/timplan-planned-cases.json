@@ -2728,7 +2728,8 @@
         ],
         "doublePlannedSubjectIds": [
          "00000000-0000-4000-8000-000000000101"
-        ]
+        ],
+        "alternativeSubjectIds": []
        }
       ]
      },
@@ -2748,7 +2749,8 @@
         "plannedMinutesPerWeek": 0,
         "status": "UNDER",
         "sources": [],
-        "doublePlannedSubjectIds": []
+        "doublePlannedSubjectIds": [],
+        "alternativeSubjectIds": []
        }
       ]
      },
@@ -2781,7 +2783,8 @@
         ],
         "doublePlannedSubjectIds": [
          "00000000-0000-4000-8000-000000000105"
-        ]
+        ],
+        "alternativeSubjectIds": []
        }
       ]
      }
@@ -5419,7 +5422,8 @@
         ],
         "doublePlannedSubjectIds": [
          "00000000-0000-4000-8000-000000000101"
-        ]
+        ],
+        "alternativeSubjectIds": []
        }
       ]
      },
@@ -5444,7 +5448,8 @@
           "minutesPerWeek": 120
          }
         ],
-        "doublePlannedSubjectIds": []
+        "doublePlannedSubjectIds": [],
+        "alternativeSubjectIds": []
        }
       ]
      }
@@ -6598,6 +6603,387 @@
        "planName": "Högstadiet 2024",
        "groupCount": 2,
        "groupNames": "3A, 3B"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "name": "a pupil on two språkval rosters is flagged with the alternative named, while class Svenska with an SvA group on top is not",
+   "input": {
+    "year": {
+     "startDate": "2026-08-17",
+     "endDate": "2027-06-11"
+    },
+    "closures": [],
+    "plans": [
+     {
+      "id": "00000000-0000-4000-8000-000000000205",
+      "name": "Grundskolan 2024",
+      "status": "DECIDED",
+      "entries": [
+       {
+        "subjectId": "00000000-0000-4000-8000-000000000105",
+        "gradeLevel": 8,
+        "minutesPerWeek": 100
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000000106",
+        "gradeLevel": 8,
+        "minutesPerWeek": 100
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000000102",
+        "gradeLevel": 8,
+        "minutesPerWeek": 200
+       },
+       {
+        "subjectId": "00000000-0000-4000-8000-000000000103",
+        "gradeLevel": 8,
+        "minutesPerWeek": 200
+       }
+      ]
+     }
+    ],
+    "attachments": [
+     {
+      "gradeLevel": 8,
+      "localTimplanId": "00000000-0000-4000-8000-000000000205"
+     }
+    ],
+    "subjects": [
+     {
+      "id": "00000000-0000-4000-8000-000000000101",
+      "name": "Matematik",
+      "nationalCode": "MA",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000102",
+      "name": "Svenska",
+      "nationalCode": "SV_SVA",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000103",
+      "name": "Svenska som andraspråk",
+      "nationalCode": "SV_SVA",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000104",
+      "name": "Engelska",
+      "nationalCode": "EN",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000105",
+      "name": "Spanska",
+      "nationalCode": "M2",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000106",
+      "name": "Tyska",
+      "nationalCode": "M2",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000107",
+      "name": "Slöjd",
+      "nationalCode": "SL",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000108",
+      "name": "Biologi",
+      "nationalCode": "BI",
+      "countsTowardTimplan": true
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000109",
+      "name": "Mentorstid",
+      "nationalCode": null,
+      "countsTowardTimplan": false
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000110",
+      "name": "Programmering",
+      "nationalCode": null,
+      "countsTowardTimplan": true
+     }
+    ],
+    "groups": [
+     {
+      "id": "00000000-0000-4000-8000-000000000340",
+      "name": "8B",
+      "kind": "CLASS",
+      "gradeLevel": 8
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000341",
+      "name": "Spanska 8",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000342",
+      "name": "Tyska 8",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000343",
+      "name": "SvA 8",
+      "kind": "TEACHING_GROUP",
+      "gradeLevel": null
+     }
+    ],
+    "requirements": [
+     {
+      "id": "00000000-0000-4000-8000-000000000580",
+      "studentGroupId": "00000000-0000-4000-8000-000000000340",
+      "subjectId": "00000000-0000-4000-8000-000000000102",
+      "lessonsPerWeek": 4,
+      "minutesPerLesson": 50,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000581",
+      "studentGroupId": "00000000-0000-4000-8000-000000000341",
+      "subjectId": "00000000-0000-4000-8000-000000000105",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 50,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000582",
+      "studentGroupId": "00000000-0000-4000-8000-000000000342",
+      "subjectId": "00000000-0000-4000-8000-000000000106",
+      "lessonsPerWeek": 2,
+      "minutesPerLesson": 50,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000583",
+      "studentGroupId": "00000000-0000-4000-8000-000000000343",
+      "subjectId": "00000000-0000-4000-8000-000000000103",
+      "lessonsPerWeek": 1,
+      "minutesPerLesson": 60,
+      "recurrence": "ALL_WEEKS",
+      "startDate": null,
+      "endDate": null
+     }
+    ],
+    "pupils": [
+     {
+      "id": "00000000-0000-4000-8000-000000000960",
+      "homeGroupId": "00000000-0000-4000-8000-000000000340",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000000341",
+       "00000000-0000-4000-8000-000000000342"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000961",
+      "homeGroupId": "00000000-0000-4000-8000-000000000340",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000000341",
+       "00000000-0000-4000-8000-000000000343"
+      ]
+     },
+     {
+      "id": "00000000-0000-4000-8000-000000000962",
+      "homeGroupId": "00000000-0000-4000-8000-000000000340",
+      "groupIds": [
+       "00000000-0000-4000-8000-000000000342"
+      ]
+     }
+    ],
+    "includePupils": true
+   },
+   "coverage": {
+    "pupilLevel": true,
+    "groups": [
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000000340",
+      "gradeLevel": 8,
+      "localTimplanId": "00000000-0000-4000-8000-000000000205",
+      "planStatus": "DECIDED",
+      "plannedMinutesPerWeek": 200,
+      "targetMinutesPerWeek": 300,
+      "plannedHours": 143.3,
+      "targetHours": 215,
+      "linesWithTarget": 2,
+      "linesCovered": 2,
+      "pupilCount": 3,
+      "lines": [
+       {
+        "key": "alt:M2",
+        "alternativeCode": "M2",
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000000105",
+         "00000000-0000-4000-8000-000000000106"
+        ],
+        "targetMinutesPerWeek": 100,
+        "plannedMinutesPerWeek": 0,
+        "deltaMinutesPerWeek": -100,
+        "targetHours": 71.7,
+        "plannedHours": 0,
+        "status": "PUPILS",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000000341",
+         "00000000-0000-4000-8000-000000000342"
+        ],
+        "pupils": {
+         "min": 100,
+         "median": 100,
+         "max": 200,
+         "below": 0
+        }
+       },
+       {
+        "key": "alt:SV_SVA",
+        "alternativeCode": "SV_SVA",
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000000102",
+         "00000000-0000-4000-8000-000000000103"
+        ],
+        "targetMinutesPerWeek": 200,
+        "plannedMinutesPerWeek": 200,
+        "deltaMinutesPerWeek": 0,
+        "targetHours": 143.3,
+        "plannedHours": 143.3,
+        "status": "MET",
+        "covered": true,
+        "teachingGroupIds": [
+         "00000000-0000-4000-8000-000000000343"
+        ],
+        "pupils": {
+         "min": 200,
+         "median": 200,
+         "max": 260,
+         "below": 0
+        }
+       }
+      ]
+     }
+    ],
+    "cells": [
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000000340",
+      "subjectId": "00000000-0000-4000-8000-000000000105",
+      "alternativeCode": "M2",
+      "targetMinutesPerWeek": 100,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 71.7,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000000340",
+      "subjectId": "00000000-0000-4000-8000-000000000106",
+      "alternativeCode": "M2",
+      "targetMinutesPerWeek": 100,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 71.7,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "PUPILS"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000000340",
+      "subjectId": "00000000-0000-4000-8000-000000000102",
+      "alternativeCode": "SV_SVA",
+      "targetMinutesPerWeek": 200,
+      "plannedMinutesPerWeek": 200,
+      "targetHours": 143.3,
+      "plannedHours": 143.3,
+      "requirementIds": [
+       "00000000-0000-4000-8000-000000000580"
+      ],
+      "status": "MET"
+     },
+     {
+      "studentGroupId": "00000000-0000-4000-8000-000000000340",
+      "subjectId": "00000000-0000-4000-8000-000000000103",
+      "alternativeCode": "SV_SVA",
+      "targetMinutesPerWeek": 200,
+      "plannedMinutesPerWeek": 0,
+      "targetHours": 143.3,
+      "plannedHours": 0,
+      "requirementIds": [],
+      "status": "MET"
+     }
+    ],
+    "pupils": [
+     {
+      "pupilId": "00000000-0000-4000-8000-000000000960",
+      "homeGroupId": "00000000-0000-4000-8000-000000000340",
+      "gradeLevel": 8,
+      "lines": [
+       {
+        "key": "alt:M2",
+        "alternativeCode": "M2",
+        "subjectIds": [
+         "00000000-0000-4000-8000-000000000105",
+         "00000000-0000-4000-8000-000000000106"
+        ],
+        "targetMinutesPerWeek": 100,
+        "plannedMinutesPerWeek": 200,
+        "status": "MET",
+        "sources": [
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000000341",
+          "subjectId": "00000000-0000-4000-8000-000000000105",
+          "minutesPerWeek": 100
+         },
+         {
+          "studentGroupId": "00000000-0000-4000-8000-000000000342",
+          "subjectId": "00000000-0000-4000-8000-000000000106",
+          "minutesPerWeek": 100
+         }
+        ],
+        "doublePlannedSubjectIds": [],
+        "alternativeSubjectIds": [
+         "00000000-0000-4000-8000-000000000105",
+         "00000000-0000-4000-8000-000000000106"
+        ]
+       }
+      ]
+     }
+    ],
+    "pupilCount": 3,
+    "pupilsBelowTarget": 0,
+    "pupilsOutsideClasses": 0,
+    "verdicts": [
+     {
+      "code": "TIMPLAN_PUPIL_DOUBLE_PLANNED",
+      "severity": "warning",
+      "pupilId": "00000000-0000-4000-8000-000000000960",
+      "studentGroupId": "00000000-0000-4000-8000-000000000340",
+      "studentGroupIds": [
+       "00000000-0000-4000-8000-000000000341",
+       "00000000-0000-4000-8000-000000000342"
+      ],
+      "subjectIds": [
+       "00000000-0000-4000-8000-000000000105",
+       "00000000-0000-4000-8000-000000000106"
+      ],
+      "alternativeCode": "M2",
+      "params": {
+       "groupName": "8B",
+       "subjectName": "Spanska / Tyska",
+       "groupNames": "Spanska 8, Tyska 8",
+       "plannedMinutesPerWeek": 200
       }
      }
     ]

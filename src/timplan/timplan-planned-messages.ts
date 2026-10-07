@@ -51,6 +51,13 @@ export function describePlannedVerdict(verdict: PlannedVerdict): string {
         `${p.deficitMinutesPerWeek} under målet ${min(p.targetMinutesPerWeek)} för ${grade(p.gradeLevel)}.`
       );
     case 'TIMPLAN_PUPIL_DOUBLE_PLANNED':
+      if (verdict.alternativeCode) {
+        return (
+          `En elev i ${p.groupName} läser både ${String(p.subjectName).replace(' / ', ' och ')} ` +
+          `i grupperna ${p.groupNames}, ${min(p.plannedMinutesPerWeek)} sammanlagt. Timplanen räknar dem ` +
+          'som alternativ, så eleven läser normalt det ena — kontrollera att det är avsett.'
+        );
+      }
       return (
         `En elev i ${p.groupName} får ${p.subjectName} från flera grupper (${p.groupNames}), ` +
         `${min(p.plannedMinutesPerWeek)} sammanlagt. Kontrollera att det är avsett.`
