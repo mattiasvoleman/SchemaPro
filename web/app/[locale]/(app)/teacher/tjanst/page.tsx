@@ -152,10 +152,12 @@ export default function MyStaffingPage() {
             <>
               {/* Without a target there is nothing to count AGAINST and no
                   status but "Inget mål": one sentence with the minutes, not
-                  "Inget mål · räknat mot målet 600 min/v · Inget mål". */}
+                  "Inget mål · räknat mot målet 600 min/v · Inget mål". With
+                  no post at all, noEmployment above has already said there
+                  is no target, so only the minutes. */}
               <p>
                 {row.targetMinutesPerWeek === null ? (
-                  t("countedNoTarget", { minutes: row.countedMinutesPerWeek })
+                  t(employment ? "countedNoTarget" : "countedOnly", { minutes: row.countedMinutesPerWeek })
                 ) : (
                   <>
                     {t("target", { minutes: row.targetMinutesPerWeek })}

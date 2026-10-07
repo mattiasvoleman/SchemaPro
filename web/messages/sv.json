@@ -1727,6 +1727,7 @@
     "noEmployment": "Ingen anställning registrerad. Utan den finns inget mål att jämföra med.",
     "target": "Mål {minutes} min/v",
     "countedNoTarget": "Räknad undervisning {minutes} min/v · inget mål att jämföra med",
+    "countedOnly": "Räknad undervisning {minutes} min/v",
     "counted": "räknat mot målet {minutes} min/v",
     "annual": "{hours} h undervisning per läsår, med lov och studiedagar avräknade.",
     "lastYear": "Förra läsåret ({year}): tjänst {percent} % · {minutes} min räknad undervisning",
