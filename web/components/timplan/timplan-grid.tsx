@@ -224,10 +224,11 @@ export function TimplanGrid({
   // Stage time only (förskoleklass is outside), and with or without a pool:
   // the sentence says neither "nothing at all" nor "skolans val".
   const nothingPlanned = !check.total.plannedHours;
-  const poolShown = poolPrinted && !nothingPlanned;
 
   const totalUnder = check.verdicts.some((v) => v.code === "TIMPLAN_TOTAL_BELOW_GUARANTEE");
   const poolOverspent = check.verdicts.some((v) => v.code === "TIMPLAN_SKOLANS_VAL_OVERSPENT");
+  // No colour where no pool figure is printed: TONE_CLASS.none is "".
+  const poolTone: Tone = poolPrinted && !nothingPlanned ? (poolOverspent ? "under" : "met") : "none";
   const footerLit = highlight?.footer === true;
   const span = columns.length;
 
@@ -333,8 +334,8 @@ export function TimplanGrid({
             </th>
             <td
               colSpan={span}
-              data-tone={poolShown ? (poolOverspent ? "under" : "met") : "none"}
-              className={cn("px-3 py-1.5 tabular-nums", poolShown && TONE_CLASS[poolOverspent ? "under" : "met"])}
+              data-tone={poolTone}
+              className={cn("px-3 py-1.5 tabular-nums", TONE_CLASS[poolTone])}
             >
               {nothingPlanned
                 ? t("footerSkolansValEmpty")
