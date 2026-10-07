@@ -14,6 +14,11 @@
  * Versioner and Optimera salar stay separate imports in the page: they are
  * pressed a few times a term, and fetching them with these would load them on
  * every visit.
+ *
+ * The two free-time searches ride along for the same reason: a refused drop
+ * opens the suggestions and the slot finder fills Lägg till, so the page awaits
+ * them from here, where they are usually already loaded, instead of carrying
+ * them in its first load or fetching a second chunk.
  */
 
 export { CreateLessonDialog } from "@/components/schedule/create-lesson-dialog";
@@ -23,3 +28,4 @@ export {
   SharedMoveDialog,
   SuggestPlacementsDialog,
 } from "@/components/schedule/placement-dialogs";
+export { findOpenSlots, suggestPlacements } from "@/lib/placement-search";

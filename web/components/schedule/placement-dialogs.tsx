@@ -11,7 +11,7 @@
 
 import { useTranslations } from "next-intl";
 import { Sparkles } from "lucide-react";
-import type { PlacementSuggestion } from "@/lib/conflicts";
+import type { PlacementSuggestion } from "@/lib/placement-search";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
