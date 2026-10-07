@@ -43,10 +43,13 @@ export interface TeacherSuggestionsProps {
  *
  * THE RANKING IS THE GATEWAY'S and nothing here re-sorts it — behörighet for
  * the group's grades, then already teaching the group, then room left after
- * the row (GET /staffing/suggest-teachers). Each name carries the same badge
- * the timplan's own picker paints (CandidateBadge), so the two places say the
- * same thing about the same person, plus what only this list knows: whether
- * they already teach the group, and whether this row would take them past the
+ * the row (GET /staffing/suggest-teachers). Each name carries the badge the
+ * timplan's own picker paints (CandidateBadge) — the same behörighet — but
+ * with the minutes worded as what is left AFTER this row ("kvar efter
+ * raden"): the picker in the requirements dialog shows the room the teacher
+ * has today, and one string for two numbers made a teacher read "kvar 180"
+ * there and "kvar 60" here. Plus what only this list knows: whether they
+ * already teach the group, and whether this row would take them past the
  * policy's limit.
  *
  * ONE CLICK ASSIGNS. A REFUSE verdict comes back as a 409 and is shown here,
@@ -120,6 +123,7 @@ export function TeacherSuggestions({
                           : { recorded: false }
                       }
                       remaining={remainingOf(candidate)}
+                      afterRow
                     />
                     {candidate.teachesGroupAlready ? (
                       <span className={badgeVariants({ variant: "outline" })}>

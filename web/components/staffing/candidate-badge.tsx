@@ -38,10 +38,18 @@ const KIND_VARIANT: Record<TeacherQualificationKind, "success" | "secondary" | "
 export function CandidateBadge({
   qualification,
   remaining,
+  afterRow = false,
   className,
 }: {
   qualification: CandidateQualification;
   remaining: CandidateRemaining;
+  /**
+   * Whether `remaining` is the room left AFTER taking the row in question
+   * (Föreslå lärare: the gateway's target − (counted + this row)) rather than
+   * the room the teacher has today (the requirements dialog: the report's
+   * saldo). Two different numbers for one person, so two different sentences.
+   */
+  afterRow?: boolean;
   className?: string;
 }) {
   const t = useTranslations("staffing");
@@ -59,11 +67,11 @@ export function CandidateBadge({
       ) : null}
       {remaining.status === "REMAINING" ? (
         <span className="text-xs tabular-nums text-muted-foreground">
-          {t("candidateRemaining", { minutes: remaining.minutes })}
+          {t(afterRow ? "candidateRemainingAfter" : "candidateRemaining", { minutes: remaining.minutes })}
         </span>
       ) : remaining.status === "OVER" ? (
         <span className="text-xs font-medium tabular-nums text-destructive">
-          {t("candidateOver", { minutes: remaining.minutes })}
+          {t(afterRow ? "candidateOverAfter" : "candidateOver", { minutes: remaining.minutes })}
         </span>
       ) : (
         <span className="text-xs text-muted-foreground">{t("candidateNoTarget")}</span>

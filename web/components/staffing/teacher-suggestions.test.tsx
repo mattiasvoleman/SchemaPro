@@ -106,9 +106,12 @@ describe("TeacherSuggestions", () => {
 
     expect(within(item("Anna Ek")).getByText("kindLEGITIMATION")).toBeInTheDocument();
     expect(within(item("Anna Ek")).getByText("suggestTeachesGroup")).toBeInTheDocument();
-    expect(within(item("Anna Ek")).getByText("candidateRemaining(120)")).toBeInTheDocument();
+    // "After this row", in words of its own: the requirements dialog's badge
+    // says "kvar" for the teacher's figure TODAY, and the two used to share
+    // one string while meaning different numbers.
+    expect(within(item("Anna Ek")).getByText("candidateRemainingAfter(120)")).toBeInTheDocument();
 
-    expect(within(item("Bo Alm")).getByText("candidateOver(150)")).toBeInTheDocument();
+    expect(within(item("Bo Alm")).getByText("candidateOverAfter(150)")).toBeInTheDocument();
     expect(within(item("Bo Alm")).getByText("suggestWouldExceed")).toBeInTheDocument();
 
     // No behörighet at all is said in words, never by colour alone.

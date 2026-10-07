@@ -101,9 +101,10 @@ export class StaffingLoadService {
 
   /**
    * Who should take one timplanspost, ranked (suggest-teachers.ts), from the
-   * same rows the report reads and in the same single transaction — so the
-   * "kvar N min/v" on a candidate is the figure the matrix shows for them,
-   * minus this row.
+   * same rows the report reads and in the same single transaction — so a
+   * candidate's remainingMinutesPerWeek is the matrix's saldo for them minus
+   * this row's charge: room left AFTER taking it, which the web words as
+   * "kvar efter raden" to keep it apart from the dialog's "kvar" (today's).
    *
    * Candidates are the school's ACTIVE staff, TEACHER and SCHOOL_ADMIN alike:
    * a teaching rektor is assigned rows here, as the requirement's teacherId
