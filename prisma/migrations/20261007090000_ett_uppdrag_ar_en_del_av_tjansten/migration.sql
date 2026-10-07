@@ -136,13 +136,29 @@
 -- precedent), because a plain SET NULL on a composite key would null schoolId
 -- too, which is NOT NULL, and the delete would fail.
 --
+-- And a slot goes with its uppdrag, by a third trigger rather than by the
+-- service alone: AFTER DELETE ON "TeacherDuties" deletes the constraint the
+-- deleted row linked to, by (blockedConstraintId, schoolId). The service
+-- deletes both in one transaction, but a duty also leaves through the year's
+-- cascade — DELETE /academic-years/:id is a plain tx.academicYear.delete, and
+-- (academicYearId, schoolId) is ON DELETE CASCADE — through the person's, and
+-- through PostgREST. Each of those used to leave a weekly UNAVAILABLE TEACHER
+-- row that no uppdrag showed any more and that TD403 no longer guarded: the
+-- teacher stayed blocked in every later generation for a duty nobody could
+-- see. AFTER, so the trigger only runs for a row the caller's DELETE was
+-- allowed to remove; the constraint's own BEFORE DELETE trigger then finds no
+-- duty linking it (the statement's own delete is visible to it) and lets it
+-- go, and the foreign key's SET NULL has no duty left to touch. When the
+-- person's cascade reaches the constraint first, the delete here finds
+-- nothing, which is no error.
+--
 -- The gateway never meets TD409 on its own paths (it creates the constraint
 -- itself), but its generic constraint PATCH can: an admin changing a linked
 -- constraint's teacher or kind through /availability-constraints. So
 -- rethrowPrismaError maps TD409 to a 409 and TD403 to a 403, the same way it
 -- maps TP409, and the adapter probe proves both through the real adapter.
 --
--- The two triggers are SECURITY DEFINER, owned by the migration owner, for
+-- The three triggers are SECURITY DEFINER, owned by the migration owner, for
 -- 20261006120000's reason: "the linked row is a TEACHER/UNAVAILABLE row for
 -- this user" must be the fact, not what the writer's RLS lets them see. They
 -- live in "app", beside the identity helpers and out of PostgREST's function
@@ -306,7 +322,7 @@ ALTER TABLE "TeacherDuties"
     ON DELETE SET NULL ("blockedConstraintId") ON UPDATE NO ACTION;
 
 -- ---------------------------------------------------------------------------
--- The link guard: the two triggers. See the preamble.
+-- The link guard: the two triggers, and the third that clears up. See the preamble.
 -- ---------------------------------------------------------------------------
 
 CREATE FUNCTION app.teacher_duties_block_is_the_teachers() RETURNS trigger
@@ -386,12 +402,29 @@ BEGIN
 END
 $$;
 
+CREATE FUNCTION app.teacher_duties_take_their_block() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
+BEGIN
+  IF OLD."blockedConstraintId" IS NOT NULL THEN
+    DELETE FROM "AvailabilityConstraints"
+     WHERE "id" = OLD."blockedConstraintId" AND "schoolId" = OLD."schoolId";
+  END IF;
+  -- An AFTER trigger's return value is ignored.
+  RETURN NULL;
+END
+$$;
+
 REVOKE ALL ON FUNCTION app.teacher_duties_block_is_the_teachers() FROM PUBLIC;
 REVOKE ALL ON FUNCTION app.availability_constraints_keep_duty_blocks() FROM PUBLIC;
+REVOKE ALL ON FUNCTION app.teacher_duties_take_their_block() FROM PUBLIC;
 
 CREATE TRIGGER "TeacherDuties_block_is_the_teachers"
     AFTER INSERT OR UPDATE ON "TeacherDuties"
     FOR EACH ROW EXECUTE FUNCTION app.teacher_duties_block_is_the_teachers();
+
+CREATE TRIGGER "TeacherDuties_take_their_block"
+    AFTER DELETE ON "TeacherDuties"
+    FOR EACH ROW EXECUTE FUNCTION app.teacher_duties_take_their_block();
 
 CREATE TRIGGER "AvailabilityConstraints_keep_duty_blocks"
     BEFORE UPDATE OR DELETE ON "AvailabilityConstraints"
