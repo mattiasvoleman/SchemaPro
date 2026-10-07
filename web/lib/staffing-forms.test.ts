@@ -308,6 +308,8 @@ describe("validatePolicyDraft", () => {
       overAllocationMode: "WARN",
       overAllocationTolerancePercent: 10,
       loadModel: "MINUTES",
+      // Always present: PUT replaces the row and absent means ALLOW.
+      unstaffedGeneration: "ALLOW",
     });
     const row = {
       fullTimeTeachingMinutesPerWeek: 1080,
@@ -319,6 +321,7 @@ describe("validatePolicyDraft", () => {
       overAllocationMode: "OFF" as const,
       overAllocationTolerancePercent: 5,
       loadModel: "FACTOR" as const,
+      unstaffedGeneration: "REFUSE" as const,
     };
     expect(policyDraftToBody(policyToDraft(row))).toEqual(row);
     expect(policyToDraft(null)).toBe(DEFAULT_POLICY_DRAFT);
@@ -351,6 +354,13 @@ describe("every refusal has a sentence in both locales", () => {
     "workDaysOutOfRange",
     "semesterHoursOutOfRange",
     "toleranceOutOfRange",
+    "dutyLabelRequired",
+    "dutyLabelTooLong",
+    "dutyMinutesOutOfRange",
+    "dutyNoteTooLong",
+    "slotTimeRequired",
+    "slotOffGrid",
+    "slotReversed",
   ];
   type Messages = { staffing: Record<string, string> };
 

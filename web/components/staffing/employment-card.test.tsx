@@ -32,6 +32,7 @@ const policy: StaffingPolicy = {
   overAllocationMode: "WARN",
   overAllocationTolerancePercent: 10,
   loadModel: "MINUTES",
+  unstaffedGeneration: "ALLOW",
 };
 const employment: TeacherEmployment = {
   id: "e1",

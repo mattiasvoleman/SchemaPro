@@ -8,6 +8,7 @@ import { useSaveStaffingPolicy, useStaffingPolicy } from "@/lib/staffing-queries
 import {
   CHECK_MODES,
   DEFAULT_POLICY_DRAFT,
+  GENERATION_MODES,
   LOAD_MODELS,
   SUGGESTED_FULL_TIME_MINUTES,
   TARGET_MINUTES_MAX,
@@ -17,7 +18,7 @@ import {
   type PolicyDraft,
   type PolicyProblem,
 } from "@/lib/staffing-forms";
-import type { StaffingCheckMode, StaffingLoadModel } from "@/lib/types";
+import type { StaffingCheckMode, StaffingLoadModel, UnstaffedGenerationMode } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,11 +36,12 @@ import {
  * ON /admin/staffing, NOT ON /admin/constraints, although the lunch card it
  * is built like lives there. Tillgänglighet holds the rules the SOLVER reads —
  * lunch, room locks, closed hours — and refuses a week over. Nothing on this
- * card reaches the engine in this phase: the riktmärke is read by the matrix
- * on this page and by nothing else, and the two check modes only begin to
- * refuse at assignment time in Fas 2. A setting whose only reader is the
- * matrix belongs beside the matrix, where the empty-riktmärke notice can
- * point at it without a page change.
+ * card reaches the engine: the riktmärke is read by the matrix on this page,
+ * the two check modes by every write that staffs a timplanspost (Fas 2: WARN
+ * saves and says so, REFUSE does not save), and "Generering utan lärare" by
+ * the generate step's pre-flight on the gateway, before the engine is asked.
+ * Settings whose readers are the staffing writes belong beside the matrix,
+ * where the empty-riktmärke notice can point at them without a page change.
  *
  * THE RIKTMÄRKE HAS NO DEFAULT, by design, and the card says so twice: the
  * field's placeholder reads "tomt = ingen jämförelse", and the suggestion is
@@ -241,6 +243,26 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
             </Select>
             <p className="text-xs text-muted-foreground">{t("modelHint")}</p>
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>{t("unstaffedGeneration")}</Label>
+          <Select
+            value={draft.unstaffedGeneration}
+            onValueChange={(value) => patch({ unstaffedGeneration: value as UnstaffedGenerationMode })}
+          >
+            <SelectTrigger className="max-w-56" aria-label={t("unstaffedGeneration")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {GENERATION_MODES.map((mode) => (
+                <SelectItem key={mode} value={mode}>
+                  {t(`generation${mode}`)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">{t("unstaffedGenerationHint")}</p>
         </div>
 
         {showsRefuse ? <p className="text-sm text-foreground">{t("refuseHint")}</p> : null}

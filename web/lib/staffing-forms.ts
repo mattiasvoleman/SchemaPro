@@ -5,6 +5,7 @@ import type {
   TeacherEmployment,
   TeacherQualification,
   TeacherQualificationKind,
+  UnstaffedGenerationMode,
 } from "@/lib/types";
 
 /*
@@ -90,7 +91,8 @@ export function parseDecimal(value: string, decimals: number): number | null {
   return Number(trimmed);
 }
 
-function wholeNumber(value: string): number | null {
+/** Digits only, as a number; null for anything else. Exported for duty-forms. */
+export function wholeNumber(value: string): number | null {
   const trimmed = value.trim();
   if (!/^\d+$/.test(trimmed)) return null;
   return Number(trimmed);
@@ -323,6 +325,7 @@ export function validityState(
 export const SUGGESTED_FULL_TIME_MINUTES = 1080;
 export const CHECK_MODES: StaffingCheckMode[] = ["OFF", "WARN", "REFUSE"];
 export const LOAD_MODELS: StaffingLoadModel[] = ["MINUTES", "FACTOR"];
+export const GENERATION_MODES: UnstaffedGenerationMode[] = ["ALLOW", "REFUSE"];
 
 export interface PolicyDraft {
   /** "" means no riktmärke — every teacher NO_TARGET. */
@@ -335,6 +338,7 @@ export interface PolicyDraft {
   overAllocationMode: StaffingCheckMode;
   overAllocationTolerancePercent: string;
   loadModel: StaffingLoadModel;
+  unstaffedGeneration: UnstaffedGenerationMode;
 }
 
 /** The table's defaults, as STAFFING_POLICY_DEFAULTS states them on the gateway. */
@@ -348,6 +352,7 @@ export const DEFAULT_POLICY_DRAFT: PolicyDraft = {
   overAllocationMode: "WARN",
   overAllocationTolerancePercent: "10",
   loadModel: "MINUTES",
+  unstaffedGeneration: "ALLOW",
 };
 
 export interface PolicyBody {
@@ -360,6 +365,11 @@ export interface PolicyBody {
   overAllocationMode: StaffingCheckMode;
   overAllocationTolerancePercent: number;
   loadModel: StaffingLoadModel;
+  /**
+   * Always sent: PUT replaces the row, and an omitted field is the default
+   * ALLOW — a card that forgot it would switch a school's refusal off.
+   */
+  unstaffedGeneration: UnstaffedGenerationMode;
 }
 
 export type PolicyProblem =
@@ -417,6 +427,7 @@ export function policyDraftToBody(draft: PolicyDraft): PolicyBody {
     overAllocationMode: draft.overAllocationMode,
     overAllocationTolerancePercent: wholeNumber(draft.overAllocationTolerancePercent) ?? 0,
     loadModel: draft.loadModel,
+    unstaffedGeneration: draft.unstaffedGeneration,
   };
 }
 
@@ -430,6 +441,7 @@ export function policyToDraft(row: {
   overAllocationMode: StaffingCheckMode;
   overAllocationTolerancePercent: number;
   loadModel: StaffingLoadModel;
+  unstaffedGeneration?: UnstaffedGenerationMode;
 } | null | undefined): PolicyDraft {
   if (!row) return DEFAULT_POLICY_DRAFT;
   return {
@@ -445,5 +457,7 @@ export function policyToDraft(row: {
     overAllocationMode: row.overAllocationMode,
     overAllocationTolerancePercent: String(row.overAllocationTolerancePercent),
     loadModel: row.loadModel,
+    // A row read from a gateway older than the column reads as today's rule.
+    unstaffedGeneration: row.unstaffedGeneration ?? "ALLOW",
   };
 }
