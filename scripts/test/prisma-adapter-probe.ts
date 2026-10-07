@@ -51,6 +51,7 @@ import { NotificationsService } from '../../src/notifications/notifications.serv
 import { readYearBoundsForShare } from '../../src/resources/academic-year-bounds';
 import { AcademicYearsService } from '../../src/resources/academic-years.service';
 import { AvailabilityConstraintsService } from '../../src/resources/availability-constraints.service';
+import { Ss12000Service } from '../../src/integration/ss12000.service';
 import type { UpdateAcademicYearDto } from '../../src/resources/dto/academic-year.dto';
 import type {
   CreateFrameTimeDto,
@@ -2157,6 +2158,31 @@ async function runChecks(
     await rollover.executeActivation(thirdYearId, { planHash: stragglers.planHash }, rullAdmin, today);
     assert.equal((await pupil('rull-p4')).group, `${MARKER} 9A`);
     assert.equal((await rollover.previewRollover(thirdYearId, fourth, rullAdmin)).blocking, false);
+  });
+
+  await check('(y) the SS12000 sync keeps a pupil whose roster still names last year\'s class, under the service principal', async () => {
+    // After (x2)/(x3): C is active, rolled from B; p1 is in C's 9A, the
+    // promoted B-8A. A register that has not rolled yet still sends "8A".
+    const sync = new Ss12000Service(api);
+    const home = async () =>
+      (
+        await owner.query<{ group: string | null }>(
+          `SELECT g.name AS "group" FROM "Users" u LEFT JOIN "StudentGroups" g ON g.id = u."studentGroupId" WHERE u.email = $1`,
+          [`${MARKER}-rull-p1@example.invalid`],
+        )
+      ).rows[0].group;
+    assert.equal(await home(), `${MARKER} 9A`);
+    const stale = await sync.importPersons(rull.schoolId, [
+      { email: `${MARKER}-rull-p1@example.invalid`, groupDisplayName: `${MARKER} 8A` },
+    ]);
+    assert.deepEqual(stale, { updated: 1, groupsCreated: 0, guardianLinks: 0, classesKept: 1, needsProvisioning: [] });
+    assert.equal(await home(), `${MARKER} 9A`, 'the sync moved a pupil back into last year\'s name');
+    // The pupil's own class name is a plain match, and moves nothing either.
+    const same = await sync.importPersons(rull.schoolId, [
+      { email: `${MARKER}-rull-p1@example.invalid`, groupDisplayName: `${MARKER} 9A` },
+    ]);
+    assert.equal(same.classesKept, 0);
+    assert.equal(await home(), `${MARKER} 9A`);
   });
 
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
