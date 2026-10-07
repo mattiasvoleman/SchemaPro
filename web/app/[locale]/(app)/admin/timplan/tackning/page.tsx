@@ -337,9 +337,14 @@ function ClassRow({ row, subjects, cell, open, gradeName, onToggle }: ClassRowPr
               "inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium tabular-nums",
               short ? "bg-warning/15 text-warning-foreground dark:text-warning" : "border text-foreground",
             )}
-            aria-label={t("coverageLabel", { covered: summary.linesCovered, total: summary.linesWithTarget })}
           >
-            {summary.linesCovered}/{summary.linesWithTarget}
+            {/* aria-label on a role-less span is not read: the sentence is text. */}
+            <span aria-hidden="true">
+              {summary.linesCovered}/{summary.linesWithTarget}
+            </span>
+            <span className="sr-only">
+              {t("coverageLabel", { covered: summary.linesCovered, total: summary.linesWithTarget })}
+            </span>
           </span>
         )}
       </td>

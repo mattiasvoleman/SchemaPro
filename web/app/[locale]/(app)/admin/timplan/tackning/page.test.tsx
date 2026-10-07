@@ -98,7 +98,11 @@ describe("TimplanCoveragePage", () => {
     expect(within(row).getAllByText("tagPupils").length).toBeGreaterThan(0);
     expect(within(row).getAllByText(/^cell\.pupils\(Spanska/).length).toBe(1);
     // Five of six lines reach every pupil: the M2 line has one pupil short.
-    expect(within(row).getByLabelText("coverageLabel(5|6)")).toHaveTextContent("5/6");
+    // Review reproduction (P2 review, lens webb): the sentence sat in an
+    // aria-label on a role-less <span>, which screen readers do not read;
+    // it is text now, and the visible "5/6" is hidden from them.
+    expect(within(row).getByText("coverageLabel(5|6)")).toHaveClass("sr-only");
+    expect(within(row).getByText("5/6")).toHaveAttribute("aria-hidden", "true");
     expect(screen.getByText("pupilsBelow(5|1)")).toBeInTheDocument();
   });
 
