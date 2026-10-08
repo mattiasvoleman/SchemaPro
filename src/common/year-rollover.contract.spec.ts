@@ -11,6 +11,9 @@ import {
   type DayBounds,
   type GroupChoice,
   type RolloverGroupInput,
+  averageWeeklyMinutes,
+  volumeFindings,
+  type VolumeRow,
 } from './year-rollover';
 
 /**
@@ -85,5 +88,25 @@ describe('the rollover module agrees with the shared fixture', () => {
 
   it('dates Easter the same way', () => {
     for (const row of fixture.easter) expect(easterSunday(row.year)).toBe(row.sunday);
+  });
+
+  // The volume check against the plan: a split row's week is its lessons'
+  // minutes (1 × 80 + 1 × 40 is 120), every week, odd weeks and one term.
+  it.each(fixture.volume.rows.map((row) => [row.name, row] as const))(
+    'averages the week of %s the same way',
+    (_name, row) => {
+      expect(averageWeeklyMinutes(row as VolumeRow, fixture.volume.year)).toBe(row.averageWeeklyMinutes);
+    },
+  );
+
+  it('finds the same volume differences, split rows counted by their lengths', () => {
+    expect(fixture.volume.rows.some((row) => row.lessonLengths.length > 0)).toBe(true);
+    expect(
+      volumeFindings(
+        fixture.volume.rows as VolumeRow[],
+        new Map(Object.entries(fixture.volume.planned)),
+        fixture.volume.year,
+      ),
+    ).toEqual(fixture.volume.findings);
   });
 });

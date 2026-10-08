@@ -126,6 +126,7 @@ export async function readPlannedInput(
       subjectId: true,
       lessonsPerWeek: true,
       minutesPerLesson: true,
+      lessonLengths: true,
       recurrence: true,
       startDate: true,
       endDate: true,
