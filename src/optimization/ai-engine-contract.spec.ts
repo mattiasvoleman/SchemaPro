@@ -97,6 +97,15 @@ const REQUIREMENT_FIELDS = [
   'teacherId',
 ];
 
+/**
+ * A requirement whose remaining lessons have two or more lengths
+ * (lektionslängder, 1 × 80 + 1 × 40) carries its list besides; a uniform one
+ * never does, so REQUIREMENT_FIELDS above stays the uniform pin.
+ * optimization-engine/tests/test_optimize.py's `_field_names(AnonymousRequirement)`
+ * must equal THIS set: the engine declares the optional field either way.
+ */
+const REQUIREMENT_FIELDS_MIXED = [...REQUIREMENT_FIELDS, 'lessonLengths'].sort();
+
 /** No resourceId: a year range names no resource, and sending one is refused. */
 const GRADE_CONSTRAINT_FIELDS = [
   'date',
@@ -151,7 +160,9 @@ describe('AI engine wire contract', () => {
   /** The tx of the most recent buildPayload, for assertions about the QUERIES. */
   let lastTx: ReturnType<typeof createTxMock>;
 
-  const buildPayload = async (): Promise<Record<string, unknown>> => {
+  const buildPayload = async (
+    requirementOverrides: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> => {
     const tx = createTxMock();
     lastTx = tx;
     const prisma = createPrismaMock(tx);
@@ -195,7 +206,10 @@ describe('AI engine wire contract', () => {
         coTeacherId: null,
         lessonsPerWeek: 1,
         minutesPerLesson: 60,
+        // The column's '{}': a uniform row, as the database answers it.
+        lessonLengths: [],
         subject: { requiredRoomTypeId: null },
+        ...requirementOverrides,
       },
     ]);
     // One teacher's arbetstid, with the lunch trio whole and the night set, so
@@ -296,22 +310,31 @@ describe('AI engine wire contract', () => {
         // what it asked for, rather than deleting the year and finding out
         // afterwards. A contract test must exercise the accepting path, or it
         // would only ever be measuring the rejection.
+        // Each at its own length: a split requirement's answer is held to the
+        // lengths it was sent.
         const requirements = payload['requirements'] as Array<{
           id: string;
           lessonsPerWeek: number;
+          minutesPerLesson: number;
+          lessonLengths?: number[];
         }>;
         const rooms = payload['rooms'] as Array<{ id: string }>;
+        const clock = (minutes: number): string =>
+          `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}:00`;
         return of({
           data: {
             requestId: payload['requestId'],
             status: 'OPTIMAL',
             lessons: requirements.flatMap((requirement) =>
-              Array.from({ length: requirement.lessonsPerWeek }, () => ({
+              (
+                requirement.lessonLengths ??
+                Array.from({ length: requirement.lessonsPerWeek }, () => 60)
+              ).map((minutes) => ({
                 requirementId: requirement.id,
                 roomId: rooms[0]?.id ?? null,
                 dayOfWeek: 1,
                 startTime: '08:00:00',
-                endTime: '09:00:00',
+                endTime: clock(480 + minutes),
               })),
             ),
             conflicts: null,
@@ -429,6 +452,13 @@ describe('AI engine wire contract', () => {
     const payload = await buildPayload();
     const requirements = payload['requirements'] as Array<Record<string, unknown>>;
     expect(Object.keys(requirements[0]!).sort()).toEqual(REQUIREMENT_FIELDS);
+  });
+
+  it('sends a split requirement the same fields and its lengths', async () => {
+    const payload = await buildPayload({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+    const requirements = payload['requirements'] as Array<Record<string, unknown>>;
+    expect(Object.keys(requirements[0]!).sort()).toEqual(REQUIREMENT_FIELDS_MIXED);
+    expect(requirements[0]).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
   });
 
   it('sends a year-range lock with bounds and without a resource id', async () => {

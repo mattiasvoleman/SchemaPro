@@ -42,6 +42,16 @@ export interface AnonymousRequirement {
   lessonsPerWeek: number;
   minutesPerLesson: number;
   /**
+   * Lektionslängder: one length per lesson, longest first, sent ONLY when the
+   * lessons left to place have two or more lengths ({80, 40} for idrott
+   * 1 × 80 + 1 × 40); then lessonsPerWeek is its length and minutesPerLesson
+   * its longest. Absent for every uniform requirement, whose entry is byte for
+   * byte what it was before the field existed. The engine places each lesson
+   * at its own length under this one id, so the spread and every refusal
+   * naming a requirement see one subject, not two.
+   */
+  lessonLengths?: number[];
+  /**
    * Minutes the PUPILS are occupied on either side of the lesson — ombyte
    * before idrotten, dusch after — and nothing else.
    *

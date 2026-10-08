@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import request from 'supertest';
+import { of } from 'rxjs';
 import { lockingRead, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './utils/staffing-world';
@@ -3844,6 +3845,61 @@ describe('Planning surface (e2e)', () => {
         .set('x-test-user', admin())
         .send({ academicYearId: IDS.yearA, walkers: 'BOTH' })
         .expect((response) => expect(response.body?.code).not.toBe('ROLLOVER_NOT_ACTIVATED'));
+    });
+
+    it('generates a split timplanspost as one engine entry with its lengths, and stamps each lesson at its own length (admin round-trip)', async () => {
+      const { world } = givenSchool(2098);
+      // 7A's Matematik as 1 × 80 + 1 × 40; every other row stays uniform.
+      const ma7 = world.rows['teachingRequirement']!.find(
+        (row) => row['studentGroupId'] === IDS.g7a && row['subjectId'] === IDS.ma,
+      )!;
+      Object.assign(ma7, { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+      const clock = (minutes: number): string =>
+        `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}:00`;
+      // The engine as it now answers: every lesson at the length it was sent.
+      harness.http.post.mockImplementationOnce((_url: string, payload: AiEngineScheduleRequest) =>
+        of({
+          data: {
+            requestId: payload.requestId,
+            status: 'OPTIMAL',
+            lessons: payload.requirements.flatMap((row, r) =>
+              (row.lessonLengths ?? Array.from({ length: row.lessonsPerWeek }, () => row.minutesPerLesson)).map(
+                (minutes, i) => ({
+                  requirementId: row.id,
+                  roomId: payload.rooms[0]?.id ?? null,
+                  dayOfWeek: 1 + ((r + i) % 5),
+                  startTime: clock(480 + 90 * r),
+                  endTime: clock(480 + 90 * r + minutes),
+                }),
+              ),
+            ),
+            conflicts: null,
+          },
+        }),
+      );
+
+      const started = await request(http())
+        .post('/api/v1/optimization/jobs')
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA })
+        .expect(202);
+      const job = () => world.rows['optimizationJob']?.find((row) => row['id'] === started.body.jobId);
+      for (let tick = 0; tick < 500 && !['SUCCEEDED', 'FAILED'].includes(job()?.['status'] as string); tick++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(job()?.['status']).toBe('SUCCEEDED');
+
+      const [, payload] = harness.http.post.mock.calls[0] as [string, AiEngineScheduleRequest];
+      const split = payload.requirements.filter((row) => row.lessonLengths !== undefined);
+      expect(split).toEqual([expect.objectContaining({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] })]);
+      // Every other entry is the uniform one it always was: no list key.
+      expect(payload.requirements.filter((row) => 'lessonLengths' in row)).toHaveLength(1);
+
+      const stamped = world.rows['masterLesson']!
+        .filter((row) => row['isGenerated'] && row['studentGroupId'] === IDS.g7a && row['subjectId'] === IDS.ma)
+        .map((row) => ((row['endTime'] as Date).getTime() - (row['startTime'] as Date).getTime()) / 60_000)
+        .sort((a, b) => b - a);
+      expect(stamped).toEqual([80, 40]);
     });
 
     it('answers GET rosters with the projection before the activation and CURRENT after it, stores the projected lunch headcount, and keeps a room proposal’s basis across the activation (admin round-trips)', async () => {
