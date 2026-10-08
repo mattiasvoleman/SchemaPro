@@ -31,6 +31,7 @@ import {
 } from "@/lib/lesson-lengths";
 
 export * from "@/lib/csv-export";
+export * from "@/lib/requirements-csv-export";
 
 export interface ParsedCsv {
   headers: string[];
