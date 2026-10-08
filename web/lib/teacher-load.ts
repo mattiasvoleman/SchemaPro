@@ -28,6 +28,7 @@
 // pins that the two give the same week counts; nothing in this file touches a
 // Date of its own.
 
+import { weeklyMinutesOf } from "@/lib/lesson-lengths";
 import {
   peakPerWeekByKey,
   teachingWeeks,
@@ -89,6 +90,12 @@ export interface LoadRequirement extends TeachingPeriod {
   coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /**
+   * The row's lektionslängder, longest first; empty or absent when uniform.
+   * Every minute below is read through weeklyMinutesOf
+   * (lib/lesson-lengths.ts), so 1 × 80 + 1 × 40 charges 120, not 160.
+   */
+  lessonLengths?: readonly number[];
   /** How much of the row the lead is charged, 0..200; 100 = all of it. */
   teacherLoadPercent: number;
   /** How much of the row the co-teacher is charged, 0..200. */
@@ -372,6 +379,7 @@ export function chargedMinutes(
     LoadRequirement,
     | "lessonsPerWeek"
     | "minutesPerLesson"
+    | "lessonLengths"
     | "teacherLoadPercent"
     | "coTeacherLoadPercent"
     | "recurrence"
@@ -382,10 +390,7 @@ export function chargedMinutes(
   year: YearBounds,
   closures: ClosedRange[],
 ): { lesson: number; teacher: number; coTeacher: number } {
-  const lesson =
-    requirement.lessonsPerWeek *
-    requirement.minutesPerLesson *
-    standardWeekWeight(requirement, year, closures);
+  const lesson = weeklyMinutesOf(requirement) * standardWeekWeight(requirement, year, closures);
   return {
     lesson,
     teacher: (lesson * requirement.teacherLoadPercent) / 100,
@@ -459,7 +464,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   const demand = new Map<string, { subjectName: string; minutes: number; count: number }>();
 
   for (const requirement of input.requirements) {
-    const weeklyMinutes = requirement.lessonsPerWeek * requirement.minutesPerLesson;
+    const weeklyMinutes = weeklyMinutesOf(requirement);
     const charged = chargedMinutes(requirement, year, closures);
     const yearMinutes =
       weeklyMinutes *

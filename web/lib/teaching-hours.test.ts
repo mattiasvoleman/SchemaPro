@@ -927,6 +927,17 @@ describe("annualMinutes", () => {
     ).toBe(0);
   });
 
+  it("charges a split row its lessons' minutes, not count × longest", () => {
+    // Lektionslängder: idrott 1 × 80 + 1 × 40 is 120 a week, not 2 × 80.
+    expect(
+      annualMinutes(req({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] }), YEAR),
+    ).toBe(ALL_WEEKS_IN_YEAR * 120);
+    // An empty list is a uniform row, counted exactly as before.
+    expect(
+      annualMinutes(req({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [] }), YEAR),
+    ).toBe(ALL_WEEKS_IN_YEAR * 2 * 80);
+  });
+
   it("is 0 when either factor is zero", () => {
     expect(annualMinutes(req({ lessonsPerWeek: 0 }), YEAR)).toBe(0);
     expect(annualMinutes(req({ minutesPerLesson: 0 }), YEAR)).toBe(0);
