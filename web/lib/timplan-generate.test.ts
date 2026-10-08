@@ -7,6 +7,7 @@ import {
   parseLessons,
   rowKey,
   suggestLessonLength,
+  uniformEdit,
   type GenerateProposedRow,
   type RowEdit,
 } from "./timplan-generate";
@@ -46,6 +47,61 @@ describe("suggestLessonLength", () => {
     expect(suggestLessonLength([{ minutesPerLesson: 47 }, { minutesPerLesson: 47 }, { minutesPerLesson: 300 }])).toBe(
       DEFAULT_LESSON_MINUTES,
     );
+  });
+});
+
+describe("suggestLessonLength with lektionslängder", () => {
+  it("shares a split post's one vote among its lengths, by their lessons", () => {
+    // 1 × 80 + 1 × 40 gives 80 and 40 half a vote each; one 60-post is a
+    // whole vote, so 60 wins where count × longest would have tied 80 with it.
+    expect(
+      suggestLessonLength([
+        { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] },
+        { lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] },
+      ]),
+    ).toBe(60);
+    // 55: ⅓ + ⅓ + 1 beats 60: ⅔ + ⅔. Read as minutesPerLesson alone, the two
+    // split posts would have been two whole votes for 60.
+    expect(
+      suggestLessonLength([
+        { lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [60, 60, 55] },
+        { lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [60, 60, 55] },
+        { lessonsPerWeek: 1, minutesPerLesson: 55, lessonLengths: [] },
+      ]),
+    ).toBe(55);
+  });
+
+  it("counts a uniform post exactly as before, whatever its lessons", () => {
+    expect(
+      suggestLessonLength([
+        { lessonsPerWeek: 5, minutesPerLesson: 60, lessonLengths: [] },
+        { lessonsPerWeek: 1, minutesPerLesson: 40 },
+        { lessonsPerWeek: 1, minutesPerLesson: 40 },
+      ]),
+    ).toBe(40);
+  });
+});
+
+describe("a split row in the preview", () => {
+  const split = row({ lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [60, 60, 55], plannedMinutesPerWeek: 175, surplusMinutesPerWeek: 0 });
+
+  it("is worth its lessons' minutes while untouched, and is not an override", () => {
+    expect(editedRow(split, undefined)).toEqual({ lessons: 3, minutes: 60, planned: 175, surplus: 0, changed: false });
+    expect(overridesFrom([split], new Map())).toEqual([]);
+  });
+
+  it("made uniform is a change even at its own count and longest, and goes out as an override", () => {
+    const edit = uniformEdit(split, 60);
+    expect(edit).toEqual({ lessons: "3", minutes: "60" });
+    expect(editedRow(split, edit)).toMatchObject({ planned: 180, surplus: 5, changed: true });
+    expect(overridesFrom([split], new Map([[rowKey(split), edit]]))).toEqual([
+      { studentGroupId: "g-7a", subjectId: "s-ma", lessonsPerWeek: 3, minutesPerLesson: 60 },
+    ]);
+  });
+
+  it("makes a row uniform at ceil(target / length), at most 40 lessons", () => {
+    expect(uniformEdit({ targetMinutesPerWeek: 200 }, 60)).toEqual({ lessons: "4", minutes: "60" });
+    expect(uniformEdit({ targetMinutesPerWeek: 5000 }, 15)).toEqual({ lessons: "40", minutes: "15" });
   });
 });
 

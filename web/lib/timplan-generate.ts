@@ -6,6 +6,8 @@
 // a row the admin changed, so the surplus beside it is the one the apply
 // will create.
 
+import { isMixed, lengthPartsOf, lessonCountOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
+
 /** The length the dialog falls back to when the year has no posts yet. */
 export const DEFAULT_LESSON_MINUTES = 60;
 export const MIN_LESSON_MINUTES = 15;
@@ -20,12 +22,26 @@ export const MAX_LESSONS_PER_WEEK = 40;
  * one), and the length a school already writes its posts in is a better guess
  * than any constant. A tie goes to the shorter length — more, shorter lessons
  * overshoot a target by less.
+ *
+ * Each post is ONE vote, as it always was. A split post (1 × 80 + 1 × 40)
+ * shares its vote among its lengths by their lessons — half to 80, half to
+ * 40 — rather than giving the whole of it to its longest, which is what
+ * minutesPerLesson alone would have said. A uniform post votes exactly as
+ * before, so a school that never splits gets the suggestion it always got.
  */
-export function suggestLessonLength(requirements: readonly { minutesPerLesson: number }[]): number {
+export function suggestLessonLength(
+  requirements: readonly { lessonsPerWeek?: number; minutesPerLesson: number; lessonLengths?: readonly number[] }[],
+): number {
   const counts = new Map<number, number>();
   for (const row of requirements) {
-    if (lessonLengthProblem(String(row.minutesPerLesson)) !== null) continue;
-    counts.set(row.minutesPerLesson, (counts.get(row.minutesPerLesson) ?? 0) + 1);
+    const parts = row.lessonLengths && row.lessonLengths.length > 0 && row.lessonsPerWeek !== undefined
+      ? lengthPartsOf({ lessonsPerWeek: row.lessonsPerWeek, minutesPerLesson: row.minutesPerLesson, lessonLengths: row.lessonLengths })
+      : [{ count: 1, minutes: row.minutesPerLesson }];
+    const lessons = parts.reduce((sum, part) => sum + part.count, 0);
+    for (const part of parts) {
+      if (lessonLengthProblem(String(part.minutes)) !== null) continue;
+      counts.set(part.minutes, (counts.get(part.minutes) ?? 0) + part.count / lessons);
+    }
   }
   let best: number | null = null;
   let bestCount = 0;
@@ -66,8 +82,15 @@ export interface GenerateProposedRow {
   subjectName: string;
   gradeLevel: number;
   targetMinutesPerWeek: number;
+  /** The lessons a week; on a split row, the list's length. */
   lessonsPerWeek: number;
+  /** The length; on a split row, the longest. */
   minutesPerLesson: number;
+  /**
+   * Only on a split row (remainder SPLIT): one length per lesson, longest
+   * first — 175 at 60 is [60, 60, 55].
+   */
+  lessonLengths?: number[];
   plannedMinutesPerWeek: number;
   surplusMinutesPerWeek: number;
   overridden: boolean;
@@ -98,6 +121,8 @@ export interface GenerateRequirementsResponse {
   academicYearId: string;
   gradeLevels: number[];
   minutesPerLesson: number;
+  /** Echoed only when the request stated it; an omitted one is ROUND_UP. */
+  remainder?: Remainder;
   dryRun: boolean;
   created: number;
   rows: GenerateProposedRow[];
@@ -111,9 +136,18 @@ export interface GenerateOverride {
   minutesPerLesson: number;
 }
 
+/**
+ * What the minutes that do not fill a whole lesson become: SPLIT meets the
+ * target with up to two lengths (175 at 60 is 2 × 60 + 1 × 55), ROUND_UP adds
+ * a whole lesson (3 × 60, 5 over). The gateway reads an omitted field as
+ * ROUND_UP; the dialog always states it.
+ */
+export type Remainder = "SPLIT" | "ROUND_UP";
+
 export interface GenerateBody {
   academicYearId: string;
   minutesPerLesson: number;
+  remainder?: Remainder;
   dryRun: boolean;
   overrides?: GenerateOverride[];
 }
@@ -148,15 +182,23 @@ export interface EditedRow {
  * A preview row after the admin's edit: the same arithmetic the gateway's
  * proposal uses (lessons × length against the target), so the surplus beside
  * an edited row is the one the apply will create.
+ *
+ * An unedited split row is worth its lessons' minutes (weeklyMinutesOf). An
+ * edit is always uniform — "Gör enhetlig" is the only edit a split row
+ * offers, and the override is lessons × minutes — so ANY edit of a split row
+ * is a change, even one whose count and length equal the row's count and
+ * longest: without it, 2 × 60 + 1 × 55 made uniform at 3 × 60 would be sent
+ * as no override at all, and the apply would create the split.
  */
 export function editedRow(row: GenerateProposedRow, edit: RowEdit | undefined): EditedRow {
-  const lessons = edit ? parseLessons(edit.lessons) : row.lessonsPerWeek;
+  const lessons = edit ? parseLessons(edit.lessons) : lessonCountOf(row);
   const minutes = edit
     ? lessonLengthProblem(edit.minutes) === null
       ? Number(edit.minutes.trim())
       : null
     : row.minutesPerLesson;
-  const planned = lessons !== null && minutes !== null ? lessons * minutes : null;
+  const planned =
+    lessons !== null && minutes !== null ? (edit ? lessons * minutes : weeklyMinutesOf(row)) : null;
   return {
     lessons,
     minutes,
@@ -164,7 +206,8 @@ export function editedRow(row: GenerateProposedRow, edit: RowEdit | undefined): 
     surplus: planned === null ? null : planned - row.targetMinutesPerWeek,
     changed:
       edit !== undefined &&
-      (edit.lessons.trim() !== String(row.lessonsPerWeek) ||
+      (isMixed(row) ||
+        edit.lessons.trim() !== String(row.lessonsPerWeek) ||
         edit.minutes.trim() !== String(row.minutesPerLesson)),
   };
 }
@@ -191,4 +234,14 @@ export function overridesFrom(
     });
   }
   return overrides;
+}
+
+/**
+ * "Gör enhetlig" on a split row: the uniform post at the chosen length that
+ * the round-up rule would have proposed — ceil(target / length) lessons,
+ * at most 40. The admin sees it in the row's own fields and may change it.
+ */
+export function uniformEdit(row: Pick<GenerateProposedRow, "targetMinutesPerWeek">, length: number): RowEdit {
+  const lessons = Math.min(MAX_LESSONS_PER_WEEK, Math.max(1, Math.ceil(row.targetMinutesPerWeek / length)));
+  return { lessons: String(lessons), minutes: String(length) };
 }
