@@ -665,10 +665,27 @@
     poster oftast har, annars 60 minuter — och tryck
     <span class="ui">Förhandsvisa</span>. Förhandsvisningen listar varje post
     som skulle skapas: klass, ämne, planens minuter och lektioner gånger
-    minuter. Antalet lektioner avrundas uppåt så att posten når målet, och
-    skillnaden står bredvid: 175 minuter blir 3 × 60, <em>+5</em>. Du kan
-    ändra lektioner och längd på en rad innan du skapar; längden ska vara
-    15–240 minuter i steg om fem.
+    minuter, med skillnaden mot målet bredvid.
+  </p>
+  <p>
+    Rutan <span class="ui">Dela upp resten i en kortare lektion</span> är
+    ikryssad från början. Då når posten målet utan överskott där det går:
+    175 minuter vid 60 blir <em>2 × 60 + 1 × 55</em>, och skillnaden är 0.
+    En rest på högst halva lektionslängden blir inte en egen kort lektion —
+    en lektion på tio eller tjugo minuter har ingen plats i en skoldag — utan
+    läggs på en av de andra: 200 minuter vid 60 blir <em>2 × 60 + 1 × 80</em>.
+    En uppdelad rad har knappen <span class="ui">Gör enhetlig</span>, som gör
+    den till hela lektioner i stället (3 × 60, <em>+5</em>); <span
+    class="ui">Dela upp igen</span> ångrar det. Kryssar du ur rutan avrundas
+    antalet lektioner uppåt på alla rader, som tidigare. En vikt lektion som
+    blir längre än skolans vanliga kan vara för lång för en snäv ramtid eller
+    rast; då säger schemaläggningen vilken post det gäller, och
+    <span class="ui">Gör enhetlig</span> eller längderna i postens dialog
+    (4.2) är lösningen.
+  </p>
+  <p>
+    Du kan ändra lektioner och längd på en enhetlig rad innan du skapar;
+    längden ska vara 15–240 minuter i steg om fem.
   </p>
   <p>
     Bara det som saknas skapas. En klass som redan har en post i ämnet hoppas
@@ -728,6 +745,21 @@
     och ämne.
   </p>
   <p>
+    <strong>Alla lektioner behöver inte vara lika långa.</strong> Idrott kan
+    vara en lektion på 80 minuter och en på 40, matematik två på 60 och en på
+    40. Tryck <span class="ui">Lägg till en längd</span> under fälten i
+    postens dialog: en rad till med lektioner och minuter dyker upp, och du
+    skriver den andra längden där. Högst tre olika längder per post, och
+    varje längd 15–240 minuter i steg om fem. Under raderna står vad posten
+    blir, till exempel <em>2 lektioner, 120 minuter i veckan: 1 lektion à
+    80 minuter och 1 lektion à 40 minuter</em>. Rutan i matrisen visar
+    <em>1×80 + 1×40</em>, och timmarna, målet och tjänstefördelningen räknar
+    120 minuter — inte två lektioner på 80. Schemaläggningen lägger varje
+    lektion med sin egen längd. Tar du bort den extra raden blir posten
+    enhetlig igen. En post med en enda längd ser ut och fungerar precis som
+    förut.
+  </p>
+  <p>
     <strong>Alla lektioner behöver inte ligga varje vecka.</strong> I dialogen
     för en lektion väljer du under <span class="ui">Veckor</span> mellan
     <em>varje vecka</em>, <em>udda veckor</em> och <em>jämna veckor</em>.
@@ -774,6 +806,23 @@
     <em>medlarare_procent</em>; en tom cell betyder 100, och en fil utan
     kolumnerna lämnar procentsatserna orörda.
   </p>
+  <p>
+    En post med flera lektionslängder skrivs i filen i kolumnen
+    <em>lektionslangder</em>, till exempel <em>1x80+1x40</em> (× och * går
+    också, och <em>80+40</em> betyder detsamma). Exporten lägger bara till
+    kolumnen, sist, när någon post har flera längder; annars är filen
+    densamma som förut. Vid import gäller:
+  </p>
+  <ul>
+    <li>en ifylld cell är postens längder — <em>lektioner_per_vecka</em> och
+      <em>minuter_per_lektion</em> kan då lämnas tomma och räknas fram, och
+      står de där måste de stämma med cellen;</li>
+    <li>en tom cell gör posten enhetlig med de lektioner och minuter raden
+      säger;</li>
+    <li>en fil utan kolumnen ändrar inga längder: en post med flera längder
+      behåller dem så länge raden säger samma antal lektioner och samma
+      längsta lektion, och blir enhetlig om raden säger något annat.</li>
+  </ul>
   <p>
     När du sparar en post med en lärare frågar SchemaPro skolans inställningar
     för tjänstefördelning: har läraren behörighet i ämnet för gruppens
@@ -1769,7 +1818,8 @@
   </table>
   <p>
     Timplansposterna följer <em>årskullen</em>: 7A:s poster blir 8A:s, med
-    samma lärare. Perioder flyttas hela veckor, och en period som slutar
+    samma lärare och samma lektionslängder (1 × 80 + 1 × 40 förblir det).
+    Perioder flyttas hela veckor, och en period som slutar
     på läsårets sista dag slutar på det nya läsårets sista dag. Skiljer sig
     en klass minuter från den beslutade timplanen för årskursen den flyttas
     upp till, sägs det i guiden.
