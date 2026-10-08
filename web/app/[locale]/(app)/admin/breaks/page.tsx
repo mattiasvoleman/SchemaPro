@@ -75,16 +75,36 @@
 //
 // Nothing here has met a real screen reader or axe: the route is behind a
 // Supabase session and e2e/a11y.spec.ts scans public routes only.
+//
+// TILLGODORÄKNAD TID SITS NEXT TO THE DAYS IT USUALLY BELONGS TO. A
+// friluftsdag is most often entered here as a lov for åk 7–9 — the timetable
+// stops, nothing is published — and then the school decides whether the day
+// counts as undervisningstid: Skolinspektionen's finding is that most schools
+// never have. Each break row offers "Räkna tid för dagen", which opens the
+// credit dialog on that day (components/timplan/credit-dialog.tsx, fetched
+// with lazy() the first time), and a credit dated inside a break is said
+// under it ("Räknas som 300 min Idrott och hälsa, åk 7–9"). The section
+// below the table lists every credit of the year, whether or not a lov
+// covers its day. Credits are dated, so they stay with their year; the
+// rollover carries the lov and not the decisions.
 
-import { useMemo, useState } from "react";
+import { Suspense, lazy, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { CalendarOff, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
 import {
   useAcademicYears,
+  useGroups,
   useSchoolBreakActions,
   useSchoolBreaks,
+  useSubjects,
 } from "@/lib/queries";
+import {
+  creditsInside,
+  useTimplanCreditActions,
+  useTimplanCredits,
+  type TimplanCredit,
+} from "@/lib/timplan-credit-queries";
 import type { BreakKind, SchoolBreak } from "@/lib/types";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -120,6 +140,17 @@ import {
 } from "@/components/ui/table";
 
 const KINDS: BreakKind[] = ["HOLIDAY", "STAFF_DAY"];
+
+const CreditDialog = lazy(() =>
+  import("@/components/timplan/credit-dialog").then((module) => ({ default: module.CreditDialog })),
+);
+
+/** The credit dialog's state: closed, or open on a credit or a day. */
+interface CreditDialogState {
+  open: boolean;
+  editing: TimplanCredit | null;
+  prefill: { name: string; date: string } | null;
+}
 
 /**
  * Whether the break carries a year span at all.
@@ -192,6 +223,32 @@ export default function BreaksPage() {
   const [form, setForm] = useState<BreakForm>(EMPTY_FORM);
   const [notice, setNotice] = useState<RemovalNotice | null>(null);
 
+  const { data: credits, isError: creditsFailed } = useTimplanCredits(activeYearId);
+  const creditActions = useTimplanCreditActions();
+  const { data: subjects } = useSubjects();
+  const { data: groups } = useGroups();
+  const [creditDialog, setCreditDialog] = useState<CreditDialogState>({
+    open: false,
+    editing: null,
+    prefill: null,
+  });
+  // Mounted from its first open onward, so lazy() fetches nothing before it.
+  const [creditDialogUsed, setCreditDialogUsed] = useState(false);
+  const [deletingCredit, setDeletingCredit] = useState<TimplanCredit | null>(null);
+  const openCredit = (editing: TimplanCredit | null, prefill: CreditDialogState["prefill"] = null) => {
+    setCreditDialogUsed(true);
+    setCreditDialog({ open: true, editing, prefill });
+  };
+  const sortedCredits = useMemo(
+    () => [...(credits ?? [])].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : 1)),
+    [credits],
+  );
+  const subjectById = useMemo(() => new Map((subjects ?? []).map((subject) => [subject.id, subject])), [subjects]);
+  const yearGroups = useMemo(
+    () => (groups ?? []).filter((group) => group.academicYearId === activeYearId),
+    [groups, activeYearId],
+  );
+
   const year = useMemo(
     () => years?.find((entry) => entry.id === activeYearId) ?? null,
     [years, activeYearId],
@@ -227,6 +284,34 @@ export default function BreaksPage() {
     return min === max
       ? tGrades("grade", { grade: min })
       : t("gradeRange", { min, max });
+  };
+
+  /** Whom a credit reaches: the whole school, an årskurs span, or one group. */
+  const creditScopeLabel = (credit: TimplanCredit): string => {
+    if (credit.studentGroupId !== null) {
+      return yearGroups.find((group) => group.id === credit.studentGroupId)?.name ?? credit.studentGroupId;
+    }
+    const { minGradeLevel: min, maxGradeLevel: max } = credit;
+    if (min === null || max === null) return t("gradeAll");
+    return min === max ? tGrades("grade", { grade: min }) : t("gradeRange", { min, max });
+  };
+  /** The credit's subject, "Inget ämne" for none, marked when it does not count. */
+  const creditSubjectLabel = (credit: TimplanCredit): string => {
+    if (credit.subjectId === null) return t("credits.subjectNone");
+    const subject = subjectById.get(credit.subjectId);
+    if (!subject) return "–";
+    return subject.countsTowardTimplan === false ? `${subject.name} (${t("credits.notCounted")})` : subject.name;
+  };
+
+  const confirmDeleteCredit = async () => {
+    if (!deletingCredit) return;
+    try {
+      await creditActions.remove.mutateAsync(deletingCredit.id);
+      toast.success(tCommon("deleted"));
+      setDeletingCredit(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : tCommon("error"));
+    }
   };
 
   /**
@@ -449,7 +534,7 @@ export default function BreaksPage() {
                 <TableHead scope="col" className="text-foreground">
                   {t("gradeSpan")}
                 </TableHead>
-                <TableHead scope="col" className="w-24 text-right text-foreground">
+                <TableHead scope="col" className="w-32 text-right text-foreground">
                   {tCommon("actions")}
                 </TableHead>
               </TableRow>
@@ -465,6 +550,15 @@ export default function BreaksPage() {
                 <TableRow key={schoolBreak.id}>
                   <TableCell className="font-medium text-foreground">
                     {schoolBreak.name}
+                    {creditsInside(sortedCredits, schoolBreak).map((credit) => (
+                      <span key={credit.id} className="block text-xs font-normal leading-relaxed">
+                        {t("credits.countsAs", {
+                          minutes: credit.minutes,
+                          subject: creditSubjectLabel(credit),
+                          scope: creditScopeLabel(credit),
+                        })}
+                      </span>
+                    ))}
                   </TableCell>
                   <TableCell>
                     {/*
@@ -511,6 +605,17 @@ export default function BreaksPage() {
                     <Button
                       variant="ghost"
                       size="icon"
+                      onClick={() =>
+                        openCredit(null, { name: schoolBreak.name, date: schoolBreak.startDate })
+                      }
+                      aria-label={t("credits.addForDayNamed", { name: schoolBreak.name })}
+                      title={t("credits.addForDay")}
+                    >
+                      <Plus />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       onClick={() => openEdit(schoolBreak)}
                       aria-label={t("editNamed", { name: schoolBreak.name })}
                     >
@@ -531,6 +636,100 @@ export default function BreaksPage() {
           </Table>
         </div>
       )}
+
+      {activeYearId && !loading && !failed ? (
+        <section aria-labelledby="credits-title" className="mt-8 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 id="credits-title" className="text-lg font-semibold text-foreground">
+              {t("credits.title")}
+            </h2>
+            <Button variant="outline" onClick={() => openCredit(null)}>
+              <Plus />
+              {t("credits.add")}
+            </Button>
+          </div>
+          <p className="max-w-prose text-sm leading-relaxed text-foreground">{t("credits.intro")}</p>
+          {creditsFailed ? (
+            <p className="text-sm text-foreground">{t("credits.loadFailed")}</p>
+          ) : sortedCredits.length === 0 ? (
+            <p className="text-sm text-foreground">{t("credits.empty")}</p>
+          ) : (
+            <div className="rounded-lg border bg-card">
+              <Table>
+                <caption className="sr-only">{t("credits.title")}</caption>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead scope="col" className="text-foreground">{tCommon("date")}</TableHead>
+                    <TableHead scope="col" className="text-foreground">{tCommon("name")}</TableHead>
+                    <TableHead scope="col" className="text-right text-foreground">{t("credits.minutes")}</TableHead>
+                    <TableHead scope="col" className="text-foreground">{t("credits.subject")}</TableHead>
+                    <TableHead scope="col" className="text-foreground">{t("credits.scope")}</TableHead>
+                    <TableHead scope="col" className="text-foreground">{t("credits.note")}</TableHead>
+                    <TableHead scope="col" className="w-24 text-right text-foreground">
+                      {tCommon("actions")}
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sortedCredits.map((credit) => (
+                    <TableRow key={credit.id}>
+                      <TableCell className="tabular-nums text-foreground">{credit.date}</TableCell>
+                      <TableCell className="font-medium text-foreground">{credit.name}</TableCell>
+                      <TableCell className="text-right tabular-nums text-foreground">{credit.minutes}</TableCell>
+                      <TableCell className="text-foreground">{creditSubjectLabel(credit)}</TableCell>
+                      <TableCell className="text-foreground">{creditScopeLabel(credit)}</TableCell>
+                      <TableCell className="max-w-64 text-foreground">{credit.note ?? ""}</TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => openCredit(credit)}
+                          aria-label={t("editNamed", { name: credit.name })}
+                        >
+                          <Pencil />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setDeletingCredit(credit)}
+                          aria-label={t("deleteNamed", { name: credit.name })}
+                        >
+                          <Trash2 />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {creditDialogUsed && year ? (
+        <Suspense fallback={null}>
+          <CreditDialog
+            open={creditDialog.open}
+            onOpenChange={(open) => setCreditDialog((current) => ({ ...current, open }))}
+            year={year}
+            breaks={breaks ?? []}
+            subjects={subjects ?? []}
+            groups={yearGroups}
+            editing={creditDialog.editing}
+            prefill={creditDialog.prefill}
+          />
+        </Suspense>
+      ) : null}
+
+      <ConfirmDialog
+        open={deletingCredit !== null}
+        onOpenChange={(open) => !open && setDeletingCredit(null)}
+        title={tCommon("deleteConfirmTitle", { name: deletingCredit?.name ?? "" })}
+        description={t("credits.deleteBody")}
+        confirmLabel={tCommon("delete")}
+        loading={creditActions.remove.isPending}
+        onConfirm={confirmDeleteCredit}
+      />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

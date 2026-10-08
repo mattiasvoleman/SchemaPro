@@ -814,7 +814,46 @@
     "noYear": "Skapa och aktivera ett läsår först.",
     "loadFailed": "Listan över lov kunde inte hämtas.",
     "loadFailedHint": "Ingen lista visas, eftersom en tom lista skulle betyda att skolan inte har några lov alls. Byt läsår i väljaren ovan för att försöka igen.",
-    "tableCaption": "Läsårets lov och studiedagar, tidigast först. Varje rad är en period då skolan inte undervisar, och timplansposternas timtal drar av den."
+    "tableCaption": "Läsårets lov och studiedagar, tidigast först. Varje rad är en period då skolan inte undervisar, och timplansposternas timtal drar av den.",
+    "credits": {
+      "title": "Tillgodoräknad tid",
+      "intro": "Skolans beslut att en dags aktivitet räknas som undervisningstid, till exempel att en friluftsdag räknas som 300 minuter idrott och hälsa för åk 7–9. Tiden räknas som genomförd i Täckning från dagen efter. En dag utan beslut här räknas inte.",
+      "add": "Lägg till beslut",
+      "edit": "Ändra beslut",
+      "addForDay": "Räkna tid för dagen",
+      "addForDayNamed": "Räkna tid för dagen: {name}",
+      "dialogIntro": "Beslutet gäller ett datum. Dela upp en dag på flera ämnen med ett beslut per ämne.",
+      "namePlaceholder": "Friluftsdag",
+      "minutes": "Minuter",
+      "minutesHint": "1–600 minuter för dagen",
+      "subject": "Ämne",
+      "subjectNone": "Inget ämne — räknas som undervisningstid",
+      "notCounted": "räknas inte mot timplanen",
+      "scope": "Gäller",
+      "scopeSchool": "Hela skolan",
+      "scopeGrades": "Årskurser",
+      "scopeGroup": "En grupp",
+      "gradesHint": "Elever räknas efter sin klass årskurs. En undervisningsgrupp räknas när alla dess elever går i årskurserna.",
+      "group": "Grupp",
+      "groupPlaceholder": "Välj grupp",
+      "note": "Anteckning",
+      "notePlaceholder": "Till exempel vem som beslutade och när",
+      "countsAs": "Räknas som {minutes} min {subject}, {scope}",
+      "overlapHint": "Lektioner som hålls samma dag räknas också. Ställ in dem eller lägg dagen som lov om aktiviteten ersätter dem.",
+      "empty": "Inga beslut om tillgodoräknad tid för läsåret.",
+      "loadFailed": "Besluten kunde inte hämtas. Ladda om sidan för att försöka igen.",
+      "deleteBody": "Tiden räknas inte längre som genomförd i Täckning.",
+      "errors": {
+        "nameBlank": "Beslutet behöver ett namn.",
+        "nameLong": "Namnet kan vara högst 80 tecken.",
+        "dateMissing": "Välj ett datum.",
+        "dateOutsideYear": "Datumet ligger utanför läsåret.",
+        "minutes": "Ange 1 till 600 hela minuter.",
+        "span": "Första årskursen kan inte vara högre än den sista.",
+        "group": "Välj en grupp.",
+        "noteLong": "Anteckningen kan vara högst 500 tecken."
+      }
+    }
   },
   "generate": {
     "title": "Generera schema",
@@ -2013,7 +2052,8 @@
       "MasterLesson": "Grundschemat ({count, plural, one {# lektion} other {# lektioner}}) — nästa läsårs schema genereras för de nya klasserna, och det går direkt när läsåret är skapat, före aktiveringen.",
       "LunchSitting": "Lunchsittningarna ({count}) — de läggs mot det nya schemat.",
       "TeacherEmployment": "Tjänsterna ({count}) — slå på Tjänster och uppdrag följer med i steg 2, eller ta med dem senare från tjänstefördelningssidan.",
-      "TeacherDuty": "Uppdragen ({count}), med sina spärrade pass och mentorskap."
+      "TeacherDuty": "Uppdragen ({count}), med sina spärrade pass och mentorskap.",
+      "TimplanCredit": "Tillgodoräknad tid — besluten gäller sina datum i det gamla läsåret. Nästa läsårs friluftsdagar har egna datum och beslutas på nytt under Lov och studiedagar."
     },
     "skippedHistory": "Det gamla läsårets historik — kalendern, närvaron, sparade versioner och genereringar — stannar hos det.",
     "sharedSettings": "Ramtider, raster, lunchsittningarnas flöden, lunchinställningen, regler per årskurs, lärarnas arbetstidsregler och salspreferenser hör inte till något läsår: de gäller båda läsåren, och en ändring slår igenom i båda direkt.",
