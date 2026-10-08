@@ -230,10 +230,17 @@ describe('the rollover registry', () => {
   });
 
   it('lists, with the option off, exactly fa4a3d6’s skipped tables and reasons, and carries exactly its tables', () => {
-    // sha256 of JSON.stringify(skippedModels()) at fa4a3d6 (a git archive of it).
-    expect(createHash('sha256').update(JSON.stringify(skippedModels())).digest('hex')).toBe(
-      '15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113',
-    );
+    // sha256 of JSON.stringify(skippedModels()) at fa4a3d6 (a git archive of
+    // it), over every entry that existed then: TimplanCredit (timplan P3) is
+    // the one table added since, and is asserted beside it — skipped, not
+    // counted — so fa4a3d6's own list stays pinned byte for byte.
+    const skipped = skippedModels();
+    expect(
+      createHash('sha256')
+        .update(JSON.stringify(skipped.filter((entry) => entry.model !== 'TimplanCredit')))
+        .digest('hex'),
+    ).toBe('15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113');
+    expect(skipped.at(-1)).toMatchObject({ model: 'TimplanCredit', counted: false });
     expect(skippedModels({ carryStaffing: false })).toEqual(skippedModels());
     expect(carriedModels().map(({ model }) => model)).toEqual([
       'AcademicYear',

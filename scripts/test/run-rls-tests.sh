@@ -283,6 +283,20 @@ if [ -z "$admin_auth_id" ]; then
   exit 1
 fi
 
+# The second school's tillgodoräknad dag. Section 23 asserts that school A's
+# admin and teacher see none of B's credits and that B's admin sees it; with
+# nothing planted there the tenant half passes while proving nothing.
+foreign_credits="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT count(*) FROM \"TimplanCredits\" WHERE \"schoolId\" = '${school_b}'" \
+  | tr -d '[:space:]'
+)"
+if [ "${foreign_credits:-0}" = "0" ]; then
+  echo "FAIL: no timplan credit in the second school; fixtures did not run." >&2
+  exit 1
+fi
+
 echo "==> Running policy assertions as ${APP_ROLE} (the role the API uses)"
 compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   psql -U "$APP_ROLE" -h localhost -d "$DB_NAME" \

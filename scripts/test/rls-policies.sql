@@ -6242,3 +6242,360 @@ BEGIN
 END
 $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 23: a tillgodoräknad dag is the admin's decision to write, the
+-- staff's to read, and nobody else's.
+--
+-- TimplanCredits (20261009100000) has two arms: admin_all and staff_select
+-- (TEACHER and admin read every credit of the school — a teacher's coverage
+-- read runs under their own RLS and must count the same credits the admin's
+-- does). No family arm until P4: a pupil and a guardian read nothing.
+--
+-- The CHECKs mirror the DTO and each is refused by NAME, because the gateway
+-- answers a CHECK reached past the DTO with a 400 naming the field it finds
+-- by the constraint: minutes 0 and 601; half a span; a span 8..7; a group and
+-- a span together; a blank, a tab-only, an NBSP-only and an 81-character
+-- name; a 501-character note and a blank one.
+--
+-- Composite keys: another school's year, subject or group, each under a row
+-- honestly stamped with this school — foreign_key_violation; a row STAMPED
+-- with school B is RLS's to refuse (42501). School B's admin acts last and
+-- sees its own fixture credit and none of A's; A's admin and teacher see
+-- none of B's. The runner refuses to start without B's credit.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+SELECT set_config('app.test_school_b', :'school_b', true);
+SELECT set_config('app.test_year_b', :'year_b', true);
+SELECT set_config('app.test_subject_b', :'subject_b', true);
+SELECT set_config('app.test_group_b', :'group_b', true);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  year uuid; subject uuid; grp uuid; credit uuid;
+  n bigint;
+  con text;
+  probe record;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'credits: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+
+  SELECT count(*) INTO n FROM "TimplanCredits" WHERE "schoolId" <> school;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'credits: % credit(s) from another school visible — tenant isolation is not enforced', n;
+  END IF;
+
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS23 år', DATE '2096-08-15', DATE '2097-06-10', false, now())
+  RETURNING id INTO year;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt")
+  VALUES (school, 'RLS23 idrott', 'RLS23', now()) RETURNING id INTO subject;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, year, 'RLS23 7A', 'CLASS', 7, now()) RETURNING id INTO grp;
+
+  -- Each scope: the whole school, a span, a group; a subject or none.
+  INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, "subjectId", "minGradeLevel", "maxGradeLevel", name, note, "updatedAt")
+  VALUES (school, year, DATE '2096-09-25', 300, subject, 7, 9, 'Friluftsdag', 'Beslut rektor 2096-09-01', now())
+  RETURNING id INTO credit;
+  INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, "studentGroupId", name, "updatedAt")
+  VALUES (school, year, DATE '2096-10-02', 120, grp, 'Temaeftermiddag', now());
+  INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, name, "updatedAt")
+  VALUES (school, year, DATE '2096-10-03', 600, 'Lägerskola dag 1', now());
+  SELECT count(*) INTO n FROM "TimplanCredits" WHERE "academicYearId" = year;
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'credits: an admin wrote % of 3 credits', n;
+  END IF;
+  -- A split day is two rows: no uniqueness on (year, date, scope, subject).
+  INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, "subjectId", "minGradeLevel", "maxGradeLevel", name, "updatedAt")
+  VALUES (school, year, DATE '2096-09-25', 120, subject, 7, 9, 'Friluftsdag', now());
+  UPDATE "TimplanCredits" SET minutes = 180 WHERE id = credit;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'credits: an admin could not edit a credit (% row(s))', n;
+  END IF;
+
+  -- Every CHECK, by name.
+  FOR probe IN
+    SELECT * FROM (VALUES
+      (0,   NULL::int, NULL::int, false, 'Friluftsdag', NULL::text, 'TimplanCredits_minutes_is_sane'),
+      (601, NULL, NULL, false, 'Friluftsdag', NULL, 'TimplanCredits_minutes_is_sane'),
+      (300, 7, NULL, false, 'Friluftsdag', NULL, 'TimplanCredits_grade_span_is_whole'),
+      (300, 8, 7, false, 'Friluftsdag', NULL, 'TimplanCredits_grade_span_is_ordered'),
+      (300, 7, 13, false, 'Friluftsdag', NULL, 'TimplanCredits_grade_span_is_ordered'),
+      (300, 7, 9, true, 'Friluftsdag', NULL, 'TimplanCredits_scope_is_one'),
+      (300, NULL, NULL, false, '', NULL, 'TimplanCredits_name_is_sane'),
+      (300, NULL, NULL, false, '   ', NULL, 'TimplanCredits_name_is_sane'),
+      (300, NULL, NULL, false, E'\t', NULL, 'TimplanCredits_name_is_sane'),
+      (300, NULL, NULL, false, U&'\00A0\2003', NULL, 'TimplanCredits_name_is_sane'),
+      (300, NULL, NULL, false, repeat('x', 81), NULL, 'TimplanCredits_name_is_sane'),
+      (300, NULL, NULL, false, 'Friluftsdag', repeat('x', 501), 'TimplanCredits_note_is_sane'),
+      (300, NULL, NULL, false, 'Friluftsdag', U&'\FEFF ', 'TimplanCredits_note_is_sane')
+    ) AS v(minutes, min_grade, max_grade, with_group, name, note, expected)
+  LOOP
+    BEGIN
+      INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, "studentGroupId", "minGradeLevel", "maxGradeLevel", name, note, "updatedAt")
+      VALUES (school, year, DATE '2096-11-01', probe.minutes, CASE WHEN probe.with_group THEN grp END,
+              probe.min_grade, probe.max_grade, probe.name, probe.note, now());
+      RAISE EXCEPTION 'credits: the row expected to break % was stored', probe.expected;
+    EXCEPTION WHEN check_violation THEN
+      GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME;
+      IF con IS DISTINCT FROM probe.expected THEN
+        RAISE EXCEPTION 'credits: a row was refused by "%", expected "%"', con, probe.expected;
+      END IF;
+    END;
+  END LOOP;
+  -- The bounds themselves are legal: 1 and 600, an 80-character name, a 500 note.
+  INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, name, note, "updatedAt")
+  VALUES (school, year, DATE '2096-11-02', 1, repeat('å', 80), repeat('ä', 500), now());
+
+  -- Composite keys: another school's year, subject, group.
+  BEGIN
+    INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, name, "updatedAt")
+    VALUES (school, current_setting('app.test_year_b')::uuid, DATE '2096-09-25', 300, 'X', now());
+    RAISE EXCEPTION 'credits: an admin credited a day of another school''s year';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, "subjectId", name, "updatedAt")
+    VALUES (school, year, DATE '2096-09-25', 300, current_setting('app.test_subject_b')::uuid, 'X', now());
+    RAISE EXCEPTION 'credits: an admin credited another school''s subject';
+  EXCEPTION WHEN foreign_key_violation THEN
+    GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME;
+    IF con IS DISTINCT FROM 'TimplanCredits_subjectId_schoolId_fkey' THEN
+      RAISE EXCEPTION 'credits: another school''s subject was refused by "%", not the subject key the gateway names', con;
+    END IF;
+  END;
+  BEGIN
+    UPDATE "TimplanCredits" SET "studentGroupId" = current_setting('app.test_group_b')::uuid,
+                                "minGradeLevel" = NULL, "maxGradeLevel" = NULL
+     WHERE id = credit;
+    RAISE EXCEPTION 'credits: an admin scoped a credit to another school''s group';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+  -- A row STAMPED with school B: RLS answers.
+  BEGIN
+    INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, name, "updatedAt")
+    VALUES (current_setting('app.test_school_b')::uuid, current_setting('app.test_year_b')::uuid,
+            DATE '2096-09-25', 300, 'X', now());
+    RAISE EXCEPTION 'credits: an admin wrote a credit stamped with another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TimplanCredits" SET "schoolId" = current_setting('app.test_school_b')::uuid,
+                                "academicYearId" = current_setting('app.test_year_b')::uuid
+     WHERE id = credit;
+    RAISE EXCEPTION 'credits: an admin moved a credit into another school';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  SELECT count(*) INTO n FROM "TimplanCredits" WHERE "academicYearId" = year;
+  IF n <> 5 THEN
+    RAISE EXCEPTION 'credits: the year holds % of its 5 credits after the refused writes', n;
+  END IF;
+END
+$$;
+
+-- A teacher reads every credit of the school and writes none.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint; year uuid;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+    RAISE EXCEPTION 'credits: expected to be acting as a TEACHER of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT id INTO year FROM "AcademicYears" WHERE name = 'RLS23 år';
+  SELECT count(*) INTO n FROM "TimplanCredits" WHERE "academicYearId" = year;
+  IF n <> 5 THEN
+    RAISE EXCEPTION 'credits: a teacher reads % of the year''s 5 credits', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanCredits" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'credits: a teacher reads % credit(s) of another school', n;
+  END IF;
+  BEGIN
+    INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, name, "updatedAt")
+    VALUES (app.current_school_id(), year, DATE '2096-09-26', 60, 'X', now());
+    RAISE EXCEPTION 'credits: a teacher credited a day';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  UPDATE "TimplanCredits" SET minutes = 600 WHERE "academicYearId" = year;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'credits: a teacher changed % credit(s)', n;
+  END IF;
+  DELETE FROM "TimplanCredits" WHERE "academicYearId" = year;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'credits: a teacher deleted % credit(s)', n;
+  END IF;
+END
+$$;
+
+-- A pupil and a guardian read nothing: no family arm until P4.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'credits: expected to be acting as a STUDENT of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanCredits";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'credits: a pupil reads % credit(s); there is no family arm', n;
+  END IF;
+  DELETE FROM "TimplanCredits";
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'credits: a pupil deleted % credit(s)', n;
+  END IF;
+END
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'credits: expected to be acting as a GUARDIAN of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanCredits";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'credits: a guardian reads % credit(s); there is no family arm', n;
+  END IF;
+END
+$$;
+
+-- The other school's admin: their own fixture credit, none of A's.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000006')::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'credits: expected to be acting as school B''s SCHOOL_ADMIN, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanCredits" WHERE "schoolId" <> app.current_school_id();
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'credits: another school''s admin reads % credit(s) outside their school', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TimplanCredits" WHERE name = 'RLS fixture friluftsdag';
+  IF n < 1 THEN
+    RAISE EXCEPTION 'credits: school B''s admin does not read their own fixture credit';
+  END IF;
+  DELETE FROM "TimplanCredits" WHERE "schoolId" <> app.current_school_id();
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'credits: another school''s admin deleted % of school A''s credits', n;
+  END IF;
+END
+$$;
+
+-- Back as A's admin: nothing moved, and the cascades — a deleted group or
+-- subject takes its credits, a deleted year takes the rest.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE year uuid; n bigint;
+BEGIN
+  SELECT id INTO year FROM "AcademicYears" WHERE name = 'RLS23 år';
+  SELECT count(*) INTO n FROM "TimplanCredits" WHERE "academicYearId" = year;
+  IF n <> 5 THEN
+    RAISE EXCEPTION 'credits: % of the year''s 5 credits are as the admin left them', n;
+  END IF;
+  DELETE FROM "StudentGroups" WHERE name = 'RLS23 7A' AND "academicYearId" = year;
+  DELETE FROM "Subjects" WHERE code = 'RLS23' AND "schoolId" = app.current_school_id();
+  SELECT count(*) INTO n FROM "TimplanCredits" WHERE "academicYearId" = year;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'credits: after the group and the subject went, % credit(s) remain, expected the 2 that named neither', n;
+  END IF;
+  DELETE FROM "AcademicYears" WHERE id = year;
+  SELECT count(*) INTO n FROM "TimplanCredits" WHERE "academicYearId" = year;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'credits: a deleted year left % credit(s) behind', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- The catalog half: row security on, exactly the two arms, each with the role
+-- in USING (and the admin's in WITH CHECK), the composite keys, the grant.
+DO $$
+DECLARE n integer; action "char"; bad text;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."TimplanCredits"'::regclass) THEN
+    RAISE EXCEPTION 'credits: row security is off on TimplanCredits';
+  END IF;
+  SELECT string_agg(polname, ',' ORDER BY polname) INTO bad FROM pg_policy
+   WHERE polrelid = 'public."TimplanCredits"'::regclass;
+  IF bad IS DISTINCT FROM 'timplan_credits_admin_all,timplan_credits_staff_select' THEN
+    RAISE EXCEPTION 'credits: TimplanCredits has policies (%), expected admin_all and staff_select', bad;
+  END IF;
+  SELECT string_agg(polname, ',') INTO bad FROM pg_policy
+   WHERE polrelid = 'public."TimplanCredits"'::regclass
+     AND (pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%'
+          OR (polcmd = '*' AND pg_get_expr(polwithcheck, polrelid) NOT LIKE '%SCHOOL_ADMIN%'));
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'credits: policies without the role in USING / WITH CHECK: %', bad;
+  END IF;
+  SELECT count(*) INTO n FROM pg_constraint
+   WHERE conrelid = 'public."TimplanCredits"'::regclass AND contype = 'f' AND array_length(conkey, 1) = 2
+     AND confdeltype = 'c';
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'credits: % composite cascading keys, expected year, subject and group', n;
+  END IF;
+  SELECT count(*) INTO n FROM pg_constraint
+   WHERE conrelid = 'public."TimplanCredits"'::regclass AND contype = 'c'
+     AND conname IN ('TimplanCredits_minutes_is_sane', 'TimplanCredits_grade_span_is_whole',
+                     'TimplanCredits_grade_span_is_ordered', 'TimplanCredits_scope_is_one',
+                     'TimplanCredits_name_is_sane', 'TimplanCredits_note_is_sane');
+  IF n <> 6 THEN
+    RAISE EXCEPTION 'credits: % of the 6 named CHECKs exist', n;
+  END IF;
+  IF NOT has_table_privilege('app_authenticated', 'public."TimplanCredits"', 'SELECT, INSERT, UPDATE, DELETE') THEN
+    RAISE EXCEPTION 'credits: app_authenticated lacks its grant on TimplanCredits';
+  END IF;
+END $$;

@@ -183,6 +183,22 @@ JOIN "Users" p ON p."authId" = '00000000-0000-4000-8000-000000000002'
 WHERE g."authId" = '00000000-0000-4000-8000-000000000005'
 ON CONFLICT ("guardianId", "studentId") DO NOTHING;
 
+-- A tillgodoräknad dag in the SECOND school, its fixture class scoped and its
+-- fixture subject named, so section 23's tenant half counts a credit that
+-- exists over there. NOT EXISTS rather than ON CONFLICT: the table has no
+-- natural key (a split day is two rows), on purpose.
+INSERT INTO "TimplanCredits"
+  ("schoolId", "academicYearId", date, minutes, "subjectId", "studentGroupId", name, "updatedAt")
+SELECT y."schoolId", y.id, y."startDate" + 30, 300, sub.id, g.id, 'RLS fixture friluftsdag', now()
+FROM "AcademicYears" y
+JOIN "Schools" s ON s.id = y."schoolId"
+JOIN "Subjects" sub ON sub."schoolId" = y."schoolId" AND sub.code = 'RLSFIX'
+JOIN "StudentGroups" g ON g."academicYearId" = y.id AND g.name = 'RLS Fixture Class'
+WHERE s.slug = 'rls-fixture-school' AND y.name = 'RLS Fixture Year'
+  AND NOT EXISTS (
+    SELECT 1 FROM "TimplanCredits" c WHERE c."schoolId" = y."schoolId" AND c.name = 'RLS fixture friluftsdag'
+  );
+
 -- A policy, a post and a behörighet in the SECOND school, for its fixture
 -- teacher in its fixture year and subject, so the tenant half of section 7h
 -- counts rows that exist over there rather than a table that happens to be
