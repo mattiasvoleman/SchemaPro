@@ -256,6 +256,7 @@ describe('rethrowPrismaError and a tjänstefördelning CHECK', () => {
     ['TeacherDuties', 'TeacherDuties_label_is_sane', 'label'],
     ['TeacherDuties', 'TeacherDuties_minutesPerWeek_is_sane', 'minutesPerWeek'],
     ['TeacherDuties', 'TeacherDuties_note_is_sane', 'note'],
+    ['TeachingRequirements', 'TeachingRequirements_lesson_lengths_are_canonical', 'lessonLengths'],
   ])('answers %s’s %s with a 400 naming %s', (table, constraint, field) => {
     let thrown: unknown;
     try {

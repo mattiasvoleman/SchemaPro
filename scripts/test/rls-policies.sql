@@ -5941,3 +5941,194 @@ BEGIN
 END
 $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 21: a timplanspost's lektionslängder are one canonical list, whoever
+-- writes it.
+--
+-- 20261008090000 adds TeachingRequirements."lessonLengths" INTEGER[] NOT NULL
+-- DEFAULT '{}' and the CHECK TeachingRequirements_lesson_lengths_are_canonical,
+-- which calls app.lesson_lengths_are_canonical. No policy changes: the column
+-- sits on a table whose arms are row predicates. What this section proves is
+-- the CHECK, through the SQL a SCHOOL_ADMIN's PostgREST PATCH sends, because
+-- that writer never meets the DTO or the service:
+--
+--  - the catalog: the column's type, nullability and default, the CHECK, and
+--    the function IMMUTABLE, not SECURITY DEFINER, not STRICT (a STRICT
+--    function answers NULL to a NULL, and a CHECK passes on NULL);
+--  - accepted: {80,40} at (2, 80), then back to '{}' at (2, 80) — both as the
+--    admin, so EXECUTE left to PUBLIC is what lets the writer's CHECK run;
+--  - refused 23514: a split row PATCHed with lessonsPerWeek alone, {60,60}
+--    (uniform written as a list), {60,42} (off the grid), {40,80} (unsorted),
+--    four different lengths, a list starting at subscript 0, {80,40,NULL}
+--    (bool_and and count(DISTINCT) skip a NULL; the explicit test and the
+--    coalesce do not) and a two-dimensional array;
+--  - a teacher's UPDATE touches no row (teaching_requirements_staff_select is
+--    the only arm a teacher has), so the list is the admin's to write.
+--
+-- Its own year, subject and class, in one transaction that is rolled back.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; s uuid; g uuid; r uuid;
+  n bigint;
+  bad record;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'lengths: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+
+  SELECT count(*) INTO n FROM information_schema.columns
+   WHERE table_schema = 'public' AND table_name = 'TeachingRequirements'
+     AND column_name = 'lessonLengths' AND data_type = 'ARRAY' AND udt_name = '_int4'
+     AND is_nullable = 'NO' AND column_default = '''{}''::integer[]';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lengths: TeachingRequirements.lessonLengths is not an int[] NOT NULL DEFAULT ''{}''';
+  END IF;
+  SELECT count(*) INTO n FROM pg_constraint
+   WHERE conrelid = 'public."TeachingRequirements"'::regclass AND contype = 'c'
+     AND conname = 'TeachingRequirements_lesson_lengths_are_canonical';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lengths: the canonical-list CHECK is missing';
+  END IF;
+  SELECT count(*) INTO n FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
+   WHERE ns.nspname = 'app' AND p.proname = 'lesson_lengths_are_canonical'
+     AND p.provolatile = 'i' AND NOT p.prosecdef AND NOT p.proisstrict;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lengths: app.lesson_lengths_are_canonical is not IMMUTABLE, invoker-rights and non-STRICT';
+  END IF;
+
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "updatedAt")
+  VALUES (school, 'RLS21 läsår', DATE '2093-08-15', DATE '2094-06-10', now()) RETURNING id INTO y;
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt")
+  VALUES (school, 'RLS21 idrott', 'RLS21ID', now()) RETURNING id INTO s;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "gradeLevel", "updatedAt")
+  VALUES (school, y, 'RLS21 7A', 7, now()) RETURNING id INTO g;
+  INSERT INTO "TeachingRequirements"
+    ("schoolId", "academicYearId", "subjectId", "studentGroupId", "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+  VALUES (school, y, s, g, 2, 60, now()) RETURNING id INTO r;
+  SELECT count(*) INTO n FROM "TeachingRequirements" WHERE id = r AND "lessonLengths" = '{}';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lengths: a row written without the column did not get ''{}''';
+  END IF;
+
+  -- Accepted: the split, written with its scalars in one statement.
+  UPDATE "TeachingRequirements"
+     SET "lessonLengths" = '{80,40}', "lessonsPerWeek" = 2, "minutesPerLesson" = 80
+   WHERE id = r;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lengths: an admin could not write {80,40} at (2, 80) (% row(s))', n;
+  END IF;
+
+  -- Refused: a half-write of a split row, and every non-canonical list.
+  BEGIN
+    UPDATE "TeachingRequirements" SET "lessonsPerWeek" = 3 WHERE id = r;
+    RAISE EXCEPTION 'lengths: lessonsPerWeek alone on a split row was accepted';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  FOR bad IN
+    SELECT * FROM (VALUES
+      ('{60,60}'::int[], 2, 60, 'a uniform row written as a list'),
+      ('{60,42}'::int[], 2, 60, 'a length off the grid'),
+      ('{40,80}'::int[], 2, 40, 'a list not sorted longest first'),
+      ('{90,80,60,40}'::int[], 4, 90, 'four different lengths'),
+      ('[0:1]={80,40}'::int[], 2, 80, 'a list starting at subscript 0'),
+      ('{80,40,NULL}'::int[], 3, 80, 'a list holding a NULL'),
+      ('{{80,40}}'::int[], 2, 80, 'a two-dimensional array'),
+      ('{245,40}'::int[], 2, 245, 'a length above 240'),
+      ('{80,40}'::int[], 3, 80, 'a count that disagrees with the list'),
+      ('{80,40}'::int[], 2, 60, 'a longest that disagrees with the list')
+    ) AS v(lengths, lessons, longest, why)
+  LOOP
+    BEGIN
+      UPDATE "TeachingRequirements"
+         SET "lessonLengths" = bad.lengths, "lessonsPerWeek" = bad.lessons, "minutesPerLesson" = bad.longest
+       WHERE id = r;
+      RAISE EXCEPTION 'lengths: % was accepted', bad.why;
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+  END LOOP;
+
+  SELECT count(*) INTO n FROM "TeachingRequirements"
+   WHERE id = r AND "lessonLengths" = '{80,40}' AND "lessonsPerWeek" = 2 AND "minutesPerLesson" = 80;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lengths: a refused write changed the split row';
+  END IF;
+
+  PERFORM set_config('app.test_rls21_requirement', r::text, true);
+END
+$$;
+
+-- As a teacher of the same school: the row is readable and not writable.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE
+  r uuid := current_setting('app.test_rls21_requirement')::uuid;
+  n bigint;
+BEGIN
+  IF app.current_user_role() <> 'TEACHER' THEN
+    RAISE EXCEPTION 'lengths: expected to be acting as a TEACHER, am %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "TeachingRequirements" WHERE id = r AND "lessonLengths" = '{80,40}';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lengths: a teacher cannot read the split row (% row(s))', n;
+  END IF;
+  UPDATE "TeachingRequirements"
+     SET "lessonLengths" = '{}', "lessonsPerWeek" = 2, "minutesPerLesson" = 80
+   WHERE id = r;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'lengths: a teacher rewrote the lengths of % row(s)', n;
+  END IF;
+END
+$$;
+
+-- Back as the admin: the teacher changed nothing, and '{}' makes the row uniform.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  r uuid := current_setting('app.test_rls21_requirement')::uuid;
+  n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "TeachingRequirements" WHERE id = r AND "lessonLengths" = '{80,40}';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lengths: the split row did not survive the teacher''s refused write';
+  END IF;
+  UPDATE "TeachingRequirements" SET "lessonLengths" = '{}' WHERE id = r;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lengths: an admin could not make the row uniform again (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeachingRequirements"
+   WHERE id = r AND "lessonLengths" = '{}' AND "lessonsPerWeek" = 2 AND "minutesPerLesson" = 80;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'lengths: the uniform row is not 2 × 80 with an empty list';
+  END IF;
+END
+$$;
+ROLLBACK;
