@@ -1726,6 +1726,107 @@ async function runChecks(
     await timplans.remove(plan.id, admin);
   });
 
+  // ---- (u2) lektionslängder: the schema's first array column, through the real adapter
+  await check('(u2) lektionslängder round-trip as an int[] through the real adapter, the CHECK is a 400 naming the field, and generate SPLIT writes them', async () => {
+    const requirements = new TeachingRequirementsService(api);
+    const subjects = new SubjectsService(api);
+    const timplans = new LocalTimplansService(api);
+    const years = new AcademicYearsService(api);
+    const yearTimplans = new AcademicYearTimplansService(api);
+    const generator = new TimplanRequirementsService(api);
+
+    const year = await years.create(
+      { name: `${MARKER} ll`, startDate: '2097-08-17', endDate: '2098-06-11' } as never,
+      admin,
+    );
+    const idrott = await subjects.create({ name: `${MARKER} ll-idrott` } as never, admin);
+    const matematik = await subjects.create({ name: `${MARKER} ll-ma`, nationalCode: 'MA' } as never, admin);
+    const classId = (
+      await owner.query<{ id: string }>(
+        `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+         VALUES ($1, $2, $3 || ' 7A', 'CLASS', 7, now()) RETURNING id`,
+        [fixture.schoolId, year.id, MARKER],
+      )
+    ).rows[0].id;
+    const stored = async (id: string) =>
+      (
+        await owner.query<{ lessonLengths: unknown; lessonsPerWeek: number; minutesPerLesson: number }>(
+          'SELECT "lessonLengths", "lessonsPerWeek", "minutesPerLesson" FROM "TeachingRequirements" WHERE id = $1',
+          [id],
+        )
+      ).rows[0];
+
+    // Written through the service, read back by the model API as number[].
+    const created = await requirements.create(
+      { academicYearId: year.id, subjectId: idrott.id, studentGroupId: classId, lessonLengths: [40, 80] },
+      admin,
+    );
+    assert.deepEqual(
+      [created.lessonsPerWeek, created.minutesPerLesson, created.lessonLengths],
+      [2, 80, [80, 40]],
+    );
+    const read = await api.withRls(admin, (tx) =>
+      tx.teachingRequirement.findUnique({ where: { id: created.id }, select: { lessonLengths: true } }),
+    );
+    assert.ok(Array.isArray(read?.lessonLengths), `lessonLengths read back as ${shapeOf(read?.lessonLengths)}`);
+    assert.ok(read!.lessonLengths.every((minutes) => typeof minutes === 'number'), JSON.stringify(read));
+    assert.deepEqual(read!.lessonLengths, [80, 40]);
+
+    // The merge over the stored row, through the real adapter: equal scalars keep it, others clear it.
+    await requirements.update(created.id, { lessonsPerWeek: 2, minutesPerLesson: 80 }, admin);
+    assert.deepEqual(await stored(created.id), { lessonLengths: [80, 40], lessonsPerWeek: 2, minutesPerLesson: 80 });
+    const uniform = await requirements.update(created.id, { lessonsPerWeek: 3, minutesPerLesson: 60 }, admin);
+    assert.equal('lessonLengths' in uniform, false, 'a uniform row was answered with its list');
+    assert.deepEqual(await stored(created.id), { lessonLengths: [], lessonsPerWeek: 3, minutesPerLesson: 60 });
+
+    // A writer past the service — PostgREST's SQL, here the model API — meets
+    // the CHECK, and rethrowPrismaError names the field.
+    await requirements.update(created.id, { lessonLengths: [80, 40] }, admin);
+    for (const data of [{ lessonsPerWeek: 3 }, { lessonLengths: [60, 60], lessonsPerWeek: 2, minutesPerLesson: 60 }]) {
+      try {
+        await api.withRls(admin, (tx) => tx.teachingRequirement.update({ where: { id: created.id }, data }));
+        assert.fail(`the CHECK let ${JSON.stringify(data)} through`);
+      } catch (error) {
+        assert.equal(sqlStateOf(error), '23514', summarise(error));
+        assert.throws(() => rethrowPrismaError(error), (thrown: unknown) => {
+          assert.ok(thrown instanceof BadRequestException, summarise(thrown));
+          assert.ok(thrown.message.startsWith('lessonLengths: '), thrown.message);
+          return true;
+        });
+      }
+    }
+    assert.deepEqual(await stored(created.id), { lessonLengths: [80, 40], lessonsPerWeek: 2, minutesPerLesson: 80 });
+
+    // Generate with SPLIT writes 175 as 2 × 60 + 1 × 55; the same call without the mode is today's preview.
+    const plan = await timplans.create(
+      { name: `${MARKER} ll`, schoolForm: 'GRUNDSKOLA', nationalTimplanVersionId: fixture.grundskolaVersionId },
+      admin,
+    );
+    await timplans.replaceEntries(plan.id, { entries: [{ subjectId: matematik.id, gradeLevel: 7, minutesPerWeek: 175 }] }, admin);
+    await yearTimplans.replace(year.id, { timplans: [{ gradeLevel: 7, localTimplanId: plan.id }] }, admin);
+    const roundUp = await generator.generate(plan.id, { academicYearId: year.id, minutesPerLesson: 60, dryRun: true }, admin);
+    assert.deepEqual(
+      roundUp.rows.map((row) => [row.lessonsPerWeek, row.minutesPerLesson, row.surplusMinutesPerWeek, 'lessonLengths' in row]),
+      [[3, 60, 5, false]],
+    );
+    const split = await generator.generate(
+      plan.id,
+      { academicYearId: year.id, minutesPerLesson: 60, remainder: 'SPLIT', dryRun: false },
+      admin,
+    );
+    assert.equal(split.created, 1, JSON.stringify(split));
+    assert.deepEqual(await stored(split.rows[0]!.requirementId!), {
+      lessonLengths: [60, 60, 55],
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+    });
+
+    await years.remove(year.id, admin);
+    await timplans.remove(plan.id, admin);
+    await subjects.remove(idrott.id, admin);
+    await subjects.remove(matematik.id, admin);
+  });
+
   await check('(v) a läsårsrullning link the database refuses is a 409 through the real adapter, and the deletes that clear one pass', async () => {
     const years = new AcademicYearsService(api);
     const groups = new StudentGroupsService(api);
