@@ -366,7 +366,7 @@
     "loadFailed": "No figures are shown, because they would read zero for the wrong reason. Switch the year above to try again.",
     "loadFailedHint": "No figures are shown, because they would read zero for the wrong reason. Switch the year above to try again.",
     "coTeacher": "Co-teacher",
-    "coTeacherHint": "Both teachers are scheduled together; published lessons get a LEAD + ASSISTANT pair.",
+    "coTeacherHint": "Both teachers are scheduled together. In the published timetable each lesson has two teachers: the lead and the co-teacher.",
     "advanced": "Advanced",
     "teacherLoadPercent": "Counts for teacher (%)",
     "coTeacherLoadPercent": "Counts for co-teacher (%)",

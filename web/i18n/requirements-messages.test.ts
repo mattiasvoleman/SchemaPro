@@ -50,3 +50,18 @@ describe("a Timplansposter cell's name", () => {
     );
   });
 });
+
+describe("the co-teacher hint", () => {
+  it("names the two teachers' roles in words, not by the values the gateway stores", () => {
+    // "publicerade lektioner får ett LEAD + ASSISTANT-par" — the
+    // LessonAssignment roles, in English capitals in a Swedish sentence.
+    for (const text of [svT("coTeacherHint"), enT("coTeacherHint")]) {
+      expect(text).not.toMatch(/LEAD|ASSISTANT/);
+    }
+    // The words the rest of sv.json already uses for the two: the rollover's
+    // "samma lärare som huvudläraren", and medlärare on the people page and
+    // in tjänstefördelningen.
+    expect(svT("coTeacherHint")).toMatch(/huvudläraren/);
+    expect(svT("coTeacherHint")).toMatch(/medläraren/);
+  });
+});
