@@ -1126,7 +1126,11 @@ function isCalendarDate(value: string): boolean {
  * which is one lesson of it ("80+40"). Spaces are forgiven anywhere; a comma
  * is not, so "80,40" is refused rather than read as one lesson. What the
  * cell says is not checked here beyond being numbers: lengthsProblem, the
- * shared module's, says whether the CHECK would store it.
+ * shared module's, says whether the CHECK would store it — including a cell
+ * past 40 lessons ("41x15"), which is readable and answered as too many, not
+ * as unreadable. The list stops one past the cap, so "999999999x60" is 41
+ * entries, not a billion. A part of no lessons ("0x60") is null here;
+ * hasEmptyPart names it for the row error.
  */
 export function parseLengthSpec(raw: string): number[] | null {
   const lengths: number[] = [];
@@ -1136,10 +1140,18 @@ export function parseLengthSpec(raw: string): number[] | null {
     if (!match) return null;
     const count = match[1] === undefined ? 1 : Number(match[1]);
     const minutes = Number(match[2]);
-    if (count < 1 || count > MAX_LESSONS_PER_WEEK) return null;
-    for (let i = 0; i < count; i += 1) lengths.push(minutes);
+    if (count < 1) return null;
+    for (let i = 0; i < count && lengths.length <= MAX_LESSONS_PER_WEEK; i += 1) lengths.push(minutes);
   }
   return lengths;
+}
+
+/** Whether a cell is in the grammar but has a part of no lessons, as "0x60+1x40". */
+function hasEmptyPart(raw: string): boolean {
+  return raw
+    .replace(/\s+/g, "")
+    .split("+")
+    .some((piece) => /^0+[x×*]\d+$/i.test(piece));
 }
 
 /** Why a `lektionslangder` cell cannot be stored, as a row error. */
@@ -1245,6 +1257,12 @@ export function mapRequirementRows(parsed: ParsedCsv): {
     let listed: ReturnType<typeof canonicalShape> | null = null;
     if (rawLengths.trim() !== "") {
       const lengths = parseLengthSpec(rawLengths);
+      if (lengths === null && hasEmptyPart(rawLengths)) {
+        return fail(
+          `Rad ${rowNumber}: lektionslangder "${rawLengths}": varje del behöver minst en lektion, ` +
+            `till exempel "1x80+1x40".`,
+        );
+      }
       if (lengths === null) {
         return fail(
           `Rad ${rowNumber}: lektionslangder "${rawLengths}" går inte att läsa. Skriv längderna som ` +
