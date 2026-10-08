@@ -121,13 +121,15 @@ export function LessonEditDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-4 [&>*]:min-w-0">
+          {/* Every Label points at its control, as in Lägg till: a Label
+              beside a Radix trigger is not tied to it otherwise. */}
           <div className="col-span-2 space-y-2">
-            <Label>{t("editDay")}</Label>
+            <Label htmlFor="edit-day">{t("editDay")}</Label>
             <Select
               value={draft.dayOfWeek}
               onValueChange={(dayOfWeek) => onDraftChange({ ...draft, dayOfWeek })}
             >
-              <SelectTrigger>
+              <SelectTrigger id="edit-day">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -158,12 +160,12 @@ export function LessonEditDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>{t("editRoom")}</Label>
+            <Label htmlFor="edit-room">{t("editRoom")}</Label>
             <Select
               value={draft.roomId}
               onValueChange={(roomId) => onDraftChange({ ...draft, roomId })}
             >
-              <SelectTrigger>
+              <SelectTrigger id="edit-room">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -177,12 +179,12 @@ export function LessonEditDialog({
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>{t("editTeacher")}</Label>
+            <Label htmlFor="edit-teacher">{t("editTeacher")}</Label>
             <Select
               value={draft.teacherId}
               onValueChange={(teacherId) => onDraftChange({ ...draft, teacherId })}
             >
-              <SelectTrigger>
+              <SelectTrigger id="edit-teacher">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -208,11 +210,17 @@ export function LessonEditDialog({
             <div className="flex items-center gap-2">
               <Lock className="h-4 w-4 text-muted-foreground" />
               <div>
-                <div className="text-sm font-medium">{t("lockLabel")}</div>
-                <div className="text-xs text-muted-foreground">{t("lockHint")}</div>
+                <label htmlFor="edit-lock" className="block text-sm font-medium">
+                  {t("lockLabel")}
+                </label>
+                <div id="edit-lock-hint" className="text-xs text-muted-foreground">
+                  {t("lockHint")}
+                </div>
               </div>
             </div>
             <Switch
+              id="edit-lock"
+              aria-describedby="edit-lock-hint"
               checked={draft.isLocked}
               onCheckedChange={(isLocked) => onDraftChange({ ...draft, isLocked })}
             />
