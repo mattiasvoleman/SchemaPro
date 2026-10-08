@@ -219,7 +219,13 @@ describe('splitWeeklyMinutes', () => {
     ['under one lesson of 15 is one lesson of 15', 10, 15, [15], false],
     ['20 at 15 folds the 5 into one lesson of 20', 20, 15, [20], false],
     ['40 at 15 is 25 + 15', 40, 15, [25, 15], false],
-    ['41 lessons fold to 40: 1220 at 30 is 50 + 39 × 30', 1220, 30, [50, ...Array(39).fill(30)], false],
+    ['the roadmap’s idrott: 120 at 80 is 1 × 80 + 1 × 40, twice a week, not one lesson of 120', 120, 80, [80, 40], false],
+    ['beside one lesson the remainder stays its own: 90 at 60 is 1 × 60 + 1 × 30', 90, 60, [60, 30], false],
+    ['beside one lesson even at L/2 exactly: 100 at 80 is 1 × 80 + 1 × 20', 100, 80, [80, 20], false],
+    ['beside one lesson, under 15 still folds: 65 at 60 is 1 × 65', 65, 60, [65], false],
+    ['beside two lessons the fold stands: 200 at 80 is 1 × 120 + 1 × 80', 200, 80, [120, 80], false],
+    ['41 lessons are capped, not folded into one of 50: 1220 at 30', 1220, 30, Array(40).fill(30), true],
+    ['41 lessons are capped, not folded into one of 95: 2045 at 50', 2045, 50, Array(40).fill(50), true],
     ['past 40 with nothing to fold, capped as ROUND_UP caps', 1200, 15, Array(40).fill(15), true],
   ])('%s', (_case, minutes, length, lengths, capped) => {
     expect(splitWeeklyMinutes(minutes, length, 'SPLIT')).toEqual({ lengths, capped });
@@ -235,6 +241,14 @@ describe('splitWeeklyMinutes', () => {
         expect([where, lengthsProblem(lengths)]).toEqual([where, null]);
         expect([where, new Set(lengths).size <= 2]).toEqual([where, true]);
         expect([where, lengths.length <= 40]).toEqual([where, true]);
+        // No lesson longer than L + L/2 (a fold of r ≤ L/2), or L + 14 (a fold of
+        // a remnant under 15), or 15 — the documented rule, at the cap too.
+        expect([where, Math.max(...lengths) <= Math.max(length + Math.max(length / 2, 14), 15)]).toEqual([where, true]);
+        // Beside a single lesson a remainder of 15 or more is its own lesson.
+        const onGrid = Math.ceil(minutes / 5) * 5;
+        if (Math.floor(onGrid / length) === 1 && onGrid - length >= 15) {
+          expect([where, lengths.length]).toEqual([where, 2]);
+        }
         if (capped) continue;
         expect([where, sum >= minutes]).toEqual([where, true]);
         // The surplus: the grid's 0..4, or up to 14 where a remainder under 15
