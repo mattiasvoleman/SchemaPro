@@ -73,6 +73,18 @@ vi.mock("@/lib/timplan-tackning-queries", () => ({
     };
   },
 }));
+// The P3 tabs are their own files with their own tests
+// (components/timplan/coverage-tabs.test.tsx); here only what the page hands them.
+vi.mock("@/components/timplan/coverage-scheduled-tab", () => ({
+  CoverageScheduledTab: (props: { year: { id: string }; linkedGroup: string | null }) => (
+    <p>scheduled-tab {props.year.id} {props.linkedGroup ?? "none"}</p>
+  ),
+}));
+vi.mock("@/components/timplan/coverage-delivered-tab", () => ({
+  CoverageDeliveredTab: (props: { year: { id: string }; linkedGroup: string | null }) => (
+    <p>delivered-tab {props.year.id} {props.linkedGroup ?? "none"}</p>
+  ),
+}));
 vi.mock("@/i18n/navigation", () => ({
   Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
 }));
@@ -210,5 +222,55 @@ describe("TimplanCoveragePage", () => {
     await user.click(screen.getByRole("button", { name: /8A/ }));
     expect(screen.queryByText("linePupils")).not.toBeInTheDocument();
     expect(screen.queryByText(/^pupilsTitle/)).not.toBeInTheDocument();
+  });
+
+  it("puts the three layers in a tablist above every empty state, so a year without classes still reaches them", async () => {
+    state.case = {
+      ...state.case,
+      response: { ...state.case.response, groups: [], cells: [], pupils: [] },
+    };
+    const user = userEvent.setup();
+    render(<TimplanCoveragePage />);
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["layerPlanned", "layerScheduled", "layerDelivered"]);
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+    // The planned layer's own empty state, inside its panel, under the tabs.
+    expect(within(screen.getByRole("tabpanel")).getByText("noClassesTitle")).toBeInTheDocument();
+    await user.click(tabs[2]!);
+    expect(screen.getAllByRole("tab")[2]).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByText("delivered-tab y-1 none")).toBeInTheDocument();
+    expect(screen.queryByText("noClassesTitle")).not.toBeInTheDocument();
+  });
+
+  it("moves between tabs with the arrow keys, Home and End, focus following", async () => {
+    const user = userEvent.setup();
+    render(<TimplanCoveragePage />);
+    screen.getAllByRole("tab")[0]!.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getAllByRole("tab")[1]).toHaveFocus();
+    expect(screen.getAllByRole("tab")[1]).toHaveAttribute("aria-selected", "true");
+    expect(screen.getAllByRole("tab")[0]).toHaveAttribute("tabindex", "-1");
+    expect(await screen.findByText("scheduled-tab y-1 none")).toBeInTheDocument();
+    await user.keyboard("{End}");
+    expect(screen.getAllByRole("tab")[2]).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getAllByRole("tab")[0]).toHaveFocus();
+    await user.keyboard("{ArrowLeft}{Home}");
+    expect(screen.getAllByRole("tab")[0]).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("opens the tab, year and group the Lektionstid panel links to, and asks layer 1 for nothing", async () => {
+    window.history.replaceState(null, "", `/admin/timplan/tackning?year=y-0&layer=scheduled&group=${id(303)}`);
+    render(<TimplanCoveragePage />);
+    expect(await screen.findByText(`scheduled-tab y-0 ${id(303)}`)).toBeInTheDocument();
+    expect(screen.getAllByRole("tab")[1]).toHaveAttribute("aria-selected", "true");
+    expect(state.asked.filter((yearId) => yearId !== null)).toEqual([]);
+  });
+
+  it("ignores a layer it does not know and shows the planned one", () => {
+    window.history.replaceState(null, "", "/admin/timplan/tackning?layer=bogus");
+    render(<TimplanCoveragePage />);
+    expect(screen.getAllByRole("tab")[0]).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("row", { name: /8A/ })).toBeInTheDocument();
   });
 });
