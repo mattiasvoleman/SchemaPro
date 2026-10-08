@@ -1109,6 +1109,21 @@ describe("useLessonActions", () => {
     });
   });
 
+  it("cancel forwards a cause beside the reason, and leaves it out when none is given", async () => {
+    // The cause is the category Täckning splits lost time by
+    // (CalendarLessons.cancelCause); absent, the gateway records MANUAL.
+    const harness = createHarness();
+    const { result } = renderHook(() => useLessonActions(), { wrapper: harness.wrapper });
+
+    await act(async () => {
+      await result.current.cancel.mutateAsync({ id: "cl-1", reason: "Sjuk", cause: "TEACHER_UNAVAILABLE" });
+    });
+    expect(mockApi.patch).toHaveBeenCalledWith("/api/v1/calendar-lessons/cl-1/cancel", {
+      reason: "Sjuk",
+      cause: "TEACHER_UNAVAILABLE",
+    });
+  });
+
   it("reinstate patches the reinstate endpoint and refreshes the day views", async () => {
     const harness = createHarness();
     const { result } = renderHook(() => useLessonActions(), { wrapper: harness.wrapper });

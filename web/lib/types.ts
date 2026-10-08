@@ -12,6 +12,14 @@ export interface RoomType {
   _count?: { rooms: number; subjects: number };
 }
 export type LessonStatus = "SCHEDULED" | "CANCELLED" | "COMPLETED" | "RESCHEDULED";
+/**
+ * Why a cancelled lesson was cancelled, as a category (CalendarLessons.cancelCause,
+ * migration 20261009090000): publish writes the two closures, the cancel
+ * endpoint what it is sent, MANUAL by default. Null on a lesson cancelled
+ * before P3 with a note nobody can categorise. The free-text reason stays in
+ * `note`.
+ */
+export type LessonCancelCause = "TEACHER_UNAVAILABLE" | "ROOM_UNAVAILABLE" | "MANUAL";
 export type AttendanceStatus = "UNKNOWN" | "PRESENT" | "ABSENT" | "LATE" | "EXCUSED";
 /**
  * GRADE_LEVEL is the one target that is not a row anywhere: there is no

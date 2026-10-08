@@ -12,6 +12,7 @@ import { sortByName, sortByPersonName } from "@/lib/sorting";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { GUARDIAN_KEYS } from "@/lib/guardian-keys";
 import type {
+  LessonCancelCause,
   LessonRecurrence,
   LunchSettings,
   RoomType,
@@ -1170,8 +1171,14 @@ export function useLessonActions() {
   };
 
   const cancel = useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
-      api.patch(`/api/v1/calendar-lessons/${id}/cancel`, reason ? { reason } : {}),
+    // `cause`: why, as a category the timplan's lost minutes are split by
+    // (CalendarLessons.cancelCause). The absence page says TEACHER_UNAVAILABLE;
+    // a cancel without one is the school's own, MANUAL on the gateway.
+    mutationFn: ({ id, reason, cause }: { id: string; reason?: string; cause?: LessonCancelCause }) =>
+      api.patch(`/api/v1/calendar-lessons/${id}/cancel`, {
+        ...(reason ? { reason } : {}),
+        ...(cause ? { cause } : {}),
+      }),
     onSuccess: invalidate,
   });
   const reinstate = useMutation({

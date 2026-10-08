@@ -139,8 +139,12 @@ export default function TeacherAbsencePage() {
   const doCancel = async () => {
     if (!cancelTarget) return;
     try {
+      // TEACHER_UNAVAILABLE: this page is where a teacher's absence after
+      // publishing is handled, and Täckning splits lost time by cause — the
+      // cause Skolinspektionen asks about most. The reason stays free text.
       await cancel.mutateAsync({
         id: cancelTarget.id,
+        cause: "TEACHER_UNAVAILABLE",
         ...(cancelReason ? { reason: cancelReason } : {}),
       });
       toast.success(tDay("cancelledToast"));
@@ -191,7 +195,7 @@ export default function TeacherAbsencePage() {
     let failed = 0;
     for (const lesson of lessons) {
       try {
-        await cancel.mutateAsync({ id: lesson.id });
+        await cancel.mutateAsync({ id: lesson.id, cause: "TEACHER_UNAVAILABLE" });
       } catch {
         failed += 1;
       }
