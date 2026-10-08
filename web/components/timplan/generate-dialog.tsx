@@ -25,19 +25,21 @@
 // schema has no school default, and the length a school already writes in is
 // the better guess.
 //
-// LEKTIONSLÄNGDER. "Dela upp resten" (remainder SPLIT) is checked from the
-// start: 175 minutes at 60 is proposed as 2 × 60 + 1 × 55 rather than 3 × 60
-// and five minutes over, which is the wall a grundskola meets first. It is a
-// proposal only — the preview shows every split row as its lengths before
-// anything is written, only missing posts are created, and no existing post
-// changes. Unchecked, the dialog asks for ROUND_UP, today's whole lessons.
-// The request always states which; the gateway's own default for a client
-// that does not is ROUND_UP. A split row in the preview offers one edit,
-// "Gör enhetlig", which turns it into the round-up post at the chosen length
-// (sent as an ordinary uniform override) and can be undone; splitting a post
-// differently is the Timplansposter dialog's job once it exists.
+// LEKTIONSLÄNGDER. "Dela upp resten" (remainder SPLIT) proposes 175 minutes
+// at 60 as 2 × 60 + 1 × 55 rather than 3 × 60 and five minutes over, the wall
+// a grundskola meets first. It starts UNCHECKED, and unchecked the request
+// carries no `remainder` at all: a school that never asks for a second length
+// sends the body it always sent and gets the answer it always got, rows
+// included. Checked, it sends SPLIT. A row SPLIT made into something other
+// than whole lessons of the chosen length (remainderChanged: a split row, but
+// also 45 at 60 as 1 × 45) is shown read-only as its lengths, counted in the
+// note above the table, and offers one edit, "Gör enhetlig", which turns it
+// into the round-up post at the chosen length (sent as an ordinary uniform
+// override) and can be undone; splitting a post differently is the
+// Timplansposter dialog's job once it exists. Focus follows those two
+// buttons: each replaces itself, so focus moves to what took its place.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { useRequirements } from "@/lib/queries";
@@ -47,6 +49,7 @@ import {
   lessonLengthProblem,
   overridesFrom,
   existingCount,
+  remainderChanged,
   rowKey,
   suggestLessonLength,
   uniformEdit,
@@ -54,7 +57,6 @@ import {
   type Remainder,
   type RowEdit,
 } from "@/lib/timplan-generate";
-import { isMixed } from "@/lib/lesson-lengths";
 import { formatLengths } from "@/lib/lesson-lengths-text";
 import { signedMinutes } from "@/lib/timplan-tackning";
 import type { AcademicYear } from "@/lib/types";
@@ -112,7 +114,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
   const lengthProblem = lessonLengthProblem(lengthText);
   const length = lengthProblem === null ? Number(lengthText.trim()) : null;
 
-  const [split, setSplit] = useState(true);
+  const [split, setSplit] = useState(false);
   const remainder: Remainder = split ? "SPLIT" : "ROUND_UP";
   const [preview, setPreview] = useState<GenerateRequirementsResponse | null>(null);
   const [edits, setEdits] = useState<Map<string, RowEdit>>(new Map());
@@ -141,7 +143,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
         planId: plan.id,
         academicYearId: yearId,
         minutesPerLesson: length,
-        remainder,
+        ...(split ? { remainder } : {}),
         dryRun: true,
       });
       // Kept with the remainder it was asked for, so a toggle discards it
@@ -161,7 +163,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
         planId: plan.id,
         academicYearId: yearId,
         minutesPerLesson: length,
-        remainder,
+        ...(split ? { remainder } : {}),
         dryRun: false,
         ...(overrides.length > 0 ? { overrides } : {}),
       });
@@ -181,7 +183,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
       setResult(null);
       setError(null);
       setTypedLength(null);
-      setSplit(true);
+      setSplit(false);
     }
     onOpenChange(next);
   };
@@ -352,6 +354,26 @@ interface PreviewBodyProps {
 function PreviewBody({ preview, edits, classCount, length, yearName, planName, onEdit, onReset }: PreviewBodyProps) {
   const t = useTranslations("timplan.generate");
 
+  // Rows whose shape SPLIT changed and the admin has not made uniform: what
+  // the note counts and what the footer's sentence describes.
+  const changedRows = preview.rows.filter(
+    (row) => remainderChanged(row, length) && !edits.has(rowKey(row)),
+  ).length;
+
+  // "Gör enhetlig" and "Dela upp igen" each unmount the button pressed. Focus
+  // goes to what replaced it in the same row — the lessons field, or the
+  // "Gör enhetlig" button back — instead of falling to the dialog itself.
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [focusNext, setFocusNext] = useState<string | null>(null);
+  useEffect(() => {
+    if (focusNext === null) return;
+    const target = Array.from(tableRef.current?.querySelectorAll<HTMLElement>("[data-focus]") ?? []).find(
+      (element) => element.dataset.focus === focusNext,
+    );
+    target?.focus();
+    setFocusNext(null);
+  }, [focusNext, edits]);
+
   if (preview.gradeLevels.length === 0) {
     return (
       <p role="status" className="rounded-md bg-muted px-3 py-2 text-sm text-foreground">
@@ -372,10 +394,8 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
               grades: preview.gradeLevels.map((value) => grade(t, value)).join(", "),
             })}
       </p>
-      {preview.rows.some((row) => isMixed(row)) ? (
-        <p className="text-sm text-foreground">
-          {t("splitNote", { count: preview.rows.filter((row) => isMixed(row)).length })}
-        </p>
+      {changedRows > 0 ? (
+        <p className="text-sm text-foreground">{t("splitNote", { count: changedRows })}</p>
       ) : null}
       {preview.skipped.some((row) => row.reason === "ALTERNATIVE") ? (
         <p className="text-sm text-foreground">{t("alternativesNote")}</p>
@@ -383,7 +403,7 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
 
       {preview.rows.length > 0 ? (
         <div className="max-h-[45vh] overflow-auto rounded-md border">
-          <table className="w-full text-sm">
+          <table ref={tableRef} className="w-full text-sm">
             <caption className="sr-only">{t("tableCaption")}</caption>
             <thead className="sticky top-0 bg-card">
               <tr className="border-b text-left text-xs text-muted-foreground">
@@ -402,9 +422,10 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
                 const shown = edit ?? base;
                 const edited = editedRow(row, edit);
                 const label = `${row.groupName} ${row.subjectName}`;
-                // A split row the admin has not made uniform: its lengths,
-                // read-only, and the one edit it offers.
-                const splitShown = isMixed(row) && edit === undefined;
+                // A row SPLIT changed that the admin has not made uniform: its
+                // lengths, read-only, and the one edit it offers.
+                const changed = remainderChanged(row, length);
+                const splitShown = changed && edit === undefined;
                 return (
                   <tr key={key} className="border-b last:border-b-0">
                     <th scope="row" className="px-3 py-1.5 text-left font-medium">{row.groupName}</th>
@@ -420,7 +441,11 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
                             variant="ghost"
                             className="h-7 px-2 text-xs"
                             aria-label={t("makeUniformFor", { row: label })}
-                            onClick={() => onEdit(key, base, uniformEdit(row, length))}
+                            data-focus={`uniform:${key}`}
+                            onClick={() => {
+                              onEdit(key, base, uniformEdit(row, length));
+                              setFocusNext(`lessons:${key}`);
+                            }}
                           >
                             {t("makeUniform")}
                           </Button>
@@ -432,6 +457,7 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
                           className="h-8 w-14"
                           value={shown.lessons}
                           aria-label={t("lessonsFor", { row: label })}
+                          data-focus={`lessons:${key}`}
                           aria-invalid={edited.lessons === null || undefined}
                           onChange={(event) => onEdit(key, base, { lessons: event.target.value })}
                         />
@@ -445,14 +471,17 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
                           onChange={(event) => onEdit(key, base, { minutes: event.target.value })}
                         />
                         {edited.changed ? <Badge variant="outline">{t("edited")}</Badge> : null}
-                        {isMixed(row) ? (
+                        {changed ? (
                           <Button
                             type="button"
                             size="sm"
                             variant="ghost"
                             className="h-7 px-2 text-xs"
                             aria-label={t("splitAgainFor", { row: label })}
-                            onClick={() => onReset(key)}
+                            onClick={() => {
+                              onReset(key);
+                              setFocusNext(`uniform:${key}`);
+                            }}
                           >
                             {t("splitAgain")}
                           </Button>
@@ -498,7 +527,7 @@ function PreviewBody({ preview, edits, classCount, length, yearName, planName, o
         </details>
       ) : null}
       <p className="text-xs text-muted-foreground">
-        {t(preview.remainder === "SPLIT" ? "surplusHintSplit" : "surplusHint")}
+        {t(changedRows > 0 ? "surplusHintSplit" : "surplusHint")}
       </p>
     </div>
   );

@@ -68,7 +68,8 @@ export class GenerateRequirementsDto {
    * with up to two lengths (175 at 60 is 2 × 60 + 1 × 55), ROUND_UP adds a
    * whole lesson (3 × 60, +5). OMITTED IS ROUND_UP, the rule generate always
    * had, so a client that has never heard of the field — and every answer it
-   * gets — is unchanged; the web's dialog states it. Null is refused rather
+   * gets — is unchanged; the web's dialog sends SPLIT when the admin checks
+   * "Dela upp resten" and omits the field otherwise. Null is refused rather
    * than read as either.
    */
   @ValidateIf((_: object, value: unknown) => value !== undefined)

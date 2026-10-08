@@ -47,27 +47,35 @@ const YEARS: AcademicYear[] = [
 const PLAN = { id: "p-1", name: "Grundskola 2026", status: "DECIDED" as const };
 
 /**
- * The gateway's SPLIT rule for the two targets this stub knows (175 and 200
- * at 60): a remainder over half a lesson is a lesson of its own, a shorter
- * one is folded into one longer lesson (generate-requirements.ts).
+ * The gateway's SPLIT rule for the targets this stub knows (on the grid, under
+ * 240 per lesson): a remainder over half a lesson, or beside a single lesson,
+ * is a lesson of its own; a shorter one beside two or more is folded into one
+ * longer lesson; under one lesson is one lesson of the target
+ * (generate-requirements.ts).
  */
 function splitOf(target: number, length: number): number[] | null {
   const whole = Math.floor(target / length);
   const rest = target - whole * length;
   if (rest === 0) return null;
+  if (whole === 0) return [Math.max(target, 15)];
   const lengths =
-    rest >= 15 && rest > length / 2
+    rest >= 15 && (rest > length / 2 || whole === 1)
       ? [...Array.from({ length: whole }, () => length), rest]
       : [...Array.from({ length: whole - 1 }, () => length), length + rest];
   return lengths.sort((a, b) => b - a);
 }
 
-function answer(body: GenerateBody & { planId: string }): GenerateRequirementsResponse {
-  const created = body.dryRun ? 0 : 2;
-  const rows = [
-    { subjectId: "s-ma", subjectName: "Matematik", target: 175 },
-    { subjectId: "s-sv", subjectName: "Svenska", target: 200 },
-  ].map(({ subjectId, subjectName, target }) => {
+const DEFAULT_TARGETS = [
+  { subjectId: "s-ma", subjectName: "Matematik", target: 175 },
+  { subjectId: "s-sv", subjectName: "Svenska", target: 200 },
+];
+
+function answer(
+  body: GenerateBody & { planId: string },
+  targets: { subjectId: string; subjectName: string; target: number }[] = DEFAULT_TARGETS,
+): GenerateRequirementsResponse {
+  const created = body.dryRun ? 0 : targets.length;
+  const rows = targets.map(({ subjectId, subjectName, target }) => {
     const override = body.overrides?.find((entry) => entry.subjectId === subjectId);
     const split = !override && body.remainder === "SPLIT" ? splitOf(target, body.minutesPerLesson) : null;
     if (split) {
@@ -80,7 +88,7 @@ function answer(body: GenerateBody & { planId: string }): GenerateRequirementsRe
         targetMinutesPerWeek: target,
         lessonsPerWeek: split.length,
         minutesPerLesson: split[0],
-        lessonLengths: split,
+        ...(new Set(split).size > 1 ? { lessonLengths: split } : {}),
         plannedMinutesPerWeek: target,
         surplusMinutesPerWeek: 0,
         overridden: false,
@@ -159,14 +167,12 @@ describe("GenerateDialog", () => {
     renderDialog();
     expect(screen.getByRole("button", { name: /^apply/ })).toBeDisabled();
 
-    // Whole lessons, rounded up: today's rule, one click away.
-    await user.click(screen.getByLabelText("splitLabel"));
+    // Whole lessons, rounded up: today's rule and today's body, no remainder.
     await user.click(screen.getByRole("button", { name: "preview" }));
     expect(state.generate.mutateAsync).toHaveBeenCalledWith({
       planId: "p-1",
       academicYearId: "y-1",
       minutesPerLesson: 60,
-      remainder: "ROUND_UP",
       dryRun: true,
     });
     expect(await screen.findByText("summary(2|1|1|grade(7))")).toBeInTheDocument();
@@ -223,7 +229,6 @@ describe("GenerateDialog", () => {
   it("sends the edited row as an override, and only that row, then shows what was created", async () => {
     const user = userEvent.setup();
     renderDialog();
-    await user.click(screen.getByLabelText("splitLabel"));
     await user.click(screen.getByRole("button", { name: "preview" }));
     await screen.findByText(/^summary/);
 
@@ -241,7 +246,6 @@ describe("GenerateDialog", () => {
       planId: "p-1",
       academicYearId: "y-1",
       minutesPerLesson: 60,
-      remainder: "ROUND_UP",
       dryRun: false,
       overrides: [{ studentGroupId: "g-7a", subjectId: "s-ma", lessonsPerWeek: 5, minutesPerLesson: 35 }],
     });
@@ -254,7 +258,6 @@ describe("GenerateDialog", () => {
   it("will not apply while an edited row holds a figure the gateway refuses", async () => {
     const user = userEvent.setup();
     renderDialog();
-    await user.click(screen.getByLabelText("splitLabel"));
     await user.click(screen.getByRole("button", { name: "preview" }));
     await screen.findByText(/^summary/);
     const lessons = screen.getByLabelText("lessonsFor(7A Svenska)");
@@ -265,10 +268,24 @@ describe("GenerateDialog", () => {
   });
 
   describe("lektionslängder: dela upp resten", () => {
-    it("asks for SPLIT from the start and shows each split row as its lengths, at no surplus", async () => {
+    it("starts unchecked, so a school that never splits sends today's body and sees today's rows", async () => {
       const user = userEvent.setup();
       renderDialog();
-      expect(screen.getByLabelText("splitLabel")).toBeChecked();
+      expect(screen.getByLabelText("splitLabel")).not.toBeChecked();
+      expect(screen.getByText("roundUpHint")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      const body = state.generate.mutateAsync.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(body).not.toHaveProperty("remainder");
+      await screen.findByText(/^summary/);
+      expect(screen.queryByText(/^splitNote/)).toBeNull();
+      expect(screen.queryByRole("button", { name: /^makeUniformFor/ })).toBeNull();
+      expect(screen.getByText("surplusHint")).toBeInTheDocument();
+    });
+
+    it("asks for SPLIT once checked and shows each split row as its lengths, at no surplus", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await user.click(screen.getByLabelText("splitLabel"));
       expect(screen.getByText("splitHint")).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "preview" }));
@@ -292,6 +309,7 @@ describe("GenerateDialog", () => {
     it("applies the split rows as the gateway proposed them: no overrides", async () => {
       const user = userEvent.setup();
       renderDialog();
+      await user.click(screen.getByLabelText("splitLabel"));
       await user.click(screen.getByRole("button", { name: "preview" }));
       await screen.findByText(/^summary/);
       await user.click(screen.getByRole("button", { name: "apply(2)" }));
@@ -307,6 +325,7 @@ describe("GenerateDialog", () => {
     it("makes one row uniform at the round-up post, sends it as an override, and can split it again", async () => {
       const user = userEvent.setup();
       renderDialog();
+      await user.click(screen.getByLabelText("splitLabel"));
       await user.click(screen.getByRole("button", { name: "preview" }));
       await screen.findByText(/^summary/);
 
@@ -337,12 +356,75 @@ describe("GenerateDialog", () => {
     it("throws the preview away when the remainder changes", async () => {
       const user = userEvent.setup();
       renderDialog();
+      await user.click(screen.getByLabelText("splitLabel"));
       await user.click(screen.getByRole("button", { name: "preview" }));
       await screen.findByText(/^summary/);
       await user.click(screen.getByLabelText("splitLabel"));
       expect(screen.queryByText(/^summary/)).not.toBeInTheDocument();
       expect(screen.getByText("roundUpHint")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /^apply/ })).toBeDisabled();
+    });
+
+    it("flags a row SPLIT made uniform at another length — 45 at 60 as 1 × 45 — as it flags a split row", async () => {
+      // isMixed cannot see 1 × 45; it is still not the 1 × 60 whole lessons give.
+      state.generate.mutateAsync = vi.fn(async (body: GenerateBody & { planId: string }) =>
+        answer(body, [
+          { subjectId: "s-ma", subjectName: "Matematik", target: 180 },
+          { subjectId: "s-mu", subjectName: "Musik", target: 45 },
+        ]),
+      );
+      const user = userEvent.setup();
+      renderDialog();
+      await user.click(screen.getByLabelText("splitLabel"));
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      const mu = await screen.findByRole("row", { name: /Musik/ });
+      expect(within(mu).getByText("1 × 45")).toBeInTheDocument();
+      expect(within(mu).queryByLabelText("lessonsFor(7A Musik)")).toBeNull();
+      // Matematik 180 is 3 × 60 either way: not flagged.
+      expect(screen.queryByRole("button", { name: "makeUniformFor(7A Matematik)" })).toBeNull();
+      expect(screen.getByText("splitNote(1)")).toBeInTheDocument();
+      expect(screen.getByText("surplusHintSplit")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "makeUniformFor(7A Musik)" }));
+      expect(screen.getByLabelText("lessonsFor(7A Musik)")).toHaveValue("1");
+      expect(screen.getByLabelText("minutesFor(7A Musik)")).toHaveValue("60");
+      expect(screen.getByRole("button", { name: "splitAgainFor(7A Musik)" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "apply(2)" }));
+      expect(state.generate.mutateAsync).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          remainder: "SPLIT",
+          overrides: [{ studentGroupId: "g-7a", subjectId: "s-mu", lessonsPerWeek: 1, minutesPerLesson: 60 }],
+        }),
+      );
+    });
+
+    it("drops the note and the split footer once every changed row is made uniform", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await user.click(screen.getByLabelText("splitLabel"));
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      await screen.findByText("splitNote(2)");
+      await user.click(screen.getByRole("button", { name: "makeUniformFor(7A Matematik)" }));
+      expect(screen.getByText("splitNote(1)")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "makeUniformFor(7A Svenska)" }));
+      expect(screen.queryByText(/^splitNote/)).toBeNull();
+      expect(screen.queryByText("surplusHintSplit")).toBeNull();
+      expect(screen.getByText("surplusHint")).toBeInTheDocument();
+    });
+
+    it("keeps focus in the row: Gör enhetlig moves it to the lessons field, Dela upp igen back to Gör enhetlig", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await user.click(screen.getByLabelText("splitLabel"));
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      await screen.findByText(/^summary/);
+      await user.click(screen.getByRole("button", { name: "makeUniformFor(7A Matematik)" }));
+      expect(screen.getByLabelText("lessonsFor(7A Matematik)")).toHaveFocus();
+      await user.click(screen.getByRole("button", { name: "splitAgainFor(7A Matematik)" }));
+      expect(screen.getByRole("button", { name: "makeUniformFor(7A Matematik)" })).toHaveFocus();
+      // The keyboard path too.
+      await user.keyboard("{Enter}");
+      expect(screen.getByLabelText("lessonsFor(7A Matematik)")).toHaveFocus();
     });
   });
 

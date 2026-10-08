@@ -5,6 +5,7 @@ import {
   lessonLengthProblem,
   overridesFrom,
   parseLessons,
+  remainderChanged,
   rowKey,
   suggestLessonLength,
   uniformEdit,
@@ -102,6 +103,24 @@ describe("a split row in the preview", () => {
   it("makes a row uniform at ceil(target / length), at most 40 lessons", () => {
     expect(uniformEdit({ targetMinutesPerWeek: 200 }, 60)).toEqual({ lessons: "4", minutes: "60" });
     expect(uniformEdit({ targetMinutesPerWeek: 5000 }, 15)).toEqual({ lessons: "40", minutes: "15" });
+  });
+
+  it.each<[string, number, number, number, number[] | undefined, boolean]>([
+    // [case, target, lessons, minutes, lengths, changed] at the chosen length 60.
+    ["a split row", 175, 3, 60, [60, 60, 55], true],
+    ["45 at 60 as 1 × 45: uniform, but not whole lessons of 60", 45, 1, 45, undefined, true],
+    ["65 at 60 folded as 1 × 65", 65, 1, 65, undefined, true],
+    ["180 at 60 as 3 × 60: what ROUND_UP gives too", 180, 3, 60, undefined, false],
+    ["175 at 60 rounded up to 3 × 60", 175, 3, 60, undefined, false],
+    ["capped at 40 × 60 either way", 5000, 40, 60, undefined, false],
+  ])("remainderChanged: %s", (_case, target, lessons, minutes, lengths, changed) => {
+    const row = {
+      targetMinutesPerWeek: target,
+      lessonsPerWeek: lessons,
+      minutesPerLesson: minutes,
+      ...(lengths ? { lessonLengths: lengths } : {}),
+    };
+    expect(remainderChanged(row, 60)).toBe(changed);
   });
 });
 
