@@ -1,5 +1,13 @@
 import { BadRequestException } from '@nestjs/common';
 import { TIMPLAN_ALTERNATIVE_CODES } from '../common/timplan-coverage';
+import {
+  LESSON_GRID_MINUTES,
+  LESSON_MAX_MINUTES,
+  LESSON_MIN_MINUTES,
+  canonicalShape,
+  isMixed,
+  weeklyMinutesOf,
+} from '../common/lesson-lengths';
 
 /*
  * "Skapa timplansposter": a plan's minutes per week turned into the
@@ -34,17 +42,89 @@ import { TIMPLAN_ALTERNATIVE_CODES } from '../common/timplan-coverage';
  *                  class already has either subject, the line is the
  *                  class's already: nothing more is proposed in it.
  *
- * HOW. lessonsPerWeek = ceil(minutes / L) at the chosen lesson length L, so the
- * row never falls short of the plan by rounding; the surplus is reported
- * (lessons × L − minutes: 175 at 60 is 3 × 60, +5). Capped at 40, the DTO's
- * and the engine's bound; a capped row says so and its "surplus" is negative.
+ * HOW, ROUND_UP (the rule an omitted `remainder` keeps). lessonsPerWeek =
+ * ceil(minutes / L) at the chosen lesson length L, so the row never falls short
+ * of the plan by rounding; the surplus is reported (lessons × L − minutes: 175
+ * at 60 is 3 × 60, +5). Capped at 40, the DTO's and the engine's bound; a
+ * capped row says so and its "surplus" is negative.
+ *
+ * HOW, SPLIT (lektionslängder; splitWeeklyMinutes below). The target is met
+ * without surplus wherever the grid allows: 175 at 60 is 2 × 60 + 1 × 55, and a
+ * short remainder is folded into one lesson rather than left as a stub no
+ * school timetables — 200 at 60 is 2 × 60 + 1 × 80. Never more than two
+ * different lengths, every one on the grid within 15..240.
+ *
  * L is on the solver's five-minute grid within 15..240 (the DTO refuses
- * anything else, assertLessonLengthFitsTheGrid's rule), so the engine never
- * receives a length it refuses (INPUT_*). Overrides — the preview's edited
- * rows — replace lessons and length for their (group, subject).
+ * anything else, assertLessonLengthFitsTheGrid's rule), and so is every length
+ * SPLIT makes of it, so the engine never receives a length it refuses
+ * (INPUT_*). Overrides — the preview's edited rows — replace lessons and
+ * length for their (group, subject), always as a uniform row.
  */
 
 export const MAX_LESSONS_PER_WEEK = 40;
+
+/** What a plan's minutes become: rounded up to whole lessons, or split to meet them. */
+export type RemainderMode = 'SPLIT' | 'ROUND_UP';
+
+export interface WeeklySplit {
+  /** One length per lesson, longest first. */
+  lengths: number[];
+  /** The 40-lesson bound was reached before the target. */
+  capped: boolean;
+}
+
+/**
+ * T minutes a week as lessons of about L minutes.
+ *
+ * ROUND_UP: ceil(T / L) × L, capped at 40 — the rule generate always had.
+ *
+ * SPLIT, with T' = T rounded up to the five-minute grid (a surplus of at most
+ * 4, reported), q = floor(T' / L) and r = T' − q·L:
+ *   1. r = 0: q × L, uniform.
+ *   2. q = 0 (T' shorter than one lesson): 1 × max(T', 15) — one lesson of
+ *      the target, never below the engine's 15.
+ *   3. r ≥ 15 and r > L/2: q × L + 1 × r. The remainder is a lesson of its
+ *      own, closer to whole than to nothing, and never longer than L.
+ *   4. Otherwise (r ≤ L/2, or under 15) the remainder is FOLDED into one
+ *      lesson: (q − 1) × L + 1 × (L + r), when L + r ≤ 240. A remnant of ten
+ *      or twenty minutes has no slot of its own in a school's day, and one
+ *      longer lesson keeps the count and puts the minutes where a day already
+ *      has the room.
+ *   5. A fold past 240 (only for L above 160): q × L + 1 × max(r, 15). Under
+ *      15 that is a surplus of 15 − r, at most 10 — not the round-up's
+ *      (q + 1) × L, which at L = 235 would be 229 minutes over.
+ *   6. More than 40 lessons: the fold (which keeps q) is tried first, then
+ *      40 × L, capped, as ROUND_UP caps.
+ * Never more than two different lengths, every one on the grid in 15..240.
+ */
+export function splitWeeklyMinutes(minutes: number, length: number, mode: RemainderMode): WeeklySplit {
+  if (mode === 'ROUND_UP') {
+    const wanted = Math.ceil(minutes / length);
+    return {
+      lengths: Array.from({ length: Math.min(wanted, MAX_LESSONS_PER_WEEK) }, () => length),
+      capped: wanted > MAX_LESSONS_PER_WEEK,
+    };
+  }
+  const target = Math.ceil(minutes / LESSON_GRID_MINUTES) * LESSON_GRID_MINUTES;
+  const q = Math.floor(target / length);
+  const r = target - q * length;
+  const lessons = (count: number, of: number): number[] => Array.from({ length: count }, () => of);
+  const foldable = q >= 1 && r > 0 && length + r <= LESSON_MAX_MINUTES;
+  const fold = (): number[] => [length + r, ...lessons(q - 1, length)];
+
+  let split: number[];
+  if (r === 0) split = lessons(q, length);
+  else if (q === 0) split = [Math.max(target, LESSON_MIN_MINUTES)];
+  else if (r >= LESSON_MIN_MINUTES && r > length / 2) split = [...lessons(q, length), r];
+  else if (foldable) split = fold();
+  else split = [...lessons(q, length), Math.max(r, LESSON_MIN_MINUTES)];
+
+  if (split.length > MAX_LESSONS_PER_WEEK) {
+    if (foldable && q <= MAX_LESSONS_PER_WEEK) return { lengths: fold(), capped: false };
+    return { lengths: lessons(MAX_LESSONS_PER_WEEK, length), capped: true };
+  }
+  return { lengths: split.sort((a, b) => b - a), capped: false };
+}
 
 export interface GenerateEntry {
   subjectId: string;
@@ -77,6 +157,8 @@ export interface GenerateInput {
   /** (group, subject) pairs the year already has a requirement for. */
   existing: { studentGroupId: string; subjectId: string }[];
   minutesPerLesson: number;
+  /** SPLIT or ROUND_UP; omitted is ROUND_UP, the rule generate always had. */
+  remainder?: RemainderMode;
   overrides: GenerateOverride[];
 }
 
@@ -87,8 +169,12 @@ export interface ProposedRow {
   subjectName: string;
   gradeLevel: number;
   targetMinutesPerWeek: number;
+  /** The lessons a week; on a split row, the list's length. */
   lessonsPerWeek: number;
+  /** The length; on a split row, the longest. */
   minutesPerLesson: number;
+  /** Only on a split row: one length per lesson, longest first (2 × 60 + 1 × 55 is [60, 60, 55]). */
+  lessonLengths?: number[];
   plannedMinutesPerWeek: number;
   /** planned − target: +5 for 175 as 3 × 60; negative only when capped. */
   surplusMinutesPerWeek: number;
@@ -199,18 +285,22 @@ export function proposeRequirements(input: GenerateInput): Proposal {
         }
       }
       const override = overrides.get(key);
-      const length = override?.minutesPerLesson ?? input.minutesPerLesson;
-      const wanted = Math.ceil(entry.minutesPerWeek / length);
-      const lessons = override?.lessonsPerWeek ?? Math.min(wanted, MAX_LESSONS_PER_WEEK);
+      const split = override
+        ? { lengths: Array.from({ length: override.lessonsPerWeek }, () => override.minutesPerLesson), capped: false }
+        : splitWeeklyMinutes(entry.minutesPerWeek, input.minutesPerLesson, input.remainder ?? 'ROUND_UP');
+      const shape = canonicalShape(split.lengths);
+      const planned = weeklyMinutesOf(shape);
       rows.push({
         ...where,
         targetMinutesPerWeek: entry.minutesPerWeek,
-        lessonsPerWeek: lessons,
-        minutesPerLesson: length,
-        plannedMinutesPerWeek: lessons * length,
-        surplusMinutesPerWeek: lessons * length - entry.minutesPerWeek,
+        lessonsPerWeek: shape.lessonsPerWeek,
+        minutesPerLesson: shape.minutesPerLesson,
+        // The key only on a split row, so a ROUND_UP preview is the one it was.
+        ...(isMixed(shape) ? { lessonLengths: shape.lessonLengths } : {}),
+        plannedMinutesPerWeek: planned,
+        surplusMinutesPerWeek: planned - entry.minutesPerWeek,
         overridden: override !== undefined,
-        capped: override === undefined && wanted > MAX_LESSONS_PER_WEEK,
+        capped: split.capped,
       });
     }
   }

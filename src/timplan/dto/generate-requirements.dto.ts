@@ -4,12 +4,14 @@ import {
   IsArray,
   IsBoolean,
   IsDivisibleBy,
+  IsIn,
   IsInt,
   IsObject,
   IsOptional,
   IsUUID,
   Max,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { SLOT_MINUTES } from '../../common/solver-grid';
@@ -59,6 +61,21 @@ export class GenerateRequirementsDto {
   @Max(240, { message: 'minutesPerLesson: högst 240 minuter per lektion.' })
   @IsDivisibleBy(SLOT_MINUTES, { message: LENGTH_GRID })
   minutesPerLesson!: number;
+
+  /**
+   * What the minutes that do not fill a whole lesson become
+   * (generate-requirements.ts, splitWeeklyMinutes): SPLIT meets the target
+   * with up to two lengths (175 at 60 is 2 × 60 + 1 × 55), ROUND_UP adds a
+   * whole lesson (3 × 60, +5). OMITTED IS ROUND_UP, the rule generate always
+   * had, so a client that has never heard of the field — and every answer it
+   * gets — is unchanged; the web's dialog states it. Null is refused rather
+   * than read as either.
+   */
+  @ValidateIf((_: object, value: unknown) => value !== undefined)
+  @IsIn(['SPLIT', 'ROUND_UP'], {
+    message: 'remainder: anges som SPLIT (dela upp resten) eller ROUND_UP (avrunda uppåt).',
+  })
+  remainder?: 'SPLIT' | 'ROUND_UP';
 
   /**
    * Required: true answers the preview and writes nothing; false creates the

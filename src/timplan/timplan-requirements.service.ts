@@ -25,6 +25,8 @@ export interface GenerateRequirementsResponse {
   /** The årskurser the year attaches to this plan; empty means nothing to do. */
   gradeLevels: number[];
   minutesPerLesson: number;
+  /** Echoed only when the request stated it; an omitted one is ROUND_UP. */
+  remainder?: 'SPLIT' | 'ROUND_UP';
   dryRun: boolean;
   /** Rows written by this call (0 for a preview). */
   created: number;
@@ -118,6 +120,7 @@ export class TimplanRequirementsService {
           nationalCodes: new Map(subjects.map((subject) => [subject.id, subject.nationalCode])),
           existing,
           minutesPerLesson: dto.minutesPerLesson,
+          remainder: dto.remainder ?? 'ROUND_UP',
           overrides: dto.overrides ?? [],
         });
 
@@ -128,6 +131,7 @@ export class TimplanRequirementsService {
           academicYearId: dto.academicYearId,
           gradeLevels,
           minutesPerLesson: dto.minutesPerLesson,
+          ...(dto.remainder !== undefined ? { remainder: dto.remainder } : {}),
           dryRun: dto.dryRun,
         };
         if (dto.dryRun || proposal.rows.length === 0) {
@@ -142,6 +146,9 @@ export class TimplanRequirementsService {
             studentGroupId: row.studentGroupId,
             lessonsPerWeek: row.lessonsPerWeek,
             minutesPerLesson: row.minutesPerLesson,
+            // Only a split row names the list; a uniform one leaves it to the
+            // column's '{}', so a ROUND_UP apply writes the rows it always did.
+            ...(row.lessonLengths ? { lessonLengths: row.lessonLengths } : {}),
             // Stated, as TeachingRequirementsService states them, so the row
             // is the one the preview described and not what defaults fill in.
             teacherId: null,
