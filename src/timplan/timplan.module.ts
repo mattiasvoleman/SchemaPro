@@ -5,6 +5,8 @@ import { LocalTimplansController } from './local-timplans.controller';
 import { LocalTimplansService } from './local-timplans.service';
 import { TimplanCoverageController } from './timplan-coverage.controller';
 import { TimplanCoverageService } from './timplan-coverage.service';
+import { TimplanCreditsController } from './timplan-credits.controller';
+import { TimplanCreditsService } from './timplan-credits.service';
 import { TimplanRequirementsService } from './timplan-requirements.service';
 
 /**
@@ -21,11 +23,17 @@ import { TimplanRequirementsService } from './timplan-requirements.service';
  * ai-engine-contract.spec.ts holds the payload's shape.
  */
 @Module({
-  controllers: [LocalTimplansController, AcademicYearTimplansController, TimplanCoverageController],
+  controllers: [
+    LocalTimplansController,
+    AcademicYearTimplansController,
+    TimplanCoverageController,
+    TimplanCreditsController,
+  ],
   providers: [
     LocalTimplansService,
     AcademicYearTimplansService,
     TimplanCoverageService,
+    TimplanCreditsService,
     TimplanRequirementsService,
   ],
 })

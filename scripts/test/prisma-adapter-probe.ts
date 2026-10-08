@@ -71,12 +71,14 @@ import { LocalTimplansService } from '../../src/timplan/local-timplans.service';
 import { AcademicYearTimplansService } from '../../src/timplan/academic-year-timplans.service';
 import { TimplanCoverageService, readPlannedInput } from '../../src/timplan/timplan-coverage.service';
 import { TimplanRequirementsService } from '../../src/timplan/timplan-requirements.service';
+import { TimplanCreditsService } from '../../src/timplan/timplan-credits.service';
 import {
   decidedTimplanRefusal,
   isTimplanInUseRefusal,
   rethrowPrismaError,
   rolloverLinkRefusal,
   teacherDutyBlockRefusal,
+  timplanCreditKeyField,
 } from '../../src/common/utils/prisma-errors';
 import { UsersService } from '../../src/users/users.service';
 import type { SupabaseAdminService } from '../../src/users/supabase-admin.service';
@@ -1827,6 +1829,110 @@ async function runChecks(
     await subjects.remove(matematik.id, admin);
   });
 
+  // ---- (u3) tillgodoräknad tid through the real adapter
+  await check('(u3) a timplan credit round-trips under RLS, a CHECK or key reached past the DTO is a 400 naming the field, and a teacher reads but cannot write', async () => {
+    const credits = new TimplanCreditsService(api);
+    const subjects = new SubjectsService(api);
+    const years = new AcademicYearsService(api);
+
+    const year = await years.create(
+      { name: `${MARKER} kredit`, startDate: '2096-08-17', endDate: '2097-06-11' } as never,
+      admin,
+    );
+    const idrott = await subjects.create({ name: `${MARKER} kredit-idrott` } as never, admin);
+    const classId = (
+      await owner.query<{ id: string }>(
+        `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+         VALUES ($1, $2, $3 || ' 7A', 'CLASS', 7, now()) RETURNING id`,
+        [fixture.schoolId, year.id, MARKER],
+      )
+    ).rows[0].id;
+
+    const created = await credits.create(
+      {
+        academicYearId: year.id,
+        date: '2096-09-25',
+        minutes: 300,
+        subjectId: idrott.id,
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+        name: ' Friluftsdag ',
+        note: '  ',
+      },
+      admin,
+    );
+    assert.deepEqual(
+      [created.date, created.minutes, created.subjectId, created.minGradeLevel, created.maxGradeLevel, created.name, created.note],
+      ['2096-09-25', 300, idrott.id, 7, 9, 'Friluftsdag', null],
+    );
+    // The DATE round-trips as the day it is, through the adapter, under RLS.
+    const raw = await owner.query<{ date: string }>(`SELECT date::text AS date FROM "TimplanCredits" WHERE id = $1`, [created.id]);
+    assert.equal(raw.rows[0]?.date, '2096-09-25');
+
+    // The PATCH replaces the scope whole.
+    const moved = await credits.update(created.id, { studentGroupId: classId }, admin);
+    assert.deepEqual([moved.studentGroupId, moved.minGradeLevel, moved.maxGradeLevel], [classId, null, null]);
+    await assert.rejects(
+      credits.create({ academicYearId: year.id, date: '2097-06-14', minutes: 60, name: 'Utanför' }, admin),
+      (error: unknown) => {
+        assert.ok(error instanceof BadRequestException, summarise(error));
+        assert.equal((error.getResponse() as { code?: string }).code, 'TIMPLAN_CREDIT_OUTSIDE_YEAR');
+        return true;
+      },
+    );
+
+    // Past the DTO — PostgREST's SQL, here the model API: the CHECK and the
+    // composite key answer, and the gateway's mapping names the field.
+    try {
+      await api.withRls(admin, (tx) => tx.timplanCredit.update({ where: { id: created.id }, data: { minutes: 601 } }));
+      assert.fail('the minutes CHECK let 601 through');
+    } catch (error) {
+      assert.equal(sqlStateOf(error), '23514', summarise(error));
+      assert.throws(() => rethrowPrismaError(error), (thrown: unknown) => {
+        assert.ok(thrown instanceof BadRequestException, summarise(thrown));
+        assert.ok(thrown.message.startsWith('minutes: '), thrown.message);
+        return true;
+      });
+    }
+    try {
+      await api.withRls(admin, (tx) =>
+        tx.timplanCredit.create({
+          data: { schoolId: fixture.schoolId, academicYearId: fixture.foreignYearId, date: new Date('2096-09-25T00:00:00Z'), minutes: 60, name: MARKER },
+        }),
+      );
+      assert.fail('another school’s year was accepted under a credit stamped with this school');
+    } catch (error) {
+      assert.equal(sqlStateOf(error), '23503', summarise(error));
+      assert.equal(timplanCreditKeyField(error), 'academicYearId', summarise(error));
+    }
+
+    // A teacher reads the year's credits — their coverage counts them — and
+    // writes none: the INSERT meets WITH CHECK, the DELETE finds no row.
+    const teacherRow = (
+      await owner.query<{ id: string; authId: string }>(
+        `SELECT id, "authId" FROM "Users" WHERE "schoolId" = $1 AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL
+          ORDER BY "authId" LIMIT 1`,
+        [fixture.schoolId],
+      )
+    ).rows[0];
+    const teacher = { authId: teacherRow.authId, userId: teacherRow.id, schoolId: fixture.schoolId, role: Role.TEACHER };
+    const read = await credits.list(year.id, teacher);
+    assert.deepEqual(read.map((row) => row.id), [created.id]);
+    await assert.rejects(
+      credits.create({ academicYearId: year.id, date: '2096-09-26', minutes: 60, name: MARKER }, teacher),
+      (error: unknown) => {
+        assert.equal(sqlStateOf(error), '42501', summarise(error));
+        return true;
+      },
+    );
+    await assert.rejects(credits.remove(created.id, teacher), NotFoundException);
+
+    await credits.remove(created.id, admin);
+    assert.equal((await owner.query('SELECT 1 FROM "TimplanCredits" WHERE id = $1', [created.id])).rowCount, 0);
+    await years.remove(year.id, admin);
+    await subjects.remove(idrott.id, admin);
+  });
+
   await check('(v) a läsårsrullning link the database refuses is a 409 through the real adapter, and the deletes that clear one pass', async () => {
     const years = new AcademicYearsService(api);
     const groups = new StudentGroupsService(api);
@@ -3329,6 +3435,11 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2 || ' nästa år'`, [schoolId, MARKER]);
   // (u)'s year, for a run that stopped first: its groups, rows and attachments go with it.
   await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name = $2 || ' p2'`, [schoolId, MARKER]);
+  // (u3)'s and (u4)'s years: their groups, credits and calendar rows go with them.
+  await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name IN ($2 || ' kredit', $2 || ' genomfört')`, [
+    schoolId,
+    MARKER,
+  ]);
   // (v)'s chain and its throwaway school, for a run that stopped half-way;
   // the groups cascade, and the link triggers let the foreign keys clear.
   await owner.query(`DELETE FROM "AcademicYears" WHERE "schoolId" = $1 AND name LIKE $2 || ' rull %'`, [schoolId, MARKER]);

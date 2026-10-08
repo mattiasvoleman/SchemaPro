@@ -270,10 +270,44 @@ const NAMED_CHECKS: Record<string, string> = {
   TeacherDuties_label_is_sane: 'label: uppdraget behöver ett namn på högst 80 tecken.',
   TeacherDuties_minutesPerWeek_is_sane: 'minutesPerWeek: ett uppdrag är 1 till 2400 minuter per vecka.',
   TeacherDuties_note_is_sane: 'note: anteckningen kan vara högst 500 tecken.',
+  TimplanCredits_minutes_is_sane: 'minutes: 1 till 600 minuter för dagen, i hela minuter.',
+  TimplanCredits_grade_span_is_whole:
+    'minGradeLevel: minGradeLevel och maxGradeLevel anges tillsammans, eller ingen av dem.',
+  TimplanCredits_grade_span_is_ordered: 'minGradeLevel: årskurserna är 0 till 12, den lägsta först.',
+  TimplanCredits_scope_is_one: 'studentGroupId: beslutet gäller en grupp eller ett årskursspann, inte båda.',
+  TimplanCredits_name_is_sane: 'name: beslutet behöver ett namn på högst 80 tecken.',
+  TimplanCredits_note_is_sane: 'note: anteckningen kan vara högst 500 tecken, och inte bara blanktecken.',
   TeachingRequirements_lesson_lengths_are_canonical:
     'lessonLengths: en längd per lektion, längsta först, 15–240 minuter i femminuterssteg och ' +
     'två eller tre olika längder — och lessonsPerWeek och minutesPerLesson ska vara antalet och den längsta.',
 };
+
+/** TimplanCredits' composite keys (migration 20261009100000) and the field each guards. */
+const TIMPLAN_CREDIT_KEYS: Record<string, string> = {
+  TimplanCredits_academicYearId_schoolId_fkey: 'academicYearId',
+  TimplanCredits_subjectId_schoolId_fkey: 'subjectId',
+  TimplanCredits_studentGroupId_schoolId_fkey: 'studentGroupId',
+};
+
+/**
+ * The body field a TimplanCredits key refused (23503 on an INSERT or UPDATE of
+ * a credit), or null. Read like isTimplanInUseRefusal: the constraint from the
+ * driver's cause, else from the rendered message. Only the write side — none
+ * of these keys is referenced FROM another table, so a delete never meets one.
+ */
+export function timplanCreditKeyField(error: unknown): string | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2003') return null;
+  const cause = (
+    error.meta as { driverAdapterError?: { cause?: DriverCause & { constraint?: { index?: unknown } } } } | undefined
+  )?.driverAdapterError?.cause;
+  const constraint =
+    typeof cause?.constraint?.index === 'string'
+      ? cause.constraint.index
+      : (/constraint: `([^`]+)`/.exec(error.message)?.[1] ??
+        /foreign key constraint "([^"]+)"/.exec(typeof cause?.originalMessage === 'string' ? cause.originalMessage : '')?.[1] ??
+        null);
+  return constraint ? (TIMPLAN_CREDIT_KEYS[constraint] ?? null) : null;
+}
 
 /**
  * The 400 sentence for a CHECK violation (23514) named in NAMED_CHECKS, or

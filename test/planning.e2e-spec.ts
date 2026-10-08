@@ -3230,6 +3230,167 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('tillgodoräknad tid (timplan-credits)', () => {
+    /*
+     * /timplan-credits over HTTP: the admin's round trip POST → GET → PATCH
+     * (the scope replaced whole) → DELETE reaches every handler; a teacher
+     * reads and writes nothing; a pupil is stopped at the guard; the DTO and
+     * the service's year rule answer 400 naming the field.
+     */
+    const CREDIT_ID = 'c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1';
+    const MODELS = ['academicYear', 'timplanCredit', 'studentGroup', 'subject'];
+    const resetModels = () => {
+      for (const model of MODELS) {
+        for (const method of Object.values(harness.tx[model]!)) method.mockReset();
+        harness.tx[model]!['findMany']!.mockResolvedValue([]);
+      }
+    };
+    beforeEach(resetModels);
+    afterEach(resetModels);
+
+    const YEAR = {
+      id: YEAR_ID,
+      name: '2026/27',
+      startDate: new Date('2026-08-17T00:00:00.000Z'),
+      endDate: new Date('2027-06-11T00:00:00.000Z'),
+    };
+    const row = (overrides: Record<string, unknown> = {}) => ({
+      id: CREDIT_ID,
+      academicYearId: YEAR_ID,
+      date: new Date('2026-09-25T00:00:00.000Z'),
+      minutes: 300,
+      subjectId: SUBJECT_ID,
+      studentGroupId: null,
+      minGradeLevel: 7,
+      maxGradeLevel: 9,
+      name: 'Friluftsdag',
+      note: null,
+      ...overrides,
+    });
+
+    it('an admin creates, lists, re-scopes and deletes a credit', async () => {
+      const tx = harness.tx;
+      tx['academicYear']!['findUnique']!.mockResolvedValue(YEAR);
+      tx['subject']!['findUnique']!.mockResolvedValue({ id: SUBJECT_ID });
+      tx['studentGroup']!['findUnique']!.mockResolvedValue({ academicYearId: YEAR_ID, name: '7A' });
+      tx['timplanCredit']!['create']!.mockImplementation((args: { data: Record<string, unknown> }) =>
+        Promise.resolve(row(args.data)),
+      );
+
+      const created = await request(http())
+        .post('/api/v1/timplan-credits')
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: YEAR_ID,
+          date: '2026-09-25',
+          minutes: 300,
+          subjectId: SUBJECT_ID,
+          minGradeLevel: 7,
+          maxGradeLevel: 9,
+          name: 'Friluftsdag',
+        })
+        .expect(201);
+      expect(created.body).toEqual({
+        id: CREDIT_ID,
+        academicYearId: YEAR_ID,
+        date: '2026-09-25',
+        minutes: 300,
+        subjectId: SUBJECT_ID,
+        studentGroupId: null,
+        minGradeLevel: 7,
+        maxGradeLevel: 9,
+        name: 'Friluftsdag',
+        note: null,
+      });
+
+      tx['timplanCredit']!['findMany']!.mockResolvedValue([row()]);
+      const listed = await request(http())
+        .get(`/api/v1/timplan-credits?academicYearId=${YEAR_ID}`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(listed.body).toMatchObject([{ id: CREDIT_ID, date: '2026-09-25', minutes: 300 }]);
+
+      tx['timplanCredit']!['findUnique']!.mockResolvedValue({ ...row(), academicYear: YEAR });
+      tx['timplanCredit']!['update']!.mockImplementation((args: { data: Record<string, unknown> }) =>
+        Promise.resolve(row(args.data)),
+      );
+      const patched = await request(http())
+        .patch(`/api/v1/timplan-credits/${CREDIT_ID}`)
+        .set('x-test-user', admin())
+        .send({ studentGroupId: GROUP_ID })
+        .expect(200);
+      expect(patched.body).toMatchObject({ studentGroupId: GROUP_ID, minGradeLevel: null, maxGradeLevel: null });
+      expect(tx['timplanCredit']!['update']!.mock.calls[0]![0]).toMatchObject({
+        where: { id: CREDIT_ID },
+        data: { studentGroupId: GROUP_ID, minGradeLevel: null, maxGradeLevel: null },
+      });
+
+      tx['timplanCredit']!['delete']!.mockResolvedValue({ id: CREDIT_ID });
+      await request(http())
+        .delete(`/api/v1/timplan-credits/${CREDIT_ID}`)
+        .set('x-test-user', admin())
+        .expect(204);
+      expect(tx['timplanCredit']!['delete']).toHaveBeenCalledWith({ where: { id: CREDIT_ID }, select: { id: true } });
+    });
+
+    it('a teacher reads the year’s credits and writes none', async () => {
+      harness.tx['academicYear']!['findUnique']!.mockResolvedValue(YEAR);
+      harness.tx['timplanCredit']!['findMany']!.mockResolvedValue([row()]);
+      const teacher = asUser({ role: 'TEACHER' as never });
+      await request(http())
+        .get(`/api/v1/timplan-credits?academicYearId=${YEAR_ID}`)
+        .set('x-test-user', teacher)
+        .expect(200);
+      await request(http()).post('/api/v1/timplan-credits').set('x-test-user', teacher).send({}).expect(403);
+      await request(http())
+        .patch(`/api/v1/timplan-credits/${CREDIT_ID}`)
+        .set('x-test-user', teacher)
+        .send({ minutes: 60 })
+        .expect(403);
+      await request(http()).delete(`/api/v1/timplan-credits/${CREDIT_ID}`).set('x-test-user', teacher).expect(403);
+      expect(harness.tx['timplanCredit']!['create']).not.toHaveBeenCalled();
+      expect(harness.tx['timplanCredit']!['delete']).not.toHaveBeenCalled();
+    });
+
+    it('stops a pupil and a guardian at the guard', async () => {
+      for (const role of ['STUDENT', 'GUARDIAN']) {
+        await request(http())
+          .get(`/api/v1/timplan-credits?academicYearId=${YEAR_ID}`)
+          .set('x-test-user', asUser({ role: role as never }))
+          .expect(403);
+      }
+      expect(harness.tx['timplanCredit']!['findMany']).not.toHaveBeenCalled();
+    });
+
+    it('400s a date outside the läsår and a group with a span, naming the field', async () => {
+      harness.tx['academicYear']!['findUnique']!.mockResolvedValue(YEAR);
+      const base = { academicYearId: YEAR_ID, date: '2026-09-25', minutes: 300, name: 'Friluftsdag' };
+      const outside = await request(http())
+        .post('/api/v1/timplan-credits')
+        .set('x-test-user', admin())
+        .send({ ...base, date: '2027-06-14' })
+        .expect(400);
+      expect(outside.body).toMatchObject({ code: 'TIMPLAN_CREDIT_OUTSIDE_YEAR' });
+      expect(outside.body.detail).toContain('date: 2027-06-14 ligger utanför läsåret 2026/27');
+
+      const both = await request(http())
+        .post('/api/v1/timplan-credits')
+        .set('x-test-user', admin())
+        .send({ ...base, studentGroupId: GROUP_ID, minGradeLevel: 7, maxGradeLevel: 9 })
+        .expect(400);
+      expect(both.body).toMatchObject({ code: 'TIMPLAN_CREDIT_SCOPE' });
+      expect(both.body.detail).toContain('studentGroupId: ');
+
+      const minutes = await request(http())
+        .post('/api/v1/timplan-credits')
+        .set('x-test-user', admin())
+        .send({ ...base, minutes: 3000 })
+        .expect(400);
+      expect(JSON.stringify(minutes.body)).toContain('minutes: 1 till 600 minuter');
+      expect(harness.tx['timplanCredit']!['create']).not.toHaveBeenCalled();
+    });
+  });
+
   describe('skapa timplansposter (generate-requirements)', () => {
     /*
      * POST /local-timplans/:id/generate-requirements over HTTP: a preview and
