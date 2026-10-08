@@ -47,6 +47,14 @@ export type ColumnRule =
   | 'NEW_ID'
   /** The source row's value, unchanged. */
   | 'COPY'
+  /**
+   * The source row's value, unchanged — written only when it is not the
+   * column's default, and otherwise left to that default. For a column added
+   * with a default every existing row holds (TeachingRequirement.lessonLengths,
+   * '{}' on every uniform row): naming it in every write would change the SQL,
+   * and the planHash over the writes, of a school that never uses it.
+   */
+  | 'COPY_UNLESS_DEFAULT'
   /** The new year's id. */
   | 'TARGET_YEAR'
   /** The source group's successor (or intake twin) in the new year. */
@@ -228,6 +236,7 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       coTeacherId: 'KEEP_TEACHER',
       lessonsPerWeek: 'COPY',
       minutesPerLesson: 'COPY',
+      lessonLengths: 'COPY_UNLESS_DEFAULT',
       minutesBefore: 'COPY',
       minutesAfter: 'COPY',
       teacherLoadPercent: 'COPY',

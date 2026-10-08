@@ -20,6 +20,7 @@ import {
   type RolloverOutcome,
   type VolumeFinding,
 } from '../common/year-rollover';
+import { isMixed } from '../common/lesson-lengths';
 import { qualificationFinding } from '../staffing/staffing-checks';
 import type { GradeSpan } from '../staffing/teacher-load';
 import { skippedModels } from './rollover-registry';
@@ -111,6 +112,12 @@ export interface RolloverWrites {
     coTeacherId: string | null;
     lessonsPerWeek: number;
     minutesPerLesson: number;
+    /**
+     * Only on a split row: its lektionslängder, carried as they are. Absent
+     * on a uniform one, so its write — and the planHash over the writes — is
+     * byte for byte what it was before the column existed.
+     */
+    lessonLengths?: number[];
     minutesBefore: number;
     minutesAfter: number;
     teacherLoadPercent: number;
@@ -458,6 +465,7 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
       subjectId: requirement.subjectId,
       lessonsPerWeek: requirement.lessonsPerWeek,
       minutesPerLesson: requirement.minutesPerLesson,
+      ...(isMixed(requirement) ? { lessonLengths: [...requirement.lessonLengths] } : {}),
       minutesBefore: requirement.minutesBefore,
       minutesAfter: requirement.minutesAfter,
       teacherLoadPercent: requirement.teacherLoadPercent,
