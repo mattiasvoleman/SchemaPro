@@ -147,15 +147,18 @@ export function CreateLessonDialog({
         </DialogHeader>
         {draft ? (
           <div className="grid grid-cols-2 gap-4">
+            {/* Every Label points at its control. A Label beside a Radix
+                trigger is not tied to it otherwise, and a screen reader
+                heard the value ("Måndag", "Ingen sal") but never the field. */}
             <div className="space-y-2">
-              <Label>{t("addSubject")}</Label>
+              <Label htmlFor="create-subject">{t("addSubject")}</Label>
               <Select
                 value={draft.subjectId || undefined}
                 onValueChange={(value) =>
                   onDraftChange({ ...draft, subjectId: value })
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger id="create-subject">
                   <SelectValue placeholder={t("addSubject")} />
                 </SelectTrigger>
                 <SelectContent>
@@ -168,16 +171,14 @@ export function CreateLessonDialog({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>{t("addGroup")}</Label>
+              <Label htmlFor="create-group">{t("addGroup")}</Label>
               <Select
                 value={draft.studentGroupId || undefined}
                 onValueChange={(value) =>
                   onDraftChange({ ...draft, studentGroupId: value })
                 }
               >
-                {/* Named here: a Label beside a Radix trigger is not tied to
-                    it, so this dialog read as a row of unnamed comboboxes. */}
-                <SelectTrigger aria-label={t("addGroup")}>
+                <SelectTrigger id="create-group">
                   <SelectValue placeholder={t("addGroup")} />
                 </SelectTrigger>
                 <SelectContent>
@@ -360,14 +361,14 @@ export function CreateLessonDialog({
               ) : null}
             </div>
             <div className="col-span-2 space-y-2">
-              <Label>{t("editDay")}</Label>
+              <Label htmlFor="create-day">{t("editDay")}</Label>
               <Select
                 value={draft.dayOfWeek}
                 onValueChange={(value) =>
                   onDraftChange({ ...draft, dayOfWeek: value })
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger id="create-day">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -402,14 +403,14 @@ export function CreateLessonDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label>{t("editRoom")}</Label>
+              <Label htmlFor="create-room">{t("editRoom")}</Label>
               <Select
                 value={draft.roomId}
                 onValueChange={(value) =>
                   onDraftChange({ ...draft, roomId: value })
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger id="create-room">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -423,14 +424,14 @@ export function CreateLessonDialog({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>{t("editTeacher")}</Label>
+              <Label htmlFor="create-teacher">{t("editTeacher")}</Label>
               <Select
                 value={draft.teacherId}
                 onValueChange={(value) =>
                   onDraftChange({ ...draft, teacherId: value })
                 }
               >
-                <SelectTrigger aria-label={t("editTeacher")}>
+                <SelectTrigger id="create-teacher">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -461,11 +462,17 @@ export function CreateLessonDialog({
               <div className="flex items-center gap-2">
                 <Lock className="h-4 w-4 text-muted-foreground" />
                 <div>
-                  <div className="text-sm font-medium">{t("lockLabel")}</div>
-                  <div className="text-xs text-muted-foreground">{t("lockHint")}</div>
+                  <label htmlFor="create-lock" className="block text-sm font-medium">
+                    {t("lockLabel")}
+                  </label>
+                  <div id="create-lock-hint" className="text-xs text-muted-foreground">
+                    {t("lockHint")}
+                  </div>
                 </div>
               </div>
               <Switch
+                id="create-lock"
+                aria-describedby="create-lock-hint"
                 checked={draft.isLocked}
                 onCheckedChange={(checked) =>
                   onDraftChange({ ...draft, isLocked: checked })
