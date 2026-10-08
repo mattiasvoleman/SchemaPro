@@ -1529,6 +1529,59 @@ describe("Timplan cell dialog: lektionslängder", () => {
     await user.click(screen.getByRole("button", { name: "addLength" }));
     expect(screen.queryByRole("button", { name: "addLength" })).toBeNull();
   });
+
+  it("keeps focus in the dialog when a length is removed: on Lägg till en längd", async () => {
+    state.requirements = loaded([split()]);
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(splitLabel));
+    await user.click(screen.getByRole("button", { name: "addLength" }));
+    // Three lengths: the add button is gone, and comes back with the removal.
+    expect(screen.queryByRole("button", { name: "addLength" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "removeLength(3)" }));
+    expect(screen.getByRole("button", { name: "addLength" })).toHaveFocus();
+    // The keyboard path: the last extra row removed with Enter.
+    screen.getByRole("button", { name: "removeLength(2)" }).focus();
+    await user.keyboard("{Enter}");
+    expect(screen.queryByLabelText("lengthMinutes(2)")).toBeNull();
+    expect(screen.getByRole("button", { name: "addLength" })).toHaveFocus();
+  });
+
+  it("labels every extra field visibly and lines the rows up under the first pair", async () => {
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
+    const firstPair = () => (screen.getByLabelText(/^(lessonsPerWeek|lengthLessons\(1\))$/).closest(".grid") as HTMLElement).className;
+    // A uniform post: the two columns it always had.
+    expect(firstPair()).toContain("grid-cols-2");
+
+    await user.click(screen.getByRole("button", { name: "addLength" }));
+    for (const name of ["lengthLessons(2)", "lengthMinutes(2)"]) {
+      const input = screen.getByLabelText(name) as HTMLInputElement;
+      // A <label> on screen, not an aria-label only a screen reader hears.
+      expect([name, input.labels?.length ?? 0, input.getAttribute("aria-label")]).toEqual([name, 1, null]);
+    }
+    const row = (screen.getByLabelText("lengthLessons(2)").closest(".grid") as HTMLElement).className;
+    expect(firstPair()).toBe(row);
+  });
+
+  it("announces why save waits from a live region that was there before the row, and ties save to it", async () => {
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
+    const live = document.getElementById("req-lengths-status");
+    expect(live).not.toBeNull();
+    expect(live).toHaveAttribute("aria-live", "polite");
+    expect(live).toHaveTextContent("");
+    // A uniform post's save describes nothing new.
+    expect(saveButton()).not.toHaveAttribute("aria-describedby");
+
+    await user.click(screen.getByRole("button", { name: "addLength" }));
+    // The same node, now speaking: mounted before, so a screen reader hears it.
+    expect(document.getElementById("req-lengths-status")).toBe(live);
+    expect(live).toHaveTextContent("lengthsProblem.INCOMPLETE");
+    expect(saveButton()).toHaveAttribute("aria-describedby", "req-lengths-status");
+  });
 });
 
 describe("Timplan cell dialog and the tjänstefördelning policy", () => {

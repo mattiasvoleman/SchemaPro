@@ -181,7 +181,7 @@ import {
   shapeFromDraft,
   type DraftPart,
 } from "@/lib/lesson-lengths-text";
-import { LessonLengthsFields } from "@/components/timplan/lesson-lengths-fields";
+import { EXTRA_ROW_GRID, LessonLengthsFields } from "@/components/timplan/lesson-lengths-fields";
 import { useLengthsInWords } from "@/components/timplan/use-lengths-in-words";
 import type { TargetSources } from "@/lib/requirements-target";
 import type { TargetState } from "@/components/timplan/requirements-target";
@@ -1495,7 +1495,8 @@ export default function RequirementsPage() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            {/* Three columns while extra lengths exist, so their rows line up under this pair. */}
+            <div className={form.extraLengths.length > 0 ? EXTRA_ROW_GRID : "grid grid-cols-2 gap-4"}>
               <div className="space-y-2">
                 <Label htmlFor="req-lessons">
                   {form.extraLengths.length > 0 ? t("lengthLessons", { n: 1 }) : t("lessonsPerWeek")}
@@ -1528,6 +1529,7 @@ export default function RequirementsPage() {
               first={{ lessons: form.lessonsPerWeek, minutes: form.minutesPerLesson }}
               extra={form.extraLengths}
               onChange={(extraLengths) => setForm({ ...form, extraLengths })}
+              statusId="req-lengths-status"
             />
             {/*
               Mål mode's line under the two numbers it reads: what the
@@ -1726,6 +1728,8 @@ export default function RequirementsPage() {
               </Button>
               <Button
                 onClick={submit}
+                // Why a split post's save waits: the sentence under its lengths.
+                aria-describedby={form.extraLengths.length > 0 ? "req-lengths-status" : undefined}
                 disabled={
                   Number(form.lessonsPerWeek) < 1 ||
                   Number(form.minutesPerLesson) < 15 ||
