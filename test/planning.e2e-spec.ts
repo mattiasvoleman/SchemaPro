@@ -3465,6 +3465,27 @@ describe('Planning surface (e2e)', () => {
         .expect(status);
     };
 
+    it('carries a split timplanspost into the new year with its lengths, and every uniform one without a list (admin round-trip)', async () => {
+      const { world, options } = givenSchool(2020);
+      const ma7 = world.rows['teachingRequirement']!.find(
+        (row) => row['studentGroupId'] === IDS.g7a && row['subjectId'] === IDS.ma,
+      )!;
+      Object.assign(ma7, { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+
+      const yearB = (await roll(options, 201)).body.academicYear.id as string;
+
+      const eightA = world.rows['studentGroup']!.find(
+        (group) => group['academicYearId'] === yearB && group['name'] === '8A',
+      )!['id'];
+      const carried = world.rows['teachingRequirement']!.filter((row) => row['academicYearId'] === yearB);
+      expect(carried.find((row) => row['studentGroupId'] === eightA && row['subjectId'] === IDS.ma)).toMatchObject({
+        lessonsPerWeek: 2,
+        minutesPerLesson: 80,
+        lessonLengths: [80, 40],
+      });
+      expect(carried.filter((row) => 'lessonLengths' in row)).toHaveLength(1);
+    });
+
     it('previews and executes a rollover, then previews and executes the activation (admin round-trips)', async () => {
       // A year that ended long ago, so the activation is not too early.
       const { world, options } = givenSchool(2020);

@@ -57,6 +57,8 @@ export interface SourceRequirement {
   coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** Lektionslängder, longest first; [] on a uniform row. */
+  lessonLengths: number[];
   minutesBefore: number;
   minutesAfter: number;
   teacherLoadPercent: number;
@@ -210,6 +212,7 @@ export async function readRolloverSource(
       coTeacherId: true,
       lessonsPerWeek: true,
       minutesPerLesson: true,
+      lessonLengths: true,
       minutesBefore: true,
       minutesAfter: true,
       teacherLoadPercent: true,
@@ -391,6 +394,7 @@ export async function readRolloverSource(
       coTeacherId: row.coTeacherId,
       lessonsPerWeek: row.lessonsPerWeek,
       minutesPerLesson: row.minutesPerLesson,
+      lessonLengths: row.lessonLengths ?? [],
       minutesBefore: row.minutesBefore,
       minutesAfter: row.minutesAfter,
       teacherLoadPercent: row.teacherLoadPercent,

@@ -114,6 +114,9 @@ export const ROLLOVER_STEPS: Record<RolloverStepName, (context: StepContext) => 
         coTeacherId: row.coTeacherId,
         lessonsPerWeek: row.lessonsPerWeek,
         minutesPerLesson: row.minutesPerLesson,
+        // Only a split row names its list; a uniform one leaves it to the
+        // column's '{}', so a school that never splits writes what it did.
+        ...(row.lessonLengths ? { lessonLengths: row.lessonLengths } : {}),
         minutesBefore: row.minutesBefore,
         minutesAfter: row.minutesAfter,
         teacherLoadPercent: row.teacherLoadPercent,

@@ -209,6 +209,42 @@ describe('YearRolloverService — rollover preview', () => {
     expect(off.requirements.teachersCleared.every((row) => row.reason !== 'NOT_QUALIFIED')).toBe(true);
   });
 
+  it('carries a split timplanspost with its lengths, measures its volume by them, and writes every uniform row as before', async () => {
+    const rows = defaultRolloverRows();
+    // 7A's Matematik as 1 × 80 + 1 × 40: 120 minutes, not 2 × 80.
+    const ma7 = rows['teachingRequirement']!.find(
+      (row) => row['studentGroupId'] === IDS.g7a && row['subjectId'] === IDS.ma,
+    )!;
+    Object.assign(ma7, { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+    rows['academicYearTimplan'] = [];
+    rows['localTimplan'] = [
+      {
+        id: 'plan',
+        name: 'Lokal timplan 2026',
+        schoolForm: 'GRUNDSKOLA',
+        status: 'DECIDED',
+        decidedAt: new Date('2026-05-01T00:00:00Z'),
+        nationalVersion: GRUNDSKOLA_2024,
+        entries: [{ subjectId: IDS.ma, gradeLevel: 8, minutesPerWeek: 120 }],
+      },
+    ];
+    const { world, service } = setup(rows);
+
+    const { preview } = await previewAndExecute(world, service, { ...OPTIONS, graduatingGradeLevel: 9 });
+
+    // Met by its lengths: no Matematik finding for 8A (as 2 × 80 it would be 160 of 120).
+    const eighth = preview.groups.find((group) => group.targetName === '8A')!;
+    expect(eighth.volumeFindings.map((finding) => finding.subjectId)).not.toContain(IDS.ma);
+    const written = world.calls
+      .filter((call) => call.model === 'teachingRequirement' && call.method === 'createMany')
+      .flatMap((call) => (call.args as { data: Row[] }).data);
+    const split = written.filter((row) => 'lessonLengths' in row);
+    expect(split).toEqual([
+      expect.objectContaining({ subjectId: IDS.ma, lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] }),
+    ]);
+    expect(written.length).toBeGreaterThan(1);
+  });
+
   it('flags a class rule across a stage change and a carried volume that differs from the decided timplan', async () => {
     const rows = defaultRolloverRows();
     rows['frameTime'] = [
@@ -577,6 +613,17 @@ describe('YearRolloverService — rollover execute', () => {
             const expected = column === 'schoolId' ? admin.schoolId : comparableSource(column, from![column]);
             expect({ ...at, written: column in row, value: comparable(row[column]) }).toEqual({ ...at, written: true, value: expected });
             checked++;
+          } else if (rule === 'COPY_UNLESS_DEFAULT') {
+            // Written as the source has it when the source is not the column's
+            // default; left to the default (not written at all) when it is.
+            const value = from![column];
+            const isDefault = value === undefined || value === null || (Array.isArray(value) && value.length === 0);
+            expect({ ...at, written: column in row, value: column in row ? comparable(row[column]) : null }).toEqual({
+              ...at,
+              written: !isDefault,
+              value: isDefault ? null : comparableSource(column, value),
+            });
+            checked++;
           } else if (rule === 'NULL') {
             expect({ ...at, written: column in row, value: row[column], source: from![column] ?? null }).toEqual({ ...at, written: true, value: null, source: null });
             checked++;
@@ -761,7 +808,24 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
     const { world, service } = setup(rolloverRowsAtFa4a3d6());
     const preview = await service.previewRollover(IDS.yearA, { ...OPTIONS, ...option }, admin);
     expect(preview.planHash).toBe(PINNED);
-    expect(digest(world.calls)).toBe(FA4A3D6_PREVIEW_CALLS);
+    // The ONE difference from fa4a3d6, named rather than re-recorded: the
+    // source read of the timplansposter selects lessonLengths (lektionslängder,
+    // 20261008090000). Asserted on its own, then taken out of that select, and
+    // every call with every argument is then fa4a3d6's, byte for byte.
+    const requirementReads = world.calls.filter(
+      (call) => call.model === 'teachingRequirement' && call.method === 'findMany',
+    );
+    expect(requirementReads.length).toBeGreaterThan(0);
+    for (const call of requirementReads) {
+      expect((call.args as { select: Record<string, unknown> }).select).toMatchObject({ lessonLengths: true });
+    }
+    const asAtFa4a3d6 = world.calls.map((call) => {
+      if (call.model !== 'teachingRequirement' || call.method !== 'findMany') return call;
+      const args = call.args as { select: Record<string, unknown> };
+      const { lessonLengths: _added, ...select } = args.select;
+      return { ...call, args: { ...args, select } };
+    });
+    expect(digest(asAtFa4a3d6)).toBe(FA4A3D6_PREVIEW_CALLS);
     expect(preview.staffing).toBeNull();
     expect(preview.problems).toEqual(
       expect.arrayContaining([
