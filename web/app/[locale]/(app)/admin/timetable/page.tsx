@@ -132,6 +132,19 @@ const lazyLessonDialogs = () => ({
   ),
 });
 let lessonDialogs = lazyLessonDialogs();
+/*
+ * Lektionstid — schemalagt mot planerat for the groups in view — fetched on
+ * the first press of its button, with the layer-2 module and the week
+ * arithmetic it brings (components/timplan/schedule-delta-panel.tsx). Made
+ * again after a failed fetch, for the reason lazyLessonDialogs is.
+ */
+const lazyLessonTime = () =>
+  lazy(() =>
+    import("@/components/timplan/schedule-delta-panel").then((module) => ({
+      default: module.ScheduleDeltaPanel,
+    })),
+  );
+let LessonTimePanel = lazyLessonTime();
 import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import type { CreateDraft } from "@/components/schedule/create-lesson-dialog";
 import type { LessonEditDraft } from "@/components/schedule/lesson-edit-dialog";
@@ -487,6 +500,25 @@ export default function TimetablePage() {
    * there is no answer to "whose". Derived rather than reset on a filter
    * change, so picking a second class simply takes the mode away.
    */
+  /*
+   * The Lektionstid panel, open or not. Remembered for the tab
+   * (sessionStorage, read after mount so the server render and the first
+   * client render agree), so the admin who opened it to watch 7A's minutes
+   * finds it open after a reload. Storage that throws is no memory.
+   */
+  const [lessonTimeOpen, setLessonTimeOpen] = useState(false);
+  useEffect(() => {
+    try {
+      setLessonTimeOpen(sessionStorage.getItem("timetable.lessonTime") === "1");
+    } catch {}
+  }, []);
+  const toggleLessonTime = () => {
+    const open = !lessonTimeOpen;
+    setLessonTimeOpen(open);
+    try {
+      sessionStorage.setItem("timetable.lessonTime", open ? "1" : "0");
+    } catch {}
+  };
   const [placingLunch, setPlacingLunch] = useState(false);
   const canPlaceLunch =
     onlyGroup !== null && lunchSettings?.lunchEnabled === true && shownYear != null;
@@ -2055,6 +2087,16 @@ export default function TimetablePage() {
             {lunchMode ? t("placeLunchOn") : t("placeLunch")}
           </Button>
         ) : null}
+        <Button
+          size="sm"
+          variant={lessonTimeOpen ? "default" : "outline"}
+          aria-expanded={lessonTimeOpen}
+          aria-controls="lesson-time"
+          onClick={toggleLessonTime}
+        >
+          <CalendarDays />
+          {t("lessonTime.button")}
+        </Button>
         {filtered.length > 0 ? (
           <span className="text-sm text-muted-foreground">
             {t("lessonCount", { count: filtered.length })}
@@ -2082,6 +2124,28 @@ export default function TimetablePage() {
           </span>
         ) : null}
       </div>
+
+      {lessonTimeOpen && shownYear ? (
+        <DialogLoadBoundary
+          onError={(error) => {
+            showError(error);
+            LessonTimePanel = lazyLessonTime();
+            setLessonTimeOpen(false);
+          }}
+        >
+          <Suspense fallback={null}>
+            <LessonTimePanel
+              id="lesson-time"
+              year={shownYear}
+              lessons={lessons ?? []}
+              requirements={requirements ?? []}
+              groups={yearGroups}
+              subjects={subjects ?? []}
+              groupFilters={groupFilters}
+            />
+          </Suspense>
+        </DialogLoadBoundary>
+      ) : null}
 
       {/*
         WHY THERE IS NO LUNCH BAND, said where the band would be.

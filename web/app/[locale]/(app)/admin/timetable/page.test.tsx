@@ -121,6 +121,8 @@ vi.mock("@/lib/queries", () => ({
   useLunchSittingMutations: () => lunch,
   useRoomPreferences: () => ({ data: [] }),
   useRasts: () => ({ data: RASTS }),
+  // Read by the Lektionstid panel once it is opened.
+  useSchoolBreaks: () => ({ data: [] }),
   useScheduleVersions: () => ({ data: state.versions }),
   useScheduleVersionDetail: (id: string | null) => ({ data: id ? state.snapshot : null }),
   useScheduleVersionActions: () => ({
@@ -1999,5 +2001,57 @@ describe("next year's grid, before its activation", () => {
     render(<TimetablePage />);
 
     expect(screen.queryByRole("group", { name: "planningYear.label" })).toBeNull();
+  });
+});
+
+describe("the Lektionstid panel", () => {
+  afterEach(() => {
+    try {
+      sessionStorage.clear();
+    } catch {}
+  });
+
+  it("is fetched on the first press, shows the year's lines, and closes again", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    const button = screen.getByRole("button", { name: "timetable.lessonTime.button" });
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: "timetable.lessonTime.region" })).toBeNull();
+
+    await user.click(button);
+    const panel = await screen.findByRole("region", { name: "timetable.lessonTime.region" });
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(button).toHaveAttribute("aria-controls", panel.id);
+    // No posts in this fixture: every subject with lessons is a line without
+    // one, and none of them matches.
+    expect(panel.textContent).toContain("timetable.lessonTime.summary(0|");
+    expect(panel.textContent).toContain("timetable.lessonTime.unplanned(Slöjd|60)");
+
+    await user.click(button);
+    expect(screen.queryByRole("region", { name: "timetable.lessonTime.region" })).toBeNull();
+  });
+
+  it("is open again after a reload in the same tab", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<TimetablePage />);
+    await user.click(screen.getByRole("button", { name: "timetable.lessonTime.button" }));
+    await screen.findByRole("region", { name: "timetable.lessonTime.region" });
+    unmount();
+
+    render(<TimetablePage />);
+    expect(await screen.findByRole("region", { name: "timetable.lessonTime.region" })).toBeDefined();
+  });
+
+  it("links to the groups in view on Täckning", async () => {
+    const user = userEvent.setup();
+    render(<TimetablePage />);
+    await filterTo("5.1");
+    await user.click(screen.getByRole("button", { name: "timetable.lessonTime.button" }));
+    const panel = await screen.findByRole("region", { name: "timetable.lessonTime.region" });
+    expect(panel.querySelector("a")?.getAttribute("href")).toBe(
+      "/admin/timplan/tackning?year=y-1&layer=scheduled&group=g-51",
+    );
+    // One group in view: every one of its lines, Slöjd and Musik.
+    expect(panel.textContent).toContain("timetable.lessonTime.unplanned(Musik|60)");
   });
 });
