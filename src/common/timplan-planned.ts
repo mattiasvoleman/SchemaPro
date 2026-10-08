@@ -1,4 +1,5 @@
 import { standardWeekWeight } from '../staffing/teacher-load';
+import { shortestLessonOf, weeklyMinutesOf } from './lesson-lengths';
 import {
   teachingWeeks,
   type ClosedRange,
@@ -33,7 +34,9 @@ import { TIMPLAN_ALTERNATIVE_CODES } from './timplan-coverage';
  *
  * ## Minutes per week: the standardvecka
  *
- * planned = Σ lessonsPerWeek × minutesPerLesson × weight over the rows, where
+ * planned = Σ weeklyMinutesOf(row) × weight over the rows (lesson-lengths.ts:
+ * lessonsPerWeek × minutesPerLesson on a uniform row, the sum of the lengths
+ * on a split one), where
  * the weight is the load report's standardvecka weight (teacher-load.ts
  * standardWeekWeight, the teaching-hours semantics): an undated row 1 every
  * week and 0.5 varannan vecka, a dated row its share of the year's teaching
@@ -156,6 +159,8 @@ export interface PlannedRequirement extends TeachingPeriod {
   subjectId: string;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** Lektionslängder, longest first; empty or absent on a uniform row. */
+  lessonLengths?: readonly number[];
 }
 
 export interface PlannedPupilInput {
@@ -394,11 +399,16 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     if (!found) {
       const span = grade === null ? null : { min: grade, max: grade };
       const weight = standardWeekWeight({ ...row, gradeSpan: span }, year, closures);
-      const perWeek = row.lessonsPerWeek * row.minutesPerLesson;
+      // The row's lessons' minutes (1 × 80 + 1 × 40 is 120), and the OVER
+      // threshold at its SHORTEST lesson: OVER means a whole lesson could go
+      // and the target still be met, and the lesson that could go is the
+      // shortest one. A uniform row reads lessonsPerWeek × minutesPerLesson
+      // and minutesPerLesson, as before.
+      const perWeek = weeklyMinutesOf(row);
       found = {
         week: perWeek * weight,
         year: perWeek * teachingWeeks(row, year, closures, grade),
-        lesson: row.minutesPerLesson * weight,
+        lesson: shortestLessonOf(row) * weight,
       };
       contributions.set(key, found);
     }

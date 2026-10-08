@@ -1,5 +1,3 @@
-import { SLOT_MINUTES } from './solver-grid';
-
 /*
  * Lektionslängder: what a timplanspost's lessons are, one length per lesson.
  *
@@ -31,8 +29,13 @@ import { SLOT_MINUTES } from './solver-grid';
 /** The engine's AnonymousRequirement bounds on one lesson (schedule.py). */
 export const LESSON_MIN_MINUTES = 15;
 export const LESSON_MAX_MINUTES = 240;
-/** The solver's grid; the engine's SLOT_MINUTES (src/common/solver-grid.ts). */
-export const LESSON_GRID_MINUTES = SLOT_MINUTES;
+/**
+ * The solver's grid: the engine's SLOT_MINUTES and solver-grid.ts's. Written
+ * out rather than imported, because solver-grid.ts reaches into @nestjs/common
+ * and this module is imported by pure ones (year-rollover.ts: "no Nest") and
+ * mirrored in the web; lesson-lengths.contract.spec.ts asserts the two agree.
+ */
+export const LESSON_GRID_MINUTES = 5;
 /** The engine's lessons_per_week bound and the DTO's @Max(40). */
 export const MAX_LESSONS_PER_WEEK = 40;
 /**

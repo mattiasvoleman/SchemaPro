@@ -14,6 +14,8 @@
  * function here depends on the timezone of the machine it runs on.
  */
 
+import { weeklyMinutesOf } from './lesson-lengths';
+
 export type GroupKind = 'CLASS' | 'TEACHING_GROUP';
 
 /** What a group becomes next year. GRADUATE is decided, never requested. */
@@ -563,6 +565,8 @@ export interface VolumeRow {
   subjectId: string;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** Lektionslängder, longest first; empty or absent on a uniform row. */
+  lessonLengths?: readonly number[];
   recurrence: 'ALL_WEEKS' | 'ODD_WEEKS' | 'EVEN_WEEKS';
   startDate: string | null;
   endDate: string | null;
@@ -579,11 +583,12 @@ export interface VolumeFinding {
 /**
  * A row's minutes per week averaged over the year: a vårtermin-only subject
  * at 2 × 60 is about 60 a week over the year, which is what a lokal timplan's
- * minutes per week mean. Odd or even weeks count half.
+ * minutes per week mean. Odd or even weeks count half. A split row's week is
+ * its lessons' minutes (lesson-lengths.ts weeklyMinutesOf): 1 × 80 + 1 × 40
+ * is 120.
  */
 export function averageWeeklyMinutes(row: VolumeRow, year: DayBounds): number {
-  const perWeek =
-    row.lessonsPerWeek * row.minutesPerLesson * (row.recurrence === 'ALL_WEEKS' ? 1 : 0.5);
+  const perWeek = weeklyMinutesOf(row) * (row.recurrence === 'ALL_WEEKS' ? 1 : 0.5);
   const start = row.startDate ?? year.startDate;
   const end = row.endDate ?? year.endDate;
   const share = (daysBetween(start, end) + 1) / (daysBetween(year.startDate, year.endDate) + 1);

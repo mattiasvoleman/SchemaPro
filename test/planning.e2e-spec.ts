@@ -3158,6 +3158,30 @@ describe('Planning surface (e2e)', () => {
       expect(response.body.groups[0].lines[0].pupils).toEqual({ min: 120, median: 120, max: 120, below: 1 });
     });
 
+    it('counts a split row by its lessons’ minutes: 1 × 80 + 1 × 40 is 120, not 160', async () => {
+      givenTheYear();
+      harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+        {
+          id: TYPE_ID, studentGroupId: GROUP_ID, subjectId: SUBJECT_ID,
+          lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40],
+          recurrence: 'ALL_WEEKS', startDate: null, endDate: null,
+        },
+      ]);
+
+      const response = await request(http())
+        .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}&layer=planned`)
+        .set('x-test-user', admin())
+        .expect(200);
+
+      const query = harness.tx['teachingRequirement']!['findMany']!.mock.calls[0]![0] as { select: object };
+      expect(query.select).toMatchObject({ lessonLengths: true });
+      expect(response.body.groups[0].lines[0]).toMatchObject({
+        targetMinutesPerWeek: 180,
+        plannedMinutesPerWeek: 120,
+        status: 'UNDER',
+      });
+    });
+
     it('a teacher reads the group level, with no pupil in the answer', async () => {
       givenTheYear();
       const response = await request(http())

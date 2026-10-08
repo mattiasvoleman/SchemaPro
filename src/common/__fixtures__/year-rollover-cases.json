@@ -1199,5 +1199,85 @@
       "year": 2030,
       "sunday": "2030-04-21"
     }
-  ]
+  ],
+  "volume": {
+    "year": {
+      "startDate": "2027-08-16",
+      "endDate": "2028-06-09"
+    },
+    "rows": [
+      {
+        "name": "uniform 3 × 60, every week",
+        "subjectId": "ma",
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": [],
+        "recurrence": "ALL_WEEKS",
+        "startDate": null,
+        "endDate": null,
+        "averageWeeklyMinutes": 180
+      },
+      {
+        "name": "idrott 1 × 80 + 1 × 40, every week",
+        "subjectId": "idh",
+        "lessonsPerWeek": 2,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          40
+        ],
+        "recurrence": "ALL_WEEKS",
+        "startDate": null,
+        "endDate": null,
+        "averageWeeklyMinutes": 120
+      },
+      {
+        "name": "slöjd 1 × 80 + 1 × 40, odd weeks",
+        "subjectId": "sl",
+        "lessonsPerWeek": 2,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          40
+        ],
+        "recurrence": "ODD_WEEKS",
+        "startDate": null,
+        "endDate": null,
+        "averageWeeklyMinutes": 60
+      },
+      {
+        "name": "teknik 2 × 60 + 1 × 55, vårterminen only",
+        "subjectId": "tk",
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": [
+          60,
+          60,
+          55
+        ],
+        "recurrence": "ALL_WEEKS",
+        "startDate": "2028-01-10",
+        "endDate": "2028-06-09",
+        "averageWeeklyMinutes": 88.96321070234113
+      }
+    ],
+    "planned": {
+      "ma": 180,
+      "idh": 120,
+      "sl": 80,
+      "tk": 60
+    },
+    "findings": [
+      {
+        "subjectId": "sl",
+        "carried": 60,
+        "planned": 80
+      },
+      {
+        "subjectId": "tk",
+        "carried": 89,
+        "planned": 60
+      }
+    ]
+  }
 }

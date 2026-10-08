@@ -1,4 +1,5 @@
 import fixture from './__fixtures__/timplan-planned-cases.json';
+import { isMixed } from './lesson-lengths';
 import {
   computePlannedCoverage,
   type PlannedCoverage,
@@ -49,6 +50,13 @@ describe('planerat mot timplan agrees with the shared fixture', () => {
     expect([...statuses].sort()).toEqual(['MET', 'NO_TARGET', 'OVER', 'PUPILS', 'UNDER', 'UNPLANNED']);
     expect(cases.some((c) => !c.coverage.pupilLevel)).toBe(true);
     expect(cases.some((c) => c.coverage.verdicts.length === 0 && c.coverage.groups.length > 0)).toBe(true);
+  });
+
+  it('reaches a split row: met by its lessons’ minutes, and OVER only by its shortest lesson', () => {
+    const split = cases.flatMap((c) => c.input.requirements).filter((r) => isMixed(r));
+    expect(split.length).toBeGreaterThan(0);
+    expect(split.some((r) => r.recurrence !== 'ALL_WEEKS')).toBe(true);
+    expect(split.some((r) => new Set(r.lessonLengths).size === 3)).toBe(true);
   });
 
   it.each(cases.map((entry) => [entry.name, entry] as const))('%s', (_name, entry) => {
