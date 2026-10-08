@@ -1003,7 +1003,23 @@
     "placeLunchOn": "Klar med lunchen",
     "placeLunch": "Placera lunch",
     "noSittingsGroup": "Ingen lunch är lagd för {group}. Motorn lägger lunch bara för klasser som har egna lektioner i timplansposterna att lägga den runt.",
-    "optimizeRooms": "Optimera salar"
+    "optimizeRooms": "Optimera salar",
+    "lessonTime": {
+      "button": "Lektionstid",
+      "region": "Lektionstid mot timplansposter",
+      "intro": "Grundschemats minuter per vecka mot läsårets timplansposter, per grupp och ämne. Siffrorna räknas om när en lektion förkortas, parkeras, får andra veckor eller tas bort. Att flytta en lektion ändrar dem inte.",
+      "loading": "Räknar …",
+      "empty": "Läsåret har varken timplansposter eller lektioner att jämföra i de valda grupperna.",
+      "summary": "{matching} av {total} ämnen stämmer",
+      "allMatch": "Alla ämnen i de valda grupperna stämmer med timplansposterna.",
+      "line": "{subject}: {scheduled} av {planned} min/vecka",
+      "unscheduled": "{subject}: inget schemalagt av {planned} min/vecka",
+      "unplanned": "{subject}: {scheduled} min/vecka utan timplanspost",
+      "parked": "{minutes} min/vecka ligger parkerade",
+      "announce": "{group} {subject}: nu {scheduled} av {planned} min/vecka.",
+      "announceMore": "{count, plural, one {# ämne till ändrades.} other {# ämnen till ändrades.}}",
+      "openCoverage": "Se alla i Täckning"
+    }
   },
   "roomOptimization": {
     "title": "Optimera salar",

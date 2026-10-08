@@ -1003,7 +1003,23 @@
     "placeLunchOn": "Done placing lunch",
     "placeLunch": "Place lunch",
     "noSittingsGroup": "No lunch has been placed for {group}. The solver places a meal only for a class with lessons of its own to place it around.",
-    "optimizeRooms": "Optimise rooms"
+    "optimizeRooms": "Optimise rooms",
+    "lessonTime": {
+      "button": "Lesson time",
+      "region": "Scheduled time against curriculum entries",
+      "intro": "The master timetable's minutes per week against the year's curriculum entries, per group and subject. The figures are recomputed when a lesson is shortened, parked, given other weeks or deleted. Moving a lesson does not change them.",
+      "loading": "Counting …",
+      "empty": "The year has neither curriculum entries nor lessons to compare in the chosen groups.",
+      "summary": "{matching} of {total} subjects match",
+      "allMatch": "Every subject in the chosen groups matches its curriculum entries.",
+      "line": "{subject}: {scheduled} of {planned} min/week",
+      "unscheduled": "{subject}: nothing scheduled of {planned} min/week",
+      "unplanned": "{subject}: {scheduled} min/week with no curriculum entry",
+      "parked": "{minutes} min/week are parked",
+      "announce": "{group} {subject}: now {scheduled} of {planned} min/week.",
+      "announceMore": "{count, plural, one {# more subject changed.} other {# more subjects changed.}}",
+      "openCoverage": "See all in Coverage"
+    }
   },
   "roomOptimization": {
     "title": "Optimise rooms",
