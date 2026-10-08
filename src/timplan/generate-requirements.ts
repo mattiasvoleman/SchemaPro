@@ -50,9 +50,11 @@ import {
  *
  * HOW, SPLIT (lektionslängder; splitWeeklyMinutes below). The target is met
  * without surplus wherever the grid allows: 175 at 60 is 2 × 60 + 1 × 55, and a
- * short remainder is folded into one lesson rather than left as a stub no
- * school timetables — 200 at 60 is 2 × 60 + 1 × 80. Never more than two
- * different lengths, every one on the grid within 15..240.
+ * short remainder beside two or more lessons is folded into one of them rather
+ * than left as a stub no school timetables — 200 at 60 is 1 × 80 + 2 × 60. Beside
+ * a single lesson it stays a lesson of its own, so the subject keeps meeting
+ * twice a week — 120 at 80 is 1 × 80 + 1 × 40. Never more than two different
+ * lengths, every one on the grid within 15..240.
  *
  * L is on the solver's five-minute grid within 15..240 (the DTO refuses
  * anything else, assertLessonLengthFitsTheGrid's rule), and so is every length
@@ -83,18 +85,23 @@ export interface WeeklySplit {
  *   1. r = 0: q × L, uniform.
  *   2. q = 0 (T' shorter than one lesson): 1 × max(T', 15) — one lesson of
  *      the target, never below the engine's 15.
- *   3. r ≥ 15 and r > L/2: q × L + 1 × r. The remainder is a lesson of its
- *      own, closer to whole than to nothing, and never longer than L.
- *   4. Otherwise (r ≤ L/2, or under 15) the remainder is FOLDED into one
- *      lesson: (q − 1) × L + 1 × (L + r), when L + r ≤ 240. A remnant of ten
- *      or twenty minutes has no slot of its own in a school's day, and one
- *      longer lesson keeps the count and puts the minutes where a day already
- *      has the room.
+ *   3. r ≥ 15 and either r > L/2 or q = 1: q × L + 1 × r. The remainder is a
+ *      lesson of its own and never longer than L — closer to whole than to
+ *      nothing, or the second lesson of a subject that would otherwise meet
+ *      once a week: 120 at 80 is 1 × 80 + 1 × 40, as a school writes idrott,
+ *      not one lesson of 120 that a frame sized for 80 refuses.
+ *   4. Otherwise (r ≤ L/2 beside two or more lessons, or r under 15) the
+ *      remainder is FOLDED into one lesson: (q − 1) × L + 1 × (L + r), when
+ *      L + r ≤ 240. A remnant of ten or twenty minutes has no slot of its own
+ *      in a school's day, and one longer lesson among several puts the
+ *      minutes where a day already has the room. Under 15 the remnant cannot
+ *      be a lesson at all, so it folds even beside one: 65 at 60 is 1 × 65.
  *   5. A fold past 240 (only for L above 160): q × L + 1 × max(r, 15). Under
  *      15 that is a surplus of 15 − r, at most 10 — not the round-up's
  *      (q + 1) × L, which at L = 235 would be 229 minutes over.
- *   6. More than 40 lessons: the fold (which keeps q) is tried first, then
- *      40 × L, capped, as ROUND_UP caps.
+ *   6. More than 40 lessons: 40 × L, capped, as ROUND_UP caps. The fold is
+ *      not stretched to stay under the bound — that would write a lesson of
+ *      up to 2 × L, which steps 3 and 4 never do.
  * Never more than two different lengths, every one on the grid in 15..240.
  */
 export function splitWeeklyMinutes(minutes: number, length: number, mode: RemainderMode): WeeklySplit {
@@ -115,12 +122,11 @@ export function splitWeeklyMinutes(minutes: number, length: number, mode: Remain
   let split: number[];
   if (r === 0) split = lessons(q, length);
   else if (q === 0) split = [Math.max(target, LESSON_MIN_MINUTES)];
-  else if (r >= LESSON_MIN_MINUTES && r > length / 2) split = [...lessons(q, length), r];
+  else if (r >= LESSON_MIN_MINUTES && (r > length / 2 || q === 1)) split = [...lessons(q, length), r];
   else if (foldable) split = fold();
   else split = [...lessons(q, length), Math.max(r, LESSON_MIN_MINUTES)];
 
   if (split.length > MAX_LESSONS_PER_WEEK) {
-    if (foldable && q <= MAX_LESSONS_PER_WEEK) return { lengths: fold(), capped: false };
     return { lengths: lessons(MAX_LESSONS_PER_WEEK, length), capped: true };
   }
   return { lengths: split.sort((a, b) => b - a), capped: false };
