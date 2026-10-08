@@ -87,6 +87,8 @@ interface RequirementFixture {
   coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** Lektionslängder: absent or [] on a uniform row, as PostgREST hands it. */
+  lessonLengths?: number[];
   /** The pupils' ombyte and dusch, 0 on every subject that needs none. */
   minutesBefore: number;
   minutesAfter: number;
@@ -1406,6 +1408,129 @@ describe("Timplan CSV", () => {
  * cell's subject and group — the failure this guards against is a badge that
  * answers for the wrong subject, or a figure recomputed to a second answer.
  */
+/*
+ * Lektionslängder. A uniform post must look and save exactly as before — the
+ * school that never states a second length sees no change — and a split post
+ * (idrott 1 × 80 + 1 × 40) must be shown, named, counted and saved as its
+ * lengths, never as count × longest.
+ */
+describe("Timplan cell dialog: lektionslängder", () => {
+  const split = (): RequirementFixture => ({
+    ...requirements[0],
+    recurrence: "ALL_WEEKS",
+    lessonsPerWeek: 2,
+    minutesPerLesson: 80,
+    lessonLengths: [80, 40],
+  });
+  const splitLabel =
+    "cellLabelLengths(7A|Samhällsorientering|lengthPart(1|80) och lengthPart(1|40))";
+  const saveButton = () => screen.getByRole("button", { name: "save" }) as HTMLButtonElement;
+
+  it("shows a split post as its lengths, names each in words, and counts its lessons' minutes", () => {
+    state.requirements = loaded([split()]);
+    render(<RequirementsPage />);
+
+    const cell = screen.getByLabelText(splitLabel);
+    expect(cell).toHaveTextContent("1×80 + 1×40");
+    // 43 all-weeks weeks × 120 minutes = 86 h; count × longest would say 114,7.
+    expect(hoursFor("7A")).toBe("86 h");
+    expect(peakFor("7A")).toBe("2");
+  });
+
+  it("keeps a uniform post's cell and save exactly as they were: no list is sent", async () => {
+    state.requirements = loaded([{ ...requirements[0], recurrence: "ALL_WEEKS", lessonLengths: [] }]);
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    const cell = screen.getByLabelText("cellLabelSet(7A|Samhällsorientering|2|60)");
+    expect(cell).toHaveTextContent("2×60");
+
+    await user.click(cell);
+    expect(screen.queryByLabelText("lengthMinutes(2)")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "save" }));
+
+    const sent = updateMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(sent.lessonsPerWeek).toBe(2);
+    expect(sent.minutesPerLesson).toBe(60);
+    expect(Object.hasOwn(sent, "lessonLengths")).toBe(false);
+  });
+
+  it("adds a second length in one action and saves the canonical list", async () => {
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
+
+    await user.click(screen.getByRole("button", { name: "addLength" }));
+    // The new row's minutes take the focus: the one thing still to type.
+    expect(screen.getByLabelText("lengthMinutes(2)")).toHaveFocus();
+    expect(saveButton().disabled).toBe(true);
+    expect(screen.getByText("lengthsProblem.INCOMPLETE")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("lengthLessons(1)"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("lengthMinutes(1)"), { target: { value: "40" } });
+    fireEvent.change(screen.getByLabelText("lengthMinutes(2)"), { target: { value: "80" } });
+    expect(
+      screen.getByText("lengthsSummary(2|120|lengthPart(1|80) och lengthPart(1|40))"),
+    ).toBeInTheDocument();
+    await user.click(saveButton());
+
+    const sent = createMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(sent).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+  });
+
+  it("opens a split post as its parts and saves them back unchanged", async () => {
+    state.requirements = loaded([split()]);
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(splitLabel));
+
+    expect((screen.getByLabelText("lengthLessons(1)") as HTMLInputElement).value).toBe("1");
+    expect((screen.getByLabelText("lengthMinutes(1)") as HTMLInputElement).value).toBe("80");
+    expect((screen.getByLabelText("lengthMinutes(2)") as HTMLInputElement).value).toBe("40");
+    await user.click(saveButton());
+
+    const sent = updateMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(sent).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+  });
+
+  it("makes a split post uniform with an explicit empty list, even at the stored count and longest", async () => {
+    state.requirements = loaded([split()]);
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText(splitLabel));
+
+    await user.click(screen.getByRole("button", { name: "removeLength(2)" }));
+    fireEvent.change(screen.getByLabelText("lessonsPerWeek"), { target: { value: "2" } });
+    await user.click(saveButton());
+
+    const sent = updateMock.mock.calls[0][0] as Record<string, unknown>;
+    // (2, 80) equals the stored scalars: without the [] the gateway's merge
+    // would keep the split the admin just removed.
+    expect(sent).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [] });
+  });
+
+  it("will not save a length off the five-minute grid, and says why", async () => {
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
+    await user.click(screen.getByRole("button", { name: "addLength" }));
+    fireEvent.change(screen.getByLabelText("lengthMinutes(2)"), { target: { value: "42" } });
+
+    expect(screen.getByText("lengthsProblem.OFF_GRID")).toBeInTheDocument();
+    expect(saveButton().disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("lengthMinutes(2)"), { target: { value: "45" } });
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  it("offers at most three lengths", async () => {
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
+    await user.click(screen.getByRole("button", { name: "addLength" }));
+    await user.click(screen.getByRole("button", { name: "addLength" }));
+    expect(screen.queryByRole("button", { name: "addLength" })).toBeNull();
+  });
+});
+
 describe("Timplan cell dialog and the tjänstefördelning policy", () => {
   const openCell = async (label: string) => {
     render(<RequirementsPage />);
@@ -1949,16 +2074,16 @@ describe("Timplansposter in Mål mode", () => {
 
     const dialog = await screen.findByRole("dialog");
     expect(
-      within(dialog).getByText("target.hintMet(180|target.grade(7)|3|60|180|0|0)"),
+      within(dialog).getByText("target.hintMet(180|target.grade(7)|3 × 60|180|0|0)"),
     ).toBeInTheDocument();
 
     fireEvent.change(within(dialog).getByLabelText("lessonsPerWeek"), { target: { value: "2" } });
     expect(
-      within(dialog).getByText("target.hintUnder(180|target.grade(7)|2|60|120|60|-60)"),
+      within(dialog).getByText("target.hintUnder(180|target.grade(7)|2 × 60|120|60|-60)"),
     ).toBeInTheDocument();
 
     fireEvent.change(within(dialog).getByLabelText("lessonsPerWeek"), { target: { value: "" } });
-    expect(within(dialog).getByText("target.hintTarget(180|target.grade(7)|0|0|0|0|0)")).toBeInTheDocument();
+    expect(within(dialog).getByText("target.hintTarget(180|target.grade(7)|0 × 0|0|0|0)")).toBeInTheDocument();
   });
 
   it("tells a teaching group's dialog where its pupils are judged", async () => {

@@ -136,6 +136,68 @@ describe("targetInput", () => {
   });
 });
 
+describe("lektionslängder in Mål mode", () => {
+  // Bild in 7A as 1 × 80 + 1 × 40 against a target of 60 a week: 120, not
+  // the 160 that count × longest would say.
+  const split = {
+    ...row("r-bi7", "g-7a", "s-bi", 2, 80),
+    lessonLengths: [80, 40],
+  };
+  const withSplit: TargetSources = {
+    ...sources,
+    requirements: [...requirements.filter((entry) => entry.id !== "r-bi7"), split],
+  };
+
+  it("passes a split row's lengths on, and leaves a uniform row without the key", () => {
+    const input = targetInput(withSplit);
+    expect(input.requirements.find((entry) => entry.id === "r-bi7")?.lessonLengths).toEqual([80, 40]);
+    expect(input.requirements.find((entry) => entry.id === "r-ma7")).not.toHaveProperty("lessonLengths");
+    const uniformList = targetInput({ ...sources, requirements: [{ ...requirements[0], lessonLengths: [] }] });
+    expect(uniformList.requirements[0]).not.toHaveProperty("lessonLengths");
+  });
+
+  it("counts a split row by its lessons' minutes on the cell", () => {
+    const view = buildTargetView(computePlannedCoverage(targetInput(withSplit)), plans);
+    expect(view.cell("g-7a", "s-bi")).toMatchObject({ planned: 120, target: 60, delta: 60, tone: "over" });
+  });
+
+  it("judges a split draft in the dialog by its lengths: 1 × 80 + 1 × 40 is 120", () => {
+    const hint = draftHint(
+      targetInput(sources),
+      "g-7a",
+      "s-bi",
+      fields({ lessonsPerWeek: "1", minutesPerLesson: "40", extraLengths: [{ lessons: "1", minutes: "80" }] }),
+    );
+    expect(hint).toMatchObject({
+      kind: "target",
+      planned: 120,
+      lessonsPerWeek: 2,
+      minutesPerLesson: 80,
+      lessonLengths: [80, 40],
+    });
+  });
+
+  it("says only the target while a split draft cannot be stored", () => {
+    const hint = draftHint(
+      targetInput(sources),
+      "g-7a",
+      "s-bi",
+      fields({ extraLengths: [{ lessons: "1", minutes: "42" }] }),
+    );
+    expect(hint).toMatchObject({ kind: "target", planned: null, lessonLengths: [] });
+  });
+
+  it("reads parts that all say one length as a uniform post", () => {
+    const hint = draftHint(
+      targetInput(sources),
+      "g-7a",
+      "s-ma",
+      fields({ lessonsPerWeek: "2", minutesPerLesson: "60", extraLengths: [{ lessons: "1", minutes: "60" }] }),
+    );
+    expect(hint).toMatchObject({ planned: 180, lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] });
+  });
+});
+
 describe("buildTargetView", () => {
   const input = targetInput(sources);
   const view = buildTargetView(computePlannedCoverage(input), plans);
@@ -249,6 +311,7 @@ describe("draftHint", () => {
       status: "MET",
       lessonsPerWeek: 3,
       minutesPerLesson: 60,
+      lessonLengths: [],
       partnerSubjectIds: [],
       carriedBy: [],
     });

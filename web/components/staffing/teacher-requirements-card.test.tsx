@@ -91,6 +91,24 @@ describe("TeacherRequirementsCard", () => {
     expect(within(items[1]!).queryByRole("button")).toBeNull();
   });
 
+  it("states a uniform row as it always did and a split row as its lengths", () => {
+    render(
+      <TeacherRequirementsCard
+        teacherId="t-anna"
+        rows={[
+          rows[0]!,
+          { ...rows[1]!, teacherId: "t-anna", coTeacherId: null, lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] },
+        ]}
+        subjectName={(id) => subjects[id]!}
+        groupName={(id) => groups[id]!}
+        teacherName={(id) => names[id] ?? id}
+      />,
+    );
+    const items = screen.getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("teacherRowLessons(3 × 60)");
+    expect(items[1]).toHaveTextContent("teacherRowLessons(1 × 80 + 1 × 40)");
+  });
+
   it("hands a row on and keeps WARN's sentence on screen in the card", async () => {
     const user = userEvent.setup();
     const warning = {

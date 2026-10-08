@@ -248,8 +248,20 @@ export interface TeachingRequirement {
   teacherId: string | null;
   /** Optional second teacher scheduled together with the lead (co-teaching). */
   coTeacherId: string | null;
+  /** On a split row, the count of lessons; on every row, Σ of the parts' counts. */
   lessonsPerWeek: number;
+  /** On a split row, the LONGEST lesson (what a frame or a rast must hold). */
   minutesPerLesson: number;
+  /**
+   * Lektionslängder: one entry per lesson, longest first, when the lessons are
+   * NOT all one length — {80,40} is "1 × 80 + 1 × 40". Empty on every uniform
+   * row (the column's default, and the only form a uniform row is stored in).
+   * Optional because only useRequirements names the column; a row from
+   * anywhere else is uniform as far as it can tell. Every reader of a row's
+   * MINUTES reads them through lib/lesson-lengths.ts weeklyMinutesOf, never as
+   * lessonsPerWeek × minutesPerLesson.
+   */
+  lessonLengths?: number[];
   /**
    * Minutes the PUPILS are occupied before the lesson and after it — ombyte
    * before idrotten, dusch and ombyte after it. 0..60, and 0 for every subject
