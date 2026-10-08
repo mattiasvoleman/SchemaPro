@@ -2610,6 +2610,21 @@ describe("lektionslangder in the timplan file", () => {
     expect(errors[4].message).toContain("fler än 40");
   });
 
+  it("calls a readable cell with too many or no lessons what it is, not unreadable", () => {
+    // The grammar is right; the count is the problem. "41x15" is the cap, as
+    // "30x60+11x40" already says, and "0x60" is a part with no lesson.
+    const { rows, errors } = mapRequirementRows(
+      parseCsv(file("7A;A;;;41x15", "7A;B;;;45x40", "7A;C;;;0x60+1x40", "7A;D;;;999999999x60")),
+    );
+    expect(rows).toEqual([]);
+    expect(errors.map((error) => error.row)).toEqual([1, 2, 3, 4]);
+    expect(errors[0].message).toContain("fler än 40");
+    expect(errors[1].message).toContain("fler än 40");
+    expect(errors[2].message).toContain("minst en lektion");
+    expect(errors[3].message).toContain("fler än 40");
+    for (const error of errors) expect(error.message).not.toContain("går inte att läsa");
+  });
+
   describe("export", () => {
     const groups = [{ id: "g-7a", name: "7A" }];
     const subjects = [
