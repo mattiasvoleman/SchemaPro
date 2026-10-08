@@ -3104,7 +3104,7 @@ describe('Planning surface (e2e)', () => {
     const PLAN_ID = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
     const MODELS = [
       'academicYear', 'academicYearTimplan', 'localTimplan', 'subject', 'studentGroup',
-      'teachingRequirement', 'schoolBreak', 'user', 'studentGroupMember',
+      'teachingRequirement', 'schoolBreak', 'user', 'studentGroupMember', 'masterLesson',
     ];
     const resetModels = () => {
       for (const model of MODELS) {
@@ -3194,19 +3194,94 @@ describe('Planning surface (e2e)', () => {
       expect(JSON.stringify(response.body)).not.toContain(STUDENT_ID);
     });
 
-    it('stops a pupil and a guardian at the guard', async () => {
-      for (const role of ['STUDENT', 'GUARDIAN']) {
-        await request(http())
-          .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}`)
-          .set('x-test-user', asUser({ role: role as never }))
-          .expect(403);
+    it('stops a pupil and a guardian at the guard, on every layer', async () => {
+      for (const layer of ['', '&layer=planned', '&layer=scheduled']) {
+        for (const role of ['STUDENT', 'GUARDIAN']) {
+          await request(http())
+            .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}${layer}`)
+            .set('x-test-user', asUser({ role: role as never }))
+            .expect(403);
+        }
       }
       expect(harness.tx['academicYear']!['findUnique']).not.toHaveBeenCalled();
     });
 
-    it('400s a layer that is not built yet, and a missing or malformed year, naming the field', async () => {
+    const t = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00.000Z`);
+    const givenTheSchedule = () => {
+      givenTheYear();
+      harness.tx['masterLesson']!['findMany']!.mockResolvedValue(
+        ['08:00', '10:00'].map((start, index) => ({
+          id: `b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b${index}`,
+          studentGroupId: GROUP_ID,
+          subjectId: SUBJECT_ID,
+          startTime: t(start),
+          endTime: t(start === '08:00' ? '09:00' : '10:55'),
+          recurrence: 'ALL_WEEKS',
+          startDate: null,
+          endDate: null,
+          isParked: false,
+          extraGroups: [],
+          participants: [],
+        })),
+      );
+    };
+
+    it('an admin reads the scheduled layer, and drills into a group for every pupil', async () => {
+      givenTheSchedule();
+      const response = await request(http())
+        .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}&layer=scheduled`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(response.body).toMatchObject({ academicYearId: YEAR_ID, layer: 'scheduled', pupilLevel: true, lessonCount: 2 });
+      expect(response.body.groups[0].lines[0]).toMatchObject({
+        plannedMinutesPerWeek: 120,
+        scheduledMinutesPerWeek: 115,
+        deltaMinutesPerWeek: -5,
+        percent: 96,
+        status: 'SHORT',
+      });
+      expect(response.body.verdicts).toEqual([
+        expect.objectContaining({
+          code: 'TIMPLAN_SCHEDULE_SHORT',
+          message: '7A: Matematik har 115 min/vecka i grundschemat, 5 under planerade 120 min/vecka.',
+        }),
+      ]);
+      expect(response.body.pupils).toEqual([]);
+
+      const drilled = await request(http())
+        .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}&layer=scheduled&studentGroupId=${GROUP_ID}`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(drilled.body.pupils).toEqual([
+        expect.objectContaining({ pupilId: STUDENT_ID, lines: [expect.objectContaining({ scheduledMinutesPerWeek: 115 })] }),
+      ]);
+    });
+
+    it('a teacher reads the scheduled layer at group level, drill-down or not, with no pupil in it', async () => {
+      givenTheSchedule();
+      for (const query of ['', `&studentGroupId=${GROUP_ID}`]) {
+        const response = await request(http())
+          .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}&layer=scheduled${query}`)
+          .set('x-test-user', asUser({ role: 'TEACHER' as never }))
+          .expect(200);
+        expect(response.body).toMatchObject({ pupilLevel: false, pupils: null, pupilsBelowPlanned: null });
+        expect(JSON.stringify(response.body)).not.toContain(STUDENT_ID);
+      }
+    });
+
+    it('400s a drill-down on the planned layer, whose answer keeps its shape', async () => {
+      for (const query of [`&studentGroupId=${GROUP_ID}`, `&layer=planned&studentGroupId=${GROUP_ID}`]) {
+        const response = await request(http())
+          .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}${query}`)
+          .set('x-test-user', admin())
+          .expect(400);
+        expect(response.body.detail).toContain('studentGroupId: ');
+      }
+    });
+
+    it('400s an unknown layer, and a missing or malformed year, naming the field', async () => {
       const cases: [string, string][] = [
-        [`?academicYearId=${YEAR_ID}&layer=delivered`, "layer: bara 'planned'"],
+        [`?academicYearId=${YEAR_ID}&layer=weekly`, "layer: 'planned'"],
         ['', 'academicYearId: läsåret anges med sitt id.'],
         ['?academicYearId=2026', 'academicYearId: läsåret anges med sitt id.'],
       ];

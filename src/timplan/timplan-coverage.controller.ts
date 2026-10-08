@@ -6,11 +6,17 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { TimplanCoverageQueryDto } from './dto/timplan-coverage.dto';
-import { TimplanCoverageService, type TimplanCoverageResponse } from './timplan-coverage.service';
+import {
+  TimplanCoverageService,
+  type ScheduledCoverageResponse,
+  type TimplanCoverageResponse,
+} from './timplan-coverage.service';
 
 /**
- * Timplanstäckning. Today layer 1 only (?layer=planned, the default);
- * "schemalagt" and "genomfört" are the next phase and answer 400 until then.
+ * Timplanstäckning, by layer: ?layer=planned (the default, P2's answer
+ * unchanged) and ?layer=scheduled (schemalagt mot planerat), with an optional
+ * studentGroupId drill-down on the latter. Each layer's response type is its
+ * own; P2's is untouched.
  *
  * SCHOOL_ADMIN and TEACHER. The admin reads the pupil level; a teacher reads
  * the same document with every pupil id, figure and verdict stripped (see
@@ -31,7 +37,8 @@ export class TimplanCoverageController {
   get(
     @Query() query: TimplanCoverageQueryDto,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<TimplanCoverageResponse> {
+  ): Promise<TimplanCoverageResponse | ScheduledCoverageResponse> {
+    if (query.layer === 'scheduled') return this.coverage.scheduled(query, user);
     return this.coverage.planned(query, user);
   }
 }
