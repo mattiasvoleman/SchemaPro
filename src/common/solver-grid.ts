@@ -23,6 +23,14 @@ import { BadRequestException } from '@nestjs/common';
  * service that may be down — which is precisely the situation the check exists
  * to keep out of. If the grid ever becomes a per-school setting, this is the
  * one place that has to learn about it.
+ *
+ * A THIRD COPY LIVES IN THE DATABASE. app.lesson_lengths_are_canonical
+ * (migration 20261008090000), the CHECK on TeachingRequirements.lessonLengths,
+ * hardcodes `x % 5 = 0` and 15..240, because a PostgREST writer reaches the
+ * column without meeting this file. Moving the grid moves all three: the
+ * engine's setting, SLOT_MINUTES here (and LESSON_GRID_MINUTES in
+ * lesson-lengths.ts on both sides, which the shared fixture pins), and that
+ * function, in a migration.
  */
 
 /**

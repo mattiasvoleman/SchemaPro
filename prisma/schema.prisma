@@ -735,8 +735,25 @@ model TeachingRequirement {
   teacherId        String? @db.Uuid
   /// Optional second teacher — both are scheduled together (co-teaching).
   coTeacherId      String? @db.Uuid
+  /// The number of lessons a week — on a split row too.
   lessonsPerWeek   Int     @default(1)
+  /// The length of every lesson on a uniform row; the LONGEST on a split one,
+  /// so a reader asking whether a lesson fits a frame or a rast sees the
+  /// length that binds.
   minutesPerLesson Int     @default(60)
+
+  /// Lektionslängder: one entry per lesson of the week, longest first, when
+  /// the lessons are NOT all one length — {80,40} is "1 × 80 + 1 × 40",
+  /// {60,60,55} is "2 × 60 + 1 × 55". EMPTY on every uniform row, which is
+  /// every row written before 20261008090000, and then lessonsPerWeek ×
+  /// minutesPerLesson says it all, as before.
+  ///
+  /// Canonical by CHECK (TeachingRequirements_lesson_lengths_are_canonical):
+  /// exactly lessonsPerWeek entries, the first is minutesPerLesson, sorted
+  /// longest first, 15..240 on the five-minute grid, two or three different
+  /// lengths. Weekly minutes and the lesson count of a row are read through
+  /// src/common/lesson-lengths.ts, never as lessonsPerWeek × minutesPerLesson.
+  lessonLengths    Int[]   @default([])
 
   /// Minutes the PUPILS are occupied on either side of the lesson: ombyte
   /// before idrotten, dusch and ombyte after it.
