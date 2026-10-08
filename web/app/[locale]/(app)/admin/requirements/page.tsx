@@ -1587,12 +1587,12 @@ export default function RequirementsPage() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label>{tCommon("teacher")}</Label>
+              <Label htmlFor="req-teacher">{tCommon("teacher")}</Label>
               <Select
                 value={form.teacherId}
                 onValueChange={(value) => setForm({ ...form, teacherId: value })}
               >
-                <SelectTrigger>
+                <SelectTrigger id="req-teacher">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -1607,12 +1607,12 @@ export default function RequirementsPage() {
               <p className="text-xs text-muted-foreground">{tStaffing("candidateHint")}</p>
             </div>
             <div className="space-y-2">
-              <Label>{t("coTeacher")}</Label>
+              <Label htmlFor="req-co-teacher">{t("coTeacher")}</Label>
               <Select
                 value={form.coTeacherId}
                 onValueChange={(value) => setForm({ ...form, coTeacherId: value })}
               >
-                <SelectTrigger>
+                <SelectTrigger id="req-co-teacher">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
