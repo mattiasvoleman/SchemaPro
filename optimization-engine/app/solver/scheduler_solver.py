@@ -647,7 +647,13 @@ class SchedulerSolver:
             ]
             if not requirements:
                 continue
-            lengths = [self._grid.minutes_to_slots(r.minutes_per_lesson) for r in requirements]
+            # Every LESSON's length, not every requirement's: a requirement of
+            # 1 × 80 + 1 × 40 demands 120 minutes and packs on gcd(80, 40).
+            lengths = [
+                self._grid.minutes_to_slots(minutes)
+                for r in requirements
+                for minutes in r.lesson_minutes()
+            ]
 
             # Whose years open which window: EVERY REQUIREMENT'S OWN, the way
             # the model binds each lesson (span_of(requirement) in the
@@ -695,9 +701,7 @@ class SchedulerSolver:
                 _Clique(
                     members=members,
                     requirements=requirements,
-                    demand=sum(
-                        r.lessons_per_week * length for r, length in zip(requirements, lengths)
-                    ),
+                    demand=sum(lengths),
                     measure=math.gcd(*lengths),
                     free_by_day=free_by_day,
                     window_text=self._shared_window_text(open_by_day),
@@ -2200,16 +2204,22 @@ class SchedulerSolver:
             # caller as a 500 with a stack trace, while the very next check in
             # this loop reports a too-long lesson as a clean 4xx. Same field,
             # same loop, two different fates.
-            try:
-                duration_slots = self._grid.minutes_to_slots(
-                    requirement.minutes_per_lesson
-                )
-            except ValueError as error:
-                raise InvalidScheduleInputError.of("INPUT_LESSON_LENGTH_OFF_GRID", {
-                    "requirement": str(requirement.id),
-                    "minutes": requirement.minutes_per_lesson,
-                    "slotMinutes": self._grid.slot_minutes,
-                }) from error
+            #
+            # EVERY LENGTH OF THE REQUIREMENT, longest first, so a uniform one
+            # is asked exactly what it always was and a split one names the
+            # length that misses the grid rather than the one that does not.
+            for minutes in sorted(set(requirement.lesson_minutes()), reverse=True):
+                try:
+                    self._grid.minutes_to_slots(minutes)
+                except ValueError as error:
+                    raise InvalidScheduleInputError.of("INPUT_LESSON_LENGTH_OFF_GRID", {
+                        "requirement": str(requirement.id),
+                        "minutes": minutes,
+                        "slotMinutes": self._grid.slot_minutes,
+                    }) from error
+            # The longest is the one every check below measures: a frame, a
+            # margin or a rast that holds it holds every shorter lesson too.
+            duration_slots = self._grid.minutes_to_slots(requirement.minutes_per_lesson)
             if duration_slots > self._grid.slots_per_day:
                 raise InvalidScheduleInputError.of("INPUT_LESSON_LONGER_THAN_DAY", {
                     "requirement": str(requirement.id),
@@ -2437,9 +2447,9 @@ class SchedulerSolver:
             # answer is yes for exactly the requirements the lock has just taken
             # that option away from, so nothing was ever charged.
             needed = sum(
-                requirement.lessons_per_week
-                * self._grid.minutes_to_slots(requirement.minutes_per_lesson)
+                self._grid.minutes_to_slots(minutes)
                 for requirement in group
+                for minutes in requirement.lesson_minutes()
             )
             # Rooms that at least one of them could actually use. A locked room
             # too small for every requirement in the group supplies nothing, and
@@ -2758,7 +2768,7 @@ class SchedulerSolver:
         lessons_by_teacher: dict[UUID, int] = {}
         shortest_by_teacher: dict[UUID, int] = {}
         for requirement in request.requirements:
-            duration = self._grid.minutes_to_slots(requirement.minutes_per_lesson)
+            duration = self._grid.minutes_to_slots(requirement.shortest_lesson_minutes())
             for teacher_id in _teachers_of(requirement):
                 lessons_by_teacher[teacher_id] = (
                     lessons_by_teacher.get(teacher_id, 0) + requirement.lessons_per_week
@@ -3142,7 +3152,7 @@ class SchedulerSolver:
                 if any(
                     self._room_in_stretch(
                         self._reserved_ranges(request, requirement, day_index), room, first,
-                    ) >= self._grid.minutes_to_slots(requirement.minutes_per_lesson)
+                    ) >= self._grid.minutes_to_slots(requirement.shortest_lesson_minutes())
                     for requirement in owned
                 ):
                     continue
@@ -3213,7 +3223,7 @@ class SchedulerSolver:
                 "opens": self._grid.format_hhmmss(room, 0)[0][:5],
                 "remaining": widest * minutes,
                 "minutes": min(
-                    self._grid.minutes_to_slots(r.minutes_per_lesson) for r in owned
+                    self._grid.minutes_to_slots(r.shortest_lesson_minutes()) for r in owned
                 ) * minutes,
                 # Which of the three took the minutes, so the school is sent to
                 # the screen that holds the lever.
@@ -3917,7 +3927,6 @@ class SchedulerSolver:
         lattice = _start_lattice(step, horizon)
 
         for requirement in requirements:
-            duration = self._grid.minutes_to_slots(requirement.minutes_per_lesson)
             # One interval per day, each ending in time for the lesson to finish
             # before that day does. A single contiguous [0, horizon - duration]
             # range would also admit starts near a day's end, which put a lesson
@@ -3992,51 +4001,64 @@ class SchedulerSolver:
             # the day's close minus those margins, which binds only for a school
             # teaching to 18:00 with no ramtid. Wherever a frame closes earlier,
             # `close_slot - duration` is the tighter bound and nothing is lost.
-            day_ranges: list[list[int]] = []
-            for day, (open_slot, close_slot) in sorted(windows.items()):
-                first = max(open_slot, lead)
-                last = min(close_slot, slots_per_day - changeover - trail) - duration
-                # A day too narrow for this lesson drops out here rather than
-                # reaching Domain.FromIntervals as a reversed pair. That happens
-                # to be safe today — FromIntervals discards such a pair silently
-                # — but it is undocumented behaviour to hang a whole feature's
-                # correctness on, and "silently discards" is one release away
-                # from "raises".
-                if last < first:
-                    continue
-                day_ranges.append(
-                    [day * slots_per_day + first, day * slots_per_day + last],
-                )
-            start_domain = cp_model.Domain.FromIntervals(day_ranges)
-
-            # RASTER CUT HOLES IN THE SAME DOMAIN, for the reason the paragraph
-            # above gives for frames: the minutes a stage is free never become
-            # variable values at all. No new variables, no new constraints, and
-            # a strictly smaller search space than the same model without them.
-            # _validate_request has already refused the case where the holes
-            # leave a requirement nowhere to go on any day, so what remains here
-            # is never empty.
             #
-            # LESSONS ONLY. The lunch interval is deliberately NOT narrowed the
-            # same way, and the reason is in the Swedish word: a lunchrast IS a
-            # rast. A school that writes "lunchrast 11:30-12:30" and lets the
-            # engine seat its classes inside it is describing the ordinary case,
-            # and subtracting the rast from the meal's domain would push the
-            # meal out of exactly the window the school reserved for it — then
-            # refuse the run when nowhere else is left. A rast keeps TEACHING
-            # out; it has nothing to say about a break.
-            if rasts:
-                start_domain = start_domain.intersection_with(
-                    self._rast_free_starts(rasts, span, duration),
-                )
-            # ON THE WEEK'S STEP, last. Every bound and hole above is cut on the
-            # grid the school wrote it on, and only the starts between the
-            # step's multiples go — none of which a timetable needs, and every
-            # bound above is itself a multiple. _start_step says why.
-            start_domain = _on_lattice(start_domain, lattice)
-            for lesson_index in range(requirement.lessons_per_week):
+            # ONE DOMAIN PER LENGTH. A requirement of 1 × 80 + 1 × 40 has two
+            # kinds of lesson, and the last start of a day is the close minus
+            # the lesson, so the 40 may start forty minutes later than the 80.
+            # Built once per distinct length, longest first; a uniform
+            # requirement builds the one domain it always built. Every check
+            # _validate_request makes reads the longest, and a window, a margin
+            # or a rast that holds the longest holds every shorter lesson too,
+            # so no domain built here is empty where the longest's is not.
+            domains: dict[int, cp_model.Domain] = {}
+            lengths = [self._grid.minutes_to_slots(m) for m in requirement.lesson_minutes()]
+            for duration in sorted(set(lengths), reverse=True):
+                day_ranges: list[list[int]] = []
+                for day, (open_slot, close_slot) in sorted(windows.items()):
+                    first = max(open_slot, lead)
+                    last = min(close_slot, slots_per_day - changeover - trail) - duration
+                    # A day too narrow for this lesson drops out here rather than
+                    # reaching Domain.FromIntervals as a reversed pair. That happens
+                    # to be safe today — FromIntervals discards such a pair silently
+                    # — but it is undocumented behaviour to hang a whole feature's
+                    # correctness on, and "silently discards" is one release away
+                    # from "raises".
+                    if last < first:
+                        continue
+                    day_ranges.append(
+                        [day * slots_per_day + first, day * slots_per_day + last],
+                    )
+                start_domain = cp_model.Domain.FromIntervals(day_ranges)
+
+                # RASTER CUT HOLES IN THE SAME DOMAIN, for the reason the paragraph
+                # above gives for frames: the minutes a stage is free never become
+                # variable values at all. No new variables, no new constraints, and
+                # a strictly smaller search space than the same model without them.
+                # _validate_request has already refused the case where the holes
+                # leave a requirement nowhere to go on any day, so what remains here
+                # is never empty.
+                #
+                # LESSONS ONLY. The lunch interval is deliberately NOT narrowed the
+                # same way, and the reason is in the Swedish word: a lunchrast IS a
+                # rast. A school that writes "lunchrast 11:30-12:30" and lets the
+                # engine seat its classes inside it is describing the ordinary case,
+                # and subtracting the rast from the meal's domain would push the
+                # meal out of exactly the window the school reserved for it — then
+                # refuse the run when nowhere else is left. A rast keeps TEACHING
+                # out; it has nothing to say about a break.
+                if rasts:
+                    start_domain = start_domain.intersection_with(
+                        self._rast_free_starts(rasts, span, duration),
+                    )
+                # ON THE WEEK'S STEP, last. Every bound and hole above is cut on the
+                # grid the school wrote it on, and only the starts between the
+                # step's multiples go — none of which a timetable needs, and every
+                # bound above is itself a multiple. _start_step says why.
+                start_domain = _on_lattice(start_domain, lattice)
+                domains[duration] = start_domain
+            for lesson_index, duration in enumerate(lengths):
                 lesson = LessonInstance(requirement=requirement, lesson_index=lesson_index)
-                start = model.NewIntVarFromDomain(start_domain, f"start_{lesson.key()}")
+                start = model.NewIntVarFromDomain(domains[duration], f"start_{lesson.key()}")
                 end = model.NewIntVar(duration, horizon, f"end_{lesson.key()}")
                 interval = model.NewIntervalVar(start, duration, end, f"interval_{lesson.key()}")
                 model.Add(end == start + duration)
@@ -6716,8 +6738,9 @@ def _start_step(request: OptimizeScheduleRequest, grid: TimeGrid) -> int:
     values = [slots_per_day]
     try:
         values.extend(
-            grid.minutes_to_slots(requirement.minutes_per_lesson)
+            grid.minutes_to_slots(minutes)
             for requirement in request.requirements
+            for minutes in set(requirement.lesson_minutes())
         )
         rules = request.rules
         if rules is not None and _lunch_window_is_set(rules):

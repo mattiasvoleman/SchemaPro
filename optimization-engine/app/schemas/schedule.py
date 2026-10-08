@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import UUID4, BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -116,6 +116,50 @@ class AnonymousRequirement(CamelModel):
         alias="coTeacherId",
         description="Optional second teacher scheduled together with the lead (co-teaching).",
     )
+    #: Lektionslängder: one length per lesson of the week when the lessons are
+    #: NOT all one length — [80, 40] is idrott as "1 × 80 + 1 × 40". Absent on
+    #: a uniform requirement, which is then lessons_per_week lessons of
+    #: minutes_per_lesson exactly as before; the gateway sends the key only
+    #: when the lessons it still wants placed have two or more lengths, so a
+    #: uniform payload is byte for byte what it was.
+    #:
+    #: ONE REQUIREMENT, NOT ONE PER LENGTH. Splitting [80, 40] into two
+    #: requirements would give them two ids, and everything keyed on the id —
+    #: the spread across days, the disruption term, the previous-lesson hints,
+    #: every refusal that names a requirement — would treat idrott as two
+    #: subjects that may happily share a Monday.
+    #:
+    #: THE SCALARS STAY TRUE: lessons_per_week is the list's length and
+    #: minutes_per_lesson its longest (the validator below), so every reader
+    #: that asks whether "a lesson of this requirement" fits a frame, a margin
+    #: or a rast reads the length that binds, and every count stays a count.
+    #: Only the sites that place or measure EACH lesson read lesson_minutes().
+    lesson_lengths: list[Annotated[int, Field(ge=15, le=240)]] | None = Field(
+        default=None, alias="lessonLengths", min_length=1, max_length=40,
+    )
+
+    @model_validator(mode="after")
+    def validate_lesson_lengths(self) -> AnonymousRequirement:
+        """The list and the scalars say the same: its count, its longest."""
+        if self.lesson_lengths is None:
+            return self
+        if len(self.lesson_lengths) != self.lessons_per_week:
+            msg = "lessonLengths must hold exactly lessonsPerWeek lengths."
+            raise ValueError(msg)
+        if max(self.lesson_lengths) != self.minutes_per_lesson:
+            msg = "minutesPerLesson must be the longest of lessonLengths."
+            raise ValueError(msg)
+        return self
+
+    def lesson_minutes(self) -> tuple[int, ...]:
+        """One length per lesson, longest first; a uniform requirement repeats its one."""
+        if self.lesson_lengths is None:
+            return (self.minutes_per_lesson,) * self.lessons_per_week
+        return tuple(sorted(self.lesson_lengths, reverse=True))
+
+    def shortest_lesson_minutes(self) -> int:
+        """The shortest lesson: the one a tight stretch can still hold."""
+        return min(self.lesson_minutes())
 
 
 class AnonymousGroup(CamelModel):

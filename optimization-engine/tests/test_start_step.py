@@ -171,6 +171,14 @@ def test_the_day_is_a_source_of_its_own() -> None:
 SOURCES: list[tuple[str, Callable[[dict], None], int]] = [
     ("a 45-minute lesson among hours",
      lambda p: p["requirements"][0].update(minutesPerLesson=45), 15),
+    # Lektionslängder: every length of a split requirement is a length the
+    # model lays a lesson of, so each feeds the gcd, not only the longest.
+    ("one requirement's last lesson 45 minutes among its hours",
+     lambda p: p["requirements"][0].update(
+         lessonLengths=[60] * (p["requirements"][0]["lessonsPerWeek"] - 1) + [45]), 15),
+    ("one requirement's last lesson 50 minutes among its hours",
+     lambda p: p["requirements"][0].update(
+         lessonLengths=[60] * (p["requirements"][0]["lessonsPerWeek"] - 1) + [50]), 10),
     ("a lesson locked at 08:05",
      lambda p: _append(p, "fixedLessons", _locked(p, "08:05", "09:05")), 5),
     ("a lock ending 11:40",
@@ -282,6 +290,8 @@ def test_every_constant_a_start_meets_feeds_the_step(
 
 UNREADABLE: list[tuple[str, Callable[[dict], None]]] = [
     ("a 42-minute lesson", lambda p: p["requirements"][0].update(minutesPerLesson=42)),
+    ("a 42-minute lesson in a split requirement", lambda p: p["requirements"][0].update(
+        lessonLengths=[60] * (p["requirements"][0]["lessonsPerWeek"] - 1) + [42])),
     ("a lunch window from 11:07", lambda p: _set_rule(p, lunchStartTime="11:07:00")),
     ("a reservation ending 11:59:30",
      lambda p: _append(p, "constraints", _row(p, "11:00", "11:59:30"))),
@@ -656,6 +666,17 @@ def _random_week(rng: random.Random) -> dict:
             "lunchEndTime": _clock(window + 60) if has_lunch else None,
             "minDailyRestMinutes": rng.choice((None, None, 1260, 1320)),
         })
+
+    # Lektionslängder, drawn LAST for the buffers' reason: every week above is
+    # the week this generator drew before a requirement could have two lengths.
+    # One requirement in five with two or more lessons gets a shorter last
+    # lesson, on the grid, so the step reads both of its lengths.
+    for row in requirements:
+        if row["lessonsPerWeek"] >= 2 and rng.random() < 0.2:
+            longest = row["minutesPerLesson"]
+            shorter = max(15, (longest // 2) // 5 * 5)
+            if shorter < longest:
+                row["lessonLengths"] = [longest] * (row["lessonsPerWeek"] - 1) + [shorter]
 
     return {
         "requestId": str(uuid4()), "academicYearId": str(uuid4()),
