@@ -18,6 +18,16 @@ import type { RecurrenceWindow } from '../calendar/lesson-recurrence';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
 import { gradeSpanOf, loadRosters, roomNeedsOf } from './room-eligibility';
+import { coverLockedLessons } from './locked-coverage';
+import { canonicalShape, lessonMinutesOf } from '../common/lesson-lengths';
+import { minutesOf } from '../common/solver-grid';
+
+/** A hand-placed lesson's length, from its two @db.Time columns (midnight-anchored UTC). */
+const lessonMinutes = (start: Date, end: Date): number => {
+  const clock = (time: Date): number =>
+    time instanceof Date ? time.getUTCHours() * 60 + time.getUTCMinutes() : 0;
+  return clock(end) - clock(start);
+};
 import { STAFF_UNSTAFFED_REQUIREMENTS } from '../staffing/staffing-checks';
 import type {
   AiEngineConflictAnalysis,
@@ -614,6 +624,9 @@ export class OptimizationProxyService {
         coTeacherId: true,
         lessonsPerWeek: true,
         minutesPerLesson: true,
+        // Lektionslängder: one length per lesson when they differ. Sent only
+        // when the lessons still to be placed have two or more lengths.
+        lessonLengths: true,
         // The pupil buffers. Numbers, not names, so they cross to the engine
         // like the lesson length beside them — and they are the class's own
         // occupancy, never the teacher's or the room's.
@@ -901,7 +914,7 @@ export class OptimizationProxyService {
     // unambiguous. The lessons themselves rather than a count, because whether
     // any of them cancels anything is a question about the requirement's
     // period and cannot be answered until the requirement is in hand.
-    const preservedByDemand = new Map<string, RecurrenceWindow[]>();
+    const preservedByDemand = new Map<string, (RecurrenceWindow & { startTime: Date; endTime: Date })[]>();
     for (const lesson of preservedLessons) {
       const key = `${lesson.studentGroupId}:${lesson.subjectId}`;
       const forDemand = preservedByDemand.get(key);
@@ -910,11 +923,22 @@ export class OptimizationProxyService {
     }
 
     const requirements: AnonymousRequirement[] = rawRequirements.flatMap((r) => {
-      const alreadyCovered = (
+      const covering = (
         preservedByDemand.get(`${r.studentGroupId}:${r.subjectId}`) ?? []
-      ).filter((lesson) => coversDemand(lesson, r)).length;
-      const remaining = r.lessonsPerWeek - alreadyCovered;
+      ).filter((lesson) => coversDemand(lesson, r));
+      // The lessons still to place, one length each (locked-coverage.ts): a
+      // uniform requirement loses one lesson per covering lock, as it always
+      // did; a split one loses the length each lock answers.
+      const remainingLengths = coverLockedLessons(
+        lessonMinutesOf(r),
+        covering.map((lesson) => lessonMinutes(lesson.startTime, lesson.endTime)),
+      );
+      const remaining = remainingLengths.length;
       if (remaining <= 0) return [];
+      // A uniform remainder is today's entry exactly — no list, and the one
+      // length as minutesPerLesson. Only a remainder of two or more lengths
+      // carries the list, with its count and its longest as the scalars.
+      const split = canonicalShape(remainingLengths);
       const needs = roomNeedsOf(rosters, { groupIds: [r.studentGroupId] }, r.subject);
       return [
         {
@@ -923,7 +947,11 @@ export class OptimizationProxyService {
           studentGroupId: anonId(groupAnonMap, r.studentGroupId),
           teacherId: r.teacherId ? anonId(teacherAnonMap, r.teacherId) : null,
           lessonsPerWeek: remaining,
-          minutesPerLesson: r.minutesPerLesson,
+          // The longest REMAINING length: r.minutesPerLesson for a uniform
+          // requirement, as before, and 40 for 1 × 80 + 1 × 40 with the 80
+          // locked — the lesson the engine is actually asked to place.
+          minutesPerLesson: split.minutesPerLesson,
+          ...(split.lessonLengths.length > 0 ? { lessonLengths: split.lessonLengths } : {}),
           // Forwarded as they stand, beside the length and not folded into it:
           // the engine has to place 60 minutes of teaching and keep the class
           // clear for 90, and a sum would lose which of the two it was told.
@@ -1694,6 +1722,14 @@ export class OptimizationProxyService {
       requirements.map((r) => [r.id, r.lessonsPerWeek]),
     );
     const placedByRequirement = new Map<string, number>();
+    // Lektionslängder: an entry sent WITH a list must come back as exactly
+    // those lengths — an engine placing 1 × 80 + 1 × 40 as two 80s answered
+    // another request. Only those entries: a uniform one is checked by count
+    // as it always was, so no school that never splits meets a new 502.
+    const lengthsByRequirement = new Map(
+      requirements.flatMap((r) => (r.lessonLengths ? [[r.id, r.lessonLengths] as const] : [])),
+    );
+    const placedMinutesByRequirement = new Map<string, number[]>();
     let unmatchedLessons = 0;
 
     const creates = response.lessons.flatMap((lesson) => {
@@ -1711,6 +1747,11 @@ export class OptimizationProxyService {
         lesson.requirementId,
         (placedByRequirement.get(lesson.requirementId) ?? 0) + 1,
       );
+      if (lengthsByRequirement.has(lesson.requirementId)) {
+        const placed = placedMinutesByRequirement.get(lesson.requirementId) ?? [];
+        placed.push(minutesOf(lesson.endTime) - minutesOf(lesson.startTime));
+        placedMinutesByRequirement.set(lesson.requirementId, placed);
+      }
 
       const realRoom = lesson.roomId ? realRoomId.get(lesson.roomId) : null;
 
@@ -1744,9 +1785,19 @@ export class OptimizationProxyService {
       ];
     });
 
+    const sameLengths = (sent: readonly number[], placed: readonly number[]): boolean => {
+      const a = [...sent].sort((x, y) => y - x);
+      const b = [...placed].sort((x, y) => y - x);
+      return a.length === b.length && a.every((minutes, i) => minutes === b[i]);
+    };
     const offTarget = [...demandByRequirement].filter(
       ([anonRequirementId, wanted]) =>
-        (placedByRequirement.get(anonRequirementId) ?? 0) !== wanted,
+        (placedByRequirement.get(anonRequirementId) ?? 0) !== wanted ||
+        (lengthsByRequirement.has(anonRequirementId) &&
+          !sameLengths(
+            lengthsByRequirement.get(anonRequirementId)!,
+            placedMinutesByRequirement.get(anonRequirementId) ?? [],
+          )),
     ).length;
     if (unmatchedLessons > 0 || offTarget > 0) {
       const requested = [...demandByRequirement.values()].reduce(

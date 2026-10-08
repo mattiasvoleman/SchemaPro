@@ -56,8 +56,9 @@ type Query = { where?: Row; select?: Selection };
  * field its code no longer gets, rather than one the fixture hands it anyway.
  */
 const isRelation = (value: unknown): boolean =>
-  Array.isArray(value) ||
-  (value !== null && typeof value === 'object' && !(value instanceof Date));
+  // A scalar list (lessonLengths: [80, 40]) is a column, not a relation.
+  (Array.isArray(value) && !(value.length > 0 && value.every((item) => typeof item !== 'object'))) ||
+  (!Array.isArray(value) && value !== null && typeof value === 'object' && !(value instanceof Date));
 const assertSelects = (select: Selection): void => {
   if (select === undefined) return;
   const asked = Object.entries(select).filter(([, how]) => how);
@@ -1159,6 +1160,10 @@ describe('OptimizationProxyService', () => {
       coTeacherId: null,
       lessonsPerWeek: 3,
       minutesPerLesson: 60,
+      // As the column defaults: a uniform row, whose list is empty. Spelled
+      // out because the database answers '{}' for it, and a uniform entry
+      // must still leave without the key.
+      lessonLengths: [],
       // As the columns default: no ombyte and no dusch. Spelled out for the same
       // reason as the two below — the database cannot produce a row without
       // them, and the map forwards them rather than defaulting them.
@@ -1885,6 +1890,134 @@ describe('OptimizationProxyService', () => {
       // period a requirement can name — it is there every week the requirement
       // is, and then some.
       expect(postedPayload().requirements[0].lessonsPerWeek).toBe(2);
+    });
+
+    /*
+     * Lektionslängder. A split requirement is one entry carrying its lengths;
+     * a lock cancels the length it answers (locked-coverage.ts), and a
+     * remainder of one length is today's uniform entry, with no list.
+     */
+    describe('lektionslängder', () => {
+      const at = (hours: number, minutes: number): Date =>
+        new Date(`1970-01-01T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00.000Z`);
+      const idrott = (overrides: Record<string, unknown> = {}) =>
+        requirement({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40], ...overrides });
+      /** An engine that places every sent lesson at the length it was sent. */
+      const placeAsSent = (lengthsOf: (r: any) => number[] = (r) => r.lessonLengths ?? Array(r.lessonsPerWeek).fill(r.minutesPerLesson)) =>
+        http.post.mockImplementation((_url: string, payload: any) =>
+          of({
+            data: {
+              requestId: payload.requestId,
+              status: 'OPTIMAL',
+              lessons: payload.requirements.flatMap((r: any) =>
+                lengthsOf(r).map((minutes: number, i: number) => ({
+                  requirementId: r.id,
+                  roomId: payload.rooms[0]?.id ?? null,
+                  dayOfWeek: i + 1,
+                  startTime: '08:00:00',
+                  endTime: `${String(8 + Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}:00`,
+                })),
+              ),
+            },
+          }),
+        );
+
+      it('sends a uniform requirement exactly as before: no list key, even though the column holds []', async () => {
+        arrange();
+        echoEngine();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const sent = postedPayload().requirements[0]!;
+        expect(sent).not.toHaveProperty('lessonLengths');
+        expect(Object.keys(sent)).toEqual([
+          'id', 'subjectId', 'studentGroupId', 'teacherId', 'lessonsPerWeek', 'minutesPerLesson',
+          'minutesBefore', 'minutesAfter', 'studentGroupSize', 'minGradeLevel', 'maxGradeLevel',
+          'requiredRoomType', 'coTeacherId',
+        ]);
+      });
+
+      it('sends a split requirement as one entry with its lengths, its count and its longest', async () => {
+        arrange({ requirements: [idrott()] });
+        placeAsSent();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(postedPayload().requirements).toHaveLength(1);
+        expect(postedPayload().requirements[0]).toMatchObject({
+          lessonsPerWeek: 2,
+          minutesPerLesson: 80,
+          lessonLengths: [80, 40],
+        });
+      });
+
+      it.each<[string, [number, number][], object]>([
+        ['a locked 80 leaves the 40, sent uniform', [[8, 80]], { lessonsPerWeek: 1, minutesPerLesson: 40 }],
+        ['a locked 40 leaves the 80, sent uniform', [[8, 40]], { lessonsPerWeek: 1, minutesPerLesson: 80 }],
+        ['a locked 50 cancels the nearest, the 40', [[8, 50]], { lessonsPerWeek: 1, minutesPerLesson: 80 }],
+        ['a locked 60 is a tie, and cancels the shorter', [[8, 60]], { lessonsPerWeek: 1, minutesPerLesson: 80 }],
+      ])('%s', async (_case, locks, expected) => {
+        arrange({
+          requirements: [idrott()],
+          lockedLessons: locks.map(([hour, minutes], i) =>
+            lockedLesson({ id: `locked-${i}`, startTime: at(hour, 0), endTime: at(hour + Math.floor(minutes / 60), minutes % 60) }),
+          ),
+        });
+        placeAsSent();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const sent = postedPayload().requirements[0]!;
+        expect(sent).toMatchObject(expected);
+        expect(sent).not.toHaveProperty('lessonLengths');
+      });
+
+      it('drops a split requirement both of whose lengths are locked', async () => {
+        arrange({
+          requirements: [idrott()],
+          lockedLessons: [
+            lockedLesson({ id: 'locked-80', startTime: at(8, 0), endTime: at(9, 20) }),
+            lockedLesson({ id: 'locked-75', dayOfWeek: 3, startTime: at(8, 0), endTime: at(9, 15) }),
+          ],
+        });
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        expect(http.post).not.toHaveBeenCalled();
+      });
+
+      it('writes each generated lesson at its own length', async () => {
+        arrange({ requirements: [idrott()] });
+        placeAsSent();
+
+        await service.triggerScheduling(ACADEMIC_YEAR, testUser());
+
+        const written = (tx.masterLesson.create.mock.calls as [{ data: { startTime: Date; endTime: Date } }][])
+          .map(([call]) => call.data);
+        const minutes = written
+          .map((row) => (row.endTime.getTime() - row.startTime.getTime()) / 60000)
+          .sort((a, b) => b - a);
+        expect(minutes).toEqual([80, 40]);
+      });
+
+      it('refuses an engine that placed the split requirement at the wrong lengths, and touches nothing', async () => {
+        arrange({ requirements: [idrott()] });
+        // Two lessons, as asked — but both 80: the count passes, the lengths do not.
+        placeAsSent(() => [80, 80]);
+
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).rejects.toMatchObject({ status: 502 });
+        expect(tx.masterLesson.deleteMany).not.toHaveBeenCalled();
+        expect(tx.masterLesson.create).not.toHaveBeenCalled();
+      });
+
+      it('still checks a uniform requirement by count alone, as it always did', async () => {
+        // The echo places every lesson 08:00-09:15 for a 60-minute row: a
+        // count-only guard accepts it, as before the lengths existed.
+        arrange();
+        echoEngine();
+
+        await expect(service.triggerScheduling(ACADEMIC_YEAR, testUser())).resolves.toBeDefined();
+      });
     });
 
     it('still asks the engine when only alternating lessons cover the demand', async () => {
