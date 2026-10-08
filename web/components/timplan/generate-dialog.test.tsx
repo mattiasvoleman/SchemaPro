@@ -46,6 +46,22 @@ const YEARS: AcademicYear[] = [
 ];
 const PLAN = { id: "p-1", name: "Grundskola 2026", status: "DECIDED" as const };
 
+/**
+ * The gateway's SPLIT rule for the two targets this stub knows (175 and 200
+ * at 60): a remainder over half a lesson is a lesson of its own, a shorter
+ * one is folded into one longer lesson (generate-requirements.ts).
+ */
+function splitOf(target: number, length: number): number[] | null {
+  const whole = Math.floor(target / length);
+  const rest = target - whole * length;
+  if (rest === 0) return null;
+  const lengths =
+    rest >= 15 && rest > length / 2
+      ? [...Array.from({ length: whole }, () => length), rest]
+      : [...Array.from({ length: whole - 1 }, () => length), length + rest];
+  return lengths.sort((a, b) => b - a);
+}
+
 function answer(body: GenerateBody & { planId: string }): GenerateRequirementsResponse {
   const created = body.dryRun ? 0 : 2;
   const rows = [
@@ -53,6 +69,24 @@ function answer(body: GenerateBody & { planId: string }): GenerateRequirementsRe
     { subjectId: "s-sv", subjectName: "Svenska", target: 200 },
   ].map(({ subjectId, subjectName, target }) => {
     const override = body.overrides?.find((entry) => entry.subjectId === subjectId);
+    const split = !override && body.remainder === "SPLIT" ? splitOf(target, body.minutesPerLesson) : null;
+    if (split) {
+      return {
+        studentGroupId: "g-7a",
+        groupName: "7A",
+        subjectId,
+        subjectName,
+        gradeLevel: 7,
+        targetMinutesPerWeek: target,
+        lessonsPerWeek: split.length,
+        minutesPerLesson: split[0],
+        lessonLengths: split,
+        plannedMinutesPerWeek: target,
+        surplusMinutesPerWeek: 0,
+        overridden: false,
+        capped: false,
+      };
+    }
     const minutes = override?.minutesPerLesson ?? body.minutesPerLesson;
     const lessons = override?.lessonsPerWeek ?? Math.ceil(target / minutes);
     return {
@@ -77,6 +111,7 @@ function answer(body: GenerateBody & { planId: string }): GenerateRequirementsRe
     academicYearId: body.academicYearId,
     gradeLevels: [7],
     minutesPerLesson: body.minutesPerLesson,
+    ...(body.remainder !== undefined ? { remainder: body.remainder } : {}),
     dryRun: body.dryRun,
     created,
     rows,
@@ -124,11 +159,14 @@ describe("GenerateDialog", () => {
     renderDialog();
     expect(screen.getByRole("button", { name: /^apply/ })).toBeDisabled();
 
+    // Whole lessons, rounded up: today's rule, one click away.
+    await user.click(screen.getByLabelText("splitLabel"));
     await user.click(screen.getByRole("button", { name: "preview" }));
     expect(state.generate.mutateAsync).toHaveBeenCalledWith({
       planId: "p-1",
       academicYearId: "y-1",
       minutesPerLesson: 60,
+      remainder: "ROUND_UP",
       dryRun: true,
     });
     expect(await screen.findByText("summary(2|1|1|grade(7))")).toBeInTheDocument();
@@ -185,6 +223,7 @@ describe("GenerateDialog", () => {
   it("sends the edited row as an override, and only that row, then shows what was created", async () => {
     const user = userEvent.setup();
     renderDialog();
+    await user.click(screen.getByLabelText("splitLabel"));
     await user.click(screen.getByRole("button", { name: "preview" }));
     await screen.findByText(/^summary/);
 
@@ -202,6 +241,7 @@ describe("GenerateDialog", () => {
       planId: "p-1",
       academicYearId: "y-1",
       minutesPerLesson: 60,
+      remainder: "ROUND_UP",
       dryRun: false,
       overrides: [{ studentGroupId: "g-7a", subjectId: "s-ma", lessonsPerWeek: 5, minutesPerLesson: 35 }],
     });
@@ -214,6 +254,7 @@ describe("GenerateDialog", () => {
   it("will not apply while an edited row holds a figure the gateway refuses", async () => {
     const user = userEvent.setup();
     renderDialog();
+    await user.click(screen.getByLabelText("splitLabel"));
     await user.click(screen.getByRole("button", { name: "preview" }));
     await screen.findByText(/^summary/);
     const lessons = screen.getByLabelText("lessonsFor(7A Svenska)");
@@ -221,6 +262,88 @@ describe("GenerateDialog", () => {
     await user.type(lessons, "41");
     expect(screen.getByRole("alert")).toHaveTextContent("invalidRows");
     expect(screen.getByRole("button", { name: "apply(2)" })).toBeDisabled();
+  });
+
+  describe("lektionslängder: dela upp resten", () => {
+    it("asks for SPLIT from the start and shows each split row as its lengths, at no surplus", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      expect(screen.getByLabelText("splitLabel")).toBeChecked();
+      expect(screen.getByText("splitHint")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      expect(state.generate.mutateAsync).toHaveBeenCalledWith({
+        planId: "p-1",
+        academicYearId: "y-1",
+        minutesPerLesson: 60,
+        remainder: "SPLIT",
+        dryRun: true,
+      });
+      const ma = await screen.findByRole("row", { name: /Matematik/ });
+      // 175 at 60: 2 × 60 + 1 × 55, and 200 at 60 folds into 2 × 60 + 1 × 80.
+      expect(within(ma).getByText("2 × 60 + 1 × 55")).toBeInTheDocument();
+      expect(within(ma).getByText("0")).toBeInTheDocument();
+      expect(within(ma).queryByLabelText("lessonsFor(7A Matematik)")).toBeNull();
+      expect(within(screen.getByRole("row", { name: /Svenska/ })).getByText("1 × 80 + 2 × 60")).toBeInTheDocument();
+      expect(screen.getByText("splitNote(2)")).toBeInTheDocument();
+      expect(screen.getByText("surplusHintSplit")).toBeInTheDocument();
+    });
+
+    it("applies the split rows as the gateway proposed them: no overrides", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      await screen.findByText(/^summary/);
+      await user.click(screen.getByRole("button", { name: "apply(2)" }));
+      expect(state.generate.mutateAsync).toHaveBeenLastCalledWith({
+        planId: "p-1",
+        academicYearId: "y-1",
+        minutesPerLesson: 60,
+        remainder: "SPLIT",
+        dryRun: false,
+      });
+    });
+
+    it("makes one row uniform at the round-up post, sends it as an override, and can split it again", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      await screen.findByText(/^summary/);
+
+      await user.click(screen.getByRole("button", { name: "makeUniformFor(7A Matematik)" }));
+      const ma = screen.getByRole("row", { name: /Matematik/ });
+      // ceil(175 / 60) = 3 × 60: equal to the split row's count and longest,
+      // and still an override, because the row it replaces is split.
+      expect(within(ma).getByLabelText("lessonsFor(7A Matematik)")).toHaveValue("3");
+      expect(within(ma).getByLabelText("minutesFor(7A Matematik)")).toHaveValue("60");
+      expect(within(ma).getByText("+5")).toBeInTheDocument();
+      expect(within(ma).getByText("edited")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "splitAgainFor(7A Matematik)" }));
+      expect(within(screen.getByRole("row", { name: /Matematik/ })).getByText("2 × 60 + 1 × 55")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "makeUniformFor(7A Matematik)" }));
+      await user.click(screen.getByRole("button", { name: "apply(2)" }));
+      expect(state.generate.mutateAsync).toHaveBeenLastCalledWith({
+        planId: "p-1",
+        academicYearId: "y-1",
+        minutesPerLesson: 60,
+        remainder: "SPLIT",
+        dryRun: false,
+        overrides: [{ studentGroupId: "g-7a", subjectId: "s-ma", lessonsPerWeek: 3, minutesPerLesson: 60 }],
+      });
+    });
+
+    it("throws the preview away when the remainder changes", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await user.click(screen.getByRole("button", { name: "preview" }));
+      await screen.findByText(/^summary/);
+      await user.click(screen.getByLabelText("splitLabel"));
+      expect(screen.queryByText(/^summary/)).not.toBeInTheDocument();
+      expect(screen.getByText("roundUpHint")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^apply/ })).toBeDisabled();
+    });
   });
 
   it("says so when no årskurs of the year follows the plan", async () => {

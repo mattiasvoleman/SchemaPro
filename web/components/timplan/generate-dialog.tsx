@@ -24,6 +24,18 @@
 // THE SUGGESTED LENGTH is the one the year's posts use most, else 60: the
 // schema has no school default, and the length a school already writes in is
 // the better guess.
+//
+// LEKTIONSLÄNGDER. "Dela upp resten" (remainder SPLIT) is checked from the
+// start: 175 minutes at 60 is proposed as 2 × 60 + 1 × 55 rather than 3 × 60
+// and five minutes over, which is the wall a grundskola meets first. It is a
+// proposal only — the preview shows every split row as its lengths before
+// anything is written, only missing posts are created, and no existing post
+// changes. Unchecked, the dialog asks for ROUND_UP, today's whole lessons.
+// The request always states which; the gateway's own default for a client
+// that does not is ROUND_UP. A split row in the preview offers one edit,
+// "Gör enhetlig", which turns it into the round-up post at the chosen length
+// (sent as an ordinary uniform override) and can be undone; splitting a post
+// differently is the Timplansposter dialog's job once it exists.
 
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
@@ -37,9 +49,13 @@ import {
   existingCount,
   rowKey,
   suggestLessonLength,
+  uniformEdit,
   type GenerateRequirementsResponse,
+  type Remainder,
   type RowEdit,
 } from "@/lib/timplan-generate";
+import { isMixed } from "@/lib/lesson-lengths";
+import { formatLengths } from "@/lib/lesson-lengths-text";
 import { signedMinutes } from "@/lib/timplan-tackning";
 import type { AcademicYear } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -96,14 +112,21 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
   const lengthProblem = lessonLengthProblem(lengthText);
   const length = lengthProblem === null ? Number(lengthText.trim()) : null;
 
+  const [split, setSplit] = useState(true);
+  const remainder: Remainder = split ? "SPLIT" : "ROUND_UP";
   const [preview, setPreview] = useState<GenerateRequirementsResponse | null>(null);
   const [edits, setEdits] = useState<Map<string, RowEdit>>(new Map());
   const [result, setResult] = useState<GenerateRequirementsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // A preview belongs to the year and length it was asked for.
+  // A preview belongs to the year, length and remainder it was asked for.
   const current =
-    preview && preview.academicYearId === yearId && preview.minutesPerLesson === length ? preview : null;
+    preview &&
+    preview.academicYearId === yearId &&
+    preview.minutesPerLesson === length &&
+    preview.remainder === remainder
+      ? preview
+      : null;
   const overrides = current ? overridesFrom(current.rows, edits) : null;
   const classCount = current ? new Set(current.rows.map((row) => row.studentGroupId)).size : 0;
 
@@ -118,9 +141,12 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
         planId: plan.id,
         academicYearId: yearId,
         minutesPerLesson: length,
+        remainder,
         dryRun: true,
       });
-      setPreview(answer);
+      // Kept with the remainder it was asked for, so a toggle discards it
+      // whether or not the gateway echoes the field.
+      setPreview({ ...answer, remainder });
       setEdits(new Map());
     } catch (caught) {
       fail(caught);
@@ -135,6 +161,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
         planId: plan.id,
         academicYearId: yearId,
         minutesPerLesson: length,
+        remainder,
         dryRun: false,
         ...(overrides.length > 0 ? { overrides } : {}),
       });
@@ -154,6 +181,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
       setResult(null);
       setError(null);
       setTypedLength(null);
+      setSplit(true);
     }
     onOpenChange(next);
   };
@@ -161,6 +189,12 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
   const editRow = (key: string, base: RowEdit, patch: Partial<RowEdit>) => {
     const next = new Map(edits);
     next.set(key, { ...(edits.get(key) ?? base), ...patch });
+    setEdits(next);
+  };
+  /** "Dela upp igen": a split row's edit thrown away, back to the gateway's proposal. */
+  const resetRow = (key: string) => {
+    const next = new Map(edits);
+    next.delete(key);
     setEdits(next);
   };
 
@@ -233,6 +267,23 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
               </div>
             </div>
 
+            <div className="space-y-1">
+              <label className="flex items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  className="size-4 accent-primary"
+                  checked={split}
+                  disabled={generate.isPending}
+                  aria-describedby="generate-split-hint"
+                  onChange={(event) => setSplit(event.target.checked)}
+                />
+                {t("splitLabel")}
+              </label>
+              <p id="generate-split-hint" className="text-xs text-muted-foreground">
+                {t(split ? "splitHint" : "roundUpHint")}
+              </p>
+            </div>
+
             {plan.status === "DRAFT" ? (
               <p className="rounded-md border-l-4 border-l-warning bg-muted px-3 py-2 text-sm text-foreground">
                 {t("draft")}
@@ -247,7 +298,7 @@ export function GenerateDialog({ open, onOpenChange, plan, years, initialYearId 
               {generate.isPending && !current ? t("previewing") : current ? t("previewAgain") : t("preview")}
             </Button>
 
-            {current ? <PreviewBody preview={current} edits={edits} classCount={classCount} onEdit={editRow} yearName={year?.name ?? ""} planName={plan.name} /> : null}
+            {current && length !== null ? <PreviewBody preview={current} edits={edits} classCount={classCount} length={length} onEdit={editRow} onReset={resetRow} yearName={year?.name ?? ""} planName={plan.name} /> : null}
             {current && overrides === null ? (
               <p role="alert" className="text-sm text-destructive">
                 {t("invalidRows")}
@@ -290,12 +341,15 @@ interface PreviewBodyProps {
   preview: GenerateRequirementsResponse;
   edits: ReadonlyMap<string, RowEdit>;
   classCount: number;
+  /** The length the preview was asked for: what "Gör enhetlig" writes. */
+  length: number;
   yearName: string;
   planName: string;
   onEdit: (key: string, base: RowEdit, patch: Partial<RowEdit>) => void;
+  onReset: (key: string) => void;
 }
 
-function PreviewBody({ preview, edits, classCount, yearName, planName, onEdit }: PreviewBodyProps) {
+function PreviewBody({ preview, edits, classCount, length, yearName, planName, onEdit, onReset }: PreviewBodyProps) {
   const t = useTranslations("timplan.generate");
 
   if (preview.gradeLevels.length === 0) {
@@ -318,6 +372,11 @@ function PreviewBody({ preview, edits, classCount, yearName, planName, onEdit }:
               grades: preview.gradeLevels.map((value) => grade(t, value)).join(", "),
             })}
       </p>
+      {preview.rows.some((row) => isMixed(row)) ? (
+        <p className="text-sm text-foreground">
+          {t("splitNote", { count: preview.rows.filter((row) => isMixed(row)).length })}
+        </p>
+      ) : null}
       {preview.skipped.some((row) => row.reason === "ALTERNATIVE") ? (
         <p className="text-sm text-foreground">{t("alternativesNote")}</p>
       ) : null}
@@ -343,12 +402,30 @@ function PreviewBody({ preview, edits, classCount, yearName, planName, onEdit }:
                 const shown = edit ?? base;
                 const edited = editedRow(row, edit);
                 const label = `${row.groupName} ${row.subjectName}`;
+                // A split row the admin has not made uniform: its lengths,
+                // read-only, and the one edit it offers.
+                const splitShown = isMixed(row) && edit === undefined;
                 return (
                   <tr key={key} className="border-b last:border-b-0">
                     <th scope="row" className="px-3 py-1.5 text-left font-medium">{row.groupName}</th>
                     <td className="px-3 py-1.5">{row.subjectName}</td>
                     <td className="px-3 py-1.5 text-right tabular-nums">{row.targetMinutesPerWeek}</td>
                     <td className="px-3 py-1.5">
+                      {splitShown ? (
+                        <div className="flex items-center gap-2">
+                          <span className="tabular-nums">{formatLengths(row)}</span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            aria-label={t("makeUniformFor", { row: label })}
+                            onClick={() => onEdit(key, base, uniformEdit(row, length))}
+                          >
+                            {t("makeUniform")}
+                          </Button>
+                        </div>
+                      ) : (
                       <div className="flex items-center gap-1">
                         <Input
                           inputMode="numeric"
@@ -368,7 +445,20 @@ function PreviewBody({ preview, edits, classCount, yearName, planName, onEdit }:
                           onChange={(event) => onEdit(key, base, { minutes: event.target.value })}
                         />
                         {edited.changed ? <Badge variant="outline">{t("edited")}</Badge> : null}
+                        {isMixed(row) ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-2 text-xs"
+                            aria-label={t("splitAgainFor", { row: label })}
+                            onClick={() => onReset(key)}
+                          >
+                            {t("splitAgain")}
+                          </Button>
+                        ) : null}
                       </div>
+                      )}
                     </td>
                     <td
                       className={cn(
@@ -407,7 +497,9 @@ function PreviewBody({ preview, edits, classCount, yearName, planName, onEdit }:
           </ul>
         </details>
       ) : null}
-      <p className="text-xs text-muted-foreground">{t("surplusHint")}</p>
+      <p className="text-xs text-muted-foreground">
+        {t(preview.remainder === "SPLIT" ? "surplusHintSplit" : "surplusHint")}
+      </p>
     </div>
   );
 }
