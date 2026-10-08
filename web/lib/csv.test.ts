@@ -28,6 +28,8 @@ import {
   mapTeacherQualificationRows,
   mapTeacherRows,
   normalizeHeader,
+  formatLengthSpec,
+  parseLengthSpec,
   teacherQualificationsToCsv,
   parseCsv,
   templateCsvContent,
@@ -2519,5 +2521,150 @@ describe("mapTeacherDutyRows", () => {
     expect(errors).toEqual([
       { row: 0, message: expect.stringContaining("benamning, minuter_per_vecka") },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lektionslängder in the timplan file
+// ---------------------------------------------------------------------------
+
+describe("lektionslangder in the timplan file", () => {
+  const HEAD = "grupp;amne;lektioner_per_vecka;minuter_per_lektion;lektionslangder\r\n";
+  const file = (...rows: string[]) => HEAD + rows.join("\r\n") + "\r\n";
+
+  it("reads the cell's grammar in every spelling the column documents", () => {
+    expect(parseLengthSpec("1x80+1x40")).toEqual([80, 40]);
+    expect(parseLengthSpec("1 × 80 + 1 × 40")).toEqual([80, 40]);
+    expect(parseLengthSpec("2*60+1X55")).toEqual([60, 60, 55]);
+    expect(parseLengthSpec("80+40")).toEqual([80, 40]);
+    expect(parseLengthSpec("80, 40")).toBeNull();
+    expect(parseLengthSpec("1x")).toBeNull();
+    expect(parseLengthSpec("1x40.5")).toBeNull();
+    expect(parseLengthSpec("0x80")).toBeNull();
+  });
+
+  it("writes a split post longest first, in the grammar it reads back", () => {
+    expect(formatLengthSpec({ lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [60, 55, 60] })).toBe(
+      "2x60+1x55",
+    );
+    expect(parseLengthSpec("2x60+1x55")).toEqual([60, 60, 55]);
+  });
+
+  it("imports a file without the column exactly as before: no key, no column", () => {
+    const { rows, errors, columns } = mapRequirementRows(
+      parseCsv("grupp;amne;lektioner_per_vecka;minuter_per_lektion\r\n7A;MA;3;60\r\n"),
+    );
+    expect(errors).toEqual([]);
+    expect(rows[0]).not.toHaveProperty("lessonLengths");
+    expect(columns).not.toContain("lessonLengths");
+  });
+
+  it("takes a filled cell as the row, deriving the two numbers it leaves empty", () => {
+    const { rows, errors, columns } = mapRequirementRows(parseCsv(file("7A;IDH;;;1x80+1x40")));
+    expect(errors).toEqual([]);
+    expect(rows[0]).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+    expect(columns).toContain("lessonLengths");
+  });
+
+  it("accepts the numbers written beside the cell when they agree with it", () => {
+    const { rows, errors } = mapRequirementRows(parseCsv(file("7A;IDH;2;80;1x40+1x80")));
+    expect(errors).toEqual([]);
+    expect(rows[0]).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+  });
+
+  it("sends an empty cell, and a cell of one length, as [] — a uniform post", () => {
+    const { rows, errors } = mapRequirementRows(parseCsv(file("7A;MA;3;60;", "7A;SV;;;3x60")));
+    expect(errors).toEqual([]);
+    expect(rows[0]).toMatchObject({ lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] });
+    expect(rows[1]).toMatchObject({ lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] });
+  });
+
+  it("still asks for the two numbers when the cell is empty", () => {
+    const { errors } = mapRequirementRows(parseCsv(file("7A;MA;;;")));
+    expect(errors).toEqual([{ row: 1, message: expect.stringContaining("lektioner_per_vecka") }]);
+  });
+
+  it("refuses a row whose numbers contradict its cell, naming both", () => {
+    const { rows, errors } = mapRequirementRows(parseCsv(file("7A;IDH;3;60;1x80+1x40")));
+    expect(rows).toEqual([]);
+    expect(errors).toEqual([
+      {
+        row: 1,
+        message: expect.stringMatching(
+          /^Rad 1: lektionslangder är 2 lektioner med längsta 80 minuter, men raden säger 3 × 60\./,
+        ),
+      },
+    ]);
+  });
+
+  it("refuses a cell the database would refuse, one row error each", () => {
+    const { rows, errors } = mapRequirementRows(
+      parseCsv(file("7A;A;;;1x80+1x42", "7A;B;;;1x80+1x250", "7A;C;;;80+60+40+20", "7A;D;;;tre", "7A;E;;;30x60+11x40")),
+    );
+    expect(rows).toEqual([]);
+    expect(errors.map((error) => error.row)).toEqual([1, 2, 3, 4, 5]);
+    expect(errors[0].message).toContain("jämnt upp i 5 minuter");
+    expect(errors[1].message).toContain("mellan 15 och 240");
+    expect(errors[2].message).toContain("högst 3 olika");
+    expect(errors[3].message).toContain("går inte att läsa");
+    expect(errors[4].message).toContain("fler än 40");
+  });
+
+  describe("export", () => {
+    const groups = [{ id: "g-7a", name: "7A" }];
+    const subjects = [
+      { id: "s-ma", name: "Matematik", code: "MA" },
+      { id: "s-idh", name: "Idrott", code: "IDH" },
+    ];
+    const requirement = (over: Partial<Parameters<typeof requirementsToCsv>[0][0]> = {}) => ({
+      studentGroupId: "g-7a",
+      subjectId: "s-ma",
+      teacherId: null,
+      coTeacherId: null,
+      lessonsPerWeek: 3,
+      minutesPerLesson: 60,
+      minutesBefore: 0,
+      minutesAfter: 0,
+      teacherLoadPercent: 100,
+      coTeacherLoadPercent: 100,
+      recurrence: "ALL_WEEKS" as const,
+      startDate: null,
+      endDate: null,
+      ...over,
+    });
+
+    it("writes the file it always wrote when no post is split, empty lists included", () => {
+      const before = requirementsToCsv([requirement()], groups, subjects, []);
+      const withEmpty = requirementsToCsv([requirement({ lessonLengths: [] })], groups, subjects, []);
+      expect(withEmpty).toBe(before);
+      expect(before.split("\r\n")[0]).toBe(BOM + CSV_TEMPLATES.requirements.headers.join(";"));
+    });
+
+    it("adds the column, last, when some post is split, and leaves it empty on the uniform ones", () => {
+      const csv = requirementsToCsv(
+        [requirement(), requirement({ subjectId: "s-idh", lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] })],
+        groups,
+        subjects,
+        [],
+      );
+      const lines = csv.trimEnd().split("\r\n");
+      expect(lines[0].endsWith(";larare_procent;medlarare_procent;lektionslangder")).toBe(true);
+      expect(lines.slice(1)).toEqual([
+        "7A;MA;3;60;0;0;;;alla;;;100;100;",
+        "7A;IDH;2;80;0;0;;;alla;;;100;100;1x80+1x40",
+      ]);
+    });
+
+    it("round-trips a split post through its own file", () => {
+      const csv = requirementsToCsv(
+        [requirement({ subjectId: "s-idh", lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [60, 60, 55] })],
+        groups,
+        subjects,
+        [],
+      );
+      const { rows, errors } = mapRequirementRows(parseCsv(csv));
+      expect(errors).toEqual([]);
+      expect(rows[0]).toMatchObject({ lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [60, 60, 55] });
+    });
   });
 });

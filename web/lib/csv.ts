@@ -20,6 +20,15 @@ import type {
   TeacherQualificationKind,
 } from "@/lib/types";
 import { BOM } from "@/lib/csv-export";
+import {
+  LESSON_GRID_MINUTES,
+  LESSON_MAX_MINUTES,
+  LESSON_MIN_MINUTES,
+  MAX_DISTINCT_LENGTHS,
+  MAX_LESSONS_PER_WEEK,
+  canonicalShape,
+  lengthsProblem,
+} from "@/lib/lesson-lengths";
 
 export * from "@/lib/csv-export";
 
@@ -239,6 +248,7 @@ const FIELD_LABELS: Record<string, string> = {
   subject: "amne",
   lessonsPerWeek: "lektioner_per_vecka",
   minutesPerLesson: "minuter_per_lektion",
+  lessonLengths: "lektionslangder",
   // As the template's header spells them, so a complaint about a cell names the
   // column an administrator can actually find in the file.
   minutesBefore: "minutesBefore",
@@ -945,6 +955,14 @@ export type RequirementRow = {
   lessonsPerWeek: number;
   minutesPerLesson: number;
   /**
+   * Lektionslängder, from the optional `lektionslangder` column: the
+   * canonical list (longest first) when the cell says two or more lengths,
+   * [] when the cell is empty or says one length — the same "make it
+   * uniform" a PATCH means by [] — and absent when the file has no such
+   * column, so every file from before it imports exactly as it did.
+   */
+  lessonLengths?: number[];
+  /**
    * The pupils' own minutes on either side of the lesson — ombyte before
    * idrotten, dusch after it. Optional in the file, like the teachers and the
    * dates: absent means the key is left out and the requirement keeps whatever
@@ -984,6 +1002,9 @@ const REQUIREMENT_COLUMNS = {
     "lektionslangd",
     "minutesperlesson",
   ],
+  // Not "lektionslangd", which is minutesPerLesson above: the plural is a
+  // different column, the one that can say "1x80+1x40".
+  lessonLengths: ["lektionslangder", "langder", "lessonlengths"],
   // The template writes the API's field name; the Swedish spellings are here
   // because an administrator who adds the column by hand writes what the
   // timplan page calls it — "Ombyte före (minuter)" — and not a camelCase
@@ -1113,6 +1134,50 @@ function isCalendarDate(value: string): boolean {
  * import into a year the administrator is not looking at.
  */
 /**
+ * The `lektionslangder` cell as one length per lesson, or null when it is not
+ * written in the cell's grammar.
+ *
+ * Parts joined by "+", each "antal x minuter" with ×, x, X or * between —
+ * "1x80+1x40", "1 × 80 + 1 × 40" and "2*60+1*55" all read — or a bare length,
+ * which is one lesson of it ("80+40"). Spaces are forgiven anywhere; a comma
+ * is not, so "80,40" is refused rather than read as one lesson. What the
+ * cell says is not checked here beyond being numbers: lengthsProblem, the
+ * shared module's, says whether the CHECK would store it.
+ */
+export function parseLengthSpec(raw: string): number[] | null {
+  const lengths: number[] = [];
+  for (const piece of raw.replace(/\s+/g, "").split("+")) {
+    // Whole numbers only: a decimal comma would make "80,40" read as 80.4.
+    const match = /^(?:(\d+)[x×*])?(\d+)$/i.exec(piece);
+    if (!match) return null;
+    const count = match[1] === undefined ? 1 : Number(match[1]);
+    const minutes = Number(match[2]);
+    if (count < 1 || count > MAX_LESSONS_PER_WEEK) return null;
+    for (let i = 0; i < count; i += 1) lengths.push(minutes);
+  }
+  return lengths;
+}
+
+/** Why a `lektionslangder` cell cannot be stored, as a row error. */
+function lengthsProblemMessage(
+  rowNumber: number,
+  raw: string,
+  problem: NonNullable<ReturnType<typeof lengthsProblem>>,
+): string {
+  const prefix = `Rad ${rowNumber}: lektionslangder "${raw}"`;
+  switch (problem) {
+    case "OFF_GRID":
+      return `${prefix}: varje längd måste gå jämnt upp i ${LESSON_GRID_MINUTES} minuter, som schemat räknar.`;
+    case "TOO_MANY_LESSONS":
+      return `${prefix} är fler än ${MAX_LESSONS_PER_WEEK} lektioner i veckan.`;
+    case "TOO_MANY_KINDS":
+      return `${prefix}: högst ${MAX_DISTINCT_LENGTHS} olika lektionslängder i en timplanspost.`;
+    default:
+      return `${prefix}: varje längd måste vara hela minuter mellan ${LESSON_MIN_MINUTES} och ${LESSON_MAX_MINUTES}.`;
+  }
+}
+
+/**
  * Rows, errors, AND which columns the file had.
  *
  * The third one is not a nicety. The import updates rather than skips, so a
@@ -1185,7 +1250,32 @@ export function mapRequirementRows(parsed: ParsedCsv): {
     const subject = cell("subject");
     if (subject === "") return fail(requiredMessage("subject", rowNumber));
 
-    const rawLessons = cell("lessonsPerWeek");
+    /*
+     * Lektionslängder. A filled cell is the row: its count and longest are
+     * the two numbers below, which may then be left empty — and if they are
+     * written, they must say the same, or the row is refused here with the
+     * sentence the gateway would answer (import.service.ts). An empty cell is
+     * a uniform post at the two numbers. No column, no key.
+     */
+    const rawLengths = cell("lessonLengths");
+    let listed: ReturnType<typeof canonicalShape> | null = null;
+    if (rawLengths.trim() !== "") {
+      const lengths = parseLengthSpec(rawLengths);
+      if (lengths === null) {
+        return fail(
+          `Rad ${rowNumber}: lektionslangder "${rawLengths}" går inte att läsa. Skriv längderna som ` +
+            `antal x minuter, åtskilda med +, till exempel "1x80+1x40".`,
+        );
+      }
+      const problem = lengthsProblem(lengths);
+      if (problem !== null) return fail(lengthsProblemMessage(rowNumber, rawLengths, problem));
+      listed = canonicalShape(lengths);
+    }
+
+    const rawLessons =
+      listed && cell("lessonsPerWeek").trim() === ""
+        ? String(listed.lessonsPerWeek)
+        : cell("lessonsPerWeek");
     const lessonsPerWeek = Number(rawLessons);
     if (!Number.isInteger(lessonsPerWeek) || lessonsPerWeek < 1 || lessonsPerWeek > 40) {
       return fail(
@@ -1193,7 +1283,10 @@ export function mapRequirementRows(parsed: ParsedCsv): {
       );
     }
 
-    const rawMinutes = cell("minutesPerLesson");
+    const rawMinutes =
+      listed && cell("minutesPerLesson").trim() === ""
+        ? String(listed.minutesPerLesson)
+        : cell("minutesPerLesson");
     const minutesPerLesson = Number(rawMinutes);
     if (
       !Number.isInteger(minutesPerLesson) ||
@@ -1202,6 +1295,16 @@ export function mapRequirementRows(parsed: ParsedCsv): {
     ) {
       return fail(
         `Rad ${rowNumber}: minuter_per_lektion "${rawMinutes}" är inte ett heltal mellan 15 och 240.`,
+      );
+    }
+    if (
+      listed &&
+      (listed.lessonsPerWeek !== lessonsPerWeek || listed.minutesPerLesson !== minutesPerLesson)
+    ) {
+      return fail(
+        `Rad ${rowNumber}: lektionslangder är ${listed.lessonsPerWeek} lektioner med längsta ` +
+          `${listed.minutesPerLesson} minuter, men raden säger ${lessonsPerWeek} × ${minutesPerLesson}. ` +
+          `Lämna lektioner och minuter tomma så räknas de ur lektionslangder.`,
       );
     }
 
@@ -1303,6 +1406,7 @@ export function mapRequirementRows(parsed: ParsedCsv): {
     // A NEW requirement made from a file without them gets the column default,
     // which is 0 — so "absent means 0" still holds wherever there is nothing to
     // leave alone.
+    if (columnOf.has("lessonLengths")) row.lessonLengths = listed?.lessonLengths ?? [];
     if (columnOf.has("minutesBefore")) row.minutesBefore = minutesBefore;
     if (columnOf.has("minutesAfter")) row.minutesAfter = minutesAfter;
     if (columnOf.has("teacherEmail")) row.teacherEmail = cell("teacherEmail") || null;
