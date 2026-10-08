@@ -18,6 +18,14 @@ import { decidedTimplanConflict, rethrowPrismaError } from '../common/utils/pris
 import { parseDateString } from '../common/utils/time';
 import { readYearBoundsForShare } from '../resources/academic-year-bounds';
 import {
+  CREATE_DEFAULT_SHAPE,
+  LESSON_LENGTHS_TOO_MANY_KINDS,
+  isLessonShapeProblem,
+  resolveLessonShape,
+} from '../resources/lesson-shape-merge';
+import { canonicalShape, isMixed } from '../common/lesson-lengths';
+import { SLOT_MINUTES, fitsTheGrid } from '../common/solver-grid';
+import {
   normalizeNationalCode,
   unknownNationalCodeMessage,
 } from '../resources/national-codes';
@@ -66,6 +74,13 @@ type RequirementValues = {
   coTeacherLoadPercent?: number;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /**
+   * Lektionslängder, written only when the file had the column or when a
+   * stored split becomes uniform ([]): see the shape resolution in the row
+   * loop. A file without the column never names it, so a school that never
+   * splits writes the rows it always wrote.
+   */
+  lessonLengths?: number[];
   /** The pupils' ombyte and dusch, outside the lesson; 0 when nobody wrote one. */
   minutesBefore?: number;
   minutesAfter?: number;
@@ -74,7 +89,7 @@ type RequirementValues = {
   endDate?: Date | null;
 };
 
-/** A stored row, which always has all eleven. */
+/** A stored row, which always has every field. */
 type StoredRequirementValues = Required<RequirementValues>;
 
 /**
@@ -1012,6 +1027,7 @@ export class ImportService {
           coTeacherLoadPercent: true,
           lessonsPerWeek: true,
           minutesPerLesson: true,
+          lessonLengths: true,
           minutesBefore: true,
           minutesAfter: true,
           recurrence: true,
@@ -1172,9 +1188,56 @@ export class ImportService {
          * So the file's column set travels beside the rows, and only what it
          * names is written.
          */
-        const values: RequirementValues = {
+        /*
+         * The lesson shape, resolved over the stored row by the one merge the
+         * timplanspost's PATCH uses (lesson-shape-merge.ts). A filled
+         * lektionslangder cell is the row and its scalars must agree with it;
+         * an empty one makes the row uniform; a file without the column keeps
+         * a stored split whose scalars it repeats, and makes uniform one whose
+         * scalars it changes. The staffing judge below sees this shape, all
+         * three fields, so it charges exactly what is written.
+         */
+        const current = existingByKey.get(key);
+        const lessonLengths = writable.has('lessonLengths') ? (row.lessonLengths ?? []) : undefined;
+        const offGrid = (lessonLengths ?? []).find((minutes) => !fitsTheGrid(minutes));
+        if (offGrid !== undefined) {
+          const below = Math.floor(offGrid / SLOT_MINUTES) * SLOT_MINUTES;
+          report.errors.push({
+            row: rowNumber,
+            message:
+              `Lektionslängden ${offGrid} minuter i lektionslangder går inte att lägga på schemat, som räknar i hela ` +
+              `${SLOT_MINUTES}-minutersintervall. Närmast är ${below} eller ${below + SLOT_MINUTES} minuter.`,
+          });
+          continue;
+        }
+        const resolved = resolveLessonShape(current ?? CREATE_DEFAULT_SHAPE, {
           lessonsPerWeek: row.lessonsPerWeek,
           minutesPerLesson: row.minutesPerLesson,
+          ...(lessonLengths !== undefined ? { lessonLengths } : {}),
+        });
+        if (isLessonShapeProblem(resolved)) {
+          const listed = canonicalShape(lessonLengths ?? []);
+          report.errors.push({
+            row: rowNumber,
+            message:
+              resolved.code === LESSON_LENGTHS_TOO_MANY_KINDS
+                ? 'lektionslangder: högst tre olika lektionslängder i en timplanspost.'
+                : `lektionslangder är ${listed.lessonsPerWeek} lektioner med längsta ${listed.minutesPerLesson} minuter, ` +
+                  `men raden säger ${row.lessonsPerWeek} × ${row.minutesPerLesson}. Rätta en av dem, eller lämna ` +
+                  'lektioner och minuter tomma så räknas de ur lektionslangder.',
+          });
+          continue;
+        }
+        const { shape } = resolved;
+        // A split row that the file makes uniform without the column: the
+        // list must be cleared with the scalars, or the CHECK refuses them.
+        const clearsSplit =
+          lessonLengths === undefined && current !== undefined && isMixed(current) && !isMixed(shape);
+
+        const values: RequirementValues = {
+          lessonsPerWeek: shape.lessonsPerWeek,
+          minutesPerLesson: shape.minutesPerLesson,
+          ...(lessonLengths !== undefined || clearsSplit ? { lessonLengths: shape.lessonLengths } : {}),
           // An empty ombyte cell is a 0, not a silence: the columns are
           // optional on the row so a school need not type two zeroes per line,
           // and within a column the file has, "nothing" is the school saying
@@ -1203,7 +1266,6 @@ export class ImportService {
           ...(writable.has('endDate') ? { endDate } : {}),
         };
 
-        const current = existingByKey.get(key);
         // One person as both teachers, in the file or against the stored half
         // the file leaves untouched: see SAME_TEACHER_TWICE.
         if (
@@ -1229,8 +1291,10 @@ export class ImportService {
                 patch: {
                   teacherId: values.teacherId,
                   coTeacherId: values.coTeacherId,
-                  lessonsPerWeek: values.lessonsPerWeek,
-                  minutesPerLesson: values.minutesPerLesson,
+                  // The resolved shape, all three fields (lesson-shape-merge.ts).
+                  lessonsPerWeek: shape.lessonsPerWeek,
+                  minutesPerLesson: shape.minutesPerLesson,
+                  lessonLengths: shape.lessonLengths,
                   teacherLoadPercent: values.teacherLoadPercent,
                   coTeacherLoadPercent: values.coTeacherLoadPercent,
                   recurrence: values.recurrence,
@@ -1621,6 +1685,11 @@ export class ImportService {
 
     if (current.lessonsPerWeek !== values.lessonsPerWeek) return false;
     if (current.minutesPerLesson !== values.minutesPerLesson) return false;
+    if (values.lessonLengths !== undefined) {
+      const stored = current.lessonLengths ?? [];
+      const sent = values.lessonLengths;
+      if (stored.length !== sent.length || stored.some((minutes, i) => minutes !== sent[i])) return false;
+    }
     if ('minutesBefore' in values && current.minutesBefore !== values.minutesBefore) {
       return false;
     }

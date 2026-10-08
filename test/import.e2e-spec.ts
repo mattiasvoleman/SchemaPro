@@ -179,6 +179,69 @@ describe('CSV import (e2e)', () => {
       expect(data).toMatchObject({ teacherLoadPercent: 150, coTeacherLoadPercent: 100 });
     });
 
+    /*
+     * Lektionslängder over the file: the column absent (every file before it),
+     * present with an empty cell, and filled; and a cell that contradicts the
+     * row's figures, which is that row's error and nothing else's.
+     */
+    it('imports a lektionslangder column: absent, empty and filled, and refuses a row that contradicts its cell', async () => {
+      const GROUP_7B = '2b2b2b2b-2b2b-4b2b-8b2b-2b2b2b2b2b2b';
+      harness.tx['studentGroup']!['findMany']!.mockResolvedValue([
+        { id: GROUP_ID, name: '7A' },
+        { id: GROUP_7B, name: '7B' },
+      ]);
+      harness.tx['subject']!['findMany']!.mockResolvedValue([
+        { id: 'sub-ma', name: 'Matematik', code: 'MA' },
+        { id: 'sub-idh', name: 'Idrott och hälsa', code: 'IDH' },
+      ]);
+      harness.tx['user']!['findMany']!.mockResolvedValue([]);
+      // 7A's Idrott is stored split; everything else is new.
+      harness.tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+        {
+          id: 'r-idh', studentGroupId: GROUP_ID, subjectId: 'sub-idh', teacherId: null, coTeacherId: null,
+          teacherLoadPercent: 100, coTeacherLoadPercent: 100, lessonsPerWeek: 2, minutesPerLesson: 80,
+          lessonLengths: [80, 40], minutesBefore: 0, minutesAfter: 0, recurrence: 'ALL_WEEKS', startDate: null, endDate: null,
+        },
+      ]);
+      harness.tx['teachingRequirement']!['create']!.mockResolvedValue({ id: 'r-new' });
+      harness.tx['teachingRequirement']!['update']!.mockResolvedValue({ id: 'r-idh' });
+      const base = ['groupName', 'subject', 'lessonsPerWeek', 'minutesPerLesson', 'recurrence'];
+      const lessons = (body: Record<string, unknown>) => ({ recurrence: 'ALL_WEEKS', ...body });
+
+      // An old file: no column. Repeating the split row's figures keeps it.
+      const old = await post(harness, 'requirements')
+        .send({
+          academicYearId: YEAR_ID,
+          columns: base,
+          rows: [lessons({ groupName: '7A', subject: 'IDH', lessonsPerWeek: 2, minutesPerLesson: 80 })],
+        })
+        .expect(201);
+      expect(old.body).toMatchObject({ created: 0, updated: 0, skipped: 1, errors: [] });
+
+      // A new file: 7A's cell empty (uniform as the row says), 7B's filled, and
+      // a 7B Matematik row whose figures contradict its cell.
+      const fresh = await post(harness, 'requirements')
+        .send({
+          academicYearId: YEAR_ID,
+          columns: [...base, 'lessonLengths'],
+          rows: [
+            lessons({ groupName: '7A', subject: 'IDH', lessonsPerWeek: 2, minutesPerLesson: 60, lessonLengths: [] }),
+            lessons({ groupName: '7B', subject: 'IDH', lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [40, 80] }),
+            lessons({ groupName: '7B', subject: 'MA', lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [80, 40] }),
+          ],
+        })
+        .expect(201);
+
+      expect(fresh.body).toMatchObject({ created: 1, updated: 1, skipped: 0 });
+      expect(fresh.body.errors).toEqual([
+        { row: 3, message: expect.stringContaining('lektionslangder är 2 lektioner med längsta 80 minuter, men raden säger 3 × 60') },
+      ]);
+      const update = harness.tx['teachingRequirement']!['update']!.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+      expect(update.data).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 60, lessonLengths: [] });
+      const create = harness.tx['teachingRequirement']!['create']!.mock.calls[0]?.[0] as { data: Record<string, unknown> };
+      expect(create.data).toMatchObject({ studentGroupId: GROUP_7B, lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+    });
+
     it('reports a REFUSE row as an error and a WARN row as a warning, and writes the rest', async () => {
       // qualificationMode REFUSE, overAllocationMode WARN. Bo holds no
       // behörighet: his row is an error. Karin is behörig but goes past her
