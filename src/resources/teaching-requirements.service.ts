@@ -14,6 +14,12 @@ import {
   touchesStaffing,
 } from '../staffing/staffing-enforcement';
 import type { StaffingWarning } from '../staffing/staffing-checks';
+import { isMixed } from '../common/lesson-lengths';
+import {
+  CREATE_DEFAULT_SHAPE,
+  mergeLessonShape,
+  touchesLessonShape,
+} from './lesson-shape-merge';
 import type {
   CreateTeachingRequirementDto,
   UpdateTeachingRequirementDto,
@@ -49,10 +55,15 @@ import type {
  */
 export type TeachingRequirementResponse = Omit<
   TeachingRequirement,
-  'startDate' | 'endDate'
+  'startDate' | 'endDate' | 'lessonLengths'
 > & {
   startDate: string | null;
   endDate: string | null;
+  /**
+   * Present only on a split row (1 × 80 + 1 × 40 is [80, 40]); a uniform row
+   * is answered without the key, byte for byte as before the column existed.
+   */
+  lessonLengths?: number[];
 };
 
 /**
@@ -97,6 +108,10 @@ export class TeachingRequirementsService {
   ): Promise<StaffedRequirementResponse> {
     // Needs nothing from the database, so it answers before one is opened.
     this.assertLessonLengthFitsTheGrid(dto.minutesPerLesson);
+    for (const minutes of dto.lessonLengths ?? []) this.assertLessonLengthFitsTheGrid(minutes);
+    // The row's lessons, over the columns' own defaults: a list makes the
+    // scalars, scalars beside it must agree (a coded 400 otherwise).
+    const { shape } = mergeLessonShape(CREATE_DEFAULT_SHAPE, dto);
     const schoolId = requireSchoolId(user);
     const startDate = dto.startDate ? parseDateString(dto.startDate) : null;
     const endDate = dto.endDate ? parseDateString(dto.endDate) : null;
@@ -122,8 +137,9 @@ export class TeachingRequirementsService {
           // row the request described rather than what the default filled in.
           teacherLoadPercent: dto.teacherLoadPercent ?? 100,
           coTeacherLoadPercent: dto.coTeacherLoadPercent ?? 100,
-          lessonsPerWeek: dto.lessonsPerWeek ?? 1,
-          minutesPerLesson: dto.minutesPerLesson ?? 60,
+          lessonsPerWeek: shape.lessonsPerWeek,
+          minutesPerLesson: shape.minutesPerLesson,
+          lessonLengths: shape.lessonLengths,
           recurrence: dto.recurrence ?? 'ALL_WEEKS',
         } as const;
         if (sameTeacherTwice(charged.teacherId, charged.coTeacherId)) {
@@ -160,6 +176,9 @@ export class TeachingRequirementsService {
             coTeacherLoadPercent: charged.coTeacherLoadPercent,
             lessonsPerWeek: charged.lessonsPerWeek,
             minutesPerLesson: charged.minutesPerLesson,
+            // Only a split row names the list; a uniform one leaves it to the
+            // column's '{}', so its INSERT is the one it always was.
+            ...(isMixed(charged) ? { lessonLengths: charged.lessonLengths } : {}),
             // The pupil buffers, stated here rather than left to the column
             // default for the same reason every other figure above is: the
             // created row is answered back to the caller, and a field the
@@ -192,6 +211,7 @@ export class TeachingRequirementsService {
         // — and outside the period's condition, or a PATCH carrying only
         // `minutesPerLesson`, which is the ordinary edit, would skip it.
         this.assertLessonLengthFitsTheGrid(dto.minutesPerLesson);
+        for (const minutes of dto.lessonLengths ?? []) this.assertLessonLengthFitsTheGrid(minutes);
 
         // The period is checked as it will END UP, not as it arrived. A PATCH
         // carrying only `endDate` still has to be measured against the
@@ -221,7 +241,20 @@ export class TeachingRequirementsService {
         // change who teaches the row or what it charges them, and of the row as
         // it will end up. The stored row is read for its year and its teachers;
         // a row RLS hides is left to the update below, which answers 404.
+        //
+        // The same read carries the row's lesson shape, which a PATCH naming
+        // any length field is merged over (lesson-shape-merge.ts): every
+        // length field is a staffing field, so no second read is needed. It
+        // takes no lock — the import locks Users, then posts, then writes
+        // requirements, and a row lock here would invert that order. Two
+        // PATCHes racing on one row are last-writer-wins, as for every other
+        // field, and the CHECK refuses (23514, a 400) any interleaving that
+        // would store a list contradicting its scalars.
         let warnings: StaffingWarning[] = [];
+        let lengthWrite: Record<string, unknown> = {
+          ...(dto.lessonsPerWeek !== undefined ? { lessonsPerWeek: dto.lessonsPerWeek } : {}),
+          ...(dto.minutesPerLesson !== undefined ? { minutesPerLesson: dto.minutesPerLesson } : {}),
+        };
         if (touchesStaffing(dto)) {
           const stored = await tx.teachingRequirement.findUnique({
             where: { id },
@@ -231,8 +264,24 @@ export class TeachingRequirementsService {
               studentGroupId: true,
               teacherId: true,
               coTeacherId: true,
+              lessonsPerWeek: true,
+              minutesPerLesson: true,
+              lessonLengths: true,
             },
           });
+          // The shape as the row will end up, and the fields that put it
+          // there. A row the read cannot see is merged over nothing: the
+          // UPDATE below answers it 404 whatever it carries.
+          const resolved = touchesLessonShape(dto)
+            ? mergeLessonShape(
+                stored ?? {
+                  lessonsPerWeek: dto.lessonsPerWeek ?? CREATE_DEFAULT_SHAPE.lessonsPerWeek,
+                  minutesPerLesson: dto.minutesPerLesson ?? CREATE_DEFAULT_SHAPE.minutesPerLesson,
+                },
+                dto,
+              )
+            : null;
+          if (resolved) lengthWrite = resolved.write;
           if (stored) {
             // As the row will end up: a PATCH naming only the co-teacher is
             // measured against the lead already on the row.
@@ -255,8 +304,9 @@ export class TeachingRequirementsService {
               patch: {
                 teacherId: dto.teacherId,
                 coTeacherId: dto.coTeacherId,
-                lessonsPerWeek: dto.lessonsPerWeek,
-                minutesPerLesson: dto.minutesPerLesson,
+                // The resolved shape, all three together, so the judge
+                // charges exactly what the UPDATE leaves on the row.
+                ...(resolved ? resolved.shape : {}),
                 teacherLoadPercent: dto.teacherLoadPercent,
                 coTeacherLoadPercent: dto.coTeacherLoadPercent,
                 recurrence: dto.recurrence,
@@ -280,12 +330,11 @@ export class TeachingRequirementsService {
             ...(dto.coTeacherLoadPercent !== undefined
               ? { coTeacherLoadPercent: dto.coTeacherLoadPercent }
               : {}),
-            ...(dto.lessonsPerWeek !== undefined
-              ? { lessonsPerWeek: dto.lessonsPerWeek }
-              : {}),
-            ...(dto.minutesPerLesson !== undefined
-              ? { minutesPerLesson: dto.minutesPerLesson }
-              : {}),
+            // The length fields resolveLessonShape chose: the scalars sent
+            // on a uniform row, as before; nothing on a split row the scalars
+            // left as it was; all three when a list was sent or a split row
+            // becomes uniform.
+            ...lengthWrite,
             ...(dto.minutesBefore !== undefined
               ? { minutesBefore: dto.minutesBefore }
               : {}),
@@ -327,8 +376,12 @@ export class TeachingRequirementsService {
    * whole change exists to remove, reintroduced one layer down.
    */
   private toResponse(row: TeachingRequirement): TeachingRequirementResponse {
+    // A uniform row leaves without the list, so every response a school that
+    // never splits receives is the one it received before the column existed.
+    const { lessonLengths, ...rest } = row;
     return {
-      ...row,
+      ...rest,
+      ...(isMixed(row) ? { lessonLengths } : {}),
       startDate: row.startDate ? row.startDate.toISOString().slice(0, 10) : null,
       endDate: row.endDate ? row.endDate.toISOString().slice(0, 10) : null,
     };

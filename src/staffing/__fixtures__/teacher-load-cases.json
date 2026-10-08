@@ -3745,6 +3745,273 @@
           "dutyMinutesPerWeek": 0
         }
       }
+    },
+    {
+      "name": "Lektionslängder: a split row charges its lessons’ minutes — every week, odd weeks, co-taught at 50 % and unstaffed",
+      "input": {
+        "year": {
+          "startDate": "2026-08-17",
+          "endDate": "2027-06-11"
+        },
+        "policy": {
+          "fullTimeTeachingMinutesPerWeek": 1080,
+          "overAllocationTolerancePercent": 10,
+          "fullTimeRegulatedHoursPerYear": 1360,
+          "workDaysPerYear": 194,
+          "qualificationMode": "WARN"
+        },
+        "employments": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": "ANN"
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": "BOB"
+          }
+        ],
+        "requirements": [
+          {
+            "id": "req-split",
+            "subjectId": "idh-subject",
+            "subjectName": "Idrott och hälsa",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "coTeacherId": null,
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 80,
+            "lessonLengths": [
+              80,
+              40
+            ],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "id": "req-split-odd",
+            "subjectId": "idh-subject",
+            "subjectName": "Idrott och hälsa",
+            "studentGroupId": "g-7b",
+            "groupName": "7B",
+            "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "coTeacherId": null,
+            "lessonsPerWeek": 3,
+            "minutesPerLesson": 60,
+            "lessonLengths": [
+              60,
+              60,
+              40
+            ],
+            "recurrence": "ODD_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "id": "req-split-co",
+            "subjectId": "idh-subject",
+            "subjectName": "Idrott och hälsa",
+            "studentGroupId": "g-7c",
+            "groupName": "7C",
+            "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "coTeacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 80,
+            "lessonLengths": [
+              80,
+              40
+            ],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 50,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "id": "req-split-unstaffed",
+            "subjectId": "idh-subject",
+            "subjectName": "Idrott och hälsa",
+            "studentGroupId": "g-7d",
+            "groupName": "7D",
+            "teacherId": null,
+            "coTeacherId": null,
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 80,
+            "lessonLengths": [
+              80,
+              40
+            ],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "id": "req-uniform",
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "coTeacherId": null,
+            "lessonsPerWeek": 3,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          }
+        ],
+        "qualifications": [],
+        "closures": [],
+        "duties": []
+      },
+      "report": {
+        "teachers": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "employment": {
+              "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": "ANN"
+            },
+            "targetMinutesPerWeek": 1080,
+            "assignedMinutesPerWeek": 500,
+            "peakMinutesPerWeek": 580,
+            "dutyMinutesPerWeek": 0,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 500,
+            "balanceMinutesPerWeek": 580,
+            "percentOfTarget": 46.3,
+            "status": "UNDER",
+            "requirementCount": 4,
+            "dutyCount": 0,
+            "subjects": [
+              {
+                "subjectId": "idh-subject",
+                "subjectName": "Idrott och hälsa",
+                "minutesPerWeek": 320,
+                "shareOfTeaching": 0.64,
+                "percentOfEmployment": 64,
+                "percentOfFullTime": 29.6
+              },
+              {
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "minutesPerWeek": 180,
+                "shareOfTeaching": 0.36,
+                "percentOfEmployment": 36,
+                "percentOfFullTime": 16.7
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 359.7,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194
+            }
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "employment": {
+              "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": "BOB"
+            },
+            "targetMinutesPerWeek": 1080,
+            "assignedMinutesPerWeek": 60,
+            "peakMinutesPerWeek": 60,
+            "dutyMinutesPerWeek": 0,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 60,
+            "balanceMinutesPerWeek": 1020,
+            "percentOfTarget": 5.6,
+            "status": "UNDER",
+            "requirementCount": 1,
+            "dutyCount": 0,
+            "subjects": [
+              {
+                "subjectId": "idh-subject",
+                "subjectName": "Idrott och hälsa",
+                "minutesPerWeek": 60,
+                "shareOfTeaching": 1,
+                "percentOfEmployment": 100,
+                "percentOfFullTime": 5.6
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 43,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194
+            }
+          }
+        ],
+        "unstaffedRequirements": [
+          {
+            "requirementId": "req-split-unstaffed",
+            "subjectId": "idh-subject",
+            "subjectName": "Idrott och hälsa",
+            "studentGroupId": "g-7d",
+            "groupName": "7D",
+            "minutesPerWeek": 120,
+            "teacherMinutesPerWeek": 120,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          }
+        ],
+        "unqualifiedAssignments": [],
+        "qualificationsRecorded": false,
+        "subjectBottlenecks": [],
+        "bottlenecksComputed": false,
+        "totals": {
+          "teacherMinutesPerWeek": 560,
+          "lessonMinutesPerWeek": 620,
+          "dutyMinutesPerWeek": 0
+        }
+      }
     }
   ]
 }

@@ -32,6 +32,8 @@ export interface WorldRequirement {
   coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** Longest first on a split row; the column's '{}' when omitted. */
+  lessonLengths?: number[];
   teacherLoadPercent?: number;
   coTeacherLoadPercent?: number;
 }
@@ -144,6 +146,7 @@ export function givenStaffingWorld(
         endDate: null,
         minutesBefore: 0,
         minutesAfter: 0,
+        lessonLengths: [],
         academicYearId: year.id,
         ...row,
         subject: { name: subjectById.get(row.subjectId)?.name ?? '?' },

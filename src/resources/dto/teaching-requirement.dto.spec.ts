@@ -118,6 +118,7 @@ describe.each([
     'coTeacherLoadPercent',
     'lessonsPerWeek',
     'minutesPerLesson',
+    'lessonLengths',
     'minutesBefore',
     'minutesAfter',
     'recurrence',
@@ -128,6 +129,32 @@ describe.each([
     // column and came back as an unnamed 400. Omitted is still allowed.
     await expect(failing(cls, { ...base, [field]: null })).resolves.toEqual([field]);
     await expect(failing(cls, { ...base })).resolves.toEqual([]);
+  });
+
+  it.each<[string, object]>([
+    ['1 × 80 + 1 × 40', { lessonLengths: [80, 40] }],
+    ['in any order, with agreeing scalars', { lessonLengths: [40, 80], lessonsPerWeek: 2, minutesPerLesson: 80 }],
+    ['[] to make a row uniform', { lessonLengths: [] }],
+    ['the bounds 15 and 240', { lessonLengths: [240, 15] }],
+    ['40 lessons', { lessonLengths: new Array(40).fill(40) }],
+    // The grid is the service's to name (it says the nearest lengths), as
+    // for minutesPerLesson; the DTO says the number is plausible.
+    ['a length between slots, left to the service', { lessonLengths: [60, 42] }],
+  ])('accepts lesson lengths: %s', async (_case, patch) => {
+    await expect(failing(cls, { ...base, ...patch })).resolves.toEqual([]);
+  });
+
+  it.each<[string, unknown, string]>([
+    ['a number, not a list', 80, 'lessonLengths: anges som en lista med en längd per lektion.'],
+    ['41 lessons', new Array(41).fill(40), 'lessonLengths: högst 40 lektioner per vecka.'],
+    ['half a minute', [80, 40.5], 'lessonLengths: varje längd anges i hela minuter.'],
+    ['a length as a string', [80, '40'], 'lessonLengths: varje längd anges i hela minuter.'],
+    ['below 15', [80, 10], 'lessonLengths: minst 15 minuter per lektion.'],
+    ['above 240', [245, 40], 'lessonLengths: högst 240 minuter per lektion.'],
+  ])('refuses lesson lengths: %s, in Swedish naming the field', async (_case, lessonLengths, message) => {
+    const errors = await validate(plainToInstance(cls, { ...base, lessonLengths }));
+    expect(errors.map((error) => error.property)).toEqual(['lessonLengths']);
+    expect(Object.values(errors[0]!.constraints ?? {})).toContain(message);
   });
 
   it('names the field in Swedish when a load percentage is null', async () => {
