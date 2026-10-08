@@ -7,6 +7,21 @@ import {
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { runsOn } from './lesson-recurrence';
+import {
+  breakCoversGroup as breakCoversGrade,
+  breakDaysOf,
+  clampDate,
+  closuresByDateOf,
+  coversTime,
+  isoWeekday,
+  iterateDates,
+  maxDate,
+  parseUtcDate,
+  publishSkips,
+  timeToString,
+  toDateString,
+  type PublishDaysContext,
+} from './publish-days';
 import { rastsForSpan } from './rasts-for-span';
 import { requireSchoolId } from '../common/utils/request-context';
 import { zonedTimeToUtc } from '../common/utils/time';
@@ -189,14 +204,7 @@ export class CalendarService {
             endTime: true,
           },
         });
-        const closuresByDate = new Map<string, typeof closures>();
-        for (const closure of closures) {
-          if (!closure.date) continue;
-          const key = toDateString(closure.date);
-          const list = closuresByDate.get(key);
-          if (list) list.push(closure);
-          else closuresByDate.set(key, [closure]);
-        }
+        const closuresByDate = closuresByDateOf(closures);
 
         /*
          * Lov och studiedagar overlapping the window.
@@ -246,16 +254,7 @@ export class CalendarService {
          * holds a few dozen breaks against a couple of hundred dates, and the
          * map keeps the shape of `closuresByDate` right above it.
          */
-        const breakDays = new Map<string, typeof breaks>();
-        for (const entry of breaks) {
-          const from = maxDate(toDateString(entry.startDate), fromDate);
-          const to = minDate(toDateString(entry.endDate), toDate);
-          for (const date of iterateDates(from, to)) {
-            const list = breakDays.get(date);
-            if (list) list.push(entry);
-            else breakDays.set(date, [entry]);
-          }
-        }
+        const breakDays = breakDaysOf(breaks, fromDate, toDate);
 
         // The year of each class, for GRADE_LEVEL closures and for breaks that
         // narrow themselves to a span of years. Read only when something in the
@@ -303,27 +302,6 @@ export class CalendarService {
         }
 
         /**
-         * Does this closure cover the lesson's own hours on that date?
-         *
-         * The closure's times are a bare wall clock and the lesson is a real
-         * instant, so the two are lifted into the same unit through the school's
-         * timezone — the same conversion that built `startsAt` a few lines
-         * below. Comparing the raw UTC parts is off by the offset, which in
-         * Europe/Stockholm is an hour or two every day of the year.
-         */
-        const coversTime = (
-          closure: { startTime: Date; endTime: Date },
-          date: string,
-          startsAt: Date,
-          endsAt: Date,
-        ): boolean => {
-          if (isFullDay(closure.startTime, closure.endTime)) return true;
-          const from = zonedTimeToUtc(date, timeToString(closure.startTime), timezone);
-          const to = zonedTimeToUtc(date, timeToString(closure.endTime), timezone);
-          return from.getTime() < endsAt.getTime() && startsAt.getTime() < to.getTime();
-        };
-
-        /**
          * Is this class inside the break — that is, off school that day?
          *
          * Both bounds null is the ordinary lov: the whole school, answered
@@ -337,15 +315,12 @@ export class CalendarService {
         const breakCoversGroup = (
           entry: { minGradeLevel: number | null; maxGradeLevel: number | null },
           studentGroupId: string,
-        ): boolean => {
-          if (entry.minGradeLevel === null && entry.maxGradeLevel === null) return true;
-          const grade = gradeOfGroup.get(studentGroupId);
-          if (typeof grade !== 'number') return false;
-          return (
-            (entry.minGradeLevel === null || grade >= entry.minGradeLevel) &&
-            (entry.maxGradeLevel === null || grade <= entry.maxGradeLevel)
-          );
-        };
+        ): boolean => breakCoversGrade(entry, gradeOfGroup.get(studentGroupId));
+
+        // The class-level skips — the lov above and a dated class or grade
+        // closure — are publish-days.ts's, the one rule the timplan's
+        // projection walks the rest of the year by.
+        const skipContext: PublishDaysContext = { breakDays, closuresByDate, gradeOfGroup, timezone };
 
         let created = 0;
         let cancelled = 0;
@@ -520,17 +495,13 @@ export class CalendarService {
             }
 
             /*
-             * Then the lov, before anything is asked about teachers or rooms.
-             * The class is not in school, so there is no lesson to hold and
-             * nobody to cancel one for — the same answer, and the same reason,
-             * as a closed class below. It is asked here rather than down there
-             * because a break has no hours to compare against.
+             * Then the class itself, before anything is asked about teachers
+             * or rooms: a lov, or a dated closure of the class or its årskurs
+             * over the lesson's hours. The class is not in school, so there is
+             * no lesson to hold and nobody to cancel one for — and a class
+             * closure outranks a resource closure.
              */
-            if (
-              (breakDays.get(date) ?? []).some((entry) =>
-                breakCoversGroup(entry, template.studentGroupId),
-              )
-            ) {
+            if (publishSkips(template, date, skipContext) !== null) {
               skipped++;
               continue;
             }
@@ -540,41 +511,16 @@ export class CalendarService {
 
             /*
              * Who is unavailable decides what to write, and the split is the
-             * point. If the CLASS is away — lov, studiedag, PRAO — there is no
-             * lesson to hold and nothing is written. If the teacher or the room
-             * is spoken for, the class is still here: the lesson is written
-             * CANCELLED so the pupils' schedule says what happened and the
-             * substitute workflow, which searches the calendar by teacher and
-             * date, can find it.
-             *
-             * A class closure outranks a resource closure: if nobody is there,
-             * there is nobody to cancel a lesson for.
+             * point. If the CLASS is away — lov, studiedag, PRAO — nothing was
+             * written (above). If the teacher or the room is spoken for, the
+             * class is still here: the lesson is written CANCELLED so the
+             * pupils' schedule says what happened and the substitute workflow,
+             * which searches the calendar by teacher and date, can find it.
              */
-            let blocked: 'group' | 'teacher' | 'room' | null = null;
+            let blocked: 'teacher' | 'room' | null = null;
             for (const closure of closuresByDate.get(date) ?? []) {
-              if (!coversTime(closure, date, startsAt, endsAt)) continue;
+              if (!coversTime(closure, date, startsAt, endsAt, timezone)) continue;
 
-              if (
-                closure.resourceType === 'STUDENT_GROUP' &&
-                closure.studentGroupId === template.studentGroupId
-              ) {
-                blocked = 'group';
-                break;
-              }
-              if (closure.resourceType === 'GRADE_LEVEL') {
-                // A group with no year of its own — a nivågrupp — cannot be
-                // shown to be inside a range, and erasing a lesson on a guess
-                // is the worse mistake.
-                const grade = gradeOfGroup.get(template.studentGroupId);
-                if (
-                  typeof grade === 'number' &&
-                  (closure.minGradeLevel === null || grade >= closure.minGradeLevel) &&
-                  (closure.maxGradeLevel === null || grade <= closure.maxGradeLevel)
-                ) {
-                  blocked = 'group';
-                  break;
-                }
-              }
               if (
                 closure.resourceType === 'TEACHER' &&
                 closure.userId !== null &&
@@ -590,11 +536,6 @@ export class CalendarService {
               ) {
                 blocked = blocked ?? 'room';
               }
-            }
-
-            if (blocked === 'group') {
-              skipped++;
-              continue;
             }
 
             // Never the constraint's own `reason`: that field holds "sjukskriven",
@@ -680,58 +621,4 @@ export class CalendarService {
       { timeoutMs: 120_000 },
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Pure date helpers (UTC-based; dates are calendar days, not instants)
-// ---------------------------------------------------------------------------
-
-function toDateString(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-function parseUtcDate(date: string): Date {
-  return new Date(`${date}T00:00:00.000Z`);
-}
-
-function maxDate(a: string, b: string): string {
-  return a > b ? a : b;
-}
-
-function minDate(a: string, b: string): string {
-  return a < b ? a : b;
-}
-
-function clampDate(value: string, min: string, max: string): string {
-  if (value < min) return min;
-  if (value > max) return max;
-  return value;
-}
-
-function* iterateDates(from: string, to: string): Generator<string> {
-  const cursor = parseUtcDate(from);
-  const end = parseUtcDate(to).getTime();
-  while (cursor.getTime() <= end) {
-    yield toDateString(cursor);
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-}
-
-/** ISO weekday for a YYYY-MM-DD string: 1 = Monday … 7 = Sunday. */
-function isoWeekday(date: string): number {
-  const jsDay = parseUtcDate(date).getUTCDay();
-  return jsDay === 0 ? 7 : jsDay;
-}
-
-function timeToString(time: Date): string {
-  const h = time.getUTCHours().toString().padStart(2, '0');
-  const m = time.getUTCMinutes().toString().padStart(2, '0');
-  const s = time.getUTCSeconds().toString().padStart(2, '0');
-  return `${h}:${m}:${s}`;
-}
-
-function isFullDay(start: Date, end: Date): boolean {
-  const startMinutes = start.getUTCHours() * 60 + start.getUTCMinutes();
-  const endMinutes = end.getUTCHours() * 60 + end.getUTCMinutes();
-  return startMinutes === 0 && (endMinutes === 0 || endMinutes >= 23 * 60 + 59);
 }
