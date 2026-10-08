@@ -11,10 +11,15 @@
  *  1. Exact matches first. A locked 40 cancels a 40, and nothing a later rule
  *     decides can take that 40 away from it.
  *  2. Every other lock, longest first, cancels the NEAREST remaining length;
- *     on a tie, the SHORTER one. The minutes then err toward over-delivery —
- *     an extra few minutes on the timetable, where the administrator sees
- *     them — which is the direction the proxy's coverage paragraph already
- *     chooses over a lesson quietly missing.
+ *     on a tie, the SHORTER one. Nearest keeps the week's error as small as
+ *     one lock allows, and it can go EITHER way: a locked 70 on 1 × 80 +
+ *     1 × 40 cancels the 80 (10 away, not 30), so the week holds 70 + 40 =
+ *     110 of 120 — exactly as a locked 45 on a uniform 3 × 60 already leaves
+ *     the week 15 short today. Only the tie is decided toward over-delivery
+ *     (a locked 60 on 80 + 40 cancels the 40: 140, not 100), the direction
+ *     the proxy's coverage paragraph prefers to a lesson quietly missing. A
+ *     lock whose length matches none of the requirement's is the
+ *     administrator's own placement; the timetable shows its minutes.
  *  3. A lock beyond the demand cancels nothing; the remainder never goes below
  *     empty.
  *

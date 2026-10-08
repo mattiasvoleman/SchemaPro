@@ -107,6 +107,18 @@
 --    base is extra="forbid", so an old engine refuses such a payload with a 422
 --    rather than placing every lesson at the longest length.
 -- 3. The gateway and the web.
+--
+-- ## Rolling the gateway back
+--
+-- Safe only while no row is split. Once one is, the old gateway reads the
+-- scalars alone: its proxy selects no "lessonLengths" and sends idrott
+-- 1 × 80 + 1 × 40 as 2 × 80, its count-only guard accepts the 160 minutes,
+-- and an old PATCH of lessonsPerWeek alone on that row fails this CHECK with a
+-- 23514 its NAMED_CHECKS does not know (an unmapped error, not a 400). Before
+-- rolling back, list the split rows (WHERE cardinality("lessonLengths") > 0),
+-- decide each one's uniform scalars, and write them together with
+-- "lessonLengths" = '{}'. The column and the CHECK can stay: the old gateway
+-- never writes the list, so '{}' keeps every row valid.
 
 ALTER TABLE "TeachingRequirements"
     ADD COLUMN "lessonLengths" INTEGER[] NOT NULL DEFAULT '{}';
