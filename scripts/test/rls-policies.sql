@@ -6243,6 +6243,116 @@ END
 $$;
 ROLLBACK;
 
+-- Section 22, second half: who reads a lesson's teacher rows, after
+-- 20261009110000 asked the pupil's arm for a pupil first. A pupil reads the
+-- teacher row of their own class's lesson and not another class's; a teacher
+-- reads both. The rows are planted by the admin and rolled back; the teacher
+-- acts before the pupil, who cannot see the teacher's user row to switch to.
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  pupil_group uuid;
+  other_group uuid;
+  subject uuid;
+  teacher uuid;
+  own uuid;
+  foreign_lesson uuid;
+BEGIN
+  SELECT "studentGroupId" INTO pupil_group FROM "Users"
+   WHERE "schoolId" = school AND role = 'STUDENT' AND "studentGroupId" IS NOT NULL
+   ORDER BY "authId" LIMIT 1;
+  SELECT id INTO other_group FROM "StudentGroups" WHERE "schoolId" = school AND id <> pupil_group ORDER BY id LIMIT 1;
+  SELECT id INTO subject FROM "Subjects" WHERE "schoolId" = school ORDER BY id LIMIT 1;
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  IF pupil_group IS NULL OR other_group IS NULL OR subject IS NULL OR teacher IS NULL THEN
+    RAISE EXCEPTION 'teacher rows: school A lacks a pupil with a class, a second group, a subject or a teacher';
+  END IF;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, subject, pupil_group, DATE '2099-01-06', timestamptz '2099-01-06 08:00+00', timestamptz '2099-01-06 09:00+00', now())
+  RETURNING id INTO own;
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+  VALUES (school, subject, other_group, DATE '2099-01-06', timestamptz '2099-01-06 08:00+00', timestamptz '2099-01-06 09:00+00', now())
+  RETURNING id INTO foreign_lesson;
+  INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId")
+  VALUES (school, own, teacher), (school, foreign_lesson, teacher);
+  PERFORM set_config('app.test_rls22_own', own::text, true);
+  PERFORM set_config('app.test_rls22_foreign', foreign_lesson::text, true);
+END
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "CalendarLessonTeachers"
+   WHERE "calendarLessonId" IN (current_setting('app.test_rls22_own')::uuid, current_setting('app.test_rls22_foreign')::uuid);
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'teacher rows: a teacher reads % of the 2 teacher rows', n;
+  END IF;
+END
+$$;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT' AND "studentGroupId" IS NOT NULL
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'teacher rows: expected to be acting as a STUDENT of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonTeachers"
+   WHERE "calendarLessonId" = current_setting('app.test_rls22_own')::uuid;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'teacher rows: a pupil reads % teacher row(s) of their own class''s lesson, expected 1', n;
+  END IF;
+  SELECT count(*) INTO n FROM "CalendarLessonTeachers"
+   WHERE "calendarLessonId" = current_setting('app.test_rls22_foreign')::uuid;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'teacher rows: a pupil reads % teacher row(s) of another class''s lesson', n;
+  END IF;
+END
+$$;
+
+ROLLBACK;
+
+-- The catalog half: the pupil's arm asks for a pupil's group before it looks
+-- up a lesson (20261009110000).
+DO $$
+DECLARE qual text;
+BEGIN
+  SELECT pg_get_expr(polqual, polrelid) INTO qual FROM pg_policy
+   WHERE polname = 'calendar_lesson_teachers_student_select';
+  IF qual IS NULL OR position('IS NOT NULL' IN qual) = 0 OR position('IS NOT NULL' IN qual) > position('EXISTS' IN qual) THEN
+    RAISE EXCEPTION 'teacher rows: the pupil arm does not ask for a pupil''s group before its EXISTS: %', qual;
+  END IF;
+END $$;
+
 -- ---------------------------------------------------------------------------
 -- Section 23: a tillgodoräknad dag is the admin's decision to write, the
 -- staff's to read, and nobody else's.
