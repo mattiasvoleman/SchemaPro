@@ -309,6 +309,27 @@ export class ImportRequirementRowDto {
   minutesPerLesson!: number;
 
   /**
+   * Lektionslängder: the file's `lektionslangder` cell ("1x80+1x40"), parsed
+   * by web/lib/csv.ts into one length per lesson. The two scalars above stay
+   * REQUIRED on the wire: the web derives them from a filled cell when the
+   * file left them empty, and the service refuses a row whose scalars
+   * contradict its list (lesson-shape-merge.ts). An EMPTY cell in a file that
+   * has the column arrives as [] and makes the row uniform; a file without the
+   * column (every file written before it existed) never sends the key, and a
+   * stored split survives a re-import whose scalars equal it.
+   *
+   * Each length 15..240 and at most 40 lessons, CreateTeachingRequirementDto's
+   * bounds; the grid and the three-lengths cap are the service's, per row.
+   */
+  @IsOptional()
+  @IsArray({ message: 'lessonLengths: anges som en lista med en längd per lektion.' })
+  @ArrayMaxSize(40, { message: 'lessonLengths: högst 40 lektioner per vecka.' })
+  @IsInt({ each: true, message: 'lessonLengths: varje längd anges i hela minuter.' })
+  @Min(15, { each: true, message: 'lessonLengths: minst 15 minuter per lektion.' })
+  @Max(240, { each: true, message: 'lessonLengths: högst 240 minuter per lektion.' })
+  lessonLengths?: number[];
+
+  /**
    * Minutes the PUPILS are occupied outside the lesson: ombyte before
    * idrotten, dusch and ombyte after it. What they block, and what they
    * deliberately leave alone, is argued on CreateTeachingRequirementDto.
@@ -398,7 +419,7 @@ export class ImportRequirementRowDto {
 }
 
 /**
- * Every column a timplan file may carry — all eleven, not only the seven that
+ * Every column a timplan file may carry — all of them, not only the ones that
  * can be left out.
  *
  * The field means "which columns the file had", so the client reports the whole
@@ -419,6 +440,7 @@ export const REQUIREMENT_FILE_COLUMNS = [
   'subject',
   'lessonsPerWeek',
   'minutesPerLesson',
+  'lessonLengths',
   'minutesBefore',
   'minutesAfter',
   'teacherEmail',
@@ -444,6 +466,7 @@ export type RequirementFileColumn = (typeof REQUIREMENT_FILE_COLUMNS)[number];
  * business, not this list's.
  */
 export const OPTIONAL_REQUIREMENT_COLUMNS = [
+  'lessonLengths',
   'minutesBefore',
   'minutesAfter',
   'teacherEmail',

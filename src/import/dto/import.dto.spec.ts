@@ -101,6 +101,24 @@ describe('ImportRequirementRowDto', () => {
     await expect(failing({ ...base, minutesBefore: null })).resolves.toEqual([]);
   });
 
+  it.each<[string, object]>([
+    ['1 × 80 + 1 × 40 from a filled lektionslangder cell', { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] }],
+    ['an empty cell in a file that has the column', { lessonLengths: [] }],
+    ['no key at all, as every file before the column', {}],
+  ])('accepts lesson lengths: %s', async (_case, patch) => {
+    await expect(failing({ ...base, ...patch })).resolves.toEqual([]);
+  });
+
+  it.each<[string, unknown]>([
+    ['a cell that never became a list', '1x80+1x40'],
+    ['a length below 15', [80, 10]],
+    ['a length past 240', [245, 40]],
+    ['half a minute', [80, 40.5]],
+    ['41 lessons', new Array(41).fill(40)],
+  ])('refuses lesson lengths: %s', async (_case, lessonLengths) => {
+    await expect(failing({ ...base, lessonLengths })).resolves.toEqual(['lessonLengths']);
+  });
+
   it('still refuses the row on the numbers that are not optional', async () => {
     // The buffers being optional must not have loosened the two beside them.
     await expect(
@@ -116,6 +134,12 @@ describe('the timplan column lists', () => {
     // the header row of their own file.
     expect(REQUIREMENT_FILE_COLUMNS).toContain('minutesBefore');
     expect(REQUIREMENT_FILE_COLUMNS).toContain('minutesAfter');
+  });
+
+  it('knows the lektionslangder column as lessonLengths, one a file may leave out', () => {
+    // Every file written before lektionslängder lacks it, and must import as it did.
+    expect(REQUIREMENT_FILE_COLUMNS).toContain('lessonLengths');
+    expect(OPTIONAL_REQUIREMENT_COLUMNS).toContain('lessonLengths');
   });
 
   it('counts both as columns a file may leave out', () => {

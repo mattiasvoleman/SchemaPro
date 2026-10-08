@@ -1918,6 +1918,8 @@ describe('ImportService', () => {
       // NOT NULL DEFAULT 100, like the buffers' 0.
       teacherLoadPercent: 100,
       coTeacherLoadPercent: 100,
+      // NOT NULL DEFAULT '{}': a uniform row, as the database answers it.
+      lessonLengths: [],
       recurrence: 'ALL_WEEKS',
       startDate: null,
       endDate: null,
@@ -2791,6 +2793,92 @@ describe('ImportService', () => {
      * REFUSE makes the row an error and the rest of the file proceeds; the rows
      * are judged in file order with the earlier ones counted.
      */
+    describe('lektionslängder (lessonLengths)', () => {
+      const SPLIT = { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] };
+      const WITH_LENGTHS = [...ALL_COLUMNS, 'lessonLengths'] as ImportRequirementsDto['columns'];
+      const updated = () => tx.teachingRequirement.update.mock.calls[0]?.[0] as { data: Record<string, unknown> } | undefined;
+
+      it('an old file repeating a split row’s count and longest keeps the split, and is SKIPPED', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored(SPLIT)]);
+
+        const report = await run(row({ lessonsPerWeek: 2, minutesPerLesson: 80 }));
+
+        expect(report).toMatchObject({ updated: 0, skipped: 1, errors: [] });
+      });
+
+      it('an old file changing another column of a split row writes the same scalars and no list', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored(SPLIT)]);
+
+        const report = await run(row({ lessonsPerWeek: 2, minutesPerLesson: 80, teacherEmail: 'karin@example.com' }));
+
+        expect(report).toMatchObject({ updated: 1 });
+        expect(updated()!.data).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, teacherId: TEACHER_ID });
+        expect(updated()!.data).not.toHaveProperty('lessonLengths');
+      });
+
+      it('an old file stating other figures on a split row makes it uniform, clearing the list with them', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored(SPLIT)]);
+
+        await run(row({ lessonsPerWeek: 3, minutesPerLesson: 60 }));
+
+        expect(updated()!.data).toMatchObject({ lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] });
+      });
+
+      it('a filled cell is the row: a uniform row becomes 1 × 80 + 1 × 40', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored()]);
+
+        const report = await runWithColumns(WITH_LENGTHS, row({ ...SPLIT, lessonLengths: [40, 80] }));
+
+        expect(report).toMatchObject({ updated: 1, errors: [] });
+        expect(updated()!.data).toMatchObject(SPLIT);
+      });
+
+      it('the same list as stored is SKIPPED', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored(SPLIT)]);
+
+        const report = await runWithColumns(WITH_LENGTHS, row(SPLIT));
+
+        expect(report).toMatchObject({ updated: 0, skipped: 1 });
+      });
+
+      it('an empty cell in a file with the column makes a split row uniform as the row says', async () => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored(SPLIT)]);
+
+        await runWithColumns(WITH_LENGTHS, row({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [] }));
+
+        expect(updated()!.data).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [] });
+      });
+
+      it('creates a split row with its list, and a uniform one from an old file without the key', async () => {
+        await runWithColumns(WITH_LENGTHS, row({ ...SPLIT, groupName: '7A' }));
+        await run(row({ groupName: '7B' }));
+
+        const [split, uniform] = tx.teachingRequirement.create.mock.calls.map(
+          ([call]) => (call as { data: Record<string, unknown> }).data,
+        );
+        expect(split).toMatchObject(SPLIT);
+        expect(uniform).toMatchObject({ lessonsPerWeek: 3, minutesPerLesson: 60 });
+        expect(uniform).not.toHaveProperty('lessonLengths');
+      });
+
+      it.each<[string, Partial<ImportRequirementRowDto>, RegExp]>([
+        ['figures that contradict the cell', { lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [80, 40] },
+          /^lektionslangder är 2 lektioner med längsta 80 minuter, men raden säger 3 × 60\./],
+        ['a fourth different length', { lessonsPerWeek: 4, minutesPerLesson: 90, lessonLengths: [90, 80, 60, 40] },
+          /^lektionslangder: högst tre olika lektionslängder/],
+        ['a length between slots', { lessonsPerWeek: 2, minutesPerLesson: 60, lessonLengths: [60, 42] },
+          /Lektionslängden 42 minuter i lektionslangder .* Närmast är 40 eller 45 minuter\./],
+      ])('a row error, and nothing written, for %s', async (_case, overrides, message) => {
+        arrangeRows(tx.teachingRequirement.findMany, [stored()]);
+
+        const report = await runWithColumns(WITH_LENGTHS, row(overrides));
+
+        expect(report.errors).toEqual([{ row: 1, message: expect.stringMatching(message) }]);
+        expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+        expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+      });
+    });
+
     describe('the staffing policy, per row', () => {
       const POST_KARIN = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
       const POST_BO = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2';
@@ -2878,6 +2966,25 @@ describe('ImportService', () => {
               'Läraren skulle få 1440 min/v mot riktmärket 1000 min/v (gränsen är 1100 min/v med 10 % tolerans).',
           },
         ]);
+      });
+
+      it('charges a split row its lengths: 2 × 120 + 2 × 60 is 360, not 480', async () => {
+        arrange({ policy: { overAllocationMode: 'REFUSE' } });
+        tx.teachingRequirement.create.mockImplementation(({ data }: { data: { studentGroupId: string; subjectId: string } }) =>
+          Promise.resolve({ id: `created-${data.studentGroupId}-${data.subjectId}` }),
+        );
+        const split = { lessonsPerWeek: 4, minutesPerLesson: 120, lessonLengths: [120, 120, 60, 60], teacherEmail: 'karin@example.com' };
+
+        // Read as 4 × 120 each row is 480 and the third is refused at 1 440;
+        // read by their lengths each is 360, 1 080 in all, inside the 1 100.
+        const report = await runWithColumns(
+          [...ALL_COLUMNS, 'lessonLengths'],
+          row({ ...split }),
+          row({ ...split, subject: 'SV' }),
+          row({ ...split, groupName: '7B' }),
+        );
+
+        expect(report).toMatchObject({ created: 3, errors: [] });
       });
 
       it('locks, once and before the year is read, the posts of every teacher a row can end up with', async () => {
