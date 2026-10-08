@@ -12,7 +12,7 @@ import { runsOn, weeksCanOverlap } from './lesson-recurrence';
 import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { parseTimeString, todayInZone, zonedTimeToUtc } from '../common/utils/time';
+import { parseTimeString, zonedTimeToUtc } from '../common/utils/time';
 import type { CreateMasterLessonDto } from './dto/create-master-lesson.dto';
 import type { UpdateMasterLessonDto } from './dto/update-master-lesson.dto';
 import { lessonQualificationFindings } from '../staffing/staffing-enforcement';
@@ -551,9 +551,10 @@ export class MasterLessonsService {
         throw new NotFoundException('Master lesson not found.');
       }
 
-      // Remove future, still-SCHEDULED materialized lessons without recorded
-      // attendance. Past lessons and lessons with attendance stay (history
-      // must remain accurate); the FK sets their masterLessonId to null.
+      // Remove still-SCHEDULED materialized lessons that have not begun and
+      // carry no attendance. Lessons already begun or held and lessons with
+      // attendance stay (history must remain accurate); the FK sets their
+      // masterLessonId to null.
       const { count: removedCalendarLessons } = await tx.calendarLesson.deleteMany({
         where: reconcilableLessons(id),
       });
@@ -1114,27 +1115,29 @@ export class MasterLessonsService {
     const endHHMM = toHHMM(after.endTime);
     const stale: string[] = [];
     let moved = 0;
-    // The school's own day, not the UTC one reconcilableLessons asks from:
-    // the question here is which calendar day has already been lived.
-    const today = todayInZone(timezone);
+    // Every row here has yet to begin (reconcilableLessons asks by instant),
+    // so the only past a row can reach is the one this edit carries it into.
+    const now = new Date();
 
     for (const calendarLesson of futureLessons) {
-      // reconcilableLessons reads from the UTC day, which for an hour or two
-      // after local midnight is the school's yesterday: a row of a day already
-      // lived is history here as everywhere, neither moved nor removed.
-      if (calendarLesson.date < today) continue;
-
       const newDate = new Date(calendarLesson.date);
       newDate.setUTCDate(newDate.getUTCDate() + dayShift);
+      const dateString = newDate.toISOString().slice(0, 10);
+      const startsAt = zonedTimeToUtc(dateString, startHHMM, timezone);
+      const endsAt = zonedTimeToUtc(dateString, endHHMM, timezone);
 
-      // Never into the past. A Thursday lesson moved to Monday on a Thursday
-      // would carry this week's row back to Monday, SCHEDULED with its
-      // teacher: a lesson the calendar says was held and nobody held. The
-      // timplan's genomförd tid counts exactly such rows, and every other
-      // reader takes a past row as what happened. The row is stale instead —
-      // the week's lesson is gone from the day it was on, as it is from the
-      // template — and removed with the others below.
-      if (newDate < today) {
+      // Never into the past, judged by the instant and not the day. A
+      // Thursday lesson moved to Monday on a Thursday would carry this week's
+      // row back to Monday; a 13:00 lesson moved to 08:00 at ten o'clock
+      // would carry today's row back three hours. Either way the row would
+      // stand SCHEDULED with its teacher at a time already lived: a lesson
+      // the calendar says was held and nobody held. The timplan's genomförd
+      // tid counts exactly such rows, and every other reader takes a past
+      // row as what happened. A slot that has already begun cannot be held
+      // as scheduled either. The row is stale instead — the week's lesson is
+      // gone from the time it was at, as it is from the template — and
+      // removed with the others below.
+      if (startsAt <= now) {
         stale.push(calendarLesson.id);
         continue;
       }
@@ -1147,14 +1150,12 @@ export class MasterLessonsService {
         continue;
       }
 
-      const dateString = newDate.toISOString().slice(0, 10);
-
       await tx.calendarLesson.update({
         where: { id: calendarLesson.id },
         data: {
           date: newDate,
-          startsAt: zonedTimeToUtc(dateString, startHHMM, timezone),
-          endsAt: zonedTimeToUtc(dateString, endHHMM, timezone),
+          startsAt,
+          endsAt,
           roomId: after.roomId,
         },
       });
@@ -1289,9 +1290,19 @@ function toResult(lesson: LessonRecord): MasterLessonResult {
  * One definition for every caller: deleting the template, narrowing it, and
  * the room optimisation moving its room (RoomOptimizationService.apply) reach
  * the same rows, and a difference between the rules would mean a lesson that
- * one of them rewrites and another leaves alone. Anything in the past, no
+ * one of them rewrites and another leaves alone. Anything that has begun, no
  * longer merely SCHEDULED (cancelled, completed, rescheduled by hand), or
  * with attendance recorded is what happened, and stays as it happened.
+ *
+ * "Has begun" is an instant, `startsAt`, not a calendar day. A day is the
+ * wrong grain twice over. Read as the UTC day it was until now, the school's
+ * yesterday is still "today" for an hour or two after local midnight, and
+ * deleting the template took yesterday's held lessons with it. Read as any
+ * day at all, this morning's lesson that has already ended is still "today's"
+ * and was deleted or moved like next week's. Both were lessons the calendar
+ * says were held — the timplan's genomförd tid counts exactly those — and a
+ * template edited afterwards does not unhold them. A lesson under way is
+ * being held and is left alone with the rest.
  *
  * Several templates at once for the room optimisation, which moves hundreds
  * of lessons in one transaction and would otherwise pay a statement each.
@@ -1299,13 +1310,11 @@ function toResult(lesson: LessonRecord): MasterLessonResult {
 export function reconcilableLessons(
   masterLessonIds: string | string[],
 ): Prisma.CalendarLessonWhereInput {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
   return {
     masterLessonId:
       typeof masterLessonIds === 'string' ? masterLessonIds : { in: masterLessonIds },
     status: 'SCHEDULED',
-    date: { gte: today },
+    startsAt: { gt: new Date() },
     attendanceRecords: { none: {} },
   };
 }
