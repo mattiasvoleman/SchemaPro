@@ -23,6 +23,27 @@ import { isMixed, lengthPartsOf, type LessonShape } from "@/lib/lesson-lengths";
 
 export const BOM = "﻿";
 
+/**
+ * Header matching that survives humans: case-insensitive, trimmed, and
+ * diacritic-free, so "Förnamn", "FÖRNAMN" and "fornamn" all resolve alike.
+ * A mis-encoded header ("FÃ¶rnamn", UTF-8 read as Latin-1) is NOT rescued —
+ * the mojibake decomposes to the wrong base letter — and fails loudly with a
+ * missing-column message, which is the right outcome: the file's DATA is
+ * equally mangled and silently importing it would corrupt names.
+ *
+ * Here rather than in lib/csv.ts, beside the parser it serves, because the
+ * timplan page reads the timplan file's headers with it and must not carry
+ * the whole parser and every row mapper for one line of code.
+ */
+export function normalizeHeader(header: string): string {
+  return header
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase();
+}
+
+
 // ---------------------------------------------------------------------------
 // Templates
 // ---------------------------------------------------------------------------

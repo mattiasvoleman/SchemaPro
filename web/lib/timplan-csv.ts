@@ -27,7 +27,8 @@
  * plan and splitting it into batches would only write half of it.
  */
 
-import { normalizeHeader, serializeCsv, type ParsedCsv, type RowError } from "@/lib/csv";
+import type { ParsedCsv, RowError } from "@/lib/csv";
+import { normalizeHeader, serializeCsv } from "@/lib/csv-export";
 import type { TimplanImportRow } from "@/lib/timplan-queries";
 
 export const TIMPLAN_CSV_TEMPLATE = {

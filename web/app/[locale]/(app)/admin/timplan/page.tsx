@@ -80,7 +80,7 @@ import {
   verdictHighlight,
   type DraftCells,
 } from "@/lib/timplan-view";
-import { downloadCsv } from "@/lib/csv";
+import { downloadCsv } from "@/lib/csv-export";
 import { TIMPLAN_CSV_TEMPLATE, timplanToCsv } from "@/lib/timplan-csv";
 import { PageHeader } from "@/components/layout/page-header";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
