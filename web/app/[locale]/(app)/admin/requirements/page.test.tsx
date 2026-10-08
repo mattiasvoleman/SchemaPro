@@ -2156,3 +2156,16 @@ describe("Timplansposter in Mål mode", () => {
     expect(within(dialog).queryByText(/target\.hint/)).toBeNull();
   });
 });
+
+describe("Timplan cell dialog: the teacher pickers", () => {
+  it("names the teacher and co-teacher pickers by the labels above them", async () => {
+    // Both Labels stood beside a Radix trigger without pointing at it, so a
+    // screen reader heard "Peter Karlsson" or "Ej tilldelad" and never which
+    // of the two teachers it was choosing.
+    render(<RequirementsPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText("cellLabel(7A|Bild)"));
+    expect(screen.getByRole("combobox", { name: "teacher" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "coTeacher" })).toBeInTheDocument();
+  });
+});
