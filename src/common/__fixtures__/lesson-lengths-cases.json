@@ -1,0 +1,710 @@
+{
+  "constants": {
+    "LESSON_MIN_MINUTES": 15,
+    "LESSON_MAX_MINUTES": 240,
+    "LESSON_GRID_MINUTES": 5,
+    "MAX_LESSONS_PER_WEEK": 40,
+    "MAX_DISTINCT_LENGTHS": 3
+  },
+  "rows": [
+    {
+      "name": "uniform 3 × 60, no list key",
+      "row": {
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60
+      },
+      "isMixed": false,
+      "lessonCount": 3,
+      "lessonMinutes": [
+        60,
+        60,
+        60
+      ],
+      "weeklyMinutes": 180,
+      "shortest": 60,
+      "longest": 60,
+      "parts": [
+        {
+          "count": 3,
+          "minutes": 60
+        }
+      ]
+    },
+    {
+      "name": "uniform 3 × 60, empty list",
+      "row": {
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "isMixed": false,
+      "lessonCount": 3,
+      "lessonMinutes": [
+        60,
+        60,
+        60
+      ],
+      "weeklyMinutes": 180,
+      "shortest": 60,
+      "longest": 60,
+      "parts": [
+        {
+          "count": 3,
+          "minutes": 60
+        }
+      ]
+    },
+    {
+      "name": "uniform 2 × 40, null list",
+      "row": {
+        "lessonsPerWeek": 2,
+        "minutesPerLesson": 40,
+        "lessonLengths": null
+      },
+      "isMixed": false,
+      "lessonCount": 2,
+      "lessonMinutes": [
+        40,
+        40
+      ],
+      "weeklyMinutes": 80,
+      "shortest": 40,
+      "longest": 40,
+      "parts": [
+        {
+          "count": 2,
+          "minutes": 40
+        }
+      ]
+    },
+    {
+      "name": "uniform 1 × 240",
+      "row": {
+        "lessonsPerWeek": 1,
+        "minutesPerLesson": 240,
+        "lessonLengths": []
+      },
+      "isMixed": false,
+      "lessonCount": 1,
+      "lessonMinutes": [
+        240
+      ],
+      "weeklyMinutes": 240,
+      "shortest": 240,
+      "longest": 240,
+      "parts": [
+        {
+          "count": 1,
+          "minutes": 240
+        }
+      ]
+    },
+    {
+      "name": "uniform 40 × 15",
+      "row": {
+        "lessonsPerWeek": 40,
+        "minutesPerLesson": 15,
+        "lessonLengths": []
+      },
+      "isMixed": false,
+      "lessonCount": 40,
+      "lessonMinutes": [
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15,
+        15
+      ],
+      "weeklyMinutes": 600,
+      "shortest": 15,
+      "longest": 15,
+      "parts": [
+        {
+          "count": 40,
+          "minutes": 15
+        }
+      ]
+    },
+    {
+      "name": "idrott 1 × 80 + 1 × 40",
+      "row": {
+        "lessonsPerWeek": 2,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          40
+        ]
+      },
+      "isMixed": true,
+      "lessonCount": 2,
+      "lessonMinutes": [
+        80,
+        40
+      ],
+      "weeklyMinutes": 120,
+      "shortest": 40,
+      "longest": 80,
+      "parts": [
+        {
+          "count": 1,
+          "minutes": 80
+        },
+        {
+          "count": 1,
+          "minutes": 40
+        }
+      ]
+    },
+    {
+      "name": "matematik 2 × 60 + 1 × 40",
+      "row": {
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": [
+          60,
+          60,
+          40
+        ]
+      },
+      "isMixed": true,
+      "lessonCount": 3,
+      "lessonMinutes": [
+        60,
+        60,
+        40
+      ],
+      "weeklyMinutes": 160,
+      "shortest": 40,
+      "longest": 60,
+      "parts": [
+        {
+          "count": 2,
+          "minutes": 60
+        },
+        {
+          "count": 1,
+          "minutes": 40
+        }
+      ]
+    },
+    {
+      "name": "generated 2 × 60 + 1 × 55",
+      "row": {
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": [
+          60,
+          60,
+          55
+        ]
+      },
+      "isMixed": true,
+      "lessonCount": 3,
+      "lessonMinutes": [
+        60,
+        60,
+        55
+      ],
+      "weeklyMinutes": 175,
+      "shortest": 55,
+      "longest": 60,
+      "parts": [
+        {
+          "count": 2,
+          "minutes": 60
+        },
+        {
+          "count": 1,
+          "minutes": 55
+        }
+      ]
+    },
+    {
+      "name": "three kinds 80 + 60 + 2 × 40",
+      "row": {
+        "lessonsPerWeek": 4,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          60,
+          40,
+          40
+        ]
+      },
+      "isMixed": true,
+      "lessonCount": 4,
+      "lessonMinutes": [
+        80,
+        60,
+        40,
+        40
+      ],
+      "weeklyMinutes": 220,
+      "shortest": 40,
+      "longest": 80,
+      "parts": [
+        {
+          "count": 1,
+          "minutes": 80
+        },
+        {
+          "count": 1,
+          "minutes": 60
+        },
+        {
+          "count": 2,
+          "minutes": 40
+        }
+      ]
+    },
+    {
+      "name": "a one-length list reads as uniform",
+      "row": {
+        "lessonsPerWeek": 2,
+        "minutesPerLesson": 60,
+        "lessonLengths": [
+          60,
+          60
+        ]
+      },
+      "isMixed": false,
+      "lessonCount": 2,
+      "lessonMinutes": [
+        60,
+        60
+      ],
+      "weeklyMinutes": 120,
+      "shortest": 60,
+      "longest": 60,
+      "parts": [
+        {
+          "count": 2,
+          "minutes": 60
+        }
+      ]
+    },
+    {
+      "name": "a half-typed form: lessons cleared",
+      "row": {
+        "lessonsPerWeek": "NaN",
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      },
+      "isMixed": false,
+      "lessonCount": 0,
+      "lessonMinutes": [],
+      "weeklyMinutes": 0,
+      "shortest": 60,
+      "longest": 60,
+      "parts": [
+        {
+          "count": 0,
+          "minutes": 60
+        }
+      ]
+    },
+    {
+      "name": "a half-typed form: minutes zero",
+      "row": {
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 0
+      },
+      "isMixed": false,
+      "lessonCount": 3,
+      "lessonMinutes": [
+        0,
+        0,
+        0
+      ],
+      "weeklyMinutes": 0,
+      "shortest": 0,
+      "longest": 0,
+      "parts": [
+        {
+          "count": 3,
+          "minutes": 0
+        }
+      ]
+    },
+    {
+      "name": "a corrupt negative count reads 0",
+      "row": {
+        "lessonsPerWeek": -2,
+        "minutesPerLesson": 60
+      },
+      "isMixed": false,
+      "lessonCount": 0,
+      "lessonMinutes": [],
+      "weeklyMinutes": 0,
+      "shortest": 60,
+      "longest": 60,
+      "parts": [
+        {
+          "count": 0,
+          "minutes": 60
+        }
+      ]
+    }
+  ],
+  "canonical": [
+    {
+      "name": "unsorted pair is sorted longest first",
+      "lengths": [
+        40,
+        80
+      ],
+      "shape": {
+        "lessonsPerWeek": 2,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          40
+        ]
+      }
+    },
+    {
+      "name": "one length is uniform",
+      "lengths": [
+        60,
+        60,
+        60
+      ],
+      "shape": {
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      }
+    },
+    {
+      "name": "a single lesson is uniform",
+      "lengths": [
+        45
+      ],
+      "shape": {
+        "lessonsPerWeek": 1,
+        "minutesPerLesson": 45,
+        "lessonLengths": []
+      }
+    },
+    {
+      "name": "two kinds keep the list",
+      "lengths": [
+        55,
+        60,
+        60
+      ],
+      "shape": {
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": [
+          60,
+          60,
+          55
+        ]
+      }
+    },
+    {
+      "name": "three kinds keep the list",
+      "lengths": [
+        40,
+        80,
+        60,
+        40
+      ],
+      "shape": {
+        "lessonsPerWeek": 4,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          60,
+          40,
+          40
+        ]
+      }
+    },
+    {
+      "name": "empty gives zeros",
+      "lengths": [],
+      "shape": {
+        "lessonsPerWeek": 0,
+        "minutesPerLesson": 0,
+        "lessonLengths": []
+      }
+    }
+  ],
+  "parts": [
+    {
+      "name": "1 × 80 + 1 × 40",
+      "parts": [
+        {
+          "count": 1,
+          "minutes": 80
+        },
+        {
+          "count": 1,
+          "minutes": 40
+        }
+      ],
+      "shape": {
+        "lessonsPerWeek": 2,
+        "minutesPerLesson": 80,
+        "lessonLengths": [
+          80,
+          40
+        ]
+      }
+    },
+    {
+      "name": "equal minutes merge to uniform",
+      "parts": [
+        {
+          "count": 2,
+          "minutes": 60
+        },
+        {
+          "count": 1,
+          "minutes": 60
+        }
+      ],
+      "shape": {
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      }
+    },
+    {
+      "name": "shorter part first is sorted",
+      "parts": [
+        {
+          "count": 1,
+          "minutes": 55
+        },
+        {
+          "count": 2,
+          "minutes": 60
+        }
+      ],
+      "shape": {
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": [
+          60,
+          60,
+          55
+        ]
+      }
+    },
+    {
+      "name": "a zero-count part adds nothing",
+      "parts": [
+        {
+          "count": 3,
+          "minutes": 60
+        },
+        {
+          "count": 0,
+          "minutes": 40
+        }
+      ],
+      "shape": {
+        "lessonsPerWeek": 3,
+        "minutesPerLesson": 60,
+        "lessonLengths": []
+      }
+    }
+  ],
+  "problems": [
+    {
+      "name": "empty",
+      "lengths": [],
+      "problem": "EMPTY"
+    },
+    {
+      "name": "fractional",
+      "lengths": [
+        60,
+        42.5
+      ],
+      "problem": "NOT_INTEGER"
+    },
+    {
+      "name": "below 15",
+      "lengths": [
+        60,
+        10
+      ],
+      "problem": "OUT_OF_RANGE"
+    },
+    {
+      "name": "above 240",
+      "lengths": [
+        245,
+        40
+      ],
+      "problem": "OUT_OF_RANGE"
+    },
+    {
+      "name": "off the grid",
+      "lengths": [
+        60,
+        42
+      ],
+      "problem": "OFF_GRID"
+    },
+    {
+      "name": "41 lessons",
+      "lengths": [
+        60,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40
+      ],
+      "problem": "TOO_MANY_LESSONS"
+    },
+    {
+      "name": "four kinds",
+      "lengths": [
+        90,
+        80,
+        60,
+        40
+      ],
+      "problem": "TOO_MANY_KINDS"
+    },
+    {
+      "name": "three kinds pass",
+      "lengths": [
+        80,
+        60,
+        40
+      ],
+      "problem": null
+    },
+    {
+      "name": "40 lessons pass",
+      "lengths": [
+        60,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40,
+        40
+      ],
+      "problem": null
+    },
+    {
+      "name": "bounds pass",
+      "lengths": [
+        240,
+        15
+      ],
+      "problem": null
+    }
+  ]
+}
