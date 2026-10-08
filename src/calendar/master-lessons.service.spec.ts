@@ -1575,12 +1575,12 @@ describe('MasterLessonsService', () => {
       });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
-      // Only future, still-SCHEDULED, attendance-free lessons are touched.
+      // Only still-SCHEDULED, attendance-free lessons not yet begun are touched.
       expect(tx.calendarLesson.findMany).toHaveBeenCalledWith({
         where: {
           masterLessonId: LESSON_ID,
           status: 'SCHEDULED',
-          date: { gte: TODAY },
+          startsAt: { gt: NOW },
           attendanceRecords: { none: {} },
         },
         select: { id: true, date: true },
@@ -1877,16 +1877,14 @@ describe('MasterLessonsService', () => {
     });
 
     it('never moves a row into the past: a Thursday lesson moved to Monday on a Thursday drops this week’s row', async () => {
-      // Thursday 2026-08-06 10:00 in Stockholm. This week's row is today's,
-      // still SCHEDULED and attendance-free, so it is reconcilable — and the
-      // shift of −3 days would land it on Monday the 3rd, a day already lived,
-      // as a SCHEDULED lesson with its teacher that nobody held. It is
-      // removed instead; next week's row moves as before. A row the UTC read
-      // still returns from the school's yesterday is history and untouched.
-      jest.setSystemTime(new Date('2026-08-06T08:00:00.000Z'));
+      // Thursday 2026-08-06 09:00 in Stockholm. This week's row is today's
+      // 10:00, not begun, so it is reconcilable — and the shift of −3 days
+      // would land it on Monday the 3rd, a day already lived, as a SCHEDULED
+      // lesson with its teacher that nobody held. It is removed instead;
+      // next week's row moves as before.
+      jest.setSystemTime(new Date('2026-08-06T07:00:00.000Z'));
       arrangeUpdate({ dayOfWeek: 4 }, { dayOfWeek: 1 });
       tx.calendarLesson.findMany.mockResolvedValue([
-        { id: 'c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0', date: new Date('2026-08-05T00:00:00.000Z') },
         { id: CAL_LESSON_ID, date: new Date('2026-08-06T00:00:00.000Z') },
         { id: OTHER_CAL_LESSON_ID, date: new Date('2026-08-13T00:00:00.000Z') },
       ]);
@@ -1911,6 +1909,66 @@ describe('MasterLessonsService', () => {
       });
       expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
         where: { id: { in: [CAL_LESSON_ID] } },
+      });
+    });
+
+    it('never moves a row into the past within the day: a 13:00 lesson moved to 08:00 at ten drops today’s row', async () => {
+      // Thursday 2026-08-06 10:00 in Stockholm. Today's 13:00 row has not
+      // begun, so it is reconcilable; moved to 08:00 it would stand on the
+      // same date — a day check lets it through — but end at 09:00, an hour
+      // before now, SCHEDULED with its teacher: held by nobody, counted as
+      // genomförd by the timplan. It is removed; next week's row moves.
+      jest.setSystemTime(new Date('2026-08-06T08:00:00.000Z'));
+      arrangeUpdate(
+        { dayOfWeek: 4, startTime: t('13:00'), endTime: t('14:00') },
+        { dayOfWeek: 4, startTime: t('08:00'), endTime: t('09:00') },
+      );
+      tx.calendarLesson.findMany.mockResolvedValue([
+        { id: CAL_LESSON_ID, date: new Date('2026-08-06T00:00:00.000Z') },
+        { id: OTHER_CAL_LESSON_ID, date: new Date('2026-08-13T00:00:00.000Z') },
+      ]);
+
+      await expect(
+        service.update(LESSON_ID, { startTime: '08:00', endTime: '09:00' }, testUser()),
+      ).resolves.toMatchObject({
+        propagatedLessons: 1,
+        removedCalendarLessons: 1,
+      });
+
+      expect(tx.calendarLesson.update).toHaveBeenCalledTimes(1);
+      expect(tx.calendarLesson.update).toHaveBeenCalledWith({
+        where: { id: OTHER_CAL_LESSON_ID },
+        data: {
+          date: new Date('2026-08-13T00:00:00.000Z'),
+          startsAt: new Date('2026-08-13T06:00:00.000Z'),
+          endsAt: new Date('2026-08-13T07:00:00.000Z'),
+          roomId: ROOM_ID,
+        },
+      });
+      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: [CAL_LESSON_ID] } },
+      });
+    });
+
+    it('asks for the rows by the instant they begin, so a lesson held this morning or the school’s yesterday is never reached', async () => {
+      // 00:30 on Friday 2026-08-07 in Stockholm is still Thursday in UTC. A
+      // day-grained read asked from Thursday the 6th and returned Thursday's
+      // held lessons; a read by the instant asks for lessons beginning after
+      // now, whatever the clock's day.
+      jest.setSystemTime(new Date('2026-08-06T22:30:00.000Z'));
+      arrangeUpdate({ dayOfWeek: 4 }, { dayOfWeek: 5 });
+      tx.calendarLesson.findMany.mockResolvedValue([]);
+
+      await service.update(LESSON_ID, { dayOfWeek: 5 }, testUser());
+
+      expect(tx.calendarLesson.findMany).toHaveBeenCalledWith({
+        where: {
+          masterLessonId: LESSON_ID,
+          status: 'SCHEDULED',
+          startsAt: { gt: new Date('2026-08-06T22:30:00.000Z') },
+          attendanceRecords: { none: {} },
+        },
+        select: { id: true, date: true },
       });
     });
 
@@ -2478,7 +2536,7 @@ describe('MasterLessonsService', () => {
       expect(tx.masterLesson.delete).not.toHaveBeenCalled();
     });
 
-    it('removes only future, attendance-free SCHEDULED calendar lessons with the template', async () => {
+    it('removes only attendance-free SCHEDULED calendar lessons not yet begun with the template', async () => {
       arrangeRemove();
       const user = testUser();
 
@@ -2492,7 +2550,7 @@ describe('MasterLessonsService', () => {
         where: {
           masterLessonId: LESSON_ID,
           status: 'SCHEDULED',
-          date: { gte: TODAY },
+          startsAt: { gt: NOW },
           attendanceRecords: { none: {} },
         },
       });

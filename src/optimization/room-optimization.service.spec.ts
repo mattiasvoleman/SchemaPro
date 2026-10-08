@@ -147,6 +147,7 @@ type CalendarFixture = {
   masterLessonId: string;
   roomId: string | null;
   date: Date;
+  startsAt: Date;
   status: 'SCHEDULED' | 'CANCELLED';
   attended: boolean;
 };
@@ -160,15 +161,20 @@ const published = (
   masterLessonId: string,
   roomId: string | null,
   overrides: Partial<CalendarFixture> = {},
-): CalendarFixture => ({
-  id,
-  masterLessonId,
-  roomId,
-  date: FUTURE,
-  status: 'SCHEDULED',
-  attended: false,
-  ...overrides,
-});
+): CalendarFixture => {
+  const date = overrides.date ?? FUTURE;
+  return {
+    id,
+    masterLessonId,
+    roomId,
+    date,
+    // Eight in the morning UTC of its day, unless a row says otherwise.
+    startsAt: new Date(date.getTime() + 8 * 3_600_000),
+    status: 'SCHEDULED',
+    attended: false,
+    ...overrides,
+  };
+};
 
 const walkOf = (roomChanges: number, floorChanges = 0, buildingChanges = 0): Walk => ({
   roomChanges,
@@ -428,7 +434,7 @@ describe('RoomOptimizationService', () => {
     // a new condition cannot pass here by being ignored.
     tx.calendarLesson.updateMany.mockImplementation(
       async ({ where, data }: { where: Record<string, any>; data: { roomId: string } }) => {
-        const known = ['masterLessonId', 'status', 'date', 'attendanceRecords', 'roomId'];
+        const known = ['masterLessonId', 'status', 'date', 'startsAt', 'attendanceRecords', 'roomId'];
         for (const key of Object.keys(where)) {
           if (!known.includes(key)) throw new Error(`unexpected calendar filter ${key}`);
         }
@@ -444,6 +450,7 @@ describe('RoomOptimizationService', () => {
             (lessonIds === undefined || lessonIds.includes(row.masterLessonId)) &&
             (where.status === undefined || where.status === row.status) &&
             (where.date === undefined || row.date.getTime() >= where.date.gte.getTime()) &&
+            (where.startsAt === undefined || row.startsAt.getTime() > where.startsAt.gt.getTime()) &&
             (where.attendanceRecords === undefined || !row.attended) &&
             (!('roomId' in where) || where.roomId === row.roomId);
           if (!matches) return row;
@@ -1710,7 +1717,7 @@ describe('RoomOptimizationService', () => {
           expect(where).toMatchObject({
             status: 'SCHEDULED',
             attendanceRecords: { none: {} },
-            date: { gte: expect.any(Date) },
+            startsAt: { gt: expect.any(Date) },
           });
           expect(where).toHaveProperty('roomId');
         }
