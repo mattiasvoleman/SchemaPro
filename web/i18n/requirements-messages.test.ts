@@ -65,3 +65,27 @@ describe("the co-teacher hint", () => {
     expect(svT("coTeacherHint")).toMatch(/medläraren/);
   });
 });
+
+describe("the page's summary line", () => {
+  it("says one lesson in the singular when the busiest week has one", () => {
+    // Same glued plural as the cells: "1 lektioner den tyngsta veckan".
+    expect(svT("summary", { lessons: 1, hours: "38 h" })).toBe(
+      "1 lektion den tyngsta veckan · 38 h undervisning per läsår",
+    );
+    expect(enT("summary", { lessons: 1, hours: "38 h" })).toBe(
+      "1 lesson in the busiest week · 38 h of teaching per year",
+    );
+  });
+
+  it("still says lessons in the plural for none and from two", () => {
+    expect(svT("summary", { lessons: 0, hours: "0 h" })).toBe(
+      "0 lektioner den tyngsta veckan · 0 h undervisning per läsår",
+    );
+    expect(svT("summary", { lessons: 28, hours: "760 h" })).toBe(
+      "28 lektioner den tyngsta veckan · 760 h undervisning per läsår",
+    );
+    expect(enT("summary", { lessons: 28, hours: "760 h" })).toBe(
+      "28 lessons in the busiest week · 760 h of teaching per year",
+    );
+  });
+});
