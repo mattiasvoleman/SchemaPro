@@ -107,6 +107,29 @@ describe('TimplanRequirementsService', () => {
     expect(answer.skipped).toEqual([expect.objectContaining({ subjectId: SV, reason: 'EXISTS' })]);
   });
 
+  it('SPLIT writes the lengths of a split row, and only of a split row', async () => {
+    tx.teachingRequirement.createManyAndReturn.mockResolvedValue([
+      { id: 'f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1', studentGroupId: A7, subjectId: MA },
+      { id: 'f2f2f2f2-f2f2-4f2f-8f2f-f2f2f2f2f2f2', studentGroupId: A7, subjectId: SV },
+    ]);
+
+    const answer = await service.generate(PLAN_ID, { ...dto(false), remainder: 'SPLIT' }, testUser());
+
+    const call = tx.teachingRequirement.createManyAndReturn.mock.calls[0]![0] as { data: Record<string, unknown>[] };
+    // Matematik 175 at 60: 2 × 60 + 1 × 55. Svenska 200 at 60: the 20 folded, 1 × 80 + 2 × 60.
+    expect(call.data.map((row) => [row['lessonsPerWeek'], row['minutesPerLesson'], row['lessonLengths']])).toEqual([
+      [3, 60, [60, 60, 55]],
+      [3, 80, [80, 60, 60]],
+    ]);
+    expect(answer).toMatchObject({ remainder: 'SPLIT', created: 2 });
+  });
+
+  it('an omitted remainder is ROUND_UP, with no echo and no list', async () => {
+    const answer = await service.generate(PLAN_ID, dto(true), testUser());
+    expect(answer).not.toHaveProperty('remainder');
+    expect(JSON.stringify(answer)).not.toContain('lessonLengths');
+  });
+
   it('is idempotent: a second apply finds both rows and writes nothing', async () => {
     tx.teachingRequirement.findMany.mockResolvedValue([
       { studentGroupId: A7, subjectId: MA },

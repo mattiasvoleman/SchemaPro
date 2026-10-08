@@ -3290,6 +3290,70 @@ describe('Planning surface (e2e)', () => {
       );
     });
 
+    it('SPLIT: previews 175 as 2 × 60 + 1 × 55, echoes the mode, and the apply writes the lengths', async () => {
+      givenThePlan();
+      const preview = await request(http())
+        .post(path)
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, minutesPerLesson: 60, remainder: 'SPLIT', dryRun: true })
+        .expect(200);
+      expect(preview.body).toMatchObject({ remainder: 'SPLIT', dryRun: true, created: 0 });
+      expect(preview.body.rows).toEqual([
+        expect.objectContaining({
+          lessonsPerWeek: 3,
+          minutesPerLesson: 60,
+          lessonLengths: [60, 60, 55],
+          plannedMinutesPerWeek: 175,
+          surplusMinutesPerWeek: 0,
+        }),
+      ]);
+
+      harness.tx['teachingRequirement']!['createManyAndReturn']!.mockResolvedValueOnce([
+        { id: TYPE_ID, studentGroupId: GROUP_ID, subjectId: SUBJECT_ID },
+      ]);
+      await request(http())
+        .post(path)
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, minutesPerLesson: 60, remainder: 'SPLIT', dryRun: false })
+        .expect(200);
+      const written = harness.tx['teachingRequirement']!['createManyAndReturn']!.mock.calls[0]![0] as { data: Record<string, unknown>[] };
+      expect(written.data[0]).toMatchObject({ lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [60, 60, 55] });
+    });
+
+    it('an omitted remainder answers and writes as before: 3 × 60, +5, no list, no echo', async () => {
+      givenThePlan();
+      const preview = await request(http())
+        .post(path)
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, minutesPerLesson: 60, dryRun: true })
+        .expect(200);
+      expect(preview.body).not.toHaveProperty('remainder');
+      expect(JSON.stringify(preview.body)).not.toContain('lessonLengths');
+
+      harness.tx['teachingRequirement']!['createManyAndReturn']!.mockResolvedValueOnce([
+        { id: TYPE_ID, studentGroupId: GROUP_ID, subjectId: SUBJECT_ID },
+      ]);
+      await request(http())
+        .post(path)
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, minutesPerLesson: 60, dryRun: false })
+        .expect(200);
+      const written = harness.tx['teachingRequirement']!['createManyAndReturn']!.mock.calls[0]![0] as { data: Record<string, unknown>[] };
+      expect(written.data[0]).not.toHaveProperty('lessonLengths');
+    });
+
+    it('400s a remainder that is neither SPLIT nor ROUND_UP, null included', async () => {
+      for (const remainder of ['FOLD', null, 1]) {
+        const response = await request(http())
+          .post(path)
+          .set('x-test-user', admin())
+          .send({ academicYearId: YEAR_ID, minutesPerLesson: 60, remainder, dryRun: true })
+          .expect(400);
+        expect(JSON.stringify(response.body)).toContain('remainder: anges som SPLIT');
+      }
+      expect(harness.tx['localTimplan']!['findUnique']).not.toHaveBeenCalled();
+    });
+
     it('400s a length off the grid or out of bounds, a missing dryRun and an override past 40 lessons, naming the field', async () => {
       const bodies: [object, string][] = [
         [{ academicYearId: YEAR_ID, minutesPerLesson: 37, dryRun: true }, 'minutesPerLesson: lektionslängden måste vara ett helt antal 5-minutersintervall'],

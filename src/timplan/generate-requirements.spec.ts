@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
-import { proposeRequirements, type GenerateInput } from './generate-requirements';
+import { proposeRequirements, splitWeeklyMinutes, type GenerateInput } from './generate-requirements';
+import { lengthsProblem } from '../common/lesson-lengths';
 
 const MA = 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1';
 const SV = 'd2d2d2d2-d2d2-4d2d-8d2d-d2d2d2d2d2d2';
@@ -191,5 +192,97 @@ describe('proposeRequirements', () => {
         ['Svenska som andraspråk', 'EXISTS', null],
       ]);
     });
+  });
+});
+
+describe('splitWeeklyMinutes', () => {
+  it.each<[number, number, number[], number[], number[], number[]]>([
+    // [T, (unused), SPLIT at 60, ROUND_UP at 60, SPLIT at 40, ROUND_UP at 40] — the spec's table.
+    [175, 0, [60, 60, 55], [60, 60, 60], [55, 40, 40, 40], [40, 40, 40, 40, 40]],
+    [180, 0, [60, 60, 60], [60, 60, 60], [60, 40, 40, 40], [40, 40, 40, 40, 40]],
+    [200, 0, [80, 60, 60], [60, 60, 60, 60], [40, 40, 40, 40, 40], [40, 40, 40, 40, 40]],
+    [45, 0, [45], [60], [45], [40, 40]],
+    [250, 0, [70, 60, 60, 60], [60, 60, 60, 60, 60], [50, 40, 40, 40, 40, 40], [40, 40, 40, 40, 40, 40, 40]],
+  ])('%s min/vecka', (minutes, _unused, split60, round60, split40, round40) => {
+    expect(splitWeeklyMinutes(minutes, 60, 'SPLIT').lengths).toEqual(split60);
+    expect(splitWeeklyMinutes(minutes, 60, 'ROUND_UP').lengths).toEqual(round60);
+    expect(splitWeeklyMinutes(minutes, 40, 'SPLIT').lengths).toEqual(split40);
+    expect(splitWeeklyMinutes(minutes, 40, 'ROUND_UP').lengths).toEqual(round40);
+  });
+
+  it.each<[string, number, number, number[], boolean]>([
+    ['173 rounds to the grid first: 2 × 60 + 1 × 55, +2', 173, 60, [60, 60, 55], false],
+    ['178 rounds to 180: 3 × 60, +2', 178, 60, [60, 60, 60], false],
+    ['a fold that stays in bounds: 410 at 200 is 210 + 200', 410, 200, [210, 200], false],
+    ['a fold past 240 with a remainder of 20 keeps it as a lesson: 480 at 230', 480, 230, [230, 230, 20], false],
+    ['a fold past 240 with a remainder under 15 rounds it to 15: 241 at 235', 241, 235, [235, 15], false],
+    ['under one lesson of 15 is one lesson of 15', 10, 15, [15], false],
+    ['20 at 15 folds the 5 into one lesson of 20', 20, 15, [20], false],
+    ['40 at 15 is 25 + 15', 40, 15, [25, 15], false],
+    ['41 lessons fold to 40: 1220 at 30 is 50 + 39 × 30', 1220, 30, [50, ...Array(39).fill(30)], false],
+    ['past 40 with nothing to fold, capped as ROUND_UP caps', 1200, 15, Array(40).fill(15), true],
+  ])('%s', (_case, minutes, length, lengths, capped) => {
+    expect(splitWeeklyMinutes(minutes, length, 'SPLIT')).toEqual({ lengths, capped });
+  });
+
+  it('never writes a length the engine refuses, never three kinds, never short, and over only where it must', () => {
+    let checked = 0;
+    for (let length = 15; length <= 240; length += 5) {
+      for (let minutes = 1; minutes <= 2400; minutes += 1) {
+        const { lengths, capped } = splitWeeklyMinutes(minutes, length, 'SPLIT');
+        const sum = lengths.reduce((a, b) => a + b, 0);
+        const where = `${minutes} at ${length}: ${lengths.join('+')}`;
+        expect([where, lengthsProblem(lengths)]).toEqual([where, null]);
+        expect([where, new Set(lengths).size <= 2]).toEqual([where, true]);
+        expect([where, lengths.length <= 40]).toEqual([where, true]);
+        if (capped) continue;
+        expect([where, sum >= minutes]).toEqual([where, true]);
+        // The surplus: the grid's 0..4, or up to 14 where a remainder under 15
+        // could not be folded past 240, or a target under one 15-minute lesson.
+        const target = Math.ceil(minutes / 5) * 5;
+        const r = target - Math.floor(target / length) * length;
+        const unfoldable = length + r > 240 && r > 0 && r < 15;
+        const allowed = minutes < 15 ? 15 - minutes : unfoldable ? 14 : 4;
+        expect([where, sum - minutes <= allowed]).toEqual([where, true]);
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(100_000);
+  });
+
+  it('leaves ROUND_UP the rule it was', () => {
+    expect(splitWeeklyMinutes(175, 60, 'ROUND_UP')).toEqual({ lengths: [60, 60, 60], capped: false });
+    expect(splitWeeklyMinutes(1200, 15, 'ROUND_UP')).toEqual({ lengths: Array(40).fill(15), capped: true });
+  });
+});
+
+describe('proposeRequirements with SPLIT', () => {
+  it('meets 175 as 2 × 60 + 1 × 55 and names the lengths, and leaves a whole row uniform', () => {
+    const { rows } = proposeRequirements(input({ remainder: 'SPLIT' }));
+    const a7 = rows.filter((row) => row.studentGroupId === A7);
+    expect(a7.map((row) => [row.subjectName, row.lessonsPerWeek, row.minutesPerLesson, row.lessonLengths, row.plannedMinutesPerWeek, row.surplusMinutesPerWeek])).toEqual([
+      // 140 at 60: q = 2, r = 20 ≤ 30, folded.
+      ['Engelska', 2, 80, [80, 60], 140, 0],
+      ['Matematik', 3, 60, undefined, 180, 0],
+      ['Svenska', 3, 60, [60, 60, 55], 175, 0],
+    ]);
+    // A uniform row carries no list key at all.
+    expect(a7.find((row) => row.subjectName === 'Matematik')).not.toHaveProperty('lessonLengths');
+  });
+
+  it('keeps an override uniform, as the admin typed it', () => {
+    const { rows } = proposeRequirements(
+      input({ remainder: 'SPLIT', overrides: [{ studentGroupId: A7, subjectId: SV, lessonsPerWeek: 3, minutesPerLesson: 60 }] }),
+    );
+    const sv = rows.find((row) => row.studentGroupId === A7 && row.subjectId === SV)!;
+    expect(sv).toMatchObject({ lessonsPerWeek: 3, minutesPerLesson: 60, surplusMinutesPerWeek: 5, overridden: true });
+    expect(sv).not.toHaveProperty('lessonLengths');
+  });
+
+  it('answers byte for byte as before when the mode is not stated', () => {
+    expect(JSON.stringify(proposeRequirements(input()))).toEqual(
+      JSON.stringify(proposeRequirements(input({ remainder: 'ROUND_UP' }))),
+    );
+    expect(JSON.stringify(proposeRequirements(input()))).not.toContain('lessonLengths');
   });
 });
