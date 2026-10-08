@@ -23,4 +23,13 @@ export const YEAR_TIMPLAN_KEYS = {
 export const TIMPLAN_COVERAGE_KEYS = {
   all: ["timplanCoverage"],
   year: (academicYearId: string) => ["timplanCoverage", academicYearId] as const,
+  /*
+   * Layers 2 and 3 under the year's key, so everything that invalidates the
+   * year — or the whole prefix, as a saved credit does — reaches them too.
+   * The group is the drill-down; "" is the overview.
+   */
+  scheduled: (academicYearId: string, studentGroupId: string | null) =>
+    ["timplanCoverage", academicYearId, "scheduled", studentGroupId ?? ""] as const,
+  delivered: (academicYearId: string, studentGroupId: string | null) =>
+    ["timplanCoverage", academicYearId, "delivered", studentGroupId ?? ""] as const,
 } as const;

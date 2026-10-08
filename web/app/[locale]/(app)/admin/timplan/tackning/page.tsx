@@ -1,7 +1,23 @@
 "use client";
 
-// Täckning — planerat mot timplan for one läsår (layer 1 of three; P3 adds
-// "schemalagt" and "genomfört" beside it).
+// Täckning — the year's timplan coverage in three layers, one tab each:
+// planerat mot timplan (P2, below), schemalagt mot planerat and genomfört mot
+// schemalagt (P3, components/timplan/coverage-scheduled-tab.tsx and
+// coverage-delivered-tab.tsx, each fetched with lazy() the first time its tab
+// is chosen, so this route carries only the tab strip for them).
+//
+// THE TABLIST SITS ABOVE EVERY LOADING AND EMPTY STATE (R27). The planned
+// layer's "no classes" or "no year" is about that layer; a year with no
+// timplan still has a grundschema to compare and a calendar to count, so the
+// other two tabs must be reachable exactly when the planned matrix is empty.
+// Each tab panel owns its own empty states; the planned panel keeps the
+// markup it had.
+//
+// A hand-built tablist (role=tablist/tab, aria-selected, roving arrow keys)
+// rather than Radix Tabs: three buttons, and no second primitive on a route
+// that needs none.
+//
+// LAYER 1 — PLANERAT MOT TIMPLAN.
 //
 // WHAT IS SHOWN. Every class of the year down the side, every subject a class
 // has a target or a post in across the top; each cell "planerat / mål" in
@@ -27,12 +43,13 @@
 // EVERYTHING IS A WARNING. Colours and words say "under mål", never "fel": the
 // law lets a pupil's studiegång deviate. Nothing here blocks anything.
 //
-// The deep link ?year=&group= (the Timplansposter matrix's Täckning pill)
-// selects the year and opens the class; it is read once after mount, not
-// through useSearchParams, which would make the whole route bail out of
-// static rendering for two ids.
+// The deep link ?year=&group=&layer= (the Timplansposter matrix's Täckning
+// pill, and the timetable's Lektionstid panel with layer=scheduled) selects
+// the year, the tab and the class; it is read once after mount, not through
+// useSearchParams, which would make the whole route bail out of static
+// rendering for three ids.
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslations } from "next-intl";
 import { ArrowLeft, TriangleAlert, Target } from "lucide-react";
 import { Link } from "@/i18n/navigation";
@@ -72,6 +89,25 @@ const hoursText = (hours: number): string => {
  * header measures their contrast): amber under, red with a border for no
  * posts, neutral for a class carried by its groups, the accent otherwise.
  */
+const CoverageScheduledTab = lazy(() =>
+  import("@/components/timplan/coverage-scheduled-tab").then((module) => ({
+    default: module.CoverageScheduledTab,
+  })),
+);
+const CoverageDeliveredTab = lazy(() =>
+  import("@/components/timplan/coverage-delivered-tab").then((module) => ({
+    default: module.CoverageDeliveredTab,
+  })),
+);
+
+const LAYERS = ["planned", "scheduled", "delivered"] as const;
+type Layer = (typeof LAYERS)[number];
+const LAYER_LABEL: Record<Layer, string> = {
+  planned: "layerPlanned",
+  scheduled: "layerScheduled",
+  delivered: "layerDelivered",
+};
+
 const TONE: Record<CoverageTone, string> = {
   unplanned: "border border-destructive text-destructive",
   under: "bg-warning/15 text-warning-foreground dark:text-warning",
@@ -84,6 +120,7 @@ const TONE: Record<CoverageTone, string> = {
 interface Deeplink {
   year: string | null;
   group: string | null;
+  layer: Layer | null;
 }
 
 export default function TimplanCoveragePage() {
@@ -98,7 +135,12 @@ export default function TimplanCoveragePage() {
   const [link, setLink] = useState<Deeplink | null>(null);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setLink({ year: params.get("year"), group: params.get("group") });
+    const layer = params.get("layer");
+    setLink({
+      year: params.get("year"),
+      group: params.get("group"),
+      layer: LAYERS.includes(layer as Layer) ? (layer as Layer) : null,
+    });
   }, []);
 
   const [chosenYear, setChosenYear] = useState<string | null>(null);
@@ -107,7 +149,32 @@ export default function TimplanCoveragePage() {
     chosenYear ?? linkedYear ?? years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
   const year = years?.find((entry) => entry.id === yearId) ?? null;
 
-  const coverage = useTimplanCoverage(yearId);
+  const [chosenLayer, setChosenLayer] = useState<Layer | null>(null);
+  // Undecided until the deep link has been read, so a link to another tab
+  // does not first ask the gateway for layer 1.
+  const layer: Layer | null = chosenLayer ?? (link === null ? null : (link.layer ?? "planned"));
+  const shownTab: Layer = layer ?? "planned";
+  const tabs = useRef<(HTMLButtonElement | null)[]>([]);
+  const onTabKey = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const index = LAYERS.indexOf(shownTab);
+    const next =
+      event.key === "ArrowRight"
+        ? (index + 1) % LAYERS.length
+        : event.key === "ArrowLeft"
+          ? (index + LAYERS.length - 1) % LAYERS.length
+          : event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? LAYERS.length - 1
+              : null;
+    if (next === null) return;
+    event.preventDefault();
+    setChosenLayer(LAYERS[next]!);
+    tabs.current[next]?.focus();
+  };
+
+  // Layer 1 is asked for only while its tab is the one shown.
+  const coverage = useTimplanCoverage(layer === "planned" ? yearId : null);
 
   const [chosenClass, setChosenClass] = useState<string | null>(null);
   const classId = chosenClass ?? (chosenYear === null ? (link?.group ?? null) : null);
@@ -143,6 +210,7 @@ export default function TimplanCoveragePage() {
 
   const loading = yearsLoading || groupsLoading || subjectsLoading || (yearId !== null && coverage.isLoading);
   const failed = yearsFailed || groupsFailed || subjectsFailed || coverage.isError;
+  const linkedGroup = chosenYear === null ? (link?.group ?? null) : null;
 
   return (
     <div>
@@ -181,7 +249,69 @@ export default function TimplanCoveragePage() {
         }
       />
 
-      {loading ? (
+      <div role="tablist" aria-label={t("layersLabel")} className="mb-4 flex flex-wrap gap-1 border-b">
+        {LAYERS.map((entry, index) => (
+          <button
+            key={entry}
+            ref={(node) => {
+              tabs.current[index] = node;
+            }}
+            type="button"
+            role="tab"
+            id={`tackning-tab-${entry}`}
+            aria-selected={shownTab === entry}
+            aria-controls="tackning-panel"
+            tabIndex={shownTab === entry ? 0 : -1}
+            onClick={() => setChosenLayer(entry)}
+            onKeyDown={onTabKey}
+            className={cn(
+              "-mb-px border-b-2 px-3 py-2 text-sm font-medium",
+              shownTab === entry
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t(LAYER_LABEL[entry])}
+          </button>
+        ))}
+      </div>
+
+      <div role="tabpanel" id="tackning-panel" aria-labelledby={`tackning-tab-${shownTab}`}>
+      {layer === null ? (
+        <Skeleton className="h-96 w-full" />
+      ) : layer !== "planned" ? (
+        yearsLoading || groupsLoading || subjectsLoading ? (
+          <Skeleton className="h-96 w-full" />
+        ) : yearsFailed || groupsFailed || subjectsFailed ? (
+          <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />
+        ) : !year ? (
+          <EmptyState icon={Target} title={t("noYearTitle")} description={t("noYearBody")} />
+        ) : (
+          <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+            {layer === "scheduled" ? (
+              <CoverageScheduledTab
+                key={year.id}
+                year={year}
+                linkedGroup={linkedGroup}
+                groupName={(id) => groupName.get(id) ?? id}
+                subjects={subjects ?? []}
+                pupilName={(id) => personName.get(id) ?? t("unknownPupil")}
+                gradeName={gradeName}
+              />
+            ) : (
+              <CoverageDeliveredTab
+                key={year.id}
+                year={year}
+                linkedGroup={linkedGroup}
+                groupName={(id) => groupName.get(id) ?? id}
+                subjects={subjects ?? []}
+                pupilName={(id) => personName.get(id) ?? t("unknownPupil")}
+                gradeName={gradeName}
+              />
+            )}
+          </Suspense>
+        )
+      ) : loading ? (
         <Skeleton className="h-96 w-full" />
       ) : failed ? (
         <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />
@@ -280,6 +410,7 @@ export default function TimplanCoveragePage() {
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }
