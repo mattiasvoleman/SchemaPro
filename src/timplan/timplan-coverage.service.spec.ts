@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Role } from '../auth/enums/role.enum';
 import {
   createPrismaMock,
@@ -11,6 +11,8 @@ import type { PlannedVerdict, PlannedVerdictCode } from '../common/timplan-plann
 import type { PrismaService } from '../database/prisma.service';
 import { TimplanCoverageService } from './timplan-coverage.service';
 import { describePlannedVerdict } from './timplan-planned-messages';
+import type { ScheduledVerdict, ScheduledVerdictCode } from '../common/timplan-scheduled';
+import { describeScheduledVerdict } from './timplan-scheduled-messages';
 
 const YEAR_ID = '44444444-4444-4444-8444-444444444444';
 const PLAN_ID = 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1';
@@ -155,6 +157,148 @@ describe('TimplanCoverageService', () => {
     const answer = await service.planned({ academicYearId: YEAR_ID }, testUser());
     expect(tx.localTimplan.findMany).not.toHaveBeenCalled();
     expect(answer.groups).toEqual([]);
+  });
+});
+
+describe('TimplanCoverageService, layer 2 (schemalagt mot planerat)', () => {
+  let service: TimplanCoverageService;
+  let tx: TxMock;
+
+  const t = (hhmm: string) => new Date(`1970-01-01T${hhmm}:00.000Z`);
+  const lessonRow = (id: string, startTime: string, endTime: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    studentGroupId: CLASS_ID,
+    subjectId: MA,
+    startTime: t(startTime),
+    endTime: t(endTime),
+    recurrence: 'ALL_WEEKS',
+    startDate: null,
+    endDate: null,
+    isParked: false,
+    extraGroups: [],
+    participants: [],
+    ...extra,
+  });
+
+  beforeEach(() => {
+    tx = createTxMock();
+    service = new TimplanCoverageService(createPrismaMock(tx) as unknown as PrismaService);
+    tx.academicYear.findUnique.mockResolvedValue({
+      startDate: new Date('2026-08-17T00:00:00.000Z'),
+      endDate: new Date('2027-06-11T00:00:00.000Z'),
+    });
+    tx.subject.findMany.mockResolvedValue([{ id: MA, name: 'Matematik', nationalCode: 'MA', countsTowardTimplan: true }]);
+    tx.studentGroup.findMany.mockResolvedValue([{ id: CLASS_ID, name: '8A', kind: 'CLASS', gradeLevel: 8 }]);
+    tx.teachingRequirement.findMany.mockResolvedValue([
+      {
+        id: 'f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1',
+        studentGroupId: CLASS_ID,
+        subjectId: MA,
+        lessonsPerWeek: 3,
+        minutesPerLesson: 60,
+        lessonLengths: [],
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+      },
+    ]);
+    tx.user.findMany.mockResolvedValue([{ id: ANNA, studentGroupId: CLASS_ID }]);
+    tx.masterLesson.findMany.mockResolvedValue([
+      lessonRow('a0a0a0a0-a0a0-4a0a-8a0a-a0a0a0a0a0a1', '08:00', '09:00'),
+      lessonRow('a0a0a0a0-a0a0-4a0a-8a0a-a0a0a0a0a0a2', '10:00', '10:55'),
+      lessonRow('a0a0a0a0-a0a0-4a0a-8a0a-a0a0a0a0a0a3', '13:00', '14:00', { isParked: true }),
+    ]);
+  });
+
+  it('reads the year’s master lessons, parked ones too, and judges each at its own duration', async () => {
+    const answer = await service.scheduled({ academicYearId: YEAR_ID, layer: 'scheduled' }, testUser());
+    expect(tx.masterLesson.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { academicYearId: YEAR_ID },
+        select: expect.objectContaining({
+          isParked: true,
+          extraGroups: { select: { studentGroupId: true } },
+          participants: { select: { studentId: true } },
+        }),
+      }),
+    );
+    expect(answer).toMatchObject({ academicYearId: YEAR_ID, layer: 'scheduled', pupilLevel: true, lessonCount: 2 });
+    expect(answer.groups[0]!.lines[0]).toMatchObject({
+      plannedMinutesPerWeek: 180,
+      scheduledMinutesPerWeek: 115,
+      parkedMinutesPerWeek: 60,
+      status: 'SHORT',
+      pupils: { min: -65, median: -65, max: -65, below: 1 },
+    });
+    // 115 + 60 parked ≥ 180 is false: a real shortfall, with its sentence.
+    expect(answer.verdicts).toEqual([
+      expect.objectContaining({
+        code: 'TIMPLAN_SCHEDULE_SHORT',
+        message: '8A: Matematik har 115 min/vecka i grundschemat, 65 under planerade 180 min/vecka.',
+      }),
+    ]);
+  });
+
+  it('gives a teacher the group level, drill-down or not, with no pupil id anywhere', async () => {
+    const answer = await service.scheduled(
+      { academicYearId: YEAR_ID, layer: 'scheduled', studentGroupId: CLASS_ID },
+      testUser({ role: Role.TEACHER }),
+    );
+    expect(answer).toMatchObject({ pupilLevel: false, pupils: null, pupilsBelowPlanned: null });
+    expect(JSON.stringify(answer)).not.toContain(ANNA);
+  });
+
+  it('gives an admin every pupil of the drilled group', async () => {
+    const answer = await service.scheduled(
+      { academicYearId: YEAR_ID, layer: 'scheduled', studentGroupId: CLASS_ID },
+      testUser(),
+    );
+    expect(answer.pupils).toEqual([
+      expect.objectContaining({ pupilId: ANNA, lines: [expect.objectContaining({ scheduledMinutesPerWeek: 115 })] }),
+    ]);
+  });
+
+  it('refuses a drill-down on layer 1, whose answer keeps its one shape', async () => {
+    await expect(
+      service.planned({ academicYearId: YEAR_ID, studentGroupId: CLASS_ID }, testUser()),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('404s a year RLS hides, and reads no lesson', async () => {
+    tx.academicYear.findUnique.mockResolvedValue(null);
+    await expect(service.scheduled({ academicYearId: YEAR_ID, layer: 'scheduled' }, testUser())).rejects.toThrow(
+      NotFoundException,
+    );
+    expect(tx.masterLesson.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('describeScheduledVerdict', () => {
+  const codes: ScheduledVerdictCode[] = [
+    'TIMPLAN_SCHEDULE_NONE',
+    'TIMPLAN_SCHEDULE_UNSCHEDULED',
+    'TIMPLAN_SCHEDULE_SHORT',
+    'TIMPLAN_SCHEDULE_PARKED',
+    'TIMPLAN_SCHEDULE_EXTRA',
+    'TIMPLAN_SCHEDULE_UNPLANNED',
+    'TIMPLAN_PUPIL_SCHEDULE_SHORT',
+  ];
+  const params = {
+    groupName: '7A',
+    subjectName: 'Matematik',
+    plannedMinutesPerWeek: 180,
+    scheduledMinutesPerWeek: 120,
+    deltaMinutesPerWeek: -60,
+    parkedMinutesPerWeek: 60,
+    deficitMinutesPerWeek: 60,
+    groupDeficitMinutesPerWeek: 0,
+  };
+  it.each(codes)('%s is a whole sentence, never says "fel" and names no pupil', (code) => {
+    const sentence = describeScheduledVerdict({ code, severity: 'warning', params } as ScheduledVerdict);
+    expect(sentence.length).toBeGreaterThan(20);
+    expect(sentence).not.toMatch(/\bfel\b/i);
+    expect(sentence).not.toContain('undefined');
+    expect(sentence).not.toContain('NaN');
   });
 });
 
