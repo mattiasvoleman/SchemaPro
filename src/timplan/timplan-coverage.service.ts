@@ -17,7 +17,16 @@ import {
   type ScheduledLessonInput,
   type ScheduledVerdict,
 } from '../common/timplan-scheduled';
+import {
+  computeDeliveredCoverage,
+  deliveredDatesToAsk,
+  type DeliveredCoverage,
+  type DeliveredVerdict,
+} from '../common/timplan-delivered';
+import { todayInZone } from '../common/utils/time';
 import type { TimplanCoverageQueryDto } from './dto/timplan-coverage.dto';
+import { describeDeliveredVerdict } from './timplan-delivered-messages';
+import { readDeliveredRows } from './timplan-delivered.sql';
 import { describePlannedVerdict } from './timplan-planned-messages';
 import { describeScheduledVerdict } from './timplan-scheduled-messages';
 import { readHomePupils, rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
@@ -33,6 +42,12 @@ export interface ScheduledCoverageResponse extends Omit<ScheduledCoverage, 'verd
   academicYearId: string;
   layer: 'scheduled';
   verdicts: (ScheduledVerdict & { message: string })[];
+}
+
+/** The layer-3 document, each verdict with its Swedish sentence. */
+export interface DeliveredCoverageResponse extends Omit<DeliveredCoverage, 'verdicts'> {
+  academicYearId: string;
+  verdicts: (DeliveredVerdict & { message: string })[];
 }
 
 /** The layer-1 document, each verdict with its Swedish sentence. */
@@ -92,6 +107,147 @@ export class TimplanCoverageService {
       verdicts: coverage.verdicts.map((verdict) => ({
         ...verdict,
         message: describePlannedVerdict(verdict),
+      })),
+    };
+  }
+
+  /**
+   * Layer 3, genomfört mot schemalagt. What counts as delivered is the SQL's
+   * (src/timplan/timplan-delivered.sql.ts) and nowhere else; this reads, under
+   * the caller's RLS in one transaction: P2's rows and rosters, the school's
+   * timezone (asOfDate is the school's day, R24), the year's master lessons,
+   * credits, breaks and dated class closures (what publish skips by), and the
+   * aggregate statements (timplan-delivered.sql.ts). The pure module does the
+   * rest.
+   *
+   * The roles as layers 1 and 2: the admin gets the pupil level and, with
+   * studentGroupId, every pupil of the group; a teacher gets the group level,
+   * the drill-down's detail included, and no pupil id. No calendar at all is
+   * 200 with one notice; no timplan is needed.
+   */
+  async delivered(
+    query: TimplanCoverageQueryDto,
+    user: AuthenticatedUser,
+  ): Promise<DeliveredCoverageResponse> {
+    requireSchoolId(user);
+    const includePupils = user.role === Role.SCHOOL_ADMIN;
+    const now = new Date();
+    const coverage = await this.prisma.withRls(user, async (tx) => {
+      const planned = await readPlannedInput(tx, user, query.academicYearId, includePupils);
+      if (!planned) return null;
+      const school = await tx.academicYear.findUnique({
+        where: { id: query.academicYearId },
+        select: { school: { select: { timezone: true } } },
+      });
+      const timezone = school?.school?.timezone ?? 'Europe/Stockholm';
+      const asOfDate = asDay(todayInZone(timezone, now));
+      const window = {
+        academicYearId: query.academicYearId,
+        yearStart: planned.year.startDate,
+        yearEnd: planned.year.endDate,
+        asOf: now,
+      };
+      const masters = await tx.masterLesson.findMany({
+        where: { academicYearId: query.academicYearId },
+        select: {
+          id: true,
+          studentGroupId: true,
+          subjectId: true,
+          teacherId: true,
+          coTeacherId: true,
+          dayOfWeek: true,
+          startTime: true,
+          endTime: true,
+          recurrence: true,
+          startDate: true,
+          endDate: true,
+          isParked: true,
+          extraGroups: { select: { studentGroupId: true } },
+          participants: { select: { studentId: true } },
+        },
+        orderBy: { id: 'asc' },
+      });
+      const credits = await tx.timplanCredit.findMany({
+        where: { academicYearId: query.academicYearId },
+        select: {
+          id: true,
+          date: true,
+          minutes: true,
+          subjectId: true,
+          studentGroupId: true,
+          minGradeLevel: true,
+          maxGradeLevel: true,
+          name: true,
+        },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
+      });
+      // What publish skips by besides the lov: dated closures of a class or an årskurs.
+      const closures = await tx.availabilityConstraint.findMany({
+        where: {
+          type: 'UNAVAILABLE',
+          resourceType: { in: ['STUDENT_GROUP', 'GRADE_LEVEL'] },
+          date: { not: null, gte: new Date(`${window.yearStart}T00:00:00.000Z`), lte: new Date(`${window.yearEnd}T00:00:00.000Z`) },
+        },
+        select: {
+          resourceType: true,
+          userId: true,
+          roomId: true,
+          studentGroupId: true,
+          minGradeLevel: true,
+          maxGradeLevel: true,
+          date: true,
+          startTime: true,
+          endTime: true,
+        },
+      });
+      const breaks = planned.closures.map((row) => ({
+        startDate: new Date(`${row.startDate}T00:00:00.000Z`),
+        endDate: new Date(`${row.endDate}T00:00:00.000Z`),
+        minGradeLevel: row.minGradeLevel ?? null,
+        maxGradeLevel: row.maxGradeLevel ?? null,
+      }));
+      const creditRows = credits.map((row) => ({ ...row, date: asDay(row.date) }));
+      const rows = await readDeliveredRows(
+        tx,
+        window,
+        deliveredDatesToAsk(creditRows, breaks, planned.year, asOfDate),
+      );
+      return computeDeliveredCoverage({
+        planned,
+        audiences: rows.audiences,
+        horizon: rows.horizon,
+        dates: rows.dates,
+        masterLessons: masters.map((row) => ({
+          id: row.id,
+          studentGroupId: row.studentGroupId,
+          subjectId: row.subjectId,
+          extraGroupIds: row.extraGroups.map((entry) => entry.studentGroupId),
+          studentIds: row.participants.map((entry) => entry.studentId),
+          teacherId: row.teacherId,
+          coTeacherId: row.coTeacherId,
+          dayOfWeek: row.dayOfWeek,
+          startTime: asClock(row.startTime),
+          endTime: asClock(row.endTime),
+          recurrence: row.recurrence,
+          startDate: asDayOrNull(row.startDate),
+          endDate: asDayOrNull(row.endDate),
+          isParked: row.isParked,
+        })),
+        publish: { breaks, closures: closures.map((row) => ({ ...row, resourceType: String(row.resourceType) })), timezone },
+        credits: creditRows,
+        asOf: now.toISOString(),
+        asOfDate,
+        published: rows.published,
+        drillGroupId: query.studentGroupId ?? null,
+      });
+    });
+    if (!coverage) throw new NotFoundException('Läsåret finns inte.');
+    return {
+      academicYearId: query.academicYearId,
+      ...coverage,
+      verdicts: coverage.verdicts.map((verdict) => ({
+        ...verdict,
+        message: describeDeliveredVerdict(verdict),
       })),
     };
   }

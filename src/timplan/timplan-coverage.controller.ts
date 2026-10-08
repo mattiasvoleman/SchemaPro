@@ -8,14 +8,16 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { TimplanCoverageQueryDto } from './dto/timplan-coverage.dto';
 import {
   TimplanCoverageService,
+  type DeliveredCoverageResponse,
   type ScheduledCoverageResponse,
   type TimplanCoverageResponse,
 } from './timplan-coverage.service';
 
 /**
  * Timplanstäckning, by layer: ?layer=planned (the default, P2's answer
- * unchanged) and ?layer=scheduled (schemalagt mot planerat), with an optional
- * studentGroupId drill-down on the latter. Each layer's response type is its
+ * unchanged), ?layer=scheduled (schemalagt mot planerat) and ?layer=delivered
+ * (genomfört mot schemalagt), with an optional studentGroupId drill-down on
+ * the latter two. Each layer's response type is its
  * own; P2's is untouched.
  *
  * SCHOOL_ADMIN and TEACHER. The admin reads the pupil level; a teacher reads
@@ -37,8 +39,9 @@ export class TimplanCoverageController {
   get(
     @Query() query: TimplanCoverageQueryDto,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<TimplanCoverageResponse | ScheduledCoverageResponse> {
+  ): Promise<TimplanCoverageResponse | ScheduledCoverageResponse | DeliveredCoverageResponse> {
     if (query.layer === 'scheduled') return this.coverage.scheduled(query, user);
+    if (query.layer === 'delivered') return this.coverage.delivered(query, user);
     return this.coverage.planned(query, user);
   }
 }

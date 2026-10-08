@@ -72,6 +72,8 @@ import { AcademicYearTimplansService } from '../../src/timplan/academic-year-tim
 import { TimplanCoverageService, readPlannedInput } from '../../src/timplan/timplan-coverage.service';
 import { TimplanRequirementsService } from '../../src/timplan/timplan-requirements.service';
 import { TimplanCreditsService } from '../../src/timplan/timplan-credits.service';
+import { readDeliveredRows } from '../../src/timplan/timplan-delivered.sql';
+import type { DeliveredLineDetail } from '../../src/common/timplan-delivered';
 import {
   decidedTimplanRefusal,
   isTimplanInUseRefusal,
@@ -1933,6 +1935,196 @@ async function runChecks(
     await subjects.remove(idrott.id, admin);
   });
 
+  // ---- (u4) the delivered SQL, under RLS, through the real adapter
+  await check('(u4) genomförd tid: every bucket the SQL defines, one audience row per shared signature, the per-lesson horizon, and the same figures for an admin and a teacher', async () => {
+    const coverage = new TimplanCoverageService(api);
+    const DAY = 24 * 60 * 60 * 1000;
+    const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+    const dayAt = (offset: number) => new Date(today.getTime() + offset * DAY).toISOString().slice(0, 10);
+    const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
+
+    const year = await one<{ id: string }>(
+      `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+       VALUES ($1, $2 || ' genomfört', $3::date, $4::date, false, now()) RETURNING id`,
+      [fixture.schoolId, MARKER, dayAt(-60), dayAt(200)],
+    );
+    const subject = await one<{ id: string }>(
+      `INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES ($1, $2 || ' gf-ma', now()) RETURNING id`,
+      [fixture.schoolId, MARKER],
+    );
+    const mentor = await one<{ id: string }>(
+      `INSERT INTO "Subjects" ("schoolId", name, "countsTowardTimplan", "updatedAt") VALUES ($1, $2 || ' gf-ment', false, now()) RETURNING id`,
+      [fixture.schoolId, MARKER],
+    );
+    const group = (name: string, grade: number) =>
+      one<{ id: string }>(
+        `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+         VALUES ($1, $2, $3 || ' ' || $4, 'CLASS', $5, now()) RETURNING id`,
+        [fixture.schoolId, year.id, MARKER, name, grade],
+      );
+    const sevenA = await group('7A', 7);
+    const eightA = await group('8A', 8);
+    const pupil = await one<{ id: string }>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+       VALUES ($1, $2 || '-gf@example.invalid', 'Probe', 'Elev', 'STUDENT', gen_random_uuid(), true, $3, now()) RETURNING id`,
+      [fixture.schoolId, MARKER, sevenA.id],
+    );
+    const teacherRow = (
+      await owner.query<{ id: string; authId: string }>(
+        `SELECT id, "authId" FROM "Users" WHERE "schoolId" = $1 AND role = 'TEACHER' AND "isActive" AND "authId" IS NOT NULL
+          ORDER BY "authId" LIMIT 1`,
+        [fixture.schoolId],
+      )
+    ).rows[0];
+    const teacher = { authId: teacherRow.authId, userId: teacherRow.id, schoolId: fixture.schoolId, role: Role.TEACHER };
+    await owner.query(
+      `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+       VALUES ($1, $2, $3, $4, 3, 60, now())`,
+      [fixture.schoolId, year.id, subject.id, sevenA.id],
+    );
+    // A lov a week ago that covers the whole school, entered after publish:
+    // the cancelled row standing on it is not lost.
+    await owner.query(
+      `INSERT INTO "SchoolBreaks" ("schoolId", "academicYearId", name, "startDate", "endDate", "updatedAt")
+       VALUES ($1, $2, $3, $4::date, $4::date, now())`,
+      [fixture.schoolId, year.id, MARKER, dayAt(-7)],
+    );
+    const masterLesson = (dayOfWeek: number, extra: string = '') =>
+      one<{ id: string }>(
+        `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "isParked", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5, $6, '08:00', '09:00', $7, now()) RETURNING id`,
+        [fixture.schoolId, year.id, subject.id, sevenA.id, teacherRow.id, dayOfWeek, extra === 'parked'],
+      );
+    // On tomorrow's weekday, with rows tomorrow and a week later: the
+    // calendar holds exactly what the master would write — no drift.
+    const tomorrow = new Date(today.getTime() + DAY);
+    const published = await masterLesson(((tomorrow.getUTCDay() + 6) % 7) + 1);
+    const unpublished = await masterLesson(2);
+    const parked = await masterLesson(3, 'parked');
+
+    /** One calendar row; a teacher row unless told otherwise; extra group and cause as named. */
+    const lesson = async (
+      offset: number,
+      status: string,
+      options: { teacher?: boolean; cause?: string; extra?: string; subjectId?: string; masterLessonId?: string } = {},
+    ) => {
+      const date = dayAt(offset);
+      const row = await one<{ id: string }>(
+        `INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "cancelCause", "updatedAt")
+         VALUES ($1, $2, $3, $4, $5::date, $5::date + time '06:00', $5::date + time '07:00', $6::"LessonStatus", $7::"LessonCancelCause", now())
+         RETURNING id`,
+        [fixture.schoolId, options.masterLessonId ?? null, options.subjectId ?? subject.id, sevenA.id, date, status, options.cause ?? null],
+      );
+      if (options.teacher !== false) {
+        await owner.query(
+          `INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES ($1, $2, $3, 'SUBSTITUTE')`,
+          [fixture.schoolId, row.id, teacherRow.id],
+        );
+      }
+      if (options.extra) {
+        await owner.query(
+          `INSERT INTO "CalendarLessonGroups" ("schoolId", "calendarLessonId", "studentGroupId") VALUES ($1, $2, $3)`,
+          [fixture.schoolId, row.id, options.extra],
+        );
+      }
+      return row;
+    };
+    await lesson(-14, 'SCHEDULED');
+    await lesson(-13, 'SCHEDULED');
+    await lesson(-12, 'COMPLETED');
+    await lesson(-11, 'SCHEDULED', { teacher: false });
+    await lesson(-10, 'CANCELLED', { cause: 'TEACHER_UNAVAILABLE' });
+    await lesson(-9, 'CANCELLED');
+    await lesson(-7, 'CANCELLED', { cause: 'TEACHER_UNAVAILABLE' });
+    await lesson(-6, 'RESCHEDULED');
+    // Two lessons shared with 8A, one audience: statement B answers one row of two.
+    await lesson(-5, 'SCHEDULED', { extra: eightA.id });
+    await lesson(-4, 'SCHEDULED', { extra: eightA.id });
+    // A subject that does not count: no bucket at all.
+    await lesson(-3, 'SCHEDULED', { subjectId: mentor.id });
+    // Ahead: the published master lesson's rows, and the parked one's.
+    await lesson(1, 'SCHEDULED', { masterLessonId: published.id });
+    await lesson(8, 'CANCELLED', { masterLessonId: published.id, cause: 'MANUAL' });
+    await lesson(9, 'SCHEDULED', { masterLessonId: parked.id });
+    // A credit on a day that had a delivered lesson in its scope.
+    await owner.query(
+      `INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, "subjectId", "studentGroupId", name, "updatedAt")
+       VALUES ($1, $2, $3::date, 120, $4, $5, $6, now())`,
+      [fixture.schoolId, year.id, dayAt(-14), subject.id, sevenA.id, MARKER],
+    );
+
+    const window = { academicYearId: year.id, yearStart: dayAt(-60), yearEnd: dayAt(200), asOf: new Date() };
+    const read = (user: AuthenticatedUser) =>
+      api.withRls(user, (tx) => readDeliveredRows(tx, window, [dayAt(-14), dayAt(-7)]));
+    const sorted = (rows: Awaited<ReturnType<typeof read>>) => ({
+      ...rows,
+      audiences: [...rows.audiences].sort((a, b) => `${a.studentGroupId}${a.bucket}${a.extraGroupIds}`.localeCompare(`${b.studentGroupId}${b.bucket}${b.extraGroupIds}`)),
+      horizon: [...rows.horizon].sort((a, b) => a.masterLessonId.localeCompare(b.masterLessonId)),
+      dates: [...rows.dates].sort((a, b) => a.date.localeCompare(b.date)),
+    });
+    const forAdmin = sorted(await read(admin));
+    const forTeacher = sorted(await read(teacher));
+    assert.deepEqual(forTeacher, forAdmin, 'a teacher’s statements answered differently from the admin’s');
+
+    const bucket = (name: string, shared = false) =>
+      forAdmin.audiences
+        .filter((row) => row.bucket === name && (row.extraGroupIds.length > 0) === shared)
+        .map((row) => [row.minutes, row.lessons]);
+    assert.deepEqual(bucket('DELIVERED'), [[180, 3]], 'SCHEDULED and COMPLETED with a teacher row are delivered');
+    assert.deepEqual(bucket('DELIVERED', true), [[120, 2]], 'two lessons with one audience are one signature row');
+    assert.deepEqual(forAdmin.audiences.find((row) => row.extraGroupIds.length > 0)?.extraGroupIds, [eightA.id]);
+    assert.deepEqual(bucket('TEACHERLESS'), [[60, 1]]);
+    assert.deepEqual(bucket('CANCELLED_TEACHER_UNAVAILABLE'), [[60, 1]]);
+    assert.deepEqual(bucket('CANCELLED_UNKNOWN'), [[60, 1]]);
+    assert.deepEqual(bucket('CANCELLED_ON_BREAK'), [[60, 1]]);
+    assert.deepEqual(bucket('OTHER'), [[60, 1]]);
+    assert.deepEqual(bucket('AHEAD'), [[120, 2]]);
+    assert.deepEqual(bucket('AHEAD_CANCELLED'), [[60, 1]]);
+    assert.ok(!forAdmin.audiences.some((row) => row.subjectId === mentor.id), 'a subject that does not count reached a bucket');
+    assert.deepEqual(forAdmin.published, { from: dayAt(-14), through: dayAt(9) });
+    assert.deepEqual(
+      forAdmin.horizon.map((row) => [row.masterLessonId, row.aheadRows, row.lastDate]),
+      [
+        [published.id, 2, dayAt(8)],
+        [parked.id, 1, dayAt(9)],
+      ].sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    );
+    assert.deepEqual(forAdmin.dates, [{ studentGroupId: sevenA.id, date: dayAt(-14), minutes: 60 }]);
+
+    // The service: the hand counts, for the admin with the pupil and the teacher without.
+    const answer = await coverage.delivered({ academicYearId: year.id, layer: 'delivered', studentGroupId: sevenA.id }, admin);
+    const line = answer.groups.find((g) => g.studentGroupId === sevenA.id)!.lines.find((l) => l.subjectId === subject.id)!;
+    assert.deepEqual(
+      [line.deliveredMinutes, line.lostMinutes, line.publishedMinutes, line.creditedMinutes],
+      [300, 240, 540, 120],
+      JSON.stringify(line),
+    );
+    const projection = (line as DeliveredLineDetail).projection;
+    assert.equal(projection.calendarAhead, 120);
+    assert.ok(projection.masterAhead > 0, 'the master lesson with no calendar row was not projected');
+    assert.deepEqual(answer.drift?.lessons, 1, `the parked lesson's standing row is not drift: ${JSON.stringify(answer.drift)}`);
+    // The drill-down answers for 7A alone; 8A's line is the overview's.
+    assert.deepEqual(answer.groups.map((g) => g.studentGroupId), [sevenA.id]);
+    const overview = await coverage.delivered({ academicYearId: year.id, layer: 'delivered' }, admin);
+    const eighth = overview.groups.find((g) => g.studentGroupId === eightA.id)!.lines.find((l) => l.subjectId === subject.id)!;
+    assert.equal(eighth.deliveredMinutes, 120, 'the extra group’s line did not count the shared lessons');
+    assert.ok(answer.verdicts.some((v) => v.code === 'TIMPLAN_CREDIT_OVERLAPS_DELIVERED'));
+    assert.equal(answer.pupils?.find((p) => p.pupilId === pupil.id)?.lines[0]?.deliveredMinutes, 300);
+    const forTeacherAnswer = await coverage.delivered({ academicYearId: year.id, layer: 'delivered', studentGroupId: sevenA.id }, teacher);
+    assert.equal(forTeacherAnswer.pupils, null);
+    assert.ok(!JSON.stringify(forTeacherAnswer).includes(pupil.id), 'a pupil id reached the teacher');
+    assert.deepEqual(
+      forTeacherAnswer.groups.map((g) => g.totals),
+      answer.groups.map((g) => g.totals),
+      'a teacher’s group figures differ from the admin’s',
+    );
+    void unpublished;
+
+    await owner.query('DELETE FROM "AcademicYears" WHERE id = $1', [year.id]);
+    await owner.query('DELETE FROM "Users" WHERE id = $1', [pupil.id]);
+    await owner.query('DELETE FROM "Subjects" WHERE id IN ($1, $2)', [subject.id, mentor.id]);
+  });
+
   await check('(v) a läsårsrullning link the database refuses is a 409 through the real adapter, and the deletes that clear one pass', async () => {
     const years = new AcademicYearsService(api);
     const groups = new StudentGroupsService(api);
@@ -3452,6 +3644,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-rulltj'`, [MARKER]);
   // (z)'s school, whole, for a run that stopped inside it.
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
+  // (u4)'s pupil, for a run that stopped before deleting it.
+  await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-gf@example.invalid'`, [schoolId, MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-duty@example.invalid'`, [schoolId, MARKER]);
   // (t)'s attachment, for a run that stopped before detaching it: the plan

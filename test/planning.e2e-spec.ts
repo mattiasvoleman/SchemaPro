@@ -3105,6 +3105,7 @@ describe('Planning surface (e2e)', () => {
     const MODELS = [
       'academicYear', 'academicYearTimplan', 'localTimplan', 'subject', 'studentGroup',
       'teachingRequirement', 'schoolBreak', 'user', 'studentGroupMember', 'masterLesson',
+      'timplanCredit', 'availabilityConstraint',
     ];
     const resetModels = () => {
       for (const model of MODELS) {
@@ -3195,7 +3196,7 @@ describe('Planning surface (e2e)', () => {
     });
 
     it('stops a pupil and a guardian at the guard, on every layer', async () => {
-      for (const layer of ['', '&layer=planned', '&layer=scheduled']) {
+      for (const layer of ['', '&layer=planned', '&layer=scheduled', '&layer=delivered']) {
         for (const role of ['STUDENT', 'GUARDIAN']) {
           await request(http())
             .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}${layer}`)
@@ -3267,6 +3268,92 @@ describe('Planning surface (e2e)', () => {
         expect(response.body).toMatchObject({ pupilLevel: false, pupils: null, pupilsBelowPlanned: null });
         expect(JSON.stringify(response.body)).not.toContain(STUDENT_ID);
       }
+    });
+
+    /**
+     * The aggregate statements, answered by what each one asks for — the
+     * harness has no database, so the SQL's own text routes the answer. The
+     * year: 7A matematik delivered 10 × 60, one lesson cancelled for the
+     * teacher, two ahead; nothing else.
+     */
+    const givenTheCalendar = (published: { from: string | null; through: string | null }) => {
+      givenTheYear();
+      const queryRaw = jest.fn((query: { sql?: string; strings?: string[] }) => {
+        const text = query.sql ?? (query.strings ?? []).join('?');
+        if (text.includes('"aheadRows"')) {
+          // Only the grand total of GROUPING SETS: no master lesson has rows.
+          return Promise.resolve([
+            { masterLessonId: null, total: 1, aheadRows: 0, firstDate: published.from, lastDate: published.through },
+          ]);
+        }
+        if (text.includes('GROUP BY 1, 2, 3, 4, 5')) {
+          const row = (bucket: string, lessons: number) => ({
+            studentGroupId: GROUP_ID, subjectId: SUBJECT_ID, bucket, extraGroupIds: [], studentIds: [], minutes: lessons * 60, lessons,
+          });
+          return Promise.resolve([row('DELIVERED', 10), row('CANCELLED_TEACHER_UNAVAILABLE', 1), row('AHEAD', 2)]);
+        }
+        if (text.includes('= ANY(')) return Promise.resolve([]);
+        return Promise.reject(new Error(`unexpected statement: ${text.slice(0, 80)}`));
+      });
+      Object.assign(harness.tx, { $queryRaw: queryRaw });
+      return queryRaw;
+    };
+
+    it('an admin reads the delivered layer: compact lines in the overview, the breakdown in the drill-down', async () => {
+      const queryRaw = givenTheCalendar({ from: '2026-08-17', through: '2026-10-23' });
+      const overview = await request(http())
+        .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}&layer=delivered`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(overview.body).toMatchObject({
+        academicYearId: YEAR_ID,
+        layer: 'delivered',
+        published: { from: '2026-08-17', through: '2026-10-23' },
+        pupilLevel: true,
+        pupilCount: 1,
+      });
+      expect(overview.body.groups[0].lostByCause).toEqual({ cancelledTeacherUnavailable: 60 });
+      const line = overview.body.groups[0].lines[0];
+      expect(line).toMatchObject({ publishedMinutes: 660, deliveredMinutes: 600, lostMinutes: 60, deliveredPercent: 91 });
+      expect(line).not.toHaveProperty('projection');
+      // C (with the published range), then A+B; D only with credit or break days.
+      expect(queryRaw).toHaveBeenCalledTimes(2);
+      for (const verdict of overview.body.verdicts) expect(typeof verdict.message).toBe('string');
+
+      const drilled = await request(http())
+        .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}&layer=delivered&studentGroupId=${GROUP_ID}`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(drilled.body.groups[0].lines[0]).toMatchObject({
+        lost: { cancelledTeacherUnavailable: 60 },
+        projection: { deliveredSoFar: 600, calendarAhead: 120 },
+      });
+      expect(drilled.body.pupils).toEqual([expect.objectContaining({ pupilId: STUDENT_ID })]);
+    });
+
+    it('a teacher reads the delivered layer at group level, drill-down included, with no pupil in it', async () => {
+      givenTheCalendar({ from: '2026-08-17', through: '2026-10-23' });
+      for (const query of ['', `&studentGroupId=${GROUP_ID}`]) {
+        const response = await request(http())
+          .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}&layer=delivered${query}`)
+          .set('x-test-user', asUser({ role: 'TEACHER' as never }))
+          .expect(200);
+        expect(response.body).toMatchObject({ pupilLevel: false, pupils: null, pupilsBelowPlanned: null });
+        expect(JSON.stringify(response.body)).not.toContain(STUDENT_ID);
+        expect(response.body.groups[0].lines[0].deliveredMinutes).toBe(600);
+      }
+    });
+
+    it('a year with no published calendar answers 200 with one notice and nothing else', async () => {
+      givenTheCalendar({ from: null, through: null });
+      const response = await request(http())
+        .get(`/api/v1/timplan-coverage?academicYearId=${YEAR_ID}&layer=delivered`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(response.body).toMatchObject({ published: null, groups: [], pupils: [] });
+      expect(response.body.verdicts).toEqual([
+        expect.objectContaining({ code: 'TIMPLAN_NOT_PUBLISHED', severity: 'notice' }),
+      ]);
     });
 
     it('400s a drill-down on the planned layer, whose answer keeps its shape', async () => {

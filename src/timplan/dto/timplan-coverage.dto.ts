@@ -2,10 +2,10 @@ import { Transform } from 'class-transformer';
 import { IsIn, IsOptional, IsUUID } from 'class-validator';
 
 /**
- * The layers GET /timplan-coverage answers: planerat mot timplan (P2), and
- * schemalagt mot planerat (P3). Genomfört mot schemalagt follows.
+ * The layers GET /timplan-coverage answers: planerat mot timplan (P2),
+ * schemalagt mot planerat and genomfört mot schemalagt (P3).
  */
-export const COVERAGE_LAYERS = ['planned', 'scheduled'] as const;
+export const COVERAGE_LAYERS = ['planned', 'scheduled', 'delivered'] as const;
 export type CoverageLayer = (typeof COVERAGE_LAYERS)[number];
 
 export class TimplanCoverageQueryDto {
@@ -16,7 +16,7 @@ export class TimplanCoverageQueryDto {
   /** Optional, 'planned' by default — P2's answer, unchanged. */
   @IsOptional()
   @IsIn(COVERAGE_LAYERS, {
-    message: "layer: 'planned' (planerat mot timplan) eller 'scheduled' (schemalagt mot planerat).",
+    message: "layer: 'planned', 'scheduled' eller 'delivered'.",
   })
   layer?: CoverageLayer;
 
