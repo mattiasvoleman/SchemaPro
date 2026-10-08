@@ -1876,6 +1876,44 @@ describe('MasterLessonsService', () => {
       });
     });
 
+    it('never moves a row into the past: a Thursday lesson moved to Monday on a Thursday drops this week’s row', async () => {
+      // Thursday 2026-08-06 10:00 in Stockholm. This week's row is today's,
+      // still SCHEDULED and attendance-free, so it is reconcilable — and the
+      // shift of −3 days would land it on Monday the 3rd, a day already lived,
+      // as a SCHEDULED lesson with its teacher that nobody held. It is
+      // removed instead; next week's row moves as before. A row the UTC read
+      // still returns from the school's yesterday is history and untouched.
+      jest.setSystemTime(new Date('2026-08-06T08:00:00.000Z'));
+      arrangeUpdate({ dayOfWeek: 4 }, { dayOfWeek: 1 });
+      tx.calendarLesson.findMany.mockResolvedValue([
+        { id: 'c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0', date: new Date('2026-08-05T00:00:00.000Z') },
+        { id: CAL_LESSON_ID, date: new Date('2026-08-06T00:00:00.000Z') },
+        { id: OTHER_CAL_LESSON_ID, date: new Date('2026-08-13T00:00:00.000Z') },
+      ]);
+
+      await expect(
+        service.update(LESSON_ID, { dayOfWeek: 1 }, testUser()),
+      ).resolves.toMatchObject({
+        dayOfWeek: 1,
+        propagatedLessons: 1,
+        removedCalendarLessons: 1,
+      });
+
+      expect(tx.calendarLesson.update).toHaveBeenCalledTimes(1);
+      expect(tx.calendarLesson.update).toHaveBeenCalledWith({
+        where: { id: OTHER_CAL_LESSON_ID },
+        data: {
+          date: new Date('2026-08-10T00:00:00.000Z'),
+          startsAt: new Date('2026-08-10T08:00:00.000Z'),
+          endsAt: new Date('2026-08-10T09:00:00.000Z'),
+          roomId: ROOM_ID,
+        },
+      });
+      expect(tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+        where: { id: { in: [CAL_LESSON_ID] } },
+      });
+    });
+
     it('drops calendar lessons left outside a term end pulled forward', async () => {
       // The window itself is narrowed, without the slot moving at all:
       // 2026-08-10 stays inside, 2026-09-14 falls past the new end date.

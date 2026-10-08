@@ -12,7 +12,7 @@ import { runsOn, weeksCanOverlap } from './lesson-recurrence';
 import type { LessonRecurrence } from '@prisma/client';
 import { RealtimeService } from '../realtime/realtime.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { parseTimeString, zonedTimeToUtc } from '../common/utils/time';
+import { parseTimeString, todayInZone, zonedTimeToUtc } from '../common/utils/time';
 import type { CreateMasterLessonDto } from './dto/create-master-lesson.dto';
 import type { UpdateMasterLessonDto } from './dto/update-master-lesson.dto';
 import { lessonQualificationFindings } from '../staffing/staffing-enforcement';
@@ -1114,10 +1114,30 @@ export class MasterLessonsService {
     const endHHMM = toHHMM(after.endTime);
     const stale: string[] = [];
     let moved = 0;
+    // The school's own day, not the UTC one reconcilableLessons asks from:
+    // the question here is which calendar day has already been lived.
+    const today = todayInZone(timezone);
 
     for (const calendarLesson of futureLessons) {
+      // reconcilableLessons reads from the UTC day, which for an hour or two
+      // after local midnight is the school's yesterday: a row of a day already
+      // lived is history here as everywhere, neither moved nor removed.
+      if (calendarLesson.date < today) continue;
+
       const newDate = new Date(calendarLesson.date);
       newDate.setUTCDate(newDate.getUTCDate() + dayShift);
+
+      // Never into the past. A Thursday lesson moved to Monday on a Thursday
+      // would carry this week's row back to Monday, SCHEDULED with its
+      // teacher: a lesson the calendar says was held and nobody held. The
+      // timplan's genomförd tid counts exactly such rows, and every other
+      // reader takes a past row as what happened. The row is stale instead —
+      // the week's lesson is gone from the day it was on, as it is from the
+      // template — and removed with the others below.
+      if (newDate < today) {
+        stale.push(calendarLesson.id);
+        continue;
+      }
 
       // The date the row would land on is the one that has to survive the
       // template's own rule — a weekday move can carry a half-term lesson
