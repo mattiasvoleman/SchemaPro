@@ -1,4 +1,5 @@
 import fixture from './__fixtures__/teacher-load-cases.json';
+import { isMixed } from '../common/lesson-lengths';
 import {
   buildTeacherLoadReport,
   countedMinutesByTeacher,
@@ -58,6 +59,14 @@ describe('the load report agrees with the shared fixture', () => {
     expect(
       cases.some((c) => !c.report.bottlenecksComputed && c.report.unstaffedRequirements.length > 0),
     ).toBe(true);
+  });
+
+  it('reaches a split row, every week, odd weeks, co-taught and unstaffed', () => {
+    const split = cases.flatMap((c) => c.input.requirements).filter((r) => isMixed(r));
+    expect(split.some((r) => r.recurrence === 'ALL_WEEKS' && r.teacherId !== null)).toBe(true);
+    expect(split.some((r) => r.recurrence !== 'ALL_WEEKS')).toBe(true);
+    expect(split.some((r) => r.coTeacherId !== null && r.coTeacherLoadPercent !== 100)).toBe(true);
+    expect(split.some((r) => r.teacherId === null)).toBe(true);
   });
 
   it.each(cases.map((entry) => [entry.name, entry] as const))('%s', (_name, entry) => {

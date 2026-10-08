@@ -475,6 +475,146 @@ describe('TeachingRequirementsService', () => {
     });
   });
 
+  describe('lektionslängder', () => {
+    const SPLIT_ROW = {
+      id: REQUIREMENT_ID,
+      schoolId: SCHOOL_ID,
+      academicYearId: YEAR_ID,
+      subjectId: SUBJECT_ID,
+      studentGroupId: GROUP_ID,
+      teacherId: null,
+      coTeacherId: null,
+      lessonsPerWeek: 2,
+      minutesPerLesson: 80,
+      lessonLengths: [80, 40],
+      startDate: null,
+      endDate: null,
+    };
+    const UNIFORM_ROW = { ...SPLIT_ROW, lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] };
+
+    /** The stored row, cut to what the read selects, found only by its own id. */
+    const givenStored = (row: Record<string, unknown>): void => {
+      tx.teachingRequirement.findUnique.mockImplementation(
+        ({ where, select }: { where: { id: string }; select?: Selection }) =>
+          Promise.resolve(where.id === REQUIREMENT_ID ? selected(row, select) : null),
+      );
+    };
+
+    const createdData = (): Record<string, unknown> =>
+      (tx.teachingRequirement.create.mock.calls[0]![0] as { data: Record<string, unknown> }).data;
+    const updatedData = (): Record<string, unknown> =>
+      (tx.teachingRequirement.update.mock.calls[0]![0] as { data: Record<string, unknown> }).data;
+
+    it('creates 1 × 80 + 1 × 40 from a list in any order: the count, the longest and the list', async () => {
+      tx.teachingRequirement.create.mockResolvedValue(SPLIT_ROW);
+
+      const created = await service.create(dto({ lessonLengths: [40, 80] }), testUser());
+
+      expect(createdData()).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+      expect(created.lessonLengths).toEqual([80, 40]);
+    });
+
+    it('creates a uniform row with the INSERT it always had, and answers it without the list', async () => {
+      tx.teachingRequirement.create.mockResolvedValue(UNIFORM_ROW);
+
+      const created = await service.create(dto({ lessonsPerWeek: 3, minutesPerLesson: 60 }), testUser());
+
+      expect(createdData()).not.toHaveProperty('lessonLengths');
+      // The database answers '{}' for the column; the response leaves it out.
+      expect(created).not.toHaveProperty('lessonLengths');
+      expect(JSON.stringify(created)).not.toContain('lessonLengths');
+    });
+
+    it('creates a list of one length as the uniform row it is', async () => {
+      tx.teachingRequirement.create.mockResolvedValue(UNIFORM_ROW);
+
+      await service.create(dto({ lessonLengths: [60, 60, 60] }), testUser());
+
+      expect(createdData()).toMatchObject({ lessonsPerWeek: 3, minutesPerLesson: 60 });
+      expect(createdData()).not.toHaveProperty('lessonLengths');
+    });
+
+    it.each<[string, Partial<CreateTeachingRequirementDto>, string]>([
+      ['scalars that contradict the list', { lessonLengths: [80, 40], lessonsPerWeek: 3 }, 'LESSON_LENGTHS_MISMATCH'],
+      ['a fourth different length', { lessonLengths: [90, 80, 60, 40] }, 'LESSON_LENGTHS_TOO_MANY_KINDS'],
+    ])('refuses %s with a coded 400, and writes nothing', async (_case, body, code) => {
+      const refused = service.create(dto(body), testUser());
+
+      await expect(refused).rejects.toBeInstanceOf(BadRequestException);
+      await expect(refused).rejects.toMatchObject({ response: { code } });
+      expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+    });
+
+    it('names the nearest lengths for one between slots, in the list as in minutesPerLesson', async () => {
+      await expect(service.create(dto({ lessonLengths: [60, 42] }), testUser())).rejects.toThrow(
+        new BadRequestException(
+          '42 minuter går inte att lägga på schemat, som räknar i hela ' +
+            '5-minutersintervall. Närmast är 40 eller 45 minuter.',
+        ),
+      );
+      await expect(
+        service.update(REQUIREMENT_ID, { lessonLengths: [60, 42] }, testUser()),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+
+    it('reads the stored shape in the staffing read, unlocked, and no second time', async () => {
+      givenStored(SPLIT_ROW);
+      tx.teachingRequirement.update.mockResolvedValue(SPLIT_ROW);
+
+      await service.update(REQUIREMENT_ID, { lessonsPerWeek: 3 }, testUser());
+
+      expect(tx.teachingRequirement.findUnique).toHaveBeenCalledTimes(1);
+      expect(tx.teachingRequirement.findUnique.mock.calls[0]![0]).toMatchObject({
+        select: { lessonsPerWeek: true, minutesPerLesson: true, lessonLengths: true },
+      });
+      // No row lock: the import's order is Users, posts, requirements.
+      expect(queryRaw).not.toHaveBeenCalled();
+    });
+
+    it.each<[string, Record<string, unknown>, UpdateTeachingRequirementDto, Record<string, unknown>]>([
+      ['equal scalars on a split row write no length field', SPLIT_ROW,
+        { lessonsPerWeek: 2, minutesPerLesson: 80, minutesBefore: 10 }, { minutesBefore: 10 }],
+      ['different scalars on a split row make it uniform, the list cleared', SPLIT_ROW,
+        { lessonsPerWeek: 3, minutesPerLesson: 60 }, { lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] }],
+      ['[] on a split row makes it uniform at its count and longest', SPLIT_ROW,
+        { lessonLengths: [] }, { lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [] }],
+      ['a list on a uniform row writes all three', UNIFORM_ROW,
+        { lessonLengths: [60, 60, 40] }, { lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [60, 60, 40] }],
+      ['scalars on a uniform row write exactly them, as before', UNIFORM_ROW,
+        { lessonsPerWeek: 4 }, { lessonsPerWeek: 4 }],
+    ])('PATCH: %s', async (_case, stored, body, data) => {
+      givenStored(stored);
+      tx.teachingRequirement.update.mockResolvedValue(stored);
+
+      await service.update(REQUIREMENT_ID, body, testUser());
+
+      expect(updatedData()).toEqual(data);
+    });
+
+    it('refuses a PATCH whose scalars contradict its list, and writes nothing', async () => {
+      givenStored(UNIFORM_ROW);
+
+      await expect(
+        service.update(REQUIREMENT_ID, { lessonLengths: [80, 40], minutesPerLesson: 60 }, testUser()),
+      ).rejects.toMatchObject({ response: { code: 'LESSON_LENGTHS_MISMATCH' } });
+      expect(tx.teachingRequirement.update).not.toHaveBeenCalled();
+    });
+
+    it('answers a split row with its list and a uniform one without the key', async () => {
+      givenStored(SPLIT_ROW);
+      tx.teachingRequirement.update.mockResolvedValue(SPLIT_ROW);
+      await expect(service.update(REQUIREMENT_ID, { teacherId: null }, testUser())).resolves.toMatchObject({
+        lessonLengths: [80, 40],
+      });
+
+      tx.teachingRequirement.update.mockResolvedValue(UNIFORM_ROW);
+      const uniform = await service.update(REQUIREMENT_ID, { teacherId: null }, testUser());
+      expect(uniform).not.toHaveProperty('lessonLengths');
+    });
+  });
+
   describe('update', () => {
     /**
      * The stored period and its year, read back the way the database answers
@@ -882,6 +1022,22 @@ describe('TeachingRequirementsService', () => {
         expect(tx.teachingRequirement.create).not.toHaveBeenCalled();
       });
 
+      it('charges a split row its lessons’ minutes, not its count times the longest', async () => {
+        arrange({ policy: { overAllocationMode: 'REFUSE' } });
+
+        // 960 + 80 + 40 = 1 080: inside the 1 100 limit. Read as 2 × 80 it
+        // would be 1 120, and refused.
+        const created = await service.create(dto({ teacherId: ANNA, lessonLengths: [80, 40] }), testUser());
+        expect(created.warnings).toEqual([]);
+
+        // 960 + 80 + 80 + 40 = 1 160 > 1 100.
+        const refused = service.create(dto({ teacherId: ANNA, lessonLengths: [80, 80, 40] }), testUser());
+        await refused.catch(() => undefined);
+        await expect(refused).rejects.toMatchObject({
+          response: { code: 'STAFF_TEACHER_OVER_TARGET', params: expect.objectContaining({ minutes: 1160 }) },
+        });
+      });
+
       it('refuses one person as both the lead and the co-teacher, naming the field, and writes nothing', async () => {
         // Charged twice in the load report, and judged twice: under WARN the
         // answer carried two identical over-target warnings for one person.
@@ -1022,6 +1178,29 @@ describe('TeachingRequirementsService', () => {
           },
         ]);
         expect(tx.teachingRequirement.update).toHaveBeenCalledTimes(1);
+      });
+
+      it('judges a PATCH of a split row by the shape it leaves, not by the scalars it sent', async () => {
+        // The stored row is 1 × 80 + 1 × 40 (120 minutes): Anna at 1 080.
+        const split = { ...target, lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] };
+        arrange({ policy: { overAllocationMode: 'REFUSE' }, requirements: [...(world().requirements ?? []), split] });
+        tx.teachingRequirement.findUnique.mockImplementation(
+          ({ where, select }: { where: { id: string }; select?: Record<string, unknown> }) =>
+            Promise.resolve(
+              where.id === REQUIREMENT_ID
+                ? selected({ ...split, academicYearId: YEAR_ID, startDate: null, endDate: null }, select)
+                : null,
+            ),
+        );
+
+        // Re-saving the same scalars keeps the split: still 1 080, no refusal.
+        await expect(
+          service.update(REQUIREMENT_ID, { lessonsPerWeek: 2, minutesPerLesson: 80 }, testUser()),
+        ).resolves.toMatchObject({ warnings: [] });
+        // [] makes it 2 × 80 = 160: 1 120, past the limit.
+        await expect(
+          service.update(REQUIREMENT_ID, { lessonLengths: [] }, testUser()),
+        ).rejects.toMatchObject({ response: { code: 'STAFF_TEACHER_OVER_TARGET' } });
       });
 
       it('asks nothing of a PATCH that changes nothing a load or a teacher is made of', async () => {

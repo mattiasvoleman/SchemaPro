@@ -133,6 +133,12 @@ export interface RequirementPatch {
   coTeacherId?: string | null;
   lessonsPerWeek?: number;
   minutesPerLesson?: number;
+  /**
+   * The row's lektionslängder, [] when uniform. Writers that touch the shape
+   * hand in the RESOLVED shape (src/resources/lesson-shape-merge.ts) — all
+   * three fields together — so this overlay never has to merge a split.
+   */
+  lessonLengths?: readonly number[];
   teacherLoadPercent?: number;
   coTeacherLoadPercent?: number;
   recurrence?: LessonRecurrence;
@@ -147,6 +153,7 @@ export const STAFFING_FIELDS: readonly (keyof RequirementPatch)[] = [
   'coTeacherId',
   'lessonsPerWeek',
   'minutesPerLesson',
+  'lessonLengths',
   'teacherLoadPercent',
   'coTeacherLoadPercent',
   'recurrence',
@@ -181,6 +188,7 @@ export function mergeRequirement(
     coTeacherId: field('coTeacherId', null),
     lessonsPerWeek: field('lessonsPerWeek', 1),
     minutesPerLesson: field('minutesPerLesson', 60),
+    lessonLengths: field('lessonLengths', []),
     teacherLoadPercent: field('teacherLoadPercent', 100),
     coTeacherLoadPercent: field('coTeacherLoadPercent', 100),
     recurrence: field('recurrence', 'ALL_WEEKS'),

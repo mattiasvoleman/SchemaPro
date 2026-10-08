@@ -1,5 +1,7 @@
 import { LessonRecurrence } from '@prisma/client';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsEnum,
   IsInt,
   IsOptional,
@@ -76,6 +78,29 @@ export class CreateTeachingRequirementDto {
   @Min(15)
   @Max(240)
   minutesPerLesson?: number;
+
+  /**
+   * Lektionslängder: one length per lesson of the week, in any order, when the
+   * lessons are not all one length — [80, 40] is "1 × 80 + 1 × 40". The
+   * service stores it longest first, with lessonsPerWeek the count and
+   * minutesPerLesson the longest; scalars sent beside it must say the same
+   * (LESSON_LENGTHS_MISMATCH otherwise). [] makes the row uniform. Omitted,
+   * a split row keeps its lengths unless the scalars sent change it.
+   *
+   * Each length is 15..240 like minutesPerLesson, at most 40 lessons like
+   * lessonsPerWeek, mirroring TeachingRequirements_lesson_lengths_are_canonical.
+   * The five-minute grid is the service's to check, as for minutesPerLesson,
+   * because its answer names the nearest lengths that work; at most three
+   * different lengths is the service's too (LESSON_LENGTHS_TOO_MANY_KINDS).
+   * Null is refused, as for every NOT NULL figure.
+   */
+  @ValidateIf(presentOrNull)
+  @IsArray({ message: 'lessonLengths: anges som en lista med en längd per lektion.' })
+  @ArrayMaxSize(40, { message: 'lessonLengths: högst 40 lektioner per vecka.' })
+  @IsInt({ each: true, message: 'lessonLengths: varje längd anges i hela minuter.' })
+  @Min(15, { each: true, message: 'lessonLengths: minst 15 minuter per lektion.' })
+  @Max(240, { each: true, message: 'lessonLengths: högst 240 minuter per lektion.' })
+  lessonLengths?: number[];
 
   /**
    * Minutes the PUPILS are occupied before the lesson, and after it: ombyte
@@ -168,6 +193,15 @@ export class UpdateTeachingRequirementDto {
   @Min(15)
   @Max(240)
   minutesPerLesson?: number;
+
+  /** One length per lesson, any order; [] makes the row uniform. See the create DTO. */
+  @ValidateIf(presentOrNull)
+  @IsArray({ message: 'lessonLengths: anges som en lista med en längd per lektion.' })
+  @ArrayMaxSize(40, { message: 'lessonLengths: högst 40 lektioner per vecka.' })
+  @IsInt({ each: true, message: 'lessonLengths: varje längd anges i hela minuter.' })
+  @Min(15, { each: true, message: 'lessonLengths: minst 15 minuter per lektion.' })
+  @Max(240, { each: true, message: 'lessonLengths: högst 240 minuter per lektion.' })
+  lessonLengths?: number[];
 
   /** Pupil buffers around the lesson; see the create DTO for what they mean. */
   @ValidateIf(presentOrNull)

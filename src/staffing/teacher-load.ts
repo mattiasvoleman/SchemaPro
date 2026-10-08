@@ -3,6 +3,7 @@ import type {
   TeacherContractKind,
   TeacherQualificationKind,
 } from '@prisma/client';
+import { weeklyMinutesOf } from '../common/lesson-lengths';
 import {
   peakPerWeekByKey,
   teachingWeeks,
@@ -41,6 +42,11 @@ import {
  * the derivation; otherwise target = round5(riktmärke × (tjänst − nedsättning)
  * / 100), rounded to the solver's five-minute grid because a target of 863
  * minutes is a precision no timetable has.
+ *
+ * A ROW'S MINUTES ARE ITS LESSONS' MINUTES. "lessons × minutes" below is
+ * weeklyMinutesOf (src/common/lesson-lengths.ts): lessonsPerWeek ×
+ * minutesPerLesson on a uniform row, as always, and the sum of the lengths on
+ * a split one — 1 × 80 + 1 × 40 is 120 minutes, not two lessons of the longest.
  *
  * EACH TEACHER IS CHARGED THE ROW'S OWN PERCENTAGE. A requirement counts for
  * its lead at lessons × minutes × teacherLoadPercent / 100 × the standardvecka
@@ -138,6 +144,12 @@ export interface LoadRequirement extends TeachingPeriod {
   coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /**
+   * The row's lektionslängder, longest first; empty or absent when uniform.
+   * Every minute below is read through weeklyMinutesOf
+   * (src/common/lesson-lengths.ts), so 1 × 80 + 1 × 40 charges 120, not 160.
+   */
+  lessonLengths?: readonly number[];
   /** How much of the row the lead is charged, 0..200; 100 = all of it. */
   teacherLoadPercent: number;
   /** How much of the row the co-teacher is charged, 0..200. */
@@ -443,6 +455,7 @@ export function chargedMinutes(
     LoadRequirement,
     | 'lessonsPerWeek'
     | 'minutesPerLesson'
+    | 'lessonLengths'
     | 'teacherLoadPercent'
     | 'coTeacherLoadPercent'
     | 'recurrence'
@@ -453,10 +466,7 @@ export function chargedMinutes(
   year: YearBounds,
   closures: ClosedRange[],
 ): { lesson: number; teacher: number; coTeacher: number } {
-  const lesson =
-    requirement.lessonsPerWeek *
-    requirement.minutesPerLesson *
-    standardWeekWeight(requirement, year, closures);
+  const lesson = weeklyMinutesOf(requirement) * standardWeekWeight(requirement, year, closures);
   return {
     lesson,
     teacher: (lesson * requirement.teacherLoadPercent) / 100,
@@ -530,7 +540,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   const demand = new Map<string, { subjectName: string; minutes: number; count: number }>();
 
   for (const requirement of input.requirements) {
-    const weeklyMinutes = requirement.lessonsPerWeek * requirement.minutesPerLesson;
+    const weeklyMinutes = weeklyMinutesOf(requirement);
     const charged = chargedMinutes(requirement, year, closures);
     const yearMinutes =
       weeklyMinutes *

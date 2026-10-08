@@ -344,6 +344,120 @@ describe('Planning surface (e2e)', () => {
   });
 
   /*
+   * Lektionslängder over HTTP: the list through the validation pipe, the
+   * merge and the response, on POST and PATCH. A uniform row's request and
+   * response carry no list at all, which is the promise to a school that
+   * never splits.
+   */
+  describe('timplan lektionslängder', () => {
+    const REQUIREMENT_ID = '16161616-1616-4616-8616-161616161616';
+    const SPLIT = {
+      id: REQUIREMENT_ID,
+      academicYearId: YEAR_ID,
+      subjectId: SUBJECT_ID,
+      studentGroupId: GROUP_ID,
+      teacherId: null,
+      coTeacherId: null,
+      lessonsPerWeek: 2,
+      minutesPerLesson: 80,
+      lessonLengths: [80, 40],
+      startDate: null,
+      endDate: null,
+    };
+
+    /** The row the database would hand back for the data that was written. */
+    const echo = (stored: Record<string, unknown>) => ({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve({ ...stored, ...data });
+
+    const post = (body: Record<string, unknown>) =>
+      request(http())
+        .post('/api/v1/teaching-requirements')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, subjectId: SUBJECT_ID, studentGroupId: GROUP_ID, ...body });
+    const patch = (body: Record<string, unknown>) =>
+      request(http())
+        .patch(`/api/v1/teaching-requirements/${REQUIREMENT_ID}`)
+        .set('x-test-user', admin())
+        .send(body);
+    const written = (method: 'create' | 'update') =>
+      (harness.tx['teachingRequirement']![method]!.mock.calls[0]![0] as { data: Record<string, unknown> }).data;
+    const givenStored = (row: Record<string, unknown>) =>
+      harness.tx['teachingRequirement']!['findUnique']!.mockResolvedValue(row);
+
+    afterEach(() => {
+      harness.tx['teachingRequirement']!['findUnique']!.mockReset();
+    });
+
+    it('POST 1 × 80 + 1 × 40: 201 with the list, the count and the longest', async () => {
+      harness.tx['teachingRequirement']!['create']!.mockImplementation(echo({ ...SPLIT, lessonLengths: [] }));
+
+      const response = await post({ lessonLengths: [40, 80] }).expect(201);
+
+      expect(written('create')).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+      expect(response.body).toMatchObject({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
+    });
+
+    it('POST a uniform row: no list written and none answered', async () => {
+      harness.tx['teachingRequirement']!['create']!.mockImplementation(echo({ ...SPLIT, lessonLengths: [] }));
+
+      const response = await post({ lessonsPerWeek: 3, minutesPerLesson: 60 }).expect(201);
+
+      expect(written('create')).not.toHaveProperty('lessonLengths');
+      expect(response.body).toMatchObject({ lessonsPerWeek: 3, minutesPerLesson: 60 });
+      expect(response.body).not.toHaveProperty('lessonLengths');
+    });
+
+    it('PATCH with the stored scalars keeps the split and writes no length field', async () => {
+      givenStored(SPLIT);
+      harness.tx['teachingRequirement']!['update']!.mockImplementation(echo(SPLIT));
+
+      const response = await patch({ lessonsPerWeek: 2, minutesPerLesson: 80, minutesBefore: 10 }).expect(200);
+
+      expect(written('update')).toEqual({ minutesBefore: 10 });
+      expect(response.body).toMatchObject({ lessonLengths: [80, 40], minutesBefore: 10 });
+    });
+
+    it('PATCH with other scalars makes the row uniform as they say', async () => {
+      givenStored(SPLIT);
+      harness.tx['teachingRequirement']!['update']!.mockImplementation(echo(SPLIT));
+
+      const response = await patch({ lessonsPerWeek: 3, minutesPerLesson: 60 }).expect(200);
+
+      expect(written('update')).toEqual({ lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [] });
+      expect(response.body).not.toHaveProperty('lessonLengths');
+    });
+
+    it('PATCH [] makes the row uniform at its count and longest', async () => {
+      givenStored(SPLIT);
+      harness.tx['teachingRequirement']!['update']!.mockImplementation(echo(SPLIT));
+
+      await patch({ lessonLengths: [] }).expect(200);
+
+      expect(written('update')).toEqual({ lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [] });
+    });
+
+    it.each<[string, Record<string, unknown>, string | null, string]>([
+      ['scalars that contradict the list', { lessonLengths: [80, 40], lessonsPerWeek: 3 }, 'LESSON_LENGTHS_MISMATCH', 'lessonLengths: 2 lektioner'],
+      ['a fourth different length', { lessonLengths: [90, 80, 60, 40] }, 'LESSON_LENGTHS_TOO_MANY_KINDS', 'högst tre olika'],
+      ['a length between slots', { lessonLengths: [60, 42] }, null, 'Närmast är 40 eller 45 minuter'],
+      ['a length past 240', { lessonLengths: [245, 40] }, null, 'lessonLengths: högst 240 minuter'],
+      ['null', { lessonLengths: null }, null, 'lessonLengths: anges som en lista'],
+    ])('400 on %s, on POST and on PATCH, and nothing written', async (_case, body, code, says) => {
+      givenStored(SPLIT);
+
+      const created = await post(body).expect(400);
+      const patched = await patch(body).expect(400);
+
+      for (const response of [created, patched]) {
+        if (code) expect(response.body).toMatchObject({ code });
+        expect(JSON.stringify(response.body)).toContain(says);
+      }
+      expect(harness.tx['teachingRequirement']!['create']).not.toHaveBeenCalled();
+      expect(harness.tx['teachingRequirement']!['update']).not.toHaveBeenCalled();
+    });
+  });
+
+  /*
    * The staffing policy at the timplan's two write points, over HTTP: WARN is
    * the write with `warnings` in the body, REFUSE is a 409 problem carrying the
    * code AND the params the web renders its sentence from, with the table not
