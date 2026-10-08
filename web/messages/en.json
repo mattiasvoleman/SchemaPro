@@ -376,8 +376,8 @@
     "teachingGroupsSection": "Teaching groups",
     "memberCount": "{count} students",
     "cellLabel": "{subject} for {group}",
-    "cellLabelSet": "{subject} for {group}: {lessons} lessons of {minutes} minutes",
-    "cellLabelPeriod": "{subject} for {group}: {lessons} lessons of {minutes} minutes, {note}",
+    "cellLabelSet": "{subject} for {group}: {lessons, plural, one {# lesson} other {# lessons}} of {minutes} minutes",
+    "cellLabelPeriod": "{subject} for {group}: {lessons, plural, one {# lesson} other {# lessons}} of {minutes} minutes, {note}",
     "target": {
       "toggle": "Target",
       "loading": "Loading the year's timplan…",

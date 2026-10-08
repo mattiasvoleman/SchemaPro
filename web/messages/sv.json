@@ -376,8 +376,8 @@
     "teachingGroupsSection": "Undervisningsgrupper",
     "memberCount": "{count} elever",
     "cellLabel": "{subject} för {group}",
-    "cellLabelSet": "{subject} för {group}: {lessons} lektioner à {minutes} minuter",
-    "cellLabelPeriod": "{subject} för {group}: {lessons} lektioner à {minutes} minuter, {note}",
+    "cellLabelSet": "{subject} för {group}: {lessons, plural, one {# lektion} other {# lektioner}} à {minutes} minuter",
+    "cellLabelPeriod": "{subject} för {group}: {lessons, plural, one {# lektion} other {# lektioner}} à {minutes} minuter, {note}",
     "target": {
       "toggle": "Mål",
       "loading": "Hämtar läsårets timplan…",
