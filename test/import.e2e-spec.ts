@@ -242,6 +242,23 @@ describe('CSV import (e2e)', () => {
       expect(create.data).toMatchObject({ studentGroupId: GROUP_7B, lessonsPerWeek: 2, minutesPerLesson: 80, lessonLengths: [80, 40] });
     });
 
+    it('400s a lektionslangder cell posted as null, and writes nothing', async () => {
+      // Null is not "leave the lengths alone": the service would read it as []
+      // and flatten a stored 1 × 80 + 1 × 40. The timplanspost DTOs refuse it too.
+      harness.tx['teachingRequirement']!['update']!.mockClear();
+      harness.tx['teachingRequirement']!['create']!.mockClear();
+      const response = await post(harness, 'requirements')
+        .send({
+          academicYearId: YEAR_ID,
+          columns: ['groupName', 'subject', 'lessonsPerWeek', 'minutesPerLesson', 'recurrence', 'lessonLengths'],
+          rows: [{ groupName: '7A', subject: 'IDH', lessonsPerWeek: 2, minutesPerLesson: 80, recurrence: 'ALL_WEEKS', lessonLengths: null }],
+        })
+        .expect(400);
+      expect(JSON.stringify(response.body)).toContain('lessonLengths: anges som en lista');
+      expect(harness.tx['teachingRequirement']!['update']).not.toHaveBeenCalled();
+      expect(harness.tx['teachingRequirement']!['create']).not.toHaveBeenCalled();
+    });
+
     it('reports a REFUSE row as an error and a WARN row as a warning, and writes the rest', async () => {
       // qualificationMode REFUSE, overAllocationMode WARN. Bo holds no
       // behörighet: his row is an error. Karin is behörig but goes past her

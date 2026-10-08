@@ -115,6 +115,10 @@ describe('ImportRequirementRowDto', () => {
     ['a length past 240', [245, 40]],
     ['half a minute', [80, 40.5]],
     ['41 lessons', new Array(41).fill(40)],
+    // Null is not absence here: the service reads a missing list as [] (make the
+    // row uniform), so a null would silently flatten a stored 1 × 80 + 1 × 40.
+    // The timplanspost DTOs refuse it too; the web sends [] for an empty cell.
+    ['null', null],
   ])('refuses lesson lengths: %s', async (_case, lessonLengths) => {
     await expect(failing({ ...base, lessonLengths })).resolves.toEqual(['lessonLengths']);
   });
