@@ -12,6 +12,15 @@ import { requireSchoolId } from '../common/utils/request-context';
 import { zonedTimeToUtc } from '../common/utils/time';
 import type { PublishScheduleDto } from './dto/publish-schedule.dto';
 
+/**
+ * The notes publish writes on a lesson it cancels for a closed teacher or
+ * room. Fixed text, read by pupils and guardians; migration 20261009090000
+ * backfilled `cancelCause` from exactly these two strings, so they are not
+ * reworded without a migration saying what the old rows were.
+ */
+export const PUBLISH_NOTE_TEACHER_UNAVAILABLE = 'Inställd: läraren är inte tillgänglig detta datum.';
+export const PUBLISH_NOTE_ROOM_UNAVAILABLE = 'Inställd: salen är inte tillgänglig detta datum.';
+
 export interface PublishResult {
   /** SCHEDULED rows written. Never includes a lesson nobody can hold. */
   created: number;
@@ -589,11 +598,11 @@ export class CalendarService {
             }
 
             // Never the constraint's own `reason`: that field holds "sjukskriven",
-            // and `note` is read by every pupil and guardian.
+            // and `note` is read by every pupil and guardian. The cause goes
+            // beside it as a category, for the timplan's lost-minutes split.
             const cancelledNote =
-              blocked === 'teacher'
-                ? 'Inställd: läraren är inte tillgänglig detta datum.'
-                : 'Inställd: salen är inte tillgänglig detta datum.';
+              blocked === 'teacher' ? PUBLISH_NOTE_TEACHER_UNAVAILABLE : PUBLISH_NOTE_ROOM_UNAVAILABLE;
+            const cancelCause = blocked === 'teacher' ? 'TEACHER_UNAVAILABLE' : 'ROOM_UNAVAILABLE';
 
             pendingCreates.push(() =>
               tx.calendarLesson.create({
@@ -607,7 +616,7 @@ export class CalendarService {
                   startsAt,
                   endsAt,
                   status: blocked === null ? 'SCHEDULED' : 'CANCELLED',
-                  ...(blocked === null ? {} : { note: cancelledNote }),
+                  ...(blocked === null ? {} : { note: cancelledNote, cancelCause }),
                   ...(template.extraGroups.length > 0
                     ? {
                         extraGroups: {

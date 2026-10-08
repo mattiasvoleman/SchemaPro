@@ -137,7 +137,15 @@ export class CalendarLessonsService {
 
       const updated = await tx.calendarLesson.update({
         where: { id },
-        data: { status: 'CANCELLED', note: dto.reason ?? lesson.note },
+        // The cause is the category the timplan counts lost minutes by; the
+        // reason stays free text in the note, which pupils read. No cause
+        // sent is the school's own decision (MANUAL), as every cancel was
+        // before the absence page started saying TEACHER_UNAVAILABLE.
+        data: {
+          status: 'CANCELLED',
+          note: dto.reason ?? lesson.note,
+          cancelCause: dto.cause ?? 'MANUAL',
+        },
         select: { id: true, status: true, note: true },
       });
 
@@ -166,7 +174,8 @@ export class CalendarLessonsService {
 
       const updated = await tx.calendarLesson.update({
         where: { id },
-        data: { status: 'SCHEDULED' },
+        // Held after all: no longer cancelled for any reason.
+        data: { status: 'SCHEDULED', cancelCause: null },
         select: { id: true, status: true, note: true },
       });
 

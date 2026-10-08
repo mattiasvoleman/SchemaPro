@@ -66,6 +66,19 @@ enum LessonStatus {
   RESCHEDULED
 }
 
+/// Why a CalendarLesson is CANCELLED, when the data knows. Null on a
+/// cancelled row means "no cause recorded" (cancelled before P3, or by a
+/// writer that did not say). See 20261009090000.
+enum LessonCancelCause {
+  /// Publish found a dated teacher closure, or the teacher-absence page
+  /// cancelled the lesson because the teacher is away.
+  TEACHER_UNAVAILABLE
+  /// Publish found a dated room closure.
+  ROOM_UNAVAILABLE
+  /// Cancelled by the school with no cause given.
+  MANUAL
+}
+
 enum AttendanceStatus {
   UNKNOWN
   PRESENT
@@ -959,6 +972,9 @@ model CalendarLesson {
   endsAt         DateTime     @db.Timestamptz(6)
   status         LessonStatus @default(SCHEDULED)
   note           String?
+  /// Read only under status CANCELLED; reinstate() writes null. The free text
+  /// stays in `note`. No CHECK ties it to the status (see the migration).
+  cancelCause    LessonCancelCause?
   createdAt      DateTime     @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime     @updatedAt @db.Timestamptz(6)
 

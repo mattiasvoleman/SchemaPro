@@ -11,7 +11,11 @@ import {
   type TxMock,
 } from '../../test/utils/prisma-mock';
 import type { PrismaService } from '../database/prisma.service';
-import { CalendarService } from './calendar.service';
+import {
+  CalendarService,
+  PUBLISH_NOTE_ROOM_UNAVAILABLE,
+  PUBLISH_NOTE_TEACHER_UNAVAILABLE,
+} from './calendar.service';
 
 const NOW = new Date('2026-08-12T08:00:00.000Z'); // a Wednesday
 const YEAR_ID = '44444444-4444-4444-8444-444444444444';
@@ -944,6 +948,37 @@ describe('CalendarService', () => {
           cancelled: 0,
           skipped: 0,
         });
+      });
+
+      it('records why beside the note: the teacher for a teacher closure, the room for a room closure', async () => {
+        // The note is the pupils' text; the cause is the category the
+        // timplan's lost minutes are split by (migration 20261009090000).
+        arrangePublish([template()], { closures: [away({ userId: TEACHER_ID })] });
+        await publishOneDay();
+        expect(tx.calendarLesson.create.mock.calls[0]![0].data).toMatchObject({
+          status: 'CANCELLED',
+          note: PUBLISH_NOTE_TEACHER_UNAVAILABLE,
+          cancelCause: 'TEACHER_UNAVAILABLE',
+        });
+
+        tx.calendarLesson.create.mockClear();
+        arrangePublish([template()], {
+          closures: [closure({ resourceType: 'ROOM', studentGroupId: null, roomId: ROOM_ID })],
+        });
+        await publishOneDay();
+        expect(tx.calendarLesson.create.mock.calls[0]![0].data).toMatchObject({
+          status: 'CANCELLED',
+          note: PUBLISH_NOTE_ROOM_UNAVAILABLE,
+          cancelCause: 'ROOM_UNAVAILABLE',
+        });
+      });
+
+      it('writes no cause on a lesson it schedules', async () => {
+        arrangePublish([template()], { closures: [away({ userId: OTHER_TEACHER_ID })] });
+        await publishOneDay();
+        const { data } = tx.calendarLesson.create.mock.calls[0]![0] as { data: Record<string, unknown> };
+        expect(data.status).toBe('SCHEDULED');
+        expect('cancelCause' in data).toBe(false);
       });
 
       it('leaves a lesson with no room alone when a closure names no room either', async () => {

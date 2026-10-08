@@ -368,6 +368,46 @@ describe('Scheduling surface (e2e)', () => {
         .expect(200);
     });
 
+    it('stores the cause the absence page sends, and MANUAL when a cancel sends none', async () => {
+      const arrange = () => {
+        harness.tx['calendarLesson']!['findUnique']!.mockResolvedValue(lessonRow());
+        harness.tx['calendarLesson']!['update']!.mockResolvedValue({ id: LESSON_ID, status: 'CANCELLED', note: null });
+        harness.tx['studentGroupMember']!['findMany']!.mockResolvedValue([]);
+        harness.tx['guardianStudent']!['findMany']!.mockResolvedValue([]);
+        harness.tx['notification']!['createMany']!.mockResolvedValue({ count: 0 });
+      };
+      const written = () =>
+        (harness.tx['calendarLesson']!['update']!.mock.calls.at(-1)![0] as { data: { cancelCause?: string } }).data
+          .cancelCause;
+
+      arrange();
+      await request(http())
+        .patch(`/api/v1/calendar-lessons/${LESSON_ID}/cancel`)
+        .set('x-test-user', admin())
+        .send({ cause: 'TEACHER_UNAVAILABLE' })
+        .expect(200);
+      expect(written()).toBe('TEACHER_UNAVAILABLE');
+
+      arrange();
+      await request(http())
+        .patch(`/api/v1/calendar-lessons/${LESSON_ID}/cancel`)
+        .set('x-test-user', admin())
+        .send({})
+        .expect(200);
+      expect(written()).toBe('MANUAL');
+    });
+
+    it('400s a cause the column does not have, naming the field', async () => {
+      harness.tx['calendarLesson']!['update']!.mockClear();
+      const response = await request(http())
+        .patch(`/api/v1/calendar-lessons/${LESSON_ID}/cancel`)
+        .set('x-test-user', admin())
+        .send({ cause: 'SICK' })
+        .expect(400);
+      expect(JSON.stringify(response.body)).toContain("cause: 'TEACHER_UNAVAILABLE'");
+      expect(harness.tx['calendarLesson']!['update']).not.toHaveBeenCalled();
+    });
+
     it('clears a room with an explicit null', async () => {
       // `null` is meaningful here — it removes the room rather than leaving
       // it untouched — so the DTO must accept it where a uuid would go.
