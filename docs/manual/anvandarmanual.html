@@ -668,16 +668,24 @@
     minuter, med skillnaden mot målet bredvid.
   </p>
   <p>
-    Rutan <span class="ui">Dela upp resten i en kortare lektion</span> är
-    ikryssad från början. Då når posten målet utan överskott där det går:
-    175 minuter vid 60 blir <em>2 × 60 + 1 × 55</em>, och skillnaden är 0.
-    En rest på högst halva lektionslängden blir inte en egen kort lektion —
-    en lektion på tio eller tjugo minuter har ingen plats i en skoldag — utan
-    läggs på en av de andra: 200 minuter vid 60 blir <em>2 × 60 + 1 × 80</em>.
-    En uppdelad rad har knappen <span class="ui">Gör enhetlig</span>, som gör
-    den till hela lektioner i stället (3 × 60, <em>+5</em>); <span
-    class="ui">Dela upp igen</span> ångrar det. Kryssar du ur rutan avrundas
-    antalet lektioner uppåt på alla rader, som tidigare. En vikt lektion som
+    Utan att du gör något avrundas antalet lektioner uppåt, som tidigare.
+    Kryssar du i rutan <span class="ui">Dela upp resten så att målet nås utan
+    överskott</span> når posten i stället målet utan överskott där det går:
+    175 minuter vid 60 blir <em>2 × 60 + 1 × 55</em>, och 120 minuter vid 80
+    blir <em>1 × 80 + 1 × 40</em> — ämnet träffar klassen två gånger i veckan,
+    som förut. Bredvid två eller fler lektioner blir en rest på högst halva
+    lektionslängden inte en egen kort lektion — en lektion på tio eller tjugo
+    minuter har ingen plats i en skoldag — utan läggs på en av de andra:
+    200 minuter vid 60 blir <em>1 × 80 + 2 × 60</em>. En rest under 15
+    minuter kan aldrig vara en egen lektion och läggs alltid på en annan
+    (65 minuter vid 60 blir <em>1 × 65</em>), och där schemats steg om fem
+    minuter eller minsta längd på 15 minuter kräver det kan posten hamna
+    några minuter över målet. Varje rad som blir något annat än hela
+    lektioner av den valda längden — även en enhetlig som 45 minuter vid 60,
+    <em>1 × 45</em> — räknas upp ovanför tabellen och har knappen
+    <span class="ui">Gör enhetlig</span>, som gör den till hela lektioner i
+    stället (3 × 60, <em>+5</em>); <span class="ui">Dela upp igen</span>
+    ångrar det. En vikt lektion som
     blir längre än skolans vanliga kan vara för lång för en snäv ramtid eller
     rast; då säger schemaläggningen vilken post det gäller, och
     <span class="ui">Gör enhetlig</span> eller längderna i postens dialog
@@ -819,9 +827,9 @@
       står de där måste de stämma med cellen;</li>
     <li>en tom cell gör posten enhetlig med de lektioner och minuter raden
       säger;</li>
-    <li>en fil utan kolumnen ändrar inga längder: en post med flera längder
-      behåller dem så länge raden säger samma antal lektioner och samma
-      längsta lektion, och blir enhetlig om raden säger något annat.</li>
+    <li>i en fil utan kolumnen behåller en post sina längder så länge raden
+      säger samma antal lektioner och samma längsta lektion; säger raden
+      något annat blir posten enhetlig med radens värden.</li>
   </ul>
   <p>
     När du sparar en post med en lärare frågar SchemaPro skolans inställningar
