@@ -366,7 +366,7 @@
     "loadFailed": "Inga siffror visas, eftersom de skulle bli noll av fel skäl. Byt läsår i väljaren ovan för att försöka igen.",
     "loadFailedHint": "Inga siffror visas, eftersom de skulle bli noll av fel skäl. Byt läsår i väljaren ovan för att försöka igen.",
     "coTeacher": "Medlärare",
-    "coTeacherHint": "Båda lärarna schemaläggs tillsammans; publicerade lektioner får ett LEAD + ASSISTANT-par.",
+    "coTeacherHint": "Båda lärarna schemaläggs tillsammans. I det publicerade schemat har varje lektion två lärare: huvudläraren och medläraren.",
     "advanced": "Avancerat",
     "teacherLoadPercent": "Räknas för lärare (%)",
     "coTeacherLoadPercent": "Räknas för medlärare (%)",
