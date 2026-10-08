@@ -174,6 +174,7 @@ model School {
   localTimplans           LocalTimplan[]
   localTimplanEntries     LocalTimplanEntry[]
   academicYearTimplans    AcademicYearTimplan[]
+  timplanCredits          TimplanCredit[]
 
   @@map("Schools")
 }
@@ -381,6 +382,7 @@ model Subject {
   teacherQualifications TeacherSubjectQualification[]
   localTimplanEntries   LocalTimplanEntry[]
   teacherDuties         TeacherDuty[]
+  timplanCredits        TimplanCredit[]
 
   @@unique([schoolId, code])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -622,6 +624,45 @@ model AcademicYearTimplan {
   @@map("AcademicYearTimplans")
 }
 
+/// Tillgodoräknad undervisningstid: the school's written decision that an
+/// activity on one date counts toward the timplan — "the friluftsdag 25
+/// September counts as 300 min idrott och hälsa for åk 7–9". The absence of a
+/// row is the decision that a day does not count. Read by the timplan's
+/// delivered layer (src/common/timplan-delivered.ts). See 20261009100000.
+model TimplanCredit {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  /// Composite (academicYearId, schoolId) key; cascades with the year.
+  academicYearId String   @db.Uuid
+  date           DateTime @db.Date
+  /// 1..600 (DB CHECK). A split day is several rows.
+  minutes        Int
+  /// Null: undervisningstid without a subject ("Utan ämne"), never "does not
+  /// count" — that is the absence of a row. Composite key, ON DELETE CASCADE.
+  subjectId      String?  @db.Uuid
+  /// Scope: a group, a grade span (judged by the home class's årskurs), or
+  /// neither — the whole school. Never both (DB CHECK).
+  studentGroupId String?  @db.Uuid
+  minGradeLevel  Int?
+  maxGradeLevel  Int?
+  /// Non-blank, at most 80 code points (DB CHECK).
+  name           String
+  /// Null, or non-blank and at most 500 code points (DB CHECK).
+  note           String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(6)
+
+  school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear  @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  subject      Subject?      @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  studentGroup StudentGroup? @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@index([schoolId, academicYearId, date])
+  @@index([studentGroupId, schoolId])
+  @@index([subjectId, schoolId])
+  @@map("TimplanCredits")
+}
+
 model AcademicYear {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId  String   @db.Uuid
@@ -655,6 +696,8 @@ model AcademicYear {
   teacherDuties        TeacherDuty[]
   /// Which lokal timplan each årskurs follows this year.
   timplans             AcademicYearTimplan[]
+  /// The school's decisions that a day's activity counts as undervisningstid.
+  timplanCredits       TimplanCredit[]
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -724,6 +767,8 @@ model StudentGroup {
   calendarLunches         CalendarLunch[]
   /// Mentorskap for this class (TeacherDuty.studentGroupId).
   teacherDuties           TeacherDuty[]
+  /// Credits scoped to this group (TimplanCredit.studentGroupId).
+  timplanCredits          TimplanCredit[]
 
   @@unique([schoolId, academicYearId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.

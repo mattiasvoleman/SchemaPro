@@ -460,6 +460,20 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     kind: 'SKIPPED',
     reason: 'Generation runs of the old year are its history; the new year runs its own.',
   },
+  /**
+   * Not carried, and not counted in the preview. A credit is the school's
+   * decision about ONE date of the old year ("the friluftsdag 25 September
+   * counts as 300 min idrott"); next year's friluftsdagar fall on other dates
+   * and are decided again. Carrying one to a guessed date would credit
+   * minutes for a day that may hold no friluftsdag at all — overstating the
+   * delivered time, which is the very figure Skolinspektionen checks. The lov
+   * that carry are where the breaks page offers "Räkna tid för dagen" again.
+   */
+  TimplanCredit: {
+    kind: 'SKIPPED',
+    reason:
+      'A credit is the school’s decision about one date of the old year; next year’s friluftsdagar have their own dates and are decided again.',
+  },
 };
 
 const isOn = (disposition: Disposition, options: RolloverOptions): boolean =>
