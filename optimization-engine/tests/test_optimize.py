@@ -4166,7 +4166,10 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
     # minutesBefore and minutesAfter are the pupils' own time around a lesson,
     # and they are on the REQUIREMENT because that is where a school configures
     # them: the same Idrott subject needs five minutes for a year-2 class and
-    # twenty for a year-9 one.
+    # twenty for a year-9 one. lessonLengths is sent only for a requirement
+    # whose remaining lessons have two or more lengths; the gateway pins the
+    # uniform set (REQUIREMENT_FIELDS) and this one (REQUIREMENT_FIELDS_MIXED)
+    # in src/optimization/ai-engine-contract.spec.ts.
     assert _field_names(AnonymousRequirement) == {
         "id",
         "subjectId",
@@ -4175,6 +4178,7 @@ def test_the_wire_contract_is_exactly_what_the_gateway_sends() -> None:
         "coTeacherId",
         "lessonsPerWeek",
         "minutesPerLesson",
+        "lessonLengths",
         "minutesBefore",
         "minutesAfter",
         "studentGroupSize",

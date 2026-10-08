@@ -56,6 +56,19 @@ os.environ.setdefault("API_KEY", "validate-key-0000000000000000000000")
 os.environ.setdefault("ALLOWED_ORIGINS", "http://localhost")
 
 
+def _lesson_slots(grid, requirement, lesson):
+    """How long this placed lesson runs, in slots.
+
+    A uniform requirement's lessons all run its one length, as they always
+    have. A split one (lessonLengths, 1 × 80 + 1 × 40) is read off the lesson's
+    own start and end, and the multiset check below holds the engine to the
+    lengths it was sent.
+    """
+    if requirement.lesson_lengths is None:
+        return grid.minutes_to_slots(requirement.minutes_per_lesson)
+    return grid.parse_hhmmss(lesson.end_time) - grid.parse_hhmmss(lesson.start_time)
+
+
 def _occupied(grid, day_of_week, start_time, duration_slots):
     """Absolute slot indices a lesson occupies, plus its day-relative start."""
     day_idx = grid.day_index(day_of_week)
@@ -236,6 +249,7 @@ def validate(grid, request, lessons) -> list[str]:
     }
     per_group_day: dict[tuple, list[tuple[int, int]]] = defaultdict(list)
     placed_by_requirement: dict = defaultdict(int)
+    placed_lengths: dict = defaultdict(list)
 
     for lesson in lessons:
         requirement = req_by_id.get(lesson.requirement_id)
@@ -245,7 +259,8 @@ def validate(grid, request, lessons) -> list[str]:
         placed_by_requirement[requirement.id] += 1
 
         try:
-            duration = grid.minutes_to_slots(requirement.minutes_per_lesson)
+            duration = _lesson_slots(grid, requirement, lesson)
+            placed_lengths[requirement.id].append(duration * grid.slot_minutes)
             day_idx, start_slot, slots = _occupied(
                 grid, lesson.day_of_week, lesson.start_time, duration)
         except ValueError as exc:
@@ -301,6 +316,12 @@ def validate(grid, request, lessons) -> list[str]:
         if got != want:
             problems.append(
                 f"requirement {requirement.id}: {got} lessons placed, {want} requested")
+        elif requirement.lesson_lengths is not None:
+            placed = sorted(placed_lengths.get(requirement.id, []), reverse=True)
+            if placed != list(requirement.lesson_minutes()):
+                problems.append(
+                    f"requirement {requirement.id}: lessons of {placed} minutes placed, "
+                    f"{list(requirement.lesson_minutes())} requested")
 
     # Group-conflict pairs (groups sharing students) must never overlap.
     lessons_by_group: dict = defaultdict(list)
@@ -309,7 +330,7 @@ def validate(grid, request, lessons) -> list[str]:
         if requirement is None:
             continue
         try:
-            duration = grid.minutes_to_slots(requirement.minutes_per_lesson)
+            duration = _lesson_slots(grid, requirement, lesson)
             day_idx, start_slot, _ = _occupied(
                 grid, lesson.day_of_week, lesson.start_time, duration)
         except ValueError:
@@ -340,7 +361,7 @@ def validate(grid, request, lessons) -> list[str]:
             if not _reached_by(constraint, requirement, lesson):
                 continue
             try:
-                duration = grid.minutes_to_slots(requirement.minutes_per_lesson)
+                duration = _lesson_slots(grid, requirement, lesson)
                 day_idx, start_slot, _ = _occupied(
                     grid, lesson.day_of_week, lesson.start_time, duration)
             except ValueError:
