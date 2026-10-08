@@ -712,7 +712,16 @@
 
   <h4>Täckning</h4>
   <p>
-    <span class="ui">Täckning</span> överst på sidan ställer läsårets
+    <span class="ui">Täckning</span> överst på sidan jämför läsårets tid i tre
+    led, en flik vardera: <span class="ui">Planerat mot timplan</span>
+    (timplansposterna mot den lokala timplanen),
+    <span class="ui">Schemalagt mot planerat</span> (grundschemat mot
+    timplansposterna) och <span class="ui">Genomfört mot schemalagt</span>
+    (kalenderns hållna lektioner mot det publicerade). Flikarna finns också när
+    läsåret saknar klasser eller timplan — de två senare behöver ingen timplan.
+  </p>
+  <p>
+    Den första fliken ställer läsårets
     timplansposter mot planen, per klass och per elev. Tabellen har en rad per
     klass och en kolumn per ämne; varje ruta visar <em>planerat / mål</em> i
     minuter per vecka med skillnaden under. Gult är under mål, rött betyder
@@ -741,6 +750,140 @@
       Hur många minuter varje lärare har per ämne visar
       tjänstefördelningen (4.5) och lärarens egen vy
       <span class="path">Min tjänst</span>. Täckningen handlar om elevernas tid.
+    </p>
+  </div>
+
+  <h4>Schemalagt mot planerat</h4>
+  <p>
+    Fliken <span class="ui">Schemalagt mot planerat</span> visar för varje klass
+    och undervisningsgrupp och varje ämne hur många minuter i veckan
+    grundschemat ger mot hur många timplansposterna planerar —
+    <em>schemalagt / planerat</em>, med skillnaden under. Det är samma mått som
+    Skola24 kallar lektionstid. Varje lektion räknas med sin egen längd: en
+    lektion på 55 minuter mot en post på 60 är 5 minuter kort i veckan. Två
+    lektioner på 60 mot en post på 1 × 80 + 1 × 40 stämmer, eftersom det är
+    minuterna som jämförs och inte längderna. En lektion eller post på udda
+    eller jämna veckor räknas till hälften, en med datum efter sin andel av
+    läsårets undervisningsveckor, och parkerade lektioner räknas inte — de
+    står för sig. Ämnen som inte räknas mot timplanen, som mentorstid, är inte
+    med.
+  </p>
+  <p>
+    En grupps rad räknar de lektioner gruppen har och de den går på som
+    extragrupp. Klicka på en grupp för att se lektionerna, till exempel
+    <em>Måndag 08:00–09:00 (udda veckor)</em>, och elevernas skillnad mot
+    planerat som lägsta, mittersta och högsta. Därunder listas elever med en
+    egen brist — oftast en elev i två grupper som får en gemensam lektion en
+    gång men har tid planerad i båda grupperna. En elev som bara ligger under
+    för att gruppen gör det räknas men listas inte. Samma siffror visas medan
+    du arbetar i grundschemat (5.3).
+  </p>
+
+  <h4>Genomfört mot schemalagt</h4>
+  <p>
+    Fliken <span class="ui">Genomfört mot schemalagt</span> räknar den tid
+    kalendern visar som hållen, per grupp, ämne och elev, och ställer den mot
+    det som publicerats. Varje ruta visar <em>genomfört / publicerat</em> i
+    timmar hittills i läsåret och hur stor andel som hölls. Pillret är
+    prognosen för hela läsåret mot planerat: <em>På väg</em>, eller hur många
+    timmar under. Överst står när det räknades, hur långt kalendern är
+    publicerad, och att det räknas efter dagens klasser och grupper.
+  </p>
+  <div class="check">
+    <span class="label">Så räknas genomförd tid</span>
+    <p>
+      En lektion i kalendern räknas som genomförd för en elev när
+      <strong>alla</strong> dessa gäller: den har slutat, den är inte inställd,
+      den har minst en lärare (en vikarie räknas), eleven hör till den — genom
+      sin klass, en undervisningsgrupp, en extragrupp eller med namn — och
+      ämnet räknas mot timplanen. Till det läggs tillgodoräknad tid (nedan) från
+      dagen efter beslutets datum. Regeln finns på ett enda ställe i systemet.
+    </p>
+    <p>
+      <strong>Frånvaro dras inte av.</strong> Undervisningstiden är det skolan
+      erbjuder; att en elev var borta en lektion ändrar inte att lektionen
+      hölls. Frånvaron följs upp i närvaron (6.3).
+    </p>
+    <table>
+      <thead><tr><th style="width:44%">Rad i kalendern</th><th>Räknas som</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Hållen, med lärare</td><td>Genomförd</td></tr>
+        <tr><td class="k">Inställd när läraren inte var tillgänglig</td><td>Förlorad: <em>Inställd – läraren inte tillgänglig</em>. Skrivs vid publicering för en lärarspärr, och när du ställer in från Lärarfrånvaro (6.2).</td></tr>
+        <tr><td class="k">Inställd när salen inte var tillgänglig</td><td>Förlorad: <em>Inställd – salen inte tillgänglig</em>, vid publicering.</td></tr>
+        <tr><td class="k">Inställd av skolan</td><td>Förlorad: <em>Inställd av skolan</em>, när du ställer in i dagsplaneringen eller lektionslistan.</td></tr>
+        <tr><td class="k">Inställd före den här versionen, med annan anteckning</td><td>Förlorad: <em>Inställd – orsak ej registrerad</em>.</td></tr>
+        <tr><td class="k">Utan lärare</td><td>Förlorad, och redovisad för sig: <em>Utan lärare</em>.</td></tr>
+        <tr><td class="k">Inställd på en lov- eller studiedag</td><td>Inte förlorad. Det händer när ett lov läggs in efter publiceringen.</td></tr>
+        <tr><td class="k">Lov och stängda klassdagar</td><td>Ingen rad alls — varken genomförd eller förlorad. Ska dagen räknas används tillgodoräknad tid.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      <strong>Prognosen</strong> är det som genomförts hittills, plus kalenderns
+      lektioner framåt, plus det grundschemat ger resten av läsåret efter det
+      som är publicerat (lov och stängda klassdagar borträknade), plus beslut om
+      tillgodoräknad tid framåt. Den jämförs med planerat för läsåret. Lektioner
+      framåt som saknar lärare räknas inte in, utan redovisas bredvid — prognosen
+      gäller om inget ändras. Dagar som kalendern inte har några rader för —
+      före det första publicerade datumet, eller efter det sista fram till i
+      dag — räknas varken som genomförda eller förlorade och redovisas som
+      <em>utan kalender</em>.
+    </p>
+    <p>
+      Exempel: 7A har matematik 3 × 60 i veckan, och läsåret har 36,4
+      undervisningsveckor för åk 7, alltså 6 552 minuter planerat. Hittills har
+      22 lektioner publicerats och 19 hållits (1 140 minuter); en ställdes in
+      för att läraren var sjuk, en av skolan och en saknade lärare. Kalendern
+      framåt ger 360 minuter och grundschemat resten av läsåret 4 800. Prognosen
+      blir 6 300 minuter, 105,0 timmar — 4,2 timmar under planerat, varav 4,0
+      timmar inställt och utan lärare. Resten, 0,2 timmar, är
+      <em>schemat mot planerat</em>: planeringen räknar en lovdag som en femtedels
+      vecka, medan schemat tappar just den dagens lektioner.
+    </p>
+    <p>
+      Det siffrorna inte kan veta: en elev som bytt klass eller grupp under
+      läsåret räknas efter den klass och de grupper eleven har i dag, och ett
+      avslutat läsårs klasser kan sakna elever. Klasshistorik kommer i en
+      senare version.
+    </p>
+  </div>
+  <p>
+    Klicka på en grupp för att se ämne för ämne: den förlorade tiden per orsak,
+    besluten om tillgodoräknad tid, prognosens delar, och — för skoladmin —
+    elevernas lägsta, mittersta och högsta prognos mot planerat. De elever som
+    beräknas få mindre än planerat utöver vad deras grupper saknar, eller som
+    inte fått någon tid i ett ämne där klassen fått tid, listas med namn;
+    <span class="ui">Visa alla elever</span> listar hela gruppen. Lärare ser
+    grupperna men inga enskilda elever.
+  </p>
+
+  <h4>Tillgodoräknad tid</h4>
+  <p>
+    Skolan avgör själv om en friluftsdag, en temadag eller en lägerskola räknas
+    som undervisningstid. Beslutet skrivs under
+    <span class="path">Planering › Lov &amp; studiedagar</span>, i avsnittet
+    <span class="ui">Tillgodoräknad tid</span>: datum, minuter (1–600 för
+    dagen), ämne och vilka det gäller — hela skolan, några årskurser eller en
+    grupp. En friluftsdag som räknas som 300 minuter idrott och hälsa för åk 7–9
+    är ett beslut; en dag som delas på två ämnen är två. Ämnet kan också vara
+    <em>Inget ämne</em>: tiden räknas då som undervisningstid utan att läggas på
+    något ämne, och syns som <em>Utan ämne</em> i Täckning. En dag utan beslut
+    räknas inte.
+  </p>
+  <p>
+    Varje lov i listan har knappen <span class="ui">Räkna tid för dagen</span>,
+    som öppnar beslutet med lovets namn och första dag, och ett beslut inom ett
+    lov står under lovets namn. Beslut för årskurser når elever efter deras
+    klass årskurs, och en undervisningsgrupp när alla dess elever går i de
+    årskurserna. Tiden räknas som genomförd från dagen efter datumet.
+  </p>
+  <div class="warn">
+    <span class="label">Lektioner samma dag räknas också</span>
+    <p>
+      Ligger beslutet på en vanlig skoldag räknas både beslutet och de
+      lektioner som hålls. Det kan vara rätt — en temaeftermiddag efter en
+      förmiddag med lektioner — men ersätter aktiviteten lektionerna ska de
+      ställas in, eller dagen läggas in som lov. Täckning säger till när ett
+      beslut ligger på en dag med hållna lektioner.
     </p>
   </div>
 
@@ -1455,6 +1598,19 @@
     <li>Specialsalar används till rätt ämnen.</li>
     <li>Eventuella markerade konflikter är åtgärdade.</li>
   </ul>
+  <h4>Lektionstid mot timplansposterna</h4>
+  <p>
+    Knappen <span class="ui">Lektionstid</span> i verktygsraden öppnar en panel
+    under den som jämför grundschemats minuter i veckan med timplansposterna,
+    per grupp och ämne — samma siffror som fliken
+    <span class="ui">Schemalagt mot planerat</span> i Täckning (4.1). Med en grupp
+    vald visas alla dess ämnen; annars bara de som avviker, och hur många ämnen
+    som stämmer. Panelen räknar om när du förkortar en lektion, parkerar eller
+    plockar fram en, ändrar dess veckor eller tar bort den. Att flytta en
+    lektion till en annan dag eller tid ändrar ingenting, eftersom veckans
+    minuter är desamma. <span class="ui">Se alla i Täckning</span> öppnar fliken
+    för den valda gruppen, med eleverna.
+  </p>
   <h4>Justera enskilda lektioner</h4>
   <p>
     Klicka på en lektion för att flytta den eller byta sal och lärare. Varje
@@ -1702,6 +1858,14 @@
     vikarier lektion för lektion, eller ställa in samtliga visade lektioner på
     en gång.
   </p>
+  <p>
+    En lektion som ställs in här registreras som <em>inställd – läraren inte
+    tillgänglig</em>, med anledningen du skriver som anteckning. En lektion som
+    ställs in i dagsplaneringen registreras som <em>inställd av skolan</em>.
+    Inställda lektioner och lektioner som står utan lärare räknas som förlorad
+    undervisningstid i Täckning (4.1), uppdelat efter orsak. En lektion med
+    vikarie räknas som genomförd.
+  </p>
   <div class="note">
     <span class="label">Välj rätt verktyg</span>
     <p>
@@ -1820,7 +1984,7 @@
     <tbody>
       <tr><td class="k">Nytt läsår</td><td>Namn och datum föreslås ett år fram (samma veckodag som i år). Välj <span class="ui">Årskursen som går ut</span> — förslaget kommer från den senast beslutade lokala timplanen, annars från den högsta klassen. Säger de olika måste du välja.</td></tr>
       <tr><td class="k">Klasser och grupper</td><td>Varje klass flyttas upp en årskurs och byter namn därefter: <em>7A</em> blir <em>8A</em>, <em>FA</em> blir <em>1A</em>. Den högsta årskursen går ut. Ändra namnet eller utfallet för en enskild grupp (<span class="ui">Följer med oförändrad</span>, <span class="ui">Följer inte med</span>). För den lägsta årskursen kan du välja <span class="ui">Flyttas upp + ny klass för intaget</span>: 7A blir 8A med sina elever, och en ny, tom 7A öppnas med samma timplansposter men utan lärare. Fem brytare styr om undervisningsgrupper, gruppernas elever, lärarna, klassernas veckoregler och tjänster och uppdrag följer med.</td></tr>
-      <tr><td class="k">Lov</td><td>Inget lov följer med om du inte bockar för det. Datumen föreslås — jullovet flyttas hela veckor, påsklovet följer påsken, övriga behåller sitt veckonummer — och kan ändras. Ett lov vars vecka inte finns nästa år måste få datum.</td></tr>
+      <tr><td class="k">Lov</td><td>Inget lov följer med om du inte bockar för det. Datumen föreslås — jullovet flyttas hela veckor, påsklovet följer påsken, övriga behåller sitt veckonummer — och kan ändras. Ett lov vars vecka inte finns nästa år måste få datum. Besluten om tillgodoräknad tid (4.1) följer inte med: de gäller sina datum, och nästa läsårs friluftsdagar beslutas på nytt.</td></tr>
       <tr><td class="k">Granska</td><td>Allt som skapas och allt som lämnas kvar. Läs särskilt lärare som tas bort från en post (inaktiva, eller utan behörighet för nästa årskurs när behörighetskontrollen står på Vägra), poster vars period hamnar utanför det nya läsåret, och under <span class="ui">Tjänster och uppdrag</span> de lärare vars nedsättning eller eget riktmärke följer med.</td></tr>
     </tbody>
   </table>
