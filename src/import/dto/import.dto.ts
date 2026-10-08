@@ -27,6 +27,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { MaxCodePoints } from '../../common/utils/max-code-points';
@@ -320,8 +321,12 @@ export class ImportRequirementRowDto {
    *
    * Each length 15..240 and at most 40 lessons, CreateTeachingRequirementDto's
    * bounds; the grid and the three-lengths cap are the service's, per row.
+   * Null is refused, as on the timplanspost DTOs — NOT read as absence the way
+   * @IsOptional reads the buffers' null: the service writes a missing list in a
+   * file with the column as [] (uniform), so a null would flatten a split row
+   * the client may have meant to leave alone.
    */
-  @IsOptional()
+  @ValidateIf((_: object, value: unknown) => value !== undefined)
   @IsArray({ message: 'lessonLengths: anges som en lista med en längd per lektion.' })
   @ArrayMaxSize(40, { message: 'lessonLengths: högst 40 lektioner per vecka.' })
   @IsInt({ each: true, message: 'lessonLengths: varje längd anges i hela minuter.' })
