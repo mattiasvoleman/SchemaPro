@@ -19,6 +19,7 @@ import type {
   TeacherContractKind,
   TeacherQualificationKind,
 } from "@/lib/types";
+import { isMixed, lengthPartsOf, type LessonShape } from "@/lib/lesson-lengths";
 
 export const BOM = "﻿";
 
@@ -512,6 +513,7 @@ export function requirementsToCsv(
     coTeacherId: string | null;
     lessonsPerWeek: number;
     minutesPerLesson: number;
+    lessonLengths?: number[];
     minutesBefore: number;
     minutesAfter: number;
     teacherLoadPercent: number;
@@ -530,6 +532,17 @@ export function requirementsToCsv(
   );
   const email = new Map(people.map((person) => [person.id, person.email]));
 
+  // Lektionslängder: a `lektionslangder` column, last, ONLY when some row
+  // the file carries is split. A school that never splits a post gets the
+  // file it always got, byte for byte, and the template is unchanged; the
+  // importer reads the column when it is there and leaves every stored split
+  // alone when it is not (equal scalars keep it).
+  const split = requirements.some(
+    (requirement) =>
+      isMixed(requirement) &&
+      groupName.has(requirement.studentGroupId) &&
+      subjectLabel.has(requirement.subjectId),
+  );
   const rows: string[][] = [];
   for (const requirement of requirements) {
     const group = groupName.get(requirement.studentGroupId);
@@ -567,9 +580,31 @@ export function requirementsToCsv(
       // Always written, 100 included, for the reason the minutes are.
       String(requirement.teacherLoadPercent),
       String(requirement.coTeacherLoadPercent),
+      // The scalars above stay the count and the longest, so an importer that
+      // predates the column still reads a sane row; an empty cell is a
+      // uniform post, which on re-import says "uniform" and nothing else.
+      ...(split ? [isMixed(requirement) ? formatLengthSpec(requirement) : ""] : []),
     ]);
 
   }
 
-  return serializeCsv(CSV_TEMPLATES.requirements.headers, rows);
+  return serializeCsv(
+    split ? [...CSV_TEMPLATES.requirements.headers, LESSON_LENGTHS_HEADER] : CSV_TEMPLATES.requirements.headers,
+    rows,
+  );
+}
+
+/** The timplan file's column for a split post's lengths, ASCII like its neighbours. */
+export const LESSON_LENGTHS_HEADER = "lektionslangder";
+
+/**
+ * A post's lengths as the `lektionslangder` cell writes them: "1x80+1x40",
+ * longest first. ASCII x rather than ×, because the file is opened in Excel on
+ * machines whose code page is not ours, and the importer reads ×, x, X and *
+ * alike (parseLengthSpec in lib/csv.ts).
+ */
+export function formatLengthSpec(row: LessonShape): string {
+  return lengthPartsOf(row)
+    .map((part) => `${part.count}x${part.minutes}`)
+    .join("+");
 }
