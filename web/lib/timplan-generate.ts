@@ -140,7 +140,8 @@ export interface GenerateOverride {
  * What the minutes that do not fill a whole lesson become: SPLIT meets the
  * target with up to two lengths (175 at 60 is 2 × 60 + 1 × 55), ROUND_UP adds
  * a whole lesson (3 × 60, 5 over). The gateway reads an omitted field as
- * ROUND_UP; the dialog always states it.
+ * ROUND_UP, and the dialog omits it unless the admin checks "Dela upp resten",
+ * so a school that never splits sends the body it always sent.
  */
 export type Remainder = "SPLIT" | "ROUND_UP";
 
@@ -244,4 +245,21 @@ export function overridesFrom(
 export function uniformEdit(row: Pick<GenerateProposedRow, "targetMinutesPerWeek">, length: number): RowEdit {
   const lessons = Math.min(MAX_LESSONS_PER_WEEK, Math.max(1, Math.ceil(row.targetMinutesPerWeek / length)));
   return { lessons: String(lessons), minutes: String(length) };
+}
+
+/**
+ * Whether the gateway's row is something other than whole lessons of the
+ * chosen length — what SPLIT made of it that ROUND_UP would not have. Not
+ * only a split row (1 × 80 + 1 × 40): SPLIT also writes a uniform row of
+ * another length, 45 minutes at 60 as 1 × 45 and 65 at 60 as 1 × 65, which
+ * isMixed cannot see. The preview counts, flags and offers "Gör enhetlig" on
+ * every such row. A ROUND_UP row is never one: it is uniformEdit's own post.
+ */
+export function remainderChanged(
+  row: Pick<GenerateProposedRow, "targetMinutesPerWeek" | "lessonsPerWeek" | "minutesPerLesson" | "lessonLengths">,
+  length: number,
+): boolean {
+  if (isMixed(row)) return true;
+  const whole = uniformEdit(row, length);
+  return String(row.lessonsPerWeek) !== whole.lessons || String(row.minutesPerLesson) !== whole.minutes;
 }
