@@ -8,6 +8,8 @@ describe('coverLockedLessons', () => {
     ['a locked 50 cancels the nearest, the 40', [80, 40], [50], [80]],
     ['a locked 75 cancels the nearest, the 80', [80, 40], [75], [40]],
     ['a locked 60 is a tie and cancels the shorter', [80, 40], [60], [80]],
+    // Nearest can under-deliver: 70 + 40 is 110 of 120, as a 45 on 3 × 60 is today.
+    ['a locked 70 cancels the nearest, the 80, and the week is 10 short', [80, 40], [70], [40]],
     ['an exact match is never taken by a nearer guess', [80, 60, 40], [70, 60], [40]],
     ['a locked 80 and a locked 75 cancel both', [80, 40], [80, 75], []],
     ['locks beyond the demand cancel nothing more', [80, 40], [80, 40, 60], []],
