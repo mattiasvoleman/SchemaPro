@@ -176,7 +176,21 @@ describe('CalendarLessonsService', () => {
       expect(tx.calendarLesson.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: LESSON_ID },
-          data: { status: 'CANCELLED', note: 'Fire drill' },
+          data: { status: 'CANCELLED', note: 'Fire drill', cancelCause: 'MANUAL' },
+        }),
+      );
+    });
+
+    it('records the cause the caller names, and MANUAL when it names none', async () => {
+      // The teacher-absence page says why; the free-text reason stays the
+      // note pupils read, and is never a category.
+      arrangeCancel();
+      await expect(
+        service.cancel(LESSON_ID, { reason: 'Sjuk', cause: 'TEACHER_UNAVAILABLE' }, testUser()),
+      ).resolves.toEqual({ id: LESSON_ID, status: 'CANCELLED', note: 'Sjuk' });
+      expect(tx.calendarLesson.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { status: 'CANCELLED', note: 'Sjuk', cancelCause: 'TEACHER_UNAVAILABLE' },
         }),
       );
     });
@@ -188,7 +202,7 @@ describe('CalendarLessonsService', () => {
 
       expect(tx.calendarLesson.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: { status: 'CANCELLED', note: 'Bring calculators' },
+          data: { status: 'CANCELLED', note: 'Bring calculators', cancelCause: 'MANUAL' },
         }),
       );
       // And the email says no more than it was told: no reason, no "Reason:".
@@ -280,7 +294,8 @@ describe('CalendarLessonsService', () => {
       expect(tx.calendarLesson.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: LESSON_ID },
-          data: { status: 'SCHEDULED' },
+          // Held after all: the cause of a cancellation that no longer is goes.
+          data: { status: 'SCHEDULED', cancelCause: null },
         }),
       );
       expect(realtime.notifyLessonChanged).toHaveBeenCalledWith(tx, LESSON_ID);
@@ -432,6 +447,19 @@ describe('CalendarLessonsService', () => {
         ).resolves.toMatchObject({ warnings: [] });
         expect(tx.teacherSubjectQualification.findMany).not.toHaveBeenCalled();
       });
+    });
+
+    it('leaves a CANCELLED lesson cancelled when a substitute is put on it through the API', async () => {
+      // The UIs offer a vikarie on scheduled rows only; the API allows it on a
+      // cancelled one. Neither the status nor the cause moves, so the
+      // timplan's genomförd tid keeps counting the lesson as lost — the
+      // school cancelled it, and a teacher row does not hold it.
+      arrangeAssign({ status: 'CANCELLED', cancelCause: 'TEACHER_UNAVAILABLE' });
+
+      await service.assignSubstitute(LESSON_ID, { teacherId: SUB_ID }, testUser());
+
+      const writes = tx.calendarLesson.update.mock.calls.map(([query]) => (query as { data: object }).data);
+      expect(writes).toEqual([{}]);
     });
 
     it('checks the substitute for overlap against other scheduled lessons only', async () => {

@@ -6132,3 +6132,113 @@ BEGIN
 END
 $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 22: an inställd lektion knows why, and the column is nothing more.
+--
+-- 20261009090000 adds CalendarLessons."cancelCause", a nullable enum with no
+-- default and no CHECK tying it to the status. The catalog half pins that
+-- shape (a default would stamp every new row with a cause it does not have, a
+-- NOT NULL would refuse publish's SCHEDULED rows). The row half: the admin
+-- writes each cause and NULL through the same SQL PostgREST sends, a value
+-- outside the enum is refused, a teacher's write reaches no row (the staff
+-- arm is SELECT only, as before), and a teacher reads the cause.
+-- ---------------------------------------------------------------------------
+
+DO $$
+DECLARE nullable text; typ text; def text; labels text;
+BEGIN
+  SELECT c.is_nullable, c.udt_name, c.column_default INTO nullable, typ, def
+    FROM information_schema.columns c
+   WHERE c.table_schema = 'public' AND c.table_name = 'CalendarLessons' AND c.column_name = 'cancelCause';
+  IF typ IS DISTINCT FROM 'LessonCancelCause' OR nullable IS DISTINCT FROM 'YES' OR def IS NOT NULL THEN
+    RAISE EXCEPTION 'cancel cause: CalendarLessons.cancelCause is % (nullable %, default %), expected a nullable LessonCancelCause with no default',
+      coalesce(typ, '<missing>'), nullable, coalesce(def, 'none');
+  END IF;
+  SELECT string_agg(enumlabel, ',' ORDER BY enumsortorder) INTO labels
+    FROM pg_enum WHERE enumtypid = '"LessonCancelCause"'::regtype;
+  IF labels IS DISTINCT FROM 'TEACHER_UNAVAILABLE,ROOM_UNAVAILABLE,MANUAL' THEN
+    RAISE EXCEPTION 'cancel cause: the enum is (%), expected TEACHER_UNAVAILABLE, ROOM_UNAVAILABLE, MANUAL', labels;
+  END IF;
+END $$;
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  lesson uuid;
+  n bigint;
+BEGIN
+  INSERT INTO "CalendarLessons" ("schoolId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "updatedAt")
+  SELECT school, s.id, g.id, DATE '2099-01-05', timestamptz '2099-01-05 08:00+00', timestamptz '2099-01-05 09:00+00',
+         'SCHEDULED', now()
+    FROM "Subjects" s, "StudentGroups" g
+   WHERE s."schoolId" = school AND g."schoolId" = school
+   ORDER BY s.id, g.id LIMIT 1
+  RETURNING id INTO lesson;
+  IF lesson IS NULL THEN
+    RAISE EXCEPTION 'cancel cause: no subject and group of school A to plant a lesson with';
+  END IF;
+  PERFORM set_config('app.test_rls22_lesson', lesson::text, true);
+  SELECT count(*) INTO n FROM "CalendarLessons" WHERE id = lesson AND "cancelCause" IS NULL;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'cancel cause: a new lesson was not written with no cause';
+  END IF;
+  UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'TEACHER_UNAVAILABLE' WHERE id = lesson;
+  UPDATE "CalendarLessons" SET "cancelCause" = 'MANUAL' WHERE id = lesson;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'cancel cause: an admin could not record a cause (% row(s))', n;
+  END IF;
+  BEGIN
+    UPDATE "CalendarLessons" SET "cancelCause" = 'SICK' WHERE id = lesson;
+    RAISE EXCEPTION 'cancel cause: a cause outside the enum was stored';
+  EXCEPTION WHEN invalid_text_representation THEN NULL;
+  END;
+  -- No CHECK ties it to the status: a reinstated row may keep it; the reader
+  -- never asks a scheduled row.
+  UPDATE "CalendarLessons" SET status = 'SCHEDULED' WHERE id = lesson;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'cancel cause: a status flip with a cause standing was refused';
+  END IF;
+  UPDATE "CalendarLessons" SET status = 'CANCELLED' WHERE id = lesson;
+END
+$$;
+
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object(
+    'sub',
+    (SELECT "authId" FROM "Users"
+      WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+      ORDER BY "authId" LIMIT 1)
+  )::text,
+  true
+);
+
+DO $$
+DECLARE lesson uuid := current_setting('app.test_rls22_lesson')::uuid; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+    RAISE EXCEPTION 'cancel cause: expected to be acting as a TEACHER of school A, resolved role %',
+      coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "CalendarLessons" WHERE id = lesson AND "cancelCause" = 'MANUAL';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'cancel cause: a teacher does not read the cause of a cancelled lesson of the school';
+  END IF;
+  UPDATE "CalendarLessons" SET "cancelCause" = 'TEACHER_UNAVAILABLE' WHERE id = lesson;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'cancel cause: a teacher rewrote the cause of % lesson(s)', n;
+  END IF;
+END
+$$;
+ROLLBACK;

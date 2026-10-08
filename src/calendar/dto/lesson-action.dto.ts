@@ -1,4 +1,5 @@
 import {
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -6,12 +7,27 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+/** What CalendarLessons.cancelCause admits (migration 20261009090000). */
+export const LESSON_CANCEL_CAUSES = ['TEACHER_UNAVAILABLE', 'ROOM_UNAVAILABLE', 'MANUAL'] as const;
+export type LessonCancelCauseValue = (typeof LESSON_CANCEL_CAUSES)[number];
+
 /** Cancels a scheduled lesson, optionally recording a reason. */
 export class CancelLessonDto {
   @IsOptional()
   @IsString()
   @MaxLength(500)
   reason?: string;
+
+  /**
+   * Why, as a category: the teacher-absence page sends TEACHER_UNAVAILABLE.
+   * Optional; absent is MANUAL, "inställd av skolan" — what every cancel
+   * meant before the field existed. The free-text reason stays in `reason`.
+   */
+  @IsOptional()
+  @IsIn(LESSON_CANCEL_CAUSES, {
+    message: "cause: 'TEACHER_UNAVAILABLE', 'ROOM_UNAVAILABLE' eller 'MANUAL'.",
+  })
+  cause?: LessonCancelCauseValue;
 }
 
 /** Assigns a substitute teacher to a single calendar lesson. */
