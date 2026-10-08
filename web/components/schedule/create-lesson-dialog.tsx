@@ -232,9 +232,12 @@ export function CreateLessonDialog({
                 </div>
               ) : null}
               <div>
-                <div className="mb-1 text-xs text-muted-foreground">
+                <label
+                  htmlFor="create-students"
+                  className="mb-1 block text-xs text-muted-foreground"
+                >
                   {t("participantStudents")}
-                </div>
+                </label>
                 {draft.studentIds.length > 0 ? (
                   <div className="mb-1.5 flex flex-wrap gap-1">
                     {draft.studentIds.map((studentId) => {
@@ -263,6 +266,7 @@ export function CreateLessonDialog({
                   </div>
                 ) : null}
                 <Input
+                  id="create-students"
                   placeholder={t("participantSearch")}
                   value={studentFilter}
                   onChange={(e) => setStudentFilter(e.target.value)}

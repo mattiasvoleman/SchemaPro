@@ -123,3 +123,12 @@ describe.each([
     expect(screen.getByRole("textbox", { name: "periodTo" })).toBeInTheDocument();
   });
 });
+
+describe("Lägg till lektion's free-slot search", () => {
+  it("names the pupil search by the label above it, not only by its placeholder", () => {
+    // "Enskilda elever (valfri klass):" was a plain div above the input, so
+    // the field was named by its placeholder alone, which goes when typing.
+    renderCreate();
+    expect(screen.getByRole("textbox", { name: "participantStudents" })).toBeInTheDocument();
+  });
+});
