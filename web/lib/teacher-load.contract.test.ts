@@ -6,6 +6,7 @@ import {
   type LoadInput,
   type TeacherLoadReport,
 } from "@/lib/teacher-load";
+import { isMixed } from "@/lib/lesson-lengths";
 
 /**
  * The same load report, implemented twice, checked against one fixture.
@@ -43,6 +44,15 @@ describe("the load report agrees with the gateway's fixture", () => {
     expect(cases.some((entry) => entry.input.requirements.some((r) => r.coTeacherLoadPercent !== 100))).toBe(true);
     expect(cases.some((entry) => entry.input.duties.length > 0)).toBe(true);
     expect(cases.some((entry) => entry.report.subjectBottlenecks.some((b) => b.short))).toBe(true);
+  });
+
+  it("reaches a split row, every week, odd weeks, co-taught and unstaffed", () => {
+    // Lektionslängder: 1 × 80 + 1 × 40 charges 120, on both sides.
+    const split = cases.flatMap((c) => c.input.requirements).filter((r) => isMixed(r));
+    expect(split.some((r) => r.recurrence === "ALL_WEEKS" && r.teacherId !== null)).toBe(true);
+    expect(split.some((r) => r.recurrence !== "ALL_WEEKS")).toBe(true);
+    expect(split.some((r) => r.coTeacherId !== null && r.coTeacherLoadPercent !== 100)).toBe(true);
+    expect(split.some((r) => r.teacherId === null)).toBe(true);
   });
 
   it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, entry) => {

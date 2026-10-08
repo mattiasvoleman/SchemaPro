@@ -18,6 +18,7 @@
 // header and not repeated here. The body below is that file with the quotes this package's style
 // uses; keep it that way, so a diff of the two shows only the header.
 
+import { shortestLessonOf, weeklyMinutesOf } from "@/lib/lesson-lengths";
 import { standardWeekWeight } from "@/lib/teacher-load";
 import {
   teachingWeeks,
@@ -66,6 +67,8 @@ export interface PlannedRequirement extends TeachingPeriod {
   subjectId: string;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** Lektionslängder, longest first; empty or absent on a uniform row. */
+  lessonLengths?: readonly number[];
 }
 
 export interface PlannedPupilInput {
@@ -304,11 +307,16 @@ export function computePlannedCoverage(input: PlannedCoverageInput): PlannedCove
     if (!found) {
       const span = grade === null ? null : { min: grade, max: grade };
       const weight = standardWeekWeight({ ...row, gradeSpan: span }, year, closures);
-      const perWeek = row.lessonsPerWeek * row.minutesPerLesson;
+      // The row's lessons' minutes (1 × 80 + 1 × 40 is 120), and the OVER
+      // threshold at its SHORTEST lesson: OVER means a whole lesson could go
+      // and the target still be met, and the lesson that could go is the
+      // shortest one. A uniform row reads lessonsPerWeek × minutesPerLesson
+      // and minutesPerLesson, as before.
+      const perWeek = weeklyMinutesOf(row);
       found = {
         week: perWeek * weight,
         year: perWeek * teachingWeeks(row, year, closures, grade),
-        lesson: row.minutesPerLesson * weight,
+        lesson: shortestLessonOf(row) * weight,
       };
       contributions.set(key, found);
     }

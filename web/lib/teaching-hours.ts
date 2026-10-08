@@ -62,6 +62,7 @@
 // figure: nobody is harmed by budgeting for a week that turns out to be a lov,
 // and the opposite error hides an under-taught subject.
 
+import { isMixed, weeklyMinutesOf } from "@/lib/lesson-lengths";
 import type { LessonRecurrence } from "@/lib/types";
 import { addDays, isoWeek, startOfIsoWeek, toDateString } from "@/lib/utils";
 
@@ -122,6 +123,12 @@ export interface ClosedRange {
 export interface RequirementLoad extends TeachingPeriod {
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /**
+   * Lektionslängder, longest first; empty or absent on a uniform row. On a
+   * split row lessonsPerWeek is still the count (what the peaks below sum)
+   * and minutesPerLesson the longest, so only the minutes read the list.
+   */
+  lessonLengths?: readonly number[];
 }
 
 /**
@@ -439,6 +446,11 @@ function load(value: number): number {
  * figure stops counting them. Without `closures` it is the calendar-week
  * overestimate it always was, unchanged to the minute.
  *
+ * A split row (1 × 80 + 1 × 40) is worth its lessons' minutes a week,
+ * lib/lesson-lengths.ts weeklyMinutesOf, never count × longest. A uniform row
+ * keeps the multiplication in the order it always had, so its figure does
+ * not move by an ulp.
+ *
  * It counts weeks and not placed lessons by design, so it answers the timplan
  * question ("is this subject planned for enough hours") before a single lesson
  * has been scheduled. It is therefore planned time, never delivered time, and
@@ -451,11 +463,9 @@ export function annualMinutes(
   closures?: ClosedRange[],
   gradeLevel?: number | null,
 ): number {
-  return (
-    teachingWeeks(req, year, closures, gradeLevel) *
-    load(req.lessonsPerWeek) *
-    load(req.minutesPerLesson)
-  );
+  const weeks = teachingWeeks(req, year, closures, gradeLevel);
+  if (isMixed(req)) return weeks * weeklyMinutesOf(req);
+  return weeks * load(req.lessonsPerWeek) * load(req.minutesPerLesson);
 }
 
 /**
