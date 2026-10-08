@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { ArrowLeftRight, BookOpen } from "lucide-react";
 import type { StaffingWarning } from "@/lib/types";
+import { formatLengths } from "@/lib/lesson-lengths-text";
 import { Button } from "@/components/ui/button";
 import { TeacherSuggestions } from "@/components/staffing/teacher-suggestions";
 import { WarningsNotice } from "@/components/staffing/staffing-notices";
@@ -16,6 +17,8 @@ export interface TeacherRequirementRow {
   coTeacherId: string | null;
   lessonsPerWeek: number;
   minutesPerLesson: number;
+  /** Lektionslängder, longest first; empty or absent when uniform. */
+  lessonLengths?: number[];
 }
 
 /**
@@ -76,10 +79,7 @@ export function TeacherRequirementsCard({
                   <span>
                     <span className="font-medium">{label}</span>{" "}
                     <span className="text-muted-foreground">
-                      {t("teacherRowLessons", {
-                        lessons: row.lessonsPerWeek,
-                        minutes: row.minutesPerLesson,
-                      })}
+                      {t("teacherRowLessons", { post: formatLengths(row) })}
                       {leads ? "" : ` · ${t("teacherRowCoTeacher")}`}
                     </span>
                   </span>

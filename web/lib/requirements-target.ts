@@ -35,6 +35,7 @@ import {
   type PlannedStatus,
 } from "@/lib/timplan-planned";
 import type { ClosedRange, YearBounds } from "@/lib/teaching-hours";
+import { shapeFromDraft, type DraftPart } from "@/lib/lesson-lengths-text";
 import type { LessonRecurrence, StudentGroup, Subject, TeachingRequirement } from "@/lib/types";
 
 /** What the matrix needs to have loaded before Mål mode can say anything. */
@@ -53,6 +54,7 @@ export interface TargetSources {
     | "subjectId"
     | "lessonsPerWeek"
     | "minutesPerLesson"
+    | "lessonLengths"
     | "recurrence"
     | "startDate"
     | "endDate"
@@ -110,6 +112,9 @@ function toPlannedRequirement(row: TargetSources["requirements"][number]): Plann
     subjectId: row.subjectId,
     lessonsPerWeek: row.lessonsPerWeek,
     minutesPerLesson: row.minutesPerLesson,
+    // Passed on, or Mål mode would count 1 × 80 + 1 × 40 as 2 × 80. Absent
+    // stays absent: a uniform row reaches the module exactly as before.
+    ...(row.lessonLengths && row.lessonLengths.length > 0 ? { lessonLengths: row.lessonLengths } : {}),
     recurrence: row.recurrence ?? "ALL_WEEKS",
     startDate: row.startDate ?? null,
     endDate: row.endDate ?? null,
@@ -315,6 +320,11 @@ export function buildTargetView(coverage: PlannedCoverage, plans: PlannedPlan[])
 export interface DraftFields {
   lessonsPerWeek: string;
   minutesPerLesson: string;
+  /**
+   * Lektionslängder: the lengths after the first, as the dialog holds them.
+   * Absent or empty is a uniform post, judged exactly as it always was.
+   */
+  extraLengths?: readonly DraftPart[];
   recurrence: LessonRecurrence;
   /** "" for the year's own boundary. */
   startDate: string;
@@ -351,6 +361,8 @@ export type DraftHint =
       status: PlannedStatus | null;
       lessonsPerWeek: number;
       minutesPerLesson: number;
+      /** The post's lengths, longest first; empty when uniform or not valid. */
+      lessonLengths: number[];
       /** The line's other subjects: SvA beside Svenska, the other språkval. */
       partnerSubjectIds: string[];
       /**
@@ -363,13 +375,24 @@ export type DraftHint =
     };
 
 /** The bounds the dialog's save button and CreateTeachingRequirementDto hold. */
-function validDraft(fields: DraftFields): { lessons: number; minutes: number } | null {
+function validDraft(
+  fields: DraftFields,
+): { lessons: number; minutes: number; lengths: number[] } | null {
+  if (fields.extraLengths && fields.extraLengths.length > 0) {
+    const { shape } = shapeFromDraft([
+      { lessons: fields.lessonsPerWeek, minutes: fields.minutesPerLesson },
+      ...fields.extraLengths,
+    ]);
+    return shape
+      ? { lessons: shape.lessonsPerWeek, minutes: shape.minutesPerLesson, lengths: shape.lessonLengths }
+      : null;
+  }
   const lessons = Number(fields.lessonsPerWeek);
   const minutes = Number(fields.minutesPerLesson);
   if (fields.lessonsPerWeek.trim() === "" || fields.minutesPerLesson.trim() === "") return null;
   if (!Number.isInteger(lessons) || lessons < 1 || lessons > 40) return null;
   if (!Number.isInteger(minutes) || minutes < 15 || minutes > 240) return null;
-  return { lessons, minutes };
+  return { lessons, minutes, lengths: [] };
 }
 
 /**
@@ -412,6 +435,7 @@ export function draftHint(
       subjectId,
       lessonsPerWeek: valid.lessons,
       minutesPerLesson: valid.minutes,
+      ...(valid.lengths.length > 0 ? { lessonLengths: valid.lengths } : {}),
       recurrence: fields.recurrence,
       startDate: fields.startDate === "" ? null : fields.startDate,
       endDate: fields.endDate === "" ? null : fields.endDate,
@@ -454,6 +478,7 @@ export function draftHint(
     status: valid ? line.status : null,
     lessonsPerWeek: valid?.lessons ?? 0,
     minutesPerLesson: valid?.minutes ?? 0,
+    lessonLengths: valid?.lengths ?? [],
     partnerSubjectIds: line.subjectIds.filter((id) => id !== subjectId),
     carriedBy: carried?.status === "PUPILS" ? carried.teachingGroupIds : [],
   };

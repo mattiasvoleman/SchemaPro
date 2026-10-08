@@ -250,7 +250,9 @@ export function useRequirements(academicYearId: string | null) {
             // timplan dialog would then have saved back as 0.
             // The same holds for the two load percentages: left out, the
             // dialog would save every row back at 100.
-            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, minutesBefore, minutesAfter, teacherLoadPercent, coTeacherLoadPercent, recurrence, startDate, endDate",
+            // And lessonLengths: left out, a split row (1 × 80 + 1 × 40) would
+            // read as 2 × 80 everywhere, and the dialog save it back so.
+            "id, academicYearId, subjectId, studentGroupId, teacherId, coTeacherId, lessonsPerWeek, minutesPerLesson, lessonLengths, minutesBefore, minutesAfter, teacherLoadPercent, coTeacherLoadPercent, recurrence, startDate, endDate",
           )
           .eq("academicYearId", academicYearId!)
           .order("id")

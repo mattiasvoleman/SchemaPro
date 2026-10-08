@@ -174,6 +174,15 @@ import {
   type YearBounds,
 } from "@/lib/teaching-hours";
 import type { LessonRecurrence, StaffingWarning, TeachingRequirement } from "@/lib/types";
+import { isMixed, lengthPartsOf } from "@/lib/lesson-lengths";
+import {
+  draftPartsOf,
+  formatLengths,
+  shapeFromDraft,
+  type DraftPart,
+} from "@/lib/lesson-lengths-text";
+import { LessonLengthsFields } from "@/components/timplan/lesson-lengths-fields";
+import { useLengthsInWords } from "@/components/timplan/use-lengths-in-words";
 import type { TargetSources } from "@/lib/requirements-target";
 import type { TargetState } from "@/components/timplan/requirements-target";
 import { subjectColor } from "@/lib/utils";
@@ -268,8 +277,14 @@ interface CellTarget {
 }
 
 interface CellForm {
+  /** The first (longest) length when the post is split, the only one when not. */
   lessonsPerWeek: string;
   minutesPerLesson: string;
+  /**
+   * Lektionslängder: the lengths after the first, empty on a uniform post —
+   * which is every post until "Lägg till en längd" is pressed.
+   */
+  extraLengths: DraftPart[];
   /**
    * The pupils' own extra time, held as text like every other number in this
    * dialog — an emptied `<input type="number">` reads as "", and storing that
@@ -295,6 +310,7 @@ export default function RequirementsPage() {
   // because the master timetable said "udda veckor" first and a requirement
   // that means the same thing must not be given a second wording here.
   const tTimetable = useTranslations("timetable");
+  const lengthsInWords = useLengthsInWords();
   const tCsvImport = useTranslations("csvImport");
   // The candidate badge's words live with the tjänstefördelning that
   // computes them, so the dialog and the matrix name a behörighet the same.
@@ -464,6 +480,7 @@ export default function RequirementsPage() {
     coTeacherId?: string | null;
     lessonsPerWeek?: number;
     minutesPerLesson?: number;
+    lessonLengths?: number[];
     minutesBefore?: number;
     minutesAfter?: number;
     teacherLoadPercent?: number;
@@ -526,6 +543,7 @@ export default function RequirementsPage() {
   const [form, setForm] = useState<CellForm>({
     lessonsPerWeek: "2",
     minutesPerLesson: "60",
+    extraLengths: [],
     minutesBefore: "0",
     minutesAfter: "0",
     teacherId: NO_TEACHER,
@@ -739,9 +757,13 @@ export default function RequirementsPage() {
     const existing = requirementIndex.get(`${groupId}:${subjectId}`) ?? null;
     setCell({ groupId, subjectId, existing });
     setRefusal(null);
+    // A split post opens as its parts, longest first: the first in the
+    // dialog's own two fields, the rest as extra rows under them.
+    const parts = existing && isMixed(existing) ? draftPartsOf(existing) : null;
     setForm({
-      lessonsPerWeek: String(existing?.lessonsPerWeek ?? 2),
-      minutesPerLesson: String(existing?.minutesPerLesson ?? 60),
+      lessonsPerWeek: parts ? parts[0].lessons : String(existing?.lessonsPerWeek ?? 2),
+      minutesPerLesson: parts ? parts[0].minutes : String(existing?.minutesPerLesson ?? 60),
+      extraLengths: parts ? parts.slice(1) : [],
       minutesBefore: String(existing?.minutesBefore ?? 0),
       minutesAfter: String(existing?.minutesAfter ?? 0),
       teacherId: existing?.teacherId ?? NO_TEACHER,
@@ -756,8 +778,28 @@ export default function RequirementsPage() {
 
   const submit = async () => {
     if (!cell || !activeYearId) return;
-    const lessonsPerWeek = Number(form.lessonsPerWeek);
-    const minutesPerLesson = Number(form.minutesPerLesson);
+    // Lektionslängder. A post with one length sends the two numbers exactly as
+    // it always did and no list — unless the stored row is split, when it
+    // also sends lessonLengths: [], the explicit "make it uniform": without
+    // it, scalars equal to the stored count and longest would keep the split
+    // (lesson-shape-merge.ts). A post with more lengths sends the canonical
+    // list and the count and longest it implies, which the gateway checks
+    // against each other.
+    const split =
+      form.extraLengths.length > 0
+        ? shapeFromDraft([
+            { lessons: form.lessonsPerWeek, minutes: form.minutesPerLesson },
+            ...form.extraLengths,
+          ]).shape
+        : null;
+    if (form.extraLengths.length > 0 && !split) return;
+    const lessonsPerWeek = split ? split.lessonsPerWeek : Number(form.lessonsPerWeek);
+    const minutesPerLesson = split ? split.minutesPerLesson : Number(form.minutesPerLesson);
+    const lengths = split
+      ? { lessonLengths: split.lessonLengths }
+      : cell.existing && isMixed(cell.existing)
+        ? { lessonLengths: [] }
+        : {};
     // Always sent, never omitted. Both are plain integers on the requirement
     // with a default of 0 — there is no "leave it alone" value to express the
     // way an emptied date has — so a field cleared back to nothing has to
@@ -798,6 +840,7 @@ export default function RequirementsPage() {
           id: cell.existing.id,
           lessonsPerWeek,
           minutesPerLesson,
+          ...lengths,
           minutesBefore,
           minutesAfter,
           teacherId,
@@ -817,6 +860,7 @@ export default function RequirementsPage() {
           coTeacherId,
           lessonsPerWeek,
           minutesPerLesson,
+          ...lengths,
           minutesBefore,
           minutesAfter,
           teacherLoadPercent,
@@ -1296,6 +1340,22 @@ export default function RequirementsPage() {
                                     group: group.name,
                                     subject: subject.name,
                                   })
+                                : isMixed(requirement)
+                                  ? // A split post says each length in words:
+                                    // "1 lektion à 80 minuter och 1 lektion à
+                                    // 40 minuter", never the count × longest.
+                                    badge
+                                    ? t("cellLabelLengthsPeriod", {
+                                        group: group.name,
+                                        subject: subject.name,
+                                        lengths: lengthsInWords(lengthPartsOf(requirement)),
+                                        note: badge,
+                                      })
+                                    : t("cellLabelLengths", {
+                                        group: group.name,
+                                        subject: subject.name,
+                                        lengths: lengthsInWords(lengthPartsOf(requirement)),
+                                      })
                                 : badge
                                   ? t("cellLabelPeriod", {
                                       group: group.name,
@@ -1339,7 +1399,9 @@ export default function RequirementsPage() {
                             ) : requirement ? (
                               <>
                                 <span className="text-sm font-semibold tabular-nums">
-                                  {requirement.lessonsPerWeek}×{requirement.minutesPerLesson}
+                                  {isMixed(requirement)
+                                    ? formatLengths(requirement, true)
+                                    : `${requirement.lessonsPerWeek}×${requirement.minutesPerLesson}`}
                                 </span>
                                 {teacherLabel(requirement.teacherId) ? (
                                   <span className="max-w-24 truncate text-[10px] leading-tight">
@@ -1435,7 +1497,9 @@ export default function RequirementsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="req-lessons">{t("lessonsPerWeek")}</Label>
+                <Label htmlFor="req-lessons">
+                  {form.extraLengths.length > 0 ? t("lengthLessons", { n: 1 }) : t("lessonsPerWeek")}
+                </Label>
                 <Input
                   id="req-lessons"
                   type="number"
@@ -1446,7 +1510,9 @@ export default function RequirementsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="req-minutes">{t("minutesPerLesson")}</Label>
+                <Label htmlFor="req-minutes">
+                  {form.extraLengths.length > 0 ? t("lengthMinutes", { n: 1 }) : t("minutesPerLesson")}
+                </Label>
                 <Input
                   id="req-minutes"
                   type="number"
@@ -1458,6 +1524,11 @@ export default function RequirementsPage() {
                 />
               </div>
             </div>
+            <LessonLengthsFields
+              first={{ lessons: form.lessonsPerWeek, minutes: form.minutesPerLesson }}
+              extra={form.extraLengths}
+              onChange={(extraLengths) => setForm({ ...form, extraLengths })}
+            />
             {/*
               Mål mode's line under the two numbers it reads: what the
               timplan asks of this class in this subject, and what the post
@@ -1658,6 +1729,13 @@ export default function RequirementsPage() {
                 disabled={
                   Number(form.lessonsPerWeek) < 1 ||
                   Number(form.minutesPerLesson) < 15 ||
+                  // A split post waits until its lengths are a list the
+                  // CHECK would store; the sentence under them says why.
+                  (form.extraLengths.length > 0 &&
+                    shapeFromDraft([
+                      { lessons: form.lessonsPerWeek, minutes: form.minutesPerLesson },
+                      ...form.extraLengths,
+                    ]).problem !== null) ||
                   // The buffers are capped in the database as well as in the
                   // DTO, so an out-of-range number would come back as a 400
                   // about a column the admin did not name. `min`/`max` on the

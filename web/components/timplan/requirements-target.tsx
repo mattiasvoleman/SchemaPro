@@ -61,6 +61,7 @@ import {
   type TargetView,
 } from "@/lib/requirements-target";
 import { formatHours } from "@/lib/teaching-hours";
+import { formatLengths } from "@/lib/lesson-lengths-text";
 import {
   computePlannedCoverage,
   type PlannedCoverageInput,
@@ -439,8 +440,11 @@ export function TargetHint({
       const values = {
         target: hint.target,
         grade: grade(hint.gradeLevel),
-        lessons: hint.lessonsPerWeek,
-        minutes: hint.minutesPerLesson,
+        post: formatLengths({
+          lessonsPerWeek: hint.lessonsPerWeek,
+          minutesPerLesson: hint.minutesPerLesson,
+          lessonLengths: hint.lessonLengths,
+        }),
         planned: hint.planned ?? 0,
         deficit: hint.delta === null ? 0 : -hint.delta,
         surplus: hint.delta ?? 0,
