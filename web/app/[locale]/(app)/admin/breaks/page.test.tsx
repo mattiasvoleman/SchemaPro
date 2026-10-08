@@ -141,6 +141,41 @@ const PASKLOV: BreakFixture = {
   maxGradeLevel: null,
 };
 
+const SUBJECTS = [
+  { id: "s-idh", name: "Idrott och hälsa", countsTowardTimplan: true },
+  { id: "s-ma", name: "Matematik", countsTowardTimplan: true },
+  { id: "s-me", name: "Mentorstid", countsTowardTimplan: false },
+];
+const GROUPS = [
+  { id: "g-7a", name: "7A", academicYearId: "y1", kind: "CLASS", gradeLevel: 7 },
+  { id: "g-old", name: "6A", academicYearId: "y0", kind: "CLASS", gradeLevel: 6 },
+];
+/** A friluftsdag inside höstlovet for åk 7–9, and a temadag on an ordinary Friday for 7A. */
+const FRILUFTSDAG = {
+  id: "c-fril",
+  academicYearId: "y1",
+  date: "2026-10-27",
+  minutes: 300,
+  subjectId: "s-idh",
+  studentGroupId: null,
+  minGradeLevel: 7,
+  maxGradeLevel: 9,
+  name: "Friluftsdag",
+  note: "Rektor 2026-09-01",
+};
+const TEMADAG = {
+  id: "c-tema",
+  academicYearId: "y1",
+  date: "2026-10-02",
+  minutes: 120,
+  subjectId: null,
+  studentGroupId: "g-7a",
+  minGradeLevel: null,
+  maxGradeLevel: null,
+  name: "Temadag",
+  note: null,
+};
+
 const freshState = () => ({
   years: loaded([year]),
   breaks: loaded([HOSTLOV, STUDIEDAG, PASKLOV]),
@@ -159,9 +194,28 @@ const { createMock, updateMock, removeMock } = vi.hoisted(() => ({
   removeMock: vi.fn(),
 }));
 
+/** The year's credits (tillgodoräknad tid) and their three writes. */
+const credits = vi.hoisted(() => ({
+  rows: [] as unknown[],
+  create: vi.fn(),
+  update: vi.fn(),
+  remove: vi.fn(),
+}));
+vi.mock("@/lib/timplan-credit-queries", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/timplan-credit-queries")>()),
+  useTimplanCredits: () => ({ data: credits.rows, isLoading: false, isError: false }),
+  useTimplanCreditActions: () => ({
+    create: { mutateAsync: credits.create, isPending: false },
+    update: { mutateAsync: credits.update, isPending: false },
+    remove: { mutateAsync: credits.remove, isPending: false },
+  }),
+}));
+
 vi.mock("@/lib/queries", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/queries")>()),
   useAcademicYears: () => state.years,
+  useSubjects: () => loaded(SUBJECTS),
+  useGroups: () => loaded(GROUPS),
   useSchoolBreaks: () => state.breaks,
   useSchoolBreakActions: () => ({
     create: { mutateAsync: createMock, isPending: false },
@@ -208,6 +262,10 @@ const fillDates = (from: string, to: string) => {
 
 beforeEach(() => {
   state = freshState();
+  credits.rows = [];
+  credits.create.mockReset().mockResolvedValue(FRILUFTSDAG);
+  credits.update.mockReset().mockResolvedValue(FRILUFTSDAG);
+  credits.remove.mockReset().mockResolvedValue(undefined);
   createMock.mockReset().mockResolvedValue(savedAs(HOSTLOV, 0));
   updateMock.mockReset().mockResolvedValue(savedAs(HOSTLOV, 0));
   removeMock.mockReset().mockResolvedValue(undefined);
@@ -673,5 +731,112 @@ describe("Lovlistan medan den inte vet", () => {
 
     expect(screen.getByText("noResults")).toBeTruthy();
     expect(screen.getByText("empty")).toBeTruthy();
+  });
+});
+
+describe("Tillgodoräknad tid", () => {
+  it("lists the year's decisions by date, with subject and scope in words", () => {
+    credits.rows = [FRILUFTSDAG, TEMADAG];
+    render(<BreaksPage />);
+    const section = screen.getByRole("region", { name: "credits.title" });
+    const rows = within(section).getAllByRole("row").slice(1);
+    expect(rows.map((row) => [...row.querySelectorAll("td")].slice(0, 6).map((cell) => cell.textContent))).toEqual([
+      ["2026-10-02", "Temadag", "120", "credits.subjectNone", "7A", ""],
+      ["2026-10-27", "Friluftsdag", "300", "Idrott och hälsa", "gradeRange(7|9)", "Rektor 2026-09-01"],
+    ]);
+  });
+
+  it("says under a lov what its day counts as, and nothing under the others", () => {
+    credits.rows = [FRILUFTSDAG, TEMADAG];
+    render(<BreaksPage />);
+    expect(rowFor("Höstlov")).toHaveTextContent("credits.countsAs(300|Idrott och hälsa|gradeRange(7|9))");
+    expect(rowFor("Påsklov")).not.toHaveTextContent("credits.countsAs");
+  });
+
+  it("says an empty list plainly, and still offers to add a decision", () => {
+    render(<BreaksPage />);
+    const section = screen.getByRole("region", { name: "credits.title" });
+    expect(within(section).getByText("credits.empty")).toBeInTheDocument();
+    expect(within(section).getByRole("button", { name: "credits.add" })).toBeInTheDocument();
+  });
+
+  it("opens the dialog on a lov's day from the lov's own row, named and dated", async () => {
+    const user = userEvent.setup();
+    render(<BreaksPage />);
+    await user.click(screen.getByRole("button", { name: "credits.addForDayNamed(Höstlov)" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("name")).toHaveValue("Höstlov");
+    expect(within(dialog).getByLabelText("date")).toHaveValue("2026-10-26");
+    // Inside a lov: no lessons that day to count twice.
+    expect(within(dialog).queryByText("overlapHint")).not.toBeInTheDocument();
+  });
+
+  it("refuses to send what the table would refuse, and says why", async () => {
+    const user = userEvent.setup();
+    render(<BreaksPage />);
+    await user.click(screen.getByRole("button", { name: "credits.add" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("name"), { target: { value: "\t\u00a0" } });
+    fireEvent.change(within(dialog).getByLabelText("date"), { target: { value: "2026-10-02" } });
+    fireEvent.change(within(dialog).getByLabelText("minutes"), { target: { value: "601" } });
+    expect(within(dialog).getByText("errors.nameBlank")).toBeInTheDocument();
+    expect(within(dialog).getByText("errors.minutes")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "save" })).toBeDisabled();
+    // An ordinary Friday: lessons held that day count as well, said before the save.
+    expect(within(dialog).getByText("overlapHint")).toBeInTheDocument();
+
+    fireEvent.change(within(dialog).getByLabelText("name"), { target: { value: "x".repeat(81) } });
+    expect(within(dialog).getByText("errors.nameLong")).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("date"), { target: { value: "2027-06-14" } });
+    expect(within(dialog).getByText("errors.dateOutsideYear")).toBeInTheDocument();
+  });
+
+  it("sends the whole scope triple and a trimmed name, and shows the server's own refusal", async () => {
+    credits.create.mockRejectedValueOnce(new Error("studentGroupId: gruppen hör till ett annat läsår."));
+    const user = userEvent.setup();
+    render(<BreaksPage />);
+    await user.click(screen.getByRole("button", { name: "credits.add" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByLabelText("name"), { target: { value: "  Friluftsdag " } });
+    fireEvent.change(within(dialog).getByLabelText("date"), { target: { value: "2026-10-27" } });
+    fireEvent.change(within(dialog).getByLabelText("minutes"), { target: { value: "300" } });
+    await user.click(within(dialog).getByRole("button", { name: "save" }));
+    expect(credits.create).toHaveBeenCalledWith({
+      academicYearId: "y1",
+      name: "Friluftsdag",
+      date: "2026-10-27",
+      minutes: 300,
+      subjectId: null,
+      studentGroupId: null,
+      minGradeLevel: null,
+      maxGradeLevel: null,
+      note: null,
+    });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("studentGroupId: gruppen hör till ett annat läsår.");
+  });
+
+  it("edits a decision in place, sending its id and the scope it now has", async () => {
+    credits.rows = [FRILUFTSDAG];
+    const user = userEvent.setup();
+    render(<BreaksPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Friluftsdag)" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("minutes")).toHaveValue("300");
+    fireEvent.change(within(dialog).getByLabelText("minutes"), { target: { value: "240" } });
+    await user.click(within(dialog).getByRole("button", { name: "save" }));
+    expect(credits.update).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "c-fril", minutes: 240, minGradeLevel: 7, maxGradeLevel: 9, studentGroupId: null }),
+    );
+  });
+
+  it("says on the delete confirm that the time stops counting, and deletes on confirm", async () => {
+    credits.rows = [TEMADAG];
+    const user = userEvent.setup();
+    render(<BreaksPage />);
+    await user.click(screen.getByRole("button", { name: "deleteNamed(Temadag)" }));
+    const confirm = await screen.findByRole("dialog");
+    expect(within(confirm).getByText("credits.deleteBody")).toBeInTheDocument();
+    await user.click(within(confirm).getByRole("button", { name: "delete" }));
+    expect(credits.remove).toHaveBeenCalledWith("c-tema");
   });
 });

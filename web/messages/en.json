@@ -814,7 +814,46 @@
     "noYear": "Create and activate an academic year first.",
     "loadFailed": "The list of holidays could not be fetched.",
     "loadFailedHint": "No list is shown, because an empty one would mean the school has no holidays at all. Switch the year above to try again.",
-    "tableCaption": "The academic year's holidays and staff days, earliest first. Each row is a period the school is not teaching, and the curriculum's hours deduct it."
+    "tableCaption": "The academic year's holidays and staff days, earliest first. Each row is a period the school is not teaching, and the curriculum's hours deduct it.",
+    "credits": {
+      "title": "Credited teaching time",
+      "intro": "The school's decision that a day's activity counts as teaching time, for instance that an outdoor day counts as 300 minutes of physical education for years 7–9. The time counts as delivered in Coverage from the day after. A day with no decision here does not count.",
+      "add": "Add decision",
+      "edit": "Edit decision",
+      "addForDay": "Credit time for this day",
+      "addForDayNamed": "Credit time for this day: {name}",
+      "dialogIntro": "A decision is about one date. Split a day across subjects with one decision per subject.",
+      "namePlaceholder": "Outdoor day",
+      "minutes": "Minutes",
+      "minutesHint": "1–600 minutes for the day",
+      "subject": "Subject",
+      "subjectNone": "No subject — counts as teaching time",
+      "notCounted": "does not count toward the timplan",
+      "scope": "Applies to",
+      "scopeSchool": "The whole school",
+      "scopeGrades": "Year groups",
+      "scopeGroup": "One group",
+      "gradesHint": "Pupils count by their class's year. A teaching group counts when all its pupils are in those years.",
+      "group": "Group",
+      "groupPlaceholder": "Choose a group",
+      "note": "Note",
+      "notePlaceholder": "For instance who decided, and when",
+      "countsAs": "Counts as {minutes} min {subject}, {scope}",
+      "overlapHint": "Lessons held that day count too. Cancel them, or enter the day as a break, if the activity replaces them.",
+      "empty": "No decisions on credited time for this year.",
+      "loadFailed": "The decisions could not be loaded. Reload the page to try again.",
+      "deleteBody": "The time no longer counts as delivered in Coverage.",
+      "errors": {
+        "nameBlank": "The decision needs a name.",
+        "nameLong": "The name can be at most 80 characters.",
+        "dateMissing": "Choose a date.",
+        "dateOutsideYear": "The date is outside the academic year.",
+        "minutes": "Enter 1 to 600 whole minutes.",
+        "span": "The first year cannot be later than the last.",
+        "group": "Choose a group.",
+        "noteLong": "The note can be at most 500 characters."
+      }
+    }
   },
   "generate": {
     "title": "Generate schedule",
@@ -2013,7 +2052,8 @@
       "MasterLesson": "The base schedule ({count, plural, one {# lesson} other {# lessons}}) — next year’s schedule is generated for the new classes, and that can be done as soon as the year is created, before its activation.",
       "LunchSitting": "The lunch sittings ({count}) — they are placed against the new schedule.",
       "TeacherEmployment": "The teaching posts ({count}) — turn on Teaching posts and duties are carried over in step 2, or bring them over later from the staffing page.",
-      "TeacherDuty": "The duties ({count}), with their blocked slots and mentorships."
+      "TeacherDuty": "The duties ({count}), with their blocked slots and mentorships.",
+      "TimplanCredit": "Credited teaching time — the decisions are about dates in the old year. Next year's outdoor days have their own dates and are decided again under Holidays and staff days."
     },
     "skippedHistory": "The old year’s history — the calendar, attendance, saved versions and generation runs — stays with it.",
     "sharedSettings": "Frame times, breaks, lunch flows, the lunch setting, per-grade rules, teachers’ working-time rules and room preferences belong to no year: they apply to both years, and a change takes effect in both at once.",
