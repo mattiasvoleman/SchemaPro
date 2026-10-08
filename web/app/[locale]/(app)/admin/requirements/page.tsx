@@ -151,7 +151,7 @@ import {
 } from "@/lib/queries";
 import { useStaffingLoad, useTeacherQualifications } from "@/lib/staffing-queries";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
-import { requirementsToCsv } from "@/lib/csv-export";
+import { requirementsToCsv } from "@/lib/requirements-csv-export";
 import { buildGradeSpans } from "@/lib/grade-span";
 import { useYearRosters } from "@/lib/planning-year";
 import { withProjectedHomes } from "@/lib/projected-rosters";
