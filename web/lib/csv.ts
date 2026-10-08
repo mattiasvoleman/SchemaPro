@@ -19,7 +19,7 @@ import type {
   TeacherDutyKind,
   TeacherQualificationKind,
 } from "@/lib/types";
-import { BOM } from "@/lib/csv-export";
+import { BOM, normalizeHeader } from "@/lib/csv-export";
 import {
   LESSON_GRID_MINUTES,
   LESSON_MAX_MINUTES,
@@ -37,22 +37,6 @@ export interface ParsedCsv {
   /** Data rows (header excluded), each padded/truncated to headers.length. */
   rows: string[][];
   delimiter: ";" | ",";
-}
-
-/**
- * Header matching that survives humans: case-insensitive, trimmed, and
- * diacritic-free, so "Förnamn", "FÖRNAMN" and "fornamn" all resolve alike.
- * A mis-encoded header ("FÃ¶rnamn", UTF-8 read as Latin-1) is NOT rescued —
- * the mojibake decomposes to the wrong base letter — and fails loudly with a
- * missing-column message, which is the right outcome: the file's DATA is
- * equally mangled and silently importing it would corrupt names.
- */
-export function normalizeHeader(header: string): string {
-  return header
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]/gi, "")
-    .toLowerCase();
 }
 
 /** Pick the delimiter that splits the header row into the most fields. */

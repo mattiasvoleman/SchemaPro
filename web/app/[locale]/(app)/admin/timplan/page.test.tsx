@@ -138,8 +138,11 @@ vi.mock("@/i18n/navigation", () => ({
   ),
 }));
 
-vi.mock("@/lib/csv", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/csv")>()),
+// The export module, which lib/csv re-exports: the page imports downloadCsv
+// from it directly, and the import dialog's template link reaches the same
+// function through lib/csv.
+vi.mock("@/lib/csv-export", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/csv-export")>()),
   downloadCsv: (...args: unknown[]) => state.download(...args),
 }));
 
