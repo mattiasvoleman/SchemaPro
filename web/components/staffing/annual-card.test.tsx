@@ -45,6 +45,8 @@ describe("AnnualCard", () => {
   it("says räknad tid under the Faktor model, and points the admin at the settings", () => {
     render(<AnnualCard annual={ferie} loadModel="FACTOR" showSettingsPath />);
     expect(rows()[0]).toBe("teachingHoursFactor=hours(573,5)");
+    // The share of regulated time is of räknad tid too, and says so.
+    expect(rows()).toContain("percentOfRegulatedFactor=52,7 %");
     expect(screen.getByText("captionAdmin")).toBeInTheDocument();
   });
 

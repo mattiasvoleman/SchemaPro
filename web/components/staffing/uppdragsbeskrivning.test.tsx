@@ -91,8 +91,28 @@ describe("Uppdragsbeskrivning", () => {
     expect(print).toHaveBeenCalledTimes(1);
   });
 
-  it("calls the minutes räknad tid under the Faktor model", () => {
-    renderPage({ loadModel: "FACTOR" });
-    expect(screen.getByRole("columnheader", { name: "uppdrag.minutesFactor" })).toBeInTheDocument();
+  it("calls every charged figure räknad tid under the Faktor model, with the undervisningstid beside it", () => {
+    // Ma at factor 1,5: 240 minutes taught are 360 charged.
+    const factorLoad = {
+      ...uppdragLoad,
+      assignedMinutesPerWeek: 360,
+      assignments: [{ ...uppdragLoad.assignments![0]!, timeMinutesPerWeek: 240, minutesPerWeek: 360, hoursPerYear: 228 }],
+    };
+    renderPage({ loadModel: "FACTOR", load: factorLoad });
+    const headers = screen.getAllByRole("columnheader").map((header) => header.textContent);
+    expect(headers).toEqual([
+      "uppdrag.subject",
+      "uppdrag.group",
+      "uppdrag.period",
+      "uppdrag.minutesTime",
+      "uppdrag.minutesFactor",
+      "uppdrag.hoursPerYearFactor",
+    ]);
+    const rows = within(screen.getByRole("table")).getAllByRole("row").map((row) => row.textContent);
+    expect(rows[1]).toBe("Matematik7Auppdrag.periodYear240360228");
+    expect(rows[2]).toMatch(/^uppdrag\.total240360/);
+    expect(screen.getByText(`uppdrag.peakFactor(${uppdragLoad.peakMinutesPerWeek})`)).toBeInTheDocument();
+    expect(screen.getByText("uppdrag.factorNote")).toBeInTheDocument();
+    expect(screen.queryByText("uppdrag.hoursPerYear")).toBeNull();
   });
 });

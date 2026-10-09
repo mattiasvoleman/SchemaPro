@@ -149,6 +149,40 @@ export const SAMVERKAN_HEADERS = [
   "Beräkningsmodell",
 ] as const;
 
+/**
+ * Under FACTOR every minute the load report and the reconciliation charge is
+ * RÄKNAD tid — lesson time × the subject's factor — and a file cited in a
+ * samverkan protokoll must not call it undervisning. The charged columns are
+ * renamed, as the matrix and the AnnualCard already say "räknad tid", and the
+ * real lesson time (Σ assignments.timeMinutesPerWeek, never weighted) gets a
+ * column of its own beside it. Under MINUTES the two are the same figure and
+ * the file is exactly SAMVERKAN_HEADERS, unchanged.
+ */
+const FACTOR_HEADER: Partial<Record<(typeof SAMVERKAN_HEADERS)[number], string>> = {
+  "Undervisning min/v (standardvecka)": "Räknad undervisning min/v (standardvecka, faktor)",
+  "Toppvecka min/v": "Räknad toppvecka min/v (faktor)",
+  "Räknat mot riktmärket min/v": "Räknat mot riktmärket min/v (faktor)",
+  "Saldo min/v": "Saldo min/v (räknad tid, faktor)",
+  "Undervisning h/år": "Räknad undervisning h/år (faktor)",
+  "Ämnen min/v": "Ämnen räknad tid min/v (faktor)",
+  "Planerat i perioden min (avrundat per rad)": "Planerat i perioden min (räknad tid, faktor, avrundat per rad)",
+  "Schemalagt i perioden min (avrundat per rad)": "Schemalagt i perioden min (räknad tid, faktor, avrundat per rad)",
+  "Genomfört i perioden min (avrundat per rad)": "Genomfört i perioden min (räknad tid, faktor, avrundat per rad)",
+  "Varav som vikarie min": "Varav som vikarie min (räknad tid, faktor)",
+  "Vikarierad av andra min": "Vikarierad av andra min (räknad tid, faktor)",
+  "Bortfall min": "Bortfall min (räknad tid, faktor)",
+};
+/** Under FACTOR, after the charged undervisning: the lesson time itself. */
+export const SAMVERKAN_TIME_HEADER = "Undervisningstid min/v (standardvecka, utan faktor)";
+const TIME_AFTER = SAMVERKAN_HEADERS.indexOf("Undervisning min/v (standardvecka)") + 1;
+
+export function samverkanHeaders(loadModel: LoadModel): string[] {
+  if (loadModel !== "FACTOR") return [...SAMVERKAN_HEADERS];
+  const headers: string[] = SAMVERKAN_HEADERS.map((header) => FACTOR_HEADER[header] ?? header);
+  headers.splice(TIME_AFTER, 0, SAMVERKAN_TIME_HEADER);
+  return headers;
+}
+
 export function samverkanCsv(input: SamverkanInput): string {
   const loadOf = new Map(input.load.map((row) => [row.userId, row]));
   const recOf = new Map(input.reconciliation.map((row) => [row.userId, row]));
@@ -204,6 +238,10 @@ export function samverkanCsv(input: SamverkanInput): string {
       input.to,
       model,
     ];
+    if (input.loadModel === "FACTOR") {
+      const time = load?.assignments?.reduce((sum, assignment) => sum + assignment.timeMinutesPerWeek, 0);
+      row.splice(TIME_AFTER, 0, whole(time));
+    }
     if (input.qualifications !== null) {
       row.push(
         input.qualifications
@@ -221,7 +259,7 @@ export function samverkanCsv(input: SamverkanInput): string {
     return row;
   });
 
-  const headers: string[] = [...SAMVERKAN_HEADERS];
+  const headers = samverkanHeaders(input.loadModel);
   if (input.qualifications !== null) headers.push("Behörigheter");
   return serializeCsv(headers, rows);
 }

@@ -70,6 +70,13 @@ export function Uppdragsbeskrivning({
   const locale = useLocale();
   const employment = load.employment;
   const assignments = load.assignments ?? [];
+  // Under FACTOR the load row's minutes and hours are räknad tid (lesson time
+  // × the subject's factor). The paper says so on every such figure and
+  // prints the undervisningstid itself beside it, so a protokoll citing it
+  // cannot read charged minutes as minutes taught. MINUTES: one column, as
+  // before — the two figures are the same.
+  const factor = loadModel === "FACTOR";
+  const timeTotal = assignments.reduce((sum, row) => sum + row.timeMinutesPerWeek, 0);
   const ticked = tickedBoxes(duties);
   const day = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", timeZone: "UTC" });
   const dayOf = (value: string) => day.format(new Date(`${value}T00:00:00Z`));
@@ -170,11 +177,16 @@ export function Uppdragsbeskrivning({
                 <th scope="col" className="py-1 pr-2 font-medium">
                   {t("period")}
                 </th>
+                {factor ? (
+                  <th scope="col" className="py-1 pr-2 text-right font-medium">
+                    {t("minutesTime")}
+                  </th>
+                ) : null}
                 <th scope="col" className="py-1 pr-2 text-right font-medium">
-                  {loadModel === "FACTOR" ? t("minutesFactor") : t("minutes")}
+                  {factor ? t("minutesFactor") : t("minutes")}
                 </th>
                 <th scope="col" className="py-1 text-right font-medium">
-                  {t("hoursPerYear")}
+                  {factor ? t("hoursPerYearFactor") : t("hoursPerYear")}
                 </th>
               </tr>
             </thead>
@@ -187,6 +199,9 @@ export function Uppdragsbeskrivning({
                   </td>
                   <td className="py-1 pr-2">{row.groupName}</td>
                   <td className="py-1 pr-2">{periodText(periodOf(row))}</td>
+                  {factor ? (
+                    <td className="py-1 pr-2 text-right tabular-nums">{formatPercent(row.timeMinutesPerWeek)}</td>
+                  ) : null}
                   <td className="py-1 pr-2 text-right tabular-nums">{formatPercent(row.minutesPerWeek)}</td>
                   <td className="py-1 text-right tabular-nums">{formatPercent(row.hoursPerYear)}</td>
                 </tr>
@@ -197,6 +212,9 @@ export function Uppdragsbeskrivning({
                 <th scope="row" colSpan={3} className="py-1 pr-2 text-left">
                   {t("total")}
                 </th>
+                {factor ? (
+                  <td className="py-1 pr-2 text-right tabular-nums">{formatPercent(timeTotal)}</td>
+                ) : null}
                 <td className="py-1 pr-2 text-right tabular-nums">{load.assignedMinutesPerWeek}</td>
                 <td className="py-1 text-right tabular-nums">
                   {formatPercent(load.annual.assignedHoursPerYear)}
@@ -206,8 +224,9 @@ export function Uppdragsbeskrivning({
           </table>
         )}
         <p className="text-muted-foreground print:text-foreground">
-          {t("peak", { minutes: load.peakMinutesPerWeek })}
+          {t(factor ? "peakFactor" : "peak", { minutes: load.peakMinutesPerWeek })}
         </p>
+        {factor ? <p className="text-muted-foreground print:text-foreground">{t("factorNote")}</p> : null}
       </section>
 
       <section className="break-inside-avoid space-y-2" aria-labelledby="uppdrag-duties">
