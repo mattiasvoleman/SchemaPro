@@ -202,6 +202,8 @@ export default function GeneratePage() {
     /** Not a gate: shown with a warning sign, and the run stays possible. */
     warn?: boolean;
     href?: string;
+    /** A second way to meet it, linked after the figure. */
+    action?: { href: string; label: string };
   }[] = [
     /*
      * The year the run is FOR, which is next year's when it is picked — so
@@ -231,7 +233,8 @@ export default function GeneratePage() {
      * the school means while it is still recruiting. Either way it links to
      * the panel where a post is staffed with one click. Met, it shows the
      * check mark and no figure: a "0" beside "Alla timplansposter har
-     * lärare" read as "none of them has one".
+     * lärare" read as "none of them has one". Unmet, it also offers Föreslå
+     * bemanning (staffing Fas 4), which staffs every row it can in one go.
      */
     {
       label: t("preStaffed"),
@@ -239,6 +242,8 @@ export default function GeneratePage() {
       warn: unstaffedCount > 0 && !refusesUnstaffed,
       detail: unstaffedCount === 0 ? "" : t("preStaffedMissing", { count: unstaffedCount }),
       href: unstaffedCount > 0 ? "/admin/staffing#unstaffed" : undefined,
+      action:
+        unstaffedCount > 0 ? { href: "/admin/staffing#propose", label: t("preStaffedPropose") } : undefined,
     },
   ];
 
@@ -349,6 +354,14 @@ export default function GeneratePage() {
                 <span className="tabular-nums text-muted-foreground">
                   {prerequisite.detail}
                 </span>
+                {prerequisite.action ? (
+                  <Link
+                    href={prerequisite.action.href}
+                    className="font-medium text-primary underline-offset-4 hover:underline"
+                  >
+                    {prerequisite.action.label}
+                  </Link>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -475,6 +488,10 @@ export default function GeneratePage() {
               {t("runBlockedUnstaffed")}{" "}
               <Link href="/admin/staffing#unstaffed" className="underline underline-offset-4">
                 {t("preStaffedLink")}
+              </Link>
+              {" · "}
+              <Link href="/admin/staffing#propose" className="underline underline-offset-4">
+                {t("preStaffedPropose")}
               </Link>
             </p>
           ) : null}
