@@ -1251,7 +1251,7 @@
       "notice": {
         "STAFFING_NOTHING_PUBLISHED": "Inget schema är publicerat till kalendern för läsåret. Genomfört är tomt, och planerat och schemalagt jämförs inte.",
         "STAFFING_RANGE_CLAMPED": "Perioden kortades till läsåret: {from} – {to}.",
-        "STAFFING_RANGE_INCLUDES_FUTURE": "Perioden når förbi i dag ({asOfDate}): lektioner som inte har slutat visas som Kommande.",
+        "STAFFING_RANGE_INCLUDES_FUTURE": "Perioden når till i dag ({asOfDate}) eller längre: lektioner som inte har slutat visas som Kommande, medan planerat räknar hela dagen.",
         "STAFFING_RANGE_BEFORE_PUBLISHED": "Kalendern börjar {publishedFrom}: planerat och schemalagt jämförs från den dagen, så tiden före ser inte ut som ett underskott.",
         "STAFFING_RANGE_AFTER_PUBLISHED": "Kalendern är publicerad till {publishedThrough}: planerat och schemalagt jämförs till den dagen.",
         "STAFFING_RANGE_HAS_GAPS": "Kalendern har luckor mellan publiceringar, {days} dagar mellan {from} och {through}. Siffrorna justeras inte för dem.",
