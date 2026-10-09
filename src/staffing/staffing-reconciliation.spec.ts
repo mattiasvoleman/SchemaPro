@@ -265,6 +265,21 @@ describe('buildReconciliation', () => {
     });
   });
 
+  it('names a comparison window that cuts a week, where a fifth of a week per day meets the real lessons', () => {
+    expect(buildReconciliation(base()).notices.map((notice) => notice.code)).not.toContain('STAFFING_RANGE_PARTIAL_WEEKS');
+    // Tuesday 8 September alone: Anna teaches Mon/Wed/Fri, so planned 3 × 60 / 5
+    // = 36 while scheduled is 0 — a schedule that went to plan.
+    const tuesday = buildReconciliation(base({ from: '2026-09-08', to: '2026-09-08' }));
+    expect(row(tuesday, ANNA)).toMatchObject({ planned: 36, scheduled: 0 });
+    expect(tuesday.notices).toContainEqual({
+      code: 'STAFFING_RANGE_PARTIAL_WEEKS',
+      params: { from: '2026-09-08', to: '2026-09-08' },
+    });
+    // A Monday-to-Thursday window cuts the week it ends in.
+    const toThursday = buildReconciliation(base({ from: '2026-09-07', to: '2026-09-17' }));
+    expect(toThursday.notices.map((notice) => notice.code)).toContain('STAFFING_RANGE_PARTIAL_WEEKS');
+  });
+
   it('says so when nothing is published, when the range reaches today, and when it was clamped', () => {
     const result = buildReconciliation(
       base({ published: null, publishedDays: [], credits: [], to: '2026-10-09', clamped: true }),

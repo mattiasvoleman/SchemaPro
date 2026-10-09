@@ -53,6 +53,11 @@ import type { ClosedRange, YearBounds } from './teaching-weeks';
  *              Plus, for the admin, the bortfall per group and subject — every
  *              lost lesson once, in the pupils' lesson minutes, never charged.
  *
+ * PARTIAL WEEKS. Planned spreads a week over its five weekdays; scheduled and
+ * delivered count lessons on the days they fall. A comparison window that
+ * cuts a week (starts Tue–Fri, ends Mon–Thu) is named in a notice, since
+ * there the columns can differ for a schedule that went to plan.
+ *
  * THE COMPARISON STARTS WHERE THE CALENDAR DOES. A range from the year's start
  * when the school first published in October would read August and September
  * as a deficit that is only "not yet published". So planned and scheduled are
@@ -84,6 +89,7 @@ export type StaffingNoticeCode =
   | 'STAFFING_RANGE_BEFORE_PUBLISHED'
   | 'STAFFING_RANGE_AFTER_PUBLISHED'
   | 'STAFFING_RANGE_HAS_GAPS'
+  | 'STAFFING_RANGE_PARTIAL_WEEKS'
   | 'STAFFING_LEAD_BESIDE_SUBSTITUTE';
 
 export interface StaffingNotice {
@@ -206,6 +212,11 @@ const addDays = (date: string, days: number): string => {
   return at.toISOString().slice(0, 10);
 };
 const minDay = (a: string, b: string): string => (a < b ? a : b);
+const weekdayOf = (date: string): number => new Date(`${date}T00:00:00.000Z`).getUTCDay();
+/** Tuesday to Friday: the window cuts the week it starts in. */
+const startsMidWeek = (date: string): boolean => weekdayOf(date) >= 2 && weekdayOf(date) <= 5;
+/** Monday to Thursday: the window cuts the week it ends in. */
+const endsMidWeek = (date: string): boolean => weekdayOf(date) >= 1 && weekdayOf(date) <= 4;
 const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 interface LineTally {
@@ -276,6 +287,15 @@ export function buildReconciliation(input: ReconciliationInput): StaffingReconci
     }
   }
   const comparison = cmpFrom <= cmpTo ? { from: cmpFrom, to: cmpTo } : null;
+  // PLANNED is a fifth of a week per teaching weekday; SCHEDULED and
+  // DELIVERED count the real lessons. Over whole Monday–Friday weeks the two
+  // agree; a window that starts after a Monday or ends before a Friday cuts a
+  // week, and a teacher whose lessons cluster on some weekdays reads a
+  // deviation for a schedule that went to plan. Said, not adjusted: the
+  // window is the one the admin asked for (or the calendar's edge).
+  if (comparison && (startsMidWeek(comparison.from) || endsMidWeek(comparison.to))) {
+    notices.push({ code: 'STAFFING_RANGE_PARTIAL_WEEKS', params: { from: comparison.from, to: comparison.to } });
+  }
 
   const keep = (userId: string): boolean => input.own === null || userId === input.own;
   const tallies = new Map<string, TeacherTally>();

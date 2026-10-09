@@ -1255,6 +1255,7 @@
         "STAFFING_RANGE_BEFORE_PUBLISHED": "The calendar starts {publishedFrom}: planned and scheduled are compared from that day, so the time before does not look like a deficit.",
         "STAFFING_RANGE_AFTER_PUBLISHED": "The calendar is published until {publishedThrough}: planned and scheduled are compared until that day.",
         "STAFFING_RANGE_HAS_GAPS": "The calendar has gaps between publishes, {days} days between {from} and {through}. The figures are not adjusted for them.",
+        "STAFFING_RANGE_PARTIAL_WEEKS": "The comparison {from} – {to} starts or ends mid-week. Planned counts a fifth of the week per school day, scheduled and delivered count each lesson on its own day, so they can differ even when everything went to plan. Choose whole weeks, Monday to Friday, to compare line by line.",
         "STAFFING_LEAD_BESIDE_SUBSTITUTE": "{lessons} held lessons have a teacher left beside a substitute. The time is credited to the substitute and not to them."
       },
       "exportsTitle": "Exports",
