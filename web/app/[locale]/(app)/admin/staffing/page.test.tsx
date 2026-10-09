@@ -466,6 +466,33 @@ describe("StaffingPage", () => {
       }
     });
 
+    it("opens for the year /admin/generate plans (?year=), not the active one", async () => {
+      // Generate may plan a rolled year not yet activated; its "Föreslå
+      // bemanning" opened this page on the ACTIVE year, and an apply there
+      // staffed the wrong year's rows.
+      state.years = [year, lastYear];
+      state.reports = { y0: { ...report, academicYearId: "y0" } };
+      window.history.replaceState(null, "", "?year=y0#propose");
+      try {
+        render(<StaffingPage />);
+        expect(await screen.findByRole("dialog", { name: "proposal" })).toBeInTheDocument();
+        expect(proposalProps.at(-1)).toMatchObject({ academicYearId: "y0", academicYearName: "2025/2026" });
+      } finally {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    });
+
+    it("ignores a ?year= the school does not have", async () => {
+      window.history.replaceState(null, "", "?year=nope#propose");
+      try {
+        render(<StaffingPage />);
+        expect(await screen.findByRole("dialog", { name: "proposal" })).toBeInTheDocument();
+        expect(proposalProps.at(-1)).toMatchObject({ academicYearId: "y1" });
+      } finally {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    });
+
     it("stays mounted after it closes, so the applied toast's Ångra still has it", async () => {
       const user = userEvent.setup();
       render(<StaffingPage />);

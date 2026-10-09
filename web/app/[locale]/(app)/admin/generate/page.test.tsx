@@ -204,12 +204,12 @@ describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
     expect(within(staffedLine()).getByText("generate.preStaffedMissing(2)")).toBeInTheDocument();
     expect(within(staffedLine()).getByRole("link", { name: "generate.preStaffed" })).toHaveAttribute(
       "href",
-      "/admin/staffing#unstaffed",
+      "/admin/staffing?year=y-1#unstaffed",
     );
     // Staffing Fas 4: the proposal that staffs them all in one go, beside it.
     expect(within(staffedLine()).getByRole("link", { name: "generate.preStaffedPropose" })).toHaveAttribute(
       "href",
-      "/admin/staffing#propose",
+      "/admin/staffing?year=y-1#propose",
     );
     expect(runButton()).toBeEnabled();
     expect(screen.queryByText(/generate\.runBlockedUnstaffed/)).toBeNull();
@@ -228,11 +228,11 @@ describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
     expect(reason?.textContent).toContain("generate.runBlockedUnstaffed");
     expect(within(reason!).getByRole("link", { name: "generate.preStaffedLink" })).toHaveAttribute(
       "href",
-      "/admin/staffing#unstaffed",
+      "/admin/staffing?year=y-1#unstaffed",
     );
     expect(within(reason!).getByRole("link", { name: "generate.preStaffedPropose" })).toHaveAttribute(
       "href",
-      "/admin/staffing#propose",
+      "/admin/staffing?year=y-1#propose",
     );
   });
 
@@ -272,7 +272,7 @@ describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
     expect(screen.getByText("Matematik för 7A, Svenska för 7B")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "generate.preStaffedLink" })).toHaveAttribute(
       "href",
-      "/admin/staffing#unstaffed",
+      "/admin/staffing?year=y-1#unstaffed",
     );
   });
 

@@ -136,8 +136,18 @@ export default function StaffingPage() {
   const tCommon = useTranslations("common");
   const { data: years, isLoading: yearsLoading, isError: yearsFailed } = useAcademicYears();
   const [selectedYearId, setSelectedYearId] = useState<string | null>(null);
+  // ?year= from /admin/generate's links, which plan a rolled year not yet
+  // activated, read once after mount as lib/planning-year.ts reads it (not
+  // with useSearchParams, which would opt the route out of static rendering).
+  // No year until it is read, so the active year's report is never fetched
+  // to be thrown away — nor #propose opened on it.
+  const [linked, setLinked] = useState<{ id: string | null } | null>(null);
+  useEffect(() => setLinked({ id: new URLSearchParams(window.location.search).get("year") }), []);
+  const linkedYearId = years?.some((year) => year.id === linked?.id) ? linked!.id : null;
   const activeYearId =
-    selectedYearId ?? years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
+    linked === null
+      ? null
+      : (selectedYearId ?? linkedYearId ?? years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null);
   const activeYear = years?.find((year) => year.id === activeYearId) ?? null;
   /** The year this one was rolled from, when the list holds it. */
   const predecessor = years?.find((year) => year.id === activeYear?.predecessorId) ?? null;
@@ -190,7 +200,7 @@ export default function StaffingPage() {
    * names and tooltips, and a late name is quiet where a late number is a
    * zero stated confidently (see admin/requirements for the argument).
    */
-  const loading = yearsLoading || reportLoading || subjectsLoading;
+  const loading = linked === null || yearsLoading || reportLoading || subjectsLoading;
   const failed = yearsFailed || reportFailed || subjectsFailed;
 
   const personOf = useMemo(() => new Map((people ?? []).map((person) => [person.id, person])), [people]);
