@@ -427,11 +427,53 @@ def test_a_zero_minute_open_row_still_costs_a_row() -> None:
     school.row("Hour", group="7B", minutes=60, eligible=["A"])
 
     problem = _problem(school)
-    assert evaluate(problem, status_quo(problem)).primary == (60 + 0) + (60 + 60)
+    # Two rows unstaffed, then their 0 + 60 lesson minutes as the tie-break.
+    unit = staffing_solver._row_unit(problem)
+    assert unit == 0 + 60 + 1
+    assert evaluate(problem, status_quo(problem)).primary == 2 * unit + (0 + 60)
 
     answer = school.solve()
     assert answer.leads == {"Zero": "A"}
     assert answer.reasons == {"Hour": "NO_CAPACITY_LEFT"}
+
+
+def test_stage_one_staffs_as_many_rows_as_it_can_before_weighing_minutes() -> None:
+    """"Inget förslag bemannar fler poster" is what the dialog says when stage
+    1 is proven, and the manual says the proposal staffs as many rows as it
+    can first. One 300-minute row against two of 100: staffing the two
+    staffs more rows, so the large one is the one left over — and with a split
+    row (charge 150, lesson 300) the same, though its pupils' minutes are more."""
+    school = School(tolerance=0)
+    school.teacher("T", target=300)
+    school.row("A", minutes=300, group="7A", eligible=["T"])
+    school.row("B", minutes=100, group="7B", eligible=["T"])
+    school.row("C", minutes=100, group="7C", eligible=["T"])
+    answer = school.solve()
+    assert answer.response.unstaffed_proven
+    assert answer.leads == {"B": "T", "C": "T"}
+    assert answer.reasons == {"A": "NO_CAPACITY_LEFT"}
+
+    split = School(tolerance=0)
+    split.teacher("T", target=200)
+    split.row("A", minutes=150, lesson=300, group="7A", eligible=["T"])
+    split.row("B", minutes=100, group="7B", eligible=["T"])
+    split.row("C", minutes=100, group="7C", eligible=["T"])
+    answer = split.solve()
+    assert answer.leads == {"B": "T", "C": "T"}
+    assert answer.response.terms.after.unstaffed_rows == 1
+
+
+def test_between_equally_many_unstaffed_rows_the_fewer_minutes_win() -> None:
+    """Rows first, then the pupils' minutes: of two ways to leave one row
+    over, the one leaving the shorter row."""
+    school = School(tolerance=0)
+    school.teacher("T", target=120)
+    school.row("Long", minutes=120, group="7A", eligible=["T"])
+    school.row("Short", minutes=60, group="7B", eligible=["T"])
+    school.row("Other", minutes=60, subject="Sv", group="7C")  # nobody may take it
+    answer = school.solve()
+    assert answer.leads == {"Long": "T"}
+    assert answer.reasons == {"Short": "NO_CAPACITY_LEFT", "Other": "NO_QUALIFIED_TEACHER"}
 
 
 def test_tenths_keep_fractional_rows_that_whole_minutes_would_lose() -> None:

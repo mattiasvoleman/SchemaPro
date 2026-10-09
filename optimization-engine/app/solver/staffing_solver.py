@@ -26,12 +26,13 @@ into an unstaffed one:
   GROWING loads (overTargetFinding, judgeRequirementWrite).
 
 TWO STAGES, NOT ONE WEIGHTED SUM. Stage 1 minimises what stays unstaffed,
-alone; stage 2 minimises everything else under "no more unstaffed than stage
-1 found". A big-M weight on unstaffed rows in one objective could not even
-find the right unstaffed count inside 10 s on the prototype (60 teachers, 400
-rows), and a weight would let a school trade a staffed row for balance. Two
-stages also make `unstaffed_proven` a claim the dialog can state: when stage
-1 is OPTIMAL, no proposal staffs more.
+alone — the number of rows first, then their lesson minutes between answers
+leaving equally many; stage 2 minimises everything else under "no worse
+than stage 1 found". A big-M weight on unstaffed rows in one objective could
+not even find the right unstaffed count inside 10 s on the prototype (60
+teachers, 400 rows), and a weight would let a school trade a staffed row for
+balance. Two stages also make `unstaffed_proven` a claim the dialog can
+state: when stage 1 is OPTIMAL, no proposal staffs more rows.
 
 ONE ANSWER PER SCHOOL WHEN PROVEN. A school has many equally good proposals,
 and the parallel portfolio returns whichever its fastest worker found. When
@@ -100,11 +101,6 @@ MAX_MODEL_VARIABLES = 1_000_000
 #: one such teacher worth 120 minutes of distance from a target at balance 1.
 COUNT_SCALE = 600
 
-#: What an unstaffed row costs in stage 1 on top of its own lesson minutes. A
-#: row of zero minutes is still a row nobody leads; without the base the model
-#: would be indifferent to it.
-ROW_BASE_MINUTES = 60
-
 #: Stage 1's share of the time limit, and its ceiling. It is the cheaper
 #: stage — the prototype proved it in under 1.5 s — and whatever it does not
 #: use passes to stage 2.
@@ -138,6 +134,14 @@ def _tie_break_weight(row: int, teacher: int) -> int:
     z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & _MASK64
     z ^= z >> 31
     return 1 + (z & ((1 << TIE_BREAK_BITS) - 1))
+
+
+def _row_unit(problem: StaffProblem) -> int:
+    """What one unstaffed row costs in stage 1: more than every open row's
+    lesson minutes together, so the row count decides first and the minutes
+    only between answers leaving equally many rows. A row of zero minutes is
+    still a row nobody leads."""
+    return sum(problem.rows[row].lesson_minutes for row in problem.open) + 1
 
 
 def _grades_param(row: AnonymousStaffRequirement) -> str:
@@ -479,6 +483,7 @@ def _unqualified(problem: StaffProblem, row: int, teacher: int) -> bool:
 
 def evaluate(problem: StaffProblem, answer: Assignment) -> Score:
     weights = problem.weights
+    unit = _row_unit(problem)
     load = [teacher.fixed_tenths for teacher in problem.teachers]
     primary = unstaffed_rows = unstaffed_minutes = 0
     continuity = current_changes = unqualified = 0
@@ -487,7 +492,7 @@ def evaluate(problem: StaffProblem, answer: Assignment) -> Score:
         teacher = answer[row]
         spec = problem.rows[row]
         if teacher is None:
-            primary += ROW_BASE_MINUTES + spec.lesson_minutes
+            primary += unit + spec.lesson_minutes
             unstaffed_rows += 1
             unstaffed_minutes += spec.lesson_minutes
             continue
@@ -641,6 +646,7 @@ def build_model(problem: StaffProblem, order: list[tuple[int, int]]) -> StaffMod
     e: dict[int, cp_model.IntVar] = {}
     by_teacher: dict[int, list[tuple[cp_model.IntVar, int]]] = defaultdict(list)
     open_rows = set(problem.open)
+    unit = _row_unit(problem)
 
     primary_vars: list[cp_model.IntVar] = []
     primary_coeffs: list[int] = []
@@ -661,7 +667,7 @@ def build_model(problem: StaffProblem, order: list[tuple[int, int]]) -> StaffMod
             u[row] = slack
             model.AddExactlyOne([slack, *literals])
             primary_vars.append(slack)
-            primary_coeffs.append(ROW_BASE_MINUTES + spec.lesson_minutes)
+            primary_coeffs.append(unit + spec.lesson_minutes)
         else:
             model.AddExactlyOne(literals)
 
