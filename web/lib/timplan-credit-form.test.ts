@@ -4,7 +4,7 @@ import {
   creditForm,
   creditFormProblems,
   EMPTY_CREDIT_FORM,
-  insideAnyBreak,
+  breaksCoverCredit,
   type CreditForm,
 } from "@/lib/timplan-credit-form";
 import { creditsInside } from "@/lib/timplan-credit-queries";
@@ -91,7 +91,33 @@ describe("credits and the lov they belong to", () => {
   ];
   it("puts a credit under the lov its date lies in, first and last day included", () => {
     expect(creditsInside(credits, { startDate: "2026-10-26", endDate: "2026-10-30" }).map((c) => c.id)).toEqual(["a", "b"]);
-    expect(insideAnyBreak("2026-10-30", [{ startDate: "2026-10-26", endDate: "2026-10-30" }])).toBe(true);
-    expect(insideAnyBreak("2026-11-02", [{ startDate: "2026-10-26", endDate: "2026-10-30" }])).toBe(false);
+  });
+
+  it("says a lov covers a credit only when it closes the credit's whole scope that day", () => {
+    const hostlov = { startDate: "2026-10-26", endDate: "2026-10-30", minGradeLevel: null, maxGradeLevel: null };
+    const prao = { startDate: "2026-09-25", endDate: "2026-09-25", minGradeLevel: 7, maxGradeLevel: 9 };
+    const groups = [
+      { id: "g-7a", gradeLevel: 7 },
+      { id: "g-sp", gradeLevel: null },
+    ];
+    const credit = (scope: "school" | "grades" | "group", date: string, extra: Record<string, unknown> = {}) => ({
+      date,
+      scope,
+      minGradeLevel: 7,
+      maxGradeLevel: 9,
+      studentGroupId: "",
+      ...extra,
+    });
+    const covers = (form: ReturnType<typeof credit>) => breaksCoverCredit(form, [hostlov, prao], groups);
+    expect(covers(credit("school", "2026-10-30"))).toBe(true);
+    expect(covers(credit("school", "2026-11-02"))).toBe(false);
+    // The friluftsdag is a lov for åk 7–9 only: åk 1–6 had lessons.
+    expect(covers(credit("school", "2026-09-25"))).toBe(false);
+    expect(covers(credit("grades", "2026-09-25"))).toBe(true);
+    expect(covers(credit("grades", "2026-09-25", { minGradeLevel: 4 }))).toBe(false);
+    expect(covers(credit("group", "2026-09-25", { studentGroupId: "g-7a" }))).toBe(true);
+    // A group without an årskurs is closed only by a lov for everybody.
+    expect(covers(credit("group", "2026-09-25", { studentGroupId: "g-sp" }))).toBe(false);
+    expect(covers(credit("group", "2026-10-27", { studentGroupId: "g-sp" }))).toBe(true);
   });
 });

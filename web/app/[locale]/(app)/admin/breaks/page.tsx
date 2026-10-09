@@ -110,6 +110,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import { EmptyState } from "@/components/ui/empty-state";
 import { GradeSpanField } from "@/components/ui/grade-span-field";
 import { Input } from "@/components/ui/input";
@@ -141,9 +142,15 @@ import {
 
 const KINDS: BreakKind[] = ["HOLIDAY", "STAFF_DAY"];
 
-const CreditDialog = lazy(() =>
-  import("@/components/timplan/credit-dialog").then((module) => ({ default: module.CreditDialog })),
-);
+/*
+ * The credit dialog, fetched on its first open. A chunk that does not arrive
+ * is caught by a DialogLoadBoundary, said in a toast, the dialog closed and
+ * the lazy wrapper made again, so the next open fetches afresh rather than
+ * the error climbing to the root (the app has no error.tsx).
+ */
+const lazyCreditDialog = () =>
+  lazy(() => import("@/components/timplan/credit-dialog").then((module) => ({ default: module.CreditDialog })));
+let CreditDialog = lazyCreditDialog();
 
 /** The credit dialog's state: closed, or open on a credit or a day. */
 interface CreditDialogState {
@@ -234,6 +241,7 @@ export default function BreaksPage() {
   });
   // Mounted from its first open onward, so lazy() fetches nothing before it.
   const [creditDialogUsed, setCreditDialogUsed] = useState(false);
+  const [creditDialogLoad, setCreditDialogLoad] = useState(0);
   const [deletingCredit, setDeletingCredit] = useState<TimplanCredit | null>(null);
   const openCredit = (editing: TimplanCredit | null, prefill: CreditDialogState["prefill"] = null) => {
     setCreditDialogUsed(true);
@@ -295,12 +303,28 @@ export default function BreaksPage() {
     if (min === null || max === null) return t("gradeAll");
     return min === max ? tGrades("grade", { grade: min }) : t("gradeRange", { min, max });
   };
-  /** The credit's subject, "Inget ämne" for none, marked when it does not count. */
+  /**
+   * The credit's subject for the table: "Utan ämne" for none (Täckning's
+   * word for the line), marked when it does not count. The dialog's long
+   * "Inget ämne — räknas som undervisningstid" is a choice, not a label.
+   */
   const creditSubjectLabel = (credit: TimplanCredit): string => {
-    if (credit.subjectId === null) return t("credits.subjectNone");
+    if (credit.subjectId === null) return t("credits.subjectNoneShort");
     const subject = subjectById.get(credit.subjectId);
     if (!subject) return "–";
     return subject.countsTowardTimplan === false ? `${subject.name} (${t("credits.notCounted")})` : subject.name;
+  };
+  /** The sentence under a lov: "Räknas som 300 min Idrott och hälsa, åk 7–9", or why it does not count. */
+  const creditUnderBreak = (credit: TimplanCredit): string => {
+    const scope = creditScopeLabel(credit);
+    if (credit.subjectId === null) {
+      return t("credits.countsAs", { minutes: credit.minutes, subject: t("credits.subjectNoneInline"), scope });
+    }
+    const subject = subjectById.get(credit.subjectId);
+    if (subject?.countsTowardTimplan === false) {
+      return t("credits.countsAsNotCounted", { minutes: credit.minutes, subject: subject.name, scope });
+    }
+    return t("credits.countsAs", { minutes: credit.minutes, subject: subject?.name ?? "–", scope });
   };
 
   const confirmDeleteCredit = async () => {
@@ -552,11 +576,7 @@ export default function BreaksPage() {
                     {schoolBreak.name}
                     {creditsInside(sortedCredits, schoolBreak).map((credit) => (
                       <span key={credit.id} className="block text-xs font-normal leading-relaxed">
-                        {t("credits.countsAs", {
-                          minutes: credit.minutes,
-                          subject: creditSubjectLabel(credit),
-                          scope: creditScopeLabel(credit),
-                        })}
+                        {creditUnderBreak(credit)}
                       </span>
                     ))}
                   </TableCell>
@@ -707,6 +727,16 @@ export default function BreaksPage() {
       ) : null}
 
       {creditDialogUsed && year ? (
+        <DialogLoadBoundary
+          key={creditDialogLoad}
+          onError={(error) => {
+            toast.error(error instanceof Error ? error.message : tCommon("error"));
+            CreditDialog = lazyCreditDialog();
+            setCreditDialog((current) => ({ ...current, open: false }));
+            setCreditDialogUsed(false);
+            setCreditDialogLoad((attempt) => attempt + 1);
+          }}
+        >
         <Suspense fallback={null}>
           <CreditDialog
             open={creditDialog.open}
@@ -719,6 +749,7 @@ export default function BreaksPage() {
             prefill={creditDialog.prefill}
           />
         </Suspense>
+        </DialogLoadBoundary>
       ) : null}
 
       <ConfirmDialog
