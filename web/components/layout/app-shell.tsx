@@ -243,7 +243,7 @@ export function AppShell({ role, userName, email, schoolName, children }: AppShe
   return (
     <div className="flex min-h-screen">
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-sidebar-border bg-sidebar lg:block">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-sidebar-border bg-sidebar lg:block print:hidden">
         {sidebar}
       </aside>
 
@@ -279,8 +279,10 @@ export function AppShell({ role, userName, email, schoolName, children }: AppShe
         min-w-0 the column keeps the viewport's width and the wide content
         scrolls inside its own container instead.
       */}
-      <div className="flex min-h-screen min-w-0 flex-1 flex-col lg:pl-64">
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b bg-background/80 px-4 backdrop-blur sm:px-6">
+      {/* print: the navigation and the header are the screen's, never the
+          paper's (the uppdragsbeskrivning prints from inside main). */}
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col lg:pl-64 print:min-h-0 print:pl-0">
+        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b bg-background/80 px-4 backdrop-blur sm:px-6 print:hidden">
           <Button
             variant="ghost"
             size="icon"
@@ -297,7 +299,7 @@ export function AppShell({ role, userName, email, schoolName, children }: AppShe
           <UserMenu userName={userName} email={email} role={role} />
         </header>
 
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8 print:p-0">{children}</main>
       </div>
     </div>
   );

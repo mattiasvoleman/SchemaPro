@@ -88,3 +88,29 @@
     scrollbar-width: thin;
   }
 }
+
+/*
+ * Paper (staffing Fas 3, the uppdragsbeskrivning): A4 with 15 mm margins and
+ * a white page whatever the screen's theme. What is not printed says so with
+ * Tailwind's print: variants where it is drawn (the app shell's navigation
+ * and header, the Skriv ut button).
+ */
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm;
+  }
+  /* The light theme's surface and ink, also for an admin in dark mode. */
+  :root,
+  .dark {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 8%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 8%;
+    --muted-foreground: 240 4% 30%;
+    --border: 240 6% 80%;
+  }
+  body {
+    background: #fff;
+  }
+}
