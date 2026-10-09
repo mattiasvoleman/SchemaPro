@@ -2347,9 +2347,10 @@
       "sharedWith": "(samma lektioner som {groups})",
       "notice": {
         "publishedLate": "Kalendern börjar {from}, men läsåret {yearStart}. Dagarna före räknas varken som genomförda eller förlorade ({hours} planerad tid för klasserna).",
-        "publishedBehind": "Kalendern är publicerad till och med {through}. Dagarna därefter fram till i dag räknas varken som genomförda eller förlorade — publicera vidare för att de ska räknas.",
+        "publishedBehind": "Kalendern är publicerad till och med {through}. Dagarna därefter fram till i dag räknas varken som genomförda eller förlorade ({hours} planerad tid för klasserna) — publicera vidare för att de ska räknas.",
+        "publishedGap": "Kalendern saknar lektioner {days, plural, one {en skoldag} other {# skoldagar}} mellan {from} och {through}, som ingen publicering skrev. De räknas varken som genomförda eller förlorade ({hours} planerad tid för klasserna).",
         "pastYearRosters": "Läsåret slutade {yearEnd}. Eleverna räknas efter dagens klasser och grupper, så ett avslutat läsårs klasser kan sakna elever.",
-        "drift": "Kalendern framåt skiljer sig från grundschemat med {minutes} min ({lessons, plural, one {# lektion} other {# lektioner}}). Publicera igen för att kalendern ska följa grundschemat.",
+        "drift": "Kalendern framåt har {extra} min som grundschemat inte har och saknar {missing} min som det har ({lessons, plural, one {# lektion} other {# lektioner}}). Publicera igen för att kalendern ska följa grundschemat.",
         "creditOutsideYear": "”{name}” ({date}) ligger utanför läsåret ({yearStart} – {yearEnd}) och räknas inte.",
         "creditSubjectNotCounted": "”{name}” ({date}) gäller ett ämne som inte räknas mot timplanen och räknas inte.",
         "creditReachesNobody": "”{name}” ({date}) gäller ingen klass eller grupp i läsåret och räknas inte.",

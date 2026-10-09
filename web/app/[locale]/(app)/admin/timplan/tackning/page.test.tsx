@@ -34,6 +34,7 @@ const id = (n: number) => `00000000-0000-4000-8000-000000000${n}`;
 const state = vi.hoisted(() => ({
   case: null as unknown as { input: { groups: unknown[]; subjects: unknown[] }; response: TimplanCoverageResponse },
   asked: [] as (string | null)[],
+  tabFails: false,
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -81,9 +82,13 @@ vi.mock("@/components/timplan/coverage-scheduled-tab", () => ({
   ),
 }));
 vi.mock("@/components/timplan/coverage-delivered-tab", () => ({
-  CoverageDeliveredTab: (props: { year: { id: string }; linkedGroup: string | null }) => (
-    <p>delivered-tab {props.year.id} {props.linkedGroup ?? "none"}</p>
-  ),
+  CoverageDeliveredTab: (props: { year: { id: string }; linkedGroup: string | null }) => {
+    // Stands in for a chunk that did not arrive: what the boundary catches.
+    if (state.tabFails) throw new Error("Loading chunk failed");
+    return (
+      <p>delivered-tab {props.year.id} {props.linkedGroup ?? "none"}</p>
+    );
+  },
 }));
 vi.mock("@/i18n/navigation", () => ({
   Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
@@ -265,6 +270,25 @@ describe("TimplanCoveragePage", () => {
     expect(await screen.findByText(`scheduled-tab y-0 ${id(303)}`)).toBeInTheDocument();
     expect(screen.getAllByRole("tab")[1]).toHaveAttribute("aria-selected", "true");
     expect(state.asked.filter((yearId) => yearId !== null)).toEqual([]);
+  });
+
+  it("says a tab whose chunk failed in its panel, keeps the page, and fetches afresh when a tab is chosen again", async () => {
+    window.history.replaceState(null, "", "/admin/timplan/tackning?layer=delivered");
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.tabFails = true;
+    try {
+      const user = userEvent.setup();
+      render(<TimplanCoveragePage />);
+      expect(await screen.findByText("loadFailed")).toBeInTheDocument();
+      // The page is still there: its tablist, and the other tabs reachable.
+      expect(screen.getAllByRole("tab")).toHaveLength(3);
+      state.tabFails = false;
+      await user.click(screen.getAllByRole("tab")[2]!);
+      expect(await screen.findByText(/^delivered-tab y-1/)).toBeInTheDocument();
+    } finally {
+      state.tabFails = false;
+      quiet.mockRestore();
+    }
   });
 
   it("ignores a layer it does not know and shows the planned one", () => {

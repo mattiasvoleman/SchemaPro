@@ -19,7 +19,7 @@
 // Loaded with lazy() when the tab is first chosen, so the planned layer's
 // route carries none of it.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { CalendarDays, TriangleAlert } from "lucide-react";
 import { useMasterLessons } from "@/lib/queries";
@@ -68,6 +68,14 @@ export function CoverageScheduledTab({ year, linkedGroup, groupName, subjects, p
       ...[...used].filter((id) => !knownIds.has(id)).sort().map((id) => ({ id, name: id })),
     ];
   }, [coverage, subjects]);
+
+  // A group reached by a link (the timetable's "Se alla i Täckning") is
+  // scrolled to once its drill-down is on screen — it opens below the whole
+  // table, and P2's tab does the same for its class.
+  useEffect(() => {
+    if (!selected || chosen !== null) return;
+    document.getElementById("tackning-scheduled-group")?.scrollIntoView?.({ block: "start" });
+  }, [selected, chosen]);
 
   if (overview.isLoading || (!coverage && !overview.isError)) return <Skeleton className="h-96 w-full" />;
   if (overview.isError || !coverage) {
@@ -298,7 +306,12 @@ function ScheduledDrillDown({
   );
   const pupils: ScheduledPupil[] =
     drill.data && drill.data.academicYearId === yearId ? (drill.data.pupils ?? []) : [];
-  const ownPupils = pupils.filter((pupil) => pupil.lines.some((line) => own.has(`${pupil.pupilId}|${line.subjectId}`)));
+  // A finding is about one subject: under this group a pupil is listed only
+  // for a subject the group has a line in, and only that line is shown.
+  const groupSubjects = new Set(summary.lines.map((line) => line.subjectId));
+  const ownLine = (pupilId: string, subjectId: string) =>
+    groupSubjects.has(subjectId) && own.has(`${pupilId}|${subjectId}`);
+  const ownPupils = pupils.filter((pupil) => pupil.lines.some((line) => ownLine(pupil.pupilId, line.subjectId)));
   const listed = showAll ? pupils : ownPupils;
 
   return (
@@ -424,7 +437,7 @@ function ScheduledDrillDown({
                   <p className="font-medium">{pupilName(pupil.pupilId)}</p>
                   <ul className="mt-1 space-y-1">
                     {pupil.lines
-                      .filter((line) => showAll || own.has(`${pupil.pupilId}|${line.subjectId}`))
+                      .filter((line) => showAll || ownLine(pupil.pupilId, line.subjectId))
                       .map((line) => {
                         const short = line.scheduledMinutesPerWeek < line.plannedMinutesPerWeek;
                         const sources = line.sources

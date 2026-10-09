@@ -115,7 +115,7 @@ const group7A = (lines: (DeliveredLineSummary | DeliveredLineDetail)[]): Deliver
   kind: "CLASS",
   gradeLevel: 7,
   pupilCount: 2,
-  totals: { published: 1920, delivered: 1740, lost: 180, credited: 420, projected: 10820, plannedYear: 10920 },
+  totals: { published: 1920, delivered: 1740, lost: 180, credited: 420, projected: 10820, plannedYear: 10920, unrecorded: 0 },
   lostByCause: { cancelledTeacherUnavailable: 60, cancelledManual: 60, teacherless: 60 },
   lines,
 });
@@ -124,7 +124,7 @@ const groupFordjupning: DeliveredGroupSummary = {
   kind: "TEACHING_GROUP",
   gradeLevel: null,
   pupilCount: 1,
-  totals: { published: 420, delivered: 360, lost: 60, credited: 0, projected: 2220, plannedYear: 2196 },
+  totals: { published: 420, delivered: 360, lost: 60, credited: 0, projected: 2220, plannedYear: 2196, unrecorded: 0 },
   lostByCause: { cancelledManual: 60 },
   lines: [fordjupningLine],
 };
@@ -133,8 +133,8 @@ const verdicts: DeliveredCoverageResponse["verdicts"] = [
   {
     code: "TIMPLAN_CALENDAR_DRIFT",
     severity: "notice",
-    params: { minutes: -60, lessons: 1 },
-    message: "Kalendern framåt skiljer sig från grundschemat med 60 min (1 lektion i grundschemat).",
+    params: { minutes: -60, extraMinutes: 60, missingMinutes: 0, lessons: 1 },
+    message: "Kalendern framåt har 60 min som grundschemat inte har (1 lektion i grundschemat).",
   },
   {
     code: "TIMPLAN_PROJECTION_SHORT",
@@ -190,7 +190,7 @@ export const DELIVERED_OVERVIEW: DeliveredCoverageResponse = {
   pupilCount: 2,
   pupilsBelowPlanned: 2,
   credits: { count: 2, minutes: 420 },
-  drift: { minutes: -60, lessons: 1 },
+  drift: { minutes: -60, extraMinutes: 60, missingMinutes: 0, lessons: 1 },
   verdicts,
 };
 

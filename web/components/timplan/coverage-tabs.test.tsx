@@ -73,6 +73,7 @@ vi.mock("@/lib/queries", () => ({
   }),
 }));
 vi.mock("next-intl", () => ({
+  useLocale: () => "sv",
   useTranslations: (namespace: string) => (key: string, values?: Record<string, unknown>) =>
     values ? `${namespace}.${key}(${Object.values(values).join("|")})` : `${namespace}.${key}`,
 }));
@@ -159,6 +160,20 @@ describe("CoverageScheduledTab", () => {
     expect(screen.queryByRole("region", { name: "7A" })).not.toBeInTheDocument();
   });
 
+  it("scrolls the linked group's drill-down into view, as the planned tab does", () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      state.scheduled[""] = scheduledCase(TWO_GROUPS).response;
+      state.scheduled["00000000-0000-4000-8000-000000000157"] = scheduledCase(DRILLED).response;
+      render(<CoverageScheduledTab {...props(subjects, "00000000-0000-4000-8000-000000000157")} />);
+      expect(scrolled).toHaveBeenCalledWith({ block: "start" });
+      expect(scrolled.mock.contexts[0]).toHaveAttribute("id", "tackning-scheduled-group");
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
   it("says the year has no grundschema rather than showing a matrix of nothing", () => {
     state.scheduled[""] = scheduledCase(NO_MASTER).response;
     render(<CoverageScheduledTab {...props(subjects)} />);
@@ -194,7 +209,8 @@ describe("CoverageDeliveredTab", () => {
     expect(within(row).getByText("timplanCoverage.delivered.projection.onTrack")).toBeInTheDocument();
     expect(within(row).getByText("180,3 h / 182,0 h")).toBeInTheDocument();
     // The year's notices in the reader's language, from the figures.
-    expect(screen.getByText("timplanCoverage.delivered.notice.drift(60|1)")).toBeInTheDocument();
+    // Drift in its two directions, never netted.
+    expect(screen.getByText("timplanCoverage.delivered.notice.drift(60|0|1)")).toBeInTheDocument();
     expect(screen.getByText("timplanCoverage.delivered.notice.creditOverlaps(Temadag|2026-10-02|120|180)")).toBeInTheDocument();
   });
 
@@ -259,5 +275,80 @@ describe("CoverageDeliveredTab", () => {
     state.delivered[DELIVERED_IDS.class7A] = drill;
     render(<CoverageDeliveredTab {...props(subjects, DELIVERED_IDS.class7A)} />);
     expect(screen.getByRole("row", { name: /Ma7-fördjupning/ })).toBeInTheDocument();
+  });
+
+  it("judges the row's projection against the planned year less the days nothing records, as its cells are", () => {
+    const late: DeliveredCoverageResponse = {
+      ...DELIVERED_OVERVIEW,
+      groups: DELIVERED_OVERVIEW.groups.map((group) =>
+        group.studentGroupId === DELIVERED_IDS.class7A
+          ? { ...group, totals: { ...group.totals, unrecorded: 1224 } }
+          : group,
+      ),
+    };
+    state.delivered[""] = late;
+    render(<CoverageDeliveredTab {...props(subjects)} />);
+    const row = screen.getByRole("row", { name: /^7A/ });
+    // 10 920 − 1 224 = 9 696 minutes: 161,6 h, not the whole year's 182,0 h.
+    expect(within(row).getByText("180,3 h / 161,6 h")).toBeInTheDocument();
+  });
+
+  it("names a gap two publishes left, in the reader's language", () => {
+    state.delivered[""] = {
+      ...DELIVERED_OVERVIEW,
+      verdicts: [
+        ...DELIVERED_OVERVIEW.verdicts,
+        {
+          code: "TIMPLAN_PUBLISHED_GAP",
+          severity: "notice",
+          params: { from: "2027-01-11", through: "2027-01-15", days: 5, unrecordedMinutes: 180 },
+          message: "gap",
+        },
+      ],
+    } as DeliveredCoverageResponse;
+    render(<CoverageDeliveredTab {...props(subjects)} />);
+    expect(
+      screen.getByText("timplanCoverage.delivered.notice.publishedGap(2027-01-11|2027-01-15|5|3,0 h)"),
+    ).toBeInTheDocument();
+  });
+
+  it("scrolls the linked group's drill-down into view once, as the planned tab does", () => {
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    try {
+      state.delivered[""] = DELIVERED_OVERVIEW;
+      state.delivered[DELIVERED_IDS.class7A] = DELIVERED_DRILL_7A;
+      render(<CoverageDeliveredTab {...props(subjects, DELIVERED_IDS.class7A)} />);
+      expect(scrolled).toHaveBeenCalledWith({ block: "start" });
+      expect(scrolled.mock.contexts[0]).toHaveAttribute("id", "tackning-delivered-group");
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  it("lists a pupil's own finding only under a group with a line in its subject, and only that line", async () => {
+    // Bea's finding is in Matematik. Ma7-fördjupning's drill-down has a
+    // Matematik line: she is listed there with it. An Idrott-only group's
+    // drill-down does not list her at all.
+    const idhOnly = {
+      ...DELIVERED_DRILL_7A,
+      groups: DELIVERED_DRILL_7A.groups.map((group) => ({
+        ...group,
+        lines: group.lines.filter((line) => line.key === `subject:${DELIVERED_IDS.idh}`),
+      })),
+    };
+    const overview = {
+      ...DELIVERED_OVERVIEW,
+      groups: DELIVERED_OVERVIEW.groups.map((group) =>
+        group.studentGroupId === DELIVERED_IDS.class7A
+          ? { ...group, lines: group.lines.filter((line) => line.key === `subject:${DELIVERED_IDS.idh}`) }
+          : group,
+      ),
+    };
+    state.delivered[""] = overview;
+    state.delivered[DELIVERED_IDS.class7A] = idhOnly;
+    render(<CoverageDeliveredTab {...props(subjects, DELIVERED_IDS.class7A)} />);
+    const section = screen.getByRole("region", { name: "7A" });
+    expect(within(section).queryByText("Bea Berg")).not.toBeInTheDocument();
   });
 });
