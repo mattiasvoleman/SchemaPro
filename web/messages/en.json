@@ -1275,6 +1275,7 @@
         "notice": {
           "NOT_HT2026": "The columns follow SCB's file description {version}; check against this year's before submitting.",
           "NO_POST": "{name}: teaching but no post registered, so OmfLarare is empty.",
+          "NO_TEACHING": "{name}: a post but no planned teaching, so the row has no verksamhetstyp and no subjects. Fill them in, or report the person in another role (for example OmfSpeciallarare).",
           "FULL_LEAVE": "{name}: fully reduced. The row states the post before the leave and no subjects; set AnstForm L if the person is on leave.",
           "REDUCTION": "{name}: the reduction is counted as partial leave (post − reduction). If it is a lead-teacher, union or other assignment, the whole post should be stated.",
           "FORSTELARARE": "{name}: holds a lead-teacher duty. State its share of the post in the ForsteLarare column.",
