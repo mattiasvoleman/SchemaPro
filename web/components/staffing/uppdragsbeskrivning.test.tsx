@@ -81,6 +81,17 @@ describe("Uppdragsbeskrivning", () => {
     expect(screen.getByText("uppdrag.stampNoVersion(2026-10-09)")).toBeInTheDocument();
   });
 
+  it("never says there is no version while the history is read or after it failed, and waits to print", () => {
+    const { unmount } = renderPage({ version: "loading" });
+    expect(screen.getByText("uppdrag.stampLoading(2026-10-09)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "uppdrag.print" })).toBeDisabled();
+    unmount();
+    renderPage({ version: "unreadable" });
+    expect(screen.getByText("uppdrag.stampUnreadable(2026-10-09)")).toBeInTheDocument();
+    expect(screen.queryByText(/stampNoVersion/)).toBeNull();
+    expect(screen.getByRole("button", { name: "uppdrag.print" })).toBeEnabled();
+  });
+
   it("prints on Skriv ut, and the button itself is not on the paper", async () => {
     const print = vi.spyOn(window, "print").mockImplementation(() => {});
     const user = userEvent.setup();

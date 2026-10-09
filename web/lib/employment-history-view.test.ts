@@ -6,6 +6,7 @@ import {
   formatStamp,
   historyLines,
   latestVersion,
+  versionStampOf,
   type HistoryLabels,
 } from "./employment-history-view";
 import type { HistoryEntry } from "./staffing-history-queries";
@@ -152,5 +153,18 @@ describe("formatStamp and latestVersion", () => {
         entry({ version: 8 }),
       ]),
     ).toEqual({ version: 9, createdAt: "2026-10-10T08:00:00.000Z" });
+  });
+});
+
+describe("versionStampOf", () => {
+  it("says no version only after a successful read; a read in flight or failed is never null", () => {
+    const v7 = entry({ version: 7, createdAt: "2026-10-09T12:02:00.000Z" });
+    expect(versionStampOf({ isSuccess: true, isError: false, data: { entries: [v7] } })).toEqual({
+      version: 7,
+      createdAt: "2026-10-09T12:02:00.000Z",
+    });
+    expect(versionStampOf({ isSuccess: true, isError: false, data: { entries: [] } })).toBeNull();
+    expect(versionStampOf({ isSuccess: false, isError: false, data: undefined })).toBe("loading");
+    expect(versionStampOf({ isSuccess: false, isError: true, data: undefined })).toBe("unreadable");
   });
 });

@@ -141,6 +141,24 @@ export function formatStamp(iso: string, timeZone: string): string {
  * The version the uppdragsbeskrivning cites: the newest of the teacher's year,
  * post and uppdrag alike, since a tjänst is both. Null before the first write.
  */
+/**
+ * What the paper may say about the version, from the history query's state.
+ * Only a history READ — a success — can say "no version": a read still in
+ * flight is "loading" and a failed one "unreadable", never null, so a page
+ * printed during the deploy window (a new web, an old API: 404) or on a 5xx
+ * does not assert that a tjänst with versions 1..7 has none.
+ */
+export type VersionStamp = { version: number; createdAt: string } | null | "loading" | "unreadable";
+
+export function versionStampOf(history: {
+  isSuccess: boolean;
+  isError: boolean;
+  data?: { entries: readonly HistoryEntry[] } | undefined;
+}): VersionStamp {
+  if (history.isSuccess) return latestVersion(history.data?.entries);
+  return history.isError ? "unreadable" : "loading";
+}
+
 export function latestVersion(
   entries: readonly HistoryEntry[] | undefined,
 ): { version: number; createdAt: string } | null {

@@ -36,7 +36,8 @@ vi.mock("@/lib/staffing-queries", () => ({
 vi.mock("@/lib/staffing-history-queries", () => ({
   useEmploymentHistory: (...args: unknown[]) => {
     state.historyArgs.push(args);
-    return { data: undefined };
+    // A read still in flight.
+    return { data: undefined, isSuccess: false, isError: false };
   },
 }));
 vi.mock("@/components/profile-context", () => ({
@@ -65,6 +66,9 @@ describe("the teacher's own uppdragsbeskrivning", () => {
     expect(state.dutyArgs.at(-1)).toEqual(["y0", "t-anna"]);
     expect(state.historyArgs.at(-1)).toEqual(["t-anna", "y0"]);
     expect(screen.getByText("uppdrag.subtitle(Anna Ek|2025/26)")).toBeInTheDocument();
+    // The history has not answered: the paper does not claim there is no version.
+    expect(screen.getByText(/uppdrag\.stampLoading/)).toBeInTheDocument();
+    expect(screen.queryByText(/uppdrag\.stampNoVersion/)).toBeNull();
   });
 
   it("falls back on the active year for an unknown one, never on a person", () => {
