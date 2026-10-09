@@ -26,7 +26,7 @@
 
 import { serializeCsv } from "@/lib/csv-export";
 import { compareSwedish } from "@/lib/sorting";
-import type { GradeSpan, LoadModel, TeacherLoad } from "@/lib/teacher-load";
+import { qualificationValidInYear, type GradeSpan, type LoadModel, type TeacherLoad } from "@/lib/teacher-load";
 import type { TeacherReconciliation } from "@/lib/staffing-reconciliation";
 import type { SchoolForm, Subject, TeacherDuty, TeacherQualification } from "@/lib/types";
 
@@ -103,6 +103,8 @@ export interface SamverkanInput {
   reconciliation: readonly TeacherReconciliation[];
   from: string;
   to: string;
+  /** The läsår's bounds: a behörighet is listed only if valid at some point of it. */
+  year: { startDate: string; endDate: string };
   personOf: PersonOf;
   subjectName: (subjectId: string) => string;
   /**
@@ -245,7 +247,11 @@ export function samverkanCsv(input: SamverkanInput): string {
     if (input.qualifications !== null) {
       row.push(
         input.qualifications
-          .filter((qualification) => qualification.userId === id)
+          // A tidsbegränsad behörighet that ended before the läsår (or starts
+          // after it) is not this year's: the file goes to the unions, and a
+          // lapsed TILLATEN must not read as current. The load report's own
+          // test, so the file and the matrix agree.
+          .filter((qualification) => qualification.userId === id && qualificationValidInYear(qualification, input.year))
           .map(
             (q) =>
               `${input.subjectName(q.subjectId)} åk ${

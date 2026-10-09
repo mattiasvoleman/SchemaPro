@@ -151,6 +151,7 @@ export function StaffingReport() {
           reconciliation: data.teachers,
           from: data.from,
           to: data.to,
+          year: data.year,
           personOf: (id) => personOf.get(id) ?? null,
           subjectName,
           qualifications,
