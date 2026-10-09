@@ -5194,6 +5194,17 @@ describe('Planning surface (e2e)', () => {
         .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
         .expect(201);
       const yearB = created.body.academicYear.id as string;
+      // B with a post for Anna that has a target (this world has no
+      // riktmärke). A lead with no target keeps her rows fixed — the proposal
+      // does not move what it cannot judge — and a fixed row carries no
+      // last-year teacher, so without it nothing here would be asked.
+      const annaA = world.rows['teacherEmployment']!.find((row) => row['userId'] === IDS.anna)!;
+      world.rows['teacherEmployment']!.push({
+        ...annaA,
+        id: '9e000000-0000-4000-8000-0000000000b1',
+        academicYearId: yearB,
+        teachingTargetMinutesPerWeek: 900,
+      });
       harness.http.post.mockClear();
       const proposal = await propose({ academicYearId: yearB, onlyUnstaffed: false }).expect(200);
       const [, payload] = harness.http.post.mock.calls[0] as [string, StaffRequest];
