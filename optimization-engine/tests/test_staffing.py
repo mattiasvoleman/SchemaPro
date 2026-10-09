@@ -707,6 +707,62 @@ def test_a_subject_short_of_teachers_is_named_with_its_arithmetic() -> None:
     assert unstaffed >= line.params["shortMinutes"]
 
 
+def test_a_teacher_who_can_hand_a_kept_row_on_is_not_said_to_be_full() -> None:
+    """T1 leads K (80 of a 100 limit) and is the only one who may take O (60).
+    K may move to T2, and does, so O fits T1: a line saying "ingen fler
+    timplanspost ryms" beside the assignment it denies would be false. Only
+    what a teacher cannot shed — fixed rows, co-teaching, duties — counts."""
+    school = School(tolerance=0)
+    school.teacher("T1", target=100)
+    school.teacher("T2", target=100)
+    school.row("K", minutes=80, group="7A", current="T1", eligible=["T1", "T2"])
+    school.row("O", minutes=60, group="7B", eligible=["T1"])
+    answer = school.solve()
+    assert answer.leads == {"K": "T2", "O": "T1"}
+    assert "STAFF_TEACHER_CAPACITY_ZERO" not in answer.codes()
+
+
+def test_a_keep_or_shed_teacher_over_the_limit_is_still_full() -> None:
+    """Over the limit today they are given nothing new whatever they shed, so
+    the line stays true for them — with what they carry today."""
+    school = School(tolerance=0)
+    school.teacher("Over", target=100)
+    school.teacher("Other", target=600)
+    school.row("K1", minutes=80, group="7A", current="Over", eligible=["Over", "Other"])
+    school.row("K2", minutes=40, group="7B", current="Over", eligible=["Over", "Other"])
+    school.row("O", minutes=10, group="7C", eligible=["Over"])
+    answer = school.solve()
+    [line] = [c for c in answer.response.conflicts if c.code == "STAFF_TEACHER_CAPACITY_ZERO"]
+    assert [str(t) for t in line.teacher_ids] == [school.id("Over")]
+    assert line.params == {"fixedMinutes": 120, "limitMinutes": 100}
+
+
+def test_the_capacity_sentence_adds_up_and_counts_one_minute_as_one() -> None:
+    """Read as a subtraction, the three numbers must subtract: 101 needed
+    against 99 left said 1 short. Rounding the shortfall and the demand up
+    and showing what is left as their difference keeps the shortfall a valid
+    lower bound and "at most … left" true (99.4 left is at most 100)."""
+    school = School(tolerance=0)
+    school.teacher("T", target=99)
+    school.row("A", minutes=50.1, group="7A", eligible=["T"])
+    school.row("B", minutes=50, group="7B", eligible=["T"])
+    [line] = school.solve().response.conflicts
+    params = line.params
+    assert params["demandedMinutes"] - params["availableMinutes"] == params["shortMinutes"]
+    assert (params["demandedMinutes"], params["availableMinutes"], params["shortMinutes"]) == (
+        101, 100, 1,
+    )
+
+    one = School(tolerance=0)
+    one.teacher("T", target=99)
+    one.row("A", minutes=50, group="7A", eligible=["T"])
+    one.row("B", minutes=50, group="7B", eligible=["T"])
+    [line] = one.solve().response.conflicts
+    assert line.params["shortMinutes"] == 1
+    assert "at least 1 minute will stay unstaffed" in line.message
+    assert "at most 99 minutes left" in line.message
+
+
 def test_a_teacher_already_at_the_limit_is_a_line_that_names_nobody() -> None:
     school = School(tolerance=0)
     school.teacher("Full", target=600, fixed=600)

@@ -867,24 +867,36 @@ def verdicts(problem: StaffProblem) -> list[StaffConflict]:
                     shed[lead] += charge
         available = sum(problem.cap[t] for t in normal) + sum(shed.values())
         if demand > available:
+            # The sentence is read as a subtraction, so its three numbers
+            # must subtract. The shortfall and the demand are rounded up (the
+            # shortfall stays a lower bound) and what is left is shown as
+            # their difference — a rounding of A, up or down, never more than
+            # a minute off, so "at most … left" stays within the rounding.
+            demanded = _tenths_to_minutes_ceil(demand)
+            short = _tenths_to_minutes_ceil(demand - available)
             conflicts.append(StaffConflict(
                 code="STAFF_CAPACITY_EXHAUSTED_FOR_SUBJECT",
                 params={
                     "subject": str(subject),
                     "count": len(counted),
-                    "demandedMinutes": _tenths_to_minutes_ceil(demand),
-                    "availableMinutes": available // 10,
-                    "shortMinutes": _tenths_to_minutes_ceil(demand - available),
+                    "demandedMinutes": demanded,
+                    "availableMinutes": demanded - short,
+                    "shortMinutes": short,
                 },
                 requirement_ids=[problem.rows[row].id for row in counted],
                 subject_ids=[subject],
             ))
 
-    # STAFF_TEACHER_CAPACITY_ZERO: a teacher with a target whose own rows
-    # already leave no room for the smallest row they could otherwise take —
-    # one they do not lead or co-teach, and (respected) one they qualify for.
-    # A target of zero (a full nedsättning) is not a capacity problem to
-    # report, and a teacher with no target has no limit to be at. Rows are
+    # STAFF_TEACHER_CAPACITY_ZERO: a teacher with a target whose load they
+    # cannot shed already leaves no room for the smallest row they could
+    # otherwise take — one they do not lead or co-teach, and (respected) one
+    # they qualify for. What they cannot shed is their fixed load (fixed
+    # rows, co-teaching, duties) for a normal teacher: their kept rows may
+    # move to somebody else, and then a row does fit, so counting those
+    # would refuse what the same proposal assigns. A keep-or-shed teacher is
+    # given nothing new whatever they shed, so for them it is what they carry
+    # today. A target of zero (a full nedsättning) is not a capacity problem
+    # to report, and a teacher with no target has no limit to be at. Rows are
     # walked smallest first, so a teacher costs a step or two, not a pass.
     by_charge = sorted(problem.free, key=lambda row: (problem.rows[row].charge_tenths, row))
     for teacher, spec in enumerate(problem.teachers):
@@ -900,11 +912,12 @@ def verdicts(problem: StaffProblem) -> list[StaffConflict]:
             ),
             None,
         )
-        if smallest is not None and problem.current_load[teacher] + smallest > spec.limit_tenths:
+        carried = spec.fixed_tenths if problem.normal[teacher] else problem.current_load[teacher]
+        if smallest is not None and carried + smallest > spec.limit_tenths:
             conflicts.append(StaffConflict(
                 code="STAFF_TEACHER_CAPACITY_ZERO",
                 params={
-                    "fixedMinutes": (problem.current_load[teacher] + 5) // 10,
+                    "fixedMinutes": (carried + 5) // 10,
                     "limitMinutes": spec.limit_tenths // 10,
                 },
                 teacher_ids=[spec.id],

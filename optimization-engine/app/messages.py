@@ -600,16 +600,18 @@ MESSAGES: dict[str, str] = {
     # The Fach-Engpass, computed before the model: a lower bound on what stays
     # unstaffed, whatever the search finds.
     "STAFF_CAPACITY_EXHAUSTED_FOR_SUBJECT": (
-        "{subject} needs {demandedMinutes} minutes a week across "
-        "{count, plural, one {# curriculum entry} other {# curriculum entries}}, and the "
-        "teachers who may take them have at most {availableMinutes} minutes left below their "
-        "limits, so at least {shortMinutes} minutes will stay unstaffed. Raise a target or the "
-        "tolerance, record more qualifications, or reduce the subject's time."
+        "{subject} needs {demandedMinutes, plural, one {# minute} other {# minutes}} a week "
+        "across {count, plural, one {# curriculum entry} other {# curriculum entries}}, and the "
+        "teachers who may take them have at most "
+        "{availableMinutes, plural, one {# minute} other {# minutes}} left below their limits, "
+        "so at least {shortMinutes, plural, one {# minute} other {# minutes}} will stay "
+        "unstaffed. Raise a target or the tolerance, record more qualifications, or reduce the "
+        "subject's time."
     ),
     # The page puts the teacher's name in front of this sentence.
     "STAFF_TEACHER_CAPACITY_ZERO": (
-        "Already carries {fixedMinutes} minutes a week against a limit of {limitMinutes}, so "
-        "no further curriculum entry fits."
+        "Already carries {fixedMinutes, plural, one {# minute} other {# minutes}} a week "
+        "against a limit of {limitMinutes}, so no further curriculum entry fits."
     ),
     "STAFF_MODEL_TOO_LARGE": (
         "There are too many possible teacher assignments to weigh in one go: about "
