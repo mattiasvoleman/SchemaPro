@@ -108,10 +108,16 @@ export interface StaffingReconciliationResponse {
   notices: StaffingNotice[];
 }
 
-/** Minutes as hours with one decimal and a decimal comma: 1 290 → "21,5". */
-export function hoursText(minutes: number): string {
+/**
+ * Minutes as hours with one decimal in the reader's decimal mark: 1 290 →
+ * "21,5" in Swedish, "21.5" in English. No grouping, an ASCII minus.
+ */
+export function hoursText(minutes: number, locale = "sv"): string {
   const hours = Math.round((minutes / 60) * 10) / 10;
-  return Number.isInteger(hours) ? String(hours) : hours.toFixed(1).replace(".", ",");
+  if (Number.isInteger(hours)) return String(hours);
+  return new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false })
+    .format(Math.abs(hours))
+    .replace(/^/, hours < 0 ? "-" : "");
 }
 
 /** The sum of a group loss's minutes, every cause and the teacherless. */

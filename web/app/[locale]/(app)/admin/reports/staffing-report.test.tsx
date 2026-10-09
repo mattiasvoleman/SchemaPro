@@ -3,6 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { uppdragLoad } from "@/lib/__fixtures__/staffing-fas3";
 import type { StaffingReconciliationResponse } from "@/lib/staffing-reconciliation";
+import { hoursText } from "@/lib/staffing-reconciliation";
+import enMessages from "@/messages/en.json";
+import svMessages from "@/messages/sv.json";
 import { StaffingReport } from "./staffing-report";
 
 Element.prototype.hasPointerCapture ??= () => false;
@@ -204,5 +207,35 @@ describe("Rapporter › Tjänstefördelning", () => {
     // Slöjd is not among the subjects this school maps: left out, and named.
     expect(screen.getByText("scb.notice.LEFT_OUT(Anna Öberg|Slöjd 7B)")).toBeInTheDocument();
     expect(screen.getByText("scb.notice.REDUCTION(Anna Öberg)")).toBeInTheDocument();
+  });
+});
+
+/*
+ * The mocked translator above never parses a message body, so a count put
+ * bare into a sentence — "1 hållna lektioner", "1 dagar" — is invisible to
+ * the rows above. next-intl is un-mocked here and the real catalogues are
+ * formatted, at one and at three.
+ */
+describe("the tab's sentences, formatted by the real catalogues", () => {
+  it("counts lessons and gap days in the singular and the plural, in Swedish and English", async () => {
+    const { createTranslator } = await vi.importActual<typeof import("next-intl")>("next-intl");
+    const sv = createTranslator({ locale: "sv", messages: svMessages, namespace: "reports.staffing.notice" });
+    const en = createTranslator({ locale: "en", messages: enMessages, namespace: "reports.staffing.notice" });
+    const gap = (days: number) => ({ days, from: "2026-09-16", through: "2026-09-16" });
+    expect(sv("STAFFING_LEAD_BESIDE_SUBSTITUTE", { lessons: 1 })).toMatch(/^1 hållen lektion har /);
+    expect(sv("STAFFING_LEAD_BESIDE_SUBSTITUTE", { lessons: 3 })).toMatch(/^3 hållna lektioner har /);
+    expect(sv("STAFFING_RANGE_HAS_GAPS", gap(1))).toContain("1 dag mellan");
+    expect(sv("STAFFING_RANGE_HAS_GAPS", gap(4))).toContain("4 dagar mellan");
+    expect(en("STAFFING_LEAD_BESIDE_SUBSTITUTE", { lessons: 1 })).toMatch(/^1 held lesson has /);
+    expect(en("STAFFING_LEAD_BESIDE_SUBSTITUTE", { lessons: 3 })).toMatch(/^3 held lessons have /);
+    expect(en("STAFFING_RANGE_HAS_GAPS", gap(1))).toContain("1 day between");
+  });
+
+  it("writes hours in the reader's decimal mark, and never calls the SCB underlag SCB's file", () => {
+    expect(hoursText(1290, "sv")).toBe("21,5");
+    expect(hoursText(1290, "en")).toBe("21.5");
+    expect(hoursText(-90, "sv")).toBe("-1,5");
+    expect(hoursText(1200, "en")).toBe("20");
+    expect(enMessages.staffing.unitHintPercentFactor).not.toMatch(/the SCB file/);
   });
 });

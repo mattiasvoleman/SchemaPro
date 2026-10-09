@@ -33,16 +33,13 @@ export interface HistoryLabels {
   removed: string;
   /** blockedConstraintId set. */
   blocked: string;
+  /** A decimal in the reader's own mark: 66,667 in Swedish, 66.667 in English. */
+  decimal: (value: number) => string;
   /**
    * The whole line for a version whose note was written or changed. The log
    * never holds a note's text (migration 20261010090000), only that it moved.
    */
   noteChanged: string;
-}
-
-/** 66.667 → "66,667"; at most three decimals, as the percentages are stored. */
-function decimal(value: number): string {
-  return String(Math.round(value * 1000) / 1000).replace(".", ",");
 }
 
 export function formatHistoryValue(
@@ -56,7 +53,7 @@ export function formatHistoryValue(
     case "employmentPercent":
     case "reductionPercent":
       return typeof value === "number" || typeof value === "string"
-        ? labels.percent(decimal(Number(value)))
+        ? labels.percent(labels.decimal(Math.round(Number(value) * 1000) / 1000))
         : String(value);
     case "teachingTargetMinutesPerWeek":
     case "minutesPerWeek":

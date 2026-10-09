@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { BookOpen, Pencil, Plus, Trash2, Upload } from "lucide-react";
 import {
@@ -91,6 +91,7 @@ const nationalLabel = (subject: NationalSubject) => `${subject.name} (${subject.
 
 export default function SubjectsPage() {
   const t = useTranslations("subjects");
+  const locale = useLocale();
   const tCommon = useTranslations("common");
   const tCsvImport = useTranslations("csvImport");
   const { data: subjects, isLoading } = useSubjects();
@@ -149,7 +150,7 @@ export default function SubjectsPage() {
       requiredRoomTypeId: subject.requiredRoomTypeId ?? ANY_ROOM,
       nationalCode: subject.nationalCode ?? OUTSIDE_TIMPLAN,
       countsTowardTimplan: subject.countsTowardTimplan,
-      loadFactor: formatLoadFactor(subject.loadFactor),
+      loadFactor: formatLoadFactor(subject.loadFactor, locale),
     });
     setDialogOpen(true);
   };

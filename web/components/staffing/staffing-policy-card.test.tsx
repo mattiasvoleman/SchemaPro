@@ -15,6 +15,7 @@ vi.mock("./subject-factors-table", () => ({
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("next-intl", () => ({
+  useLocale: () => "sv",
   useTranslations: () => (key: string, values?: Record<string, unknown>) =>
     values ? `${key}(${Object.values(values).join("|")})` : key,
 }));

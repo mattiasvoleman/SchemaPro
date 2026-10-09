@@ -33,8 +33,12 @@ export function parseLoadFactor(value: string): number | null {
   return factor;
 }
 
-/** "1", "0,8", "1,125" — the way the field shows a stored factor. */
-export function formatLoadFactor(factor: number | null | undefined): string {
-  const value = factor ?? 1;
-  return String(Math.round(value * 1000) / 1000).replace(".", ",");
+/**
+ * "1", "0,8", "1,125" in Swedish, "0.8" in English — the way the field shows
+ * a stored factor, in the reader's own decimal mark (parseLoadFactor takes
+ * either back).
+ */
+export function formatLoadFactor(factor: number | null | undefined, locale = "sv"): string {
+  const value = Math.round((factor ?? 1) * 1000) / 1000;
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: LOAD_FACTOR_DECIMALS, useGrouping: false }).format(value);
 }

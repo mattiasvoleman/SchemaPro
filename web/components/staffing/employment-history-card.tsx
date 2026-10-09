@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { ChevronDown, ChevronRight, History } from "lucide-react";
 import { useProfile } from "@/components/profile-context";
 import { useEmploymentHistory } from "@/lib/staffing-history-queries";
@@ -50,6 +50,7 @@ export function EmploymentHistoryCard({
   dutyLabel,
 }: EmploymentHistoryCardProps) {
   const t = useTranslations("staffing.history");
+  const locale = useLocale();
   const tStaffing = useTranslations("staffing");
   const { school } = useProfile();
   const timeZone = school?.timezone ?? "Europe/Stockholm";
@@ -69,6 +70,8 @@ export function EmploymentHistoryCard({
     empty: "—",
     removed: t("removed"),
     blocked: t("blocked"),
+    // Percentages are stored with up to three decimals (66.667).
+    decimal: (value) => new Intl.NumberFormat(locale, { maximumFractionDigits: 3, useGrouping: false }).format(value),
     noteChanged: t("noteChanged"),
   };
 

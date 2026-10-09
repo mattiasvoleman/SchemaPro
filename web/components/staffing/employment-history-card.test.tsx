@@ -23,7 +23,7 @@ vi.mock("next-intl", () => {
   const t = (key: string, values?: Record<string, unknown>) =>
     values ? `${key}(${Object.values(values).join("|")})` : key;
   t.has = () => true;
-  return { useTranslations: () => t };
+  return { useLocale: () => "sv", useTranslations: () => t };
 });
 
 const renderCard = () =>
