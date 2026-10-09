@@ -266,4 +266,56 @@ describe('TeacherEmploymentsService', () => {
       );
     });
   });
+
+  describe('history', () => {
+    const logRow = (version: number, overrides: Record<string, unknown> = {}) => ({
+      id: `log-${version}`,
+      version,
+      entity: 'EMPLOYMENT',
+      entityId: 'emp-1',
+      action: 'UPDATE',
+      before: { id: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID, employmentPercent: 100, reductionPercent: 0 },
+      after: { id: 'emp-1', userId: COLLEAGUE, academicYearId: YEAR_ID, employmentPercent: 80, reductionPercent: 0 },
+      actorId: ME,
+      createdAt: new Date('2026-10-09T12:02:00.000Z'),
+      ...overrides,
+    });
+
+    it('reads a teacher’s versions newest first under the admin’s RLS, each with what it changed', async () => {
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([logRow(2), logRow(1, { action: 'CREATE', before: null })]);
+
+      const answer = await service.history(COLLEAGUE, YEAR_ID, testUser());
+
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(tx.teacherEmploymentLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: COLLEAGUE, academicYearId: YEAR_ID }, orderBy: { version: 'desc' }, take: 201 }),
+      );
+      expect(answer.truncated).toBe(false);
+      expect(answer.entries.map((entry) => [entry.version, entry.action, entry.actorId])).toEqual([
+        [2, 'UPDATE', ME],
+        [1, 'CREATE', ME],
+      ]);
+      expect(answer.entries[0]!.changes).toEqual([{ field: 'employmentPercent', before: 100, after: 80 }]);
+      // The raw JSON is not handed out: the changes are.
+      expect(answer.entries[0]).not.toHaveProperty('before');
+    });
+
+    it('lets a teacher read their own, and 403s a colleague’s before a statement is sent', async () => {
+      tx.teacherEmploymentLog.findMany.mockResolvedValue([]);
+      const teacher = testUser({ role: Role.TEACHER });
+
+      await expect(service.history(ME, YEAR_ID, teacher)).resolves.toEqual({ entries: [], truncated: false });
+      prisma.withRls.mockClear();
+      await expect(service.history(COLLEAGUE, YEAR_ID, teacher)).rejects.toThrow(ForbiddenException);
+      expect(prisma.withRls).not.toHaveBeenCalled();
+    });
+
+    it('says when it left the oldest versions out', async () => {
+      tx.teacherEmploymentLog.findMany.mockResolvedValue(Array.from({ length: 201 }, (_, i) => logRow(201 - i)));
+      const answer = await service.history(COLLEAGUE, YEAR_ID, testUser());
+      expect(answer.entries).toHaveLength(200);
+      expect(answer.truncated).toBe(true);
+      expect(answer.entries.at(-1)!.version).toBe(2);
+    });
+  });
 });
