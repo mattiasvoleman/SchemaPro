@@ -580,6 +580,33 @@ describe("StaffingProposalDialog", () => {
       expect(toast.success).toHaveBeenLastCalledWith("Bemanningen är som före förslaget.");
     });
 
+    it("names the warnings an undo is saved with, as an apply's", async () => {
+      const user = userEvent.setup();
+      post.mockImplementation(async (path: string, body: { undo?: boolean }) => {
+        if (path === PROPOSE) return proposal();
+        if (!body.undo) return applied();
+        return applied({
+          warnings: [
+            {
+              code: "STAFF_TEACHER_NOT_QUALIFIED",
+              params: { role: "TEACHER", subject: "Musik", grades: "8" },
+              userId: "t-gone",
+              requirementIds: ["r-mu-8b"],
+            },
+          ],
+        });
+      });
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Tillämpa 3 valda" }));
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      await pressUndo();
+      await waitFor(() => expect(toast.warning).toHaveBeenCalled());
+      expect(toast.warning).toHaveBeenLastCalledWith("Bemanningen är som före förslaget.", {
+        description: "Gun Gone (Musik för 8B): Läraren saknar behörighet i Musik för åk 8.",
+      });
+    });
+
     it("names the teacher and the rows a WARN is about, and still offers Ångra", async () => {
       const user = userEvent.setup();
       post.mockImplementation(async (path: string) =>
@@ -683,6 +710,11 @@ describe("StaffingProposalDialog", () => {
         "a school too large to weigh at once",
         new ApiError(400, "Det finns för många …", "STAFF_MODEL_TOO_LARGE", { variables: 1500000, limit: 1000000 }),
         "Det finns för många möjliga lärartilldelningar att väga på en gång: omkring 1500000 modellvariabler mot gränsen 1000000. Behåll de poster som är klara som de är, eller registrera behörigheter så att färre lärare är kandidater för varje post, och försök igen.",
+      ],
+      [
+        "the proposal throttle",
+        new ApiError(429, "ThrottlerException: Too Many Requests"),
+        "Du har beräknat många förslag på kort tid. Vänta en minut och försök igen.",
       ],
       [
         "a school with more staff than the engine takes",
