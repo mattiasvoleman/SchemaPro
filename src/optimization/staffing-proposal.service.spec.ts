@@ -506,11 +506,54 @@ describe('StaffingProposalService.propose', () => {
       value && typeof value === 'object' && 'eligibilitySets' in (value as object)
         ? 'x'.repeat(MAX_STAFF_BODY_BYTES + 1)
         : stringify(value, ...rest)) as typeof JSON.stringify);
+    // Counted as the engine counts them: not respected, every teacher is a
+    // candidate for each of the 3 free rows (3 · 5), plus one per teacher —
+    // not the 0 recorded eligibility a school without behörigheter has.
     await expect(service.propose(ask(), admin())).rejects.toMatchObject({
       status: 400,
-      response: { code: 'STAFF_MODEL_TOO_LARGE', params: { variables: expect.any(Number), limit: 1_000_000 } },
+      response: { code: 'STAFF_MODEL_TOO_LARGE', params: { variables: 20, limit: 1_000_000 } },
     });
     expect(http.post).not.toHaveBeenCalled();
+  });
+
+  it('refuses more staff than the engine takes with its own code and the numbers that refused it', async () => {
+    // A school of 1 005 active staff and 3 open rows was told "about 0 model
+    // variables against the limit 1 000 000" — a refusal that contradicts itself.
+    const rows = schoolRows();
+    for (let index = 0; index < 1000; index++) {
+      rows['user']!.push({ id: `d1000000-0000-4000-8000-${String(index).padStart(12, '0')}`, role: 'TEACHER', isActive: true, studentGroupId: null });
+    }
+    const { service, http } = setup(rows);
+    await expect(service.propose(ask(), admin())).rejects.toMatchObject({
+      status: 400,
+      response: {
+        code: 'STAFF_PROPOSAL_TOO_MANY',
+        params: { teachers: 1005, requirements: 5, limitTeachers: 1000, limitRequirements: 5000 },
+        message: expect.stringContaining('1005 lärare'),
+      },
+    });
+    expect(http.post).not.toHaveBeenCalled();
+  });
+
+  it('sends only the fixed rows of classes the proposal touches, so a year of many settled rows is not refused', async () => {
+    // 5 001 settled rows in 6A, none free: they say nothing about who is
+    // already in a class that has a free row, and counted against the
+    // engine's 5 000 they refused a proposal for three open rows.
+    const rows = schoolRows();
+    rows['studentGroup']!.push({ id: G6A, academicYearId: YEAR, name: '6A', kind: 'CLASS', gradeLevel: 6, predecessorId: null });
+    for (let index = 0; index < 5001; index++) {
+      rows['teachingRequirement']!.push(
+        requirement(`00000000-0000-4000-8000-1${String(index).padStart(11, '0')}`, G6A, SV, { teacherId: ANNA, lessonsPerWeek: 0 }),
+      );
+    }
+    const { service, sent } = setup(rows);
+    const proposal = await service.propose(ask(), admin());
+    expect(proposal.status).toBe('OPTIMAL');
+    const payload = sent()[0]!;
+    // 7A and 8A: Ma 7A (fixed, Anna — present in 7A), the vacated Sv 7A, the
+    // two open 8A rows and the inconsistent 8A row.
+    expect(payload.requirements).toHaveLength(5);
+    expect(proposal.counts.fixedRequirements).toBe(5003);
   });
 
   it.each([404, 405])('names an engine without /staff (%i) STAFF_ENGINE_UNAVAILABLE, a 503 and not the year’s 404', async (status) => {

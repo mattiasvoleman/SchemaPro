@@ -641,6 +641,16 @@ describe("StaffingProposalDialog", () => {
         new ApiError(400, "Det finns för många …", "STAFF_MODEL_TOO_LARGE", { variables: 1500000, limit: 1000000 }),
         "Det finns för många möjliga lärartilldelningar att väga på en gång: omkring 1500000 modellvariabler mot gränsen 1000000. Behåll de poster som är klara som de är, eller registrera behörigheter så att färre lärare är kandidater för varje post, och försök igen.",
       ],
+      [
+        "a school with more staff than the engine takes",
+        new ApiError(400, "Förslaget skulle väga …", "STAFF_PROPOSAL_TOO_MANY", {
+          teachers: 1005,
+          requirements: 12,
+          limitTeachers: 1000,
+          limitRequirements: 5000,
+        }),
+        "Förslaget skulle väga 1005 lärare och 12 timplansposter, men motorn tar högst 1000 lärare och 5000 poster åt gången. Behåll de poster som är klara som de är och försök igen.",
+      ],
     ])("says %s in words", async (_name, error, sentence) => {
       const user = userEvent.setup();
       post.mockRejectedValue(error);
