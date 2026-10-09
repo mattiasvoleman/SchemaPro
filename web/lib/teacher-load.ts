@@ -340,6 +340,16 @@ export function round5(value: number): number {
 }
 
 const round1 = (value: number): number => Math.round(value * 10) / 10;
+
+/**
+ * Counted minutes as a percentage of the target, one decimal, or null without
+ * a target (or with a target of 0, a 100 % nedsättning: no share of nothing).
+ * The report's figure, exported so the staffing proposal's before → after and
+ * its dialog state the same percentage the matrix prints for the same minutes.
+ */
+export function percentOfTarget(counted: number, target: number | null): number | null {
+  return target === null || target === 0 ? null : round1((counted / target) * 100);
+}
 const round4 = (value: number): number => Math.round(value * 10_000) / 10_000;
 const byName = (a: string, b: string): number => a.localeCompare(b, "sv");
 const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -709,8 +719,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       countedDutyMinutesPerWeek: acc.countedDutyMinutes,
       countedMinutesPerWeek: Math.round(counted),
       balanceMinutesPerWeek: target === null ? null : target - Math.round(counted),
-      percentOfTarget:
-        target === null || target === 0 ? null : round1((counted / target) * 100),
+      percentOfTarget: percentOfTarget(counted, target),
       status: loadStatus(counted, target, policy.overAllocationTolerancePercent),
       requirementCount: acc.requirementCount,
       dutyCount: acc.dutyCount,

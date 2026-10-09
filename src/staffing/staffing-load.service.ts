@@ -19,11 +19,9 @@ import { publishBreaksOf, readPublishClosures } from '../timplan/publish-context
 import { todayInZone } from '../common/utils/time';
 import { addDays } from '../common/year-rollover';
 import type { StaffingDeliveredQueryDto } from './dto/staffing-delivered.dto';
-import {
-  suggestTeachers,
-  type LastYearTeachers,
-  type TeacherSuggestions,
-} from './suggest-teachers';
+import { suggestTeachers, type TeacherSuggestions } from './suggest-teachers';
+import { readLastYearTeachersOf } from './last-year-teachers';
+import { readActiveStaffIds } from './staff-candidates';
 
 /**
  * The horizons the weekly report can be asked for: the timplansposter
@@ -265,13 +263,10 @@ export class StaffingLoadService {
    *
    * CONTINUITY. When the row's group has a predecessor (StudentGroup
    * .predecessorId, set by the year rollover), one more plain read names who
-   * taught the subject for it: the union of lead and co-teacher over every
-   * predecessor row of the subject. LR409 keeps a predecessor group in the
-   * predecessor year, so no year filter is needed. The read runs after the
-   * others, on its own, and only then — a school that never rolls makes the
-   * same statements as before and gets the same ranking. It reads
-   * TeachingRequirements, which are not HR data, and never reaches
-   * rostersOfYear (the roster-readers inventory's rule 5).
+   * taught the subject for it (last-year-teachers.ts, the fold the staffing
+   * proposal reads too). The read runs after the others, on its own, and only
+   * then — a school that never rolls makes the same statements as before and
+   * gets the same ranking.
    */
   async suggestTeachers(requirementId: string, user: AuthenticatedUser): Promise<TeacherSuggestions> {
     requireSchoolId(user);
@@ -287,29 +282,15 @@ export class StaffingLoadService {
       if (!requirement) {
         throw new NotFoundException('The requested record does not exist.');
       }
-      const [{ input: yearInput }, staff] = await Promise.all([
+      const [{ input: yearInput }, staffIds] = await Promise.all([
         this.readInput(tx, requirement.academicYearId, user),
-        tx.user.findMany({
-          where: { role: { in: ['TEACHER', 'SCHOOL_ADMIN'] }, isActive: true },
-          select: { id: true },
-          orderBy: { id: 'asc' },
-        }),
+        readActiveStaffIds(tx),
       ]);
       const predecessorId = requirement.studentGroup.predecessorId;
       const lastYear = predecessorId
-        ? lastYearTeachers(
-            await tx.teachingRequirement.findMany({
-              where: { studentGroupId: predecessorId, subjectId: requirement.subjectId },
-              select: {
-                teacherId: true,
-                coTeacherId: true,
-                studentGroup: { select: { name: true, academicYear: { select: { name: true } } } },
-              },
-              orderBy: { id: 'asc' },
-            }),
-          )
+        ? await readLastYearTeachersOf(tx, predecessorId, requirement.subjectId)
         : null;
-      return { input: yearInput, staffIds: staff.map((row) => row.id), lastYear };
+      return { input: yearInput, staffIds, lastYear };
     });
     return suggestTeachers(input, requirementId, staffIds, lastYear);
   }
@@ -411,27 +392,5 @@ function toScheduledMaster(m: MasterRow, read: LoadRead): ScheduledMaster {
     startDate: asDayOrNull(m.startDate),
     endDate: asDayOrNull(m.endDate),
     isParked: m.isParked,
-  };
-}
-
-/** The predecessor's rows of the subject, folded to who taught them; null for none. */
-function lastYearTeachers(
-  rows: {
-    teacherId: string | null;
-    coTeacherId: string | null;
-    studentGroup: { name: string; academicYear: { name: string } };
-  }[],
-): LastYearTeachers | null {
-  const first = rows[0];
-  if (!first) return null;
-  const teacherIds = new Set<string>();
-  for (const row of rows) {
-    if (row.teacherId) teacherIds.add(row.teacherId);
-    if (row.coTeacherId) teacherIds.add(row.coTeacherId);
-  }
-  return {
-    groupName: first.studentGroup.name,
-    yearName: first.studentGroup.academicYear.name,
-    teacherIds: [...teacherIds].sort(),
   };
 }

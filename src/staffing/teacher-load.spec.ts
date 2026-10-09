@@ -2,7 +2,9 @@ import {
   DEFAULT_LOAD_POLICY,
   buildTeacherLoadReport,
   chargedMinutes,
+  countedMinutesByTeacher,
   loadStatus,
+  percentOfTarget,
   qualificationCovers,
   round5,
   standardWeekWeight,
@@ -352,6 +354,27 @@ describe('buildTeacherLoadReport', () => {
       expect(row.balanceMinutesPerWeek).toBe(265);
       expect(row.percentOfTarget).toBe(69.4);
       expect(row.status).toBe('UNDER');
+    });
+
+    it('states percentOfTarget through the exported helper the staffing proposal reads', () => {
+      const rows: Partial<LoadInput> = {
+        employments: [employment({ employmentPercent: 80 }), employment({ userId: BO, teachingTargetMinutesPerWeek: 0 })],
+        requirements: [
+          requirement({ lessonsPerWeek: 7, minutesPerLesson: 55, teacherLoadPercent: 37 }),
+          requirement({ teacherId: BO }),
+        ],
+        duties: [duty({ countsAsTeaching: true, minutesPerWeek: 33 })],
+      };
+      const full = report(rows);
+      const counted = countedMinutesByTeacher({ year: YEAR, closures: [], duties: rows.duties!, requirements: rows.requirements! });
+      expect(full.teachers.map((row) => row.userId).sort()).toEqual([ANNA, BO]);
+      for (const row of full.teachers) {
+        expect(percentOfTarget(counted.get(row.userId) ?? 0, row.targetMinutesPerWeek)).toBe(row.percentOfTarget);
+      }
+      expect(full.teachers.find((row) => row.userId === ANNA)!.percentOfTarget).not.toBeNull();
+      expect(percentOfTarget(500, null)).toBeNull();
+      expect(percentOfTarget(500, 0)).toBeNull();
+      expect(percentOfTarget(142.45, 990)).toBe(14.4);
     });
 
     it('is OVER one minute past the tolerance and OK on it', () => {

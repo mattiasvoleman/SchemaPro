@@ -1,4 +1,4 @@
-import { suggestTeachers } from './suggest-teachers';
+import { subjectFamiliarTeachers, suggestTeachers } from './suggest-teachers';
 import {
   DEFAULT_LOAD_POLICY,
   type LoadEmployment,
@@ -315,6 +315,38 @@ describe('suggestTeachers', () => {
       expect(without.lastYear).toBeNull();
       expect(without.candidates.every((c) => c.taughtLastYear === false)).toBe(true);
       expect(order(without)).toEqual([DAG, CY, BO, ANNA]);
+    });
+  });
+
+  describe('subjectFamiliarTeachers (the no-behörighet tier, extracted)', () => {
+    const LAST = (teacherIds: string[]) => ({ groupName: '7A', yearName: '2025/26', teacherIds });
+    const rows = input({
+      employments: [post(ANNA), post(BO), post(CY), post(DAG)],
+      requirements: [
+        row('target', { teacherId: DAG }),
+        row('ma-9b', { studentGroupId: 'g-9b', groupName: '9B', teacherId: BO, coTeacherId: CY }),
+        row('sv-8a', { subjectId: 'sv', subjectName: 'Svenska', teacherId: ANNA }),
+      ],
+    });
+
+    it('is everybody on ANOTHER row of the subject, lead or co-teacher, and last year’s teachers', () => {
+      // DAG leads only the row itself, ANNA only another subject.
+      expect([...subjectFamiliarTeachers(rows, 'target', null)].sort()).toEqual([BO, CY]);
+      expect([...subjectFamiliarTeachers(rows, 'target', LAST([ANNA]))].sort()).toEqual([ANNA, BO, CY]);
+    });
+
+    it('is exactly the old tier: teachesSubjectAlready || taughtLastYear, for every candidate', () => {
+      for (const lastYear of [null, LAST([ANNA]), LAST([DAG, CY])]) {
+        const familiar = subjectFamiliarTeachers(rows, 'target', lastYear);
+        const ranked = suggestTeachers(rows, 'target', [ANNA, BO, CY, DAG], lastYear);
+        for (const candidate of ranked.candidates) {
+          expect(familiar.has(candidate.userId)).toBe(candidate.teachesSubjectAlready || candidate.taughtLastYear);
+        }
+      }
+    });
+
+    it('throws for a row the input does not hold, as suggestTeachers does', () => {
+      expect(() => subjectFamiliarTeachers(rows, 'nope', null)).toThrow('nope');
     });
   });
 });
