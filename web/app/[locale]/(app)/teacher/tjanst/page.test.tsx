@@ -41,6 +41,9 @@ vi.mock("@/lib/staffing-queries", () => ({
     return state.duties;
   },
 }));
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
+}));
 vi.mock("next-intl", () => ({
   useTranslations: (namespace: string) => (key: string, values?: Record<string, unknown>) =>
     values ? `${namespace}.${key}(${Object.values(values).join("|")})` : `${namespace}.${key}`,
@@ -85,7 +88,18 @@ const row = (overrides: Record<string, unknown> = {}) => ({
       percentOfFullTime: null,
     },
   ],
-  annual: { assignedHoursPerYear: 573.5, regulatedHoursPerYear: 1360, workDaysPerYear: 194 },
+  annual: {
+    assignedHoursPerYear: 573.5,
+    regulatedHoursPerYear: 1360,
+    workDaysPerYear: 194,
+    contractKind: "FERIE",
+    annualHours: 1767,
+    unregulatedHoursPerYear: 407,
+    semesterHoursPerWeek: null,
+    dutyHoursPerYear: 76,
+    teachingWeeksPerYear: 38,
+    percentOfRegulated: 42.2,
+  },
   ...overrides,
 });
 
@@ -133,7 +147,19 @@ describe("Min tjänst", () => {
     expect(screen.getByText("staffing.statusUNDER")).toBeInTheDocument();
     // The admin's own bar, drawn from the same row.
     expect(screen.getByRole("img")).toBeInTheDocument();
-    expect(screen.getByText("myStaffing.annual(573,5)")).toBeInTheDocument();
+    // Staffing Fas 3: the year in hours, as the school's settings frame it,
+    // without a path to settings a teacher cannot open.
+    expect(screen.getByRole("heading", { level: 2, name: "staffing.annual.title" })).toBeInTheDocument();
+    expect(screen.getByText("staffing.annual.hours(573,5)")).toBeInTheDocument();
+    expect(screen.getByText("staffing.annual.caption")).toBeInTheDocument();
+    expect(screen.queryByText("staffing.annual.captionAdmin")).not.toBeInTheDocument();
+  });
+
+  it("links to the printable uppdragsbeskrivning of the teacher's own tjänst, by year and never by person", () => {
+    render(<MyStaffingPage />);
+    const link = screen.getByRole("link", { name: "myStaffing.printLink" });
+    expect(link).toHaveAttribute("href", "/teacher/tjanst/uppdragsbeskrivning?year=y-1");
+    expect(link.getAttribute("href")).not.toContain(ME);
   });
 
   it("says once that there is no target, with the counted minutes, and never 'counted against the target'", () => {

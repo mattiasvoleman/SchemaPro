@@ -1548,7 +1548,6 @@
     "drawerSubjects": "Undervisning per ämne",
     "drawerSubjectRow": "{minutes} min/v · {share} % av undervisningen",
     "drawerSubjectRowEmployment": "{minutes} min/v · {share} % av undervisningen · {percent} % av anställningen",
-    "drawerAnnual": "{hours} h undervisning per läsår",
     "drawerUnqualified": "{count, plural, one {# tilldelning utan behörighet} other {# tilldelningar utan behörighet}}",
     "employmentTitle": "Anställning",
     "employmentHint": "Tjänsten gäller läsåret {year}. Hela raden skrivs om när du sparar.",
@@ -1816,6 +1815,67 @@
       "invalid": "En faktor är ett tal mellan 0,5 och 3 med högst tre decimaler.",
       "save": "{count, plural, =0 {Spara faktorer} one {Spara # faktor} other {Spara # faktorer}}",
       "saved": "{count, plural, one {# faktor sparad} other {# faktorer sparade}}"
+    },
+    "drawerSubjectsFactor": "Räknad tid per ämne (faktor)",
+    "printUppdrag": "Skriv ut uppdragsbeskrivning",
+    "annual": {
+      "title": "Årsarbetstid",
+      "hours": "{hours} h",
+      "teachingHours": "Undervisning per läsår",
+      "teachingHoursFactor": "Räknad undervisning per läsår (faktor)",
+      "dutyHours": "Uppdrag per läsår",
+      "regulated": "Reglerad arbetstid",
+      "annualHours": "Årsarbetstid",
+      "unregulated": "Övrig arbetstid (årsarbetstid − reglerad)",
+      "workDays": "A-dagar (skolans inställning)",
+      "percentOfRegulated": "Undervisning av reglerad arbetstid",
+      "teachingWeeks": "Undervisningsveckor (lov avräknade)",
+      "semesterWeekly": "Semestertjänst: {hours} h/vecka enligt skolans inställning.",
+      "noPost": "Ingen tjänst registrerad: reglerad arbetstid och årsarbetstid räknas från tjänsten.",
+      "caption": "Enligt skolans inställningar för tjänstefördelningen. Timmarna är skolans val, inte lagtext.",
+      "captionAdmin": "Enligt skolans inställningar (Tjänstefördelning › Inställningar). Timmarna är skolans val, inte lagtext."
+    },
+    "history": {
+      "title": "Historik",
+      "show": "Visa",
+      "hide": "Dölj",
+      "loading": "Läser historiken …",
+      "loadFailed": "Historiken kunde inte läsas.",
+      "empty": "Inga ändringar registrerade för läsåret.",
+      "version": "Version {version}",
+      "system": "System",
+      "deletedUser": "Borttagen användare",
+      "minutes": "{minutes} min/v",
+      "percent": "{percent} %",
+      "yes": "ja",
+      "no": "nej",
+      "removed": "borttaget",
+      "blocked": "blockerad tid",
+      "truncated": "Bara de 200 senaste versionerna visas.",
+      "caption": "Varje ändring av tjänsten eller ett uppdrag sparas som en ny version i samma ögonblick, vem som än gjorde den och hur. Versionsnumret kan citeras i ett protokoll.",
+      "action": {
+        "EMPLOYMENT_CREATE": "Tjänst skapad",
+        "EMPLOYMENT_UPDATE": "Tjänst ändrad",
+        "EMPLOYMENT_DELETE": "Tjänst borttagen",
+        "DUTY_CREATE": "Uppdrag skapat",
+        "DUTY_UPDATE": "Uppdrag ändrat",
+        "DUTY_DELETE": "Uppdrag borttaget"
+      },
+      "field": {
+        "employmentPercent": "Tjänstgöringsgrad",
+        "reductionPercent": "Nedsättning",
+        "contractKind": "Avtalsform",
+        "teachingTargetMinutesPerWeek": "Eget riktmärke",
+        "signature": "Signatur",
+        "note": "Anteckning",
+        "kind": "Typ",
+        "label": "Benämning",
+        "minutesPerWeek": "Tid",
+        "countsAsTeaching": "Räknas mot riktmärket",
+        "subjectId": "Ämne",
+        "studentGroupId": "Grupp",
+        "blockedConstraintId": "Blockerad tid"
+      }
     }
   },
   "myStaffing": {
@@ -1831,7 +1891,6 @@
     "countedNoTarget": "Räknad undervisning {minutes} min/v · inget mål att jämföra med",
     "countedOnly": "Räknad undervisning {minutes} min/v",
     "counted": "räknat mot målet {minutes} min/v",
-    "annual": "{hours} h undervisning per läsår, med lov och studiedagar avräknade.",
     "lastYear": "Förra läsåret ({year}): tjänst {percent} % · {minutes} min räknad undervisning",
     "lastYearNoPost": "Förra läsåret ({year}): ingen tjänst registrerad · {minutes} min räknad undervisning",
     "teachingTitle": "Undervisning",
@@ -1840,7 +1899,8 @@
     "minutesHeader": "Min/v",
     "shareHeader": "Andel av tjänsten",
     "noTeaching": "Ingen undervisning är fördelad till dig ännu.",
-    "noDuties": "Inga uppdrag registrerade."
+    "noDuties": "Inga uppdrag registrerade.",
+    "printLink": "Skriv ut uppdragsbeskrivning"
   },
   "planningYear": {
     "label": "Läsår att planera",

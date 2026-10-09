@@ -1548,7 +1548,6 @@
     "drawerSubjects": "Teaching per subject",
     "drawerSubjectRow": "{minutes} min/wk · {share} % of teaching",
     "drawerSubjectRowEmployment": "{minutes} min/wk · {share} % of teaching · {percent} % of employment",
-    "drawerAnnual": "{hours} h teaching per year",
     "drawerUnqualified": "{count, plural, one {# assignment without qualification} other {# assignments without qualification}}",
     "employmentTitle": "Employment",
     "employmentHint": "The post applies to {year}. The whole row is rewritten when you save.",
@@ -1816,6 +1815,67 @@
       "invalid": "A factor is a number between 0.5 and 3 with at most three decimals.",
       "save": "{count, plural, =0 {Save factors} one {Save # factor} other {Save # factors}}",
       "saved": "{count, plural, one {# factor saved} other {# factors saved}}"
+    },
+    "drawerSubjectsFactor": "Counted time per subject (factor)",
+    "printUppdrag": "Print assignment description",
+    "annual": {
+      "title": "Annual working time",
+      "hours": "{hours} h",
+      "teachingHours": "Teaching per school year",
+      "teachingHoursFactor": "Counted teaching per school year (factor)",
+      "dutyHours": "Duties per school year",
+      "regulated": "Regulated working time",
+      "annualHours": "Annual working time",
+      "unregulated": "Other working time (annual − regulated)",
+      "workDays": "A-days (the school's setting)",
+      "percentOfRegulated": "Teaching of regulated working time",
+      "teachingWeeks": "Teaching weeks (holidays subtracted)",
+      "semesterWeekly": "Semester post: {hours} h/week per the school's setting.",
+      "noPost": "No post registered: regulated and annual working time are computed from the post.",
+      "caption": "Per the school's staffing settings. The hours are the school's choice, not statute.",
+      "captionAdmin": "Per the school's settings (Staffing › Settings). The hours are the school's choice, not statute."
+    },
+    "history": {
+      "title": "History",
+      "show": "Show",
+      "hide": "Hide",
+      "loading": "Reading the history …",
+      "loadFailed": "The history could not be read.",
+      "empty": "No changes recorded for the school year.",
+      "version": "Version {version}",
+      "system": "System",
+      "deletedUser": "Deleted user",
+      "minutes": "{minutes} min/wk",
+      "percent": "{percent} %",
+      "yes": "yes",
+      "no": "no",
+      "removed": "removed",
+      "blocked": "blocked time",
+      "truncated": "Only the 200 most recent versions are shown.",
+      "caption": "Every change to the post or a duty is saved as a new version in the same moment, whoever made it and however. The version number can be cited in minutes.",
+      "action": {
+        "EMPLOYMENT_CREATE": "Post created",
+        "EMPLOYMENT_UPDATE": "Post changed",
+        "EMPLOYMENT_DELETE": "Post removed",
+        "DUTY_CREATE": "Duty created",
+        "DUTY_UPDATE": "Duty changed",
+        "DUTY_DELETE": "Duty removed"
+      },
+      "field": {
+        "employmentPercent": "Employment rate",
+        "reductionPercent": "Reduction",
+        "contractKind": "Contract",
+        "teachingTargetMinutesPerWeek": "Own target",
+        "signature": "Signature",
+        "note": "Note",
+        "kind": "Type",
+        "label": "Label",
+        "minutesPerWeek": "Time",
+        "countsAsTeaching": "Counts toward the target",
+        "subjectId": "Subject",
+        "studentGroupId": "Group",
+        "blockedConstraintId": "Blocked time"
+      }
     }
   },
   "myStaffing": {
@@ -1831,7 +1891,6 @@
     "countedNoTarget": "Counted teaching {minutes} min/wk · no target to compare it with",
     "countedOnly": "Counted teaching {minutes} min/wk",
     "counted": "counted against the target {minutes} min/wk",
-    "annual": "{hours} h of teaching per school year, with holidays and staff days deducted.",
     "lastYear": "Last year ({year}): post {percent} % · {minutes} min counted teaching",
     "lastYearNoPost": "Last year ({year}): no post registered · {minutes} min counted teaching",
     "teachingTitle": "Teaching",
@@ -1840,7 +1899,8 @@
     "minutesHeader": "Min/wk",
     "shareHeader": "Share of post",
     "noTeaching": "No teaching has been allocated to you yet.",
-    "noDuties": "No duties registered."
+    "noDuties": "No duties registered.",
+    "printLink": "Print assignment description"
   },
   "planningYear": {
     "label": "Year to plan",
