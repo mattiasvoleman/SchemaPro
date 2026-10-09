@@ -35,6 +35,7 @@ const labels: HistoryLabels = {
   empty: "—",
   removed: "borttaget",
   blocked: "blockerad tid",
+  noteChanged: "Anteckningen skrevs eller ändrades (texten sparas inte i historiken).",
 };
 
 const entry = (overrides: Partial<HistoryEntry>): HistoryEntry => ({
@@ -50,6 +51,20 @@ const entry = (overrides: Partial<HistoryEntry>): HistoryEntry => ({
 });
 
 describe("historyLines", () => {
+  it("says a note was written in one sentence, never as a value", () => {
+    expect(
+      historyLines(
+        entry({
+          changes: [
+            { field: "reductionPercent", before: 0, after: 10 },
+            { field: "noteChanged", before: null, after: true },
+          ],
+        }),
+        labels,
+      ),
+    ).toEqual(["Nedsättning: 0 % → 10 %", "Anteckningen skrevs eller ändrades (texten sparas inte i historiken)."]);
+  });
+
   it("says an update before → after, with the post's percentages and avtalsform in words", () => {
     expect(
       historyLines(

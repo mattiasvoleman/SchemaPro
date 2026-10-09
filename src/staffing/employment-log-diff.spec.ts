@@ -10,7 +10,6 @@ describe('diffLogEntry', () => {
     contractKind: 'FERIE',
     teachingTargetMinutesPerWeek: null,
     signature: 'ANN',
-    note: null,
   };
 
   it('lists every field of a created post in the form’s order, never its identity', () => {
@@ -20,7 +19,6 @@ describe('diffLogEntry', () => {
       'contractKind',
       'teachingTargetMinutesPerWeek',
       'signature',
-      'note',
     ]);
     expect(diffLogEntry('EMPLOYMENT', null, post)[0]).toEqual({ field: 'employmentPercent', before: null, after: 100 });
   });
@@ -36,7 +34,7 @@ describe('diffLogEntry', () => {
   it('lists every field a deleted duty had, in the duty’s order', () => {
     const duty = {
       id: 'd1', userId: 'u1', academicYearId: 'y1', kind: 'MENTORSKAP', label: 'Mentor 7B', minutesPerWeek: 90,
-      countsAsTeaching: false, subjectId: null, studentGroupId: 'g7b', blockedConstraintId: null, note: null,
+      countsAsTeaching: false, subjectId: null, studentGroupId: 'g7b', blockedConstraintId: null, noteChanged: true,
     };
     expect(diffLogEntry('DUTY', duty, null).map((change) => [change.field, change.before, change.after])).toEqual([
       ['kind', 'MENTORSKAP', null],
@@ -46,8 +44,17 @@ describe('diffLogEntry', () => {
       ['subjectId', null, null],
       ['studentGroupId', 'g7b', null],
       ['blockedConstraintId', null, null],
-      ['note', null, null],
+      ['noteChanged', true, null],
     ]);
+  });
+
+  it('says a note was written, never what it said, in the note’s place in the form', () => {
+    const changes = diffLogEntry('EMPLOYMENT', post, { ...post, signature: 'ANS', noteChanged: true });
+    expect(changes).toEqual([
+      { field: 'signature', before: 'ANN', after: 'ANS' },
+      { field: 'noteChanged', before: null, after: true },
+    ]);
+    expect(JSON.stringify(changes)).not.toContain('"note"');
   });
 
   it('keeps a key it does not know, last and alphabetical, so an older reader never hides a change', () => {

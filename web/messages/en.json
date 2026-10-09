@@ -1935,8 +1935,9 @@
       "no": "no",
       "removed": "removed",
       "blocked": "blocked time",
+      "noteChanged": "The note was written or changed (its text is not kept in the history).",
       "truncated": "Only the 200 most recent versions are shown.",
-      "caption": "Every change to the post or a duty is saved as a new version in the same moment, whoever made it and however. The version number can be cited in minutes.",
+      "caption": "Every change to the post or a duty is saved as a new version in the same moment, whoever made it and however. The version number can be cited in minutes. A note's text is not kept in the history, only that it was written: correcting the note corrects it.",
       "action": {
         "EMPLOYMENT_CREATE": "Post created",
         "EMPLOYMENT_UPDATE": "Post changed",

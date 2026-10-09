@@ -3399,6 +3399,19 @@ async function runChecks(
         ]) {
           await assert.rejects(owner.query(statement, [f3.t2.id]), (error: { code?: string }) => error.code === 'TL403');
         }
+        // Nor empties it: TRUNCATE fires no row guard, the statement guard refuses it.
+        await assert.rejects(owner.query(`TRUNCATE "TeacherEmploymentLogs"`), (error: { code?: string }) => error.code === 'TL403');
+
+        // A note written is a version; its text is never in the history.
+        await employments.upsert(f3.t2.id, f3.yearId, { employmentPercent: 75, reductionPercent: 5, note: `${MARKER} hemlig` }, f3.admin);
+        const kept = await owner.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM "TeacherEmploymentLogs"
+            WHERE "userId" = $1 AND (COALESCE(before::text, '') || COALESCE(after::text, '')) LIKE '%hemlig%'`,
+          [f3.t2.id],
+        );
+        assert.equal(kept.rows[0]!.n, 0, 'a note’s text was kept in the history');
+        const noted = await employments.history(f3.t2.id, f3.yearId, f3.admin);
+        assert.deepEqual(noted.entries[0]!.changes, [{ field: 'noteChanged', before: null, after: true }]);
 
         // A person deleted, with a post, a slot-holding uppdrag and a mentorship: works, and takes their history.
         await owner.query(`DELETE FROM "Users" WHERE id = $1`, [f3.t4.id]);

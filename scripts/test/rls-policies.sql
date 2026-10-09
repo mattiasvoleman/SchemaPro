@@ -7049,15 +7049,42 @@ BEGIN
   IF n <> 1 THEN
     RAISE EXCEPTION 'history: a subject deleted under an ämnesansvar is % version(s), expected one UPDATE by the admin', n;
   END IF;
+
+  -- A note's text never enters the history, so correcting the row corrects
+  -- it; that it was written is a version ("noteChanged"), and re-saving the
+  -- same note is none.
+  UPDATE "TeacherEmployments" SET note = 'RLS24 hemlig anteckning', "updatedAt" = now()
+   WHERE "userId" = me AND "academicYearId" = y;
+  UPDATE "TeacherEmployments" SET note = 'RLS24 hemlig anteckning', "updatedAt" = now() + interval '1 minute'
+   WHERE "userId" = me AND "academicYearId" = y;
+  UPDATE "TeacherDuties" SET note = 'RLS24 hemlig uppdragsanteckning', "updatedAt" = now() WHERE id = d;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", note, "updatedAt")
+  VALUES (school, me, y, 'ANNAT', 'RLS24 med anteckning', 10, 'RLS24 hemlig från början', now());
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "schoolId" = school AND (COALESCE(before::text, '') || COALESCE(after::text, '')) LIKE '%hemlig%';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'history: % version(s) keep a note''s text — a corrected note can never be corrected in the history', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "userId" = me AND "academicYearId" = y AND "actorId" = admin
+     AND (before IS NULL OR NOT before ? 'note') AND (after IS NULL OR NOT after ? 'note')
+     AND after->'noteChanged' = 'true'::jsonb
+     AND ((entity = 'EMPLOYMENT' AND action = 'UPDATE')
+          OR (entity = 'DUTY' AND action = 'UPDATE' AND "entityId" = d)
+          OR (entity = 'DUTY' AND action = 'CREATE' AND after->>'label' = 'RLS24 med anteckning'));
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'history: % note version(s) marked noteChanged, expected three (a post''s note, an uppdrag''s, a new uppdrag''s) and none for the identical re-save', n;
+  END IF;
 END
 $$;
 ROLLBACK;
 
 -- The catalog half: row security on, exactly the two read arms, each with the
 -- role in USING, the guards and writers present as SECURITY DEFINER, the
--- composite keys, SELECT and nothing else for the API role.
+-- composite keys, SELECT and nothing else for the API role, no TRUNCATE,
+-- REFERENCES or TRIGGER for any API role.
 DO $$
-DECLARE n integer; bad text;
+DECLARE n integer; bad text; api_role text;
 BEGIN
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."TeacherEmploymentLogs"'::regclass) THEN
     RAISE EXCEPTION 'history: row security is off on TeacherEmploymentLogs';
@@ -7079,9 +7106,10 @@ BEGIN
      AND (t.tgrelid, t.tgname) IN (
        ('public."TeacherEmployments"'::regclass,    'TeacherEmployments_log'),
        ('public."TeacherDuties"'::regclass,         'TeacherDuties_log'),
-       ('public."TeacherEmploymentLogs"'::regclass, 'TeacherEmploymentLogs_append_only'));
-  IF n <> 3 THEN
-    RAISE EXCEPTION 'history: % of the three log triggers are present, enabled and SECURITY DEFINER', n;
+       ('public."TeacherEmploymentLogs"'::regclass, 'TeacherEmploymentLogs_append_only'),
+       ('public."TeacherEmploymentLogs"'::regclass, 'TeacherEmploymentLogs_no_truncate'));
+  IF n <> 4 THEN
+    RAISE EXCEPTION 'history: % of the four log triggers are present, enabled and SECURITY DEFINER', n;
   END IF;
   SELECT count(*) INTO n FROM pg_constraint
    WHERE conrelid = 'public."TeacherEmploymentLogs"'::regclass AND contype = 'f' AND array_length(conkey, 1) = 2
@@ -7097,6 +7125,33 @@ BEGIN
      OR has_table_privilege('app_authenticated', 'public."TeacherEmploymentLogs"', 'DELETE') THEN
     RAISE EXCEPTION 'history: app_authenticated holds a write privilege on TeacherEmploymentLogs';
   END IF;
+  -- TRUNCATE fires no row trigger and ignores RLS: no API role may hold it,
+  -- nor REFERENCES or TRIGGER, whatever default ACL the environment has
+  -- (Supabase's hands all three to anon, authenticated and service_role).
+  FOR api_role IN SELECT rolname FROM pg_roles
+                   WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated')
+  LOOP
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."TeacherEmploymentLogs"', p);
+    IF bad IS NOT NULL THEN
+      RAISE EXCEPTION 'history: % holds % on TeacherEmploymentLogs', api_role, bad;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+     AND has_table_privilege('anon', 'public."TeacherEmploymentLogs"', 'SELECT') THEN
+    RAISE EXCEPTION 'history: anon may SELECT TeacherEmploymentLogs';
+  END IF;
+  -- The API role cannot empty it either (refused by the grant, and the
+  -- statement guard behind it). The owner, whom no grant binds, meets the
+  -- guard alone: that half is the probe's (ö3), which holds an owner
+  -- connection.
+  BEGIN
+    TRUNCATE "TeacherEmploymentLogs";
+    RAISE EXCEPTION 'history: % truncated TeacherEmploymentLogs — the history can be emptied', current_user;
+  EXCEPTION WHEN insufficient_privilege OR SQLSTATE 'TL403' THEN
+    NULL;
+  END;
 END $$;
 
 -- ---------------------------------------------------------------------------

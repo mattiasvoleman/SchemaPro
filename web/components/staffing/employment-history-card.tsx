@@ -69,6 +69,7 @@ export function EmploymentHistoryCard({
     empty: "—",
     removed: t("removed"),
     blocked: t("blocked"),
+    noteChanged: t("noteChanged"),
   };
 
   const entries = history.data?.entries ?? [];
