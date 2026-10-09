@@ -2020,7 +2020,7 @@
       "badgeLastYear": "Samma som förra läsåret",
       "badgeGroup": "Har redan gruppen",
       "keep": "Behåll som nu och beräkna om",
-      "keepRow": "Behåll {row} som nu och beräkna om",
+      "keepRow": "Behåll som nu och beräkna om: {row}",
       "teachersTitle": "Lärarna före och efter",
       "teachersShowAll": "Visa alla ({count})",
       "teachersShowChanged": "Visa bara ändrade",

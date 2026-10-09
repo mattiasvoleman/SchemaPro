@@ -489,7 +489,7 @@ describe("StaffingProposalDialog", () => {
       const user = userEvent.setup();
       renderDialog();
       await computeProposal(user);
-      await user.click(screen.getByRole("button", { name: "Behåll Musik för 8B som nu och beräkna om" }));
+      await user.click(screen.getByRole("button", { name: "Behåll som nu och beräkna om: Musik för 8B" }));
       await waitFor(() => expect(asks()).toHaveLength(2));
       expect(asks()[1]).toEqual({
         academicYearId: "y1",
@@ -497,6 +497,49 @@ describe("StaffingProposalDialog", () => {
         respectQualifications: true,
         pinnedRequirementIds: ["r-mu-8b"],
       });
+    });
+
+    it("names the keep button by its visible words first, then the row (WCAG 2.5.3)", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      const button = screen.getByRole("button", { name: "Behåll som nu och beräkna om: Musik för 8B" });
+      expect(button).toHaveTextContent("Behåll som nu och beräkna om");
+      expect(button.getAttribute("aria-label")).toMatch(new RegExp(`^${button.textContent}`));
+    });
+
+    it("takes a kept row out of the selection at once, so a recompute that fails cannot apply it", async () => {
+      const user = userEvent.setup();
+      let asked = 0;
+      post.mockImplementation(async (path: string) => {
+        if (path === APPLY) return applied();
+        asked += 1;
+        if (asked === 1) return proposal();
+        throw new ApiError(429, "ThrottlerException: Too Many Requests");
+      });
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("button", { name: "Behåll som nu och beräkna om: Musik för 8B" }));
+      await screen.findByRole("alert");
+      expect(screen.getByRole("checkbox", { name: "Ta med Musik för 8B" })).not.toBeChecked();
+      await user.click(screen.getByRole("button", { name: "Tillämpa 2 valda" }));
+      await waitFor(() => expect(applies()).toHaveLength(1));
+      expect(applies()[0]!.changes.map((change: { requirementId: string }) => change.requirementId)).toEqual([
+        "r-ma-7a",
+        "r-no-7a",
+      ]);
+    });
+
+    it("keeps a row the admin left out left out when another row is kept and the proposal asked again", async () => {
+      const user = userEvent.setup();
+      renderDialog();
+      await computeProposal(user);
+      await user.click(screen.getByRole("checkbox", { name: "Ta med NO för 7A" }));
+      await user.click(screen.getByRole("button", { name: "Behåll som nu och beräkna om: Musik för 8B" }));
+      await waitFor(() => expect(asks()).toHaveLength(2));
+      // The same answer comes back (the stub ignores pins): NO 7A stays out.
+      await waitFor(() => expect(screen.getByRole("checkbox", { name: "Ta med Matematik för 7A" })).toBeChecked());
+      expect(screen.getByRole("checkbox", { name: "Ta med NO för 7A" })).not.toBeChecked();
     });
   });
 

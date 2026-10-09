@@ -195,7 +195,12 @@ export function StaffingProposalDialog({
     return changed.length === 0 ? undefined : Object.fromEntries(changed.map((key) => [key, weights[key]]));
   };
 
-  const compute = async (pins: string[] = pinned) => {
+  /**
+   * `leftOut`: rows the admin had unticked, kept unticked in the answer when
+   * it proposes them again — a "Behåll" asks again for one row's sake, not to
+   * undo the admin's other choices.
+   */
+  const compute = async (pins: string[] = pinned, leftOut: ReadonlySet<string> = new Set()) => {
     const mine = ++ask.current;
     setProblem(null);
     try {
@@ -209,17 +214,38 @@ export function StaffingProposalDialog({
       if (mine !== ask.current) return;
       setStale(false);
       setProposal(answer);
-      setSelected(new Set(answer.assignments.map((assignment) => assignment.requirementId)));
+      setSelected(
+        new Set(
+          answer.assignments
+            .map((assignment) => assignment.requirementId)
+            .filter((requirementId) => !leftOut.has(requirementId)),
+        ),
+      );
     } catch (error) {
       if (mine === ask.current) setProblem(failure(error));
     }
   };
 
-  /** "Behåll som nu och beräkna om": the row is pinned, and the proposal asked again without it. */
+  /**
+   * "Behåll som nu och beräkna om": the row is pinned, and the proposal asked
+   * again without it. It leaves the selection at once — a recompute that
+   * fails (the throttle, the engine) leaves the old proposal on screen, and
+   * "Tillämpa" must not then write the very row the admin asked to keep.
+   */
   const keep = (requirementId: string) => {
     const pins = pinned.includes(requirementId) ? pinned : [...pinned, requirementId];
+    const leftOut = new Set(
+      (proposal?.assignments ?? [])
+        .map((assignment) => assignment.requirementId)
+        .filter((id) => !selected.has(id)),
+    );
+    setSelected((previous) => {
+      const next = new Set(previous);
+      next.delete(requirementId);
+      return next;
+    });
     setPinned(pins);
-    void compute(pins);
+    void compute(pins, leftOut);
   };
 
   /** A REFUSE of the batch: whom it is about, which row, and the policy's sentence. */
