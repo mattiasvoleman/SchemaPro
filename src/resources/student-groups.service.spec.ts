@@ -227,6 +227,65 @@ describe('StudentGroupsService', () => {
         service.update(GROUP_ID, { name: 'X' }, testUser()),
       ).rejects.toThrow(NotFoundException);
     });
+
+    describe('a class with pupils’ class history keeps its läsår (timplan P4)', () => {
+      const OTHER_YEAR = '88888888-8888-4888-8888-888888888888';
+      beforeEach(() => {
+        tx.studentGroup.findUnique.mockResolvedValue({ academicYearId: YEAR_ID, academicYear: { name: '2026/27' } });
+      });
+
+      it('refuses another year with 409 STUDENT_GROUP_HAS_ENROLMENT_HISTORY naming the year, writing nothing', async () => {
+        tx.studentEnrollment.count.mockResolvedValue(3);
+
+        const error = await service.update(GROUP_ID, { academicYearId: OTHER_YEAR }, testUser()).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toEqual(
+          expect.objectContaining({ code: 'STUDENT_GROUP_HAS_ENROLMENT_HISTORY', params: { year: '2026/27' } }),
+        );
+        expect(tx.studentEnrollment.count).toHaveBeenCalledWith({ where: { studentGroupId: GROUP_ID } });
+        expect(tx.studentGroup.update).not.toHaveBeenCalled();
+      });
+
+      it('moves a class without history, and asks nothing when the year is unchanged', async () => {
+        tx.studentEnrollment.count.mockResolvedValue(0);
+        tx.studentGroup.update.mockResolvedValue({ id: GROUP_ID });
+
+        await service.update(GROUP_ID, { academicYearId: OTHER_YEAR }, testUser());
+        expect(tx.studentGroup.update).toHaveBeenCalledWith({ where: { id: GROUP_ID }, data: { academicYearId: OTHER_YEAR } });
+
+        tx.studentEnrollment.count.mockClear();
+        await service.update(GROUP_ID, { academicYearId: YEAR_ID, name: '7B' }, testUser());
+        expect(tx.studentEnrollment.count).not.toHaveBeenCalled();
+      });
+
+      it('answers the history key’s own refusal of a race with the same 409', async () => {
+        tx.studentEnrollment.count.mockResolvedValue(0);
+        tx.studentGroup.update.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('Foreign key constraint violated', {
+            code: 'P2003',
+            clientVersion: Prisma.prismaVersion.client,
+            meta: {
+              modelName: 'StudentGroup',
+              driverAdapterError: {
+                cause: {
+                  originalCode: '23503',
+                  originalMessage:
+                    'update or delete on table "StudentGroups" violates foreign key constraint "StudentEnrollments_studentGroupId_academicYearId_schoolId_fkey" on table "StudentEnrollments"',
+                  constraint: { index: 'StudentEnrollments_studentGroupId_academicYearId_schoolId_fkey' },
+                },
+              },
+            },
+          }),
+        );
+
+        const error = await service.update(GROUP_ID, { academicYearId: OTHER_YEAR }, testUser()).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toEqual(
+          expect.objectContaining({ code: 'STUDENT_GROUP_HAS_ENROLMENT_HISTORY' }),
+        );
+      });
+    });
   });
 
   describe('remove', () => {

@@ -297,6 +297,20 @@ if [ "${foreign_credits:-0}" = "0" ]; then
   exit 1
 fi
 
+# The second school's class history. Section 26 asserts that no role of the
+# primary school reads another school's segments; with none over there the
+# tenant half passes while proving nothing. Counted as the owner.
+foreign_enrolments="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT count(*) FROM \"StudentEnrollments\" WHERE \"schoolId\" = '${school_b}'" \
+  | tr -d '[:space:]'
+)"
+if [ "${foreign_enrolments:-0}" = "0" ]; then
+  echo "FAIL: no class history in the second school; fixtures did not run." >&2
+  exit 1
+fi
+
 echo "==> Running policy assertions as ${APP_ROLE} (the role the API uses)"
 compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   psql -U "$APP_ROLE" -h localhost -d "$DB_NAME" \

@@ -266,6 +266,15 @@ export class YearRolloverService {
           if (plan.planHash !== dto.planHash) throw activationStale();
 
           if (!plan.year.isActive) {
+            // The class history's backdate hint (migration 20261010120000):
+            // on a FIRST activation the pupils it moves out of last year's
+            // classes are recorded in their new class from the year's first
+            // day, which every roster reader already treated them as sitting
+            // in (projected rosters) — not from today, when the activation
+            // runs late. Transaction-local; a straggler moved by a later run
+            // of the active year's activation is recorded from that day.
+            const startDate = source.years.find((candidate) => candidate.id === yearId)!.startDate;
+            await tx.$executeRaw`SELECT set_config('app.enrolment_from', ${`${yearId}:${startDate}`}, true)`;
             await tx.academicYear.updateMany({
               where: { isActive: true, id: { not: yearId } },
               data: { isActive: false },

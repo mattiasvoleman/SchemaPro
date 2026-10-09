@@ -3190,6 +3190,224 @@ async function runChecks(
     assert.equal(await home(), `${MARKER} 9A`);
   });
 
+  // ---- (u5) en elev minns sina klasser: every path that changes a pupil's
+  // class writes its history in the same transaction, through the real
+  // services and the real adapter, in a school of its own (the activation
+  // moves pupils and hands the active flag over).
+  {
+    const eh = await givenEnrolmentSchool(owner);
+    const ehAdmin: AuthenticatedUser = { authId: eh.adminAuthId, userId: eh.adminId, schoolId: eh.schoolId, role: Role.SCHOOL_ADMIN };
+    const segmentsOf = async (email: string) =>
+      (
+        await owner.query<{ group: string | null; grade: number | null; from: string; to: string | null; source: string; year: string }>(
+          `SELECT g.name AS "group", e."gradeLevel" AS grade, e."validFrom"::text AS "from", e."validTo"::text AS "to",
+                  e.source::text AS source, y.name AS year
+             FROM "StudentEnrollments" e JOIN "Users" u ON u.id = e."studentId"
+             JOIN "AcademicYears" y ON y.id = e."academicYearId"
+             LEFT JOIN "StudentGroups" g ON g.id = e."studentGroupId"
+            WHERE u.email = $1 ORDER BY e."validFrom", e."createdAt"`,
+          [`${MARKER}-eh-${email}@example.invalid`],
+        )
+      ).rows.map((row) => [row.year.replace(`${MARKER} eh `, ''), row.group?.replace(`${MARKER} eh `, '') ?? null, row.grade, row.from, row.to, row.source]);
+    const today = eh.today;
+    try {
+      await check('(u5) en elevs klasshistorik: every writer of a pupil’s class records it in its own transaction — users, CSV, SS12000, the activation, a class deleted, a year deleted — and nobody else writes it', async () => {
+        const users = new UsersService(api, { isConfigured: false } as unknown as SupabaseAdminService);
+        const rollover = new YearRolloverService(api);
+        const years = new AcademicYearsService(api);
+        const groups = new StudentGroupsService(api);
+        const sinceStart = eh.currentStart;
+
+        // 9: the rollover writes no history.
+        const before = (await owner.query<{ n: number }>(`SELECT count(*)::int AS n FROM "StudentEnrollments" WHERE "schoolId" = $1`, [eh.schoolId])).rows[0].n;
+        const rolled = await rollover.previewRollover(eh.prevYearId, eh.rolloverOptions, ehAdmin);
+        const target = await rollover.executeRollover(eh.prevYearId, { ...eh.rolloverOptions, planHash: rolled.planHash }, ehAdmin);
+        const after = (await owner.query<{ n: number }>(`SELECT count(*)::int AS n FROM "StudentEnrollments" WHERE "schoolId" = $1`, [eh.schoolId])).rows[0].n;
+        assert.equal(after, before, 'the rollover wrote class history');
+        const curYear = target.academicYear.id;
+        await groups.create({ academicYearId: curYear, name: `${MARKER} eh 8B`, gradeLevel: 8 }, ehAdmin);
+        const cls = async (name: string) =>
+          (await owner.query<{ id: string }>(`SELECT id FROM "StudentGroups" WHERE "academicYearId" = $1 AND name = $2`, [curYear, `${MARKER} eh ${name}`])).rows[0].id;
+
+        // 5: a FIRST activation, run after the new year began, records the
+        // moved pupils from the year's first day; the graduate's open segment
+        // closes; the pupil inactive at the activation is left where they are.
+        const preview = await rollover.previewActivation(curYear, ehAdmin);
+        await rollover.executeActivation(curYear, { planHash: preview.planHash }, ehAdmin);
+        assert.deepEqual(await segmentsOf('p1'), [['i år', '8A', 8, sinceStart, null, 'RECORDED']]);
+        assert.deepEqual(await segmentsOf('p2'), [['i år', '8A', 8, sinceStart, null, 'RECORDED']]);
+        assert.deepEqual(await segmentsOf('p3'), [], 'the graduate kept a segment');
+        assert.deepEqual(await segmentsOf('p4'), [], 'an inactive pupil got a segment');
+        // The straggler: p4 comes back, still in last year's 7A, and the
+        // ACTIVE year's activation moves them — recorded from today, no hint.
+        await users.update(eh.p4, { isActive: true }, ehAdmin);
+        assert.deepEqual(await segmentsOf('p4'), [['förra', '7A', 7, eh.prevEnd1, null, 'RECORDED']]);
+        const straggler = await rollover.previewActivation(curYear, ehAdmin);
+        await rollover.executeActivation(curYear, { planHash: straggler.planHash }, ehAdmin);
+        assert.deepEqual(await segmentsOf('p4'), [['i år', '8A', 8, today, null, 'RECORDED']]);
+
+        // 1 and 2: POST /users with a class, then PATCHes.
+        const p5 = await users.create(
+          { role: 'STUDENT', firstName: 'Probe', lastName: 'EH', email: `${MARKER}-eh-p5@example.invalid`, studentGroupId: await cls('8A') } as never,
+          ehAdmin,
+        );
+        assert.deepEqual(await segmentsOf('p5'), [['i år', '8A', 8, today, null, 'RECORDED']]);
+        await users.update(p5.id, { studentGroupId: await cls('8B') }, ehAdmin); // a same-day correction
+        assert.deepEqual(await segmentsOf('p5'), [['i år', '8B', 8, today, null, 'RECORDED']]);
+        // A move of a pupil who sat in 8A since the year began closes and opens at today.
+        await users.update(eh.p1, { studentGroupId: await cls('8B') }, ehAdmin);
+        assert.deepEqual(await segmentsOf('p1'), [
+          ['i år', '8A', 8, sinceStart, today, 'RECORDED'],
+          ['i år', '8B', 8, today, null, 'RECORDED'],
+        ]);
+        await users.update(eh.p1, { studentGroupId: await cls('8A') }, ehAdmin); // back, the same day
+        assert.deepEqual(await segmentsOf('p1'), [['i år', '8A', 8, sinceStart, null, 'RECORDED']]);
+        // Deactivation closes; reactivation re-opens (the same day: one segment again).
+        await users.update(eh.p2, { isActive: false }, ehAdmin);
+        assert.deepEqual(await segmentsOf('p2'), [['i år', '8A', 8, sinceStart, today, 'RECORDED']]);
+        await users.update(eh.p2, { isActive: true }, ehAdmin);
+        assert.deepEqual(await segmentsOf('p2'), [['i år', '8A', 8, sinceStart, null, 'RECORDED']]);
+        // Another school's class is no class of this school: 400, nothing written.
+        await assert.rejects(users.update(eh.p2, { studentGroupId: eh.foreignGroupId }, ehAdmin), (error: unknown) => {
+          assert.ok(error instanceof BadRequestException, summarise(error));
+          assert.match(error.message, /^studentGroupId: /);
+          return true;
+        });
+        assert.deepEqual(await segmentsOf('p2'), [['i år', '8A', 8, sinceStart, null, 'RECORDED']]);
+
+        // 8: a move whose transaction rolls back leaves no history.
+        await assert.rejects(
+          api.withRls(ehAdmin, async (tx) => {
+            await tx.user.update({ where: { id: eh.p2 }, data: { studentGroupId: await cls('8B') } });
+            throw new Error('probe: roll back');
+          }),
+          /roll back/,
+        );
+        assert.deepEqual(await segmentsOf('p2'), [['i år', '8A', 8, sinceStart, null, 'RECORDED']]);
+
+        // 3: the CSV import (one row of a class the year has, one of none).
+        const imports = new ImportService(api, users);
+        const report = await imports.importStudents(
+          {
+            academicYearId: curYear,
+            rows: [
+              { firstName: 'Probe', lastName: 'EH', email: `${MARKER}-eh-csv@example.invalid`, className: `${MARKER} eh 8B` },
+              { firstName: 'Probe', lastName: 'EH', email: `${MARKER}-eh-csv2@example.invalid`, className: 'Ingen sådan klass' },
+            ],
+          } as never,
+          ehAdmin,
+        );
+        assert.equal(report.created, 1, JSON.stringify(report));
+        assert.deepEqual(await segmentsOf('csv'), [['i år', '8B', 8, today, null, 'RECORDED']]);
+        assert.deepEqual(await segmentsOf('csv2'), []);
+
+        // 4: SS12000 under the service principal, into the active year's class by name.
+        await owner.query(
+          `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+           VALUES ($1, $2, 'Probe', 'EH', 'STUDENT', gen_random_uuid(), true, now())`,
+          [eh.schoolId, `${MARKER}-eh-ss@example.invalid`],
+        );
+        const synced = await new Ss12000Service(api).importPersons(eh.schoolId, [
+          { email: `${MARKER}-eh-ss@example.invalid`, groupDisplayName: `${MARKER} eh 8B` },
+        ]);
+        assert.equal(synced.updated, 1);
+        assert.deepEqual(await segmentsOf('ss'), [['i år', '8B', 8, today, null, 'RECORDED']]);
+
+        // C3: a class with history keeps its year — the service names it,
+        // and the key refuses the PostgREST-equivalent write.
+        // 8B, not 8A: 8A continues last year's 7A, and a linked class's year
+        // is the rollover link trigger's to refuse (LR409) before this key.
+        await assert.rejects(groups.update(await cls('8B'), { academicYearId: eh.prevYearId }, ehAdmin), (error: unknown) => {
+          assert.ok(error instanceof ConflictException, summarise(error));
+          assert.equal((error.getResponse() as { code?: string }).code, 'STUDENT_GROUP_HAS_ENROLMENT_HISTORY');
+          return true;
+        });
+        const class8b = await cls('8B');
+        await assert.rejects(
+          api.withRls(ehAdmin, (tx) => tx.studentGroup.update({ where: { id: class8b }, data: { academicYearId: eh.prevYearId } })),
+          (error: unknown) => {
+            assert.equal(sqlStateOf(error), '23503', summarise(error));
+            return true;
+          },
+        );
+
+        // 6: a class deleted. Its pupils' segments close at today with no
+        // class and keep their grade; their class is cleared.
+        await users.update(eh.p4, { studentGroupId: await cls('8B') }, ehAdmin); // p4's same-day 8A segment is replaced
+        await groups.remove(await cls('8A'), ehAdmin);
+        assert.deepEqual(await segmentsOf('p1'), [['i år', null, 8, sinceStart, today, 'RECORDED']]);
+        assert.deepEqual(await segmentsOf('p2'), [['i år', null, 8, sinceStart, today, 'RECORDED']]);
+
+        // Nobody but the database writes it: the owner meets the guard (SE403),
+        // TRUNCATE included, and the API role the grant (42501).
+        for (const sql of [
+          `INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "validFrom") VALUES ('${eh.schoolId}', '${eh.p1}', '${curYear}', DATE '2001-01-01')`,
+          `UPDATE "StudentEnrollments" SET "validFrom" = DATE '2001-01-01' WHERE "schoolId" = '${eh.schoolId}'`,
+          `DELETE FROM "StudentEnrollments" WHERE "schoolId" = '${eh.schoolId}'`,
+          `TRUNCATE "StudentEnrollments"`,
+        ]) {
+          await assert.rejects(owner.query(sql), (error: unknown) => {
+            assert.equal((error as { code?: string }).code, 'SE403', `${sql}: ${summarise(error)}`);
+            return true;
+          });
+        }
+        await assert.rejects(
+          api.withRls(ehAdmin, (tx) => tx.$executeRaw`DELETE FROM "StudentEnrollments"`),
+          (error: unknown) => {
+            assert.equal(sqlStateOf(error), '42501', summarise(error));
+            return true;
+          },
+        );
+        // The constraints behind the trigger, with the guard set aside in a
+        // transaction that is rolled back: an overlapping segment is 23P01,
+        // a second open one 23505.
+        await owner.query('BEGIN');
+        try {
+          await owner.query('ALTER TABLE "StudentEnrollments" DISABLE TRIGGER "StudentEnrollments_written_by_trigger"');
+          for (const [sql, state] of [
+            [`INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "validFrom", "validTo") VALUES ('${eh.schoolId}', '${eh.p1}', '${curYear}', '${sinceStart}', '${today}')`, '23P01'],
+            [`INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "validFrom") VALUES ('${eh.schoolId}', '${p5.id}', '${eh.prevYearId}', DATE '2001-01-01')`, '23505'],
+          ] as const) {
+            await owner.query('SAVEPOINT s');
+            await assert.rejects(owner.query(sql), (error: unknown) => {
+              assert.equal((error as { code?: string }).code, state, `${sql}: ${summarise(error)}`);
+              return true;
+            });
+            await owner.query('ROLLBACK TO SAVEPOINT s');
+          }
+        } finally {
+          await owner.query('ROLLBACK');
+        }
+
+        // 7: a year deleted takes its history along, nothing raised — once its
+        // pupils have left its classes (YEAR_HAS_HOME_PUPILS guards that).
+        await owner.query(`UPDATE "Users" SET "studentGroupId" = NULL WHERE "schoolId" = $1 AND role = 'STUDENT'`, [eh.schoolId]);
+        await owner.query(`UPDATE "AcademicYears" SET "isActive" = false WHERE id = $1`, [curYear]);
+        await years.remove(curYear, ehAdmin);
+        assert.equal(
+          (await owner.query(`SELECT 1 FROM "StudentEnrollments" WHERE "academicYearId" = $1`, [curYear])).rowCount,
+          0,
+        );
+      });
+
+      await check('(u5) the backfill: every active pupil of the seeded school with a class has exactly one open segment, in that class', async () => {
+        const { rows } = await owner.query<{ id: string; open: number; same: number }>(
+          `SELECT u.id,
+                  (SELECT count(*)::int FROM "StudentEnrollments" e WHERE e."studentId" = u.id AND e."validTo" IS NULL) AS open,
+                  (SELECT count(*)::int FROM "StudentEnrollments" e WHERE e."studentId" = u.id AND e."validTo" IS NULL
+                      AND e."studentGroupId" = u."studentGroupId") AS same
+             FROM "Users" u
+            WHERE u."schoolId" = $1 AND u.role = 'STUDENT' AND u."isActive" AND u."studentGroupId" IS NOT NULL`,
+          [fixture.schoolId],
+        );
+        assert.ok(rows.length > 0);
+        assert.deepEqual(rows.filter((row) => row.open !== 1 || row.same !== 1), []);
+      });
+    } finally {
+      await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-elevhistorik'`, [MARKER]);
+    }
+  }
+
   await check('(z) the active year\'s hot paths send Postgres exactly f5ff8da\'s statements, the PATCH one fewer: the roster basis rides on reads they already make', async () => {
     // A school of its own, swept whole: an active year with 7A and 8A at the
     // same hour (no shared pupil or teacher), a published lesson, behörighet,
@@ -3642,6 +3860,88 @@ async function dropStaffingTriggers(owner: Client): Promise<void> {
   await owner.query('DROP FUNCTION IF EXISTS public.probe_tj_repoint()');
 }
 
+interface EnrolmentSchool {
+  schoolId: string;
+  adminId: string;
+  adminAuthId: string;
+  prevYearId: string;
+  p4: string;
+  p1: string;
+  p2: string;
+  foreignGroupId: string;
+  /** The school's local today, the start of the rolled year (50 days ago), and the old year's end + 1. */
+  today: string;
+  currentStart: string;
+  prevEnd1: string;
+  rolloverOptions: { name: string; startDate: string; endDate: string; graduatingGradeLevel: number };
+}
+
+/**
+ * (u5)'s school: an ACTIVE year that ended 60 days ago, with 7A (p1, p2, and
+ * p4, who is inactive) and 9A (p3, who graduates). Its rollover is a year
+ * that began 50 days ago, so the activation is a late first one — the case
+ * the class history's hint exists for. Dates relative to the real day: the
+ * trigger's "today" is the database's, not an injected one.
+ */
+async function givenEnrolmentSchool(owner: Client): Promise<EnrolmentSchool> {
+  const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> =>
+    (await owner.query<T>(sql, params)).rows[0];
+  const day = await one<{ today: string; start: string; prevStart: string; prevEnd: string; prevEnd1: string; end: string }>(
+    `SELECT t::text AS today, (t - 50)::text AS start, (t - 400)::text AS "prevStart", (t - 60)::text AS "prevEnd",
+            (t - 59)::text AS "prevEnd1", (t + 250)::text AS "end"
+       FROM (SELECT (now() AT TIME ZONE 'Europe/Stockholm')::date AS t) d`,
+    [],
+  );
+  const school = await one<{ id: string }>(
+    `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+    [`${MARKER} elevhistorik`, `${MARKER}-elevhistorik`],
+  );
+  const year = await one<{ id: string }>(
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    [school.id, `${MARKER} eh förra`, day.prevStart, day.prevEnd],
+  );
+  const group = (name: string, grade: number) =>
+    one<{ id: string }>(
+      `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+       VALUES ($1, $2, $3, 'CLASS', $4, now()) RETURNING id`,
+      [school.id, year.id, `${MARKER} eh ${name}`, grade],
+    );
+  const g7a = await group('7A', 7);
+  const g9a = await group('9A', 9);
+  const person = (role: string, email: string, groupId: string | null = null) =>
+    one<{ id: string; authId: string }>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
+       VALUES ($1, $2, 'Probe', 'EH', $3::"UserRole", gen_random_uuid(), true, $4, now()) RETURNING id, "authId"`,
+      [school.id, `${MARKER}-eh-${email}@example.invalid`, role, groupId],
+    );
+  const admin = await person('SCHOOL_ADMIN', 'admin');
+  const p1 = await person('STUDENT', 'p1', g7a.id);
+  const p2 = await person('STUDENT', 'p2', g7a.id);
+  await person('STUDENT', 'p3', g9a.id);
+  const p4 = await person('STUDENT', 'p4', g7a.id);
+  await owner.query('UPDATE "Users" SET "isActive" = false WHERE id = $1', [p4.id]);
+  const foreign = await one<{ id: string }>(
+    `SELECT g.id FROM "StudentGroups" g JOIN "Schools" s ON s.id = g."schoolId"
+      WHERE s.slug = 'rls-fixture-school' AND g.name = 'RLS Fixture Class'`,
+    [],
+  );
+  return {
+    schoolId: school.id,
+    adminId: admin.id,
+    adminAuthId: admin.authId,
+    prevYearId: year.id,
+    p1: p1.id,
+    p2: p2.id,
+    p4: p4.id,
+    foreignGroupId: foreign.id,
+    today: day.today,
+    currentStart: day.start,
+    prevEnd1: day.prevEnd1,
+    rolloverOptions: { name: `${MARKER} eh i år`, startDate: day.start, endDate: day.end, graduatingGradeLevel: 9 },
+  };
+}
+
 interface RolloverSchool {
   schoolId: string;
   adminId: string;
@@ -3919,6 +4219,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // (z)'s school, whole, for a run that stopped inside it.
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
   // (ö)'s school, whole, for a run that stopped inside it.
+  // (u5)'s school, whole, for a run that stopped inside it.
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-elevhistorik'`, [MARKER]);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
   // (u4)'s pupil, for a run that stopped before deleting it.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-gf@example.invalid'`, [schoolId, MARKER]);

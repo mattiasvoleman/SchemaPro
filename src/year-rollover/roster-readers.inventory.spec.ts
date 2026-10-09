@@ -69,6 +69,18 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
   },
 };
 
+/**
+ * Every file of src/ that reads the class history (StudentEnrollments, timplan
+ * P4), and why. Its own basis, ENROLLED — who sat where, as recorded — beside
+ * the three above: a past year's rosters read from the history are neither the
+ * rows as they are now (CURRENT) nor the activation's projection (PROJECTED),
+ * and a reader that started reading it without anybody deciding so would mix
+ * a recorded year with a present one.
+ */
+const ENROLLED: Record<string, string> = {
+  'src/resources/student-groups.service.ts': 'a class with history keeps its läsår: counted before a year change (409 STUDENT_GROUP_HAS_ENROLMENT_HISTORY)',
+};
+
 const STAFF = new Set(['SCHOOL_ADMIN', 'TEACHER']);
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
@@ -166,6 +178,18 @@ describe('the roster-reader inventory', () => {
       if (entry.basis !== 'PROJECTED' || path === 'src/year-rollover/projected-rosters.ts') continue;
       expect([path, files.find((file) => file.path === path)!.text.includes('year-rollover/projected-rosters')]).toEqual([path, true]);
     }
+  });
+
+  it('has every read of the class history in a file classified ENROLLED', () => {
+    const readers = new Set<string>();
+    for (const { path, text } of files) {
+      if (/\bstudentEnrollment\.(findMany|findFirst|findUnique|findUniqueOrThrow|findFirstOrThrow|count|groupBy|aggregate)\(/.test(text)) {
+        readers.add(path);
+      }
+      // Raw SQL over the table: a $queryRaw or a Prisma.sql template naming it.
+      if (/(?:\$queryRaw|Prisma\.sql)[^`]*`[^`]*"StudentEnrollments"/.test(text)) readers.add(path);
+    }
+    expect([...readers].sort()).toEqual(Object.keys(ENROLLED).sort());
   });
 
   it('builds a CURRENT basis nowhere but in projected-rosters.ts', () => {
