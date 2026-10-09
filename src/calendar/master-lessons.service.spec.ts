@@ -2110,6 +2110,7 @@ describe('MasterLessonsService', () => {
 
     it('re-assigns the LEAD teacher on propagated lessons when the teacher changes', async () => {
       arrangeUpdate({}, { teacherId: NEW_TEACHER_ID });
+      (tx as unknown as { $executeRaw: jest.Mock }).$executeRaw = jest.fn().mockResolvedValue(1);
       tx.calendarLesson.findMany.mockResolvedValue([
         { id: CAL_LESSON_ID, date: new Date('2026-08-10T00:00:00.000Z') },
       ]);
@@ -2128,14 +2129,14 @@ describe('MasterLessonsService', () => {
       expect(tx.calendarLessonTeacher.deleteMany).toHaveBeenCalledWith({
         where: { calendarLessonId: CAL_LESSON_ID, role: 'LEAD' },
       });
-      expect(tx.calendarLessonTeacher.create).toHaveBeenCalledWith({
-        data: {
-          schoolId: SCHOOL_ID,
-          calendarLessonId: CAL_LESSON_ID,
-          teacherId: NEW_TEACHER_ID,
-          role: 'LEAD',
-        },
-      });
+      // The new LEAD, unless the lesson has a vikarie or the new teacher is
+      // already on it (staffing Fas 3, C5b): one guarded INSERT.
+      const insert = (tx as unknown as { $executeRaw: jest.Mock }).$executeRaw.mock.calls[0]!;
+      const sql = (insert[0] as readonly string[]).join('?');
+      expect(sql).toContain('INSERT INTO "CalendarLessonTeachers"');
+      expect(sql).toContain(`x."role" = 'SUBSTITUTE' OR x."teacherId" =`);
+      expect(insert.slice(1)).toEqual([SCHOOL_ID, CAL_LESSON_ID, NEW_TEACHER_ID, CAL_LESSON_ID, NEW_TEACHER_ID]);
+      expect(tx.calendarLessonTeacher.create).not.toHaveBeenCalled();
     });
 
     /*

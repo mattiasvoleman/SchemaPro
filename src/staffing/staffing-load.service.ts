@@ -4,7 +4,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import { Role } from '../auth/enums/role.enum';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId, requireUserId } from '../common/utils/request-context';
-import { readLoadInput } from './load-input';
+import { readLoadInput, type LoadRead } from './load-input';
 import {
   buildTeacherLoadReport,
   type LoadInput,
@@ -12,21 +12,51 @@ import {
   type UnstaffedRequirement,
 } from './teacher-load';
 import type { YearBounds } from './teaching-weeks';
+import { toScheduledRequirements, type ScheduledMaster } from './scheduled-load';
+import { buildReconciliation, type StaffingReconciliation } from './staffing-reconciliation';
+import { readPublishedSpans, staffingCreditStatement, type StaffingCreditRow } from '../timplan/timplan-delivered.sql';
+import { publishBreaksOf, readPublishClosures } from '../timplan/publish-context';
+import { todayInZone } from '../common/utils/time';
+import type { StaffingDeliveredQueryDto } from './dto/staffing-delivered.dto';
 import {
   suggestTeachers,
   type LastYearTeachers,
   type TeacherSuggestions,
 } from './suggest-teachers';
 
-/** The horizons the report can be asked for. Only the first exists in Fas 1. */
-export const LOAD_HORIZONS = ['planned'] as const;
+/**
+ * The horizons the weekly report can be asked for: the timplansposter
+ * (planned) or the grundschema (scheduled, Fas 3). Delivered time is a range,
+ * not a week, and has its own route (GET /staffing/delivered).
+ */
+export const LOAD_HORIZONS = ['planned', 'scheduled'] as const;
 export type LoadHorizon = (typeof LOAD_HORIZONS)[number];
 
 export interface TeacherLoadReportResponse extends TeacherLoadReport {
   academicYearId: string;
   horizon: LoadHorizon;
   year: YearBounds;
+  /**
+   * False under horizon=scheduled: the unstaffed, unqualified and bottleneck
+   * lists are about timplansposter and belong to the planned horizon, so they
+   * are empty there rather than computed over lessons.
+   */
+  listsComputed: boolean;
 }
+
+/** GET /staffing/delivered's answer. */
+export interface StaffingReconciliationResponse extends StaffingReconciliation {
+  academicYearId: string;
+  year: YearBounds;
+  /** The instant "held" is measured at, and the school's day it falls on. */
+  asOf: string;
+  asOfDate: string;
+}
+
+const asDay = (value: Date): string => value.toISOString().slice(0, 10);
+const asDayOrNull = (value: Date | null): string | null => (value === null ? null : asDay(value));
+/** A @db.Time back out as the wall clock it is, "HH:MM". */
+const asClock = (value: Date): string => value.toISOString().slice(11, 16);
 
 /**
  * Reads the rows the report is computed from, in ONE RLS transaction, and hands
@@ -57,12 +87,13 @@ export class StaffingLoadService {
     const chosen = horizon ?? 'planned';
     if (!(LOAD_HORIZONS as readonly string[]).includes(chosen)) {
       throw new BadRequestException(
-        `Horisonten "${chosen}" finns inte ännu — just nu beräknas bara "planned" (tjänstefördelningen). Schemalagd och genomförd tid kommer i en senare fas.`,
+        `Horisonten "${chosen}" finns inte — välj "planned" (timplansposterna) eller "scheduled" (grundschemat). Genomförd tid över en period läses från /staffing/delivered.`,
       );
     }
 
+    const scheduled = chosen === 'scheduled';
     const { year, input } = await this.prisma.withRls(user, (tx) =>
-      this.readInput(tx, academicYearId, user),
+      scheduled ? this.readScheduledInput(tx, academicYearId, user) : this.readInput(tx, academicYearId, user),
     );
     const report = buildTeacherLoadReport(input);
 
@@ -71,6 +102,10 @@ export class StaffingLoadService {
       horizon: chosen as LoadHorizon,
       year,
       ...report,
+      listsComputed: !scheduled,
+      ...(scheduled
+        ? { unstaffedRequirements: [], unqualifiedAssignments: [], subjectBottlenecks: [], bottlenecksComputed: false }
+        : {}),
     };
     if (user.role === Role.SCHOOL_ADMIN) return response;
 
@@ -89,6 +124,112 @@ export class StaffingLoadService {
       bottlenecksComputed: false,
       totals: { teacherMinutesPerWeek: 0, lessonMinutesPerWeek: 0, dutyMinutesPerWeek: 0 },
     };
+  }
+
+  /**
+   * Planerat, schemalagt och genomfört per lärare över [from, to]: the
+   * reconciliation of src/staffing/staffing-reconciliation.ts, read in ONE
+   * RLS transaction —
+   *
+   *   1. the year's master lessons (their groups are the spans' groups);
+   *   2. readLoadInput, asked for those groups too: the timplansposter, the
+   *      posts, the lov, the policy and the load weights — the planned load's
+   *      own reader, so the planned column IS the report's arithmetic. It
+   *      reaches the year's roster basis (projected-rosters.ts), so on a
+   *      rolled year not yet activated this answers R6's 409 as /load does;
+   *   3. the school's timezone: "held" is measured now, the range's default
+   *      end is the school's today;
+   *   4. the dated class and årskurs closures publish skips by
+   *      (src/timplan/publish-context.ts, P3's reader);
+   *   5. the published range and days (P3's statement C);
+   *   6. statement E (src/timplan/timplan-delivered.sql.ts) over P3's one
+   *      definition of held.
+   *
+   * SCHOOL_ADMIN gets every teacher, the bortfall per group and the totals. A
+   * TEACHER gets their own row: statement E is asked for their id alone, and
+   * the group losses and totals stay empty — the reconciliation never
+   * computes a colleague's figure for them. Ids only; the web names people.
+   */
+  async delivered(
+    query: StaffingDeliveredQueryDto,
+    user: AuthenticatedUser,
+  ): Promise<StaffingReconciliationResponse> {
+    const schoolId = requireSchoolId(user);
+    const own = user.role === Role.SCHOOL_ADMIN ? null : requireUserId(user);
+    const now = new Date();
+    if (query.from !== undefined && query.to !== undefined && query.from > query.to) {
+      throw new BadRequestException('from: periodens början ligger efter dess slut.');
+    }
+    return this.prisma.withRls(user, async (tx) => {
+      const masters = await readMasters(tx, query.academicYearId);
+      const read = await readLoadInput(tx, user, query.academicYearId, schoolId, {
+        alsoGroupIds: masterGroupIds(masters),
+      });
+      if (!read) throw new NotFoundException('Academic year not found.');
+      const school = await tx.academicYear.findUnique({
+        where: { id: query.academicYearId },
+        select: { school: { select: { timezone: true } } },
+      });
+      const timezone = school?.school?.timezone ?? 'Europe/Stockholm';
+      const asOfDate = asDay(todayInZone(timezone, now));
+      const { year } = read;
+
+      // The range: the asked days, or the year's start to the school's today,
+      // clamped into the year.
+      const askedFrom = query.from ?? year.startDate;
+      const askedTo = query.to ?? (asOfDate < year.endDate ? asOfDate : year.endDate);
+      if (askedTo < year.startDate || askedFrom > year.endDate) {
+        throw new BadRequestException(
+          `from/to: perioden ligger helt utanför läsåret (${year.startDate} – ${year.endDate}).`,
+        );
+      }
+      const from = askedFrom < year.startDate ? year.startDate : askedFrom;
+      const to = askedTo > year.endDate ? year.endDate : askedTo;
+      if (from > to) {
+        // The defaults themselves cross: a year that has not begun yet.
+        throw new BadRequestException('from: periodens början ligger efter dess slut.');
+      }
+      const clamped = (query.from !== undefined && from !== query.from) || (query.to !== undefined && to !== query.to);
+
+      const window = { academicYearId: query.academicYearId, yearStart: year.startDate, yearEnd: year.endDate, asOf: now };
+      const closures = await readPublishClosures(tx, window);
+      const spans = await readPublishedSpans(tx, window);
+      const credits =
+        spans.published === null
+          ? []
+          : await tx.$queryRaw<StaffingCreditRow[]>(staffingCreditStatement(window, { from, to }, own));
+      const groups = await tx.studentGroup.findMany({
+        where: { academicYearId: query.academicYearId },
+        select: { id: true, gradeLevel: true, kind: true },
+      });
+
+      const reconciliation = buildReconciliation({
+        year,
+        from,
+        to,
+        clamped,
+        asOfDate,
+        loadModel: read.loadModel,
+        published: spans.published,
+        publishedDays: spans.publishedDays,
+        requirements: read.input.requirements,
+        employmentUserIds: read.input.employments.map((row) => row.userId),
+        groups: groups.map((g) => ({ id: g.id, gradeLevel: g.gradeLevel, kind: String(g.kind) })),
+        closures: read.input.closures,
+        masters: masters.map((m) => toScheduledMaster(m, read)),
+        publish: { breaks: publishBreaksOf(read.input.closures), closures, timezone },
+        credits,
+        weightOf: read.weightOf,
+        own,
+      });
+      return {
+        academicYearId: query.academicYearId,
+        year,
+        asOf: now.toISOString(),
+        asOfDate,
+        ...reconciliation,
+      };
+    });
   }
 
   /** The year's requirements with no lead teacher, with their minutes and span. */
@@ -177,6 +318,93 @@ export class StaffingLoadService {
     }
     return { year: read.year, input: read.input };
   }
+
+  /**
+   * The SCHEDULED horizon's input: the planned input with its requirements
+   * replaced by one row per non-parked master lesson
+   * (src/staffing/scheduled-load.ts), and no behörigheter — the
+   * requirement-shaped lists are the planned horizon's, and asking them of
+   * lessons would flag a lesson twice for a row. requirementCount counts
+   * lessons here. One statement more than planned: the master lessons, read
+   * first so their groups' spans are derived with the rest.
+   */
+  private async readScheduledInput(
+    tx: PrismaClient,
+    academicYearId: string,
+    user: AuthenticatedUser,
+  ): Promise<{ year: YearBounds; input: LoadInput }> {
+    const masters = await readMasters(tx, academicYearId);
+    const read = await readLoadInput(tx, user, academicYearId, requireSchoolId(user), {
+      alsoGroupIds: masterGroupIds(masters),
+    });
+    if (!read) {
+      throw new NotFoundException('Academic year not found.');
+    }
+    return {
+      year: read.year,
+      input: {
+        ...read.input,
+        requirements: toScheduledRequirements(
+          masters.map((m) => toScheduledMaster(m, read)),
+          read.input.requirements,
+          (groupIds) => read.spanOf(groupIds),
+          read.loadModel === 'FACTOR' ? read.weightOf : null,
+        ),
+        qualifications: [],
+      },
+    };
+  }
+}
+
+type MasterRow = Awaited<ReturnType<typeof readMasters>>[number];
+
+/** The year's master lessons, parked ones included (the walk skips them), in id order. */
+function readMasters(tx: PrismaClient, academicYearId: string) {
+  return tx.masterLesson.findMany({
+    where: { academicYearId },
+    select: {
+      id: true,
+      subjectId: true,
+      studentGroupId: true,
+      teacherId: true,
+      coTeacherId: true,
+      dayOfWeek: true,
+      startTime: true,
+      endTime: true,
+      recurrence: true,
+      startDate: true,
+      endDate: true,
+      isParked: true,
+      subject: { select: { name: true } },
+      studentGroup: { select: { name: true } },
+      extraGroups: { select: { studentGroupId: true } },
+    },
+    orderBy: { id: 'asc' },
+  });
+}
+
+function masterGroupIds(masters: readonly MasterRow[]): string[] {
+  return [...new Set(masters.flatMap((m) => [m.studentGroupId, ...m.extraGroups.map((g) => g.studentGroupId)]))];
+}
+
+function toScheduledMaster(m: MasterRow, read: LoadRead): ScheduledMaster {
+  return {
+    id: m.id,
+    subjectId: m.subjectId,
+    subjectName: m.subject.name,
+    studentGroupId: m.studentGroupId,
+    groupName: m.studentGroup.name ?? read.groupName(m.studentGroupId) ?? '',
+    extraGroupIds: m.extraGroups.map((g) => g.studentGroupId),
+    teacherId: m.teacherId,
+    coTeacherId: m.coTeacherId,
+    dayOfWeek: m.dayOfWeek,
+    startTime: asClock(m.startTime),
+    endTime: asClock(m.endTime),
+    recurrence: m.recurrence,
+    startDate: asDayOrNull(m.startDate),
+    endDate: asDayOrNull(m.endDate),
+    isParked: m.isParked,
+  };
 }
 
 /** The predecessor's rows of the subject, folded to who taught them; null for none. */
