@@ -37,8 +37,11 @@ import type {
  *                              for its group (a lov entered after publish left
  *                              publish's cancelled rows standing) — NOT lost
  *   OTHER                      past, RESCHEDULED (nothing writes it) — lost
- *   AHEAD / AHEAD_TEACHERLESS / AHEAD_CANCELLED / AHEAD_OTHER
- *                              not yet ended, by the same tests
+ *   AHEAD / AHEAD_TEACHERLESS / AHEAD_CANCELLED / AHEAD_CANCELLED_ON_BREAK /
+ *   AHEAD_OTHER                not yet ended, by the same tests — the break test
+ *                              too, so a cancelled row on a lov reads the same
+ *                              (not lost, not projected) before its day and
+ *                              after it
  *
  * The break test is publish's breakCoversGroup in SQL: a whole-school break
  * covers every group, a spanned one a group whose gradeLevel is inside it.
@@ -71,6 +74,15 @@ export interface DeliveredWindow {
 /** The classification, as a CTE body; see the header. */
 export function deliveredLessons(window: DeliveredWindow): Prisma.Sql {
   const { academicYearId, yearStart, yearEnd, asOf } = window;
+  // Asked only of a CANCELLED row, past or ahead: one test, written once.
+  const onBreak = Prisma.sql`EXISTS (
+                      SELECT 1 FROM "SchoolBreaks" b
+                       WHERE b."academicYearId" = ${academicYearId}::uuid
+                         AND cl."date" BETWEEN b."startDate" AND b."endDate"
+                         AND ((b."minGradeLevel" IS NULL AND b."maxGradeLevel" IS NULL)
+                              OR (g."gradeLevel" IS NOT NULL
+                                  AND (b."minGradeLevel" IS NULL OR g."gradeLevel" >= b."minGradeLevel")
+                                  AND (b."maxGradeLevel" IS NULL OR g."gradeLevel" <= b."maxGradeLevel"))))`;
   return Prisma.sql`
     SELECT cl."id", cl."studentGroupId", cl."subjectId", cl."date", cl."masterLessonId",
            round(EXTRACT(EPOCH FROM (cl."endsAt" - cl."startsAt")) / 60)::int AS "minutes",
@@ -79,20 +91,14 @@ export function deliveredLessons(window: DeliveredWindow): Prisma.Sql {
                CASE WHEN cl."status" IN ('SCHEDULED', 'COMPLETED') THEN
                       CASE WHEN EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t WHERE t."calendarLessonId" = cl."id")
                            THEN 'AHEAD' ELSE 'AHEAD_TEACHERLESS' END
-                    WHEN cl."status" = 'CANCELLED' THEN 'AHEAD_CANCELLED'
+                    WHEN cl."status" = 'CANCELLED' THEN
+                      CASE WHEN ${onBreak} THEN 'AHEAD_CANCELLED_ON_BREAK' ELSE 'AHEAD_CANCELLED' END
                     ELSE 'AHEAD_OTHER' END
              WHEN cl."status" IN ('SCHEDULED', 'COMPLETED') THEN
                CASE WHEN EXISTS (SELECT 1 FROM "CalendarLessonTeachers" t WHERE t."calendarLessonId" = cl."id")
                     THEN 'DELIVERED' ELSE 'TEACHERLESS' END
              WHEN cl."status" = 'CANCELLED' THEN
-               CASE WHEN EXISTS (
-                      SELECT 1 FROM "SchoolBreaks" b
-                       WHERE b."academicYearId" = ${academicYearId}::uuid
-                         AND cl."date" BETWEEN b."startDate" AND b."endDate"
-                         AND ((b."minGradeLevel" IS NULL AND b."maxGradeLevel" IS NULL)
-                              OR (g."gradeLevel" IS NOT NULL
-                                  AND (b."minGradeLevel" IS NULL OR g."gradeLevel" >= b."minGradeLevel")
-                                  AND (b."maxGradeLevel" IS NULL OR g."gradeLevel" <= b."maxGradeLevel"))))
+               CASE WHEN ${onBreak}
                     THEN 'CANCELLED_ON_BREAK'
                     ELSE 'CANCELLED_' || COALESCE(cl."cancelCause"::text, 'UNKNOWN') END
              ELSE 'OTHER'
@@ -132,16 +138,19 @@ export function audienceStatement(window: DeliveredWindow): Prisma.Sql {
  * C: per master lesson, how many of its rows have not ended, and its first and
  * last dated row (every status and subject — a row occupies its date whatever
  * became of it): the per-lesson horizon the projection walks from (R1). The
- * same scan's grand total (GROUPING SETS' empty set, "total" = 1) is the
- * year's published range — its first and last dated row of any kind, rows
- * without a master lesson included — so one statement answers both; a year
- * with no row at all answers the total row with nulls.
+ * same scan's grand total (GROUPING SETS' empty set, "total" = 1 and no
+ * "day") is the year's published range — its first and last dated row of any
+ * kind, rows without a master lesson included — and its (date) set ("total" =
+ * 1 and a "day") is every date holding a row, from which the module finds the
+ * gaps two publishes left; so one statement answers all three. A year with no
+ * row at all answers the total row with nulls.
  */
 export function horizonStatement(window: DeliveredWindow): Prisma.Sql {
   const { academicYearId, yearStart, yearEnd, asOf } = window;
   return Prisma.sql`
     SELECT cl."masterLessonId",
            GROUPING(cl."masterLessonId")::int AS "total",
+           (CASE WHEN GROUPING(cl."date") = 0 THEN cl."date"::text END) AS "day",
            (COUNT(*) FILTER (WHERE cl."endsAt" > ${asOf}::timestamptz))::int AS "aheadRows",
            MIN(cl."date")::text AS "firstDate",
            MAX(cl."date")::text AS "lastDate"
@@ -149,7 +158,7 @@ export function horizonStatement(window: DeliveredWindow): Prisma.Sql {
       JOIN "StudentGroups" g ON g."id" = cl."studentGroupId"
      WHERE g."academicYearId" = ${academicYearId}::uuid
        AND cl."date" BETWEEN ${yearStart}::date AND ${yearEnd}::date
-     GROUP BY GROUPING SETS ((cl."masterLessonId"), ())
+     GROUP BY GROUPING SETS ((cl."masterLessonId"), (cl."date"), ())
   `;
 }
 
@@ -173,6 +182,8 @@ export interface DeliveredRows {
   audiences: DeliveredAudienceRow[];
   horizon: DeliveredHorizonRow[];
   published: { from: string; through: string } | null;
+  /** Every date holding a row, sorted. */
+  publishedDays: string[];
   dates: DeliveredDateRow[];
 }
 
@@ -183,12 +194,16 @@ export async function readDeliveredRows(
   dates: string[],
 ): Promise<DeliveredRows> {
   const spans = await tx.$queryRaw<
-    { masterLessonId: string | null; total: number; aheadRows: number; firstDate: string | null; lastDate: string | null }[]
+    { masterLessonId: string | null; total: number; day?: string | null; aheadRows: number; firstDate: string | null; lastDate: string | null }[]
   >(horizonStatement(window));
-  const total = spans.find((row) => row.total === 1);
+  const total = spans.find((row) => row.total === 1 && (row.day ?? null) === null);
   if (!total || total.firstDate === null || total.lastDate === null) {
-    return { audiences: [], horizon: [], published: null, dates: [] };
+    return { audiences: [], horizon: [], published: null, publishedDays: [], dates: [] };
   }
+  const publishedDays = spans
+    .filter((row) => row.total === 1 && (row.day ?? null) !== null)
+    .map((row) => row.day!)
+    .sort();
   const horizon: DeliveredHorizonRow[] = spans
     .filter((row) => row.total === 0 && row.masterLessonId !== null)
     .map((row) => ({
@@ -206,6 +221,7 @@ export async function readDeliveredRows(
     audiences: audiences.map((row) => ({ ...row, bucket: row.bucket as DeliveredBucket })),
     horizon,
     published: { from: total.firstDate, through: total.lastDate },
+    publishedDays,
     dates: byDate,
   };
 }

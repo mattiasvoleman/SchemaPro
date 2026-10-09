@@ -254,14 +254,20 @@ describe('the worked example (spec §4.4, recomputed in review R22)', () => {
     for (const p of [bea, ...classmates]) expect(text).not.toContain(p.id);
   });
 
-  it('credits the friluftsdag to 7A’s Idrott, its pupils and the teaching groups wholly inside åk 7–9', () => {
+  it('credits the friluftsdag to 7A’s Idrott, its pupils and the Idrott groups wholly inside åk 7–9', () => {
     const b = group('6A', 'CLASS', 6);
     const idrott7 = group('Idrott 7 tjej', 'TEACHING_GROUP', null);
     const mixed = group('Idrott 6–7', 'TEACHING_GROUP', null);
-    const ada = pupil(a, [idrott7, mixed]);
+    // Wholly inside åk 7–9 as well, but it studies no Idrott: no Idrott line.
+    const sprak = group('Språkval 7', 'TEACHING_GROUP', null);
+    const ada = pupil(a, [idrott7, mixed, sprak]);
     const sixth = pupil(b, [mixed]);
     const coverage = compute({
-      planned: { groups: [a, b, idrott7, mixed], pupils: [ada, sixth], requirements: [req(a, S.IDH, 2, 60)] },
+      planned: {
+        groups: [a, b, idrott7, mixed, sprak],
+        pupils: [ada, sixth],
+        requirements: [req(a, S.IDH, 2, 60), req(idrott7, S.IDH, 2, 60), req(mixed, S.IDH, 2, 60), req(sprak, S.SV, 2, 60)],
+      },
       credits: [
         { id: id(7001), date: '2026-09-25', minutes: 300, subjectId: S.IDH, studentGroupId: null, minGradeLevel: 7, maxGradeLevel: 9, name: 'Friluftsdag' },
         { id: id(7002), date: '2026-09-25', minutes: 120, subjectId: S.IDH, studentGroupId: null, minGradeLevel: 4, maxGradeLevel: 5, name: 'Ingen klass' },
@@ -271,7 +277,8 @@ describe('the worked example (spec §4.4, recomputed in review R22)', () => {
     });
     expect(lineOf(coverage, a, `subject:${S.IDH}`)).toMatchObject({ creditedMinutes: 300 });
     expect(lineOf(coverage, idrott7, `subject:${S.IDH}`)).toMatchObject({ creditedMinutes: 300 });
-    expect(coverage.groups.find((g) => g.studentGroupId === mixed.id)).toBeUndefined();
+    expect(lineOf(coverage, mixed, `subject:${S.IDH}`)).toMatchObject({ creditedMinutes: 0 });
+    expect(coverage.groups.find((g) => g.studentGroupId === sprak.id)!.lines.map((l) => l.key)).toEqual([`subject:${S.SV}`]);
     expect(coverage.groups.find((g) => g.studentGroupId === b.id)!.lines).toEqual([]);
     expect(coverage.credits).toEqual({ count: 1, minutes: 300 });
     expect(coverage.verdicts.filter((v) => v.creditId).map((v) => [v.code, v.params.reason ?? ''])).toEqual([
@@ -367,8 +374,11 @@ describe('genomfört mot schemalagt', () => {
         { masterLessonId: live.id, aheadRows: 2, firstDate: '2026-08-21', lastDate: '2026-10-23' },
       ],
     });
-    expect(coverage.drift).toEqual({ minutes: -120 + 60, lessons: 2 });
-    expect(coverage.verdicts.find((v) => v.code === 'TIMPLAN_CALENDAR_DRIFT')).toMatchObject({ params: { minutes: -60, lessons: 2 } });
+    // Two directions, kept apart: they would cancel each other in one figure.
+    expect(coverage.drift).toEqual({ minutes: -120 + 60, extraMinutes: 120, missingMinutes: 60, lessons: 2 });
+    expect(coverage.verdicts.find((v) => v.code === 'TIMPLAN_CALENDAR_DRIFT')).toMatchObject({
+      params: { minutes: -60, extraMinutes: 120, missingMinutes: 60, lessons: 2 },
+    });
   });
 
   it('leaves teacherless time ahead out of the projection and reports it beside', () => {
@@ -443,5 +453,154 @@ describe('genomfört mot schemalagt', () => {
       audiences: [row(c, S.MA, 'DELIVERED', 2), row(t, S.MA, 'DELIVERED', 1)],
     });
     expect(lineOf(coverage, c, `subject:${S.MA}`).pupils!.delivered).toEqual({ min: 120, median: 150, max: 180, below: 0 });
+  });
+});
+
+/*
+ * What the review of P3 found, each row failing on the code before it.
+ */
+describe('genomfört mot schemalagt — review findings', () => {
+  /** Mon–Fri dates in [from, to] on the given ISO weekdays that no closure for the grade covers. */
+  const occurrences = (from: string, to: string, weekdays: number[], grade: number, closures = CLOSURES): string[] => {
+    const out: string[] = [];
+    for (let d = new Date(`${from}T00:00:00.000Z`); d <= new Date(`${to}T00:00:00.000Z`); d = new Date(d.getTime() + 86_400_000)) {
+      const value = d.toISOString().slice(0, 10);
+      const weekday = d.getUTCDay() === 0 ? 7 : d.getUTCDay();
+      if (!weekdays.includes(weekday)) continue;
+      const closed = closures.some(
+        (c) =>
+          value >= c.startDate &&
+          value <= c.endDate &&
+          ((c.minGradeLevel === null && c.maxGradeLevel === null) ||
+            ((c.minGradeLevel === null || grade >= c.minGradeLevel) && (c.maxGradeLevel === null || grade <= c.maxGradeLevel))),
+      );
+      if (!closed) out.push(value);
+    }
+    return out;
+  };
+
+  it('judges a teaching group with an årskurs at that årskurs, so an åk 9 prao week does not read it short', () => {
+    // Prao for åk 9 is a lov. Publish and the walk skip a lesson by its
+    // owner's gradeLevel, a nivågrupp's too; its planned year must lose the
+    // same week, as 9A's does. Same lessons, same calendar, same answer.
+    const prao = lov('2026-11-16', '2026-11-20', 9, 9);
+    const closures = [...CLOSURES, prao];
+    const breaks = [...BREAKS, { startDate: day(prao.startDate), endDate: day(prao.endDate), minGradeLevel: 9, maxGradeLevel: 9 }];
+    const nine = group('9A', 'CLASS', 9);
+    const niva = group('Ma9-nivå', 'TEACHING_GROUP', 9);
+    const past = occurrences('2026-08-17', '2026-10-07', [1, 3, 5], 9, closures).length;
+    const coverage = compute({
+      planned: { groups: [nine, niva], closures, requirements: [req(nine, S.MA, 3, 60), req(niva, S.MA, 3, 60)] },
+      publish: { breaks, closures: [], timezone: 'Europe/Stockholm' },
+      published: { from: '2026-08-17', through: '2026-10-07' },
+      audiences: [row(nine, S.MA, 'DELIVERED', past), row(niva, S.MA, 'DELIVERED', past)],
+      masterLessons: [1, 3, 5].flatMap((weekday) => [master(nine, S.MA, weekday), master(niva, S.MA, weekday)]),
+    });
+    const classLine = lineOf(coverage, nine, `subject:${S.MA}`);
+    const nivaLine = lineOf(coverage, niva, `subject:${S.MA}`);
+    expect(nivaLine.plannedYearMinutes).toBe(classLine.plannedYearMinutes);
+    expect(nivaLine.projectedMinutes).toBe(classLine.projectedMinutes);
+    expect([classLine.status, nivaLine.status]).toEqual(['ON_TRACK', 'ON_TRACK']);
+    expect(coverage.verdicts.filter((v) => v.code === 'TIMPLAN_PROJECTION_SHORT')).toEqual([]);
+  });
+
+  it('keeps a week two publishes left empty out of the deficit, and names it', () => {
+    // Published 17 Aug – 18 Dec, then again from Monday 18 Jan (publish's
+    // default fromDate = today): 11–15 Jan was never written. Nothing else
+    // differs from a calendar that has every week.
+    const a = group('7A');
+    const days = [
+      ...occurrences('2026-08-17', '2026-12-18', [1, 3, 5], 7),
+      ...occurrences('2027-01-18', '2027-06-11', [1, 3, 5], 7),
+    ];
+    const pastDays = days.filter((d) => d < '2027-01-18');
+    const aheadOf = (weekday: number) => days.filter((d) => d >= '2027-01-18' && new Date(`${d}T00:00:00.000Z`).getUTCDay() === weekday);
+    const masters = [1, 3, 5].map((weekday) => master(a, S.MA, weekday));
+    const coverage = compute({
+      planned: { groups: [a], requirements: [req(a, S.MA, 3, 60)] },
+      asOf: '2027-01-18T06:00:00.000Z', // Monday 07:00, the day's lesson still ahead
+      asOfDate: '2027-01-18',
+      published: { from: '2026-08-17', through: '2027-06-11' },
+      // Other groups' lessons fill the other weekdays; the calendar is empty
+      // only in the week nobody published.
+      publishedDays: [
+        ...occurrences('2026-08-17', '2026-12-18', [1, 2, 3, 4, 5], 7),
+        ...occurrences('2027-01-18', '2027-06-11', [1, 2, 3, 4, 5], 7),
+      ],
+      audiences: [row(a, S.MA, 'DELIVERED', pastDays.length), row(a, S.MA, 'AHEAD', days.length - pastDays.length)],
+      masterLessons: masters,
+      horizon: masters.map((m, i) => ({
+        masterLessonId: m.id,
+        aheadRows: aheadOf([1, 3, 5][i]!).length,
+        firstDate: days.find((d) => new Date(`${d}T00:00:00.000Z`).getUTCDay() === [1, 3, 5][i])!,
+        lastDate: aheadOf([1, 3, 5][i]!).at(-1)!,
+      })),
+      drillGroupId: a.id,
+    });
+    const line = lineOf(coverage, a, `subject:${S.MA}`) as DeliveredLineDetail;
+    // Five weekdays at a fifth of 180 each are neither delivered nor lost.
+    expect(line).toMatchObject({ unrecordedMinutes: 180, lostMinutes: 0, status: 'ON_TRACK' });
+    expect(line.projection.scheduleGapMinutes).toBe(-12);
+    expect(coverage.drift).toBeNull();
+    expect(coverage.verdicts.map((v) => v.code)).toEqual(['TIMPLAN_PUBLISHED_GAP']);
+    expect(coverage.verdicts[0]!.params).toEqual({ from: '2027-01-11', through: '2027-01-15', days: 5, unrecordedMinutes: 180 });
+  });
+
+  it('gives each unrecorded-days notice its own window, and none for a window without planned time', () => {
+    const a = group('7A');
+    const base = { planned: { groups: [a], requirements: [req(a, S.MA, 3, 60)] }, masterLessons: [1, 3, 5].map((w) => master(a, S.MA, w)) };
+    const params = (coverage: DeliveredCoverage, code: string) => coverage.verdicts.find((v) => v.code === code)?.params;
+    // Published from Monday 24 Aug through Friday 2 Oct: 17–21 Aug before
+    // (5 × 36), 5–7 Oct after (3 × 36).
+    const both = compute({ ...base, published: { from: '2026-08-24', through: '2026-10-02' } });
+    expect(params(both, 'TIMPLAN_PUBLISHED_LATE')).toMatchObject({ unrecordedMinutes: 180 });
+    expect(params(both, 'TIMPLAN_PUBLISHED_BEHIND')).toMatchObject({ unrecordedMinutes: 108 });
+    // The group row's totals say what the line is judged against.
+    expect(both.groups[0]!.totals).toMatchObject({ unrecorded: 288, plannedYear: 6552 });
+    // A year starting on a Saturday, published from the Monday: nothing late.
+    const weekend = compute({
+      ...base,
+      planned: { ...base.planned, year: { startDate: '2026-08-15', endDate: YEAR.endDate } },
+      published: { from: '2026-08-17', through: '2026-10-02' },
+    });
+    expect(params(weekend, 'TIMPLAN_PUBLISHED_LATE')).toBeUndefined();
+    expect(params(weekend, 'TIMPLAN_PUBLISHED_BEHIND')).toMatchObject({ unrecordedMinutes: 108 });
+  });
+
+  it('reads a cancelled row on a lov the same before its day as after: not lost, not projected', () => {
+    const a = group('7B');
+    const coverage = compute({
+      planned: { groups: [a], requirements: [req(a, S.IDH, 2, 60)] },
+      audiences: [row(a, S.IDH, 'DELIVERED', 2), row(a, S.IDH, 'AHEAD_CANCELLED_ON_BREAK', 1)],
+      drillGroupId: a.id,
+    });
+    const line = lineOf(coverage, a, `subject:${S.IDH}`) as DeliveredLineDetail;
+    expect(line.cancelledOnBreak).toBe(60);
+    expect(line.projection).toMatchObject({ aheadCancelled: 0, lostMinutes: 0 });
+  });
+
+  it('credits a class’s teaching group of its own pupils in the subject, and a subjectless credit only class lines', () => {
+    const a = group('7A');
+    const b = group('7B');
+    const girls = group('7A Idrott tjej', 'TEACHING_GROUP', null);
+    const both = group('7AB Idrott kille', 'TEACHING_GROUP', null);
+    const pupils = [pupil(a, [girls]), pupil(a, [both]), pupil(b, [both])];
+    const coverage = compute({
+      planned: {
+        groups: [a, b, girls, both],
+        pupils,
+        requirements: [req(a, S.IDH, 2, 60), req(girls, S.IDH, 2, 60), req(both, S.IDH, 2, 60)],
+      },
+      credits: [
+        { id: id(7300), date: '2026-09-04', minutes: 300, subjectId: S.IDH, studentGroupId: a.id, minGradeLevel: null, maxGradeLevel: null, name: 'Friluftsdag 7A' },
+        { id: id(7301), date: '2026-09-11', minutes: 120, subjectId: null, studentGroupId: null, minGradeLevel: null, maxGradeLevel: null, name: 'Temadag' },
+      ],
+    });
+    expect(lineOf(coverage, girls, `subject:${S.IDH}`)).toMatchObject({ creditedMinutes: 300 });
+    expect(lineOf(coverage, both, `subject:${S.IDH}`)).toMatchObject({ creditedMinutes: 0 });
+    expect(lineOf(coverage, a, 'none')).toMatchObject({ creditedMinutes: 120 });
+    for (const g of [girls, both]) {
+      expect(coverage.groups.find((s) => s.studentGroupId === g.id)!.lines.map((l) => l.key)).toEqual([`subject:${S.IDH}`]);
+    }
   });
 });

@@ -238,6 +238,7 @@ export class TimplanCoverageService {
         asOf: now.toISOString(),
         asOfDate,
         published: rows.published,
+        publishedDays: rows.publishedDays,
         drillGroupId: query.studentGroupId ?? null,
       });
     });
