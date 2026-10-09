@@ -54,6 +54,14 @@ class Settings(BaseSettings):
     room_solver_max_time_seconds: float = Field(
         default=10.0, alias="ROOM_SOLVER_MAX_TIME_SECONDS",
     )
+    # The staffing proposal's budget, shared by its two stages, for the room
+    # budget's reason: it sits behind a button on /admin/staffing with someone
+    # watching the spinner, and it can always stop early with nothing lost —
+    # keeping every row as it is is a valid answer from the first instant. The
+    # 60-teacher, 400-row bench proves its first stage well inside it.
+    staff_solver_max_time_seconds: float = Field(
+        default=10.0, alias="STAFF_SOLVER_MAX_TIME_SECONDS",
+    )
 
     schedule_day_start_minutes: int = Field(default=480, alias="SCHEDULE_DAY_START_MINUTES")
     schedule_day_end_minutes: int = Field(default=1080, alias="SCHEDULE_DAY_END_MINUTES")
@@ -126,7 +134,10 @@ class Settings(BaseSettings):
         return [int(day.strip()) for day in self.schedule_days_env.split(",") if day.strip()]
 
     @field_validator(
-        "solver_timeout_seconds", "solver_max_time_seconds", "room_solver_max_time_seconds",
+        "solver_timeout_seconds",
+        "solver_max_time_seconds",
+        "room_solver_max_time_seconds",
+        "staff_solver_max_time_seconds",
     )
     @classmethod
     def validate_positive_timeout(cls, value: float) -> float:
