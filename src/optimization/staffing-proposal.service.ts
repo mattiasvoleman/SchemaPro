@@ -63,6 +63,12 @@ export const STAFF_PROPOSAL_STALE = 'STAFF_PROPOSAL_STALE';
 export const STAFF_ENGINE_UNAVAILABLE = 'STAFF_ENGINE_UNAVAILABLE';
 /** The engine's own refusal of a model it will not build, said here before the call too. */
 export const STAFF_MODEL_TOO_LARGE = 'STAFF_MODEL_TOO_LARGE';
+/**
+ * More staff, or more rows in play, than the engine's lists take. The
+ * gateway's own code: STAFF_MODEL_TOO_LARGE's "about N variables against
+ * 1 000 000" said nothing true about a school refused for its 1 001st teacher.
+ */
+export const STAFF_PROPOSAL_TOO_MANY = 'STAFF_PROPOSAL_TOO_MANY';
 
 /**
  * Under the engine's 8 MiB body limit (app/main.py MAX_REQUEST_BODY_BYTES),
@@ -378,7 +384,13 @@ export class StaffingProposalService {
       return answer('OPTIMAL', true, new Map(), reasons, [], null);
     }
 
-    const variables = free.reduce((sum, row) => sum + row.eligible.length, 0);
+    // Counted as the engine's guard counts (estimate_model_size), from above:
+    // respected, a row's candidates are its eligibility set; not respected,
+    // every teacher is — the set is only a preference then — plus one per
+    // teacher. An estimate for the sentence; the engine's own guard decides.
+    const variables =
+      free.reduce((sum, row) => sum + (plan.respect ? row.eligible.length : plan.teachers.length), 0) +
+      plan.teachers.length;
     const tooLarge = (): BadRequestException =>
       new BadRequestException({
         // The catalogue's sentence (engineMessages.STAFF_MODEL_TOO_LARGE), with its numbers.
@@ -389,9 +401,25 @@ export class StaffingProposalService {
         code: STAFF_MODEL_TOO_LARGE,
         params: { variables, limit: MODEL_VARIABLE_LIMIT },
       });
-    if (plan.teachers.length > MAX_TEACHERS || plan.rows.length > MAX_REQUIREMENTS) throw tooLarge();
 
     const { payload, maps } = anonymise(requestId, plan, dto.weights);
+    const teachersSent = payload.teachers.length;
+    const rowsSent = payload.requirements.length;
+    if (teachersSent > MAX_TEACHERS || rowsSent > MAX_REQUIREMENTS) {
+      throw new BadRequestException({
+        message:
+          `Förslaget skulle väga ${teachersSent} lärare och ${rowsSent} timplansposter, men motorn tar högst ` +
+          `${MAX_TEACHERS} lärare och ${MAX_REQUIREMENTS} poster åt gången. Behåll de poster som är klara som de är ` +
+          'och försök igen.',
+        code: STAFF_PROPOSAL_TOO_MANY,
+        params: {
+          teachers: teachersSent,
+          requirements: rowsSent,
+          limitTeachers: MAX_TEACHERS,
+          limitRequirements: MAX_REQUIREMENTS,
+        },
+      });
+    }
     if (Buffer.byteLength(JSON.stringify(payload), 'utf8') > MAX_STAFF_BODY_BYTES) throw tooLarge();
 
     let response: StaffResponse;
@@ -1063,8 +1091,15 @@ export function anonymise(
     fixedTenths: row.fixedTenths,
   }));
 
+  // A fixed row tells the engine only who is already in its class (its lead,
+  // its co-teacher): its load is in fixedTenths. So only the classes the
+  // proposal can touch need theirs — a year of thousands of settled rows and
+  // three open ones is not refused for the engine's 5 000-row list.
+  const inPlay = new Set(plan.rows.filter((row) => row.kind !== 'FIXED').map((row) => row.row.studentGroupId));
+  const sent = plan.rows.filter((row) => row.kind !== 'FIXED' || inPlay.has(row.row.studentGroupId));
+
   const sets = new Map<string, StaffEligibilitySet>();
-  const requirements: AnonymousStaffRequirement[] = plan.rows.map((planned) => {
+  const requirements: AnonymousStaffRequirement[] = sent.map((planned) => {
     const free = planned.kind !== 'FIXED';
     let eligibilitySetId: string | null = null;
     if (free && planned.eligible.length > 0) {

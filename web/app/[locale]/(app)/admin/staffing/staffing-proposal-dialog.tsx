@@ -51,6 +51,8 @@ const UNDO_TOAST_MS = 15_000;
 
 /** The model's own guard against a too-large school; the sentence is the engine catalogue's. */
 const STAFF_MODEL_TOO_LARGE = "STAFF_MODEL_TOO_LARGE";
+/** The gateway's: more staff, or more rows in play, than the engine's lists take. */
+const STAFF_PROPOSAL_TOO_MANY = "STAFF_PROPOSAL_TOO_MANY";
 /** The conflict line about one teacher: the page puts the name in front of it. */
 const STAFF_TEACHER_CAPACITY_ZERO = "STAFF_TEACHER_CAPACITY_ZERO";
 
@@ -175,6 +177,15 @@ export function StaffingProposalDialog({
     if (error.status === 404) return t("yearMissing");
     if (error.code === STAFF_MODEL_TOO_LARGE) {
       return engineMessage(tEngine, { code: error.code, message: error.message, params: error.params ?? null });
+    }
+    if (error.code === STAFF_PROPOSAL_TOO_MANY && error.params) {
+      const { teachers, requirements, limitTeachers, limitRequirements } = error.params;
+      return t("tooMany", {
+        teachers: Number(teachers),
+        rows: Number(requirements),
+        limitTeachers: Number(limitTeachers),
+        limitRows: Number(limitRequirements),
+      });
     }
     return error.message || tCommon("error");
   };
