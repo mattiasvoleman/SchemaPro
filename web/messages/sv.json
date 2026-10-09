@@ -1255,6 +1255,7 @@
         "STAFFING_RANGE_BEFORE_PUBLISHED": "Kalendern börjar {publishedFrom}: planerat och schemalagt jämförs från den dagen, så tiden före ser inte ut som ett underskott.",
         "STAFFING_RANGE_AFTER_PUBLISHED": "Kalendern är publicerad till {publishedThrough}: planerat och schemalagt jämförs till den dagen.",
         "STAFFING_RANGE_HAS_GAPS": "Kalendern har luckor mellan publiceringar, {days} dagar mellan {from} och {through}. Siffrorna justeras inte för dem.",
+        "STAFFING_RANGE_PARTIAL_WEEKS": "Jämförelsen {from} – {to} börjar eller slutar mitt i en vecka. Planerat räknas som en femtedel av veckan per skoldag, schemalagt och genomfört per lektion den dag den ligger, så de kan skilja sig även när allt gick enligt plan. Välj hela veckor, måndag till fredag, för en jämförelse rad för rad.",
         "STAFFING_LEAD_BESIDE_SUBSTITUTE": "{lessons} hållna lektioner har en lärare kvar bredvid en vikarie. Tiden räknas till vikarien och inte till dem."
       },
       "exportsTitle": "Exporter",
