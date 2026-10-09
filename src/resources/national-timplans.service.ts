@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { SchoolForm, TimplanStage } from '@prisma/client';
+import type { SchoolForm, TimplanApplicability, TimplanStage } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
@@ -28,6 +28,8 @@ export interface NationalTimplanVersionResponse {
   skolansValHours: number | null;
   reductionCapPercent: number | null;
   appliesFromCohortTerm: string;
+  /** How the lydelse applies: to unfinished stadier, or to cohorts starting from the term. */
+  appliesBy: TimplanApplicability;
   supersededByCode: string | null;
   entries: NationalTimplanEntryResponse[];
 }
@@ -89,6 +91,7 @@ export class NationalTimplansService {
           skolansValHours: true,
           reductionCapPercent: true,
           appliesFromCohortTerm: true,
+          appliesBy: true,
           supersededByCode: true,
           entries: {
             orderBy: [{ subjectCode: 'asc' }, { stage: 'asc' }],

@@ -3221,6 +3221,7 @@ async function runChecks(
         // 9: the rollover writes no history.
         const before = (await owner.query<{ n: number }>(`SELECT count(*)::int AS n FROM "StudentEnrollments" WHERE "schoolId" = $1`, [eh.schoolId])).rows[0].n;
         const rolled = await rollover.previewRollover(eh.prevYearId, eh.rolloverOptions, ehAdmin);
+        assert.ok(!rolled.problems.some((problem) => problem.code === 'ROLLOVER_2028_RENUMBERING'));
         const target = await rollover.executeRollover(eh.prevYearId, { ...eh.rolloverOptions, planHash: rolled.planHash }, ehAdmin);
         const after = (await owner.query<{ n: number }>(`SELECT count(*)::int AS n FROM "StudentEnrollments" WHERE "schoolId" = $1`, [eh.schoolId])).rows[0].n;
         assert.equal(after, before, 'the rollover wrote class history');
@@ -3378,6 +3379,17 @@ async function runChecks(
         } finally {
           await owner.query('ROLLBACK');
         }
+
+        // 2028: the rollover preview says it, blocks nothing.
+        const into2028 = await rollover.previewRollover(
+          curYear,
+          { name: `${MARKER} eh 2028`, startDate: '2028-08-14', endDate: '2029-06-08', graduatingGradeLevel: 9 },
+          ehAdmin,
+        );
+        assert.deepEqual(
+          into2028.problems.filter((problem) => problem.code === 'ROLLOVER_2028_RENUMBERING'),
+          [{ code: 'ROLLOVER_2028_RENUMBERING', blocking: false, params: { startYear: 2028, source: 'SFS 2025:729, övergångsbestämmelse 4' } }],
+        );
 
         // 7: a year deleted takes its history along, nothing raised — once its
         // pupils have left its classes (YEAR_HAS_HOME_PUPILS guards that).

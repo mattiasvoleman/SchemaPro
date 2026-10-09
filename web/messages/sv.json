@@ -2341,7 +2341,8 @@
       "STAFFING_ALREADY_PRESENT": "{teachers, plural, =0 {} one {# lärare har redan en tjänst i läsåret och hoppas över helt. } other {# lärare har redan en tjänst i läsåret och hoppas över helt. }}{duties, plural, =0 {} one {# uppdrag följer inte med, eftersom det redan finns i läsåret eller hör till en lärare som redan har en tjänst där.} other {# uppdrag följer inte med, eftersom de redan finns i läsåret eller hör till en lärare som redan har en tjänst där.}}",
       "STAFFING_SLOTS_OVER_LESSONS": "{duties, plural, one {# spärrat pass hamnar} other {# spärrade pass hamnar}} på {lessons, plural, one {# lektion} other {# lektioner}} som läraren redan har i läsårets schema. De blir konflikter att lösa i schemat.",
       "VOLUME_DIFFERS_FROM_TIMPLAN": "Timplansposterna för {groups} skiljer sig från den beslutade timplanen för den årskurs de flyttas upp till.",
-      "ISO_WEEK_53_CROSSED": "Rullningen passerar en vecka 53: {rows, plural, one {# post} other {# poster}} på udda eller jämna veckor byter till den andra veckotypen. Kontrollera dem."
+      "ISO_WEEK_53_CROSSED": "Rullningen passerar en vecka 53: {rows, plural, one {# post} other {# poster}} på udda eller jämna veckor byter till den andra veckotypen. Kontrollera dem.",
+      "ROLLOVER_2028_RENUMBERING": "Det nya läsåret börjar {startYear}: enligt {source} går eleverna som redan går i skolan upp två årskurser i stället för en (förskoleklassen 2027/28 börjar direkt i åk 2). Rullningen flyttar i dag upp en årskurs, så kontrollera klassernas årskurser innan läsåret aktiveras."
     },
     "errors": {
       "YEAR_HAS_SUCCESSOR": "Läsåret har redan rullats vidare till {successor}.",

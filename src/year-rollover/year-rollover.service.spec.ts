@@ -1245,7 +1245,21 @@ describe('YearRolloverService — activation', () => {
     expect(homeOf(world, IDS.pGone)).toBe(groupNamed(world, yearB, '8A'));
     // The active year's straggler run sets no hint: the straggler is recorded from today.
     expect(world.calls.filter((call) => call.model === '$executeRaw')).toEqual([]);
-    await expect(service.previewRollover(yearB, next, admin)).resolves.toMatchObject({ planHash: expect.any(String) });
+    const into2028 = await service.previewRollover(yearB, next, admin);
+    expect(into2028.planHash).toEqual(expect.any(String));
+    // The tioårig grundskola's renumbering is said, never refused, and never hashed.
+    expect(into2028.problems).toContainEqual({
+      code: 'ROLLOVER_2028_RENUMBERING',
+      blocking: false,
+      params: { startYear: 2028, source: 'SFS 2025:729, övergångsbestämmelse 4' },
+    });
+    expect(into2028.blocking).toBe(false);
+  });
+
+  it('says nothing of 2028 for a year that starts before it', async () => {
+    const { service } = setup();
+    const preview = await service.previewRollover(IDS.yearA, OPTIONS, admin);
+    expect(preview.problems.map((problem) => problem.code)).not.toContain('ROLLOVER_2028_RENUMBERING');
   });
 
   it('refuses while the old year runs, a superseded year, a stale preview and a hidden year', async () => {

@@ -2341,7 +2341,8 @@
       "STAFFING_ALREADY_PRESENT": "{teachers, plural, =0 {} one {# teacher already has a post in the year and is skipped whole. } other {# teachers already have a post in the year and are skipped whole. }}{duties, plural, =0 {} one {# duty is not carried over, because it already exists in the year or belongs to a teacher who already has a post there.} other {# duties are not carried over, because they already exist in the year or belong to a teacher who already has a post there.}}",
       "STAFFING_SLOTS_OVER_LESSONS": "{duties, plural, one {# blocked slot lands} other {# blocked slots land}} on {lessons, plural, one {# lesson} other {# lessons}} the teacher already has in the year's schedule. They become conflicts to resolve in the schedule.",
       "VOLUME_DIFFERS_FROM_TIMPLAN": "The teaching requirements of {groups} differ from the decided timplan for the grade they are promoted into.",
-      "ISO_WEEK_53_CROSSED": "The rollover crosses a week 53: {rows, plural, one {# odd- or even-week requirement switches} other {# odd- or even-week requirements switch}} to the other week type. Check them."
+      "ISO_WEEK_53_CROSSED": "The rollover crosses a week 53: {rows, plural, one {# odd- or even-week requirement switches} other {# odd- or even-week requirements switch}} to the other week type. Check them.",
+      "ROLLOVER_2028_RENUMBERING": "The new year starts in {startYear}: under {source}, pupils already in school move up two grades instead of one (the 2027/28 preschool class starts directly in grade 2). The rollover moves classes up one grade today, so check the classes’ grades before the year is activated."
     },
     "errors": {
       "YEAR_HAS_SUCCESSOR": "This year has already been rolled over to {successor}.",
