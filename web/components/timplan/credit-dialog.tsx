@@ -12,10 +12,16 @@
 //
 // The checks mirror the DTO (lib/timplan-credit-form.ts), and whatever the
 // server still refuses — a group of another läsår, a subject deleted in
-// between — is shown in its own sentence. A date outside every lov says, before
-// the save, that lessons held that day count as well (R6): a temaeftermiddag
-// after a morning of lessons is fine, a friluftsdag left on the calendar is
-// counted twice, and only the school knows which this is.
+// between — is shown in its own sentence. A date on which no lov covers the
+// credit's whole scope says, before the save, that lessons held that day count
+// as well (R6): a temaeftermiddag after a morning of lessons is fine, a
+// friluftsdag left on the calendar is counted twice, and only the school knows
+// which this is. A lov for åk 7–9 does not cover a whole-school credit.
+//
+// A field's problem is said under that field once the field has been changed
+// — a dialog opened from a lov arrives with a name and a date and must not
+// greet the admin with "Ange 1 till 600 hela minuter" — and is tied to it with
+// aria-describedby and aria-invalid, so a screen reader hears it on the field.
 //
 // Fetched with lazy() the first time it opens; the page carries none of it.
 //
@@ -34,7 +40,7 @@ import {
   creditForm,
   creditFormProblems,
   EMPTY_CREDIT_FORM,
-  insideAnyBreak,
+  breaksCoverCredit,
   type CreditForm,
   type CreditScope,
 } from "@/lib/timplan-credit-form";
@@ -64,6 +70,29 @@ import {
 /** Radix Select has no empty value; the "no subject" choice is this. */
 const NO_SUBJECT = "none";
 
+/** The field each problem (creditFormProblems) is about. */
+type CreditField = "name" | "date" | "minutes" | "grades" | "group" | "note";
+const FIELD_OF: Record<string, CreditField> = {
+  nameBlank: "name",
+  nameLong: "name",
+  dateMissing: "date",
+  dateOutsideYear: "date",
+  minutes: "minutes",
+  span: "grades",
+  group: "group",
+  noteLong: "note",
+};
+/** The form keys a change touches, as fields. */
+const FIELDS_OF_KEY: Partial<Record<keyof CreditForm, CreditField>> = {
+  name: "name",
+  date: "date",
+  minutes: "minutes",
+  minGradeLevel: "grades",
+  maxGradeLevel: "grades",
+  studentGroupId: "group",
+  note: "note",
+};
+
 export interface CreditDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -85,11 +114,13 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
   const actions = useTimplanCreditActions();
   const [form, setForm] = useState<CreditForm>(EMPTY_CREDIT_FORM);
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [touched, setTouched] = useState<ReadonlySet<CreditField>>(new Set());
 
   // A fresh form every time the dialog opens, from what it was opened on.
   useEffect(() => {
     if (!open) return;
     setRefusal(null);
+    setTouched(new Set());
     setForm(
       editing
         ? creditForm(editing)
@@ -107,7 +138,26 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
   );
   const problems = creditFormProblems(form, year);
   const saving = actions.create.isPending || actions.update.isPending;
-  const set = (patch: Partial<CreditForm>) => setForm((current) => ({ ...current, ...patch }));
+  const set = (patch: Partial<CreditForm>) => {
+    setForm((current) => ({ ...current, ...patch }));
+    const fields = (Object.keys(patch) as (keyof CreditForm)[]).flatMap((key) => FIELDS_OF_KEY[key] ?? []);
+    if (fields.length > 0) setTouched((current) => new Set([...current, ...fields]));
+  };
+  /** The problems to say under a field: its own, once it has been changed. */
+  const shown = (field: CreditField) =>
+    touched.has(field) ? problems.filter((problem) => FIELD_OF[problem] === field) : [];
+  const errorId = (field: CreditField) => `credit-${field}-error`;
+  const describedBy = (field: CreditField, ...others: string[]) =>
+    [...others, ...(shown(field).length > 0 ? [errorId(field)] : [])].join(" ") || undefined;
+  const invalid = (field: CreditField) => (shown(field).length > 0 ? true : undefined);
+  const fieldError = (field: CreditField) =>
+    shown(field).length > 0 ? (
+      <p id={errorId(field)} className="text-xs leading-relaxed text-foreground">
+        {shown(field)
+          .map((problem) => t(`errors.${problem}`))
+          .join(" ")}
+      </p>
+    ) : null;
 
   const submit = async () => {
     const body = creditBody(form, year.id);
@@ -138,8 +188,11 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
                 id="credit-name"
                 value={form.name}
                 placeholder={t("namePlaceholder")}
+                aria-invalid={invalid("name")}
+                aria-describedby={describedBy("name")}
                 onChange={(event) => set({ name: event.target.value })}
               />
+              {fieldError("name")}
             </div>
             <div className="space-y-2">
               <Label htmlFor="credit-date">{tCommon("date")}</Label>
@@ -149,8 +202,10 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
                 min={year.startDate}
                 max={year.endDate}
                 value={form.date}
+                aria-describedby={describedBy("date")}
                 onChange={(value) => set({ date: value })}
               />
+              {fieldError("date")}
             </div>
           </div>
 
@@ -161,12 +216,14 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
                 id="credit-minutes"
                 inputMode="numeric"
                 value={form.minutes}
-                aria-describedby="credit-minutes-hint"
+                aria-invalid={invalid("minutes")}
+                aria-describedby={describedBy("minutes", "credit-minutes-hint")}
                 onChange={(event) => set({ minutes: event.target.value })}
               />
               <p id="credit-minutes-hint" className="text-xs leading-relaxed text-foreground">
                 {t("minutesHint")}
               </p>
+              {fieldError("minutes")}
             </div>
             <div className="space-y-2">
               <Label>{t("subject")}</Label>
@@ -205,21 +262,24 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
             </Select>
           </div>
           {form.scope === "grades" ? (
-            <GradeSpanField
-              label={tBreaks("gradeSpan")}
-              fromLabel={tBreaks("gradeFromLabel")}
-              toLabel={tBreaks("gradeToLabel")}
-              min={form.minGradeLevel}
-              max={form.maxGradeLevel}
-              onChange={({ min, max }) => set({ minGradeLevel: min, maxGradeLevel: max })}
-              hint={t("gradesHint")}
-              hintClassName="text-xs leading-relaxed text-foreground"
-            />
+            <div className="space-y-2">
+              <GradeSpanField
+                label={tBreaks("gradeSpan")}
+                fromLabel={tBreaks("gradeFromLabel")}
+                toLabel={tBreaks("gradeToLabel")}
+                min={form.minGradeLevel}
+                max={form.maxGradeLevel}
+                onChange={({ min, max }) => set({ minGradeLevel: min, maxGradeLevel: max })}
+                hint={t("gradesHint")}
+                hintClassName="text-xs leading-relaxed text-foreground"
+              />
+              {fieldError("grades")}
+            </div>
           ) : form.scope === "group" ? (
             <div className="space-y-2">
               <Label>{t("group")}</Label>
               <Select value={form.studentGroupId || undefined} onValueChange={(value) => set({ studentGroupId: value })}>
-                <SelectTrigger aria-label={t("group")}>
+                <SelectTrigger aria-label={t("group")} aria-invalid={invalid("group")} aria-describedby={describedBy("group")}>
                   <SelectValue placeholder={t("groupPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
@@ -230,6 +290,7 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
                   ))}
                 </SelectContent>
               </Select>
+              {fieldError("group")}
             </div>
           ) : null}
 
@@ -240,21 +301,17 @@ export function CreditDialog({ open, onOpenChange, year, breaks, subjects, group
               rows={2}
               value={form.note}
               placeholder={t("notePlaceholder")}
+              aria-invalid={invalid("note")}
+              aria-describedby={describedBy("note")}
               onChange={(event) => set({ note: event.target.value })}
             />
+            {fieldError("note")}
           </div>
 
-          {form.date !== "" && !insideAnyBreak(form.date, breaks) ? (
+          {form.date !== "" && !breaksCoverCredit(form, breaks, groups) ? (
             <p className="rounded-md bg-muted px-3 py-2 text-xs leading-relaxed text-foreground">
               {t("overlapHint")}
             </p>
-          ) : null}
-          {problems.length > 0 && (form.name !== "" || form.minutes !== "" || form.date !== "") ? (
-            <ul className="space-y-0.5 text-xs leading-relaxed text-foreground">
-              {problems.map((problem) => (
-                <li key={problem}>{t(`errors.${problem}`)}</li>
-              ))}
-            </ul>
           ) : null}
           <p role="alert" className="text-sm text-foreground">
             {refusal}

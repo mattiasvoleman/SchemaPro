@@ -95,11 +95,41 @@ export function creditForm(credit: TimplanCredit): CreditForm {
   };
 }
 
-interface DatedRange {
+interface ScopedRange {
   startDate: string;
   endDate: string;
+  minGradeLevel: number | null;
+  maxGradeLevel: number | null;
 }
 
-/** Whether a date lies inside any of the year's breaks — outside one, lessons that day count as well. */
-export const insideAnyBreak = (date: string, breaks: readonly DatedRange[]): boolean =>
-  breaks.some((range) => date >= range.startDate && date <= range.endDate);
+/**
+ * Whether a lov that day covers the credit's WHOLE scope — then no lesson in
+ * the scope was published that day, and the credit is the day's only time.
+ * Otherwise lessons held that day count as well, and the dialog says so
+ * before the save (R6). A lov for åk 7–9 does not cover a whole-school
+ * credit: åk 1–6 had lessons. The coverage rule is publish's
+ * (breakCoversGroup): a lov without a span covers everybody, a spanned one a
+ * span inside it and a group whose årskurs is inside it — a group without an
+ * årskurs only by a lov for the whole school.
+ */
+export function breaksCoverCredit(
+  form: Pick<CreditForm, "date" | "scope" | "minGradeLevel" | "maxGradeLevel" | "studentGroupId">,
+  breaks: readonly ScopedRange[],
+  groups: readonly { id: string; gradeLevel: number | null }[],
+): boolean {
+  const covering = breaks.filter((range) => form.date >= range.startDate && form.date <= range.endDate);
+  const contains = (range: ScopedRange, min: number, max: number) =>
+    (range.minGradeLevel === null || range.minGradeLevel <= min) &&
+    (range.maxGradeLevel === null || range.maxGradeLevel >= max);
+  const whole = (range: ScopedRange) => range.minGradeLevel === null && range.maxGradeLevel === null;
+  switch (form.scope) {
+    case "school":
+      return covering.some(whole);
+    case "grades":
+      return covering.some((range) => whole(range) || contains(range, form.minGradeLevel, form.maxGradeLevel));
+    case "group": {
+      const grade = groups.find((group) => group.id === form.studentGroupId)?.gradeLevel ?? null;
+      return covering.some((range) => whole(range) || (grade !== null && contains(range, grade, grade)));
+    }
+  }
+}

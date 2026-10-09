@@ -225,6 +225,17 @@ vi.mock("@/lib/queries", async (importOriginal) => ({
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+/** A credit dialog whose chunk did not arrive: what the page's boundary catches. */
+const dialogLoad = vi.hoisted(() => ({ fails: false }));
+vi.mock("@/components/timplan/credit-dialog", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/components/timplan/credit-dialog")>();
+  return {
+    CreditDialog: (props: Parameters<typeof real.CreditDialog>[0]) => {
+      if (dialogLoad.fails) throw new Error("Loading chunk failed");
+      return <real.CreditDialog {...props} />;
+    },
+  };
+});
 
 vi.mock("next-intl", () => ({
   // DateField reads the active locale for its month and weekday names.
@@ -741,7 +752,7 @@ describe("Tillgodoräknad tid", () => {
     const section = screen.getByRole("region", { name: "credits.title" });
     const rows = within(section).getAllByRole("row").slice(1);
     expect(rows.map((row) => [...row.querySelectorAll("td")].slice(0, 6).map((cell) => cell.textContent))).toEqual([
-      ["2026-10-02", "Temadag", "120", "credits.subjectNone", "7A", ""],
+      ["2026-10-02", "Temadag", "120", "credits.subjectNoneShort", "7A", ""],
       ["2026-10-27", "Friluftsdag", "300", "Idrott och hälsa", "gradeRange(7|9)", "Rektor 2026-09-01"],
     ]);
   });
@@ -751,6 +762,56 @@ describe("Tillgodoräknad tid", () => {
     render(<BreaksPage />);
     expect(rowFor("Höstlov")).toHaveTextContent("credits.countsAs(300|Idrott och hälsa|gradeRange(7|9))");
     expect(rowFor("Påsklov")).not.toHaveTextContent("credits.countsAs");
+  });
+
+  it("says a credit without a subject under its lov in a sentence's words, not the dialog's choice", () => {
+    credits.rows = [{ ...TEMADAG, id: "c-lov", date: "2026-10-28", studentGroupId: null }];
+    render(<BreaksPage />);
+    expect(rowFor("Höstlov")).toHaveTextContent("credits.countsAs(120|credits.subjectNoneInline|");
+    expect(rowFor("Höstlov")).not.toHaveTextContent("credits.subjectNone|");
+  });
+
+  it("warns that lessons count too when the lov that day does not close the credit's whole scope", async () => {
+    // Studiedagen closes åk 0–6 only. A whole-school credit on it reaches åk
+    // 7–9, who had lessons that day: said before the save.
+    const user = userEvent.setup();
+    render(<BreaksPage />);
+    await user.click(screen.getByRole("button", { name: "credits.addForDayNamed(Studiedag)" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("date")).toHaveValue("2027-01-08");
+    expect(within(dialog).getByText("overlapHint")).toBeInTheDocument();
+  });
+
+  it("greets a dialog opened on a lov's day with no error, and ties a field's problem to that field", async () => {
+    const user = userEvent.setup();
+    render(<BreaksPage />);
+    await user.click(screen.getByRole("button", { name: "credits.addForDayNamed(Höstlov)" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText(/^errors\./)).not.toBeInTheDocument();
+    const minutes = within(dialog).getByLabelText("minutes");
+    fireEvent.change(minutes, { target: { value: "0" } });
+    expect(minutes).toHaveAttribute("aria-invalid", "true");
+    const ids = (minutes.getAttribute("aria-describedby") ?? "").split(" ");
+    expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual(["minutesHint", "errors.minutes"]);
+  });
+
+  it("says a dialog that did not load in a toast, keeps the page, and loads it afresh on the next open", async () => {
+    const { toast } = await import("sonner");
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    dialogLoad.fails = true;
+    try {
+      const user = userEvent.setup();
+      render(<BreaksPage />);
+      await user.click(screen.getByRole("button", { name: "credits.add" }));
+      expect(toast.error).toHaveBeenCalledWith("Loading chunk failed");
+      expect(screen.getByRole("region", { name: "credits.title" })).toBeInTheDocument();
+      dialogLoad.fails = false;
+      await user.click(screen.getByRole("button", { name: "credits.add" }));
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    } finally {
+      dialogLoad.fails = false;
+      quiet.mockRestore();
+    }
   });
 
   it("says an empty list plainly, and still offers to add a decision", () => {
