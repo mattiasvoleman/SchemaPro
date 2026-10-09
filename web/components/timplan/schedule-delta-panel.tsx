@@ -31,7 +31,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { useSchoolBreaks } from "@/lib/queries";
-import { computeScheduledCoverage, type ScheduledCoverage } from "@/lib/timplan-scheduled";
+import { standardWeekWeight } from "@/lib/teacher-load";
+import { computeScheduledCoverage, lessonMinutes, type ScheduledCoverage } from "@/lib/timplan-scheduled";
 import {
   buildScheduleDelta,
   changedLines,
@@ -58,14 +59,21 @@ const TONE: Record<ScheduleTone, string> = {
 /** At most this many changed lines are read out at once; the rest are counted. */
 const ANNOUNCED = 3;
 
+/**
+ * Each input is undefined until the board has it. The panel says "loading"
+ * until every one has landed — a list standing in for one still on its way
+ * would paint every line "inget schemalagt" and then announce the load as
+ * an edit. The page keys the panel by year, so a year switch starts over
+ * rather than reading the new year's lines as changes to the old one's.
+ */
 export interface ScheduleDeltaPanelProps {
   id: string;
   year: AcademicYear;
-  lessons: readonly MasterLesson[];
-  requirements: readonly TeachingRequirement[];
+  lessons: readonly MasterLesson[] | undefined;
+  requirements: readonly TeachingRequirement[] | undefined;
   /** The year's groups (the board's yearGroups). */
-  groups: readonly StudentGroup[];
-  subjects: readonly Subject[];
+  groups: readonly StudentGroup[] | undefined;
+  subjects: readonly Subject[] | undefined;
   /** The grid's group filter; empty is every group. */
   groupFilters: readonly string[];
 }
@@ -85,8 +93,8 @@ export function ScheduleDeltaPanel({
   const coverage = useMemo<ScheduledCoverage | null>(() => {
     // Without the lov a dated row or lesson would weigh against the wrong
     // number of teaching weeks; wait for them rather than show a figure that
-    // moves when they land.
-    if (!breaks) return null;
+    // moves when they land. The same for the board's own lists.
+    if (!breaks || !lessons || !requirements || !groups || !subjects) return null;
     return computeScheduledCoverage({
       year: { startDate: year.startDate, endDate: year.endDate },
       closures: breaks.map((row) => ({
@@ -136,9 +144,41 @@ export function ScheduleDeltaPanel({
     });
   }, [breaks, year.startDate, year.endDate, subjects, groups, requirements, lessons]);
 
+  // Each parked lesson's minutes a week, once: a combined lesson parked
+  // reaches every group it is on, and its minutes stand on each of their
+  // lines — right per line, but a summary adding the lines counted it once a
+  // group. Weighed at the owner's årskurs, as its own line weighs it.
+  const parked = useMemo(() => {
+    const minutes = new Map<string, number>();
+    if (!breaks || !lessons || !groups) return minutes;
+    const gradeOf = new Map(groups.map((group) => [group.id, group.kind === "CLASS" ? group.gradeLevel : null]));
+    const closures = breaks.map((row) => ({
+      startDate: row.startDate,
+      endDate: row.endDate,
+      minGradeLevel: row.minGradeLevel,
+      maxGradeLevel: row.maxGradeLevel,
+    }));
+    for (const lesson of lessons) {
+      if (!lesson.isParked) continue;
+      const grade = gradeOf.get(lesson.studentGroupId) ?? null;
+      const weight = standardWeekWeight(
+        {
+          recurrence: lesson.recurrence ?? "ALL_WEEKS",
+          startDate: lesson.startDate ?? null,
+          endDate: lesson.endDate ?? null,
+          gradeSpan: grade === null ? null : { min: grade, max: grade },
+        },
+        { startDate: year.startDate, endDate: year.endDate },
+        closures,
+      );
+      minutes.set(lesson.id, lessonMinutes(lesson) * weight);
+    }
+    return minutes;
+  }, [breaks, lessons, groups, year.startDate, year.endDate]);
+
   const view = useMemo(
-    () => (coverage ? buildScheduleDelta(coverage, groupFilters, groups, subjects) : null),
-    [coverage, groupFilters, groups, subjects],
+    () => (coverage && groups && subjects ? buildScheduleDelta(coverage, groupFilters, groups, subjects, parked) : null),
+    [coverage, groupFilters, groups, subjects, parked],
   );
 
   // One polite line naming only what changed since the last answer. The first
@@ -150,10 +190,15 @@ export function ScheduleDeltaPanel({
     const before = previous.current;
     previous.current = coverage;
     if (!before) return;
-    const changed = changedLines(before, coverage);
+    // Only the groups in view: a line of a group the grid is not showing
+    // changed by nothing this person did here.
+    const inView = new Set(groupFilters);
+    const changed = changedLines(before, coverage).filter(
+      ({ studentGroupId }) => inView.size === 0 || inView.has(studentGroupId),
+    );
     if (changed.length === 0) return;
-    const groupName = new Map(groups.map((group) => [group.id, group.name]));
-    const subjectName = new Map(subjects.map((subject) => [subject.id, subject.name]));
+    const groupName = new Map((groups ?? []).map((group) => [group.id, group.name]));
+    const subjectName = new Map((subjects ?? []).map((subject) => [subject.id, subject.name]));
     const said = changed.slice(0, ANNOUNCED).map(({ studentGroupId, line }) =>
       t("announce", {
         group: groupName.get(studentGroupId) ?? "",
@@ -164,7 +209,7 @@ export function ScheduleDeltaPanel({
     );
     if (changed.length > ANNOUNCED) said.push(t("announceMore", { count: changed.length - ANNOUNCED }));
     setAnnouncement(said.join(" "));
-  }, [coverage, groups, subjects, t]);
+  }, [coverage, groupFilters, groups, subjects, t]);
 
   const onlyGroup = groupFilters.length === 1 ? groupFilters[0]! : null;
   const coverageHref =
