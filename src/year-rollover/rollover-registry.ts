@@ -474,6 +474,19 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     reason:
       'A credit is the school’s decision about one date of the old year; next year’s friluftsdagar have their own dates and are decided again.',
   },
+  /**
+   * Not carried, and not counted. The history of a post (staffing Fas 3) is a
+   * record of what the old year's tjänst WAS, version by version, cited by
+   * that year's samverkan protokoll; copied into the new year it would claim
+   * changes nobody made there. A post carried with `carryStaffing` starts the
+   * new year's history itself — the trigger logs it as created, by the admin
+   * who ran the rollover.
+   */
+  TeacherEmploymentLog: {
+    kind: 'SKIPPED',
+    reason:
+      'The history of the old year’s tjänster is that year’s record; a carried tjänst starts the new year’s history as created.',
+  },
 };
 
 const isOn = (disposition: Disposition, options: RolloverOptions): boolean =>

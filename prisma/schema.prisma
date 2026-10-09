@@ -171,6 +171,7 @@ model School {
   teacherEmployments      TeacherEmployment[]
   teacherQualifications   TeacherSubjectQualification[]
   teacherDuties           TeacherDuty[]
+  teacherEmploymentLogs   TeacherEmploymentLog[]
   localTimplans           LocalTimplan[]
   localTimplanEntries     LocalTimplanEntry[]
   academicYearTimplans    AcademicYearTimplan[]
@@ -237,6 +238,7 @@ model User {
   subjectQualifications   TeacherSubjectQualification[] @relation("QualificationTeacher")
   /// Uppdrag beside teaching, per läsår (TeacherDuty), by the same key.
   duties                  TeacherDuty[]                 @relation("DutyTeacher")
+  employmentLogs          TeacherEmploymentLog[]        @relation("EmploymentLogTeacher")
   /// Local timplans this person recorded as decided. Restrict on the other
   /// side: a person who recorded a decision is deactivated, not deleted.
   decidedLocalTimplans    LocalTimplan[]                @relation("LocalTimplanDecider")
@@ -369,6 +371,11 @@ model Subject {
   /// the statute's sense — Resurs, Studiehandledning — so they never pollute a
   /// timplan sum. Default true: an existing school sees no change.
   countsTowardTimplan Boolean @default(true)
+  /// Skola24's "Faktor ämne": under StaffingPolicy.loadModel FACTOR a teacher
+  /// is charged lesson minutes × this. 0.5..3.0 (Subjects_loadFactor_is_sane),
+  /// default 1.000; never read under MINUTES. Lesson minutes the pupils sit
+  /// are never weighted. See migration 20261010100000.
+  loadFactor         Decimal  @default(1.000) @db.Decimal(4, 3)
   createdAt          DateTime @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime @updatedAt @db.Timestamptz(6)
 
@@ -694,6 +701,7 @@ model AcademicYear {
   lunchSittings        LunchSitting[]
   teacherEmployments   TeacherEmployment[]
   teacherDuties        TeacherDuty[]
+  teacherEmploymentLogs TeacherEmploymentLog[]
   /// Which lokal timplan each årskurs follows this year.
   timplans             AcademicYearTimplan[]
   /// The school's decisions that a day's activity counts as undervisningstid.
@@ -1585,9 +1593,8 @@ enum StaffingCheckMode {
 }
 
 /// MINUTES: a teacher's load is lesson minutes. FACTOR: Skola24's "Faktor
-/// ämne" / Untis' subject factor, weighting minutes per subject. The column
-/// FACTOR reads (Subject.loadFactor) arrives in Fas 3; until then both compute
-/// as MINUTES and the report header says so.
+/// ämne" / Untis' subject factor — a teacher is charged lesson minutes ×
+/// Subject.loadFactor (Fas 3, teacher-load.ts loadWeightOf).
 enum StaffingLoadModel {
   MINUTES
   FACTOR
@@ -1663,6 +1670,9 @@ model StaffingPolicy {
   /// teacher. ALLOW is today's behaviour; REFUSE answers
   /// STAFF_UNSTAFFED_REQUIREMENTS naming group · subject.
   unstaffedGeneration            UnstaffedGenerationMode @default(ALLOW)
+  /// Whether GET /ss12000/v1/duties emits dutyPercent and hoursPerYear. Off by
+  /// default: see migration 20261010110000.
+  shareEmploymentWithIntegrations Boolean @default(false)
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
@@ -1802,6 +1812,53 @@ model TeacherDuty {
   @@unique([blockedConstraintId, schoolId])
   @@index([schoolId, academicYearId, userId])
   @@map("TeacherDuties")
+}
+
+/// What a TeacherEmploymentLog row is about.
+enum TeacherLogEntity {
+  EMPLOYMENT
+  DUTY
+}
+
+/// What happened to the row: CREATE has only `after`, DELETE only `before`.
+enum TeacherLogAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+/// A tjänst's history: one row per change to a teacher's post or uppdrag,
+/// written by a database trigger in the write's own transaction, append-only
+/// for every role. HR data: the admin reads all, a teacher their own. See
+/// migration 20261010090000 for the trigger, the existence rule and the guards.
+model TeacherEmploymentLog {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String           @db.Uuid
+  /// The teacher the change is about. Composite (userId, schoolId) key.
+  userId         String           @db.Uuid
+  /// Composite (academicYearId, schoolId) key.
+  academicYearId String           @db.Uuid
+  /// 1, 2, 3 … per (schoolId, userId, academicYearId); "Version 7" is a citation.
+  version        Int
+  entity         TeacherLogEntity
+  /// The employment's or duty's id. No foreign key: the history outlives the row.
+  entityId       String           @db.Uuid
+  action         TeacherLogAction
+  /// The row before, minus schoolId/createdAt/updatedAt; null on CREATE.
+  before         Json?
+  /// The row after, likewise; null on DELETE.
+  after          Json?
+  /// app.current_user_id() of the writer; null for a migration, the seed or the owner.
+  actorId        String?          @db.Uuid
+  createdAt      DateTime         @default(dbgenerated("clock_timestamp()")) @db.Timestamptz(6)
+
+  school       School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  user         User         @relation("EmploymentLogTeacher", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  academicYear AcademicYear @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@unique([schoolId, userId, academicYearId, version], map: "TeacherEmploymentLogs_version_key")
+  @@index([entityId])
+  @@map("TeacherEmploymentLogs")
 }
 
 /// Ramtider: the hours of the day a stage of the school may be taught in.

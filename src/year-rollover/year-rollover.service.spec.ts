@@ -833,9 +833,12 @@ describe('YearRolloverService — tjänster and uppdrag (carryStaffing)', () => 
       ]),
     );
     expect(preview.problems.filter((problem) => problem.code.startsWith('STAFFING_'))).toEqual([]);
+    // The two staffing tables as fa4a3d6 listed them; the post's history
+    // (Fas 3) follows them, skipped and never counted.
     expect(preview.skipped.filter((entry) => entry.model.startsWith('Teacher'))).toEqual([
       { model: 'TeacherEmployment', reason: 'Tjänster are rolled by staffing Fas 5, which decides what a post carries into the next year.', count: 1 },
       expect.objectContaining({ model: 'TeacherDuty', count: 1 }),
+      expect.objectContaining({ model: 'TeacherEmploymentLog', count: null }),
     ]);
     world.calls.length = 0;
     const result = await service.executeRollover(

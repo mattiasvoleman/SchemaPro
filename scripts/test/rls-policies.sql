@@ -1639,8 +1639,9 @@ ROLLBACK;
 --
 -- The service principal closes the section, in the same transaction with the
 -- user principal cleared: it reads this school's posts (the SS12000 /duties
--- feed, Fas 3), none of the other school's, and no qualification and no policy,
--- which have no arm for it.
+-- feed, Fas 3), none of the other school's, and no qualification, which has no
+-- arm for it. Since 20261010110000 it reads its own school's policy (the feed's
+-- switch and annual hours) and still no other school's, and no post's history.
 -- ---------------------------------------------------------------------------
 
 BEGIN;
@@ -2085,10 +2086,22 @@ BEGIN
     RAISE EXCEPTION
       'staffing: the service principal reads % behörighet(er); it has no arm there', n;
   END IF;
-  SELECT count(*) INTO n FROM "StaffingPolicies";
-  IF n <> 0 THEN
+  -- 20261010110000 gave it the policy of its own school (the /duties
+  -- switch and fullTimeAnnualHours: configuration, not a person's data), and
+  -- still none of another school's.
+  SELECT count(*) INTO n FROM "StaffingPolicies" WHERE "schoolId" = school_a;
+  IF n <> 1 THEN
     RAISE EXCEPTION
-      'staffing: the service principal reads % policy row(s); it has no arm there', n;
+      'staffing: the service principal reads % policy row(s) of its own school, expected 1 — /duties cannot read the switch', n;
+  END IF;
+  SELECT count(*) INTO n FROM "StaffingPolicies" WHERE "schoolId" <> school_a;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: the service principal leaked % policy row(s) from another school', n;
+  END IF;
+  -- And never a post's history: the log has no principal arm.
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'staffing: the service principal reads % history row(s); it has no arm there', n;
   END IF;
 END
 $$;
@@ -6709,3 +6722,432 @@ BEGIN
     RAISE EXCEPTION 'credits: app_authenticated lacks its grant on TimplanCredits';
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 24: en tjänsts historik är skolans och lärarens egen.
+--
+-- TeacherEmploymentLogs (20261010090000) is written by a trigger on
+-- TeacherEmployments and TeacherDuties, never by a role, and read through two
+-- arms: the admin reads the school's, a TEACHER the rows ABOUT THEM. What this
+-- section asserts, in one transaction that is rolled back:
+--
+--  - every write the admin makes through app_authenticated is a version, with
+--    the admin as actor, numbered 1..n per (teacher, year) with no gap; a save
+--    that changes nothing is no version; the JSON carries no schoolId,
+--    createdAt or updatedAt;
+--  - a duty moved to a colleague (PostgREST can, the DTO cannot) is two rows,
+--    one under each teacher, so neither reads the other's half;
+--  - nobody writes the log: INSERT, UPDATE and DELETE are refused to the API
+--    role by the grant (and to every role by the guards — the owner's half of
+--    that is the probe's, which holds an owner connection);
+--  - the first teacher reads exactly their own rows, the colleague exactly
+--    theirs, a pupil and a guardian nothing (the service principal's nothing
+--    is in 7h);
+--  - the existence rule: deleting a person with a post, with an uppdrag that
+--    holds a blocked slot, with a mentorship, and deleting a year whose class
+--    has a mentor, each SUCCEED and leave no history behind; a subject deleted
+--    under an ämnesansvar IS a version (its SET NULL), with the admin as actor.
+--    Deleting a school is the probe's (the API role cannot).
+--
+-- The tenant half bites: the fixtures' posts and uppdrag in the second school
+-- were written by the owner, so the second school has history rows, and the
+-- runner refuses to start without them.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  admin uuid := app.current_user_id();
+  me uuid; colleague uuid; y uuid; g uuid; d_mentor uuid; d_vakt uuid;
+  n bigint; versions int[];
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'history: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  -- The tenant half first, before this school has rows of its own here.
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "schoolId" <> school;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'history: % row(s) of another school''s history visible — tenant isolation is not enforced', n;
+  END IF;
+
+  SELECT id INTO me FROM "Users"
+   WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1;
+  SELECT id INTO colleague FROM "Users"
+   WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" OFFSET 1 LIMIT 1;
+  IF me IS NULL OR colleague IS NULL THEN
+    RAISE EXCEPTION 'history: the seed lacks two teachers (%, %)', me, colleague;
+  END IF;
+
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS24 år', DATE '2100-08-16', DATE '2101-06-10', false, now()) RETURNING id INTO y;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, y, 'RLS24 7A', 'CLASS', 7, now()) RETURNING id INTO g;
+
+  -- Two posts, a change, a save that changes nothing, two uppdrag.
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "reductionPercent", "updatedAt")
+  VALUES (school, me, y, 100, 0, now()), (school, colleague, y, 80, 0, now());
+  UPDATE "TeacherEmployments" SET "employmentPercent" = 80, "reductionPercent" = 10, "updatedAt" = now()
+   WHERE "userId" = me AND "academicYearId" = y;
+  UPDATE "TeacherEmployments" SET "employmentPercent" = 80, "updatedAt" = now() + interval '1 minute'
+   WHERE "userId" = me AND "academicYearId" = y;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  VALUES (school, me, y, 'MENTORSKAP', 'RLS24 Mentor 7A', 90, g, now()) RETURNING id INTO d_mentor;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "updatedAt")
+  VALUES (school, me, y, 'RASTVAKT', 'RLS24 Rastvakt', 30, now()) RETURNING id INTO d_vakt;
+  -- Moved to the colleague, as PostgREST could.
+  UPDATE "TeacherDuties" SET "userId" = colleague WHERE id = d_vakt;
+
+  SELECT array_agg(version ORDER BY version) INTO versions
+    FROM "TeacherEmploymentLogs" WHERE "userId" = me AND "academicYearId" = y;
+  IF versions IS DISTINCT FROM ARRAY[1, 2, 3, 4, 5] THEN
+    RAISE EXCEPTION 'history: the first teacher''s versions are %, expected 1..5 (two post writes, a no-op skipped, two uppdrag, one moved away)', versions;
+  END IF;
+  SELECT array_agg(version ORDER BY version) INTO versions
+    FROM "TeacherEmploymentLogs" WHERE "userId" = colleague AND "academicYearId" = y;
+  IF versions IS DISTINCT FROM ARRAY[1, 2] THEN
+    RAISE EXCEPTION 'history: the colleague''s versions are %, expected 1..2 (their post, the uppdrag moved to them)', versions;
+  END IF;
+
+  -- What each version says.
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "userId" = me AND "academicYearId" = y AND (
+         (version = 1 AND entity = 'EMPLOYMENT' AND action = 'CREATE' AND before IS NULL AND (after->>'employmentPercent')::numeric = 100)
+      OR (version = 2 AND entity = 'EMPLOYMENT' AND action = 'UPDATE' AND (before->>'employmentPercent')::numeric = 100
+          AND (after->>'employmentPercent')::numeric = 80 AND (after->>'reductionPercent')::numeric = 10)
+      OR (version = 3 AND entity = 'DUTY' AND action = 'CREATE' AND "entityId" = d_mentor AND after->>'label' = 'RLS24 Mentor 7A')
+      OR (version = 4 AND entity = 'DUTY' AND action = 'CREATE' AND "entityId" = d_vakt)
+      OR (version = 5 AND entity = 'DUTY' AND action = 'DELETE' AND "entityId" = d_vakt AND after IS NULL
+          AND before->>'label' = 'RLS24 Rastvakt' AND (before->>'userId')::uuid = me));
+  IF n <> 5 THEN
+    RAISE EXCEPTION 'history: % of the first teacher''s 5 versions read as written', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "userId" = colleague AND "academicYearId" = y AND version = 2 AND action = 'CREATE'
+     AND before IS NULL AND (after->>'userId')::uuid = colleague AND "entityId" = d_vakt;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'history: the moved uppdrag is not a CREATE under the colleague';
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "academicYearId" = y AND ("actorId" IS DISTINCT FROM admin
+      OR COALESCE(before, after) ?| ARRAY['schoolId', 'createdAt', 'updatedAt']);
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'history: % row(s) without the admin as actor, or carrying schoolId/createdAt/updatedAt', n;
+  END IF;
+
+  -- Nobody writes the log: the API role holds SELECT and nothing else.
+  BEGIN
+    INSERT INTO "TeacherEmploymentLogs" ("schoolId", "userId", "academicYearId", version, entity, "entityId", action, after)
+    VALUES (school, me, y, 99, 'EMPLOYMENT', d_mentor, 'CREATE', '{}'::jsonb);
+    RAISE EXCEPTION 'history: an admin wrote a version by hand';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    UPDATE "TeacherEmploymentLogs" SET "actorId" = NULL WHERE "userId" = me;
+    RAISE EXCEPTION 'history: an admin rewrote a version';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "TeacherEmploymentLogs" WHERE "userId" = me;
+    RAISE EXCEPTION 'history: an admin deleted a version';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  PERFORM set_config('app.test_rls24_year', y::text, true);
+  PERFORM set_config('app.test_rls24_me', me::text, true);
+  PERFORM set_config('app.test_rls24_colleague', colleague::text, true);
+END
+$$;
+
+-- The first teacher: exactly their own five, the moved uppdrag's DELETE half
+-- among them, and nothing of the colleague's.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', (SELECT "authId" FROM "Users"
+                             WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+                             ORDER BY "authId" LIMIT 1))::text,
+  true
+);
+
+DO $$
+DECLARE
+  me uuid := app.current_user_id();
+  y uuid := current_setting('app.test_rls24_year')::uuid;
+  n bigint;
+BEGIN
+  IF me IS DISTINCT FROM current_setting('app.test_rls24_me')::uuid OR app.current_user_role() <> 'TEACHER' THEN
+    RAISE EXCEPTION 'history: expected to be acting as the first TEACHER, am % (%)', app.current_user_role(), me;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "academicYearId" = y;
+  IF n <> 5 THEN
+    RAISE EXCEPTION 'history: a teacher reads % row(s) of the year''s history, expected exactly their own 5', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "userId" <> me;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'history: a teacher reads % row(s) of a colleague''s history', n;
+  END IF;
+END
+$$;
+
+-- The colleague: their two, never the first teacher's mentorship or post.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', (SELECT "authId" FROM "Users"
+                             WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER'
+                             ORDER BY "authId" OFFSET 1 LIMIT 1))::text,
+  true
+);
+
+DO $$
+DECLARE
+  me uuid := app.current_user_id();
+  y uuid := current_setting('app.test_rls24_year')::uuid;
+  n bigint;
+BEGIN
+  IF me IS DISTINCT FROM current_setting('app.test_rls24_colleague')::uuid THEN
+    RAISE EXCEPTION 'history: expected to be acting as the colleague, am %', me;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "academicYearId" = y;
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'history: the colleague reads % row(s), expected exactly their own 2', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "academicYearId" = y AND (before::text LIKE '%Mentor 7A%' OR after::text LIKE '%Mentor 7A%'
+                                   OR before IS NOT NULL);
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'history: the colleague reads % row(s) carrying the first teacher''s side of the uppdrag', n;
+  END IF;
+END
+$$;
+
+-- A pupil and a guardian of the same school: nothing.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', (SELECT "authId" FROM "Users"
+                             WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT'
+                             ORDER BY "authId" LIMIT 1))::text,
+  true
+);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' THEN
+    RAISE EXCEPTION 'history: expected a STUDENT, resolved %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'history: a pupil reads % history row(s)', n;
+  END IF;
+END
+$$;
+-- The fixtures' guardian of school A, by authId (a pupil cannot look one up).
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text,
+  true
+);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'history: expected a GUARDIAN, resolved %', coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'history: a guardian reads % history row(s)', n;
+  END IF;
+END
+$$;
+
+-- The existence rule, as the admin: every delete that works without the log
+-- still works, and leaves no history behind it.
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  admin uuid := app.current_user_id();
+  me uuid := current_setting('app.test_rls24_me')::uuid;
+  y uuid := current_setting('app.test_rls24_year')::uuid;
+  y2 uuid; g2 uuid; u uuid; slot uuid; s uuid; d uuid;
+  kind text;
+  n bigint;
+BEGIN
+  FOREACH kind IN ARRAY ARRAY['post', 'slot', 'mentor'] LOOP
+    INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+    VALUES (school, 'rls24-' || kind || '@example.invalid', 'RLS24', kind, 'TEACHER', gen_random_uuid(), true, now())
+    RETURNING id INTO u;
+    IF kind = 'post' THEN
+      INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+      VALUES (school, u, y, 50, now());
+      UPDATE "TeacherEmployments" SET "employmentPercent" = 60 WHERE "userId" = u;
+    ELSIF kind = 'slot' THEN
+      INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+      VALUES (school, 'TEACHER', u, 2, '15:00', '16:00', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id INTO slot;
+      INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+      VALUES (school, u, y, 'APT_KONFERENS', 'RLS24 APT', 60, slot, now());
+    ELSE
+      INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+      SELECT school, u, y, 'MENTORSKAP', 'RLS24 Mentor', 60, g."id", now()
+        FROM "StudentGroups" g WHERE g."academicYearId" = y AND g.name = 'RLS24 7A';
+    END IF;
+    SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "userId" = u;
+    IF n = 0 THEN
+      RAISE EXCEPTION 'history: the % person''s writes left no version to cascade', kind;
+    END IF;
+    -- The delete that works today must still work.
+    DELETE FROM "Users" WHERE id = u;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n <> 1 THEN
+      RAISE EXCEPTION 'history: deleting a person with a % deleted % row(s)', kind, n;
+    END IF;
+    SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "userId" = u;
+    IF n <> 0 THEN
+      RAISE EXCEPTION 'history: a deleted person (%) left % history row(s)', kind, n;
+    END IF;
+  END LOOP;
+
+  -- A year whose class has a mentor: the class's SET NULL on the uppdrag
+  -- happens while the year is being deleted.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS24 år två', DATE '2101-08-15', DATE '2102-06-10', false, now()) RETURNING id INTO y2;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, y2, 'RLS24 8A', 'CLASS', 8, now()) RETURNING id INTO g2;
+  INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+  VALUES (school, me, y2, 100, now());
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+  VALUES (school, me, y2, 'MENTORSKAP', 'RLS24 Mentor 8A', 60, g2, now());
+  DELETE FROM "AcademicYears" WHERE id = y2;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'history: deleting a year whose class has a mentor deleted % row(s)', n;
+  END IF;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs" WHERE "academicYearId" = y2;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'history: a deleted year left % history row(s)', n;
+  END IF;
+
+  -- A subject deleted under an ämnesansvar: the SET NULL is a version, by the admin.
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt")
+  VALUES (school, 'RLS24 ämne', 'RLS24', now()) RETURNING id INTO s;
+  INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "subjectId", "updatedAt")
+  VALUES (school, me, y, 'AMNESANSVAR', 'RLS24 Ämnesansvar', 30, s, now()) RETURNING id INTO d;
+  DELETE FROM "Subjects" WHERE id = s;
+  SELECT count(*) INTO n FROM "TeacherEmploymentLogs"
+   WHERE "entityId" = d AND action = 'UPDATE' AND (before->>'subjectId')::uuid = s
+     AND after->'subjectId' = 'null'::jsonb AND "actorId" = admin;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'history: a subject deleted under an ämnesansvar is % version(s), expected one UPDATE by the admin', n;
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- The catalog half: row security on, exactly the two read arms, each with the
+-- role in USING, the guards and writers present as SECURITY DEFINER, the
+-- composite keys, SELECT and nothing else for the API role.
+DO $$
+DECLARE n integer; bad text;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."TeacherEmploymentLogs"'::regclass) THEN
+    RAISE EXCEPTION 'history: row security is off on TeacherEmploymentLogs';
+  END IF;
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
+   WHERE polrelid = 'public."TeacherEmploymentLogs"'::regclass;
+  IF bad IS DISTINCT FROM 'teacher_employment_logs_admin_select:r,teacher_employment_logs_teacher_own_select:r' THEN
+    RAISE EXCEPTION 'history: TeacherEmploymentLogs has policies (%), expected the two SELECT arms', bad;
+  END IF;
+  SELECT string_agg(polname, ',') INTO bad FROM pg_policy
+   WHERE polrelid = 'public."TeacherEmploymentLogs"'::regclass
+     AND pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%';
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'history: policies without the role in USING: %', bad;
+  END IF;
+  SELECT count(*) INTO n
+    FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+   WHERE NOT t.tgisinternal AND t.tgenabled = 'O' AND p.prosecdef
+     AND (t.tgrelid, t.tgname) IN (
+       ('public."TeacherEmployments"'::regclass,    'TeacherEmployments_log'),
+       ('public."TeacherDuties"'::regclass,         'TeacherDuties_log'),
+       ('public."TeacherEmploymentLogs"'::regclass, 'TeacherEmploymentLogs_append_only'));
+  IF n <> 3 THEN
+    RAISE EXCEPTION 'history: % of the three log triggers are present, enabled and SECURITY DEFINER', n;
+  END IF;
+  SELECT count(*) INTO n FROM pg_constraint
+   WHERE conrelid = 'public."TeacherEmploymentLogs"'::regclass AND contype = 'f' AND array_length(conkey, 1) = 2
+     AND confdeltype = 'c';
+  IF n <> 2 THEN
+    RAISE EXCEPTION 'history: % composite cascading keys, expected teacher and year', n;
+  END IF;
+  IF NOT has_table_privilege('app_authenticated', 'public."TeacherEmploymentLogs"', 'SELECT') THEN
+    RAISE EXCEPTION 'history: app_authenticated cannot read TeacherEmploymentLogs';
+  END IF;
+  IF has_table_privilege('app_authenticated', 'public."TeacherEmploymentLogs"', 'INSERT')
+     OR has_table_privilege('app_authenticated', 'public."TeacherEmploymentLogs"', 'UPDATE')
+     OR has_table_privilege('app_authenticated', 'public."TeacherEmploymentLogs"', 'DELETE') THEN
+    RAISE EXCEPTION 'history: app_authenticated holds a write privilege on TeacherEmploymentLogs';
+  END IF;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 25: ett ämnes faktor och integrationens strömbrytare.
+--
+-- 20261010100000 adds Subjects."loadFactor" NUMERIC(4,3) NOT NULL DEFAULT
+-- 1.000 with CHECK 0.5..3.0 (Subjects_loadFactor_is_sane), mirroring the DTO;
+-- 20261010110000 adds StaffingPolicies."shareEmploymentWithIntegrations"
+-- NOT NULL DEFAULT false. Both are refused or defaulted for every writer, the
+-- admin's PostgREST included: the bounds are legal, 0.499 and 3.001 are not,
+-- by name, and a fresh subject and a fresh policy read the defaults.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config(
+  'request.jwt.claims',
+  json_build_object('sub', :'admin_auth_id')::text,
+  true
+);
+DO $$
+DECLARE school uuid := app.current_school_id(); s uuid; f numeric; v numeric; con text; flag boolean;
+BEGIN
+  INSERT INTO "Subjects" ("schoolId", name, code, "updatedAt")
+  VALUES (school, 'RLS25 slöjd', 'RLS25', now()) RETURNING id, "loadFactor" INTO s, f;
+  IF f IS DISTINCT FROM 1.000 THEN
+    RAISE EXCEPTION 'factor: a new subject reads factor %, expected 1.000', f;
+  END IF;
+  FOREACH v IN ARRAY ARRAY[0.5, 0.7, 3.0] LOOP
+    UPDATE "Subjects" SET "loadFactor" = v WHERE id = s;
+  END LOOP;
+  FOREACH v IN ARRAY ARRAY[0.499, 3.001, 0] LOOP
+    BEGIN
+      UPDATE "Subjects" SET "loadFactor" = v WHERE id = s;
+      RAISE EXCEPTION 'factor: % was stored', v;
+    EXCEPTION WHEN check_violation THEN
+      GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME;
+      IF con IS DISTINCT FROM 'Subjects_loadFactor_is_sane' THEN
+        RAISE EXCEPTION 'factor: % was refused by "%", expected Subjects_loadFactor_is_sane', v, con;
+      END IF;
+    END;
+  END LOOP;
+
+  SELECT "shareEmploymentWithIntegrations" INTO flag FROM "StaffingPolicies" WHERE "schoolId" = school;
+  IF flag IS NOT NULL AND flag THEN
+    RAISE EXCEPTION 'integrations: the seeded policy shares employment with integrations by default';
+  END IF;
+  SELECT column_default INTO con FROM information_schema.columns
+   WHERE table_name = 'StaffingPolicies' AND column_name = 'shareEmploymentWithIntegrations' AND is_nullable = 'NO';
+  IF con IS DISTINCT FROM 'false' THEN
+    RAISE EXCEPTION 'integrations: the switch is not NOT NULL DEFAULT false (default %)', con;
+  END IF;
+END
+$$;
+ROLLBACK;
