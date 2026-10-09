@@ -17,6 +17,7 @@ import { buildReconciliation, type StaffingReconciliation } from './staffing-rec
 import { readPublishedSpans, staffingCreditStatement, type StaffingCreditRow } from '../timplan/timplan-delivered.sql';
 import { publishBreaksOf, readPublishClosures } from '../timplan/publish-context';
 import { todayInZone } from '../common/utils/time';
+import { addDays } from '../common/year-rollover';
 import type { StaffingDeliveredQueryDto } from './dto/staffing-delivered.dto';
 import {
   suggestTeachers,
@@ -174,10 +175,16 @@ export class StaffingLoadService {
       const asOfDate = asDay(todayInZone(timezone, now));
       const { year } = read;
 
-      // The range: the asked days, or the year's start to the school's today,
-      // clamped into the year.
+      // The range: the asked days, or the year's start to the school's
+      // YESTERDAY, clamped into the year. Yesterday, not today: planned
+      // counts today in full while today's lessons are held only as they
+      // end, so a default through today would show every teacher behind by
+      // the rest of the day on every load. A year that begins today (or
+      // later) has no yesterday in it and keeps today.
       const askedFrom = query.from ?? year.startDate;
-      const askedTo = query.to ?? (asOfDate < year.endDate ? asOfDate : year.endDate);
+      const yesterday = addDays(asOfDate, -1);
+      const lastClosed = yesterday >= year.startDate ? yesterday : asOfDate;
+      const askedTo = query.to ?? (lastClosed < year.endDate ? lastClosed : year.endDate);
       if (askedTo < year.startDate || askedFrom > year.endDate) {
         throw new BadRequestException(
           `from/to: perioden ligger helt utanför läsåret (${year.startDate} – ${year.endDate}).`,

@@ -379,11 +379,14 @@ describe('StaffingLoadService', () => {
 
     afterEach(() => jest.useRealTimers());
 
-    it('answers the admin the whole school from one RLS transaction, defaulting to the year’s start and the school’s today', async () => {
+    it('answers the admin the whole school from one RLS transaction, defaulting to the year’s start and the school’s yesterday', async () => {
       const answer = await service.delivered(query(), testUser());
 
       expect(prisma.withRls).toHaveBeenCalledTimes(1);
-      expect(answer).toMatchObject({ academicYearId: YEAR_ID, from: '2026-08-17', to: '2026-10-09', asOfDate: '2026-10-09', loadModel: 'MINUTES' });
+      // The default compares closed days: today's unfinished lessons would
+      // read as every teacher's deficit (planned counts the whole day).
+      expect(answer).toMatchObject({ academicYearId: YEAR_ID, from: '2026-08-17', to: '2026-10-08', asOfDate: '2026-10-09', loadModel: 'MINUTES' });
+      expect(answer.notices.map((notice) => notice.code)).not.toContain('STAFFING_RANGE_INCLUDES_FUTURE');
       expect(answer.teachers).toEqual([expect.objectContaining({ userId: ME, delivered: 120, deliveredLessons: 2 })]);
       expect(answer.totals).not.toBeNull();
       // C (the published range), then E — the admin's E has the bortfall part.
@@ -412,6 +415,19 @@ describe('StaffingLoadService', () => {
       await expect(service.delivered(query({ from: '2027-07-01', to: '2027-07-31' }), testUser())).rejects.toBeInstanceOf(
         BadRequestException,
       );
+    });
+
+    it('defaults to the year’s first day, not before it, when the year begins today', async () => {
+      tx.academicYear.findUnique.mockImplementation((args: { select: Record<string, unknown> }) =>
+        Promise.resolve(
+          'school' in args.select
+            ? { school: { timezone: 'Europe/Stockholm' } }
+            : { startDate: new Date('2026-10-09T00:00:00.000Z'), endDate: new Date('2027-06-11T00:00:00.000Z') },
+        ),
+      );
+      const answer = await service.delivered(query(), testUser());
+      expect(answer).toMatchObject({ from: '2026-10-09', to: '2026-10-09' });
+      expect(answer.notices.map((notice) => notice.code)).toContain('STAFFING_RANGE_INCLUDES_FUTURE');
     });
 
     it('clamps a range reaching outside the year, and says so', async () => {

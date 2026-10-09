@@ -1251,7 +1251,7 @@
       "notice": {
         "STAFFING_NOTHING_PUBLISHED": "No schedule is published to the calendar for the school year. Delivered is empty, and planned and scheduled are not compared.",
         "STAFFING_RANGE_CLAMPED": "The period was shortened to the school year: {from} – {to}.",
-        "STAFFING_RANGE_INCLUDES_FUTURE": "The period reaches past today ({asOfDate}): lessons that have not ended show as Upcoming.",
+        "STAFFING_RANGE_INCLUDES_FUTURE": "The period reaches today ({asOfDate}) or later: lessons that have not ended show as Upcoming, while planned counts the whole day.",
         "STAFFING_RANGE_BEFORE_PUBLISHED": "The calendar starts {publishedFrom}: planned and scheduled are compared from that day, so the time before does not look like a deficit.",
         "STAFFING_RANGE_AFTER_PUBLISHED": "The calendar is published until {publishedThrough}: planned and scheduled are compared until that day.",
         "STAFFING_RANGE_HAS_GAPS": "The calendar has gaps between publishes, {days} days between {from} and {through}. The figures are not adjusted for them.",
