@@ -515,6 +515,7 @@ export class StaffingProposalService {
           const row = rows.get(requirementId)!;
           return requirementName(row.subjectName, row.groupName);
         },
+        restoring: dto.undo === true ? await this.appliedBefore(tx, dto) : undefined,
       });
 
       // One statement per (from, to) pair, each still carrying the from-lead:
@@ -589,6 +590,58 @@ export class StaffingProposalService {
   }
 
   // ---------------------------------------------------------------------------
+
+  /**
+   * For an undo: the leads the apply it reverses found, row by row — or
+   * undefined when it reverses none, and is then judged as any write.
+   *
+   * The apply is the latest STAFFING_PROPOSAL log row of the year that is not
+   * itself an undo, whose basisAfter is the basis this undo was checked
+   * against (so nothing has changed since it), and of whose changes every
+   * change here is the exact reversal (from its `to`, back to its `from`). A
+   * partial undo — a selection of the apply's rows — qualifies; a change the
+   * apply did not make does not, and turns the whole batch back into an
+   * ordinary one. Read under the year's lock, through RLS (admin only).
+   */
+  private async appliedBefore(
+    tx: PrismaClient,
+    dto: ApplyStaffingDto,
+  ): Promise<ReadonlyMap<string, string | null> | undefined> {
+    const logs = await tx.scheduleChangeLog.findMany({
+      where: {
+        academicYearId: dto.academicYearId,
+        masterLessonId: null,
+        action: 'UPDATE',
+        after: { path: ['basisAfter'], equals: dto.basisSha256 },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { before: true, after: true },
+    });
+    for (const log of logs) {
+      const after = log.after as { kind?: unknown; undo?: unknown; basisAfter?: unknown; changes?: unknown } | null;
+      const before = log.before as { kind?: unknown; changes?: unknown } | null;
+      if (after?.kind !== 'STAFFING_PROPOSAL' || after.undo !== false || after.basisAfter !== dto.basisSha256) continue;
+      if (before?.kind !== 'STAFFING_PROPOSAL') continue;
+      const leads = (changes: unknown): Map<string, string | null> =>
+        new Map(
+          (Array.isArray(changes) ? changes : []).map((change: { requirementId: string; teacherId: string | null }) => [
+            change.requirementId,
+            change.teacherId,
+          ]),
+        );
+      const was = leads(before.changes);
+      const became = leads(after.changes);
+      const reverses = dto.changes.every(
+        (change) =>
+          became.has(change.requirementId) &&
+          became.get(change.requirementId) === change.fromTeacherId &&
+          was.has(change.requirementId) &&
+          was.get(change.requirementId) === change.toTeacherId,
+      );
+      if (reverses) return was;
+    }
+    return undefined;
+  }
 
   /** One read, in the caller's transaction, of everything the proposal and its basis depend on. */
   private async readState(tx: PrismaClient, user: AuthenticatedUser, academicYearId: string): Promise<StaffingState> {

@@ -307,11 +307,23 @@ export interface BatchFinding extends StaffingFinding {
  * answers with is the same for the same batch every time. `input` is the year
  * as read before the write; a change naming a row it does not hold throws (the
  * caller validated them). PURE, like the rest of this module.
+ *
+ * `restoring` makes the batch the undo of an earlier one: the leads the rows
+ * of THAT batch had before it (row id → teacher, null for nobody). The
+ * proposal deliberately sheds rows from a teacher already over the limit, so
+ * putting one back is a "growth" from today that a REFUSE school would refuse
+ * — and the school could not get back the state it had a minute earlier. So
+ * an undo is asked what a write would be asked about the state the apply
+ * FOUND, not about today: a lead put back on a row they had then is not
+ * somebody new, and a teacher grows only past the larger of today's minutes
+ * and the minutes they had before the apply. Anything beyond the reversal —
+ * another lead, another row, a load above both — is asked as ever.
  */
 export function judgeRequirementBatch(args: {
   input: LoadInput;
   policy: CheckPolicy;
   changes: readonly BatchChange[];
+  restoring?: ReadonlyMap<string, string | null>;
 }): BatchFinding[] {
   const { input, policy } = args;
   if (!checksAnything(policy)) return [];
@@ -326,10 +338,14 @@ export function judgeRequirementBatch(args: {
     return row;
   };
 
+  const restoring = args.restoring ?? new Map<string, string | null>();
+  const putsBack = (change: BatchChange): boolean =>
+    restoring.has(change.requirementId) && restoring.get(change.requirementId) === change.teacherId;
+
   const findings: BatchFinding[] = [];
   for (const change of changes) {
     const row = rowOf(change.requirementId);
-    if (change.teacherId === null || change.teacherId === row.teacherId) continue;
+    if (change.teacherId === null || change.teacherId === row.teacherId || putsBack(change)) continue;
     const finding = qualificationFinding({
       policy,
       qualifications: input.qualifications,
@@ -360,6 +376,17 @@ export function judgeRequirementBatch(args: {
         return change ? { ...row, teacherId: change.teacherId } : row;
       }),
     });
+    // Before the batch this undoes, when it undoes one: today with every row
+    // of that batch given back the lead it had.
+    const found =
+      restoring.size === 0
+        ? null
+        : countedMinutesByTeacher({
+            ...input,
+            requirements: input.requirements.map((row) =>
+              restoring.has(row.id) ? { ...row, teacherId: restoring.get(row.id)! } : row,
+            ),
+          });
     const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
     for (const userId of [...gained.keys()].sort()) {
       const finding = overTargetFinding({
@@ -367,7 +394,7 @@ export function judgeRequirementBatch(args: {
         employment: employmentByUser.get(userId) ?? null,
         userId,
         role: 'TEACHER',
-        before: before.get(userId) ?? 0,
+        before: Math.max(before.get(userId) ?? 0, found?.get(userId) ?? 0),
         after: after.get(userId) ?? 0,
       });
       if (finding) findings.push({ ...finding, requirementIds: gained.get(userId)! });

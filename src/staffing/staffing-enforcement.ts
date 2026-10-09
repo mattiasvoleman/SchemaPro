@@ -414,6 +414,8 @@ export function enforceRequirementBatch(args: {
   changes: readonly BatchChange[];
   /** The school's name for a row ("Matematik för 7B"), for the refusal's sentence. */
   rowName: (requirementId: string) => string;
+  /** For an undo: the leads the batch it reverses found (judgeRequirementBatch). */
+  restoring?: ReadonlyMap<string, string | null>;
 }): BatchWarning[] {
   const { policy } = args;
   if (!checksAnything(policy)) return [];
@@ -423,6 +425,7 @@ export function enforceRequirementBatch(args: {
     input: args.input,
     policy: asksLoad ? policy : { ...policy, overAllocationMode: 'OFF' },
     changes: args.changes,
+    restoring: args.restoring,
   });
   const refusal = findings.find((finding) => finding.mode === 'REFUSE');
   if (refusal) {

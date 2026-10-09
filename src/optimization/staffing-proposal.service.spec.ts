@@ -790,6 +790,61 @@ describe('StaffingProposalService.apply', () => {
     expect(world.rows['scheduleChangeLog']![1]!['after']).toMatchObject({ undo: true });
   });
 
+  describe('an undo of an apply that relieved a teacher over the limit (overAllocationMode REFUSE)', () => {
+    const R_BO = '00000000-0000-4000-8000-0000000000c1';
+    /** Bo (target 300, limit 330) leads a 300-minute row and co-teaches 60: 360, OVER. */
+    const overloaded = (boLeads: boolean) => {
+      const rows = schoolRows();
+      rows['staffingPolicy']![0]!['overAllocationMode'] = 'REFUSE';
+      rows['teachingRequirement']!.push(
+        requirement(R_BO, G7A, SV, { teacherId: boLeads ? BO : REKTOR, lessonsPerWeek: 5 }),
+      );
+      return rows;
+    };
+    const shed = { requirementId: R_BO, fromTeacherId: BO, toTeacherId: REKTOR };
+    const back = { requirementId: R_BO, fromTeacherId: REKTOR, toTeacherId: BO };
+
+    it('undoes it: Bo gets back no more than he had a minute ago', async () => {
+      const { service, world, proposal } = await proposeThenApply(overloaded(true));
+      const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [shed] }, admin());
+      expect(leadOf(world, R_BO)).toBe(REKTOR);
+      const undone = await service.apply(
+        { academicYearId: YEAR, basisSha256: applied.basisSha256, undo: true, changes: [back] },
+        admin(),
+      );
+      expect(leadOf(world, R_BO)).toBe(BO);
+      expect(undone.basisSha256).toBe(proposal.basisSha256);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(2);
+    });
+
+    it('judges an undo that reverses no apply as any write, so undo:true is no way round REFUSE', async () => {
+      const { service, world, proposal } = await proposeThenApply(overloaded(false));
+      await expect(
+        service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, undo: true, changes: [back] }, admin()),
+      ).rejects.toMatchObject({ status: 409, response: { code: 'STAFF_TEACHER_OVER_TARGET', params: { userId: BO } } });
+      expect(leadOf(world, R_BO)).toBe(REKTOR);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('judges the part of an undo that is not a reversal as any write', async () => {
+      const { service, world, proposal } = await proposeThenApply(overloaded(true));
+      const applied = await service.apply({ academicYearId: YEAR, basisSha256: proposal.basisSha256, changes: [shed] }, admin());
+      // Back to Bo, and Ma 8A (120, open before and after) to him as well.
+      await expect(
+        service.apply(
+          {
+            academicYearId: YEAR,
+            basisSha256: applied.basisSha256,
+            undo: true,
+            changes: [back, { requirementId: R_MA8, fromTeacherId: null, toTeacherId: BO }],
+          },
+          admin(),
+        ),
+      ).rejects.toMatchObject({ status: 409, response: { code: 'STAFF_TEACHER_OVER_TARGET', params: { userId: BO } } });
+      expect(leadOf(world, R_BO)).toBe(REKTOR);
+    });
+  });
+
   it('refuses STAFF_PROPOSAL_STALE when the tjänstefördelning changed since, writing nothing', async () => {
     const { service, world, proposal } = await proposeThenApply();
     world.rows['teachingRequirement']!.find((row) => row['id'] === R_MA7)!['lessonsPerWeek'] = 4;
