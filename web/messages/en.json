@@ -2020,7 +2020,7 @@
       "badgeLastYear": "Same as last year",
       "badgeGroup": "Already has the group",
       "keep": "Keep as it is and recompute",
-      "keepRow": "Keep {row} as it is and recompute",
+      "keepRow": "Keep as it is and recompute: {row}",
       "teachersTitle": "Teachers before and after",
       "teachersShowAll": "Show all ({count})",
       "teachersShowChanged": "Show changed only",
