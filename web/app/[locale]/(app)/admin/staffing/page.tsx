@@ -429,6 +429,11 @@ export default function StaffingPage() {
             requirements={requirements ?? []}
             groups={yearGroups}
             teacherName={teacherName}
+            loadModel={report?.loadModel ?? "MINUTES"}
+            personName={(userId) => {
+              const person = personOf.get(userId);
+              return person ? `${person.firstName} ${person.lastName}` : null;
+            }}
           />
         </Suspense>
       ) : null}

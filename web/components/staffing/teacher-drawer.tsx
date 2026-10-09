@@ -1,8 +1,11 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import { Printer } from "lucide-react";
+import { Link } from "@/i18n/navigation";
 import { formatPercent } from "@/lib/staffing-view";
-import type { TeacherLoad, UnqualifiedAssignment } from "@/lib/teacher-load";
+import { useTeacherDuties } from "@/lib/staffing-queries";
+import type { LoadModel, TeacherLoad, UnqualifiedAssignment } from "@/lib/teacher-load";
 import type {
   StaffingPolicy,
   Subject,
@@ -15,6 +18,8 @@ import { QualificationsCard } from "@/components/staffing/qualifications-card";
 import { LoadBar } from "@/components/staffing/load-bar";
 import { StatusBadge } from "@/components/staffing/staffing-matrix";
 import { DutiesCard } from "@/components/staffing/duties-card";
+import { AnnualCard } from "@/components/staffing/annual-card";
+import { EmploymentHistoryCard } from "@/components/staffing/employment-history-card";
 import {
   TeacherRequirementsCard,
   type TeacherRequirementRow,
@@ -37,6 +42,10 @@ export interface TeacherDrawerProps {
   /** The year's groups, for the names and the mentorskap picker. */
   groups: { id: string; name: string }[];
   teacherName: (userId: string) => string;
+  /** The report's model: under FACTOR the teaching figures are räknad tid. */
+  loadModel?: LoadModel;
+  /** A person's name, or null when the people list has none (Historik's actor). */
+  personName?: (userId: string) => string | null;
 }
 
 /**
@@ -65,8 +74,13 @@ export function TeacherDrawer({
   requirements,
   groups,
   teacherName,
+  loadModel = "MINUTES",
+  personName = () => null,
 }: TeacherDrawerProps) {
   const t = useTranslations("staffing");
+  // The same query (and cache entry) DutiesCard reads: Historik names an
+  // uppdrag whose version does not carry its label by today's label.
+  const { data: duties } = useTeacherDuties(academicYearId, teacher.id);
   const name = `${teacher.firstName} ${teacher.lastName}`;
   const subjectName = (id: string) => subjects.find((subject) => subject.id === id)?.name ?? "—";
   const groupName = (id: string) => groups.find((group) => group.id === id)?.name ?? "—";
@@ -94,6 +108,14 @@ export function TeacherDrawer({
         </DialogHeader>
 
         {load ? <LoadBar teacher={load} /> : null}
+
+        <Link
+          href={`/admin/staffing/uppdragsbeskrivning?teacher=${encodeURIComponent(teacher.id)}&year=${encodeURIComponent(academicYearId)}`}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline"
+        >
+          <Printer className="size-4" aria-hidden="true" />
+          {t("printUppdrag")}
+        </Link>
 
         <EmploymentCard
           teacher={teacher}
@@ -123,7 +145,9 @@ export function TeacherDrawer({
 
         {load && load.subjects.length > 0 ? (
           <section className="rounded-lg border bg-card p-4">
-            <h3 className="mb-2 font-semibold">{t("drawerSubjects")}</h3>
+            <h3 className="mb-2 font-semibold">
+              {loadModel === "FACTOR" ? t("drawerSubjectsFactor") : t("drawerSubjects")}
+            </h3>
             <ul className="space-y-1 text-sm">
               {load.subjects.map((subject) => (
                 <li key={subject.subjectId} className="flex justify-between gap-3">
@@ -143,9 +167,6 @@ export function TeacherDrawer({
                 </li>
               ))}
             </ul>
-            <p className="mt-2 text-sm text-muted-foreground">
-              {t("drawerAnnual", { hours: formatPercent(load.annual.assignedHoursPerYear) })}
-            </p>
             {unqualified.length > 0 ? (
               <p className="mt-2 text-sm font-medium text-destructive">
                 {t("drawerUnqualified", { count: unqualified.length })}:{" "}
@@ -154,6 +175,17 @@ export function TeacherDrawer({
             ) : null}
           </section>
         ) : null}
+
+        {load ? <AnnualCard annual={load.annual} loadModel={loadModel} showSettingsPath /> : null}
+
+        <EmploymentHistoryCard
+          userId={teacher.id}
+          academicYearId={academicYearId}
+          personName={personName}
+          subjectName={(id) => subjects.find((subject) => subject.id === id)?.name ?? null}
+          groupName={(id) => groups.find((group) => group.id === id)?.name ?? null}
+          dutyLabel={(id) => duties?.find((duty) => duty.id === id)?.label ?? null}
+        />
       </DialogContent>
     </Dialog>
   );

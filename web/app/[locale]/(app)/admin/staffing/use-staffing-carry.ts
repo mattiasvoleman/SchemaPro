@@ -51,6 +51,8 @@ export function useExecuteStaffingCarry(targetYearId: string | null) {
       for (const queryKey of [
         STAFFING_KEYS.employments,
         STAFFING_KEYS.duties,
+        // The carry writes a version per post and uppdrag it creates.
+        STAFFING_KEYS.history,
         STAFFING_KEYS.load,
         STAFFING_KEYS.suggestions,
         ["constraints"],

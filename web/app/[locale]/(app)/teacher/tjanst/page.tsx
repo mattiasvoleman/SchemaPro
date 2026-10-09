@@ -25,19 +25,30 @@
 // id, cut to their own row). Absent without a predecessor or without a row
 // there: a missing comparison is not a zero.
 //
-// Bundle: core tier (170KB). It reuses lib/staffing-queries.ts and the
-// LoadBar the admin page draws — two small modules — and nothing from the
-// admin drawer, whose cards carry forms this page has no use for.
+// ÅRSARBETSTID AND THE UPPDRAGSBESKRIVNING (staffing Fas 3). The year in
+// hours beside the frame the school has set (annual-card.tsx, the card the
+// drawer shows the admin — figures the gateway computed from the school's
+// settings, labelled as such), and a link to the printable
+// uppdragsbeskrivning of the teacher's own tjänst, which takes no id: the
+// page under /teacher/tjanst/uppdragsbeskrivning reads the same own-row
+// report this one does.
+//
+// Bundle: core tier (170KB). It reuses lib/staffing-queries.ts, the LoadBar
+// and the AnnualCard the admin surfaces draw — small presentational modules —
+// and nothing from the admin drawer, whose cards carry forms this page has no
+// use for.
 
 import { useMemo } from "react";
 import { useTranslations } from "next-intl";
-import { CalendarClock, Scale } from "lucide-react";
+import { CalendarClock, Printer, Scale } from "lucide-react";
+import { Link } from "@/i18n/navigation";
 import { useProfile } from "@/components/profile-context";
 import { useActiveYear, useGroups, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
 import { useLastYearTjanst } from "./use-last-year-tjanst";
 import { formatPercent } from "@/lib/staffing-view";
 import { LoadBar } from "@/components/staffing/load-bar";
+import { AnnualCard } from "@/components/staffing/annual-card";
 import { PageHeader } from "@/components/layout/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -125,7 +136,16 @@ export default function MyStaffingPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       {header}
-      <p className="text-sm text-foreground">{t("readOnly")}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-foreground">{t("readOnly")}</p>
+        <Link
+          href={`/teacher/tjanst/uppdragsbeskrivning?year=${encodeURIComponent(activeYear.id)}`}
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline"
+        >
+          <Printer className="size-4" aria-hidden="true" />
+          {t("printLink")}
+        </Link>
+      </div>
 
       <Card>
         <CardHeader>
@@ -169,9 +189,6 @@ export default function MyStaffingPage() {
                 )}
               </p>
               <LoadBar teacher={row} />
-              <p>
-                {t("annual", { hours: formatPercent(row.annual.assignedHoursPerYear) })}
-              </p>
             </>
           ) : null}
           {lastYear ? (
@@ -187,6 +204,14 @@ export default function MyStaffingPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      {row ? (
+        <AnnualCard
+          annual={row.annual}
+          loadModel={load.data?.loadModel ?? "MINUTES"}
+          headingLevel="h2"
+        />
+      ) : null}
 
       <Card>
         <CardHeader>

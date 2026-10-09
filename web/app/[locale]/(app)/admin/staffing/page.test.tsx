@@ -202,6 +202,22 @@ vi.mock("@/i18n/navigation", () => ({
   Link: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// Staffing Fas 3: the drawer's Historik card reads its own module and the
+// school's time zone, and links to the printable uppdragsbeskrivning.
+const historyAsked = vi.hoisted(() => [] as unknown[][]);
+vi.mock("@/lib/staffing-history-queries", () => ({
+  useEmploymentHistory: (...args: unknown[]) => {
+    historyAsked.push(args);
+    return { data: undefined, isLoading: false, isError: false };
+  },
+}));
+vi.mock("@/components/profile-context", () => ({
+  useProfile: () => ({ profile: { id: "u-admin" }, school: { timezone: "Europe/Stockholm" } }),
+}));
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
+}));
+
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: (namespace: string) => {
@@ -383,6 +399,17 @@ describe("StaffingPage", () => {
     expect(
       within(screen.getByRole("dialog")).getByRole("button", { name: "changeTeacherFor(7A · Matematik)" }),
     ).toBeInTheDocument();
+    // Fas 3: årsarbetstid, the printable uppdragsbeskrivning, and a Historik
+    // that reads nothing until it is unfolded.
+    const dialog = within(screen.getByRole("dialog"));
+    // Both cards title themselves "title" under their own namespace here.
+    expect(dialog.getAllByRole("heading", { name: "title" })).toHaveLength(2);
+    expect(dialog.getByText("captionAdmin")).toBeInTheDocument();
+    expect(dialog.getByRole("link", { name: "printUppdrag" })).toHaveAttribute(
+      "href",
+      "/admin/staffing/uppdragsbeskrivning?teacher=t-bo&year=y1",
+    );
+    expect(historyAsked.at(-1)).toEqual(["t-bo", "y1", false]);
   });
   describe("last year (staffing Fas 5)", () => {
     const lastReport = {

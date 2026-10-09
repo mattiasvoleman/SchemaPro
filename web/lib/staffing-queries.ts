@@ -94,6 +94,7 @@ export function useTeacherEmploymentActions() {
   const queryClient = useQueryClient();
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.employments });
+    void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.history });
     void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
     // A target moves every kvar and wouldExceed in a cached ranking.
     void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
@@ -266,6 +267,7 @@ export function useTeacherDutyActions() {
   const queryClient = useQueryClient();
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.duties });
+    void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.history });
     void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.load });
     void queryClient.invalidateQueries({ queryKey: STAFFING_KEYS.suggestions });
     void queryClient.invalidateQueries({ queryKey: ["constraints"] });

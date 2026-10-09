@@ -26,4 +26,9 @@ export const STAFFING_KEYS = {
   duties: ["teacherDuties"],
   /** suggest-teachers per requirement: every staffing write makes them stale. */
   suggestions: ["staffingSuggestions"],
+  /**
+   * A teacher's versions (staffing Fas 3). Every write to a post or an
+   * uppdrag adds one, so every writer below invalidates it.
+   */
+  history: ["teacherEmploymentHistory"],
 } as const;
