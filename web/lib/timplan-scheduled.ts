@@ -559,13 +559,27 @@ export function computeScheduledCoverage(input: ScheduledCoverageInput): Schedul
   }
 
   verdicts.sort((a, b) => VERDICT_ORDER[a.code] - VERDICT_ORDER[b.code]);
+  // The drill-down answers for its group alone, as layer 3's does: the page
+  // already holds the overview, and re-sending every group and verdict with
+  // one group's pupils took the answer past a megabyte at 2 000 pupils.
+  // Year-wide counts stay year-wide.
+  const inDrill = (groupId: string | undefined) => drill === null || groupId === undefined || groupId === drill;
+  const drilledPupils = new Set(
+    drill === null ? [] : results.filter((result) => result.groupIds.includes(drill)).map((result) => result.pupil.id),
+  );
   return {
     pupilLevel: input.includePupils,
-    groups: summaries,
-    pupils: input.includePupils ? listed : null,
+    groups: drill === null ? summaries : summaries.filter((summary) => summary.studentGroupId === drill),
+    pupils: input.includePupils
+      ? drill === null
+        ? listed
+        : listed.filter((entry) => drilledPupils.has(entry.pupilId))
+      : null,
     pupilCount: results.length,
     pupilsBelowPlanned: input.includePupils ? pupilsBelow : null,
     lessonCount,
-    verdicts: input.includePupils ? verdicts : verdicts.filter((verdict) => verdict.pupilId === undefined),
+    verdicts: verdicts.filter(
+      (verdict) => (input.includePupils || verdict.pupilId === undefined) && inDrill(verdict.studentGroupId),
+    ),
   };
 }

@@ -24,7 +24,8 @@
  * the teacher test written as a correlated EXISTS and as IN (a hashed
  * SubPlan); the service's warm median of 7, each run paired with a concurrent
  * layer=planned read (the shared-Mac rule: host load moves both alike); and
- * the response size in bytes, overview and drill-down.
+ * the response size in bytes, overview and drill-down — and layer 2's and
+ * layer 1's sizes on the same school beside it.
  */
 import { performance } from 'node:perf_hooks';
 import { Client } from 'pg';
@@ -319,6 +320,17 @@ async function run(scaleName: 'a' | 'b'): Promise<void> {
   );
   console.log(
     `  response: overview ${(size / 1024).toFixed(0)} kB (admin), ${(Buffer.byteLength(JSON.stringify(teacherAnswer)) / 1024).toFixed(0)} kB (teacher), drill-down ${(Buffer.byteLength(JSON.stringify(drill)) / 1024).toFixed(0)} kB`,
+  );
+  // Layer 2 beside it: the same school, overview and drill-down, and the
+  // layer-1 answer for scale. Sizes only — layer 2 runs no statement of its own.
+  const scheduledQuery = { academicYearId: world.yearId, layer: 'scheduled' as const };
+  const t0 = performance.now();
+  const scheduled = await coverage.scheduled(scheduledQuery, admin);
+  const scheduledMs = performance.now() - t0;
+  const scheduledDrill = await coverage.scheduled({ ...scheduledQuery, studentGroupId: world.classId }, admin);
+  const plannedAnswer = await coverage.planned({ academicYearId: world.yearId }, admin);
+  console.log(
+    `  layer 2: overview ${kb(scheduled)} kB (verdicts ${kb(scheduled.verdicts)} kB, ${scheduled.verdicts.length}) in ${scheduledMs.toFixed(0)} ms, drill-down ${kb(scheduledDrill)} kB; layer 1 ${kb(plannedAnswer)} kB`,
   );
   await api.$disconnect();
   // BENCH_KEEP=1 leaves the seeded school for a closer look; the next run deletes it first.
