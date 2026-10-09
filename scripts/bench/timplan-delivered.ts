@@ -26,6 +26,11 @@
  * layer=planned read (the shared-Mac rule: host load moves both alike); and
  * the response size in bytes, overview and drill-down — and layer 2's and
  * layer 1's sizes on the same school beside it.
+ *
+ * Staffing Fas 3 adds statement E (the reconciliation's crediting statement
+ * over the same classification): EXPLAIN ANALYZE as the admin over the whole
+ * year and over one month, as a TEACHER over the year for their own id, and
+ * GET /staffing/delivered's warm median over the year.
  */
 import { performance } from 'node:perf_hooks';
 import { Client } from 'pg';
@@ -36,8 +41,10 @@ import {
   audienceStatement,
   datesStatement,
   horizonStatement,
+  staffingCreditStatement,
   type DeliveredWindow,
 } from '../../src/timplan/timplan-delivered.sql';
+import { StaffingLoadService } from '../../src/staffing/staffing-load.service';
 
 interface Scale {
   name: 'a' | 'b';
@@ -282,6 +289,16 @@ async function run(scaleName: 'a' | 'b'): Promise<void> {
     const inD = await explain(appUrl, authId, asIn(exists.D));
     console.log(`  EXPLAIN ANALYZE as ${who} (EXISTS): ${row.join(', ')} → ${total.toFixed(0)} ms; as IN: A_B ${inAB.toFixed(0)}, D ${inD.toFixed(0)} ms`);
   }
+  {
+    const [teacherRow] = (
+      await owner.query<{ id: string }>(`SELECT id FROM "Users" WHERE "authId" = $1`, [world.teacher])
+    ).rows;
+    const year = { from: YEAR_START, to: YEAR_END };
+    const eAdmin = await explain(appUrl, world.admin, staffingCreditStatement(window, year, null));
+    const eMonth = await explain(appUrl, world.admin, staffingCreditStatement(window, { from: '2026-09-01', to: '2026-09-30' }, null));
+    const eTeacher = await explain(appUrl, world.teacher, staffingCreditStatement(window, year, teacherRow!.id));
+    console.log(`  statement E (staffing): ADMIN year ${eAdmin.toFixed(0)} ms, ADMIN September ${eMonth.toFixed(0)} ms, TEACHER year (own) ${eTeacher.toFixed(0)} ms`);
+  }
 
   const previous = process.env.DATABASE_URL;
   const api = new PrismaService();
@@ -308,6 +325,17 @@ async function run(scaleName: 'a' | 'b'): Promise<void> {
     planned.push(p);
     size = Buffer.byteLength(JSON.stringify(answer));
   }
+  const staffing = new StaffingLoadService(api);
+  const staffingTimes: number[] = [];
+  let staffingSize = 0;
+  for (let i = 0; i < 8; i += 1) {
+    const t0 = performance.now();
+    const answer = await staffing.delivered({ academicYearId: world.yearId, from: YEAR_START, to: YEAR_END }, admin);
+    if (i === 0) continue;
+    staffingTimes.push(performance.now() - t0);
+    staffingSize = Buffer.byteLength(JSON.stringify(answer));
+  }
+  console.log(`  GET /staffing/delivered over the year (warm median of 7): ${median(staffingTimes).toFixed(0)} ms, ${(staffingSize / 1024).toFixed(0)} kB`);
   const drill = await coverage.delivered({ ...query, studentGroupId: world.classId }, admin);
   const teacherAnswer = await coverage.delivered(query, { authId: world.teacher, schoolId: world.schoolId, role: Role.TEACHER } as never);
   console.log(

@@ -299,7 +299,8 @@ describe('the roster-reader inventory', () => {
       // Some answer it only when they compute a basis: a timplanspost or an
       // import when the staffing checks run, a vikarie when behörighet is
       // asked. StaffingLoadController.unstaffed reads the load input like
-      // the report it is opened from.
+      // the report it is opened from, and .delivered (staffing Fas 3) reads
+      // it for the planned column of the reconciliation.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'CalendarLessonsController.assignSubstitute',
         'CalendarLessonsController.suggestSubstitutes',
@@ -311,6 +312,7 @@ describe('the roster-reader inventory', () => {
         'OptimizationController.proposeRooms',
         'OptimizationController.startJob',
         'OptimizationController.trigger',
+        'StaffingLoadController.delivered',
         'StaffingLoadController.load',
         'StaffingLoadController.suggestTeachers',
         'StaffingLoadController.unstaffed',

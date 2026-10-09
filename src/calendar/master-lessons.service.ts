@@ -1161,20 +1161,29 @@ export class MasterLessonsService {
       });
       moved++;
 
-      // Keep the LEAD teacher assignment in sync with the template.
+      // Keep the LEAD teacher assignment in sync with the template — except
+      // on a lesson a vikarie has been assigned to. assignSubstitute replaced
+      // every row of that lesson with one SUBSTITUTE row; writing the new
+      // lead beside it put two teachers on a lesson one person held, and the
+      // staffing reconciliation would credit both (it now reads such a LEAD
+      // as DISPLACED, for rows written before this). And when the new lead IS
+      // the vikarie, the unique (calendarLessonId, teacherId) made the whole
+      // PATCH a P2002. So the LEAD is written only when the lesson has no
+      // SUBSTITUTE row and the new teacher no row of their own on it: one
+      // statement, as the create it replaces.
       if (after.teacherId !== before.teacherId) {
         await tx.calendarLessonTeacher.deleteMany({
           where: { calendarLessonId: calendarLesson.id, role: 'LEAD' },
         });
         if (after.teacherId) {
-          await tx.calendarLessonTeacher.create({
-            data: {
-              schoolId,
-              calendarLessonId: calendarLesson.id,
-              teacherId: after.teacherId,
-              role: 'LEAD',
-            },
-          });
+          await tx.$executeRaw`
+            INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", "role")
+            SELECT ${schoolId}::uuid, ${calendarLesson.id}::uuid, ${after.teacherId}::uuid, 'LEAD'::"TeacherAssignmentRole"
+             WHERE NOT EXISTS (
+                     SELECT 1 FROM "CalendarLessonTeachers" x
+                      WHERE x."calendarLessonId" = ${calendarLesson.id}::uuid
+                        AND (x."role" = 'SUBSTITUTE' OR x."teacherId" = ${after.teacherId}::uuid))
+          `;
         }
       }
     }

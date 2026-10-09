@@ -2282,13 +2282,159 @@ describe('Planning surface (e2e)', () => {
         expect(response.body.unstaffedRequirements).toEqual([]);
       });
 
-      it('400s a horizon that does not exist yet, and a missing year', async () => {
+      it('400s a horizon that does not exist, naming the two that do, and a missing year', async () => {
         const response = await request(http())
-          .get(`/api/v1/staffing/load?academicYearId=${YEAR_ID}&horizon=scheduled`)
+          .get(`/api/v1/staffing/load?academicYearId=${YEAR_ID}&horizon=x`)
           .set('x-test-user', admin())
           .expect(400);
         expect(response.body.detail).toContain('"scheduled"');
         await request(http()).get('/api/v1/staffing/load').set('x-test-user', admin()).expect(400);
+      });
+
+      /** The grundschema: ten 60-minute Ma lessons of the colleague's in 7A, one parked. */
+      const masterRow = (id: string, overrides: Record<string, unknown> = {}) => ({
+        id,
+        subjectId: SUBJECT_ID,
+        studentGroupId: GROUP_ID,
+        teacherId: COLLEAGUE_ID,
+        coTeacherId: null,
+        dayOfWeek: 1,
+        startTime: new Date('1970-01-01T08:00:00.000Z'),
+        endTime: new Date('1970-01-01T09:00:00.000Z'),
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+        isParked: false,
+        subject: { name: 'Matematik' },
+        studentGroup: { name: '7A' },
+        extraGroups: [],
+        ...overrides,
+      });
+
+      it('horizon=scheduled charges the grundschema through the handler: an untouched schedule reads as planned, the lists are not computed', async () => {
+        harness.tx['masterLesson']!['findMany']!.mockResolvedValue([
+          ...Array.from({ length: 10 }, (_, i) => masterRow(`80808080-8080-4080-8080-8080808080${String(i).padStart(2, '0')}`)),
+          masterRow('80808080-8080-4080-8080-8080808080ff', { isParked: true }),
+        ]);
+        const response = await request(http())
+          .get(`/api/v1/staffing/load?academicYearId=${YEAR_ID}&horizon=scheduled`)
+          .set('x-test-user', admin())
+          .expect(200);
+        expect(response.body).toMatchObject({ horizon: 'scheduled', listsComputed: false, unstaffedRequirements: [] });
+        expect(response.body.teachers).toHaveLength(2);
+        expect(response.body.teachers).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ userId: COLLEAGUE_ID, assignedMinutesPerWeek: 600, requirementCount: 10 }),
+            expect.objectContaining({ userId: TEACHER_ID, assignedMinutesPerWeek: 0 }),
+          ]),
+        );
+      });
+
+      describe('genomfört (GET /staffing/delivered)', () => {
+        /** C (the published range) and E (who held what), as Postgres would answer them. */
+        const givenCalendar = (published: boolean) => {
+          const queryRaw = jest.fn((statement: { sql: string; values: unknown[] }) =>
+            Promise.resolve(
+              statement.sql.includes('GROUPING SETS')
+                ? [{ masterLessonId: null, total: 1, day: null, aheadRows: 0, firstDate: published ? '2026-08-17' : null, lastDate: published ? '2027-06-11' : null }]
+                : [
+                    { kind: 'T', personId: COLLEAGUE_ID, role: 'LEAD', subjectId: SUBJECT_ID, studentGroupId: GROUP_ID, extraGroupIds: [], bucket: 'DELIVERED', minutes: 540, lessons: 9 },
+                    { kind: 'T', personId: TEACHER_ID, role: 'SUBSTITUTE', subjectId: SUBJECT_ID, studentGroupId: GROUP_ID, extraGroupIds: [], bucket: 'DELIVERED', minutes: 60, lessons: 1 },
+                    { kind: 'C', personId: COLLEAGUE_ID, role: 'LEAD', subjectId: SUBJECT_ID, studentGroupId: GROUP_ID, extraGroupIds: [], bucket: 'DELIVERED', minutes: 60, lessons: 1 },
+                    ...(statement.sql.includes(`SELECT 'G'`)
+                      ? [{ kind: 'G', personId: null, role: null, subjectId: SUBJECT_ID, studentGroupId: GROUP_ID, extraGroupIds: null, bucket: 'CANCELLED_MANUAL', minutes: 60, lessons: 1 }]
+                      : []),
+                  ],
+            ),
+          );
+          Object.assign(harness.tx, { $queryRaw: queryRaw });
+          harness.tx['academicYear']!['findUnique']!.mockImplementation((args: { select?: Record<string, unknown> }) =>
+            Promise.resolve(args.select && 'school' in args.select ? { school: { timezone: 'Europe/Stockholm' } } : yearRow()),
+          );
+          harness.tx['masterLesson']!['findMany']!.mockResolvedValue([masterRow('80808080-8080-4080-8080-808080808001')]);
+          return queryRaw;
+        };
+
+        it('an admin reads every teacher, the bortfall per group and the totals, ids only', async () => {
+          givenCalendar(true);
+          const response = await request(http())
+            .get(`/api/v1/staffing/delivered?academicYearId=${YEAR_ID}&from=2026-09-07&to=2026-09-18`)
+            .set('x-test-user', admin())
+            .expect(200);
+          expect(response.body).toMatchObject({
+            academicYearId: YEAR_ID,
+            from: '2026-09-07',
+            to: '2026-09-18',
+            loadModel: 'MINUTES',
+            published: { from: '2026-08-17', through: '2027-06-11' },
+            groupLosses: [expect.objectContaining({ studentGroupId: GROUP_ID, cancelledManual: 60, lessons: 1 })],
+          });
+          const colleague = response.body.teachers.find((row: { userId: string }) => row.userId === COLLEAGUE_ID);
+          // Planned 10 × 60 a week over two weeks; one Monday lesson a week scheduled.
+          expect(colleague).toMatchObject({ planned: 1200, scheduled: 120, delivered: 540, coveredByOthersMinutes: 60 });
+          const me = response.body.teachers.find((row: { userId: string }) => row.userId === TEACHER_ID);
+          expect(me).toMatchObject({ delivered: 60, substituteMinutes: 60 });
+          expect(response.body.totals).toMatchObject({ delivered: 600, substituteMinutes: 60 });
+          expect(JSON.stringify(response.body)).not.toMatch(/firstName|lastName|email/);
+        });
+
+        it('a teacher reads their own row alone, with no bortfall per group and no totals', async () => {
+          const queryRaw = givenCalendar(true);
+          const response = await request(http())
+            .get(`/api/v1/staffing/delivered?academicYearId=${YEAR_ID}&from=2026-09-07&to=2026-09-18`)
+            .set('x-test-user', asUser({ role: 'TEACHER' as never }))
+            .expect(200);
+          expect(response.body.teachers.map((row: { userId: string }) => row.userId)).toEqual([TEACHER_ID]);
+          expect(response.body.groupLosses).toEqual([]);
+          expect(response.body.totals).toBeNull();
+          // E was asked for their id, not filtered afterwards.
+          const e = queryRaw.mock.calls[1]![0] as { sql: string; values: unknown[] };
+          expect(e.values).toContain(TEACHER_ID);
+          expect(e.sql).not.toContain(`SELECT 'G'`);
+        });
+
+        it('400s a start after its end and a malformed day, in Swedish; 404s a hidden year', async () => {
+          givenCalendar(true);
+          const reversed = await request(http())
+            .get(`/api/v1/staffing/delivered?academicYearId=${YEAR_ID}&from=2026-10-01&to=2026-09-01`)
+            .set('x-test-user', admin())
+            .expect(400);
+          expect(JSON.stringify(reversed.body)).toContain('periodens början ligger efter dess slut');
+          await request(http())
+            .get(`/api/v1/staffing/delivered?academicYearId=${YEAR_ID}&from=2026-02-30`)
+            .set('x-test-user', admin())
+            .expect(400);
+          await request(http()).get('/api/v1/staffing/delivered').set('x-test-user', admin()).expect(400);
+          harness.tx['academicYear']!['findUnique']!.mockResolvedValue(null);
+          await request(http())
+            .get(`/api/v1/staffing/delivered?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', admin())
+            .expect(404);
+        });
+
+        it('says so when nothing is published, and asks no crediting statement', async () => {
+          const queryRaw = givenCalendar(false);
+          const response = await request(http())
+            .get(`/api/v1/staffing/delivered?academicYearId=${YEAR_ID}&from=2026-09-07&to=2026-09-18`)
+            .set('x-test-user', admin())
+            .expect(200);
+          expect(response.body.published).toBeNull();
+          expect(response.body.notices.map((notice: { code: string }) => notice.code)).toContain('STAFFING_NOTHING_PUBLISHED');
+          expect(queryRaw).toHaveBeenCalledTimes(1);
+        });
+
+        it('403s a pupil and a guardian, and 401s an integration key', async () => {
+          for (const role of ['STUDENT', 'GUARDIAN']) {
+            await request(http())
+              .get(`/api/v1/staffing/delivered?academicYearId=${YEAR_ID}`)
+              .set('x-test-user', asUser({ role: role as never }))
+              .expect(403);
+          }
+          await request(http())
+            .get(`/api/v1/staffing/delivered?academicYearId=${YEAR_ID}`)
+            .set('x-api-key', `sp_${'a'.repeat(48)}`)
+            .expect(401);
+        });
       });
 
       it('404s a year RLS hides', async () => {
@@ -4583,6 +4729,9 @@ describe('Planning surface (e2e)', () => {
       for (const [who, user] of [['admin', admin()], ['teacher', teacher]] as const) {
         const load = await request(http()).get(`/api/v1/staffing/load?academicYearId=${yearC}`).set('x-test-user', user).expect(409);
         expect([who, load.body]).toMatchObject([who, refused]);
+        // Staffing Fas 3: the reconciliation's planned column is the load's reader.
+        const delivered = await request(http()).get(`/api/v1/staffing/delivered?academicYearId=${yearC}`).set('x-test-user', user).expect(409);
+        expect([who, delivered.body]).toMatchObject([who, refused]);
         const coverage = await request(http()).get(`/api/v1/timplan-coverage?academicYearId=${yearC}`).set('x-test-user', user).expect(409);
         expect([who, coverage.body]).toMatchObject([who, refused]);
       }

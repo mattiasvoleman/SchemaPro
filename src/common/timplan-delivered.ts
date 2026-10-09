@@ -436,6 +436,104 @@ export function plannedMinutesBetween(
 }
 
 /**
+ * One grundschema lesson as publish walks it: the days it would write a
+ * calendar row on. `runs(day)` is runsOn (its recurrence and window) and
+ * publishSkips (lov for its group, a dated closure, a weekend) — publish's own
+ * two tests, nothing else; `firstFrom(day)` is the first day on or after `day`
+ * that falls on the lesson's weekday. Built once per lesson, so a walk over a
+ * year parses the lesson's dates and clock once.
+ *
+ * Extracted from computeDeliveredCoverage, which walks the lessons AHEAD of
+ * the calendar with it (adding its own "not yet ended" test), so the staffing
+ * reconciliation (src/staffing/staffing-reconciliation.ts) counts a
+ * grundschema lesson's occurrences in a range by the very same rule — one
+ * definition of "the days publish would write", not two.
+ */
+export type MasterWalkLesson = Pick<
+  DeliveredMasterLesson,
+  'studentGroupId' | 'dayOfWeek' | 'startTime' | 'endTime' | 'recurrence' | 'startDate' | 'endDate'
+>;
+
+export function masterWalk(
+  m: MasterWalkLesson,
+  ctx: PublishDaysContext,
+): { runs: (day: string) => boolean; firstFrom: (day: string) => string } {
+  const window = {
+    recurrence: m.recurrence ?? 'ALL_WEEKS',
+    startDate: m.startDate ? parseUtcDate(m.startDate) : null,
+    endDate: m.endDate ? parseUtcDate(m.endDate) : null,
+  };
+  const template = { studentGroupId: m.studentGroupId, startTime: clockDate(m.startTime), endTime: clockDate(m.endTime) };
+  return {
+    runs: (day: string): boolean => runsOn(window, parseUtcDate(day)) && publishSkips(template, day, ctx) === null,
+    firstFrom: (day: string): string => addDays(day, (m.dayOfWeek - isoWeekday(day) + 7) % 7),
+  };
+}
+
+/**
+ * How many rows publish would write for one grundschema lesson in [from, to],
+ * both inclusive — and, with `also`, only on the days it also accepts.
+ */
+export function masterOccurrencesBetween(
+  m: MasterWalkLesson,
+  from: string,
+  to: string,
+  ctx: PublishDaysContext,
+  also?: (day: string) => boolean,
+): number {
+  const walk = masterWalk(m, ctx);
+  let count = 0;
+  for (let day = walk.firstFrom(from); day <= to; day = addDays(day, 7)) {
+    if (walk.runs(day) && (also === undefined || also(day))) count += 1;
+  }
+  return count;
+}
+
+/**
+ * The gaps two publishes left: every past weekday in [from, lastRecorded] on
+ * which the school's calendar holds no row at all and that no lov closes for
+ * every class (a grade's own lov is no gap; a day closed for all is no gap
+ * either — nothing was to be written). One window per run of weekdays, the
+ * weekend inside a run adding nothing; `first`/`last` the outermost gap days.
+ *
+ * Extracted from computeDeliveredCoverage, whose unrecorded "gap" part this
+ * is; the staffing reconciliation names the same days in its notice.
+ */
+export function publishedGaps(args: {
+  from: string;
+  lastRecorded: string;
+  publishedDays: readonly string[];
+  closures: readonly ClosedRange[];
+  classGrades: readonly (number | null)[];
+}): { days: number; windows: [string, string][]; first: string | null; last: string | null } {
+  const recorded = new Set(args.publishedDays);
+  const closedForAll = (day: string): boolean =>
+    args.classGrades.every((grade) =>
+      args.closures.some((c) => day >= c.startDate && day <= c.endDate && closesGrade(c, grade)),
+    );
+  const windows: [string, string][] = [];
+  let days = 0;
+  let first: string | null = null;
+  let last: string | null = null;
+  let run: [string, string] | null = null;
+  for (let day = args.from; day <= args.lastRecorded; day = addDays(day, 1)) {
+    const weekday = isoWeekday(day);
+    if (weekday > 5) continue;
+    if (recorded.has(day) || closedForAll(day)) {
+      run = null;
+      continue;
+    }
+    days += 1;
+    if (first === null) first = day;
+    last = day;
+    // One window per run of weekdays; the weekend inside a run adds nothing.
+    if (run && addDays(run[1], weekday === 1 ? 3 : 1) === day) run[1] = day;
+    else windows.push((run = [day, day]));
+  }
+  return { days, windows, first, last };
+}
+
+/**
  * The dates statement D is asked about: every credit date inside the year and
  * every past day a break covers (some group) — a delivered lesson on either is
  * a notice. The service and the tests ask this one function.
@@ -695,18 +793,12 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
       }
       continue;
     }
-    const window = {
-      recurrence: m.recurrence ?? 'ALL_WEEKS',
-      startDate: m.startDate ? parseUtcDate(m.startDate) : null,
-      endDate: m.endDate ? parseUtcDate(m.endDate) : null,
-    };
-    const template = { studentGroupId: m.studentGroupId, startTime: clockDate(m.startTime), endTime: clockDate(m.endTime) };
+    const walk = masterWalk(m, ctx);
     const runs = (day: string): boolean =>
-      runsOn(window, parseUtcDate(day)) &&
-      publishSkips(template, day, ctx) === null &&
+      walk.runs(day) &&
       (day > asOfDate || zonedTimeToUtc(day, m.endTime, ctx.timezone).getTime() > asOf.getTime());
     // The first occurrence on or after a day, by the lesson's weekday.
-    const firstFrom = (day: string): string => addDays(day, (m.dayOfWeek - isoWeekday(day) + 7) % 7);
+    const firstFrom = walk.firstFrom;
     let count = 0;
     const start = row && row.lastDate >= asOfDate ? addDays(row.lastDate, 1) : asOfDate;
     for (let day = firstFrom(start); day <= year.endDate; day = addDays(day, 7)) if (runs(day)) count += 1;
@@ -897,27 +989,16 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
   let gapDays = 0;
   const gapRange: string[] = [];
   if (input.publishedDays) {
-    const recorded = new Set(input.publishedDays);
-    const classGrades = [...new Set(classes.map((g) => g.gradeLevel))];
-    const closedForAll = (day: string): boolean =>
-      classGrades.every((grade) =>
-        planned.closures.some((c) => day >= c.startDate && day <= c.endDate && closesGrade(c, grade)),
-      );
-    let run: [string, string] | null = null;
-    for (let day = input.published.from; day <= lastRecorded; day = addDays(day, 1)) {
-      const weekday = isoWeekday(day);
-      if (weekday > 5) continue;
-      if (recorded.has(day) || closedForAll(day)) {
-        run = null;
-        continue;
-      }
-      gapDays += 1;
-      if (gapRange.length === 0) gapRange.push(day);
-      gapRange[1] = day;
-      // One window per run of weekdays; the weekend inside a run adds nothing.
-      if (run && addDays(run[1], weekday === 1 ? 3 : 1) === day) run[1] = day;
-      else windows.gap.push((run = [day, day]));
-    }
+    const gaps = publishedGaps({
+      from: input.published.from,
+      lastRecorded,
+      publishedDays: input.publishedDays,
+      closures: planned.closures,
+      classGrades: [...new Set(classes.map((g) => g.gradeLevel))],
+    });
+    gapDays = gaps.days;
+    if (gaps.first !== null && gaps.last !== null) gapRange.push(gaps.first, gaps.last);
+    windows.gap.push(...gaps.windows);
   }
   const plannedCache = new Map<string, { year: number; unrecorded: UnrecordedParts }>();
   const plannedOf = (row: PlannedRequirement, grade: number | null) => {

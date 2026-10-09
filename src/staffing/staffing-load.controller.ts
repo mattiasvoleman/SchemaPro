@@ -7,8 +7,10 @@ import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import {
   StaffingLoadService,
+  type StaffingReconciliationResponse,
   type TeacherLoadReportResponse,
 } from './staffing-load.service';
+import { StaffingDeliveredQueryDto } from './dto/staffing-delivered.dto';
 import type { UnstaffedRequirement } from './teacher-load';
 import type { TeacherSuggestions } from './suggest-teachers';
 
@@ -28,7 +30,10 @@ const uuid = () => new ParseUUIDPipe({ version: '4' });
 export class StaffingLoadController {
   constructor(private readonly loads: StaffingLoadService) {}
 
-  /** `?academicYearId=&horizon=planned` — the whole school, or a teacher's own row. */
+  /**
+   * `?academicYearId=&horizon=planned|scheduled` — the whole school, or a
+   * teacher's own row. planned is the timplansposter, scheduled the grundschema.
+   */
   @Get('load')
   @Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
   load(
@@ -37,6 +42,20 @@ export class StaffingLoadController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<TeacherLoadReportResponse> {
     return this.loads.load(academicYearId, horizon, user);
+  }
+
+  /**
+   * `?academicYearId=&from=&to=` — planerat, schemalagt och genomfört per
+   * lärare över en period: the whole school with the bortfall per group for
+   * an admin, their own row alone for a teacher.
+   */
+  @Get('delivered')
+  @Roles(Role.SCHOOL_ADMIN, Role.TEACHER)
+  delivered(
+    @Query() query: StaffingDeliveredQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<StaffingReconciliationResponse> {
+    return this.loads.delivered(query, user);
   }
 
   /** `?academicYearId=` — every requirement with no lead teacher. */

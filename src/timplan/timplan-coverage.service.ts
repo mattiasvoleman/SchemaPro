@@ -27,6 +27,7 @@ import { todayInZone } from '../common/utils/time';
 import type { TimplanCoverageQueryDto } from './dto/timplan-coverage.dto';
 import { describeDeliveredVerdict } from './timplan-delivered-messages';
 import { readDeliveredRows } from './timplan-delivered.sql';
+import { publishBreaksOf, readPublishClosures } from './publish-context';
 import { describePlannedVerdict } from './timplan-planned-messages';
 import { describeScheduledVerdict } from './timplan-scheduled-messages';
 import { readHomePupils, rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
@@ -182,30 +183,8 @@ export class TimplanCoverageService {
         orderBy: [{ date: 'asc' }, { id: 'asc' }],
       });
       // What publish skips by besides the lov: dated closures of a class or an årskurs.
-      const closures = await tx.availabilityConstraint.findMany({
-        where: {
-          type: 'UNAVAILABLE',
-          resourceType: { in: ['STUDENT_GROUP', 'GRADE_LEVEL'] },
-          date: { not: null, gte: new Date(`${window.yearStart}T00:00:00.000Z`), lte: new Date(`${window.yearEnd}T00:00:00.000Z`) },
-        },
-        select: {
-          resourceType: true,
-          userId: true,
-          roomId: true,
-          studentGroupId: true,
-          minGradeLevel: true,
-          maxGradeLevel: true,
-          date: true,
-          startTime: true,
-          endTime: true,
-        },
-      });
-      const breaks = planned.closures.map((row) => ({
-        startDate: new Date(`${row.startDate}T00:00:00.000Z`),
-        endDate: new Date(`${row.endDate}T00:00:00.000Z`),
-        minGradeLevel: row.minGradeLevel ?? null,
-        maxGradeLevel: row.maxGradeLevel ?? null,
-      }));
+      const closures = await readPublishClosures(tx, window);
+      const breaks = publishBreaksOf(planned.closures);
       const creditRows = credits.map((row) => ({ ...row, date: asDay(row.date) }));
       const rows = await readDeliveredRows(
         tx,
@@ -233,7 +212,7 @@ export class TimplanCoverageService {
           endDate: asDayOrNull(row.endDate),
           isParked: row.isParked,
         })),
-        publish: { breaks, closures: closures.map((row) => ({ ...row, resourceType: String(row.resourceType) })), timezone },
+        publish: { breaks, closures, timezone },
         credits: creditRows,
         asOf: now.toISOString(),
         asOfDate,

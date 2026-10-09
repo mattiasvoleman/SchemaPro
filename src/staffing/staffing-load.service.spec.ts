@@ -290,11 +290,148 @@ describe('StaffingLoadService', () => {
     expect(report.totals.lessonMinutesPerWeek).toBe(720);
   });
 
-  it('refuses a horizon that does not exist yet, before reading anything', async () => {
-    await expect(service.load(YEAR_ID, 'scheduled', testUser())).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+  it('refuses a horizon that does not exist, before reading anything, and names the two that do', async () => {
+    for (const horizon of ['delivered', 'x']) {
+      const error = await service.load(YEAR_ID, horizon, testUser()).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).message).toContain('"scheduled"');
+    }
     expect(prisma.withRls).not.toHaveBeenCalled();
+  });
+
+  describe('horizon=scheduled', () => {
+    const master = (overrides: Record<string, unknown> = {}) => ({
+      id: 'm-1',
+      subjectId: MA,
+      studentGroupId: GROUP_7A,
+      teacherId: ME,
+      coTeacherId: null,
+      dayOfWeek: 1,
+      startTime: new Date('1970-01-01T08:00:00.000Z'),
+      endTime: new Date('1970-01-01T09:00:00.000Z'),
+      recurrence: 'ALL_WEEKS',
+      startDate: null,
+      endDate: null,
+      isParked: false,
+      subject: { name: 'Matematik' },
+      studentGroup: { name: '7A' },
+      extraGroups: [],
+      ...overrides,
+    });
+
+    it('charges the teacher the grundschema: an untouched schedule reads as planned, a parked lesson not at all', async () => {
+      // The planned row is 10 × 60; the grundschema holds ten 60-minute lessons and a parked one.
+      tx.masterLesson.findMany.mockResolvedValue([
+        ...Array.from({ length: 10 }, (_, i) => master({ id: `m-${i}` })),
+        master({ id: 'm-parked', isParked: true }),
+      ]);
+
+      const planned = await service.load(YEAR_ID, 'planned', testUser());
+      const scheduled = await service.load(YEAR_ID, 'scheduled', testUser());
+
+      expect(scheduled).toMatchObject({ horizon: 'scheduled', listsComputed: false });
+      expect(planned).toMatchObject({ horizon: 'planned', listsComputed: true });
+      expect(scheduled.teachers[0]!.assignedMinutesPerWeek).toBe(planned.teachers[0]!.assignedMinutesPerWeek);
+      expect(scheduled.teachers[0]!.requirementCount).toBe(10);
+      // The lists belong to the planned horizon.
+      expect(scheduled.unstaffedRequirements).toEqual([]);
+      expect(scheduled.unqualifiedAssignments).toEqual([]);
+      expect(scheduled.subjectBottlenecks).toEqual([]);
+      expect(tx.masterLesson.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.masterLesson.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { academicYearId: YEAR_ID } }));
+    });
+
+    it('takes the row’s percentage for the slot: a lesson short of the plan reads short', async () => {
+      tx.teachingRequirement.findMany.mockResolvedValue([requirementRow({ teacherLoadPercent: 50 })]);
+      tx.masterLesson.findMany.mockResolvedValue([master(), master({ id: 'm-2', endTime: new Date('1970-01-01T08:40:00.000Z') })]);
+
+      const report = await service.load(YEAR_ID, 'scheduled', testUser());
+
+      // (60 + 40) × 50 %.
+      expect(report.teachers[0]!.assignedMinutesPerWeek).toBe(50);
+    });
+  });
+
+  describe('delivered (the reconciliation over a range)', () => {
+    const query = (overrides: Record<string, string> = {}) => ({ academicYearId: YEAR_ID, ...overrides });
+    let queryRaw: jest.Mock;
+
+    beforeEach(() => {
+      jest.useFakeTimers({ now: new Date('2026-10-09T10:00:00.000Z'), doNotFake: ['nextTick', 'setImmediate'] });
+      tx.academicYear.findUnique.mockImplementation((args: { select: Record<string, unknown> }) =>
+        Promise.resolve(
+          'school' in args.select
+            ? { school: { timezone: 'Europe/Stockholm' } }
+            : { startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: new Date('2027-06-11T00:00:00.000Z') },
+        ),
+      );
+      queryRaw = jest.fn((statement: { sql: string }) =>
+        Promise.resolve(
+          statement.sql.includes('GROUPING SETS')
+            ? [{ masterLessonId: null, total: 1, day: null, aheadRows: 0, firstDate: '2026-08-17', lastDate: '2027-06-11' }]
+            : [
+                { kind: 'T', personId: ME, role: 'LEAD', subjectId: MA, studentGroupId: GROUP_7A, extraGroupIds: [], bucket: 'DELIVERED', minutes: 120, lessons: 2 },
+              ],
+        ),
+      );
+      (tx as unknown as { $queryRaw: jest.Mock }).$queryRaw = queryRaw;
+    });
+
+    afterEach(() => jest.useRealTimers());
+
+    it('answers the admin the whole school from one RLS transaction, defaulting to the year’s start and the school’s today', async () => {
+      const answer = await service.delivered(query(), testUser());
+
+      expect(prisma.withRls).toHaveBeenCalledTimes(1);
+      expect(answer).toMatchObject({ academicYearId: YEAR_ID, from: '2026-08-17', to: '2026-10-09', asOfDate: '2026-10-09', loadModel: 'MINUTES' });
+      expect(answer.teachers).toEqual([expect.objectContaining({ userId: ME, delivered: 120, deliveredLessons: 2 })]);
+      expect(answer.totals).not.toBeNull();
+      // C (the published range), then E — the admin's E has the bortfall part.
+      expect(queryRaw).toHaveBeenCalledTimes(2);
+      expect((queryRaw.mock.calls[1]![0] as { sql: string }).sql).toContain(`SELECT 'G'`);
+    });
+
+    it('asks statement E for a teacher’s own id alone, and hands back no colleague, no group losses and no totals', async () => {
+      const teacher = testUser({ role: Role.TEACHER, userId: ME });
+
+      const answer = await service.delivered(query({ from: '2026-09-01', to: '2026-09-30' }), teacher);
+
+      const e = queryRaw.mock.calls[1]![0] as { sql: string; values: unknown[] };
+      expect(e.sql).not.toContain(`SELECT 'G'`);
+      expect(e.values).toContain(ME);
+      expect(answer.groupLosses).toEqual([]);
+      expect(answer.totals).toBeNull();
+      expect(answer.teachers.map((row) => row.userId)).toEqual([ME]);
+    });
+
+    it('400s a start after the end before reading anything, and a range wholly outside the year', async () => {
+      await expect(service.delivered(query({ from: '2026-10-01', to: '2026-09-01' }), testUser())).rejects.toThrow(
+        'from: periodens början ligger efter dess slut.',
+      );
+      expect(prisma.withRls).not.toHaveBeenCalled();
+      await expect(service.delivered(query({ from: '2027-07-01', to: '2027-07-31' }), testUser())).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('clamps a range reaching outside the year, and says so', async () => {
+      const answer = await service.delivered(query({ from: '2026-08-01', to: '2026-09-30' }), testUser());
+      expect(answer).toMatchObject({ from: '2026-08-17', to: '2026-09-30' });
+      expect(answer.notices).toContainEqual({ code: 'STAFFING_RANGE_CLAMPED', params: { from: '2026-08-17', to: '2026-09-30' } });
+    });
+
+    it('asks no crediting statement when nothing is published', async () => {
+      queryRaw.mockResolvedValueOnce([{ masterLessonId: null, total: 1, day: null, aheadRows: 0, firstDate: null, lastDate: null }]);
+      const answer = await service.delivered(query(), testUser());
+      expect(queryRaw).toHaveBeenCalledTimes(1);
+      expect(answer.published).toBeNull();
+      expect(answer.notices.map((notice) => notice.code)).toContain('STAFFING_NOTHING_PUBLISHED');
+    });
+
+    it('404s a year RLS hides', async () => {
+      tx.academicYear.findUnique.mockResolvedValue(null);
+      await expect(service.delivered(query(), testUser())).rejects.toBeInstanceOf(NotFoundException);
+    });
   });
 
   it('404s a year RLS hides', async () => {
