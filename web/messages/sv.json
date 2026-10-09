@@ -1202,7 +1202,91 @@
     "empty": "Ingen närvaro registrerades för klassen under vald period.",
     "validMinutes": "Giltig frånv. (min)",
     "invalidMinutes": "Ogiltig frånv. (min)",
-    "scheduledMinutes": "Schemalagda min"
+    "scheduledMinutes": "Schemalagda min",
+    "tabs": {
+      "label": "Rapport",
+      "attendance": "Närvaro",
+      "staffing": "Tjänstefördelning"
+    },
+    "staffing": {
+      "title": "Rapporter",
+      "subtitle": "Tjänstefördelning: planerat, schemalagt och genomfört per lärare",
+      "year": "Läsår",
+      "noYear": "Inget läsår att visa.",
+      "loadFailed": "Avstämningen kunde inte läsas.",
+      "empty": "Ingen lärare har planerad, schemalagd eller genomförd tid i perioden.",
+      "comparison": "Planerat och schemalagt jämförs {from} – {to}. Beräkningsmodell: {model}. Minuter, avrundat per rad.",
+      "model": {
+        "MINUTES": "minuter",
+        "FACTOR": "faktor (räknad tid)"
+      },
+      "minutes": "{minutes} min",
+      "hours": "{hours} h",
+      "planned": "Planerat",
+      "scheduled": "Schemalagt",
+      "delivered": "Genomfört",
+      "substitute": "Som vikarie",
+      "coveredByOthers": "Vikarierad av andra",
+      "lost": "Bortfall",
+      "ahead": "Kommande",
+      "deltaDelivered": "Genomfört − planerat",
+      "teacher": "Lärare",
+      "employment": "Tjänst",
+      "tableCaption": "Planerat, schemalagt och genomfört per lärare i minuter, med vikarietid och bortfall. Varje rad kan fällas ut per ämne och grupp.",
+      "showLines": "Visa ämnen och grupper för {name}",
+      "hideLines": "Dölj ämnen och grupper för {name}",
+      "withGroups": "(samläst med {groups})",
+      "groupLosses": "Bortfall per grupp",
+      "groupSubject": "Grupp · ämne",
+      "lessons": "Lektioner",
+      "footGroupLosses": "Varje förlorad lektion räknas en gång, i elevernas lektionsminuter och inte per lärare.",
+      "footDefinition": "Genomfört är lektioner som har hållits, inte är inställda och har minst en lärare — samma definition av hållen tid som Timplan › Täckning, men med alla ämnen, även dem som inte räknas mot timplanen: en lärares mentorstid är också undervisning.",
+      "footCredit": "En hållen lektion räknas till lärarraderna på den: ledaren och medläraren med radens procent, en vikarie med 100 %. En ledare eller medlärare som står kvar bredvid en vikarie räknas till ingen.",
+      "footCoTeacher": "Vikarierad av andra läses mot grundschemats nuvarande lärare och medlärare, inte mot den som stod i schemat den dagen. En vikarie ersätter alla lärarrader på lektionen, så en medlärare som var med räknas här och inte som genomförd.",
+      "footScheduled": "Schemalagt är dagens grundschema räknat över perioden; ändringar under perioden syns i Genomfört. Parkerade lektioner räknas inte som schemalagda men som genomförda om de hölls.",
+      "footGrade": "Planerat räknas per skoldag i perioden och lov efter gruppens egen årskurs, som publiceringen gör. Veckorapporten under Tjänstefördelning räknar en standardvecka.",
+      "footAhead": "Kommande: lektioner i perioden som inte har slutat än. Inställda kommande lektioner räknas varken som bortfall eller kommande. Lov och studiedagar är inget bortfall.",
+      "footRounding": "Varje rad, varje lärares summa och totalerna avrundas var för sig (avrundat per rad): en lärares summa är inte alltid summan av raderna under den.",
+      "footFactor": "Beräkningsmodell Faktor: minuterna är räknad tid, lektionstid × ämnets faktor. Faktorn är skolans per ämne och gäller alla läsår; ändras den ändras även tidigare års siffror.",
+      "notice": {
+        "STAFFING_NOTHING_PUBLISHED": "Inget schema är publicerat till kalendern för läsåret. Genomfört är tomt, och planerat och schemalagt jämförs inte.",
+        "STAFFING_RANGE_CLAMPED": "Perioden kortades till läsåret: {from} – {to}.",
+        "STAFFING_RANGE_INCLUDES_FUTURE": "Perioden når förbi i dag ({asOfDate}): lektioner som inte har slutat visas som Kommande.",
+        "STAFFING_RANGE_BEFORE_PUBLISHED": "Kalendern börjar {publishedFrom}: planerat och schemalagt jämförs från den dagen, så tiden före ser inte ut som ett underskott.",
+        "STAFFING_RANGE_AFTER_PUBLISHED": "Kalendern är publicerad till {publishedThrough}: planerat och schemalagt jämförs till den dagen.",
+        "STAFFING_RANGE_HAS_GAPS": "Kalendern har luckor mellan publiceringar, {days} dagar mellan {from} och {through}. Siffrorna justeras inte för dem.",
+        "STAFFING_LEAD_BESIDE_SUBSTITUTE": "{lessons} hållna lektioner har en lärare kvar bredvid en vikarie. Tiden räknas till vikarien och inte till dem."
+      },
+      "exportsTitle": "Exporter",
+      "exportSamverkan": "Exportera för samverkan (CSV)",
+      "exportSamverkanHint": "En rad per lärare: tjänst, riktmärke, undervisning och uppdrag, årsarbetstid enligt skolans inställningar och perioden ovan. Semikolon, UTF-8 med BOM, för Excel.",
+      "includeQualifications": "Ta med behörigheter",
+      "exportScb": "SCB-underlag, Pedagogisk personal (CSV)",
+      "scbNotice": "Ett underlag, inte SCB:s fil. Komplettera personnummer, skolenhetskod och anställningsform och kontrollera mot SCB:s aktuella datafilsbeskrivning innan inlämning. Kolumnerna följer SCB:s datafilsbeskrivning för Pedagogisk personal HT 2026 (versionsdatum 2026-05-07, hämtad 2026-10-09); rubrikraden och BOM är SchemaPros egna. Klistra in raderna i SCB:s Excelmall — SCB tar emot Excelmallen eller ett systems textfil.",
+      "scbYearNote": "Underlaget räknar läsårets planerade undervisning, inte perioden ovan, i undervisningstid utan faktor. Uppdrag ingår i lärartjänsten. Behörigheter och legitimation tas aldrig med.",
+      "scbNoticesTitle": "{count, plural, =0 {Inget att kontrollera utöver personnummer, skolenhetskod och anställningsform.} one {# sak att kontrollera i underlaget:} other {# saker att kontrollera i underlaget:}}",
+      "exportFailed": "Exporten misslyckades.",
+      "scb": {
+        "form": {
+          "SPECIALSKOLA": "specialskola",
+          "SAMESKOLA": "sameskola"
+        },
+        "notice": {
+          "NOT_HT2026": "Kolumnerna följer SCB:s datafilsbeskrivning {version}; kontrollera mot årets innan inlämning.",
+          "NO_POST": "{name}: undervisning men ingen tjänst registrerad, så OmfLarare är tom.",
+          "FULL_LEAVE": "{name}: helt nedsatt. Raden anger tjänsten före ledigheten och inga ämnen; ange AnstForm L om personen är tjänstledig.",
+          "REDUCTION": "{name}: nedsättningen räknas som partiell ledighet (tjänst − nedsättning). Avser den förstelärarskap, facklig tid eller annat uppdrag ska hela tjänsten anges.",
+          "FORSTELARARE": "{name}: har ett försteläraruppdrag. Ange andelen av tjänsten i kolumnen ForsteLarare.",
+          "ADMIN": "{name}: är administratör i SchemaPro och redovisas som lärare. Kontrollera OmfRektor och OmfLedn.",
+          "LEFT_OUT": "{name}: {line} har ingen SCB-kolumn för radens verksamhetstyp och lämnades utanför; övriga ämnen räknades upp till 100.",
+          "NO_SPAN": "{name}: {line} har ingen årskurs, så raden saknar verksamhetstyp.",
+          "GRADE_OUT_OF_SCOPE": "Årskurs {grade} ligger utanför underlaget (förskoleklass till åk 9); raden saknar verksamhetstyp.",
+          "FORM_WITHOUT_CODE": "Årskurs {grade} följer en timplan för {form}, som SCB:s lista över verksamhetstyper saknar kod för; raden saknar verksamhetstyp.",
+          "GRADE_WITHOUT_TIMPLAN": "Årskurs {grade} har ingen timplan för läsåret och redovisas som grundskola.",
+          "ALL_LEFT_OUT": "{name}: undervisningen på en rad har ingen SCB-kolumn. Ange ämnen för hand."
+        }
+      }
+    }
   },
   "schedule": {
     "title": "Mitt schema",

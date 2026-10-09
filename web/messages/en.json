@@ -1202,7 +1202,91 @@
     "empty": "No attendance was recorded for this class in the selected period.",
     "validMinutes": "Excused min",
     "invalidMinutes": "Unexcused min",
-    "scheduledMinutes": "Scheduled min"
+    "scheduledMinutes": "Scheduled min",
+    "tabs": {
+      "label": "Report",
+      "attendance": "Attendance",
+      "staffing": "Staffing"
+    },
+    "staffing": {
+      "title": "Reports",
+      "subtitle": "Staffing: planned, scheduled and delivered per teacher",
+      "year": "School year",
+      "noYear": "No school year to show.",
+      "loadFailed": "The reconciliation could not be read.",
+      "empty": "No teacher has planned, scheduled or delivered time in the period.",
+      "comparison": "Planned and scheduled are compared {from} – {to}. Model: {model}. Minutes, rounded per row.",
+      "model": {
+        "MINUTES": "minutes",
+        "FACTOR": "factor (counted time)"
+      },
+      "minutes": "{minutes} min",
+      "hours": "{hours} h",
+      "planned": "Planned",
+      "scheduled": "Scheduled",
+      "delivered": "Delivered",
+      "substitute": "As substitute",
+      "coveredByOthers": "Covered by others",
+      "lost": "Lost",
+      "ahead": "Upcoming",
+      "deltaDelivered": "Delivered − planned",
+      "teacher": "Teacher",
+      "employment": "Post",
+      "tableCaption": "Planned, scheduled and delivered per teacher in minutes, with substitute time and losses. Each row expands per subject and group.",
+      "showLines": "Show subjects and groups for {name}",
+      "hideLines": "Hide subjects and groups for {name}",
+      "withGroups": "(taught together with {groups})",
+      "groupLosses": "Losses per group",
+      "groupSubject": "Group · subject",
+      "lessons": "Lessons",
+      "footGroupLosses": "Every lost lesson counts once, in the pupils' lesson minutes and not per teacher.",
+      "footDefinition": "Delivered is lessons that were held, are not cancelled and have at least one teacher — the same definition of held time as Timplan › Coverage, but with every subject, including those that do not count toward the timplan: a teacher's mentor time is teaching too.",
+      "footCredit": "A held lesson is credited to the teacher rows on it: the lead and the co-teacher at the row's percentage, a substitute at 100 %. A lead or co-teacher left beside a substitute is credited to nobody.",
+      "footCoTeacher": "Covered by others reads the master schedule's current teacher and co-teacher, not whoever was scheduled that day. A substitute replaces every teacher row on the lesson, so a co-teacher who was there counts here and not as delivered.",
+      "footScheduled": "Scheduled is today's master schedule counted over the period; changes during the period show in Delivered. Parked lessons do not count as scheduled but count as delivered if they were held.",
+      "footGrade": "Planned is counted per school day in the period, holidays by the group's own grade, as publishing does. The weekly report under Staffing counts a standard week.",
+      "footAhead": "Upcoming: lessons in the period that have not ended yet. Cancelled upcoming lessons count as neither lost nor upcoming. Holidays and staff days are not a loss.",
+      "footRounding": "Each row, each teacher's total and the totals are rounded on their own (rounded per row): a teacher's total is not always the sum of the rows under it.",
+      "footFactor": "Model Factor: the minutes are counted time, lesson time × the subject's factor. The factor is the school's per subject and applies to every school year; changing it changes earlier years' figures too.",
+      "notice": {
+        "STAFFING_NOTHING_PUBLISHED": "No schedule is published to the calendar for the school year. Delivered is empty, and planned and scheduled are not compared.",
+        "STAFFING_RANGE_CLAMPED": "The period was shortened to the school year: {from} – {to}.",
+        "STAFFING_RANGE_INCLUDES_FUTURE": "The period reaches past today ({asOfDate}): lessons that have not ended show as Upcoming.",
+        "STAFFING_RANGE_BEFORE_PUBLISHED": "The calendar starts {publishedFrom}: planned and scheduled are compared from that day, so the time before does not look like a deficit.",
+        "STAFFING_RANGE_AFTER_PUBLISHED": "The calendar is published until {publishedThrough}: planned and scheduled are compared until that day.",
+        "STAFFING_RANGE_HAS_GAPS": "The calendar has gaps between publishes, {days} days between {from} and {through}. The figures are not adjusted for them.",
+        "STAFFING_LEAD_BESIDE_SUBSTITUTE": "{lessons} held lessons have a teacher left beside a substitute. The time is credited to the substitute and not to them."
+      },
+      "exportsTitle": "Exports",
+      "exportSamverkan": "Export for consultation (CSV)",
+      "exportSamverkanHint": "One row per teacher: post, target, teaching and duties, annual working time per the school's settings, and the period above. Semicolons, UTF-8 with BOM, for Excel.",
+      "includeQualifications": "Include qualifications",
+      "exportScb": "SCB working file, Pedagogisk personal (CSV)",
+      "scbNotice": "A working file, not SCB's file. Complete personal identity numbers, school unit code and employment form, and check against SCB's current file description before submitting. The columns follow SCB's file description for Pedagogisk personal HT 2026 (version date 2026-05-07, retrieved 2026-10-09); the header row and BOM are SchemaPro's own. Paste the rows into SCB's Excel template — SCB accepts the Excel template or a system's text file.",
+      "scbYearNote": "The file counts the school year's planned teaching, not the period above, in teaching time without the factor. Duties are part of the teaching post. Qualifications and certification are never included.",
+      "scbNoticesTitle": "{count, plural, =0 {Nothing to check beyond identity numbers, school unit code and employment form.} one {# thing to check in the file:} other {# things to check in the file:}}",
+      "exportFailed": "The export failed.",
+      "scb": {
+        "form": {
+          "SPECIALSKOLA": "special school",
+          "SAMESKOLA": "Sami school"
+        },
+        "notice": {
+          "NOT_HT2026": "The columns follow SCB's file description {version}; check against this year's before submitting.",
+          "NO_POST": "{name}: teaching but no post registered, so OmfLarare is empty.",
+          "FULL_LEAVE": "{name}: fully reduced. The row states the post before the leave and no subjects; set AnstForm L if the person is on leave.",
+          "REDUCTION": "{name}: the reduction is counted as partial leave (post − reduction). If it is a lead-teacher, union or other assignment, the whole post should be stated.",
+          "FORSTELARARE": "{name}: holds a lead-teacher duty. State its share of the post in the ForsteLarare column.",
+          "ADMIN": "{name}: is an administrator in SchemaPro and is reported as a teacher. Check OmfRektor and OmfLedn.",
+          "LEFT_OUT": "{name}: {line} has no SCB column for the row's type of activity and was left out; the other subjects were scaled up to 100.",
+          "NO_SPAN": "{name}: {line} has no grade, so the row has no type of activity.",
+          "GRADE_OUT_OF_SCOPE": "Grade {grade} is outside the file (preschool class to grade 9); the row has no type of activity.",
+          "FORM_WITHOUT_CODE": "Grade {grade} follows a timplan for {form}, which SCB's list of activity types has no code for; the row has no type of activity.",
+          "GRADE_WITHOUT_TIMPLAN": "Grade {grade} has no timplan for the school year and is reported as compulsory school.",
+          "ALL_LEFT_OUT": "{name}: the teaching on one row has no SCB column. State the subjects by hand."
+        }
+      }
+    }
   },
   "schedule": {
     "title": "My schedule",
