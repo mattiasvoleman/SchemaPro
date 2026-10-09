@@ -824,9 +824,11 @@
       tillgodoräknad tid framåt. Den jämförs med planerat för läsåret. Lektioner
       framåt som saknar lärare räknas inte in, utan redovisas bredvid — prognosen
       gäller om inget ändras. Dagar som kalendern inte har några rader för —
-      före det första publicerade datumet, eller efter det sista fram till i
-      dag — räknas varken som genomförda eller förlorade och redovisas som
-      <em>utan kalender</em>.
+      före det första publicerade datumet, efter det sista fram till i dag,
+      eller skoldagar mellan två publiceringar som ingen av dem skrev — räknas
+      varken som genomförda eller förlorade och redovisas som
+      <em>utan kalender</em>. En dag räknas som skriven om någon grupp i skolan
+      har en rad den dagen, så ett lov för några årskurser är ingen lucka.
     </p>
     <p>
       Exempel: 7A har matematik 3 × 60 i veckan, och läsåret har 36,4
@@ -873,8 +875,13 @@
     Varje lov i listan har knappen <span class="ui">Räkna tid för dagen</span>,
     som öppnar beslutet med lovets namn och första dag, och ett beslut inom ett
     lov står under lovets namn. Beslut för årskurser når elever efter deras
-    klass årskurs, och en undervisningsgrupp när alla dess elever går i de
-    årskurserna. Tiden räknas som genomförd från dagen efter datumet.
+    klass årskurs. En undervisningsgrupp får beslutet på sin egen rad bara i
+    ett ämne gruppen läser: för hela skolan, för årskurser när alla gruppens
+    elever går i dem, och för en klass när alla gruppens elever hör till den
+    klassen — en idrottsgrupp får friluftsdagens idrott, en språkgrupp inte.
+    Eleverna får tiden genom sin klass i båda fallen. Ett beslut utan ämne
+    står bara på klassernas rader. Tiden räknas som genomförd från dagen
+    efter datumet.
   </p>
   <div class="warn">
     <span class="label">Lektioner samma dag räknas också</span>
@@ -882,8 +889,10 @@
       Ligger beslutet på en vanlig skoldag räknas både beslutet och de
       lektioner som hålls. Det kan vara rätt — en temaeftermiddag efter en
       förmiddag med lektioner — men ersätter aktiviteten lektionerna ska de
-      ställas in, eller dagen läggas in som lov. Täckning säger till när ett
-      beslut ligger på en dag med hållna lektioner.
+      ställas in, eller dagen läggas in som lov. Dialogen säger det innan du
+      sparar när inget lov den dagen stänger beslutets hela omfång — ett lov
+      för åk 7–9 räcker inte för ett beslut för hela skolan — och Täckning
+      säger till när ett beslut ligger på en dag med hållna lektioner.
     </p>
   </div>
 
@@ -1822,7 +1831,11 @@
   <p>
     Behöver du senare ändra en enskild lektion i grundschemat följer framtida
     publicerade lektioner automatiskt med, förutsatt att närvaro ännu inte
-    registrerats på dem. Redan genomförda lektioner lämnas orörda.
+    registrerats på dem. En lektion som redan har börjat — också en som hölls
+    tidigare i dag — lämnas orörd, både när lektionen ändras och när den tas
+    bort ur grundschemat. Och en lektion flyttas aldrig till en tid som redan
+    varit: flyttar du en lektion klockan tio från 13:00 till 08:00 tas dagens
+    lektion bort ur kalendern, och från nästa vecka ligger den på 08:00.
   </p>
 
   <div class="check">
