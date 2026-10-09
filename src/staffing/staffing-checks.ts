@@ -272,6 +272,110 @@ export function judgeRequirementWrite(args: {
   return findings;
 }
 
+/** One row of a batch: the lead it ends up with (null: nobody). */
+export interface BatchChange {
+  requirementId: string;
+  teacherId: string | null;
+}
+
+/**
+ * A finding of a batch, with the rows it is about. A behörighet finding names
+ * its one row; a load finding names, in row order, every changed row that adds
+ * to the teacher — the first is the one a refusal is prefixed with.
+ */
+export interface BatchFinding extends StaffingFinding {
+  requirementIds: string[];
+}
+
+/**
+ * The two questions for a whole batch of lead changes judged as ONE write: the
+ * staffing proposal's apply, and its undo.
+ *
+ * Judged one row at a time, a swap — Anna takes Bo's row and Bo takes Anna's —
+ * would refuse its first half for putting Anna over, although the batch as a
+ * whole leaves both where they were. So the year is laid over with EVERY
+ * change before the load is counted, and a teacher is asked about once, over
+ * the whole batch:
+ *
+ *   - behörighet, per changed row whose lead becomes somebody new (role
+ *     TEACHER, window the läsår), in row-id order — judgeRequirementWrite's
+ *     question for the same row;
+ *   - load, once per teacher whose counted minutes GROW over the batch, in
+ *     user-id order, with overTargetFinding's own threshold.
+ *
+ * Behörighet before load, rows and teachers in id order, so the 409 a REFUSE
+ * answers with is the same for the same batch every time. `input` is the year
+ * as read before the write; a change naming a row it does not hold throws (the
+ * caller validated them). PURE, like the rest of this module.
+ */
+export function judgeRequirementBatch(args: {
+  input: LoadInput;
+  policy: CheckPolicy;
+  changes: readonly BatchChange[];
+}): BatchFinding[] {
+  const { input, policy } = args;
+  if (!checksAnything(policy)) return [];
+  const byId = new Map(input.requirements.map((row) => [row.id, row]));
+  const changes = [...args.changes].sort((a, b) =>
+    a.requirementId < b.requirementId ? -1 : a.requirementId > b.requirementId ? 1 : 0,
+  );
+  const changeById = new Map(changes.map((change) => [change.requirementId, change]));
+  const rowOf = (requirementId: string): LoadRequirement => {
+    const row = byId.get(requirementId);
+    if (!row) throw new Error(`judgeRequirementBatch: requirement ${requirementId} is not in the input`);
+    return row;
+  };
+
+  const findings: BatchFinding[] = [];
+  for (const change of changes) {
+    const row = rowOf(change.requirementId);
+    if (change.teacherId === null || change.teacherId === row.teacherId) continue;
+    const finding = qualificationFinding({
+      policy,
+      qualifications: input.qualifications,
+      userId: change.teacherId,
+      role: 'TEACHER',
+      subject: { id: row.subjectId, name: row.subjectName },
+      span: row.gradeSpan,
+      window: input.year,
+    });
+    if (finding) findings.push({ ...finding, requirementIds: [row.id] });
+  }
+
+  if (policy.overAllocationMode !== 'OFF') {
+    // Who gains a row, and which rows, in row order.
+    const gained = new Map<string, string[]>();
+    for (const change of changes) {
+      const row = rowOf(change.requirementId);
+      if (change.teacherId === null || change.teacherId === row.teacherId) continue;
+      const rows = gained.get(change.teacherId);
+      if (rows) rows.push(row.id);
+      else gained.set(change.teacherId, [row.id]);
+    }
+    const before = countedMinutesByTeacher(input);
+    const after = countedMinutesByTeacher({
+      ...input,
+      requirements: input.requirements.map((row) => {
+        const change = changeById.get(row.id);
+        return change ? { ...row, teacherId: change.teacherId } : row;
+      }),
+    });
+    const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
+    for (const userId of [...gained.keys()].sort()) {
+      const finding = overTargetFinding({
+        policy,
+        employment: employmentByUser.get(userId) ?? null,
+        userId,
+        role: 'TEACHER',
+        before: before.get(userId) ?? 0,
+        after: after.get(userId) ?? 0,
+      });
+      if (finding) findings.push({ ...finding, requirementIds: gained.get(userId)! });
+    }
+  }
+  return findings;
+}
+
 const ROLE_SV: Record<StaffingRole, string> = {
   TEACHER: 'Läraren',
   CO_TEACHER: 'Medläraren',

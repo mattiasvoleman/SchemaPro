@@ -1,3 +1,4 @@
+import { ConflictException } from '@nestjs/common';
 import type { LessonRecurrence, PrismaClient, UnstaffedGenerationMode } from '@prisma/client';
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { asDay, readLoadInput } from './load-input';
@@ -5,9 +6,12 @@ import { rostersOfYear, type BasisOrYear, type RosterViewer } from '../year-roll
 import {
   DEFAULT_CHECK_POLICY,
   checksAnything,
+  judgeRequirementBatch,
   judgeRequirementWrite,
   qualificationFinding,
   settleFindings,
+  staffingSentence,
+  type BatchChange,
   type CheckPolicy,
   type StaffingFinding,
   type StaffingRole,
@@ -379,6 +383,62 @@ export class RequirementImportChecks {
     if (index === -1) this.input.requirements.push(after);
     else this.input.requirements[index] = after;
   }
+}
+
+/** A WARN of a batch: whom it is about, and which rows. */
+export interface BatchWarning extends StaffingWarning {
+  userId: string;
+  requirementIds: string[];
+}
+
+/**
+ * The two questions for a batch of lead changes, settled: the first REFUSE
+ * throws, the WARNs come back with whom and which rows they are about.
+ *
+ * For a caller that has ALREADY locked the teachers' posts and read the year
+ * under the lock (the staffing proposal's apply, whose lock order puts the
+ * requirement rows between the two): `postsLocked` is what lockEmploymentsOf
+ * answered. The gating is RequirementImportChecks.open's — nothing when the
+ * policy asks nothing, the load question only when it is asked and a post was
+ * locked (no post, no target, nothing to be over).
+ *
+ * A REFUSE answers 409 with the finding's code, its params plus `userId` and
+ * `requirementId` — the row it is about, so a page naming thirty changes can
+ * say which — and the Swedish sentence prefixed with that row's name. The
+ * http filter forwards flat params, so both ids reach the page.
+ */
+export function enforceRequirementBatch(args: {
+  input: LoadInput;
+  policy: CheckPolicy;
+  postsLocked: number;
+  changes: readonly BatchChange[];
+  /** The school's name for a row ("Matematik för 7B"), for the refusal's sentence. */
+  rowName: (requirementId: string) => string;
+}): BatchWarning[] {
+  const { policy } = args;
+  if (!checksAnything(policy)) return [];
+  const asksLoad = policy.overAllocationMode !== 'OFF' && args.postsLocked > 0;
+  if (policy.qualificationMode === 'OFF' && !asksLoad) return [];
+  const findings = judgeRequirementBatch({
+    input: args.input,
+    policy: asksLoad ? policy : { ...policy, overAllocationMode: 'OFF' },
+    changes: args.changes,
+  });
+  const refusal = findings.find((finding) => finding.mode === 'REFUSE');
+  if (refusal) {
+    const requirementId = refusal.requirementIds[0]!;
+    throw new ConflictException({
+      message: `${args.rowName(requirementId)}: ${staffingSentence(refusal)}`,
+      code: refusal.code,
+      params: { ...refusal.params, userId: refusal.userId, requirementId },
+    });
+  }
+  return findings.map(({ code, params, userId, requirementIds }) => ({
+    code,
+    params,
+    userId,
+    requirementIds,
+  }));
 }
 
 /**

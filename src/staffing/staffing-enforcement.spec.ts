@@ -1,4 +1,5 @@
-import { STAFFING_FIELDS, mergeRequirement, touchesStaffing } from './staffing-enforcement';
+import { ConflictException } from '@nestjs/common';
+import { STAFFING_FIELDS, enforceRequirementBatch, mergeRequirement, touchesStaffing } from './staffing-enforcement';
 import { judgeRequirementWrite } from './staffing-checks';
 import { DEFAULT_CHECK_POLICY } from './staffing-checks';
 import { buildTeacherLoadReport, loadWeightOf, type LoadInput, type LoadRequirement } from './teacher-load';
@@ -107,5 +108,60 @@ describe('touchesStaffing', () => {
     expect(STAFFING_FIELDS).toContain('lessonLengths');
     expect(touchesStaffing({ lessonLengths: [] })).toBe(true);
     expect(touchesStaffing({ minutesBefore: 10 })).toBe(false);
+  });
+});
+
+describe('enforceRequirementBatch', () => {
+  const year = (): LoadInput => ({
+    year: { startDate: '2026-08-17', endDate: '2027-06-11' },
+    policy: null,
+    employments: [
+      { userId: 'anna', employmentPercent: 100, reductionPercent: 0, contractKind: 'FERIE', teachingTargetMinutesPerWeek: 280, signature: null },
+    ],
+    requirements: [
+      { ...STORED, id: 'r1', teacherId: null, lessonLengths: [] },
+      { ...STORED, id: 'r2', teacherId: null, lessonLengths: [] },
+    ],
+    qualifications: [{ userId: 'bo', subjectId: 'idh', minGradeLevel: 1, maxGradeLevel: 9, kind: 'BEHORIG', validFrom: null, validTo: null }],
+    closures: [],
+    duties: [],
+  });
+  const names = (id: string) => (id === 'r1' ? 'Idrott och hälsa för 7A' : 'Idrott och hälsa för 7B');
+  const changes = [
+    { requirementId: 'r2', teacherId: 'anna' },
+    { requirementId: 'r1', teacherId: 'anna' },
+  ];
+
+  it('refuses with the code, the params plus whom and which row, and the row’s name before the sentence', () => {
+    const policy = { ...DEFAULT_CHECK_POLICY, qualificationMode: 'OFF' as const, overAllocationMode: 'REFUSE' as const };
+    let thrown: unknown;
+    try {
+      enforceRequirementBatch({ input: year(), policy, postsLocked: 1, changes, rowName: names });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ConflictException);
+    expect((thrown as ConflictException).getResponse()).toEqual({
+      message:
+        'Idrott och hälsa för 7A: Läraren skulle få 320 min/v mot riktmärket 280 min/v (gränsen är 308 min/v med 10 % tolerans).',
+      code: 'STAFF_TEACHER_OVER_TARGET',
+      params: { role: 'TEACHER', minutes: 320, target: 280, limit: 308, tolerance: 10, userId: 'anna', requirementId: 'r1' },
+    });
+  });
+
+  it('hands back WARNs with whom and every row', () => {
+    const warnings = enforceRequirementBatch({ input: year(), policy: DEFAULT_CHECK_POLICY, postsLocked: 1, changes, rowName: names });
+    expect(warnings).toEqual([
+      { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: { role: 'TEACHER', subject: 'Idrott och hälsa', grades: '7' }, userId: 'anna', requirementIds: ['r1'] },
+      { code: 'STAFF_TEACHER_NOT_QUALIFIED', params: { role: 'TEACHER', subject: 'Idrott och hälsa', grades: '7' }, userId: 'anna', requirementIds: ['r2'] },
+      expect.objectContaining({ code: 'STAFF_TEACHER_OVER_TARGET', userId: 'anna', requirementIds: ['r1', 'r2'] }),
+    ]);
+  });
+
+  it('asks no load question when no post was locked, and nothing when the policy asks nothing', () => {
+    const refuseLoad = { ...DEFAULT_CHECK_POLICY, qualificationMode: 'OFF' as const, overAllocationMode: 'REFUSE' as const };
+    expect(enforceRequirementBatch({ input: year(), policy: refuseLoad, postsLocked: 0, changes, rowName: names })).toEqual([]);
+    const off = { ...DEFAULT_CHECK_POLICY, qualificationMode: 'OFF' as const, overAllocationMode: 'OFF' as const };
+    expect(enforceRequirementBatch({ input: year(), policy: off, postsLocked: 1, changes, rowName: names })).toEqual([]);
   });
 });
