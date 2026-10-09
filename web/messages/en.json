@@ -1889,7 +1889,7 @@
     "teachingPeakHeaderFactor": "Counted peak week (factor) min/wk",
     "unitHintPercentFactor": "Under Factor the percentage is counted time: the employment rate × the subject's share of the teacher's counted time (minutes × factor). SCB's subject share is defined on teaching time and the SCB file takes it from lesson minutes, without the factor.",
     "shareWithIntegrations": "Share employment rate and annual working time with integrations (SS12000)",
-    "shareWithIntegrationsHint": "Off: /ss12000/v1/duties only shows who holds a post, with signature and mentor assignments. On: also the employment rate in percent and, for a ferietjänst, the annual hours. Reduction, own target and note are never shared.",
+    "shareWithIntegrationsHint": "Off: /ss12000/v1/duties only shows who holds a post, with signature and mentor assignments. On: also the employment rate in percent and, for a ferietjänst, the annual hours. Reduction, own target and note are never shared. With On, a post without annual hours can still be told to be a semestertjänst. In both modes the post's modified time also moves when something not shared changes — never what changed.",
     "factor": {
       "tableTitle": "Factor per subject",
       "hint": "Load = lesson time × the subject's factor, 0.5–3 (1 = the minutes as they are). The factor is the school's per subject and applies to every school year, earlier years' figures included, and does not appear in the teachers' history. Factors are saved here; the model when you save the settings.",

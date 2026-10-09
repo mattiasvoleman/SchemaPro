@@ -1889,7 +1889,7 @@
     "teachingPeakHeaderFactor": "Räknad toppvecka (faktor) min/v",
     "unitHintPercentFactor": "Med Faktor är procenten räknad tid: tjänstgöringsgraden × ämnets andel av lärarens räknade tid (minuter × faktor). SCB:s ämnesomfattning räknas på undervisningstid och tas i SCB-underlaget från lektionsminuterna, utan faktor.",
     "shareWithIntegrations": "Dela tjänstgöringsgrad och årsarbetstid med integrationer (SS12000)",
-    "shareWithIntegrationsHint": "Av: /ss12000/v1/duties visar bara vem som har en tjänst, med signatur och mentorsuppdrag. På: även tjänstgöringsgrad i procent och, för ferietjänst, årsarbetstid i timmar. Nedsättning, eget riktmärke och anteckning delas aldrig.",
+    "shareWithIntegrationsHint": "Av: /ss12000/v1/duties visar bara vem som har en tjänst, med signatur och mentorsuppdrag. På: även tjänstgöringsgrad i procent och, för ferietjänst, årsarbetstid i timmar. Nedsättning, eget riktmärke och anteckning delas aldrig. Med På syns ändå att en tjänst utan årsarbetstid är en semestertjänst. I båda lägena flyttas tjänstens ändringstid även när något som inte delas ändras — men aldrig vad som ändrades.",
     "factor": {
       "tableTitle": "Faktor per ämne",
       "hint": "Tjänstgöring = lektionstid × ämnets faktor, 0,5–3 (1 = minuterna som de är). Faktorn är skolans per ämne och gäller alla läsår, även tidigare års siffror, och syns inte i lärarnas historik. Faktorerna sparas här; beräkningsmodellen när du sparar inställningarna.",
