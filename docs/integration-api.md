@@ -48,7 +48,7 @@ schemas do not define, at any depth.
 | 2.1.0 property | Required | Emitted | Source |
 |---|---|---|---|
 | `id` | yes | always | the post's id (`TeacherEmployments.id`) |
-| `meta` `{created, modified}` | yes | always | the post's `createdAt`; `modified` = the latest `updatedAt` of the post and its mentorships (best effort: a deleted mentorship does not move it) |
+| `meta` `{created, modified}` | yes | always | the post's `createdAt`; `modified` = the latest `updatedAt` of the post and its mentorships (best effort: a deleted mentorship does not move it; and it moves when a field this feed never sends changes — see below) |
 | `person` `{id}` | — | always | the teacher's `Users.id`, the id `/persons` uses |
 | `assignmentRole[]` `{group, assignmentRoleType, startDate, endDate}` | — | when the teacher has a MENTORSKAP uppdrag on a class of the active year | `{group: {id}, assignmentRoleType: "Mentor"}`, dated with the läsår. Other uppdrag kinds have no `AssignmentRoleType` value and are left out; the standard says teaching is not an assignment |
 | `dutyAt` `{id}` | yes | always | the school's id, the Skolenhet `/organisation` returns |
@@ -73,9 +73,25 @@ so they appear only when an admin turns on *Dela tjänstgöringsgrad och
 årsarbetstid med integrationer* (`StaffingPolicies.shareEmploymentWithIntegrations`,
 default off). `hoursPerYear` comes from the post, never from post −
 nedsättning: with `dutyPercent` beside it the difference would publish the
-nedsättning. **Never emitted**, whatever the switch: the nedsättning, the
-avtalsform, the teacher's own riktmärke, the note and the behörigheter — the
-feed's query does not select them.
+nedsättning. **Never emitted as values**, whatever the switch: the
+nedsättning, the avtalsform, the teacher's own riktmärke, the note and the
+behörigheter — the feed's query does not select them.
+
+What a reader can still **infer**, stated so a school can decide on the
+switch knowing it:
+
+* **The avtalsform, with the switch on.** `hoursPerYear` is sent for a
+  ferietjänst only. When the school's policy has an annual-hours figure, a
+  Duty that carries `dutyPercent` but no `hoursPerYear` is a semestertjänst.
+  With the switch off neither field is sent and nothing can be told apart.
+* **That a hidden field changed, and when — never to what.** `meta.modified`
+  is the post's `updatedAt`, which moves on every save of the post: a changed
+  nedsättning, riktmärke, note or avtalsform moves it while every field the
+  feed sends stays the same. A system polling the feed can see that something
+  it is not shown changed on that teacher's post at that time. SchemaPro has
+  no per-column timestamp to narrow it to the sent fields; the post's own
+  version history (TeacherEmploymentLogs) is deliberately not readable by the
+  service principal.
 
 ## Import (roster sync)
 
