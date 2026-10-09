@@ -33,6 +33,7 @@ describe('NationalTimplansService', () => {
       skolansValHours: 600,
       reductionCapPercent: 20,
       appliesFromCohortTerm: 'HT2024',
+      appliesBy: 'STAGES_NOT_COMPLETED',
       supersededByCode: 'SFS2025:729',
       entries: [
         {
@@ -86,6 +87,7 @@ describe('NationalTimplansService', () => {
     };
     expect(select).not.toHaveProperty('createdAt');
     expect(Object.keys(select).sort()).toEqual([
+      'appliesBy',
       'appliesFromCohortTerm',
       'code',
       'entries',

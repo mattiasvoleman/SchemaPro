@@ -438,6 +438,12 @@ enum TimplanStage {
   LAG_MELLAN
 }
 
+/// How a national lydelse applies to a pupil; see NationalTimplanVersion.appliesBy.
+enum TimplanApplicability {
+  STAGES_NOT_COMPLETED
+  COHORTS_STARTING
+}
+
 model NationalTimplanVersion {
   id                    String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// 'SFS2023:945/B1': the författning the figures are the lydelse of, and the
@@ -459,6 +465,11 @@ model NationalTimplanVersion {
   /// the older bilaga 1.
   appliesFromCohortTerm String
   supersededByCode      String?
+  /// HOW the lydelse applies (20261010130000): STAGES_NOT_COMPLETED — to the
+  /// stadier a pupil had not finished when it came into force (SFS 2023:945
+  /// övergångsbestämmelse 3); COHORTS_STARTING — to the cohorts starting åk 1
+  /// from appliesFromCohortTerm (SFS 2025:729 övergångsbestämmelse 12).
+  appliesBy             TimplanApplicability
   createdAt             DateTime   @default(now()) @db.Timestamptz(6)
 
   supersededBy NationalTimplanVersion?  @relation("TimplanSupersession", fields: [supersededByCode], references: [code], onDelete: Restrict)

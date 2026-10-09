@@ -7586,3 +7586,49 @@ BEGIN
     RAISE EXCEPTION 'enrolment: anon may SELECT StudentEnrollments';
   END IF;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 26e: en lydelse vet hur den gäller.
+--
+-- 20261010130000 adds NationalTimplanVersions."appliesBy" and three totals-only
+-- 2028 rows. The column is the statute's like the rest of the row: a pupil and
+-- a guardian read it (their card's figures are judged by it), nobody writes
+-- it, and the figures are SFS 2025:729's — 7 424, 7 199 and 5 007, with no
+-- cells.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE n bigint; figures text;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'lydelse: expected a GUARDIAN, resolved %', coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT string_agg(code || '=' || "appliesBy" || ':' || "totalHours", ',' ORDER BY code) INTO figures
+    FROM "NationalTimplanVersions" WHERE code LIKE 'SFS2025:729%';
+  IF figures IS DISTINCT FROM 'SFS2025:729=COHORTS_STARTING:7424,SFS2025:729/AGA=COHORTS_STARTING:7424,SFS2025:729/AGB=COHORTS_STARTING:7199,SFS2025:729/SAM=COHORTS_STARTING:5007' THEN
+    RAISE EXCEPTION 'lydelse: a guardian reads the 2028 rows as %', figures;
+  END IF;
+  SELECT count(*) INTO n FROM "NationalTimplanVersions" WHERE code LIKE 'SFS2023:945/%' AND "appliesBy" <> 'STAGES_NOT_COMPLETED';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'lydelse: % SFS 2023:945 row(s) not applied by stage', n;
+  END IF;
+  SELECT count(*) INTO n FROM "NationalTimplanEntries" e JOIN "NationalTimplanVersions" v ON v.id = e."versionId"
+   WHERE v.code LIKE 'SFS2025:729%';
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'lydelse: a 2028 row carries % cell(s) nobody has published', n;
+  END IF;
+END
+$$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  BEGIN
+    UPDATE "NationalTimplanVersions" SET "appliesBy" = 'COHORTS_STARTING' WHERE code = 'SFS2023:945/B1';
+    RAISE EXCEPTION 'lydelse: an admin rewrote how a lydelse applies';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$$;
+ROLLBACK;

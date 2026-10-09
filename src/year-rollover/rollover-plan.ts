@@ -76,6 +76,7 @@ export type RolloverProblemCode =
   | 'DUTY_SLOTS_NOT_CARRIED'
   | 'VOLUME_DIFFERS_FROM_TIMPLAN'
   | 'ISO_WEEK_53_CROSSED'
+  | 'ROLLOVER_2028_RENUMBERING'
   | StaffingProblemCode;
 
 export interface RolloverProblem {
@@ -261,6 +262,23 @@ export function planRollover(source: RolloverSource, request: RolloverRequest): 
     .sort();
   if (overlapping.length > 0) {
     problems.push({ code: 'YEAR_DATES_OVERLAP', blocking: false, params: { years: overlapping } });
+  }
+  // The tioårig grundskola (SFS 2025:729, i kraft 2026-07-01, tillämpas från
+  // 2028-07-01). Its övergångsbestämmelse 4 moves every pupil already in
+  // school one årskurs further than a normal year: förskoleklassen 2027/28
+  // begins directly in åk 2, and everyone who would have begun åk 2 or
+  // higher in HT 2028 begins the årskurs above it. This rollover promotes
+  // one årskurs (PROMOTE_GRADE); the double step is a follow-up due before
+  // the spring 2028 rollover. Until then the preview SAYS so, as a warning
+  // that blocks nothing — every class's gradeLevel in a year from HT 2028
+  // would otherwise be one too low without anybody being told. Not a write,
+  // so the planHash over the writes is unchanged.
+  if (Number(target.startDate.slice(0, 4)) >= 2028) {
+    problems.push({
+      code: 'ROLLOVER_2028_RENUMBERING',
+      blocking: false,
+      params: { startYear: Number(target.startDate.slice(0, 4)), source: 'SFS 2025:729, övergångsbestämmelse 4' },
+    });
   }
 
   // ---- G
