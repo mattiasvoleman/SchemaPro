@@ -13,8 +13,9 @@ const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"
 
 /**
  * The old year's own record — its dated calendar, attendance, saved versions,
- * change log and generation runs — summed up in one sentence rather than ten:
- * none of it is a starting point for the new year, and none of it is lost.
+ * change log, generation runs and the history of its tjänster — summed up in
+ * one sentence rather than eleven: none of it is a starting point for the new
+ * year, and none of it is lost.
  */
 const HISTORY = new Set([
   "MasterLessonGroup",
@@ -29,6 +30,7 @@ const HISTORY = new Set([
   "ScheduleVersion",
   "ScheduleChangeLog",
   "OptimizationJob",
+  "TeacherEmploymentLog",
 ]);
 
 /**

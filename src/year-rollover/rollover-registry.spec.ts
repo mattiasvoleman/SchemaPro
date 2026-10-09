@@ -231,16 +231,21 @@ describe('the rollover registry', () => {
 
   it('lists, with the option off, exactly fa4a3d6’s skipped tables and reasons, and carries exactly its tables', () => {
     // sha256 of JSON.stringify(skippedModels()) at fa4a3d6 (a git archive of
-    // it), over every entry that existed then: TimplanCredit (timplan P3) is
-    // the one table added since, and is asserted beside it — skipped, not
-    // counted — so fa4a3d6's own list stays pinned byte for byte.
+    // it), over every entry that existed then: TimplanCredit (timplan P3) and
+    // TeacherEmploymentLog (staffing Fas 3) are the tables added since, and
+    // are asserted beside it — skipped, not counted — so fa4a3d6's own list
+    // stays pinned byte for byte.
     const skipped = skippedModels();
+    const added = ['TimplanCredit', 'TeacherEmploymentLog'];
     expect(
       createHash('sha256')
-        .update(JSON.stringify(skipped.filter((entry) => entry.model !== 'TimplanCredit')))
+        .update(JSON.stringify(skipped.filter((entry) => !added.includes(entry.model))))
         .digest('hex'),
     ).toBe('15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113');
-    expect(skipped.at(-1)).toMatchObject({ model: 'TimplanCredit', counted: false });
+    expect(skipped.slice(-2)).toEqual([
+      expect.objectContaining({ model: 'TimplanCredit', counted: false }),
+      expect.objectContaining({ model: 'TeacherEmploymentLog', counted: false }),
+    ]);
     expect(skippedModels({ carryStaffing: false })).toEqual(skippedModels());
     expect(carriedModels().map(({ model }) => model)).toEqual([
       'AcademicYear',

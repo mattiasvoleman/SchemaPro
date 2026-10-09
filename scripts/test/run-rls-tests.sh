@@ -153,7 +153,7 @@ done
 # posts or behörigheter, and section 17 the same of its uppdrag; with nothing
 # planted over there each of those passes while proving nothing. Counted as
 # the owner, like the room lock.
-for table in StaffingPolicies TeacherEmployments TeacherSubjectQualifications TeacherDuties; do
+for table in StaffingPolicies TeacherEmployments TeacherSubjectQualifications TeacherDuties TeacherEmploymentLogs; do
   foreign_rows="$(
     compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
       -v ON_ERROR_STOP=1 -tAc \
