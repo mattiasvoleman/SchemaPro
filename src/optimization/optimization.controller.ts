@@ -19,12 +19,18 @@ import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { TriggerOptimizationDto } from './dto/trigger-optimization.dto';
 import { ApplyRoomChangesDto, RoomProposalDto } from './dto/room-optimization.dto';
+import { ApplyStaffingDto, StaffingProposalDto } from './dto/staffing-proposal.dto';
 import { OptimizationProxyService } from './optimization-proxy.service';
 import {
   RoomOptimizationService,
   type RoomApplyResult,
   type RoomProposal,
 } from './room-optimization.service';
+import {
+  StaffingProposalService,
+  type StaffingApplyResult,
+  type StaffingProposal,
+} from './staffing-proposal.service';
 import {
   OptimizationJobsService,
   type OptimizationJobView,
@@ -51,6 +57,7 @@ export class OptimizationController {
     private readonly proxy: OptimizationProxyService,
     private readonly jobsService: OptimizationJobsService,
     private readonly rooms: RoomOptimizationService,
+    private readonly staffing: StaffingProposalService,
   ) {}
 
   /**
@@ -140,5 +147,38 @@ export class OptimizationController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<RoomApplyResult> {
     return this.rooms.apply(dto, user);
+  }
+
+  /**
+   * Bemanningsförslag: who should lead every timplanspost, as a proposal.
+   * Writes nothing. Loads and targets are HR figures, so this stays behind the
+   * class-level SCHOOL_ADMIN like everything here — a TEACHER is refused at the
+   * guard, before the year is read or the engine woken. Throttled like the
+   * room proposal: each ask is capped at the engine's ten seconds.
+   */
+  @Post('staffing/proposal')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  proposeStaffing(
+    @Body() dto: StaffingProposalDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<StaffingProposal> {
+    return this.staffing.propose(dto, user);
+  }
+
+  /**
+   * Applies a proposal (or the rows the admin kept selected) — and, with the
+   * changes swapped and `undo: true`, undoes one. Refused with 409
+   * STAFF_PROPOSAL_STALE when the tjänstefördelning has changed since the basis
+   * was computed, and judged as one write by the school's staffing policy.
+   */
+  @Post('staffing/apply')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  applyStaffing(
+    @Body() dto: ApplyStaffingDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<StaffingApplyResult> {
+    return this.staffing.apply(dto, user);
   }
 }

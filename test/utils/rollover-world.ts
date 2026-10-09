@@ -610,7 +610,20 @@ export function givenRolloverWorld(
                         // strict world joins it whole by studentGroupId instead.
                         studentGroup: options.strict ? undefined : (() => {
                           const group = table('studentGroup').find((candidate) => candidate['id'] === row['studentGroupId']);
-                          return group ? { name: group['name'], gradeLevel: group['gradeLevel'] } : undefined;
+                          if (!group) return undefined;
+                          // And its year's name, when asked: the read of last
+                          // year's teachers (last-year-teachers.ts) names it.
+                          const asksYear = Boolean(
+                            (((args['select'] as Row | undefined)?.['studentGroup'] as Row | undefined)?.['select'] as Row | undefined)?.['academicYear'],
+                          );
+                          const year = asksYear
+                            ? table('academicYear').find((candidate) => candidate['id'] === group['academicYearId'])
+                            : undefined;
+                          return {
+                            name: group['name'],
+                            gradeLevel: group['gradeLevel'],
+                            ...(asksYear ? { academicYear: { name: year?.['name'] } } : {}),
+                          };
                         })(),
                       }
                     : name === 'academicYearTimplan'

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import request from 'supertest';
-import { of } from 'rxjs';
+import { AxiosError } from 'axios';
+import { of, throwError } from 'rxjs';
 import { lockingRead, type LockedTable } from './utils/locking-read';
 import { asUser, createTestApp, type TestHarness } from './utils/test-app';
 import { forgetStaffingWorld, givenStaffingWorld, type StaffingWorld } from './utils/staffing-world';
@@ -9,6 +10,7 @@ import { rolloverRowsAtFa4a3d6 } from './utils/rollover-rows-fa4a3d6';
 import type { PrismaMock } from './utils/prisma-mock';
 import { PrismaService } from '../src/database/prisma.service';
 import type { AiEngineScheduleRequest } from '../src/optimization/interfaces/ai-engine-payload.interface';
+import type { StaffRequest } from '../src/optimization/interfaces/staffing.interface';
 
 /**
  * The Kom igång → Planering surface over HTTP: läsår, salstyper, klasser and
@@ -4917,6 +4919,274 @@ describe('Planning surface (e2e)', () => {
       expect(again.body).toEqual(replaced.body);
       // The source year's mapping is the cohort's record and did not move.
       expect(world.rows['academicYearTimplan']!.filter((row) => row['academicYearId'] === IDS.yearA)).toHaveLength(3);
+    });
+  });
+
+  describe('Bemanningsförslag (staffing proposal)', () => {
+    /*
+     * POST /optimization/staffing/proposal and /apply over HTTP, against the
+     * rollover world's school with a staff worth staffing (staffingRows): Anna
+     * active with a post, Bo inactive (his Sv 7A is vacated), Cecilia active
+     * with a 700-minute target and no row, Teknik 7A open. The engine is the
+     * harness's HttpService stub, answering as the real one would: kept rows
+     * keep their lead, every open row goes to the first teacher with a target.
+     */
+    let prisma: PrismaMock;
+    let originalWithRls: ((...args: unknown[]) => unknown) | undefined;
+    beforeEach(() => {
+      prisma = harness.app.get(PrismaService) as unknown as PrismaMock;
+      originalWithRls = prisma.withRls.getMockImplementation();
+    });
+    afterEach(() => {
+      prisma.withRls.mockImplementation(originalWithRls);
+    });
+
+    const PROPOSAL = '/api/v1/optimization/staffing/proposal';
+    const APPLY = '/api/v1/optimization/staffing/apply';
+    const r = (n: number) => `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
+    const V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+    const givenStaff = (policy: Row | null = null) => {
+      const rows = staffingRows();
+      if (policy) {
+        rows['staffingPolicy'] = [
+          {
+            schoolId: IDS.school,
+            fullTimeTeachingMinutesPerWeek: 600,
+            fullTimeRegulatedHoursPerYear: 1360,
+            fullTimeAnnualHours: 1767,
+            workDaysPerYear: 194,
+            qualificationMode: 'WARN',
+            overAllocationMode: 'WARN',
+            overAllocationTolerancePercent: 10,
+            loadModel: 'MINUTES',
+            unstaffedGeneration: 'ALLOW',
+            ...policy,
+          },
+        ];
+      }
+      rows['scheduleChangeLog'] = [];
+      const world = givenRolloverWorld(rows);
+      // The posts' and the rows' locks, answered as Postgres would.
+      const fallback = world.queryRaw;
+      world.queryRaw = (sql, values) => {
+        if (sql.includes('"TeacherEmployments"')) {
+          const ids = values[0] as string[];
+          return world.rows['teacherEmployment']!.filter((row) => ids.includes(row['id'] as string)).map((row) => ({ id: row['id'] }));
+        }
+        if (sql.includes('"TeachingRequirements"')) return (values[0] as string[]).map((id) => ({ id }));
+        return fallback(sql, values);
+      };
+      prisma.withRls.mockImplementation((_user: unknown, fn: (tx: unknown) => unknown) => fn(world.tx));
+      harness.http.post.mockImplementation((_url: string, payload: StaffRequest) => {
+        // A normal teacher: a target above 0 and room under the limit — never the row's co-teacher.
+        const pick = (row: StaffRequest['requirements'][number]) =>
+          payload.teachers.find(
+            (t) => (t.targetTenths ?? 0) > 0 && t.fixedTenths + row.chargeTenths <= t.limitTenths! && t.id !== row.coTeacherId,
+          );
+        const zero = { unstaffedRows: 0, unstaffedMinutes: 0, deviationTenths: 0, underBandTenths: 0, newClassTeachers: 0, continuityChanges: 0, currentChanges: 0, unqualifiedAssignments: 0 };
+        return of({
+          data: {
+            requestId: payload.requestId,
+            status: 'OPTIMAL',
+            unstaffedProven: true,
+            assignments: payload.requirements
+              .filter((row) => !row.fixed && (row.currentTeacherId || pick(row)))
+              .map((row) => ({ requirementId: row.id, teacherId: row.currentTeacherId ?? pick(row)!.id })),
+            unstaffed: payload.requirements
+              .filter((row) => !row.fixed && !row.currentTeacherId && !pick(row))
+              .map((row) => ({ requirementId: row.id, reason: 'NO_CAPACITY_LEFT' })),
+            conflicts: [],
+            terms: { before: zero, after: zero },
+          },
+        });
+      });
+      return world;
+    };
+    const lead = (world: ReturnType<typeof givenRolloverWorld>, id: string) =>
+      world.rows['teachingRequirement']!.find((row) => row['id'] === id)!['teacherId'];
+    const propose = (body: Record<string, unknown> = {}) =>
+      request(http())
+        .post(PROPOSAL)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, onlyUnstaffed: true, respectQualifications: false, ...body });
+
+    afterEach(() => {
+      harness.http.post.mockReset();
+      harness.http.post.mockImplementation(() => of({ data: { status: 'OPTIMAL', lessons: [] } }));
+    });
+
+    it('proposes from anonymous ids and minutes only, applies, and undoes, each with a log row (admin round-trip)', async () => {
+      const world = givenStaff();
+      const proposal = await propose().expect(200);
+
+      // What crossed: every string a fresh v4 uuid, no name, email or signature.
+      expect(harness.http.post).toHaveBeenCalledTimes(1);
+      const [url, payload] = harness.http.post.mock.calls[0] as [string, StaffRequest];
+      expect(url).toMatch(/\/api\/v1\/staff$/);
+      const text = JSON.stringify(payload);
+      for (const word of ['Matematik', 'Svenska', 'Teknik', '7A', 'AN', 'CE', 'anna', 'cecilia']) expect(text).not.toContain(word);
+      const strings = (value: unknown): string[] =>
+        typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
+      for (const value of strings(payload)) expect(value).toMatch(V4);
+      // Anna and Cecilia — Cecilia has no row and is sent all the same.
+      expect(payload.teachers).toHaveLength(2);
+
+      expect(proposal.body).toMatchObject({
+        status: 'OPTIMAL',
+        counts: { vacated: 1, inconsistent: 1, openRequirements: 2, teachersSent: 2 },
+        assignments: [
+          { requirementId: r(2), fromTeacherId: IDS.bo, toTeacherId: IDS.cecilia },
+          { requirementId: r(6), fromTeacherId: null, toTeacherId: IDS.cecilia },
+        ],
+      });
+      expect(proposal.body.teachers.find((t: { userId: string }) => t.userId === IDS.cecilia)).toMatchObject({
+        targetMinutesPerWeek: 700,
+        before: { countedMinutesPerWeek: 0, status: 'UNDER' },
+      });
+
+      const changes = proposal.body.assignments.map((a: Record<string, unknown>) => ({
+        requirementId: a['requirementId'],
+        fromTeacherId: a['fromTeacherId'],
+        toTeacherId: a['toTeacherId'],
+      }));
+      const applied = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes })
+        .expect(200);
+      expect(applied.body).toMatchObject({ updated: 2, warnings: [] });
+      expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.cecilia, IDS.cecilia]);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(1);
+      expect(world.rows['scheduleChangeLog']![0]).toMatchObject({ action: 'UPDATE', masterLessonId: null, after: { kind: 'STAFFING_PROPOSAL', undo: false } });
+
+      const undone = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: applied.body.basisSha256,
+          undo: true,
+          changes: changes.map((c: Record<string, unknown>) => ({ requirementId: c['requirementId'], fromTeacherId: c['toTeacherId'], toTeacherId: c['fromTeacherId'] })),
+        })
+        .expect(200);
+      expect([lead(world, r(2)), lead(world, r(6))]).toEqual([IDS.bo, null]);
+      expect(undone.body.basisSha256).toBe(proposal.body.basisSha256);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(2);
+    });
+
+    it('409s STAFF_PROPOSAL_STALE after a PATCH changed the timplan, writing nothing', async () => {
+      const world = givenStaff();
+      const proposal = await propose().expect(200);
+      await request(http())
+        .patch(`/api/v1/teaching-requirements/${r(1)}`)
+        .set('x-test-user', admin())
+        .send({ lessonsPerWeek: 4 })
+        .expect(200);
+      const stale = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes: [{ requirementId: r(6), fromTeacherId: null, toTeacherId: IDS.cecilia }] })
+        .expect(409);
+      expect(stale.body).toMatchObject({ code: 'STAFF_PROPOSAL_STALE' });
+      expect(lead(world, r(6))).toBeNull();
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('409s a REFUSE with the teacher and the row named, and hands back a WARN with both', async () => {
+      // Riktmärke 600: Anna (70.5 %) 425, already far over — so one more row grows her.
+      givenStaff({ overAllocationMode: 'REFUSE' });
+      const proposal = await propose().expect(200);
+      const refused = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes: [{ requirementId: r(6), fromTeacherId: null, toTeacherId: IDS.anna }] })
+        .expect(409);
+      expect(refused.body).toMatchObject({
+        code: 'STAFF_TEACHER_OVER_TARGET',
+        params: { role: 'TEACHER', target: 425, userId: IDS.anna, requirementId: r(6) },
+      });
+      expect(refused.body.detail).toMatch(/^Teknik för 7A: Läraren skulle få/);
+
+      const world = givenStaff({ overAllocationMode: 'WARN' });
+      const again = await propose().expect(200);
+      const warned = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: again.body.basisSha256, changes: [{ requirementId: r(6), fromTeacherId: null, toTeacherId: IDS.anna }] })
+        .expect(200);
+      expect(warned.body.warnings).toEqual([
+        expect.objectContaining({ code: 'STAFF_TEACHER_OVER_TARGET', userId: IDS.anna, requirementIds: [r(6)] }),
+      ]);
+      expect(lead(world, r(6))).toBe(IDS.anna);
+    });
+
+    it('400s a co-teacher made lead, and 409s a change from a lead the row does not have', async () => {
+      const world = givenStaff();
+      world.rows['teachingRequirement']!.find((row) => row['id'] === r(6))!['coTeacherId'] = IDS.cecilia;
+      const proposal = await propose().expect(200);
+      await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes: [{ requirementId: r(6), fromTeacherId: null, toTeacherId: IDS.cecilia }] })
+        .expect(400);
+      const wrongFrom = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes: [{ requirementId: r(1), fromTeacherId: IDS.cecilia, toTeacherId: IDS.anna }] })
+        .expect(409);
+      expect(wrongFrom.body).toMatchObject({ code: 'STAFF_PROPOSAL_STALE' });
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
+    });
+
+    it('503s STAFF_ENGINE_UNAVAILABLE when the engine has no /staff yet, and forwards STAFF_MODEL_TOO_LARGE with its code', async () => {
+      givenStaff();
+      const missing = new AxiosError('missing');
+      missing.response = { status: 404, data: { code: 'HTTP_ERROR', message: 'Not Found' } } as never;
+      harness.http.post.mockImplementation(() => throwError(() => missing));
+      const unavailable = await propose().expect(503);
+      expect(unavailable.body).toMatchObject({ code: 'STAFF_ENGINE_UNAVAILABLE' });
+
+      const large = new AxiosError('large');
+      large.response = {
+        status: 400,
+        data: { code: 'INVALID_SCHEDULE_INPUT', message: 'too many', details: { code: 'STAFF_MODEL_TOO_LARGE', params: { variables: 1200000, limit: 1000000 } } },
+      } as never;
+      harness.http.post.mockImplementation(() => throwError(() => large));
+      const refused = await propose().expect(400);
+      expect(refused.body).toMatchObject({ code: 'STAFF_MODEL_TOO_LARGE', params: { variables: 1200000, limit: 1000000 } });
+    });
+
+    it('proposes for a rolled year not yet activated, with last year’s teachers sent', async () => {
+      const world = givenStaff();
+      const options = { name: '2027/28', startDate: '2027-08-16', endDate: '2028-06-09' };
+      const preview = await request(http()).post(`/api/v1/academic-years/${IDS.yearA}/rollover/preview`).set('x-test-user', admin()).send(options).expect(200);
+      const created = await request(http())
+        .post(`/api/v1/academic-years/${IDS.yearA}/rollover`)
+        .set('x-test-user', admin())
+        .send({ ...options, graduatingGradeLevel: 9, planHash: preview.body.planHash })
+        .expect(201);
+      const yearB = created.body.academicYear.id as string;
+      harness.http.post.mockClear();
+      const proposal = await propose({ academicYearId: yearB, onlyUnstaffed: false }).expect(200);
+      const [, payload] = harness.http.post.mock.calls[0] as [string, StaffRequest];
+      // B's 8A Ma follows A's 7A Ma, which Anna taught.
+      expect(payload.requirements.some((row) => row.lastYearTeacherIds.length > 0)).toBe(true);
+      expect(proposal.body.status).toBe('OPTIMAL');
+      expect(world.rows['teachingRequirement']!.filter((row) => row['academicYearId'] === yearB).length).toBeGreaterThan(0);
+    });
+
+    it.each([PROPOSAL, APPLY])('403s a TEACHER on %s before the engine or the database is touched', async (path) => {
+      const world = givenStaff();
+      const before = world.calls.length;
+      await request(http())
+        .post(path)
+        .set('x-test-user', asUser({ role: 'TEACHER' as never }))
+        .send({ academicYearId: IDS.yearA, onlyUnstaffed: true, respectQualifications: false, basisSha256: 'a'.repeat(64), changes: [{ requirementId: r(6), fromTeacherId: null, toTeacherId: IDS.anna }] })
+        .expect(403);
+      expect(harness.http.post).not.toHaveBeenCalled();
+      expect(world.calls.length).toBe(before);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(0);
     });
   });
 
