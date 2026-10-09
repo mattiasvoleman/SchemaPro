@@ -788,11 +788,22 @@ def test_a_model_that_refuses_the_status_quo_is_a_build_error(spy: type[_Spy]) -
         _continuity().solve()
 
 
-def test_a_canonical_pass_out_of_budget_keeps_the_proven_optimum(spy: type[_Spy]) -> None:
+def test_a_canonical_pass_out_of_budget_keeps_the_optimum_but_promises_no_repeat(
+    spy: type[_Spy],
+) -> None:
+    """OPTIMAL is promised to be the same on every press. An optimum the
+    tie-break did not settle is just as good, but goes out as FEASIBLE;
+    unstaffed stays proven."""
     spy.answers = [None, None, cp_model.UNKNOWN]
     answer = _continuity().solve()
-    assert answer.response.status == "OPTIMAL"
+    assert answer.response.status == "FEASIBLE"
+    assert answer.response.unstaffed_proven is True
     assert answer.leads == {"R": "B"}
+
+    spy.answers = [None, None, cp_model.FEASIBLE]
+    assert _continuity().solve().response.status == "FEASIBLE"
+    spy.answers = []
+    assert _continuity().solve().response.status == "OPTIMAL"
 
 
 def test_the_size_guard_refuses_before_anything_is_built(
@@ -912,6 +923,57 @@ def test_a_proven_answer_is_the_same_on_every_press() -> None:
             assert response.status == "OPTIMAL", seed
             dumps.add(response.model_dump_json())
         assert len(dumps) == 1, seed
+
+
+def _relabelled_payload(payload: dict) -> tuple[dict, dict[str, str]]:
+    """The same school under fresh uuids, in the same canonical order."""
+    mapping: dict[str, str] = {}
+
+    def fresh(value: str | None) -> str | None:
+        return None if value is None else mapping.setdefault(value, str(uuid4()))
+
+    return {
+        **payload,
+        "requestId": str(uuid4()),
+        "teachers": [{**t, "id": fresh(t["id"])} for t in payload["teachers"]],
+        "eligibilitySets": [
+            {"id": fresh(s["id"]), "teacherIds": [fresh(t) for t in s["teacherIds"]]}
+            for s in payload["eligibilitySets"]
+        ],
+        "requirements": [
+            {
+                **r,
+                **{
+                    key: fresh(r[key])
+                    for key in ("id", "subjectId", "studentGroupId", "currentTeacherId",
+                                "coTeacherId", "eligibilitySetId")
+                },
+                "lastYearTeacherIds": [fresh(t) for t in r["lastYearTeacherIds"]],
+            }
+            for r in payload["requirements"]
+        ],
+    }, mapping
+
+
+def test_a_proven_answer_repeats_on_a_medium_school_under_fresh_ids() -> None:
+    """30 teachers, 120 rows: both stages are proven in a fraction of a
+    second, but a blind single-worker search for "the first answer at S*"
+    ran out of its budget there on every press, and the portfolio's answer
+    — one of many equally good — went out as OPTIMAL. Four of five presses
+    differed. A proven answer is now the unique optimum of a tie-break, the
+    same whichever worker finds it."""
+    base = build_school(6, 30, 12)
+    settings = _settings(STAFF_SOLVER_MAX_TIME_SECONDS=10.0)
+    seen = set()
+    for _ in range(5):
+        payload, mapping = _relabelled_payload(base)
+        back = {fresh: old for old, fresh in mapping.items()}
+        response = StaffingSolver(settings).solve(StaffRequest.model_validate(payload))
+        assert response.status == "OPTIMAL"
+        seen.add(tuple(
+            (back[str(a.requirement_id)], back[str(a.teacher_id)]) for a in response.assignments
+        ))
+    assert len(seen) == 1
 
 
 def test_the_unstaffed_verdict_repeats_on_the_bench_school() -> None:

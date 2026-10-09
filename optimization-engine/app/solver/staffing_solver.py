@@ -33,6 +33,12 @@ rows), and a weight would let a school trade a staffed row for balance. Two
 stages also make `unstaffed_proven` a claim the dialog can state: when stage
 1 is OPTIMAL, no proposal staffs more.
 
+ONE ANSWER PER SCHOOL WHEN PROVEN. A school has many equally good proposals,
+and the parallel portfolio returns whichever its fastest worker found. When
+both stages are proven, a third solve picks the unique optimum of a fixed
+tie-break among them (StaffingSolver._canonical), so OPTIMAL means the same
+proposal on every press. A time-limited answer is FEASIBLE and may differ.
+
 WHAT IT NEVER DOES: decide a co-teacher, split a row, change a load percent,
 look at time (availability, work rules, overlaps — that is the generator's),
 or read a name. See app/schemas/staffing.py for what crosses the wire.
@@ -77,11 +83,12 @@ logger = logging.getLogger(__name__)
 #: proven one is made not to: see the canonical pass in StaffingSolver._search.
 STAFF_WORKERS = 8
 
-#: The canonical pass's budget, in CP-SAT's DETERMINISTIC time — a count of
-#: work, not of seconds — so whether it finishes cannot depend on how loaded
-#: the host is. Two presses on the same school either both reach the same
-#: canonical answer or both keep the portfolio's (equally optimal) one.
-CANONICAL_DETERMINISTIC_TIME = 2.0
+#: The canonical pass's tie-break weights lie in 1..2**TIE_BREAK_BITS. Wide
+#: enough that two different proposals of equal P and S summing to the same
+#: tie-break is a coincidence of 20-bit numbers, narrow enough that the
+#: objective stays far inside int64 and CP-SAT's LP relaxation.
+TIE_BREAK_BITS = 20
+_MASK64 = (1 << 64) - 1
 
 #: The largest model this module builds, in CP-SAT variables — the room
 #: optimiser's and the generator's budget, for the same reason: the time limit
@@ -117,6 +124,20 @@ AFTER_SEARCH_SECONDS = 0.25
 
 def _tenths_to_minutes_ceil(tenths: int) -> int:
     return -(-tenths // 10)
+
+
+def _tie_break_weight(row: int, teacher: int) -> int:
+    """A fixed pseudo-random weight in 1..2**TIE_BREAK_BITS for x[row, teacher].
+
+    A function of payload POSITIONS (splitmix64), never of uuids or Python's
+    hash: the gateway sends canonical order with fresh uuids, so the same
+    school gets the same weights on every press and on every host.
+    """
+    z = (row * 0x9E3779B97F4A7C15 + teacher * 0xBF58476D1CE4E5B9 + 0x94D049BB133111EB) & _MASK64
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & _MASK64
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & _MASK64
+    z ^= z >> 31
+    return 1 + (z & ((1 << TIE_BREAK_BITS) - 1))
 
 
 def _grades_param(row: AnonymousStaffRequirement) -> str:
@@ -1050,7 +1071,11 @@ class StaffingSolver:
         best = min(candidates, key=lambda answer: evaluate(problem, answer).key())
         optimal = proven and second_proven and best is candidates[0]
         if optimal:
-            best = self._canonical(problem, built, best, started, timings)
+            # OPTIMAL is promised to repeat; an optimum the tie-break could
+            # not settle in time is just as good but may not, so it goes out
+            # as FEASIBLE ("bästa hittills inom tidsgränsen") — unstaffed
+            # stays proven.
+            best, optimal = self._canonical(problem, built, best, started, timings)
         return best, "OPTIMAL" if optimal else "FEASIBLE", proven
 
     def _canonical(
@@ -1060,48 +1085,54 @@ class StaffingSolver:
         optimum: Assignment,
         started: float,
         timings: SolveReport,
-    ) -> Assignment:
-        """One proven-optimal answer, the same one on every press.
+    ) -> tuple[Assignment, bool]:
+        """The proven optimum every press returns, and whether it was found.
 
         A school has many equally good proposals — two teachers with the same
         target and the same subjects are interchangeable — and the parallel
-        portfolio returns whichever worker reached one first, so a proven
-        optimum still differed between presses on 6 of 60 small schools
-        measured. Here the optimum's own value is fixed (P ≤ P*, S ≤ S*),
-        the objective and every hint are cleared, and one worker searches the
-        identical model for the first answer at that value, under a
-        deterministic budget. The model is built in payload order and the
-        gateway sends payload order canonically, so the answer depends on the
-        school alone. Out of budget, the portfolio's optimum stands: just as
-        good, only not guaranteed to repeat.
+        portfolio returns whichever worker reached one first. Here the
+        optimum's value is fixed (P ≤ P* is already in the model, S ≤ S*
+        joins it) and the portfolio minimises a fixed tie-break,
+        Σ w(r, t)·x[r, t] with _tie_break_weight's pseudo-random weights of
+        payload positions. Its proven optimum is one answer, whichever worker
+        proves it, on whatever host.
+
+        It replaced a single-worker search for "the first answer at S*" under
+        a deterministic budget: with no objective to steer it, that search
+        could not find S* again on a 30-teacher, 120-row school even in 30
+        units of deterministic time, so every press there waited two seconds
+        and then sent the portfolio's own (varying) answer as OPTIMAL. The
+        tie-break is proven in 0.01–3 s up to 50 teachers and 200 rows.
+
+        Returns the optimum unchanged and False when the tie-break is not
+        proven in the time left.
         """
         left = self._settings.staff_solver_max_time_seconds - AFTER_SEARCH_SECONDS - (
             time.monotonic() - started
         )
         if left < MIN_STAGE_SECONDS:
-            return optimum
+            return optimum, False
         score = evaluate(problem, optimum)
         built.model.Add(built.secondary <= score.secondary)
-        built.model.clear_objective()
-        built.model.ClearHints()
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = left
-        solver.parameters.max_deterministic_time = CANONICAL_DETERMINISTIC_TIME
-        solver.parameters.num_workers = 1
-        solver.parameters.random_seed = 0
+        pairs = list(built.x)  # insertion order: payload order
+        built.model.Minimize(cp_model.LinearExpr.WeightedSum(
+            [built.x[pair] for pair in pairs], [_tie_break_weight(*pair) for pair in pairs],
+        ))
+        _hint(problem, built, optimum)
+        solver = self._solver(left)
         began = time.monotonic()
         code = solver.Solve(built.model)
         timings.canonical = time.monotonic() - began
         timings.canonical_status = solver.StatusName(code)
         self._refuse_broken(built, code)
         if code not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            return optimum
+            return optimum, False
         found = _read(problem, built, solver)
         check(problem, found)
         if evaluate(problem, found).key() != score.key():
             msg = "The canonical staffing answer is not the proven optimum's equal."
             raise SolverBuildError(msg)
-        return found
+        return found, code == cp_model.OPTIMAL
 
     @staticmethod
     def _refuse_broken(built: StaffModel, code: int) -> None:
