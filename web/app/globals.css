@@ -100,6 +100,15 @@
     size: A4;
     margin: 15mm;
   }
+  /*
+   * The light scheme for the UA's own controls too (the uppdrag boxes are
+   * native checkboxes). next-themes writes `color-scheme: dark` as an INLINE
+   * style on <html> for a dark theme (enableColorScheme, on by default), and
+   * an inline declaration beats any normal rule here — hence !important.
+   */
+  :root {
+    color-scheme: light !important;
+  }
   /* The light theme's surface and ink, also for an admin in dark mode. */
   :root,
   .dark {
