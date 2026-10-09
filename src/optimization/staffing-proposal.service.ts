@@ -926,10 +926,23 @@ export function planOf(
     else qualificationsBySubject.set(qualification.subjectId, [qualification]);
   }
 
+  const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
+  const targetOf = new Map(
+    staffIds.map((userId) => [userId, targetMinutesPerWeek(employmentByUser.get(userId) ?? null, loadPolicy)]),
+  );
+
   const rows = [...input.requirements].sort((a, b) => compareIds(a.id, b.id)).map((row): RowPlan => {
     const inconsistent = row.teacherId !== null && row.teacherId === row.coTeacherId;
+    // A row led by active staff with NO target stays as it is. Their room is
+    // unknown, not zero (Fas 1), so the proposal neither adds to it nor takes
+    // from it: as keep-or-shed rows, balance on the receivers always beat
+    // keepCurrent, and with "bara obemannade" off such a teacher lost every
+    // row they had. A target of 0 is a known room of nothing — a full
+    // nedsättning — and its rows stay movable.
+    const untargetedLead = row.teacherId !== null && staff.has(row.teacherId) && targetOf.get(row.teacherId) === null;
     const free =
       !inconsistent &&
+      !untargetedLead &&
       !pinnedAsked.has(row.id) &&
       (!dto.onlyUnstaffed || row.teacherId === null || !staff.has(row.teacherId));
     const current = !inconsistent && row.teacherId !== null && staff.has(row.teacherId) ? row.teacherId : null;
@@ -974,9 +987,8 @@ export function planOf(
   for (const row of rows) {
     if (row.kind === 'KEPT') keptTenths.set(row.current!, (keptTenths.get(row.current!) ?? 0) + row.chargeTenths);
   }
-  const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
   const teachers = staffIds.map((userId): TeacherPlan => {
-    const target = targetMinutesPerWeek(employmentByUser.get(userId) ?? null, loadPolicy);
+    const target = targetOf.get(userId) ?? null;
     const fixedTenths = Math.min(MAX_FIXED_TENTHS, toTenthsUp(fixed.get(userId) ?? 0));
     const currentTenths = fixedTenths + (keptTenths.get(userId) ?? 0);
     const limitTenths = target === null ? null : limitTenthsOf(target, tolerance);

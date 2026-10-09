@@ -2032,6 +2032,7 @@
       "minutes": "{minutes} min/v",
       "minutesPercent": "{minutes} min/v · {percent} %",
       "keepOrShed": "Behåller eller lämnar bara sina egna poster",
+      "keepsNoTarget": "Har inget mål och behåller sina poster",
       "overLimitSelection": "Urvalet lägger läraren över gränsen; tillämpningen prövas mot skolans inställning.",
       "unstaffedTitle": "Blir kvar obemannade ({count})",
       "reason_NO_QUALIFIED_TEACHER": "ingen aktiv lärare är behörig",
