@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { api } from "@/lib/api";
 import {
   useReplaceTeacherQualifications,
+  useTeacherDutyActions,
   useTeacherEmploymentActions,
 } from "@/lib/staffing-queries";
 
@@ -12,7 +13,7 @@ vi.mock("@/lib/api", () => ({
   api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), delete: vi.fn() },
 }));
 
-const mockApi = api as unknown as Record<"put" | "delete", Mock>;
+const mockApi = api as unknown as Record<"put" | "delete" | "post", Mock>;
 
 function createHarness() {
   const queryClient = new QueryClient({
@@ -54,6 +55,8 @@ describe("staffing writes refetch the suggestions they change", () => {
     );
     expect(invalidatedKeys(harness)).toEqual([
       ["teacherEmployments"],
+      // A saved or removed post is a new version in the teacher's Historik.
+      ["teacherEmploymentHistory"],
       ["staffingLoad"],
       ["staffingSuggestions"],
     ]);
@@ -70,5 +73,23 @@ describe("staffing writes refetch the suggestions they change", () => {
       ["staffingLoad"],
       ["staffingSuggestions"],
     ]);
+  });
+});
+
+describe("every write to a tjänst refetches its Historik (staffing Fas 3)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockApi.post.mockResolvedValue({});
+    mockApi.delete.mockResolvedValue({});
+  });
+
+  it("an uppdrag created or removed", async () => {
+    const harness = createHarness();
+    const { result } = renderHook(() => useTeacherDutyActions(), { wrapper: harness.wrapper });
+    await act(() => result.current.create.mutateAsync({ userId: "t-1", academicYearId: "y-1" } as never));
+    expect(invalidatedKeys(harness)).toContainEqual(["teacherEmploymentHistory"]);
+    harness.invalidateSpy.mockClear();
+    await act(() => result.current.remove.mutateAsync("d-1"));
+    expect(invalidatedKeys(harness)).toContainEqual(["teacherEmploymentHistory"]);
   });
 });

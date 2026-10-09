@@ -177,13 +177,16 @@ describe("useSubjects", () => {
     const { result } = renderHook(() => useSubjects(), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual(rows);
-    expect(queryClient.getQueryData(["subjects"])).toEqual(rows);
+    // loadFactor (staffing Fas 3) is a NUMERIC: read as a number, 1 when absent.
+    const read = rows.map((row) => ({ ...row, loadFactor: 1 }));
+    expect(result.current.data).toEqual(read);
+    expect(queryClient.getQueryData(["subjects"])).toEqual(read);
     expect(supabaseMocks.from).toHaveBeenCalledWith("Subjects");
     expect(argsFor("Subjects", "select")).toEqual([
-      // The two timplan columns are part of the row the subjects form writes
-      // back; missing here, the dialog would clear a mapping on every save.
-      ["id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan"],
+      // The two timplan columns and the factor are part of the row the
+      // subjects form writes back; missing here, the dialog would clear a
+      // mapping (or reset a factor to 1) on every save.
+      ["id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor"],
     ]);
     // Paged reads sort by a tie-break column as well; see selectAll.
     expect(argsFor("Subjects", "order")).toEqual([["name"], ["id"]]);
@@ -1658,6 +1661,8 @@ describe("useImportCsv", () => {
     ["teacherQualifications"],
     ["staffingLoad"],
     ["teacherDuties"],
+    // Every post or uppdrag an import writes is a new version of a tjänst.
+    ["teacherEmploymentHistory"],
     // A requirements file can staff or unstaff rows, a teachers file post
     // a target: the unstaffed list and the cached rankings go stale too.
     ["staffingUnstaffed"],
