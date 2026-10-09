@@ -1283,7 +1283,10 @@
     att öppna lärarens kort: <span class="ui">Anställning</span> (tjänst,
     nedsättning och avtal, som ger målet), <span class="ui">Behörigheter</span>,
     <span class="ui">Uppdrag</span> och lärarens
-    <span class="ui">Timplansposter</span>.
+    <span class="ui">Timplansposter</span>, och under dem
+    <span class="ui">Årsarbetstid</span> och <span class="ui">Historik</span>.
+    Länken <span class="ui">Skriv ut uppdragsbeskrivning</span> överst i kortet
+    öppnar lärarens uppdragsbeskrivning (se nedan).
   </p>
 
   <h4>Bemanna en post</h4>
@@ -1412,13 +1415,111 @@
     </p>
   </div>
 
+  <h4>Årsarbetstid</h4>
+  <p>
+    Kortet <span class="ui">Årsarbetstid</span> ställer lärarens år i timmar
+    bredvid den ram skolan har satt. För en ferietjänst: undervisning och
+    uppdrag per läsår, reglerad arbetstid, årsarbetstid, övrig arbetstid
+    (årsarbetstid − reglerad), A-dagar och undervisningens andel av den
+    reglerade tiden. För en semestertjänst: skolans vecka för en hel
+    semestertjänst, skalad med tjänsten. Utan tjänst bara undervisning och
+    uppdrag.
+  </p>
+  <p>
+    Timmarna räknas ur <span class="path">Tjänstefördelning › Inställningar</span>
+    och tjänsten: reglerad arbetstid = skolans reglerade timmar × (tjänst −
+    nedsättning) / 100, årsarbetstid likadant ur skolans årsarbetstid.
+    Förvalen (1 360 reglerade timmar, 1 767 timmars årsarbetstid, 194 A-dagar,
+    40 timmar i veckan för semestertjänst) är satta efter det centrala avtalets
+    ram, men de är <strong>skolans inställningar</strong>: har skolan ett annat
+    lokalt avtal ändrar ni dem på kortet, och kortet säger alltid
+    <em>enligt skolans inställningar</em>. Undervisningen räknas över läsårets
+    undervisningsveckor med lov avräknade; uppdragen över samma veckor.
+  </p>
+  <div class="note">
+    <span class="label">A-dagar skalas inte</span>
+    <p>
+      A-dagar visas som skolans inställning, också för en deltid. Om en
+      deltidstjänst har färre A-dagar är skolans beslut; SchemaPro räknar inte
+      fram det.
+    </p>
+  </div>
+
+  <h4>Faktormodellen</h4>
+  <p>
+    Under <span class="ui">Beräkningsmodell</span> på inställningskortet väljer
+    skolan hur en lärares tjänstgöring räknas. <strong>Minuter</strong>
+    (förval) räknar lektionsminuterna som de är. <strong>Faktor</strong> är
+    Skola24:s faktormodell: tjänstgöring = lektionstid × ämnets faktor. En
+    skola som har kommit överens om att en timme svenska med sin rättning
+    väger 1,2 och en timme slöjd i halvklass 0,8 anger det en gång per ämne.
+  </p>
+  <p>
+    Faktorn sätts per ämne, 0,5–3 med högst tre decimaler (1 = minuterna som
+    de är): i tabellen <span class="ui">Faktor per ämne</span> som visas på
+    inställningskortet när Faktor är valt, eller i ämnesdialogen under
+    <span class="path">Grunddata › Ämnen</span>. Under Faktor väger faktorn in
+    i lärarens räknade tid överallt där en lärare belastas: matrisen (kolumnen
+    heter då <span class="ui">Räknad tid (faktor)</span>), toppveckan,
+    timmarna per läsår, <span class="ui">Föreslå lärare</span> och kontrollen
+    mot överbeläggning. Elevernas lektionsminuter, timplanen och SCB-underlaget
+    påverkas aldrig. Under Minuter läses faktorn inte alls, och varje siffra är
+    densamma som före faktorns tid.
+  </p>
+  <div class="warn">
+    <span class="label">Faktorn är skolans, inte läsårets</span>
+    <p>
+      Ändrar du ett ämnes faktor ändras alla läsårs siffror under Faktor, även
+      förra årets, och ändringen syns inte i lärarnas historik. Ta ut
+      samverkansfilen (6.6) före en ändring om ni behöver de gamla siffrorna.
+      En faktor per grupp finns inte; radens procent på timplansposten
+      (<span class="ui">Räknas för lärare (%)</span>) väger redan en grupp och ett ämne.
+    </p>
+  </div>
+
+  <h4>Historik</h4>
+  <p>
+    Kortet <span class="ui">Historik</span> i lärarens kort visar lärarens tjänst
+    för läsåret version för version: varje ändring av tjänsten eller av ett
+    uppdrag, vem som gjorde den och när, och vad som ändrades — till exempel
+    <em>Version 7 · 2026-10-09 14:02 · Anna Admin · Tjänst ändrad ·
+    Tjänstgöringsgrad: 100 % → 80 %</em>. Versionen sparas i samma ögonblick
+    som ändringen, hur den än gjordes: i kortet, genom en import, vid
+    rullningen till ett nytt läsår eller genom överföringen i efterhand.
+    Versionsnumren börjar på 1 per lärare och läsår och återanvänds aldrig, så
+    ett samverkansprotokoll kan citera <em>Version 7</em>. En ändring utan
+    användare (skolans grunddata vid installationen) står som
+    <em>System</em>, och en användare som har tagits bort som
+    <em>Borttagen användare</em>. Kortet är ihopfällt tills du öppnar det.
+    Tas en lärare bort ur SchemaPro försvinner också lärarens historik.
+  </p>
+
+  <h4>Uppdragsbeskrivning</h4>
+  <p>
+    <span class="ui">Skriv ut uppdragsbeskrivning</span> i lärarens kort öppnar
+    en utskriftssida med lärarens tjänst för läsåret, i en kommunal
+    uppdragsbeskrivnings form (förlagan är Göteborgs Stads uppdragsbeskrivning
+    för lärare med ferietjänst): läsår, namn, skola, signatur,
+    tjänstgöringsgrad, nedsättning och avtal; tomma rader för rektor och
+    arbetslag att fylla i för hand; undervisningen per ämne och grupp med
+    period, minuter per vecka och timmar per läsår, summan och toppveckan;
+    övriga uppdrag med mallens rutor (Mentor, Ämnesansvarig, Förstelärare,
+    VFU, APL, APT/konferens, Övrigt) kryssade efter uppdragen; årsarbetstiden;
+    riktmärket; och signaturrader för rektor och lärare. Foten säger
+    <em>Tjänstens version N (datum)</em> ur historiken, så papperet går att
+    knyta till en version. <span class="ui">Skriv ut</span> skriver ut A4 utan
+    meny och knappar. Sidan säger att skolans egen mall gäller.
+  </p>
+
   <h4>Lärarens egen vy</h4>
   <p>
     En lärare ser sin egen tjänst under <span class="path">Min tjänst</span>:
     anställning, mål och räknade minuter, samma stapel som du ser,
     undervisningen per ämne med minuter och andel av tjänsten, och sina
     uppdrag med tiden de blockerar. Har läsåret rullats från ett annat står
-    också förra läsårets tjänst och räknade minuter. Läraren ser bara sig
+    också förra läsårets tjänst och räknade minuter. Läraren ser också sin
+    <span class="ui">Årsarbetstid</span> och kan skriva ut sin egen
+    uppdragsbeskrivning. Läraren ser bara sig
     själv och kan inte ändra något. Anställningen och behörigheterna är personaluppgifter: en
     lärare ser aldrig en kollegas.
   </p>
@@ -1922,12 +2023,123 @@
     till schemat, så en sal som redan har lektion går inte att boka.
   </p>
 
-  <h3><span class="num">6.6</span>Rapporter</h3>
+  <h3 id="s66"><span class="num">6.6</span>Rapporter</h3>
   <p>
-    <span class="path">Drift › Rapporter</span> visar närvarograd per klass och
-    elev för en vald period, med klassens snitt som jämförelse. Underlaget kan
-    exporteras som CSV för vidare bearbetning eller arkivering.
+    <span class="path">Drift › Rapporter</span> har två flikar. Fliken
+    <span class="ui">Närvaro</span> visar närvarograd per klass och elev för en
+    vald period, med klassens snitt som jämförelse, och kan exporteras som CSV.
   </p>
+
+  <h4>Tjänstefördelning: planerat, schemalagt och genomfört</h4>
+  <p>
+    Fliken <span class="ui">Tjänstefördelning</span> ställer per lärare tre tal
+    mot varandra över en period du väljer (förval: läsårets start till i dag):
+  </p>
+  <table>
+    <thead><tr><th style="width:22%">Kolumn</th><th>Vad den räknar</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Planerat</td><td>Timplansposternas minuter på periodens skoldagar, varje lärare med sin andel av raden. Lov räknas bort efter gruppens egen årskurs, som publiceringen gör.</td></tr>
+      <tr><td class="k">Schemalagt</td><td>Dagens grundschema räknat över perioden: varje lektion med sin egen längd, de veckor den går. Parkerade lektioner räknas inte. Ändringar under perioden syns i Genomfört, inte här.</td></tr>
+      <tr><td class="k">Genomfört</td><td>Lektioner i kalendern som har hållits, inte är inställda och har minst en lärare — samma definition av hållen tid som <span class="path">Timplan › Täckning</span>, men med alla ämnen, även dem som inte räknas mot timplanen, eftersom en lärares mentorstid också är undervisning.</td></tr>
+      <tr><td class="k">Som vikarie</td><td>Den del av Genomfört som läraren höll som vikarie.</td></tr>
+      <tr><td class="k">Vikarierad av andra</td><td>Hållna lektioner där läraren står i grundschemat men någon annan vikarierade.</td></tr>
+      <tr><td class="k">Bortfall</td><td>Inställda lektioner som läraren fortfarande står på, per orsak. Lov och studiedagar är inget bortfall.</td></tr>
+      <tr><td class="k">Kommande</td><td>Lektioner i perioden som inte har slutat än.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    <strong>Vem tiden räknas till.</strong> En hållen lektion räknas till
+    lärarraderna på den: ledaren och medläraren med radens procent, en vikarie
+    med 100 %, som Lectio räknar vikarien. När en vikarie sätts in ersätts
+    lektionens alla lärarrader, så en medlärare som var med får inte tiden;
+    den syns som <em>Vikarierad av andra</em>. Står en lärare kvar bredvid en
+    vikarie räknas den lektionen till vikarien och inte till läraren, och en
+    notis säger hur många sådana lektioner det finns. <em>Vikarierad av
+    andra</em> läses mot grundschemats nuvarande lärare, inte mot den som stod
+    i schemat den dagen. En lektion som läses för flera grupper samtidigt
+    (samläsning) räknas läraren med summan av sina andelar i gruppernas
+    timplansposter.
+  </p>
+  <p>
+    Planerat och schemalagt jämförs där kalendern finns: publicerades schemat
+    först i september räknas augusti inte som ett underskott, och sidan säger
+    från och till vilken dag jämförelsen gäller. Luckor mellan två
+    publiceringar namnges men justeras inte. Varje rad, varje lärares summa och
+    totalerna avrundas var för sig (avrundat per rad), så en lärares summa är
+    inte alltid summan av raderna under den. Under Faktor är minuterna räknad
+    tid. Varje lärare kan fällas ut per ämne och grupp, och under tabellen står
+    <span class="ui">Bortfall per grupp</span> med varje förlorad lektion en
+    gång, i elevernas minuter.
+  </p>
+  <p>
+    Ett läsår som har rullats men ännu inte aktiverats kan inte stämmas av:
+    sidan säger att läsåret inte är aktiverat. Fliken är bara för
+    administratörer; en lärare ser sina egna siffror via sin egen tjänst.
+  </p>
+
+  <h4>Exporter</h4>
+  <p>
+    <span class="ui">Exportera för samverkan (CSV)</span> ger en rad per lärare
+    — alla som har en tjänst, en timplanspost eller tid i perioden, också en
+    vikarie utan tjänst — med tjänst, nedsättning, avtal, riktmärke,
+    undervisning och uppdrag per vecka, toppvecka, saldo, timmar per läsår,
+    reglerad arbetstid, årsarbetstid och A-dagar enligt skolans inställningar,
+    ämnena, periodens planerat, schemalagt och genomfört, vikarietid, bortfall
+    och beräkningsmodellen. Kryssar du <span class="ui">Ta med
+    behörigheter</span> får filen en kolumn till med lärarens behörigheter;
+    valet gäller bara den filen och sparas inte, eftersom varje fil går till en
+    annan mottagare. Filen öppnas direkt i Excel (semikolon, UTF-8).
+  </p>
+  <p>
+    <span class="ui">SCB-underlag, Pedagogisk personal (CSV)</span> är ett
+    <strong>underlag</strong> till SCB:s insamling Pedagogisk personal, inte
+    SCB:s fil. Kolumnerna följer SCB:s <em>Pedagogisk personal HT 2026,
+    Datafilsbeskrivning</em> (versionsdatum 2026-05-07) och SCB:s
+    <em>Instruktioner 2026</em> (mätdatum 15 oktober 2026, sista insändningsdag
+    2 november 2026), båda från
+    <span class="path">scb.se › Lämna uppgifter › Pedagogisk personal</span>,
+    hämtade och kontrollerade 2026-10-09. Underlaget räknar läsårets planerade
+    undervisning (inte perioden ovan):
+  </p>
+  <ul>
+    <li>En rad per lärare och stadium: förskoleklass (verksamhetstyp 1),
+      grundskola åk 1–3, 4–6, 7–9 (4, 5, 6) eller anpassad grundskola (10, 11,
+      12), efter vilken timplan årskursen följer i
+      <span class="ui">Timplan per årskurs</span> (4.1). Specialskola och
+      sameskola har ingen kod i SCB:s lista och får tom verksamhetstyp.</li>
+    <li><strong>OmfLarare</strong> = tjänst − nedsättning, fördelad över
+      lärarens rader efter undervisningstiden. Uppdrag ingår i lärartjänsten,
+      som SCB anvisar. Nedsättningen räknas som partiell ledighet; avser den
+      förstelärarskap, facklig tid eller annat uppdrag ska hela tjänsten
+      anges, och underlaget påminner om det per lärare.</li>
+    <li><strong>Ämnesomfattningen</strong> räknas på undervisningstid, utan
+      faktor, i hela procent som summerar till 100. Ämnen SCB inte har en
+      kolumn för på radens stadium — NO och SO som block, fördelningsbar tid,
+      ämnen utanför timplanen — lämnas utanför och de övriga räknas upp, som
+      SCB:s instruktion säger; varje sådant ämne nämns i listan under
+      knappen. Förskoleklass får inga ämnen.</li>
+    <li>Tomma, att fylla i: <strong>PersonNr</strong>,
+      <strong>SkolenhetsKod</strong> och <strong>AnstForm</strong> — SchemaPro
+      lagrar dem inte — och andelen för förstelärare och lektor. System är
+      <em>SchemaPro</em> och Version SchemaPros versionsnummer.
+      Behörigheter och legitimation tas aldrig med; SCB hämtar dem själv.</li>
+  </ul>
+  <div class="warn">
+    <span class="label">Kontrollera innan inlämning</span>
+    <p>
+      Rubrikraden med SCB:s variabelnamn och kodningen (UTF-8 med BOM) är
+      SchemaPros egna val — SCB:s datafilsbeskrivning säger inget om dem. SCB
+      tar emot sin egen Excelmall eller ett systems textfil. Klistra in
+      underlagets rader i SCB:s Excelmall, komplettera personnummer,
+      skolenhetskod och anställningsform, gå igenom listan under knappen, och
+      kontrollera mot SCB:s aktuella datafilsbeskrivning innan du skickar in.
+      Spara inte om CSV-filen i Excel efter att ha skrivit in personnummer:
+      Excel kan göra om ett tolvsiffrigt nummer till ett tal. För ett annat
+      läsår än HT 2026 säger underlaget att kolumnerna följer 2026 års
+      beskrivning. Formatet behöver prövas mot en verklig skolas inlämning
+      innan det används skarpt.
+    </p>
+  </div>
 </section>
 
 <!-- ============================ 7 ============================ -->
@@ -1960,6 +2172,26 @@
     länge hör sannolikt till ett system som inte längre är i drift — återkalla
     den.
   </p>
+
+  <h4>Lärarnas tjänster (duties)</h4>
+  <p>
+    Ett anslutet system kan läsa det aktiva läsårets lärartjänster som
+    SS12000-objektet <em>Duty</em> (SS12000 version 2.1.0): vem som har en
+    lärartjänst på skolan, med signatur, läsårets start och slut, och
+    mentorskapen som uppdrag på sina klasser. Varje läsår får tjänsten ett
+    nytt id. Nedsättning, eget riktmärke, anteckning och behörigheter lämnas
+    aldrig ut.
+  </p>
+  <p>
+    <strong>Tjänstgöringsgraden</strong> i procent — och för en ferietjänst
+    årsarbetstiden i timmar — lämnas bara ut om skolan slår på
+    <span class="ui">Dela tjänstgöringsgrad och årsarbetstid med integrationer
+    (SS12000)</span> under
+    <span class="path">Tjänstefördelning › Inställningar</span>. Brytaren är
+    av från början: många anslutna system är lärplattformar som inte behöver
+    några procentsatser. Årsarbetstiden räknas på tjänsten utan nedsättning,
+    så att nedsättningen inte går att räkna fram ur det som delas.
+  </p>
 </section>
 
 <!-- ============================ 8 ============================ -->
@@ -1977,9 +2209,10 @@
       <tr><td class="k">Efter sista skoldagen</td><td>Aktivera det nya läsåret</td><td>Eleverna flyttar till sina nya klasser och nians går ut (8.3).</td></tr>
       <tr><td class="k">Sensommar</td><td>Granska efter sommarens klassbyten</td><td>Klassbyten och nya elever efter genereringen kan ge krockar; de ritas i grundschemat. Justera, eller generera om med hög <span class="ui">Schemastabilitet</span>.</td></tr>
       <tr><td class="k">Före terminsstart</td><td>Spara version och publicera</td><td>Publicera hela terminen eller läsåret.</td></tr>
+      <tr><td class="k">Oktober</td><td>SCB Pedagogisk personal</td><td>Mätdatum 15 oktober. Ta ut SCB-underlaget under <span class="path">Rapporter › Tjänstefördelning</span>, komplettera och kontrollera det (6.6).</td></tr>
       <tr><td class="k">Löpande</td><td>Drift</td><td>Närvaro, vikarier, ledigheter, bokningar.</td></tr>
       <tr><td class="k">Vid större ändringar</td><td>Spara version, justera, generera om</td><td>Höj <span class="ui">Schemastabilitet</span> så att befintliga placeringar behålls.</td></tr>
-      <tr><td class="k">Terminsslut</td><td>Exportera rapporter</td><td>Närvarostatistik per klass för arkivering.</td></tr>
+      <tr><td class="k">Terminsslut</td><td>Exportera rapporter</td><td>Närvarostatistik per klass för arkivering, och tjänstefördelningens samverkansfil med planerat mot genomfört.</td></tr>
     </tbody>
   </table>
 
