@@ -243,7 +243,10 @@
     "nationalCodeSuggestion": "Use {code} ({name})",
     "countsTowardTimplan": "Counts as teaching time",
     "countsTowardTimplanHint": "Turn off for mentor time and resource time, so those minutes stay out of every timplan total.",
-    "notTeachingTime": "Not teaching time"
+    "notTeachingTime": "Not teaching time",
+    "loadFactor": "Factor in staffing",
+    "loadFactorHint": "0.5–3, 1 = the minutes as they are. Used only when staffing counts with Factor (Staffing › Settings): the teacher's load = lesson time × factor.",
+    "loadFactorInvalid": "Enter a number between 0.5 and 3 with at most three decimals."
   },
   "rooms": {
     "title": "Rooms",
@@ -1618,7 +1621,7 @@
     "modeREFUSE": "Refuse",
     "modelMINUTES": "Minutes",
     "modelFACTOR": "Factor",
-    "modelHint": "Factor needs a weight per subject and comes in a later phase; until then minutes are counted whatever is chosen.",
+    "modelHint": "Minutes: a teacher's load is their lesson minutes. Factor: load = lesson time × the subject's factor (the school's setting per subject). The pupils' lesson minutes are not affected.",
     "refuseHint": "Refuse means an assignment that breaks the check is not saved, with a sentence saying why. Warn saves and shows the sentence. A substitute is always warned, never refused.",
     "policySaved": "The settings are saved.",
     "candidateUnqualified": "Not qualified",
@@ -1797,6 +1800,22 @@
       "footnote": "Counted teaching is the curriculum entries' minutes in a standard week plus duties counted as teaching. Both years are counted with the school's settings as they are today.",
       "failed": "The staffing for {year} could not be read, so no comparison is shown.",
       "notActivated": "{year} has not been fully activated, so its staffing cannot be read and no comparison is shown."
+    },
+    "teachingHeaderFactor": "Counted time (factor) min/wk",
+    "teachingPeakHeaderFactor": "Counted peak week (factor) min/wk",
+    "unitHintPercentFactor": "Under Factor the percentage is counted time: the employment rate × the subject's share of the teacher's counted time (minutes × factor). SCB's subject share is defined on teaching time and the SCB file takes it from lesson minutes, without the factor.",
+    "shareWithIntegrations": "Share employment rate and annual working time with integrations (SS12000)",
+    "shareWithIntegrationsHint": "Off: /ss12000/v1/duties only shows who holds a post, with signature and mentor assignments. On: also the employment rate in percent and, for a ferietjänst, the annual hours. Reduction, own target and note are never shared.",
+    "factor": {
+      "tableTitle": "Factor per subject",
+      "hint": "Load = lesson time × the subject's factor, 0.5–3 (1 = the minutes as they are). The factor is the school's per subject and applies to every school year, earlier years' figures included, and does not appear in the teachers' history. Factors are saved here; the model when you save the settings.",
+      "loadFailed": "The subjects could not be read.",
+      "subject": "Subject",
+      "factor": "Factor",
+      "factorFor": "Factor for {subject}",
+      "invalid": "A factor is a number between 0.5 and 3 with at most three decimals.",
+      "save": "{count, plural, =0 {Save factors} one {Save # factor} other {Save # factors}}",
+      "saved": "{count, plural, one {# factor saved} other {# factors saved}}"
     }
   },
   "myStaffing": {

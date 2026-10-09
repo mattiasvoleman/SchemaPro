@@ -362,7 +362,9 @@ export default function StaffingPage() {
           {view === "matrix" ? (
             <p className="text-xs text-foreground">
               {week === "peak" ? t("weekHintPeak") : t("weekHintStandard")}
-              {unit === "percent" ? ` ${t("unitHintPercent")}` : ""}
+              {unit === "percent"
+                ? ` ${t(report.loadModel === "FACTOR" ? "unitHintPercentFactor" : "unitHintPercent")}`
+                : ""}
             </p>
           ) : null}
 

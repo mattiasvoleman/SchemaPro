@@ -71,6 +71,12 @@ export interface Subject {
    * undervisningstid sum. The column is NOT NULL with default true.
    */
   countsTowardTimplan: boolean;
+  /**
+   * Tjänstefördelningens faktor (Skola24's "Faktor ämne"), 0,5..3, 1 = the
+   * minutes as they are. Read only when the policy's loadModel is FACTOR.
+   * Optional because a row read before staffing Fas 3 has none; absent is 1.
+   */
+  loadFactor?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -567,6 +573,11 @@ export interface StaffingPolicy {
   overAllocationTolerancePercent: number;
   loadModel: StaffingLoadModel;
   unstaffedGeneration: UnstaffedGenerationMode;
+  /**
+   * Whether /ss12000/v1/duties carries dutyPercent (and a ferietjänst's
+   * hoursPerYear). Off by default; optional for a gateway older than Fas 3.
+   */
+  shareEmploymentWithIntegrations?: boolean;
 }
 
 /** A teacher's post for ONE läsår; percentages carry up to three decimals. */

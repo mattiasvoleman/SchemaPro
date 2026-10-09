@@ -339,6 +339,8 @@ export interface PolicyDraft {
   overAllocationTolerancePercent: string;
   loadModel: StaffingLoadModel;
   unstaffedGeneration: UnstaffedGenerationMode;
+  /** Dela tjänstgöringsgrad med integrationer (SS12000 /duties). */
+  shareEmploymentWithIntegrations: boolean;
 }
 
 /** The table's defaults, as STAFFING_POLICY_DEFAULTS states them on the gateway. */
@@ -353,6 +355,7 @@ export const DEFAULT_POLICY_DRAFT: PolicyDraft = {
   overAllocationTolerancePercent: "10",
   loadModel: "MINUTES",
   unstaffedGeneration: "ALLOW",
+  shareEmploymentWithIntegrations: false,
 };
 
 export interface PolicyBody {
@@ -370,6 +373,11 @@ export interface PolicyBody {
    * ALLOW — a card that forgot it would switch a school's refusal off.
    */
   unstaffedGeneration: UnstaffedGenerationMode;
+  /**
+   * Always sent, for unstaffedGeneration's reason: an omitted field is the
+   * default false, so a card that forgot it would stop sharing on every save.
+   */
+  shareEmploymentWithIntegrations: boolean;
 }
 
 export type PolicyProblem =
@@ -428,6 +436,7 @@ export function policyDraftToBody(draft: PolicyDraft): PolicyBody {
     overAllocationTolerancePercent: wholeNumber(draft.overAllocationTolerancePercent) ?? 0,
     loadModel: draft.loadModel,
     unstaffedGeneration: draft.unstaffedGeneration,
+    shareEmploymentWithIntegrations: draft.shareEmploymentWithIntegrations,
   };
 }
 
@@ -442,6 +451,7 @@ export function policyToDraft(row: {
   overAllocationTolerancePercent: number;
   loadModel: StaffingLoadModel;
   unstaffedGeneration?: UnstaffedGenerationMode;
+  shareEmploymentWithIntegrations?: boolean;
 } | null | undefined): PolicyDraft {
   if (!row) return DEFAULT_POLICY_DRAFT;
   return {
@@ -459,5 +469,7 @@ export function policyToDraft(row: {
     loadModel: row.loadModel,
     // A row read from a gateway older than the column reads as today's rule.
     unstaffedGeneration: row.unstaffedGeneration ?? "ALLOW",
+    // Likewise: a gateway older than staffing Fas 3 shares nothing.
+    shareEmploymentWithIntegrations: row.shareEmploymentWithIntegrations ?? false,
   };
 }

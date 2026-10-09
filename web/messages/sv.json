@@ -243,7 +243,10 @@
     "nationalCodeSuggestion": "Använd {code} ({name})",
     "countsTowardTimplan": "Räknas som undervisningstid",
     "countsTowardTimplanHint": "Stäng av för mentorstid och resurs, så att tiden hålls utanför varje timplansumma.",
-    "notTeachingTime": "Ej undervisningstid"
+    "notTeachingTime": "Ej undervisningstid",
+    "loadFactor": "Faktor i tjänstefördelningen",
+    "loadFactorHint": "0,5–3, 1 = minuterna som de är. Används bara när tjänstefördelningen räknar med Faktor (Tjänstefördelning › Inställningar): lärarens tjänstgöring = lektionstid × faktor.",
+    "loadFactorInvalid": "Ange ett tal mellan 0,5 och 3 med högst tre decimaler."
   },
   "rooms": {
     "title": "Salar",
@@ -1618,7 +1621,7 @@
     "modeREFUSE": "Vägra",
     "modelMINUTES": "Minuter",
     "modelFACTOR": "Faktor",
-    "modelHint": "Faktor kräver en vikt per ämne och kommer i en senare fas; tills dess räknas minuter oavsett val.",
+    "modelHint": "Minuter: en lärares tjänstgöring är lektionsminuterna. Faktor: tjänstgöring = lektionstid × ämnets faktor (skolans inställning per ämne). Lektionsminuterna för eleverna påverkas inte.",
     "refuseHint": "Vägra betyder att en tilldelning som bryter mot kontrollen inte sparas, med en mening som säger varför. Varna sparar och visar meningen. En vikarie varnas alltid men vägras aldrig.",
     "policySaved": "Inställningarna är sparade.",
     "candidateUnqualified": "Saknar behörighet",
@@ -1797,6 +1800,22 @@
       "footnote": "Räknad undervisning är timplansposternas minuter en standardvecka plus uppdrag som räknas som undervisning. Båda läsåren räknas med skolans inställningar i dag.",
       "failed": "Tjänstefördelningen för {year} kunde inte läsas, så ingen jämförelse visas.",
       "notActivated": "{year} har inte aktiverats färdigt, så dess tjänstefördelning kan inte läsas och ingen jämförelse visas."
+    },
+    "teachingHeaderFactor": "Räknad tid (faktor) min/v",
+    "teachingPeakHeaderFactor": "Räknad toppvecka (faktor) min/v",
+    "unitHintPercentFactor": "Med Faktor är procenten räknad tid: tjänstgöringsgraden × ämnets andel av lärarens räknade tid (minuter × faktor). SCB:s ämnesomfattning räknas på undervisningstid och tas i SCB-underlaget från lektionsminuterna, utan faktor.",
+    "shareWithIntegrations": "Dela tjänstgöringsgrad och årsarbetstid med integrationer (SS12000)",
+    "shareWithIntegrationsHint": "Av: /ss12000/v1/duties visar bara vem som har en tjänst, med signatur och mentorsuppdrag. På: även tjänstgöringsgrad i procent och, för ferietjänst, årsarbetstid i timmar. Nedsättning, eget riktmärke och anteckning delas aldrig.",
+    "factor": {
+      "tableTitle": "Faktor per ämne",
+      "hint": "Tjänstgöring = lektionstid × ämnets faktor, 0,5–3 (1 = minuterna som de är). Faktorn är skolans per ämne och gäller alla läsår, även tidigare års siffror, och syns inte i lärarnas historik. Faktorerna sparas här; beräkningsmodellen när du sparar inställningarna.",
+      "loadFailed": "Ämnena kunde inte läsas.",
+      "subject": "Ämne",
+      "factor": "Faktor",
+      "factorFor": "Faktor för {subject}",
+      "invalid": "En faktor är ett tal mellan 0,5 och 3 med högst tre decimaler.",
+      "save": "{count, plural, =0 {Spara faktorer} one {Spara # faktor} other {Spara # faktorer}}",
+      "saved": "{count, plural, one {# faktor sparad} other {# faktorer sparade}}"
     }
   },
   "myStaffing": {

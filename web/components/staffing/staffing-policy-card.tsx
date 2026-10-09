@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { SlidersHorizontal } from "lucide-react";
@@ -22,6 +22,7 @@ import type { StaffingCheckMode, StaffingLoadModel, UnstaffedGenerationMode } fr
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -29,6 +30,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+/**
+ * "Faktor per ämne", shown only once the admin picks the Faktor model. Lazy
+ * (React's, not next/dynamic — see the drawer on the page): a MINUTES school,
+ * which is every school until one chooses otherwise, never loads it.
+ */
+const SubjectFactorsTable = lazy(() =>
+  import("./subject-factors-table").then((module) => ({ default: module.SubjectFactorsTable })),
+);
 
 /**
  * Tjänstefördelningens inställningar: one row for the school.
@@ -243,6 +253,27 @@ export function StaffingPolicyCard({ id = "staffing-policy" }: { id?: string }) 
             </Select>
             <p className="text-xs text-muted-foreground">{t("modelHint")}</p>
           </div>
+        </div>
+
+        {draft.loadModel === "FACTOR" ? (
+          <Suspense fallback={null}>
+            <SubjectFactorsTable />
+          </Suspense>
+        ) : null}
+
+        {/* Staffing Fas 3: what /ss12000/v1/duties may say about a post. Off
+            until the school says otherwise — the consumers of an integration
+            key are often learning platforms that need no percentages. */}
+        <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+          <div className="space-y-1">
+            <Label htmlFor={`${id}-share`}>{t("shareWithIntegrations")}</Label>
+            <p className="text-xs text-muted-foreground">{t("shareWithIntegrationsHint")}</p>
+          </div>
+          <Switch
+            id={`${id}-share`}
+            checked={draft.shareEmploymentWithIntegrations}
+            onCheckedChange={(checked) => patch({ shareEmploymentWithIntegrations: checked })}
+          />
         </div>
 
         <div className="space-y-1.5">

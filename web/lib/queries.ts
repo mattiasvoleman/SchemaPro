@@ -104,15 +104,21 @@ export function useSubjects() {
       // Ämnesval before Bild. Every consumer reads this hook, so the subject
       // page, the timplan columns and every subject dropdown agree.
       sortByName(
-        await selectAll<Subject>(
-          "Subjects",
-          // nationalCode and countsTowardTimplan are part of the row the
-          // subjects form writes back: left out of this list, the dialog would
-          // open on "Utanför timplanen" for every mapped subject and the next
-          // save would clear the mapping.
-          "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan",
-          "name",
-        ),
+        (
+          await selectAll<Subject>(
+            "Subjects",
+            // nationalCode, countsTowardTimplan and loadFactor are part of the
+            // row the subjects form writes back: left out of this list, the
+            // dialog would open on "Utanför timplanen" for every mapped subject
+            // (or on factor 1) and the next save would clear the mapping.
+            "id, name, code, color, requiredRoomTypeId, nationalCode, countsTowardTimplan, loadFactor",
+            "name",
+          )
+        ).map((subject) => ({
+          ...subject,
+          // A NUMERIC column: a number, never the string a driver may hand over.
+          loadFactor: Number(subject.loadFactor ?? 1),
+        })),
         (subject) => subject.name,
       ),
   });
