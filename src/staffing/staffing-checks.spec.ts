@@ -7,6 +7,7 @@ import {
   STAFF_TEACHER_OVER_TARGET,
   STAFF_UNSTAFFED_REQUIREMENTS,
   gradesParam,
+  judgeRequirementBatch,
   judgeRequirementWrite,
   overTargetFinding,
   qualificationFinding,
@@ -328,6 +329,94 @@ describe('judgeRequirementWrite', () => {
         after: requirement({ teacherId: BO, lessonsPerWeek: 40 }),
       }),
     ).toEqual([]);
+  });
+});
+
+describe('judgeRequirementBatch', () => {
+  const CY = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  // Riktmärke 1000, 10 %: the limit is 1 100. Anna and Bo each carry 960 of
+  // other rows and one 120-minute row of Ma: 1 080 each, inside.
+  const school = (overrides: Partial<LoadInput> = {}): LoadInput =>
+    input({
+      employments: [employment(ANNA), employment(BO), employment(CY)],
+      qualifications: [qualification(), qualification({ userId: BO })],
+      requirements: [
+        requirement({ id: 'a-rest', subjectId: 'x', teacherId: ANNA, lessonsPerWeek: 16 }),
+        requirement({ id: 'b-rest', subjectId: 'x', teacherId: BO, lessonsPerWeek: 16 }),
+        requirement({ id: 'r-anna', teacherId: ANNA }),
+        requirement({ id: 'r-bo', teacherId: BO }),
+        requirement({ id: 'r-open' }),
+      ],
+      ...overrides,
+    });
+  const refuse = policy({ qualificationMode: 'REFUSE', overAllocationMode: 'REFUSE' });
+
+  it('judges a swap as one write: neither teacher grows, so nothing is said, where one row at a time refuses', () => {
+    const year = school();
+    const changes = [
+      { requirementId: 'r-anna', teacherId: BO },
+      { requirementId: 'r-bo', teacherId: ANNA },
+    ];
+    expect(judgeRequirementBatch({ input: year, policy: refuse, changes })).toEqual([]);
+    // The first half alone puts Bo at 1 200.
+    const bo = year.requirements.find((row) => row.id === 'r-anna')!;
+    expect(
+      judgeRequirementWrite({ input: year, policy: refuse, before: bo, after: { ...bo, teacherId: BO }, subjectName: 'Matematik' }),
+    ).toEqual([expect.objectContaining({ code: STAFF_TEACHER_OVER_TARGET, userId: BO })]);
+  });
+
+  it('asks the load once per teacher who grows, naming every row they gain, in row order', () => {
+    const findings = judgeRequirementBatch({
+      input: school(),
+      policy: refuse,
+      changes: [
+        { requirementId: 'r-open', teacherId: ANNA },
+        { requirementId: 'r-bo', teacherId: ANNA },
+      ],
+    });
+    expect(findings).toEqual([
+      expect.objectContaining({
+        code: STAFF_TEACHER_OVER_TARGET,
+        mode: 'REFUSE',
+        userId: ANNA,
+        requirementIds: ['r-bo', 'r-open'],
+        params: { role: 'TEACHER', minutes: 1320, target: 1000, limit: 1100, tolerance: 10 },
+      }),
+    ]);
+  });
+
+  it('asks behörighet of every row whose lead becomes somebody new, before any load, in row order', () => {
+    const findings = judgeRequirementBatch({
+      input: school(),
+      policy: refuse,
+      changes: [
+        { requirementId: 'r-open', teacherId: CY },
+        { requirementId: 'r-bo', teacherId: CY },
+        // Unchanged, and emptied: neither is an assignment.
+        { requirementId: 'r-anna', teacherId: ANNA },
+        { requirementId: 'b-rest', teacherId: null },
+      ],
+    });
+    expect(findings.map((f) => [f.code, f.userId, f.requirementIds])).toEqual([
+      [STAFF_TEACHER_NOT_QUALIFIED, CY, ['r-bo']],
+      [STAFF_TEACHER_NOT_QUALIFIED, CY, ['r-open']],
+    ]);
+    // Cy carries 240 of a 1 000 target: no load finding.
+  });
+
+  it('asks nothing under OFF, no behörighet with nothing recorded, and no load with the load mode off', () => {
+    const changes = [{ requirementId: 'r-open', teacherId: ANNA }];
+    expect(judgeRequirementBatch({ input: school(), policy: policy({ qualificationMode: 'OFF', overAllocationMode: 'OFF' }), changes })).toEqual([]);
+    expect(
+      judgeRequirementBatch({ input: school({ qualifications: [] }), policy: policy({ overAllocationMode: 'OFF' }), changes: [{ requirementId: 'r-open', teacherId: CY }] }),
+    ).toEqual([]);
+    expect(judgeRequirementBatch({ input: school(), policy: policy({ overAllocationMode: 'OFF' }), changes })).toEqual([]);
+  });
+
+  it('throws on a row the year does not hold', () => {
+    expect(() =>
+      judgeRequirementBatch({ input: school(), policy: refuse, changes: [{ requirementId: 'nope', teacherId: ANNA }] }),
+    ).toThrow('nope');
   });
 });
 
