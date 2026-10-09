@@ -134,6 +134,7 @@ export function suggestTeachers(
   const teaches = (userId: string, row: (typeof others)[number]) =>
     row.teacherId === userId || row.coTeacherId === userId;
   const lastYearTeachers = new Set(lastYear?.teacherIds ?? []);
+  const familiar = subjectFamiliarTeachers(input, requirementId, lastYear);
 
   const candidates: TeacherCandidate[] = [];
   for (const userId of new Set(staffIds)) {
@@ -168,7 +169,7 @@ export function suggestTeachers(
       ? candidate.qualificationKind
         ? QUALIFICATION_RANK[candidate.qualificationKind]
         : 0
-      : Number(candidate.teachesSubjectAlready || candidate.taughtLastYear);
+      : Number(familiar.has(candidate.userId));
   candidates.sort(
     (a, b) =>
       tier(b) - tier(a) ||
@@ -189,4 +190,37 @@ export function suggestTeachers(
     lastYear: lastYear ? { groupName: lastYear.groupName, yearName: lastYear.yearName } : null,
     candidates,
   };
+}
+
+/**
+ * Who "already teaches the subject" for one timplanspost: everybody who leads
+ * or co-teaches ANOTHER row of the subject this year, and whoever taught it for
+ * the group's predecessor last year (`lastYear`, as the caller read it).
+ *
+ * The floor a school with NO behörighet rows is ranked by — suggestTeachers'
+ * key (1) without records, which is exactly teachesSubjectAlready ||
+ * taughtLastYear — and the eligibility the staffing proposal sends for such a
+ * school, as a preference rather than a rule (StaffingProposalService). One
+ * predicate, so the picker's first tier and the proposal's "undervisar redan i
+ * ämnet" badge name the same people.
+ *
+ * Every id the rows name, staff or not: the caller intersects with whom it can
+ * actually give the row to.
+ */
+export function subjectFamiliarTeachers(
+  input: Pick<LoadInput, 'requirements'>,
+  requirementId: string,
+  lastYear: LastYearTeachers | null,
+): Set<string> {
+  const requirement = input.requirements.find((row) => row.id === requirementId);
+  if (!requirement) {
+    throw new Error(`subjectFamiliarTeachers: requirement ${requirementId} is not in the input`);
+  }
+  const familiar = new Set<string>(lastYear?.teacherIds ?? []);
+  for (const row of input.requirements) {
+    if (row.id === requirementId || row.subjectId !== requirement.subjectId) continue;
+    if (row.teacherId !== null) familiar.add(row.teacherId);
+    if (row.coTeacherId !== null) familiar.add(row.coTeacherId);
+  }
+  return familiar;
 }
