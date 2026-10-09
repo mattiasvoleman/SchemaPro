@@ -315,6 +315,15 @@ describe("SCB Pedagogisk personal, underlag", () => {
     expect(csv.toLowerCase()).not.toContain("legitim");
   });
 
+  it("names a post with no planned teaching: SCB wants a verksamhetstyp and subjects for OmfLarare > 0", () => {
+    // A speciallärare, or a teacher whose timplansposter are not staffed yet.
+    const { csv, notices } = scbUnderlag(input({ load: [teacher("t-anna", { assignments: [] })] }));
+    const [row] = rowsOf(csv);
+    expect(row![col("OmfLarare")]).toBe("100");
+    expect(row![col("Verksamhetstyp")]).toBe("");
+    expect(notices).toContainEqual({ code: "NO_TEACHING", params: { name: "Anna Öberg" } });
+  });
+
   it("splits a group across stages by its grades, and the post by largest remainder summing to the whole", () => {
     const { csv } = scbUnderlag(
       input({

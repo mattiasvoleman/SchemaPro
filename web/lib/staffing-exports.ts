@@ -489,6 +489,7 @@ export function scbColumnOf(subject: Pick<Subject, "nationalCode" | "code" | "na
 export type ScbNoticeCode =
   | "NOT_HT2026"
   | "NO_POST"
+  | "NO_TEACHING"
   | "FULL_LEAVE"
   | "REDUCTION"
   | "FORSTELARARE"
@@ -668,6 +669,12 @@ export function scbUnderlag(input: ScbInput): { csv: string; notices: ScbNotice[
       continue;
     }
     if (stages.length === 0) {
+      // A post with no planned teaching (a speciallärare, posts not yet
+      // staffed): the row has no verksamhetstyp to take from a group, and
+      // SCB wants one on every row and subjects whenever OmfLarare > 0. The
+      // row is kept — the tjänst is real — and named, so the count above the
+      // file is never "nothing to check" for a row SCB would refuse.
+      if (omf !== null && omf > 0) notice({ code: "NO_TEACHING", params: { name } });
       const record = base("");
       record.OmfLarare = omf === null ? "" : String(Math.round(omf));
       record.Undervisning = "N";

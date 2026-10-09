@@ -1275,6 +1275,7 @@
         "notice": {
           "NOT_HT2026": "Kolumnerna följer SCB:s datafilsbeskrivning {version}; kontrollera mot årets innan inlämning.",
           "NO_POST": "{name}: undervisning men ingen tjänst registrerad, så OmfLarare är tom.",
+          "NO_TEACHING": "{name}: tjänst men ingen planerad undervisning, så raden saknar verksamhetstyp och ämnen. Fyll i dem, eller redovisa personen i en annan befattning (till exempel OmfSpeciallarare).",
           "FULL_LEAVE": "{name}: helt nedsatt. Raden anger tjänsten före ledigheten och inga ämnen; ange AnstForm L om personen är tjänstledig.",
           "REDUCTION": "{name}: nedsättningen räknas som partiell ledighet (tjänst − nedsättning). Avser den förstelärarskap, facklig tid eller annat uppdrag ska hela tjänsten anges.",
           "FORSTELARARE": "{name}: har ett försteläraruppdrag. Ange andelen av tjänsten i kolumnen ForsteLarare.",
