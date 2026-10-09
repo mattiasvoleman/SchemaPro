@@ -72,7 +72,7 @@ import { AcademicYearTimplansService } from '../../src/timplan/academic-year-tim
 import { TimplanCoverageService, readPlannedInput } from '../../src/timplan/timplan-coverage.service';
 import { TimplanRequirementsService } from '../../src/timplan/timplan-requirements.service';
 import { TimplanCreditsService } from '../../src/timplan/timplan-credits.service';
-import { readDeliveredRows } from '../../src/timplan/timplan-delivered.sql';
+import { readDeliveredRows, staffingCreditStatement } from '../../src/timplan/timplan-delivered.sql';
 import type { DeliveredLineDetail } from '../../src/common/timplan-delivered';
 import {
   decidedTimplanRefusal,
@@ -1268,6 +1268,19 @@ async function runChecks(
       )
     ).rows;
     assert.deepEqual(stored, [{ userId: person.id, minutesPerWeek: 25, countsAsTeaching: true, blockedConstraintId: null }]);
+    // Staffing Fas 3: the import's writes are versions by the admin, and the
+    // identical re-import is none (the trigger skips an unchanged row).
+    const versions = (
+      await owner.query<{ action: string; actorId: string | null }>(
+        `SELECT l.action::text AS action, l."actorId" FROM "TeacherEmploymentLogs" l
+           JOIN "TeacherDuties" d ON d.id = l."entityId" WHERE d.label = $1 ORDER BY l.version`,
+        [`${MARKER} import`],
+      )
+    ).rows;
+    assert.deepEqual(versions, [
+      { action: 'CREATE', actorId: admin.userId },
+      { action: 'UPDATE', actorId: admin.userId },
+    ]);
   });
 
   // ---- (r) the staffing checks: a post locked through the real adapter
@@ -2911,6 +2924,18 @@ async function runChecks(
 
     const target = await staffingOf(tj.targetYearId);
     const source = await staffingOf(tj.sourceYearId);
+    // Staffing Fas 3: every carried post and uppdrag is a CREATE version of
+    // the new year, written in the rollover's transaction by the admin who ran it.
+    const carriedVersions = (
+      await owner.query<{ entity: string; action: string; actorId: string | null }>(
+        `SELECT entity::text AS entity, action::text AS action, "actorId" FROM "TeacherEmploymentLogs"
+          WHERE "academicYearId" = $1 ORDER BY "userId", version`,
+        [tj.targetYearId],
+      )
+    ).rows;
+    assert.equal(carriedVersions.filter((v) => v.entity === 'EMPLOYMENT' && v.action === 'CREATE').length, 2, 'a carried post is no version');
+    assert.equal(carriedVersions.filter((v) => v.entity === 'DUTY' && v.action === 'CREATE').length, 2, 'a carried uppdrag is no version');
+    assert.ok(carriedVersions.every((v) => v.actorId === tjAdmin.userId), 'a carried version names another actor than the admin');
     assert.deepEqual(target.employments, [
       { userId: tj.t1.id, percent: '100.000', reduction: '10.000', kind: 'FERIE', target: null, signature: 'TJ1', note: 'probe tj ett' },
       { userId: tj.t2.id, percent: '80.000', reduction: '0.000', kind: 'SEMESTER', target: 900, signature: 'TJ2', note: null },
@@ -2945,6 +2970,11 @@ async function runChecks(
     );
     assert.equal(await schoolConstraints(), constraintsBefore);
     assert.equal(await sourceChecksum(owner, tj.sourceYearId), before, 'deleting the new year changed the source year');
+    assert.equal(
+      (await owner.query('SELECT 1 FROM "TeacherEmploymentLogs" WHERE "academicYearId" = $1', [tj.targetYearId])).rowCount,
+      0,
+      'a deleted year left its tjänsters history behind',
+    );
     tj.targetYearId = '';
   });
 
@@ -3122,6 +3152,17 @@ async function runChecks(
     assert.ok(dropped.problems.some((problem) => problem.code === 'STAFFING_SIGNATURE_TAKEN'));
     assert.deepEqual((await carry.execute(yearId, dropped.planHash, tjAdmin)).counts, { employments: 2, duties: 2, dutySlots: 2 });
     assert.equal(await sourceChecksum(owner, tj.sourceYearId), before, 'the carry changed the source year');
+    // Staffing Fas 3: the staffing-rollover endpoint's writes are versions by the admin.
+    const endpointVersions = (
+      await owner.query<{ actorId: string | null }>(
+        `SELECT "actorId" FROM "TeacherEmploymentLogs" WHERE "academicYearId" = $1 AND action = 'CREATE'`,
+        [yearId],
+      )
+    ).rows;
+    // The probe's own owner-written rows (the signature taken meanwhile) carry no actor.
+    const byAdmin = endpointVersions.filter((v) => v.actorId === tjAdmin.userId).length;
+    assert.ok(byAdmin >= 4, `the carry wrote ${byAdmin} version(s) by the admin, expected its posts and uppdrag`);
+    assert.ok(endpointVersions.every((v) => v.actorId === tjAdmin.userId || v.actorId === null), 'a version names an actor nobody was');
   });
 
   await check('(y) the SS12000 sync keeps a pupil whose roster still names last year\'s class, under the service principal', async () => {
@@ -3220,6 +3261,206 @@ async function runChecks(
       await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
     }
   });
+
+  // ---- Staffing Fas 3: avstämning, historik, faktor och /duties, in a school of their own.
+  {
+    const f3 = await givenFas3School(owner);
+    const notifications = {
+      recipientsForGroups: async () => [],
+      notifyUsers: async () => undefined,
+    } as unknown as NotificationsService;
+    const realtime = { notifyMasterTimetableChanged: () => undefined, notifyLessonChanged: async () => undefined } as unknown as RealtimeService;
+    try {
+      await check('(ö1) avstämning: statement E credits the rows on held lessons through the real adapter — lead and co-teacher at their percentages, the vikarie at 100 %, a lead beside a vikarie nobody — and a teacher gets their own row alone', async () => {
+        const loads = new StaffingLoadService(api);
+        const range = { academicYearId: f3.yearId, from: f3.dayAt(-20), to: f3.dayAt(10) };
+        const admin = await loads.delivered(range, f3.admin);
+        const row = (userId: string) => admin.teachers.find((teacher) => teacher.userId === userId);
+        assert.deepEqual(
+          [row(f3.t1.id), row(f3.t2.id), row(f3.t3.id)].map((teacher) =>
+            teacher && [teacher.delivered, teacher.substituteMinutes, teacher.coveredByOthersMinutes, teacher.lostMinutes, teacher.aheadMinutes, teacher.deliveredLessons, teacher.displacedLessons],
+          ),
+          [
+            // t1: L1 and the mentorstid lesson held; L2 and L4 covered; L3 lost; L6 ahead; L4's LEAD displaced.
+            [120, 0, 120, 60, 60, 2, 1],
+            // t2 at 50 %: L1; L2 and L4 covered; L3 lost; L6 ahead.
+            [30, 0, 60, 30, 30, 1, 0],
+            // t3 the vikarie: L2 and L4 at 100 %.
+            [120, 120, 0, 0, 0, 2, 0],
+          ],
+        );
+        assert.ok(admin.notices.some((notice) => notice.code === 'STAFFING_LEAD_BESIDE_SUBSTITUTE' && notice.params.lessons === 1));
+        assert.deepEqual(
+          admin.groupLosses.map((loss) => [loss.studentGroupId, loss.subjectId, loss.cancelledTeacherUnavailable, loss.lessons]),
+          [[f3.class7a, f3.ma, 60, 1]],
+        );
+        assert.equal(admin.totals?.delivered, 270);
+
+        const own = await loads.delivered(range, f3.teacher(f3.t1));
+        assert.deepEqual(own.teachers.map((teacher) => teacher.userId), [f3.t1.id]);
+        assert.deepEqual(own.groupLosses, []);
+        assert.equal(own.totals, null);
+        const mine = own.teachers[0]!;
+        const theirs = row(f3.t1.id)!;
+        assert.deepEqual(
+          [mine.planned, mine.scheduled, mine.delivered, mine.coveredByOthersMinutes, mine.lostMinutes, mine.displacedLessons],
+          [theirs.planned, theirs.scheduled, theirs.delivered, theirs.coveredByOthersMinutes, theirs.lostMinutes, null],
+        );
+        // The rows Postgres hands back are the types the module reads.
+        const rows = await api.withRls(f3.admin, (tx) =>
+          tx.$queryRaw<{ minutes: unknown; lessons: unknown; extraGroupIds: unknown }[]>(
+            staffingCreditStatement(
+              { academicYearId: f3.yearId, yearStart: f3.dayAt(-60), yearEnd: f3.dayAt(200), asOf: new Date() },
+              { from: range.from, to: range.to },
+              null,
+            ),
+          ),
+        );
+        assert.ok(rows.length > 0 && rows.every((r) => typeof r.minutes === 'number' && typeof r.lessons === 'number'));
+        assert.ok(rows.every((r) => r.extraGroupIds === null || Array.isArray(r.extraGroupIds)));
+      });
+
+      await check('(ö2) a master lesson’s new teacher is not written beside a vikarie, and naming the vikarie as the lead is no longer a P2002 (C5b)', async () => {
+        const lessons = new MasterLessonsService(api, realtime, notifications);
+        const calendar = new CalendarLessonsService(api, realtime, notifications);
+        await calendar.assignSubstitute(f3.future.withSub, { teacherId: f3.t3.id }, f3.admin);
+        const rowsOf = async (lesson: string) =>
+          (
+            await owner.query<{ teacherId: string; role: string }>(
+              `SELECT "teacherId", role::text AS role FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = $1 ORDER BY role, "teacherId"`,
+              [lesson],
+            )
+          ).rows.map((r) => [r.teacherId, r.role]);
+        assert.deepEqual(await rowsOf(f3.future.withSub), [[f3.t3.id, 'SUBSTITUTE']]);
+
+        await lessons.update(f3.future.master, { teacherId: f3.t2.id }, f3.admin);
+        assert.deepEqual(await rowsOf(f3.future.withSub), [[f3.t3.id, 'SUBSTITUTE']], 'the new lead was written beside the vikarie');
+        assert.deepEqual(await rowsOf(f3.future.plain), [[f3.t2.id, 'LEAD']], 'a lesson without a vikarie did not get the new lead');
+
+        // The vikarie as the new lead: one row each, no unique violation.
+        await lessons.update(f3.future.master, { teacherId: f3.t3.id }, f3.admin);
+        assert.deepEqual(await rowsOf(f3.future.withSub), [[f3.t3.id, 'SUBSTITUTE']]);
+        assert.deepEqual(await rowsOf(f3.future.plain), [[f3.t3.id, 'LEAD']]);
+      });
+
+      await check('(ö3) a tjänst’s history through the real adapter: every service write a version by the admin, a no-op none, a teacher reads their own, the owner rewrites nothing, and a person deleted takes theirs', async () => {
+        const employments = new TeacherEmploymentsService(api);
+        const duties = new TeacherDutiesService(api);
+        const versionsOf = async (userId: string) =>
+          (
+            await owner.query<{ version: number; entity: string; action: string; actorId: string | null }>(
+              `SELECT version, entity::text AS entity, action::text AS action, "actorId" FROM "TeacherEmploymentLogs"
+                WHERE "userId" = $1 AND "academicYearId" = $2 ORDER BY version`,
+              [userId, f3.yearId],
+            )
+          ).rows;
+        const startAt = (await versionsOf(f3.t2.id)).length;
+        await employments.upsert(f3.t2.id, f3.yearId, { employmentPercent: 75 }, f3.admin);
+        await employments.upsert(f3.t2.id, f3.yearId, { employmentPercent: 75 }, f3.admin);
+        await employments.upsert(f3.t2.id, f3.yearId, { employmentPercent: 75, reductionPercent: 5 }, f3.admin);
+        const duty = await duties.create(
+          { userId: f3.t2.id, academicYearId: f3.yearId, kind: 'RASTVAKT', label: `${MARKER} f3 vakt`, minutesPerWeek: 30 },
+          f3.admin,
+        );
+        await duties.update(duty.id, { minutesPerWeek: 45 }, f3.admin);
+        await duties.remove(duty.id, f3.admin);
+        const written = (await versionsOf(f3.t2.id)).slice(startAt);
+        assert.deepEqual(
+          written.map((v) => [v.entity, v.action, v.actorId]),
+          [
+            ['EMPLOYMENT', 'UPDATE', f3.admin.userId],
+            ['EMPLOYMENT', 'UPDATE', f3.admin.userId],
+            ['DUTY', 'CREATE', f3.admin.userId],
+            ['DUTY', 'UPDATE', f3.admin.userId],
+            ['DUTY', 'DELETE', f3.admin.userId],
+          ],
+          'the writes are not exactly five versions (the identical PUT must write none)',
+        );
+        const all = await versionsOf(f3.t2.id);
+        assert.deepEqual(all.map((v) => v.version), all.map((_, i) => i + 1), 'versions have a gap');
+
+        const history = await employments.history(f3.t2.id, f3.yearId, f3.admin);
+        assert.equal(history.entries[0]!.version, all.length);
+        assert.deepEqual(history.entries.find((e) => e.entity === 'EMPLOYMENT' && e.action === 'UPDATE' && e.changes.some((c) => c.field === 'reductionPercent'))!.changes, [
+          { field: 'reductionPercent', before: 0, after: 5 },
+        ]);
+        // The teacher: their own through the service and through RLS; a colleague's 403.
+        assert.equal((await employments.history(f3.t2.id, f3.yearId, f3.teacher(f3.t2))).entries.length, history.entries.length);
+        await assert.rejects(employments.history(f3.t2.id, f3.yearId, f3.teacher(f3.t1)), ForbiddenException);
+        const seen = await api.withRls(f3.teacher(f3.t1), (tx) => tx.teacherEmploymentLog.findMany({ select: { userId: true } }));
+        assert.ok(seen.length > 0 && seen.every((r) => r.userId === f3.t1.id), 'a teacher read a colleague’s history through RLS');
+
+        // The owner rewrites nothing: the guards hold for the role RLS does not bind.
+        for (const statement of [
+          `UPDATE "TeacherEmploymentLogs" SET "actorId" = NULL WHERE "userId" = $1`,
+          `DELETE FROM "TeacherEmploymentLogs" WHERE "userId" = $1`,
+          `INSERT INTO "TeacherEmploymentLogs" ("schoolId", "userId", "academicYearId", version, entity, "entityId", action, after)
+           SELECT "schoolId", "userId", "academicYearId", 999, entity, "entityId", 'CREATE', '{}'::jsonb FROM "TeacherEmploymentLogs" WHERE "userId" = $1 LIMIT 1`,
+        ]) {
+          await assert.rejects(owner.query(statement, [f3.t2.id]), (error: { code?: string }) => error.code === 'TL403');
+        }
+
+        // A person deleted, with a post, a slot-holding uppdrag and a mentorship: works, and takes their history.
+        await owner.query(`DELETE FROM "Users" WHERE id = $1`, [f3.t4.id]);
+        assert.equal((await versionsOf(f3.t4.id)).length, 0, 'a deleted person left history behind');
+      });
+
+      await check('(ö4) /ss12000/v1/duties under the service principal: the active year’s posts of active users as Duty objects, the mentorship, no nedsättning ever, the percentage only with the opt-in', async () => {
+        const ss12000 = new Ss12000Service(api);
+        const off = await ss12000.duties(f3.schoolId);
+        const keys = (duty: object) => Object.keys(duty).sort();
+        assert.ok(off.data.length >= 2);
+        assert.ok(off.data.every((duty) => !('dutyPercent' in duty) && !('hoursPerYear' in duty) && duty.dutyRole === 'Lärare'));
+        assert.ok(!JSON.stringify(off).includes('reduction'));
+        const t1 = off.data.find((duty) => duty.person.id === f3.t1.id)!;
+        assert.deepEqual(t1.assignmentRole, [
+          { group: { id: f3.class7a }, assignmentRoleType: 'Mentor', startDate: f3.dayAt(-60), endDate: f3.dayAt(200) },
+        ]);
+        assert.ok(keys(t1).every((key) => ['id', 'meta', 'person', 'assignmentRole', 'dutyAt', 'dutyRole', 'signature', 'startDate', 'endDate'].includes(key)));
+        assert.ok(!off.data.some((duty) => duty.person.id === f3.inactive.id), 'an inactive user’s post was exported');
+
+        await owner.query(`UPDATE "StaffingPolicies" SET "shareEmploymentWithIntegrations" = true WHERE "schoolId" = $1`, [f3.schoolId]);
+        const on = await ss12000.duties(f3.schoolId);
+        const t1On = on.data.find((duty) => duty.person.id === f3.t1.id)!;
+        // t1's post is 100 % with 20 % nedsättning: the post, never the difference.
+        assert.equal(t1On.dutyPercent, 100);
+        assert.equal(t1On.hoursPerYear, 1767);
+        await owner.query(`UPDATE "StaffingPolicies" SET "shareEmploymentWithIntegrations" = false WHERE "schoolId" = $1`, [f3.schoolId]);
+      });
+
+      await check('(ö5) a subject’s Faktor round-trips as a number, and under FACTOR the load and the scheduled horizon charge minutes × factor through the real adapter', async () => {
+        const subjects = new SubjectsService(api);
+        const loads = new StaffingLoadService(api);
+        const before = await loads.load(f3.yearId, 'planned', f3.admin);
+        const updated = await subjects.update(f3.ma, { loadFactor: 0.7 }, f3.admin);
+        assert.equal(updated.loadFactor, 0.7);
+        const minutes = await loads.load(f3.yearId, 'planned', f3.admin);
+        assert.deepEqual(JSON.stringify(minutes), JSON.stringify(before), 'a factor moved a MINUTES school’s figures');
+        await owner.query(`UPDATE "StaffingPolicies" SET "loadModel" = 'FACTOR' WHERE "schoolId" = $1`, [f3.schoolId]);
+        try {
+          const factor = await loads.load(f3.yearId, 'planned', f3.admin);
+          const t1 = (report: typeof factor) => report.teachers.find((teacher) => teacher.userId === f3.t1.id)!;
+          assert.equal(factor.loadModel, 'FACTOR');
+          assert.equal(t1(factor).assignedMinutesPerWeek, Math.round(t1(before).assignedMinutesPerWeek * 0.7));
+          assert.equal(factor.totals.lessonMinutesPerWeek, before.totals.lessonMinutesPerWeek);
+          const scheduled = await loads.load(f3.yearId, 'scheduled', f3.admin);
+          assert.equal(scheduled.horizon, 'scheduled');
+          assert.equal(scheduled.listsComputed, false);
+          const own = await loads.load(f3.yearId, 'scheduled', f3.teacher(f3.t1));
+          assert.deepEqual(own.teachers.map((teacher) => teacher.userId), [f3.t1.id]);
+        } finally {
+          await owner.query(`UPDATE "StaffingPolicies" SET "loadModel" = 'MINUTES' WHERE "schoolId" = $1`, [f3.schoolId]);
+          await subjects.update(f3.ma, { loadFactor: 1 }, f3.admin);
+        }
+      });
+    } finally {
+      // (ö6) as the owner: a school with posts, uppdrag and their history deletes whole.
+      await owner.query(`DELETE FROM "Schools" WHERE id = $1`, [f3.schoolId]);
+    }
+    await check('(ö6) a school with posts, uppdrag and history deletes whole, and leaves no history', async () => {
+      assert.equal((await owner.query('SELECT 1 FROM "TeacherEmploymentLogs" WHERE "schoolId" = $1', [f3.schoolId])).rowCount, 0);
+    });
+  }
 
   await check('(j) raw reads the code relies on come back as the types it compares', async () => {
     // assertRlsIsEnforceable's statement. It tests the two attributes for
@@ -3660,6 +3901,8 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-rulltj'`, [MARKER]);
   // (z)'s school, whole, for a run that stopped inside it.
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-budget'`, [MARKER]);
+  // (ö)'s school, whole, for a run that stopped inside it.
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
   // (u4)'s pupil, for a run that stopped before deleting it.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-gf@example.invalid'`, [schoolId, MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
@@ -3729,6 +3972,157 @@ function requiredEnv(name: string): string {
 /** A PrismaService built as Nest builds it — from DATABASE_URL — for this URL. */
 
 /** (z)'s school: one active year, the rows its hot paths read, and their ids. */
+interface Fas3Person {
+  id: string;
+  authId: string;
+}
+
+interface Fas3School {
+  schoolId: string;
+  yearId: string;
+  admin: AuthenticatedUser & { userId: string };
+  t1: Fas3Person;
+  t2: Fas3Person;
+  t3: Fas3Person;
+  t4: Fas3Person;
+  inactive: Fas3Person;
+  teacher: (person: Fas3Person) => AuthenticatedUser;
+  class7a: string;
+  ma: string;
+  dayAt: (offset: number) => string;
+  future: { master: string; withSub: string; plain: string };
+}
+
+/**
+ * Staffing Fas 3's school, as the owner: an active year around today, 7A,
+ * Ma and a mentorstid subject outside the timplan, a Ma row t1 leads at
+ * 100 % and t2 co-teaches at 50 %, its master lesson, and a calendar of
+ * held, substituted, cancelled and coming lessons (ö1); a second master
+ * with two future lessons (ö2); posts and a mentorship (ö3, ö4).
+ */
+async function givenFas3School(owner: Client): Promise<Fas3School> {
+  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
+  const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
+  const DAY = 24 * 60 * 60 * 1000;
+  const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const dayAt = (offset: number) => new Date(today.getTime() + offset * DAY).toISOString().slice(0, 10);
+  const school = await one<{ id: string }>(
+    `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
+    [`${MARKER} fas3`, `${MARKER}-fas3`],
+  );
+  const person = (role: string, email: string, active = true) =>
+    one<Fas3Person>(
+      `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+       VALUES ($1, $2, 'Probe', 'Fas3', $3::"UserRole", gen_random_uuid(), $4, now()) RETURNING id, "authId"`,
+      [school.id, `${MARKER}-fas3-${email}@example.invalid`, role, active],
+    );
+  const admin = await person('SCHOOL_ADMIN', 'admin');
+  const t1 = await person('TEACHER', 't1');
+  const t2 = await person('TEACHER', 't2');
+  const t3 = await person('TEACHER', 't3');
+  const t4 = await person('TEACHER', 't4');
+  const inactive = await person('TEACHER', 'inactive', false);
+  const year = await one<{ id: string }>(
+    `INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+     VALUES ($1, $2, $3::date, $4::date, true, now()) RETURNING id`,
+    [school.id, `${MARKER} fas3`, dayAt(-60), dayAt(200)],
+  );
+  const class7a = await one<{ id: string }>(
+    `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+     VALUES ($1, $2, '7A', 'CLASS', 7, now()) RETURNING id`,
+    [school.id, year.id],
+  );
+  const ma = await one<{ id: string }>(`INSERT INTO "Subjects" ("schoolId", name, "updatedAt") VALUES ($1, 'Matematik', now()) RETURNING id`, [school.id]);
+  const mentor = await one<{ id: string }>(
+    `INSERT INTO "Subjects" ("schoolId", name, "countsTowardTimplan", "updatedAt") VALUES ($1, 'Mentorstid', false, now()) RETURNING id`,
+    [school.id],
+  );
+  await owner.query(`INSERT INTO "StaffingPolicies" ("schoolId", "fullTimeTeachingMinutesPerWeek", "updatedAt") VALUES ($1, 1080, now())`, [school.id]);
+  for (const [who, percent, reduction] of [[t1, 100, 20], [t2, 100, 0], [t3, 50, 0], [t4, 100, 0], [inactive, 100, 0]] as const) {
+    await owner.query(
+      `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "reductionPercent", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, now())`,
+      [school.id, who.id, year.id, percent, reduction],
+    );
+  }
+  await owner.query(
+    `INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+     VALUES ($1, $2, $3, 'MENTORSKAP', 'Mentor 7A', 60, $4, now())`,
+    [school.id, t1.id, year.id, class7a.id],
+  );
+  // t4, to be deleted with a post, a slot-holding uppdrag and a mentorship (ö3).
+  const slot = await one<{ id: string }>(
+    `INSERT INTO "AvailabilityConstraints" ("schoolId", "resourceType", "userId", "dayOfWeek", "startTime", "endTime", type, reason, "updatedAt")
+     VALUES ($1, 'TEACHER', $2, 2, '15:00', '16:00', 'UNAVAILABLE', 'Uppdrag', now()) RETURNING id`,
+    [school.id, t4.id],
+  );
+  await owner.query(
+    `INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "blockedConstraintId", "updatedAt")
+     VALUES ($1, $2, $3, 'APT_KONFERENS', 'APT', 60, $4, now())`,
+    [school.id, t4.id, year.id, slot.id],
+  );
+  await owner.query(
+    `INSERT INTO "TeacherDuties" ("schoolId", "userId", "academicYearId", kind, label, "minutesPerWeek", "studentGroupId", "updatedAt")
+     VALUES ($1, $2, $3, 'MENTORSKAP', 'Mentor 7A bis', 30, $4, now())`,
+    [school.id, t4.id, year.id, class7a.id],
+  );
+  await owner.query(
+    `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "coTeacherId",
+                                         "lessonsPerWeek", "minutesPerLesson", "teacherLoadPercent", "coTeacherLoadPercent", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, $6, 3, 60, 100, 50, now())`,
+    [school.id, year.id, ma.id, class7a.id, t1.id, t2.id],
+  );
+  const master = (teacherId: string, coTeacherId: string | null, dayOfWeek: number) =>
+    one<{ id: string }>(
+      `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "coTeacherId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, '08:00', '09:00', now()) RETURNING id`,
+      [school.id, year.id, ma.id, class7a.id, teacherId, coTeacherId, dayOfWeek],
+    );
+  const taught = await master(t1.id, t2.id, 1);
+  const lesson = async (offset: number, status: string, rows: [Fas3Person, string][], options: { cause?: string; subjectId?: string; masterId?: string | null } = {}) => {
+    const date = dayAt(offset);
+    const row = await one<{ id: string }>(
+      `INSERT INTO "CalendarLessons" ("schoolId", "masterLessonId", "subjectId", "studentGroupId", date, "startsAt", "endsAt", status, "cancelCause", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5::date, $5::date + time '06:00', $5::date + time '07:00', $6::"LessonStatus", $7::"LessonCancelCause", now())
+       RETURNING id`,
+      [school.id, 'masterId' in options ? options.masterId : taught.id, options.subjectId ?? ma.id, class7a.id, date, status, options.cause ?? null],
+    );
+    for (const [who, role] of rows) {
+      await owner.query(
+        `INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES ($1, $2, $3, $4::"TeacherAssignmentRole")`,
+        [school.id, row.id, who.id, role],
+      );
+    }
+    return row.id;
+  };
+  await lesson(-14, 'SCHEDULED', [[t1, 'LEAD'], [t2, 'ASSISTANT']]);
+  await lesson(-13, 'SCHEDULED', [[t3, 'SUBSTITUTE']]);
+  await lesson(-12, 'CANCELLED', [[t1, 'LEAD'], [t2, 'ASSISTANT']], { cause: 'TEACHER_UNAVAILABLE' });
+  await lesson(-11, 'SCHEDULED', [[t3, 'SUBSTITUTE'], [t1, 'LEAD']]);
+  // Mentorstid, made by hand: no master, no row — t1's teaching at 100 %.
+  await lesson(-10, 'SCHEDULED', [[t1, 'LEAD']], { subjectId: mentor.id, masterId: null });
+  await lesson(5, 'SCHEDULED', [[t1, 'LEAD'], [t2, 'ASSISTANT']]);
+  // (ö2): a second master, t1 leading, with two lessons a month ahead.
+  const second = await master(t1.id, null, 3);
+  const withSub = await lesson(30, 'SCHEDULED', [[t1, 'LEAD']], { masterId: second.id });
+  const plain = await lesson(37, 'SCHEDULED', [[t1, 'LEAD']], { masterId: second.id });
+  return {
+    schoolId: school.id,
+    yearId: year.id,
+    admin: { authId: admin.authId, userId: admin.id, schoolId: school.id, role: Role.SCHOOL_ADMIN },
+    t1,
+    t2,
+    t3,
+    t4,
+    inactive,
+    teacher: (who) => ({ authId: who.authId, userId: who.id, schoolId: school.id, role: Role.TEACHER }),
+    class7a: class7a.id,
+    ma: ma.id,
+    dayAt,
+    future: { master: second.id, withSub, plain },
+  };
+}
+
 interface BudgetSchool {
   schoolId: string;
   admin: AuthenticatedUser;
