@@ -1317,6 +1317,92 @@
     Medlärare ändras i timplansposternas dialog (4.2).
   </p>
 
+  <h4>Föreslå bemanning</h4>
+  <p>
+    <span class="ui">Föreslå bemanning</span> överst på sidan låter motorn
+    bemanna alla poster på en gång i stället för en i taget. Dialogen har två
+    val. <span class="ui">Bara obemannade poster (och poster vars lärare har
+    slutat)</span> är förvalt: poster som har en aktiv lärare lämnas som de är.
+    Tar du bort bocken får varje post som inte är låst byta lärare.
+    <span class="ui">Respektera behörighet</span> betyder att en post bara ges
+    till en lärare vars behörighet täcker ämnet och gruppens årskurser; utan
+    bocken föredras behöriga lärare men en obehörig kan få posten när ingen
+    behörig har plats. Har skolan valt att vägra obehöriga tilldelningar är
+    valet alltid på. Under <span class="ui">Avancerat</span> finns fem vikter,
+    0–100, och <span class="ui">Återställ</span>. Tryck
+    <span class="ui">Beräkna förslag</span>; det tar upp till tio sekunder.
+  </p>
+  <p>
+    Förslaget följer några fasta regler:
+  </p>
+  <ul>
+    <li>Ingen lärare får mer än målet plus toleransen, mål × (1 + tolerans),
+      även när kontrollen mot överbeläggning är avstängd.</li>
+    <li>En lärare utan mål, eller med målet 0 (full nedsättning), får inga nya
+      poster men behåller sina. Detsamma gäller en lärare som redan är över
+      gränsen: läraren kan bara behålla eller lämna ifrån sig egna poster. Har
+      ingen lärare ett mål kan förslaget inte beräknas; dialogen pekar då på
+      inställningarna, där skolans riktmärke för heltid anges.</li>
+    <li>En post som har en lärare i dag blir aldrig obemannad. Förslaget tar
+      bara en post från en lärare för att ge den till en annan.</li>
+    <li>Medlärare ändras inte. Förslaget bemannar bara postens lärare, och
+      medläraren räknas som redan i klassen.</li>
+  </ul>
+  <p>
+    Förslaget bemannar först så många poster som möjligt. Det vägs aldrig mot
+    något annat. Bland lika många bemannade poster väljer det sedan, i den här
+    ordningen efter förvalda vikter: jämn belastning mot målet, där lärare
+    under mål lyfts först; få lärare per klass; förra läsårets lärare för en
+    post som saknar lärare; och att en post behåller sin nuvarande lärare.
+    Förra läsårets lärare väger bara för obemannade poster: har du bytt lärare
+    på en post sedan rullningen står ditt byte kvar. En obehörig lärare som
+    redan har posten byts mot en behörig bara när bytet också jämnar ut
+    belastningen, eftersom vikterna för att behålla och för obehörighet är
+    lika stora. Har skolan inte registrerat några behörigheter föredras
+    lärare som redan undervisar i ämnet eller hade gruppen i ämnet förra
+    läsåret.
+  </p>
+  <p>
+    Resultatet visar först om förslaget är <em>Optimalt</em> eller
+    <em>Bästa hittills inom tidsgränsen</em>, och om inget förslag bemannar
+    fler poster. Därefter visas varje post med föreslagen lärare och nuvarande
+    lärare (eller <em>Obemannad</em>, eller lärarens namn med <em>har
+    slutat</em>). Märkena säger varför: behörighetens slag, <em>Saknar
+    behörighet</em>, <em>Undervisar redan i ämnet</em>, <em>Samma som förra
+    läsåret</em> och <em>Har redan gruppen</em>. Varje lärare som berörs står
+    med minuter och procent av målet före och efter, och
+    <span class="ui">Visa alla</span> visar resten. Sist kommer posterna som
+    blir kvar obemannade, med skälet, och motorns förklaringar, till exempel
+    att ett ämne behöver fler minuter än de behöriga lärarna har kvar.
+    Under beräkningsmodellen Faktor är minuterna räknad tid.
+  </p>
+  <p>
+    Bocka ur en post för att lämna den utanför. Siffrorna för lärarna räknas
+    om, och lägger urvalet en lärare över gränsen står det vid läraren.
+    <span class="ui">Behåll som nu och beräkna om</span> låser posten och
+    beräknar ett nytt förslag utan den. <span class="ui">Tillämpa N
+    valda</span> sparar de valda posterna i en enda ändring, prövad mot
+    skolans inställningar som vilken tilldelning som helst. Med Varna sparas
+    den och varningarna namnger lärare och post. Med Vägra sparas ingenting,
+    och dialogen säger vilken lärare och vilken post som stoppade den. Har
+    tjänstefördelningen ändrats sedan förslaget beräknades sparas ingenting
+    och du får beräkna om. Meddelandet efter en tillämpning har
+    <span class="ui">Ångra</span> i femton sekunder. Ångra prövas på samma
+    sätt och går inte om någon har ändrat posterna sedan dess.
+  </p>
+  <div class="note">
+    <span class="label">Grundschemat ändras inte</span>
+    <p>
+      Förslaget byter bara timplanspostens lärare. Ett schema som redan är
+      genererat får de nya lärarna när du genererar igen (5.2). Bästa
+      hittills inom tidsgränsen kan ge olika, lika bra förslag mellan två
+      tryck; ett optimalt förslag blir detsamma varje gång. Motorn får bara
+      anonyma id:n och minuter, aldrig namn, e-post, behörighetens slag eller
+      tjänstens procent, och sparar ingenting. Förslaget och tillämpningen är
+      bara för administratörer: en lärare kan varken se eller använda dem.
+    </p>
+  </div>
+
   <h4>Jämför med förra läsåret</h4>
   <p>
     Ett läsår som rullats från ett annat (8.1) får växeln
@@ -1612,6 +1698,8 @@
     lärare: Vägra</span> (4.5) är knappen avstängd tills alla poster har en
     lärare, och skälet står under den. Med <span class="ui">Tillåt</span> är
     raden bara en varning: poster utan lärare schemaläggs utan lärare.
+    Saknas lärare länkar raden också till <span class="ui">Föreslå
+    bemanning</span> (4.5), som bemannar alla poster det kan på en gång.
   </p>
   <div class="warn">
     <span class="label">Grupper utan årskurs binds inte av ramtider och raster</span>
