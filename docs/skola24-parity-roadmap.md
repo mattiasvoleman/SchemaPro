@@ -67,14 +67,15 @@ Admin → Integrations), `X-API-Key`-guarded external API under `/ss12000/v1`:
 `organisation`, `persons` (incl. enrolments + guardian relations), `groups`,
 `activities` (weekly template incl. co-teachers, extra classes, participants),
 `calendarEvents?from&to` (the **lesson export** with cancelled flags, rooms,
-teacher assignments) and `POST /import/persons` (update-only roster sync:
+teacher assignments), `duties` (staffing Fas 3: the active year's teaching
+posts as SS12000 2.1.0 Duty objects with mentorships; tjänstgöringsgrad only
+when the school opts in) and `POST /import/persons` (update-only roster sync:
 names, class membership with auto-created classes, guardian links; unknown
 emails returned as `needsProvisioning`). Tenant isolation enforced per key in
 code; rate-limited. Docs: `docs/integration-api.md`. Migration:
 `20260713210000_integration_api_keys`. Remaining for full SS12000
 certification: subscription/webhook deliveries and the complete resource set
-(duties, placements, syllabuses) — add when a municipal procurement requires
-them.
+(placements, syllabuses) — add when a municipal procurement requires them.
 
 **3 (original scope).** The Swedish school-IT interoperability
 standard. Without it, municipalities cannot connect their student registry

@@ -26,11 +26,56 @@ Paginated responses: `{ totalCount, limit, offset, data: [...] }` with
 | `GET /ss12000/v1/groups` | Group (groupType Klass) incl. memberships | StudentGroups |
 | `GET /ss12000/v1/activities` | Activity (Undervisning) — weekly template | MasterLessons (active year), incl. co-teacher, extra classes, individual participants |
 | `GET /ss12000/v1/calendarEvents?from=YYYY-MM-DD&to=YYYY-MM-DD` | CalendarEvent — dated lessons (**lesson export**) | CalendarLessons incl. cancelled flag, room, teacher assignments, participants |
+| `GET /ss12000/v1/duties` | Duty (**SS12000 2.1.0 property names**) — one per teaching post of the active year | TeacherEmployments (active users), their MENTORSKAP TeacherDuties, StaffingPolicies (the opt-in) |
 
 Field notes: `eduPersonPrincipalNames` carries the school email;
 `personRole` is Elev/Lärare/Vårdnadshavare/Personal; `responsibles` /
 `responsibleFor` mirror guardian links; activities/events carry `groupIds`
 (primary + extra classes) and `studentIds` (individual participants).
+
+### `/duties`: the one feed in the standard's own shape
+
+The other feeds are SS12000-*inspired*: house field names (`groupIds`,
+`teacherIds`) beside SS12000 resource names. `/duties` is the first that
+emits the standard's own object. Every property is checked against **SIS
+TK450, SS12000 OpenAPI 3.0, `info.version` 2.1.0** (korrigendum augusti 2022),
+`components.schemas.Duty`,
+<https://www.sis.se/globalassets/standardutveckling/tksidor/tk-450/openapi_ss12000_version2_1_0.yaml>,
+retrieved 2026-10-09; the SIS page lists no newer YAML. A contract test
+(`src/integration/ss12000-duties.contract.spec.ts`) fails on any key the 2.1.0
+schemas do not define, at any depth.
+
+| 2.1.0 property | Required | Emitted | Source |
+|---|---|---|---|
+| `id` | yes | always | the post's id (`TeacherEmployments.id`) |
+| `meta` `{created, modified}` | yes | always | the post's `createdAt`; `modified` = the latest `updatedAt` of the post and its mentorships (best effort: a deleted mentorship does not move it) |
+| `person` `{id}` | — | always | the teacher's `Users.id`, the id `/persons` uses |
+| `assignmentRole[]` `{group, assignmentRoleType, startDate, endDate}` | — | when the teacher has a MENTORSKAP uppdrag on a class of the active year | `{group: {id}, assignmentRoleType: "Mentor"}`, dated with the läsår. Other uppdrag kinds have no `AssignmentRoleType` value and are left out; the standard says teaching is not an assignment |
+| `dutyAt` `{id}` | yes | always | the school's id, the Skolenhet `/organisation` returns |
+| `dutyRole` | yes | always `"Lärare"` | a post here is a teaching post; Förstelärare is an uppdrag inside it, not a Duty |
+| `description` | — | never | no source |
+| `signature` | — | when set | `TeacherEmployments.signature` |
+| `dutyPercent` (integer) | — | **only with the opt-in** | `round(employmentPercent)` |
+| `hoursPerYear` (integer) | — | **only with the opt-in, ferietjänst only** | `round(StaffingPolicies.fullTimeAnnualHours × employmentPercent / 100)` |
+| `startDate` | yes | always | the active läsår's start |
+| `endDate` | — | always | the active läsår's end |
+
+Deviations from the standard, stated: paging is the house's
+`{totalCount, limit, offset, data}` ordered by the post's id, not `pageToken`;
+no `expand`, `expandReferenceNames` or filters (no `modifiedAfter`: `meta.modified`
+is best effort). `startDate`/`endDate` mean "employment at the skolenhet" in
+the standard; SchemaPro holds no employment date, so the läsår's bounds are
+sent, and a teacher gets a **new Duty id every läsår** (posts are per year).
+
+**The opt-in.** `dutyPercent` and `hoursPerYear` are standard fields, but a
+school's keys are often held by systems that need nobody's tjänstgöringsgrad,
+so they appear only when an admin turns on *Dela tjänstgöringsgrad och
+årsarbetstid med integrationer* (`StaffingPolicies.shareEmploymentWithIntegrations`,
+default off). `hoursPerYear` comes from the post, never from post −
+nedsättning: with `dutyPercent` beside it the difference would publish the
+nedsättning. **Never emitted**, whatever the switch: the nedsättning, the
+avtalsform, the teacher's own riktmärke, the note and the behörigheter — the
+feed's query does not select them.
 
 ## Import (roster sync)
 
@@ -86,6 +131,8 @@ What the principal is granted, always on the key's school only:
 | `Users` | SELECT, UPDATE |
 | `StudentGroups` | SELECT, INSERT |
 | `GuardianStudents` | SELECT, INSERT, UPDATE — the import upserts links |
+| `TeacherEmployments`, `TeacherDuties` | SELECT — what `/duties` reads (`20261006100000`, `20261007090000`); the query names only the Duty's columns |
+| `StaffingPolicies` | SELECT — the `/duties` opt-in and `fullTimeAnnualHours`: the school's configuration, no person's data (`20261010110000`) |
 
 Each write policy has a `WITH CHECK` on the same school, so a write can
 neither create a row in another school nor move one there. There is no INSERT
@@ -108,6 +155,11 @@ school with a lesson. With only `Subjects` and `Rooms` readable they answered
 lessons with no teachers either. A relation added to a feed's `select` needs
 its table in this list and in section 3 of the suite below. The feeds read
 teachers and pupils as id columns, so `Users` needs no more than it has.
+
+`TeacherEmploymentLogs` (a tjänst's history, staffing Fas 3) has no
+service-principal policy on purpose and reads as empty to it; the RLS suite's
+section 7h asserts that, and that the principal reads its own school's policy
+row and no other school's.
 
 The one that refuses it is `_prisma_migrations`, Prisma's migration history,
 which holds no school data. Until `20260914180000` it was the one table in `public` without

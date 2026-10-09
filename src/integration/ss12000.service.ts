@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { PrismaClient } from '@prisma/client';
 import { PrismaService } from '../database/prisma.service';
+import { dutyEmploymentSelect, toSs12000Duty, type Ss12000Duty } from './ss12000-duties';
 
 /**
  * SS12000:2020-inspired read API + roster import.
@@ -160,6 +161,92 @@ export class Ss12000Service {
             person: { id: member.id },
           })),
         })),
+      };
+    });
+  }
+
+  /**
+   * The active läsår's teaching posts as SS12000 2.1.0 Duty objects — the
+   * one feed here that uses the standard's own property names and `meta`
+   * (src/integration/ss12000-duties.ts, with the citation and every field's
+   * source). Paging is the house's, ordered by the post's id.
+   *
+   * Posts of active users only. The principal reads TeacherEmployments and
+   * TeacherDuties through their service arms (20261006100000,
+   * 20261007090000) and the policy through 20261010110000's; the select
+   * names exactly the Duty's columns, so reductionPercent, the target and the
+   * note never leave the database. dutyPercent and hoursPerYear appear only
+   * when the school has turned shareEmploymentWithIntegrations on.
+   */
+  async duties(
+    schoolId: string,
+    limit?: string,
+    offset?: string,
+  ): Promise<{ totalCount: number; limit: number; offset: number; data: Ss12000Duty[] }> {
+    const { take, skip } = this.page(limit, offset);
+    return this.prisma.withServicePrincipal(schoolId, async (tx) => {
+      const year = await tx.academicYear.findFirst({
+        where: { schoolId, isActive: true },
+        select: { id: true, startDate: true, endDate: true },
+      });
+      if (!year) return { totalCount: 0, limit: take, offset: skip, data: [] };
+      const policy = await tx.staffingPolicy.findUnique({
+        where: { schoolId },
+        select: { shareEmploymentWithIntegrations: true, fullTimeAnnualHours: true },
+      });
+      const share = policy?.shareEmploymentWithIntegrations === true;
+      const where = { schoolId, academicYearId: year.id, user: { isActive: true } };
+      // One statement after another: a transaction is one connection.
+      const totalCount = await tx.teacherEmployment.count({ where });
+      const posts = await tx.teacherEmployment.findMany({
+        where,
+        orderBy: { id: 'asc' },
+        take,
+        skip,
+        select: dutyEmploymentSelect(share),
+      });
+      const mentorships =
+        posts.length === 0
+          ? []
+          : await tx.teacherDuty.findMany({
+              where: {
+                schoolId,
+                academicYearId: year.id,
+                kind: 'MENTORSKAP',
+                userId: { in: posts.map((post) => post.userId) },
+                studentGroup: { academicYearId: year.id },
+              },
+              select: { userId: true, studentGroupId: true, updatedAt: true },
+              orderBy: [{ userId: 'asc' }, { studentGroupId: 'asc' }],
+            });
+      const bounds = {
+        startDate: year.startDate.toISOString().slice(0, 10),
+        endDate: year.endDate.toISOString().slice(0, 10),
+      };
+      return {
+        totalCount,
+        limit: take,
+        offset: skip,
+        data: posts.map((post) =>
+          toSs12000Duty({
+            schoolId,
+            year: bounds,
+            share,
+            fullTimeAnnualHours: policy?.fullTimeAnnualHours ?? null,
+            employment: {
+              id: post.id,
+              userId: post.userId,
+              employmentPercent: Number(post.employmentPercent),
+              signature: post.signature,
+              createdAt: post.createdAt,
+              updatedAt: post.updatedAt,
+              ...('contractKind' in post ? { contractKind: post.contractKind as 'FERIE' | 'SEMESTER' } : {}),
+            },
+            mentorships: mentorships
+              .filter((duty) => duty.userId === post.userId && duty.studentGroupId !== null)
+              .map((duty) => ({ studentGroupId: duty.studentGroupId!, updatedAt: duty.updatedAt })),
+          }),
+        ),
       };
     });
   }

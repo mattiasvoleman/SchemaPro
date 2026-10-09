@@ -126,6 +126,19 @@ export class Ss12000Controller {
     return this.ss12000.groups(req.integrationSchoolId as string, limit, offset);
   }
 
+  /**
+   * SS12000 2.1.0 Duty: the active year's teaching posts, one per teacher,
+   * with their mentorships; percentages only when the school shares them.
+   */
+  @Get('duties')
+  duties(
+    @Req() req: IntegrationRequest,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.ss12000.duties(req.integrationSchoolId as string, limit, offset);
+  }
+
   @Get('activities')
   activities(
     @Req() req: IntegrationRequest,
