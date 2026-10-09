@@ -61,6 +61,13 @@ export function rethrowPrismaError(error: unknown): never {
   if (rolloverLink) {
     throw rolloverLinkConflict(rolloverLink);
   }
+  const enrolmentKey = enrolmentClassKeyRefusal(error);
+  if (enrolmentKey === 'CLASS_MOVED') {
+    throw studentGroupHasEnrolmentHistory(null);
+  }
+  if (enrolmentKey === 'NOT_THE_SCHOOLS') {
+    throw new BadRequestException('studentGroupId: klassen finns inte i skolan.');
+  }
   if (isWriteConflict(error)) {
     throw writeConflict();
   }
@@ -439,4 +446,68 @@ export function rolloverLinkConflict(refusal: Pick<RolloverLinkRefusal, 'reason'
     message: ROLLOVER_LINK_MESSAGES[refusal.reason],
     code: refusal.reason,
   });
+}
+
+/** The problem `code` of a class with pupils' history moved to another läsår. */
+export const STUDENT_GROUP_HAS_ENROLMENT_HISTORY = 'STUDENT_GROUP_HAS_ENROLMENT_HISTORY';
+
+/**
+ * The 409 for moving a class that has class history (StudentEnrollments,
+ * migration 20261010120000) to another läsår. The history's class key is ON
+ * UPDATE NO ACTION, because a cascade would carry the segments into the other
+ * year while their dates stayed in the first; StudentGroupsService.update asks
+ * first and names the year, and the key's refusal of a race lands here without
+ * it.
+ */
+export function studentGroupHasEnrolmentHistory(yearName: string | null): ConflictException {
+  return new ConflictException({
+    message:
+      `Klassen har elevhistorik${yearName ? ` i läsåret ${yearName}` : ''}. ` +
+      'Flytta eleverna till en klass i rätt läsår; en flytt samma dag som de placerades lämnar ingen historik.',
+    code: STUDENT_GROUP_HAS_ENROLMENT_HISTORY,
+    params: yearName ? { year: yearName } : {},
+  });
+}
+
+/** The class key of a segment of class history (migration 20261010120000). */
+const ENROLMENT_CLASS_KEY = 'StudentEnrollments_studentGroupId_academicYearId_schoolId_fkey';
+/**
+ * Its year key. A segment the trigger opens carries the pupil's school and the
+ * class's year, so another school's class fails here first — measured through
+ * the real adapter: "insert or update on table "StudentEnrollments" violates
+ * foreign key constraint "StudentEnrollments_academicYearId_schoolId_fkey"".
+ */
+const ENROLMENT_YEAR_KEY = 'StudentEnrollments_academicYearId_schoolId_fkey';
+
+/**
+ * Which side of the class-history key refused (23503), or null.
+ *
+ * 'NOT_THE_SCHOOLS': a pupil's class was written as a group the history cannot
+ * name — another school's (Users."studentGroupId" references the group's id
+ * alone; the segment the trigger opens carries the pupil's school) — "insert
+ * or update on table "StudentEnrollments"". 'CLASS_MOVED': a class with
+ * segments moved to another year, "update or delete on table
+ * "StudentGroups"". Read like isTimplanInUseRefusal: the constraint from the
+ * driver's cause, else from the rendered message; the side from the driver's
+ * message, else from the model whose operation failed.
+ */
+export function enrolmentClassKeyRefusal(error: unknown): 'NOT_THE_SCHOOLS' | 'CLASS_MOVED' | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2003') return null;
+  const meta = error.meta as
+    | { modelName?: unknown; driverAdapterError?: { cause?: DriverCause & { constraint?: { index?: unknown } } } }
+    | undefined;
+  const cause = meta?.driverAdapterError?.cause;
+  const message = typeof cause?.originalMessage === 'string' ? cause.originalMessage : '';
+  const constraint =
+    typeof cause?.constraint?.index === 'string'
+      ? cause.constraint.index
+      : (/constraint: `([^`]+)`/.exec(error.message)?.[1] ?? /foreign key constraint "([^"]+)"/.exec(message)?.[1] ?? null);
+  if (constraint !== ENROLMENT_CLASS_KEY && constraint !== ENROLMENT_YEAR_KEY) return null;
+  const moved = message
+    ? message.startsWith('update or delete on table "StudentGroups"')
+    : meta?.modelName === 'StudentGroup';
+  if (moved) return constraint === ENROLMENT_CLASS_KEY ? 'CLASS_MOVED' : null;
+  // Only the trigger writes a segment, so a refused write is a class it
+  // cannot record — never a delete of a year, which cascades.
+  return message === '' || message.startsWith('insert or update on table "StudentEnrollments"') ? 'NOT_THE_SCHOOLS' : null;
 }

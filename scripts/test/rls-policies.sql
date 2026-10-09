@@ -7206,3 +7206,383 @@ BEGIN
 END
 $$;
 ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- Section 26: en elev minns sina klasser.
+--
+-- StudentEnrollments (20261010120000) is a pupil's home-class history, written
+-- only by the Users trigger, read through four arms. Pupil data is the most
+-- sensitive in the product, so each arm is asserted from the side it must
+-- EXCLUDE, in the transaction that just showed the rows exist:
+--
+--  26a the admin and a teacher read the school's rows; a STUDENT exactly their
+--      own and none of a classmate's the teacher just read; the fixtures'
+--      GUARDIAN exactly their child's; every role none of the second school's.
+--  26b nobody writes it: INSERT, UPDATE, DELETE and TRUNCATE are refused to the
+--      API role whatever the claims (the grant; the guard behind it is the
+--      probe's, which holds an owner connection).
+--  26c every trigger path at the SQL level, as the admin through the API role
+--      — PostgREST's door: a pupil created in an ended year's class; the
+--      activation's hint backdating a cross-year move to the year's start; a
+--      move closing one segment and opening the next; a move back the same
+--      day coalescing; the class cleared; deactivation and reactivation; a
+--      malformed hint ignored; a grade corrected; a class with history moved
+--      to another year (23503); a class deleted (a closed segment, no class,
+--      its grade); a role change; another school's class (23503); a year
+--      deleted (its segments with it, nothing raised).
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+SELECT set_config('app.test_group_b', :'group_b', true);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  n bigint; m bigint;
+  child uuid; other uuid;
+BEGIN
+  IF app.current_user_role() <> 'SCHOOL_ADMIN' THEN
+    RAISE EXCEPTION 'enrolment: expected to be acting as an admin, am %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "StudentEnrollments";
+  SELECT count(*) INTO m FROM "StudentEnrollments" WHERE "schoolId" = school;
+  IF n = 0 OR n <> m THEN
+    RAISE EXCEPTION 'enrolment: the admin reads % row(s), % of them the school''s — expected the school''s and only them', n, m;
+  END IF;
+  -- The fixtures' guardian's child, and a classmate who is not their child.
+  SELECT gs."studentId" INTO child FROM "GuardianStudents" gs
+    JOIN "Users" g ON g.id = gs."guardianId" AND g."authId" = '00000000-0000-4000-8000-000000000004';
+  SELECT e."studentId" INTO other FROM "StudentEnrollments" e
+   WHERE e."studentId" <> child ORDER BY e."studentId" LIMIT 1;
+  IF child IS NULL OR other IS NULL
+     OR NOT EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "studentId" = child) THEN
+    RAISE EXCEPTION 'enrolment: the fixtures'' child (%) has no history, or there is no other pupil (%)', child, other;
+  END IF;
+  PERFORM set_config('app.test_rls26_child', child::text, true);
+  PERFORM set_config('app.test_rls26_child_sub', (SELECT "authId"::text FROM "Users" WHERE id = child), true);
+  PERFORM set_config('app.test_rls26_teacher_sub', (SELECT "authId"::text FROM "Users"
+    WHERE "schoolId" = school AND role = 'TEACHER' ORDER BY "authId" LIMIT 1), true);
+  PERFORM set_config('app.test_rls26_other', other::text, true);
+  PERFORM set_config('app.test_rls26_total', n::text, true);
+END
+$$;
+
+-- A teacher: the same rows as the admin.
+SELECT set_config('request.jwt.claims', json_build_object('sub', (SELECT "authId" FROM "Users"
+  WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER' ORDER BY "authId" LIMIT 1))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'TEACHER' THEN
+    RAISE EXCEPTION 'enrolment: expected a TEACHER, resolved %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "StudentEnrollments";
+  IF n::text <> current_setting('app.test_rls26_total') THEN
+    RAISE EXCEPTION 'enrolment: a teacher reads % row(s), the admin %', n, current_setting('app.test_rls26_total');
+  END IF;
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "studentId" = current_setting('app.test_rls26_other')::uuid;
+  IF n = 0 THEN
+    RAISE EXCEPTION 'enrolment: the teacher cannot read the classmate''s history the pupil below must not';
+  END IF;
+END
+$$;
+
+-- The child, as a STUDENT: exactly their own, nothing of the classmate's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls26_child_sub'))::text, true);
+DO $$
+DECLARE n bigint; me uuid := app.current_user_id();
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'STUDENT' OR me IS DISTINCT FROM current_setting('app.test_rls26_child')::uuid THEN
+    RAISE EXCEPTION 'enrolment: expected the child as a STUDENT, resolved % (%)', app.current_user_role(), me;
+  END IF;
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "studentId" <> me;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'enrolment: a pupil reads % row(s) of another pupil''s class history', n;
+  END IF;
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "studentId" = me;
+  IF n = 0 THEN
+    RAISE EXCEPTION 'enrolment: a pupil cannot read their own class history';
+  END IF;
+END
+$$;
+
+-- The fixtures' guardian: their child's rows, none of the classmate's.
+SELECT set_config('request.jwt.claims', json_build_object('sub', '00000000-0000-4000-8000-000000000004')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN
+    RAISE EXCEPTION 'enrolment: expected a GUARDIAN, resolved %', coalesce(app.current_user_role()::text, '<none>');
+  END IF;
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "studentId" <> current_setting('app.test_rls26_child')::uuid;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'enrolment: a guardian reads % row(s) of a pupil who is not their child', n;
+  END IF;
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "studentId" = current_setting('app.test_rls26_child')::uuid;
+  IF n = 0 THEN
+    RAISE EXCEPTION 'enrolment: a guardian cannot read their child''s class history';
+  END IF;
+END
+$$;
+
+-- An inactive principal (the fixtures' deactivated admin): nothing.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'inactive_auth_id')::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  IF app.current_user_role() IS NOT NULL THEN
+    RAISE EXCEPTION 'enrolment: the deactivated admin resolved to %', app.current_user_role();
+  END IF;
+  SELECT count(*) INTO n FROM "StudentEnrollments";
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'enrolment: an unresolved principal reads % row(s)', n;
+  END IF;
+END
+$$;
+
+-- 26b: no API role writes it, whoever it claims to be.
+SELECT set_config('app.test_rls26_admin', :'admin_auth_id', true);
+DO $$
+DECLARE sub text; who text;
+BEGIN
+  FOREACH sub IN ARRAY ARRAY[
+    current_setting('app.test_rls26_admin'),
+    current_setting('app.test_rls26_teacher_sub'),
+    current_setting('app.test_rls26_child_sub'),
+    '00000000-0000-4000-8000-000000000004'
+  ] LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', sub)::text, true);
+    who := coalesce(app.current_user_role()::text, '<none>');
+    BEGIN
+      INSERT INTO "StudentEnrollments" ("schoolId", "studentId", "academicYearId", "validFrom")
+      SELECT "schoolId", "studentId", "academicYearId", DATE '2001-01-01' FROM "StudentEnrollments" LIMIT 1;
+      RAISE EXCEPTION 'enrolment: % inserted a segment', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      UPDATE "StudentEnrollments" SET "validFrom" = DATE '2001-01-01';
+      RAISE EXCEPTION 'enrolment: % rewrote a segment', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      DELETE FROM "StudentEnrollments";
+      RAISE EXCEPTION 'enrolment: % deleted a segment', who;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+    BEGIN
+      TRUNCATE "StudentEnrollments";
+      RAISE EXCEPTION 'enrolment: % truncated the history', who;
+    EXCEPTION WHEN insufficient_privilege OR SQLSTATE 'SE403' THEN NULL;
+    END;
+  END LOOP;
+END
+$$;
+ROLLBACK;
+
+-- 26c: the trigger paths, as the admin through the API role.
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+SELECT set_config('app.test_group_b', :'group_b', true);
+
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  today date := (now() AT TIME ZONE (SELECT timezone FROM "Schools" WHERE id = app.current_school_id()))::date;
+  y0 uuid; y1 uuid; a0 uuid; a1 uuid; b1 uuid; p uuid; r uuid; q uuid;
+  y1_start date := today - 50;
+  y0_end date := today - 60;
+  n bigint; seg record; con text;
+BEGIN
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS26 förra', today - 400, y0_end, false, now()) RETURNING id INTO y0;
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "isActive", "updatedAt")
+  VALUES (school, 'RLS26 i år', y1_start, today + 250, false, now()) RETURNING id INTO y1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, y0, 'RLS26 7A', 'CLASS', 7, now()) RETURNING id INTO a0;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, y1, 'RLS26 8A', 'CLASS', 8, now()) RETURNING id INTO a1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "gradeLevel", "updatedAt")
+  VALUES (school, y1, 'RLS26 8B', 'CLASS', 8, now()) RETURNING id INTO b1;
+
+  -- A pupil created in a class of an ended year claims no day inside it.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt", "studentGroupId")
+  VALUES (school, 'rls26-p@example.invalid', 'RLS26', 'P', 'STUDENT', gen_random_uuid(), true, now(), a0) RETURNING id INTO p;
+  SELECT count(*) INTO n FROM "StudentEnrollments"
+   WHERE "studentId" = p AND "academicYearId" = y0 AND "validFrom" = y0_end + 1 AND "validTo" IS NULL
+     AND "studentGroupId" = a0 AND "gradeLevel" = 7 AND source = 'RECORDED';
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'enrolment: a pupil placed in an ended year''s class is not one open segment from its end + 1';
+  END IF;
+
+  -- The activation's hint: a cross-year move out of an earlier year's class is
+  -- recorded from the new year's first day.
+  PERFORM set_config('app.enrolment_from', y1::text || ':' || y1_start::text, true);
+  UPDATE "Users" SET "studentGroupId" = a1 WHERE id = p;
+  PERFORM set_config('app.enrolment_from', '', true);
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "studentId" = p AND "academicYearId" = y0;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'enrolment: the ended year''s segment that held no day was kept (% row(s))', n;
+  END IF;
+  SELECT count(*) INTO n FROM "StudentEnrollments"
+   WHERE "studentId" = p AND "academicYearId" = y1 AND "studentGroupId" = a1 AND "validFrom" = y1_start AND "validTo" IS NULL;
+  IF n <> 1 THEN
+    RAISE EXCEPTION 'enrolment: the hint did not backdate the move to the year''s first day';
+  END IF;
+
+  -- A move within the year closes at today and opens at today.
+  UPDATE "Users" SET "studentGroupId" = b1 WHERE id = p;
+  SELECT count(*) INTO n FROM "StudentEnrollments"
+   WHERE "studentId" = p AND ((("studentGroupId" = a1 AND "validFrom" = y1_start AND "validTo" = today))
+                              OR ("studentGroupId" = b1 AND "validFrom" = today AND "validTo" IS NULL));
+  IF n <> 2 OR (SELECT count(*) FROM "StudentEnrollments" WHERE "studentId" = p) <> 2 THEN
+    RAISE EXCEPTION 'enrolment: a move did not close 8A at today and open 8B at today';
+  END IF;
+  -- Back the same day: one segment, as if never moved.
+  UPDATE "Users" SET "studentGroupId" = a1 WHERE id = p;
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "studentId" = p;
+  IF n <> 1 OR NOT EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "studentId" = p AND "studentGroupId" = a1
+                            AND "validFrom" = y1_start AND "validTo" IS NULL) THEN
+    RAISE EXCEPTION 'enrolment: a move back the same day left % row(s) instead of the one re-opened segment', n;
+  END IF;
+  -- The class cleared closes it; set again the same day re-opens it.
+  UPDATE "Users" SET "studentGroupId" = NULL WHERE id = p;
+  IF NOT EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "studentId" = p AND "validTo" = today)
+     OR EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "studentId" = p AND "validTo" IS NULL) THEN
+    RAISE EXCEPTION 'enrolment: clearing the class did not close the segment at today';
+  END IF;
+  UPDATE "Users" SET "studentGroupId" = a1 WHERE id = p;
+  -- Deactivation closes, reactivation (the same day) re-opens.
+  UPDATE "Users" SET "isActive" = false WHERE id = p;
+  IF EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "studentId" = p AND "validTo" IS NULL) THEN
+    RAISE EXCEPTION 'enrolment: a deactivated pupil still has an open segment';
+  END IF;
+  UPDATE "Users" SET "isActive" = true WHERE id = p;
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "studentId" = p;
+  IF n <> 1 OR NOT EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "studentId" = p AND "validTo" IS NULL AND "validFrom" = y1_start) THEN
+    RAISE EXCEPTION 'enrolment: reactivation the same day left % row(s), expected the one re-opened segment', n;
+  END IF;
+
+  -- A malformed hint is ignored, never raised: another pupil out of 7A.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt", "studentGroupId")
+  VALUES (school, 'rls26-r@example.invalid', 'RLS26', 'R', 'STUDENT', gen_random_uuid(), true, now(), a0) RETURNING id INTO r;
+  PERFORM set_config('app.enrolment_from', y1::text || ':2026-99-99', true);
+  UPDATE "Users" SET "studentGroupId" = b1 WHERE id = r;
+  PERFORM set_config('app.enrolment_from', 'nonsense', true);
+  IF NOT EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "studentId" = r AND "studentGroupId" = b1 AND "validFrom" = today) THEN
+    RAISE EXCEPTION 'enrolment: a malformed hint was not ignored';
+  END IF;
+  PERFORM set_config('app.enrolment_from', '', true);
+
+  -- A corrected class grade corrects every segment in the class.
+  UPDATE "StudentGroups" SET "gradeLevel" = 9 WHERE id = a1;
+  IF EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "studentGroupId" = a1 AND "gradeLevel" IS DISTINCT FROM 9) THEN
+    RAISE EXCEPTION 'enrolment: a corrected class grade left a segment behind';
+  END IF;
+  UPDATE "StudentGroups" SET "gradeLevel" = 8 WHERE id = a1;
+
+  -- A class with history keeps its year.
+  BEGIN
+    UPDATE "StudentGroups" SET "academicYearId" = y0 WHERE id = a1;
+    RAISE EXCEPTION 'enrolment: a class with history was moved to another year';
+  EXCEPTION WHEN foreign_key_violation THEN
+    GET STACKED DIAGNOSTICS con = CONSTRAINT_NAME;
+    IF con IS DISTINCT FROM 'StudentEnrollments_studentGroupId_academicYearId_schoolId_fkey' THEN
+      RAISE EXCEPTION 'enrolment: the year change was refused by "%", expected the history''s class key', con;
+    END IF;
+  END;
+
+  -- Another school's class: the segment it would open refuses it.
+  BEGIN
+    UPDATE "Users" SET "studentGroupId" = current_setting('app.test_group_b')::uuid WHERE id = r;
+    RAISE EXCEPTION 'enrolment: a pupil was placed in another school''s class';
+  EXCEPTION WHEN foreign_key_violation THEN NULL;
+  END;
+
+  -- A deleted class: a closed segment with no class and its grade.
+  DELETE FROM "StudentGroups" WHERE id = a1;
+  SELECT * INTO seg FROM "StudentEnrollments" WHERE "studentId" = p;
+  IF seg."studentGroupId" IS NOT NULL OR seg."gradeLevel" IS DISTINCT FROM 8 OR seg."validFrom" <> y1_start
+     OR seg."validTo" IS DISTINCT FROM today OR (SELECT "studentGroupId" FROM "Users" WHERE id = p) IS NOT NULL THEN
+    RAISE EXCEPTION 'enrolment: a deleted class left %, expected a closed segment with no class and grade 8', row_to_json(seg);
+  END IF;
+
+  -- A role change clears the class and closes the segment (r's held no day: deleted).
+  UPDATE "Users" SET role = 'TEACHER', "studentGroupId" = NULL WHERE id = r;
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "studentId" = r;
+  IF n <> 0 THEN
+    RAISE EXCEPTION 'enrolment: a pupil who became staff the day they were placed keeps % segment(s)', n;
+  END IF;
+
+  -- A pupil without a class has no segment; the year deleted takes its history.
+  INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+  VALUES (school, 'rls26-q@example.invalid', 'RLS26', 'Q', 'STUDENT', gen_random_uuid(), true, now()) RETURNING id INTO q;
+  IF EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "studentId" = q) THEN
+    RAISE EXCEPTION 'enrolment: a pupil without a class has a segment';
+  END IF;
+  UPDATE "Users" SET "studentGroupId" = b1 WHERE id = q;
+  DELETE FROM "AcademicYears" WHERE id = y1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 OR EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "academicYearId" = y1) THEN
+    RAISE EXCEPTION 'enrolment: deleting a year with class history did not take it along';
+  END IF;
+  DELETE FROM "AcademicYears" WHERE id = y0;
+  -- A person deleted takes theirs (GDPR erasure).
+  DELETE FROM "Users" WHERE id IN (p, q);
+  IF EXISTS (SELECT 1 FROM "StudentEnrollments" WHERE "studentId" IN (p, q)) THEN
+    RAISE EXCEPTION 'enrolment: a deleted pupil left class history behind';
+  END IF;
+END
+$$;
+ROLLBACK;
+
+-- The catalog half: row security on, exactly the four read arms each with the
+-- role in USING, the writers and guards present and SECURITY DEFINER, SELECT
+-- and nothing else for the API role, nothing for anon.
+DO $$
+DECLARE n integer; bad text; api_role text;
+BEGIN
+  IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."StudentEnrollments"'::regclass) THEN
+    RAISE EXCEPTION 'enrolment: row security is off on StudentEnrollments';
+  END IF;
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
+   WHERE polrelid = 'public."StudentEnrollments"'::regclass;
+  IF bad IS DISTINCT FROM 'student_enrollments_admin_select:r,student_enrollments_guardian_select:r,student_enrollments_staff_select:r,student_enrollments_student_select:r' THEN
+    RAISE EXCEPTION 'enrolment: StudentEnrollments has policies (%), expected the four SELECT arms', bad;
+  END IF;
+  SELECT string_agg(polname, ',') INTO bad FROM pg_policy
+   WHERE polrelid = 'public."StudentEnrollments"'::regclass
+     AND pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%';
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'enrolment: policies without the role in USING: %', bad;
+  END IF;
+  SELECT count(*) INTO n
+    FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
+   WHERE NOT t.tgisinternal AND t.tgenabled = 'O' AND p.prosecdef
+     AND (t.tgrelid, t.tgname) IN (
+       ('public."Users"'::regclass,              'Users_enrollment_on_insert'),
+       ('public."Users"'::regclass,              'Users_enrollment_on_update'),
+       ('public."StudentGroups"'::regclass,      'StudentGroups_enrollment_grade'),
+       ('public."StudentEnrollments"'::regclass, 'StudentEnrollments_written_by_trigger'),
+       ('public."StudentEnrollments"'::regclass, 'StudentEnrollments_no_truncate'));
+  IF n <> 5 THEN
+    RAISE EXCEPTION 'enrolment: % of the five history triggers are present, enabled and SECURITY DEFINER', n;
+  END IF;
+  IF NOT has_table_privilege('app_authenticated', 'public."StudentEnrollments"', 'SELECT') THEN
+    RAISE EXCEPTION 'enrolment: app_authenticated cannot read StudentEnrollments';
+  END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles
+                   WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated')
+  LOOP
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."StudentEnrollments"', p);
+    IF bad IS NOT NULL THEN
+      RAISE EXCEPTION 'enrolment: % holds % on StudentEnrollments', api_role, bad;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon')
+     AND has_table_privilege('anon', 'public."StudentEnrollments"', 'SELECT') THEN
+    RAISE EXCEPTION 'enrolment: anon may SELECT StudentEnrollments';
+  END IF;
+END $$;

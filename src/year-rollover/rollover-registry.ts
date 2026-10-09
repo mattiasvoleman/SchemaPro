@@ -338,6 +338,18 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
       'A pupil’s home class (studentGroupId) moves when the new year is activated, not at the rollover: the old year is still running.',
   },
 
+  /**
+   * Who sat in which class (timplan P4). The rollover writes no history and
+   * moves no pupil; the activation's moves are what the Users trigger
+   * records, in the activation's own transaction (migration 20261010120000),
+   * and the old year's segments stay with the old year as its record.
+   */
+  StudentEnrollment: {
+    kind: 'AT_ACTIVATION',
+    reason:
+      'A pupil’s class history is written by the database when the activation moves them; the rollover writes none, and the old year’s history stays with it.',
+  },
+
   MasterLesson: {
     kind: 'SKIPPED',
     previewCount: true,

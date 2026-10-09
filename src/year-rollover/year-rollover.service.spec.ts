@@ -1205,6 +1205,13 @@ describe('YearRolloverService — activation', () => {
       });
     }
 
+    // The class history's hint, on this first activation, before the first move.
+    const hints = world.calls.filter((call) => call.model === '$executeRaw');
+    expect(hints.map((call) => [call.sql, call.values])).toEqual([
+      ["SELECT set_config('app.enrolment_from', ?, true)", [`${yearB}:2027-08-16`]],
+    ]);
+    expect(world.calls.indexOf(hints[0]!)).toBeLessThan(world.calls.findIndex((call) => call.model === 'user' && call.method === 'updateMany'));
+
     const again = await service.previewActivation(yearB, admin, AFTER);
     expect(again).toMatchObject({ moves: [], alreadyInYear: 3, blocking: false });
     world.calls.length = 0;
@@ -1233,8 +1240,11 @@ describe('YearRolloverService — activation', () => {
     const again = await service.previewActivation(yearB, admin, AFTER);
     expect(again).toMatchObject({ year: { isActive: true }, blocking: false });
     expect(again.moves).toEqual([expect.objectContaining({ fromGroupId: IDS.g7a, toGroupName: '8A', count: 1, studentIds: [IDS.pGone] })]);
+    world.calls.length = 0;
     await service.executeActivation(yearB, { planHash: again.planHash }, admin, AFTER);
     expect(homeOf(world, IDS.pGone)).toBe(groupNamed(world, yearB, '8A'));
+    // The active year's straggler run sets no hint: the straggler is recorded from today.
+    expect(world.calls.filter((call) => call.model === '$executeRaw')).toEqual([]);
     await expect(service.previewRollover(yearB, next, admin)).resolves.toMatchObject({ planHash: expect.any(String) });
   });
 

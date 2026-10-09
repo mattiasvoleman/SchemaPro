@@ -16,6 +16,7 @@ import {
   WRITE_CONFLICT,
   decidedTimplanConflict,
   decidedTimplanRefusal,
+  enrolmentClassKeyRefusal,
   isTimplanInUseRefusal,
   listNames,
   rethrowPrismaError,
@@ -527,5 +528,54 @@ describe('rethrowPrismaError and a läsårsrullning link', () => {
     expect(((answer(dutyRefusal('TD409')) as ConflictException).getResponse() as { code: string }).code).toBe(
       'TEACHER_DUTY_BLOCK_MISMATCH',
     );
+  });
+});
+
+describe('rethrowPrismaError and the class history’s keys (timplan P4)', () => {
+  const answer = (error: unknown) => {
+    try {
+      rethrowPrismaError(error);
+    } catch (thrown) {
+      return thrown;
+    }
+    return undefined;
+  };
+  /** A 23503 as @prisma/adapter-pg reports it (measured: the probe's (u5)). */
+  const keyRefusal = (constraint: string, message: string, modelName: string, withCause = true) =>
+    new Prisma.PrismaClientKnownRequestError(`Foreign key constraint violated on the constraint: \`${constraint}\``, {
+      code: 'P2003',
+      clientVersion: Prisma.prismaVersion.client,
+      meta: withCause
+        ? { modelName, driverAdapterError: { cause: { originalCode: '23503', originalMessage: message, constraint: { index: constraint } } } }
+        : { modelName },
+    });
+
+  it('answers a pupil placed in another school’s class with a 400 naming the field', () => {
+    for (const key of ['StudentEnrollments_academicYearId_schoolId_fkey', 'StudentEnrollments_studentGroupId_academicYearId_schoolId_fkey']) {
+      const error = keyRefusal(key, `insert or update on table "StudentEnrollments" violates foreign key constraint "${key}"`, 'User');
+      expect(enrolmentClassKeyRefusal(error)).toBe('NOT_THE_SCHOOLS');
+      const thrown = answer(error);
+      expect(thrown).toBeInstanceOf(BadRequestException);
+      expect((thrown as BadRequestException).message).toMatch(/^studentGroupId: /);
+    }
+  });
+
+  it('answers a class with history moved to another year with 409 STUDENT_GROUP_HAS_ENROLMENT_HISTORY, cause or no cause', () => {
+    const key = 'StudentEnrollments_studentGroupId_academicYearId_schoolId_fkey';
+    for (const error of [
+      keyRefusal(key, `update or delete on table "StudentGroups" violates foreign key constraint "${key}" on table "StudentEnrollments"`, 'StudentGroup'),
+      keyRefusal(key, '', 'StudentGroup', false),
+    ]) {
+      expect(enrolmentClassKeyRefusal(error)).toBe('CLASS_MOVED');
+      const thrown = answer(error);
+      expect(thrown).toBeInstanceOf(ConflictException);
+      expect((thrown as ConflictException).getResponse()).toMatchObject({ code: 'STUDENT_GROUP_HAS_ENROLMENT_HISTORY' });
+    }
+  });
+
+  it('leaves every other key to the generic answer', () => {
+    const other = keyRefusal('TimplanCredits_subjectId_schoolId_fkey', 'insert or update on table "TimplanCredits"', 'TimplanCredit');
+    expect(enrolmentClassKeyRefusal(other)).toBeNull();
+    expect(enrolmentClassKeyRefusal(knownError('P2025'))).toBeNull();
   });
 });

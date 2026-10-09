@@ -183,6 +183,22 @@ JOIN "Users" p ON p."authId" = '00000000-0000-4000-8000-000000000002'
 WHERE g."authId" = '00000000-0000-4000-8000-000000000005'
 ON CONFLICT ("guardianId", "studentId") DO NOTHING;
 
+-- A PUPIL WITH A CLASS in the SECOND school, so section 26's tenant half
+-- counts class history that exists over there: the Users trigger
+-- (20261010120000) opens the segment as this row is written. A pupil of its
+-- own rather than the cross-tenant guardian assertion's child above, whose
+-- classlessness other sections may rely on.
+INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt", "studentGroupId")
+SELECT s.id, 'rls-fixture-pupil-class@example.invalid', 'Fixture', 'Pupil With Class', 'STUDENT',
+       '00000000-0000-4000-8000-000000000007', true, now(), g.id
+FROM "Schools" s
+JOIN "AcademicYears" y ON y."schoolId" = s.id AND y.name = 'RLS Fixture Year'
+JOIN "StudentGroups" g ON g."academicYearId" = y.id AND g.name = 'RLS Fixture Class'
+WHERE s.slug = 'rls-fixture-school'
+  AND NOT EXISTS (
+    SELECT 1 FROM "Users" WHERE "authId" = '00000000-0000-4000-8000-000000000007'
+  );
+
 -- A tillgodoräknad dag in the SECOND school, its fixture class scoped and its
 -- fixture subject named, so section 23's tenant half counts a credit that
 -- exists over there. NOT EXISTS rather than ON CONFLICT: the table has no

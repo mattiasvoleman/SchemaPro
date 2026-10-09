@@ -1,9 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { StudentGroup } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { requireSchoolId } from '../common/utils/request-context';
-import { rethrowPrismaError } from '../common/utils/prisma-errors';
+import { rethrowPrismaError, studentGroupHasEnrolmentHistory } from '../common/utils/prisma-errors';
 import type {
   CreateStudentGroupDto,
   SetGroupMembersDto,
@@ -43,14 +43,33 @@ export class StudentGroupsService {
     }
   }
 
+  /**
+   * A class that has class history (StudentEnrollments, timplan P4) keeps its
+   * läsår: its pupils' segments are dated inside that year, and the history's
+   * key to the class is ON UPDATE NO ACTION rather than carrying them into
+   * another one. Asked first, so the 409 names the year; the key refuses a
+   * race the same way (rethrowPrismaError). A class created in the wrong year
+   * a minute ago has no history yet — a same-day placement leaves none once
+   * the pupils are moved out — so it can still be moved.
+   */
   async update(
     id: string,
     dto: UpdateStudentGroupDto,
     user: AuthenticatedUser,
   ): Promise<StudentGroup> {
     try {
-      return await this.prisma.withRls(user, (tx) =>
-        tx.studentGroup.update({
+      return await this.prisma.withRls(user, async (tx) => {
+        if (dto.academicYearId !== undefined) {
+          const current = await tx.studentGroup.findUnique({
+            where: { id },
+            select: { academicYearId: true, academicYear: { select: { name: true } } },
+          });
+          if (current && current.academicYearId !== dto.academicYearId) {
+            const history = await tx.studentEnrollment.count({ where: { studentGroupId: id } });
+            if (history > 0) throw studentGroupHasEnrolmentHistory(current.academicYear.name);
+          }
+        }
+        return tx.studentGroup.update({
           where: { id },
           data: {
             ...(dto.academicYearId !== undefined
@@ -60,9 +79,10 @@ export class StudentGroupsService {
             ...(dto.kind !== undefined ? { kind: dto.kind } : {}),
             ...(dto.gradeLevel !== undefined ? { gradeLevel: dto.gradeLevel } : {}),
           },
-        }),
-      );
+        });
+      });
     } catch (error) {
+      if (error instanceof ConflictException) throw error;
       rethrowPrismaError(error);
     }
   }

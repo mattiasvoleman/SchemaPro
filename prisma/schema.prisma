@@ -176,6 +176,7 @@ model School {
   localTimplanEntries     LocalTimplanEntry[]
   academicYearTimplans    AcademicYearTimplan[]
   timplanCredits          TimplanCredit[]
+  studentEnrollments      StudentEnrollment[]
 
   @@map("Schools")
 }
@@ -248,6 +249,9 @@ model User {
   masterLessonJoins   MasterLessonStudent[]   @relation("MasterLessonParticipant")
   groupMemberships    StudentGroupMember[]    @relation("TeachingGroupStudent")
   calendarLessonJoins CalendarLessonStudent[] @relation("CalendarLessonParticipant")
+  /// The home-class history (timplan P4), written only by a trigger on this
+  /// table; see StudentEnrollment.
+  enrollments         StudentEnrollment[]     @relation("EnrollmentStudent")
 
   // Guardian <-> student relations.
   guardianLinks       GuardianStudent[] @relation("GuardianSide")
@@ -670,6 +674,63 @@ model TimplanCredit {
   @@map("TimplanCredits")
 }
 
+/// Where a segment of a pupil's class history came from: RECORDED by the
+/// Users trigger as the class changed, or BACKFILL — the one fact the database
+/// held when the history began (each active pupil's current class), written by
+/// migration 20261010120000.
+enum EnrollmentSource {
+  RECORDED
+  BACKFILL
+}
+
+/// A pupil's home-class history (timplan P4): one row per SEGMENT, an
+/// unbroken period [validFrom, validTo) in one läsår during which the pupil
+/// had one home class. validTo null is the class the pupil has now; exactly one
+/// open row exists iff the pupil is an active STUDENT with a class.
+///
+/// WRITTEN ONLY BY THE DATABASE. An AFTER trigger on Users
+/// (app.student_enrollments_follow_the_class) writes it in the same statement
+/// as every change of studentGroupId, isActive or role — the services, the
+/// imports, the activation, a class's SET NULL and PostgREST alike — and a
+/// guard (SQLSTATE SE403) refuses any other write, the owner's and the service
+/// key's included. RLS: admin and teacher read the school's, a pupil their
+/// own, a guardian their children's. Not stated here, because schema.prisma
+/// cannot: the EXCLUDE constraint StudentEnrollments_one_class_at_a_time (no
+/// two segments of a pupil overlap in a year) and the partial unique index
+/// StudentEnrollments_one_open_per_pupil. See 20261010120000.
+model StudentEnrollment {
+  id             String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String           @db.Uuid
+  studentId      String           @db.Uuid
+  academicYearId String           @db.Uuid
+  /// Null when the class was deleted: the period is then unrecorded, never zero.
+  studentGroupId String?          @db.Uuid
+  /// The class's årskurs, kept in step with StudentGroups.gradeLevel; null when
+  /// the class has none.
+  gradeLevel     Int?
+  /// The school's local date, inclusive.
+  validFrom      DateTime         @db.Date
+  /// Exclusive; null is the current class.
+  validTo        DateTime?        @db.Date
+  source         EnrollmentSource @default(RECORDED)
+  createdAt      DateTime         @default(now()) @db.Timestamptz(6)
+  /// Set by the trigger; no API role writes this table.
+  updatedAt      DateTime         @default(now()) @db.Timestamptz(6)
+
+  school       School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student      User          @relation("EnrollmentStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  academicYear AcademicYear  @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  /// ON DELETE SET NULL ("studentGroupId") — that column only, which Prisma's
+  /// SetNull cannot say and the migration does — and ON UPDATE NO ACTION: a
+  /// class with history keeps its year.
+  studentGroup StudentGroup? @relation(fields: [studentGroupId, academicYearId, schoolId], references: [id, academicYearId, schoolId], onDelete: SetNull, onUpdate: NoAction)
+
+  @@index([schoolId, academicYearId])
+  @@index([studentGroupId, schoolId])
+  @@index([studentId, academicYearId, validFrom])
+  @@map("StudentEnrollments")
+}
+
 model AcademicYear {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId  String   @db.Uuid
@@ -706,6 +767,8 @@ model AcademicYear {
   timplans             AcademicYearTimplan[]
   /// The school's decisions that a day's activity counts as undervisningstid.
   timplanCredits       TimplanCredit[]
+  /// Who sat in which class this year (timplan P4).
+  studentEnrollments   StudentEnrollment[]
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
@@ -777,10 +840,14 @@ model StudentGroup {
   teacherDuties           TeacherDuty[]
   /// Credits scoped to this group (TimplanCredit.studentGroupId).
   timplanCredits          TimplanCredit[]
+  /// The pupils' segments in this class (StudentEnrollment.studentGroupId).
+  enrollments             StudentEnrollment[]
 
   @@unique([schoolId, academicYearId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.
   @@unique([id, schoolId])
+  /// The target StudentEnrollment's class key needs: a class OF ITS OWN YEAR.
+  @@unique([id, academicYearId, schoolId])
   /// One successor per group; also the index the predecessor key's SET NULL scans.
   @@unique([predecessorId, schoolId])
   @@index([schoolId])
