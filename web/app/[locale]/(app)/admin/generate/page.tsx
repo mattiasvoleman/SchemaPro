@@ -64,6 +64,13 @@ export default function GeneratePage() {
    */
   const planning = usePlanningYear();
   const { year } = planning;
+  /**
+   * /admin/staffing for the year planned here: a rolled year not yet
+   * activated is not the one the staffing page opens on by itself, and a
+   * proposal applied there would staff the wrong year's rows.
+   */
+  const staffingHref = (section: "unstaffed" | "propose") =>
+    `/admin/staffing${year ? `?year=${encodeURIComponent(year.id)}` : ""}#${section}`;
   const { data: requirements } = useRequirements(year?.id ?? null);
   const { data: rooms } = useRooms();
   const { data: storedPeople } = usePeople();
@@ -241,9 +248,9 @@ export default function GeneratePage() {
       ok: unstaffedCount === 0,
       warn: unstaffedCount > 0 && !refusesUnstaffed,
       detail: unstaffedCount === 0 ? "" : t("preStaffedMissing", { count: unstaffedCount }),
-      href: unstaffedCount > 0 ? "/admin/staffing#unstaffed" : undefined,
+      href: unstaffedCount > 0 ? staffingHref("unstaffed") : undefined,
       action:
-        unstaffedCount > 0 ? { href: "/admin/staffing#propose", label: t("preStaffedPropose") } : undefined,
+        unstaffedCount > 0 ? { href: staffingHref("propose"), label: t("preStaffedPropose") } : undefined,
     },
   ];
 
@@ -486,11 +493,11 @@ export default function GeneratePage() {
             <p id="generate-blocked-unstaffed" className="mt-2 text-sm text-foreground">
               {t("preStaffed")} ({t("preStaffedMissing", { count: unstaffedCount })}).{" "}
               {t("runBlockedUnstaffed")}{" "}
-              <Link href="/admin/staffing#unstaffed" className="underline underline-offset-4">
+              <Link href={staffingHref("unstaffed")} className="underline underline-offset-4">
                 {t("preStaffedLink")}
               </Link>
               {" · "}
-              <Link href="/admin/staffing#propose" className="underline underline-offset-4">
+              <Link href={staffingHref("propose")} className="underline underline-offset-4">
                 {t("preStaffedPropose")}
               </Link>
             </p>
@@ -551,7 +558,7 @@ export default function GeneratePage() {
             {refusedUnstaffed ? (
               <p className="text-sm text-muted-foreground">
                 <Link
-                  href="/admin/staffing#unstaffed"
+                  href={staffingHref("unstaffed")}
                   className="font-medium text-foreground underline underline-offset-4"
                 >
                   {t("preStaffedLink")}
