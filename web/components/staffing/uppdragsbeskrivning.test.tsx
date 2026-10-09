@@ -1,5 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { uppdragLoad } from "@/lib/__fixtures__/staffing-fas3";
 import type { TeacherDuty } from "@/lib/types";
@@ -125,5 +127,15 @@ describe("Uppdragsbeskrivning", () => {
     expect(screen.getByText(`uppdrag.peakFactor(${uppdragLoad.peakMinutesPerWeek})`)).toBeInTheDocument();
     expect(screen.getByText("uppdrag.factorNote")).toBeInTheDocument();
     expect(screen.queryByText("uppdrag.hoursPerYear")).toBeNull();
+  });
+});
+
+describe("the paper's theme", () => {
+  it("prints the light scheme for native controls too, over next-themes' inline color-scheme", () => {
+    const css = readFileSync(resolve(__dirname, "../../app/globals.css"), "utf8");
+    const print = css.slice(css.indexOf("@media print"));
+    // An inline `color-scheme: dark` on <html> beats a normal rule: only
+    // !important puts the checkboxes back in the light scheme on paper.
+    expect(print).toMatch(/:root\s*\{\s*color-scheme:\s*light\s*!important;/);
   });
 });
