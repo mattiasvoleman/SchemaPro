@@ -300,7 +300,10 @@ describe('the roster-reader inventory', () => {
       // import when the staffing checks run, a vikarie when behörighet is
       // asked. StaffingLoadController.unstaffed reads the load input like
       // the report it is opened from, and .delivered (staffing Fas 3) reads
-      // it for the planned column of the reconciliation.
+      // it for the planned column of the reconciliation. The staffing
+      // proposal (Fas 4) reads it for every row's grade span, in propose and
+      // again under apply's locks, so a rolled year two steps ahead is refused
+      // there as everywhere else.
       expect(reached.map((entry) => entry.route).sort()).toEqual([
         'CalendarLessonsController.assignSubstitute',
         'CalendarLessonsController.suggestSubstitutes',
@@ -309,7 +312,9 @@ describe('the roster-reader inventory', () => {
         'MasterLessonsController.create',
         'MasterLessonsController.update',
         'OptimizationController.applyRooms',
+        'OptimizationController.applyStaffing',
         'OptimizationController.proposeRooms',
+        'OptimizationController.proposeStaffing',
         'OptimizationController.startJob',
         'OptimizationController.trigger',
         'StaffingLoadController.delivered',

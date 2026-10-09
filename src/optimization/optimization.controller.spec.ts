@@ -10,6 +10,7 @@ import { OptimizationController } from './optimization.controller';
 import type { OptimizationJobsService } from './optimization-jobs.service';
 import type { OptimizationProxyService } from './optimization-proxy.service';
 import type { RoomOptimizationService } from './room-optimization.service';
+import type { StaffingProposalService } from './staffing-proposal.service';
 
 const YEAR_ID = '44444444-4444-4444-8444-444444444444';
 const JOB_ID = '66666666-6666-4666-8666-666666666666';
@@ -18,6 +19,7 @@ describe('OptimizationController', () => {
   let proxy: { triggerScheduling: jest.Mock };
   let jobs: { start: jest.Mock; get: jest.Mock; list: jest.Mock };
   let rooms: { propose: jest.Mock; apply: jest.Mock };
+  let staffing: { propose: jest.Mock; apply: jest.Mock };
   let controller: OptimizationController;
 
   const dto = (
@@ -29,10 +31,12 @@ describe('OptimizationController', () => {
     proxy = { triggerScheduling: jest.fn() };
     jobs = { start: jest.fn(), get: jest.fn(), list: jest.fn() };
     rooms = { propose: jest.fn(), apply: jest.fn() };
+    staffing = { propose: jest.fn(), apply: jest.fn() };
     controller = new OptimizationController(
       proxy as unknown as OptimizationProxyService,
       jobs as unknown as OptimizationJobsService,
       rooms as unknown as RoomOptimizationService,
+      staffing as unknown as StaffingProposalService,
     );
   });
 
@@ -219,6 +223,48 @@ describe('OptimizationController', () => {
       expect(Reflect.getMetadata(PATH_METADATA, method)).toBe(path);
       expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(RequestMethod.POST);
       expect(Reflect.getMetadata(HTTP_CODE_METADATA, method)).toBe(HttpStatus.OK);
+    });
+  });
+
+  describe('staffing', () => {
+    const BASIS = 'b'.repeat(64);
+
+    it('hands a proposal request to the staffing service with the caller', async () => {
+      const proposal = { status: 'OPTIMAL', assignments: [] };
+      staffing.propose.mockResolvedValue(proposal);
+      const user = testUser();
+      const body = { academicYearId: YEAR_ID, onlyUnstaffed: true, respectQualifications: false };
+
+      await expect(controller.proposeStaffing(body, user)).resolves.toBe(proposal);
+      expect(staffing.propose).toHaveBeenCalledWith(body, user);
+      expect(rooms.propose).not.toHaveBeenCalled();
+    });
+
+    it('hands an apply (and an undo) to the staffing service with the caller', async () => {
+      const result = { updated: 1, basisSha256: BASIS, warnings: [], logId: JOB_ID };
+      staffing.apply.mockResolvedValue(result);
+      const user = testUser();
+      const body = {
+        academicYearId: YEAR_ID,
+        basisSha256: BASIS,
+        undo: true,
+        changes: [{ requirementId: JOB_ID, fromTeacherId: YEAR_ID, toTeacherId: null }],
+      };
+
+      await expect(controller.applyStaffing(body, user)).resolves.toBe(result);
+      expect(staffing.apply).toHaveBeenCalledWith(body, user);
+    });
+
+    it.each([
+      ['proposeStaffing', 'staffing/proposal', 5],
+      ['applyStaffing', 'staffing/apply', 10],
+    ] as const)('serves %s as POST %s, answering 200, at %i a minute', (handler, path, limit) => {
+      const method = OptimizationController.prototype[handler];
+      expect(Reflect.getMetadata(PATH_METADATA, method)).toBe(path);
+      expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(RequestMethod.POST);
+      expect(Reflect.getMetadata(HTTP_CODE_METADATA, method)).toBe(HttpStatus.OK);
+      // The room routes' limits: a proposal wakes the solver, an apply only the database.
+      expect(Reflect.getMetadata('THROTTLER:LIMITdefault', method)).toBe(limit);
     });
   });
 

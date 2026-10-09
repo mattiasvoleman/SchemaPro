@@ -7,6 +7,7 @@ import { OptimizationController } from './optimization.controller';
 import { OptimizationProxyService } from './optimization-proxy.service';
 import { OptimizationJobsService } from './optimization-jobs.service';
 import { RoomOptimizationService } from './room-optimization.service';
+import { StaffingProposalService } from './staffing-proposal.service';
 
 @Module({
   imports: [
@@ -27,6 +28,11 @@ import { RoomOptimizationService } from './room-optimization.service';
     }),
   ],
   controllers: [OptimizationController],
-  providers: [OptimizationProxyService, OptimizationJobsService, RoomOptimizationService],
+  providers: [
+    OptimizationProxyService,
+    OptimizationJobsService,
+    RoomOptimizationService,
+    StaffingProposalService,
+  ],
 })
 export class OptimizationModule {}

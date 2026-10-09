@@ -145,7 +145,7 @@ export interface AnonMaps {
  * when the group has none. One function for every refusal that names a row,
  * the engine's and the staffing pre-flight's alike.
  */
-function requirementName(subject: string, group: string | undefined | null): string {
+export function requirementName(subject: string, group: string | undefined | null): string {
   return group ? `${subject} för ${group}` : subject;
 }
 
