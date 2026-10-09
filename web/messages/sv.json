@@ -1935,8 +1935,9 @@
       "no": "nej",
       "removed": "borttaget",
       "blocked": "blockerad tid",
+      "noteChanged": "Anteckningen skrevs eller ändrades (texten sparas inte i historiken).",
       "truncated": "Bara de 200 senaste versionerna visas.",
-      "caption": "Varje ändring av tjänsten eller ett uppdrag sparas som en ny version i samma ögonblick, vem som än gjorde den och hur. Versionsnumret kan citeras i ett protokoll.",
+      "caption": "Varje ändring av tjänsten eller ett uppdrag sparas som en ny version i samma ögonblick, vem som än gjorde den och hur. Versionsnumret kan citeras i ett protokoll. En antecknings text sparas inte i historiken, bara att den skrevs: rättar du anteckningen är den rättad.",
       "action": {
         "EMPLOYMENT_CREATE": "Tjänst skapad",
         "EMPLOYMENT_UPDATE": "Tjänst ändrad",

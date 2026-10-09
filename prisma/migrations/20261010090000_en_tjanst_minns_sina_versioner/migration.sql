@@ -27,7 +27,8 @@
 --     action (TeacherEmploymentLogs_shape): CREATE has only after, DELETE only
 --     before, UPDATE both. The JSON is the row as the table holds it, minus
 --     schoolId (the log row carries it), createdAt and updatedAt (bookkeeping
---     that changes on every save and would make every no-op a version).
+--     that changes on every save and would make every no-op a version), and
+--     minus the note's text (below).
 --   * actorId: app.current_user_id() of the writer — the admin behind the
 --     request, the import, the rollover — and NULL for a migration, the seed or
 --     the owner's own psql. No foreign key, as ScheduleChangeLogs.actorId has
@@ -78,7 +79,24 @@
 --     CREATE-shaped one under the NEW (after = NEW). The DTOs forbid moving a
 --     post, but PostgREST does not; with one row filed under the new owner,
 --     teacher B's own arm would show B the `before` of teacher A's duty —
---     label, minutes, note. Each owner sees exactly their own half.
+--     label, minutes. Each owner sees exactly their own half.
+--
+-- ## A note's text is not kept, only that it was written
+--
+-- TeacherEmployments.note and TeacherDuties.note are free text (≤ 500), and
+-- free text is where an admin writes what should never be stored for long:
+-- "B sjukskriven, A täcker" on A's row, a remark about someone's health or
+-- leave. Corrected on the row, it would stay in an append-only version that
+-- the teacher reads through their own arm and that no role can redact — the
+-- only ways out would be deleting the person or the läsår. GDPR rectification
+-- and minimisation of HR free text would be impossible. So the logged JSON
+-- never carries the text: `note` is dropped from before and after, and a
+-- version whose note was written or changed carries "noteChanged": true in
+-- its after (a CREATE with a note, an UPDATE that changed it, the CREATE half
+-- of an owner change). A save that changed only the note is still a version
+-- — the card reads "Anteckningen skrevs eller ändrades" — but what it said
+-- lives on the row alone, where correcting it corrects it. The no-op test
+-- compares the rows with their notes, so an unchanged note is no version.
 --
 -- ## The existence rule: nothing that works today is refused
 --
@@ -115,8 +133,9 @@
 -- ## Append-only, for every role
 --
 -- RLS and GRANTs do not bind the owner or Supabase's service_role (BYPASSRLS),
--- and a history that the service key can rewrite is no history. So three
--- guards on the log itself, BEFORE INSERT / UPDATE / DELETE FOR EACH ROW:
+-- and a history that the service key can rewrite is no history. So four
+-- guards on the log itself, BEFORE INSERT / UPDATE / DELETE FOR EACH ROW and
+-- BEFORE TRUNCATE FOR EACH STATEMENT:
 --
 --   * INSERT is refused unless it comes from a trigger (pg_trigger_depth() >
 --     1 inside the guard): the logging trigger's own insert passes, a direct
@@ -128,6 +147,13 @@
 --   * DELETE is refused unless it is a cascade (depth > 1): the person, the
 --     year or the school deleted takes the history with them (above); nobody
 --     deletes a version on its own.
+--   * TRUNCATE is refused, always. It fires no row trigger and ignores RLS,
+--     so without a statement guard one TRUNCATE by the owner — or by any role
+--     Supabase's default privileges hand TRUNCATE (below) — empties every
+--     school's history and every "Version N" a protokoll cites. Nothing in
+--     SchemaPro truncates; a TRUNCATE of a parent with CASCADE reaches the
+--     log too and is refused with it, which is the point. Deleting rows of
+--     Schools, Users or AcademicYears still cascades, row by row, above.
 --
 -- The depth reads differently here than in the writer, and was measured so:
 -- a BEFORE row trigger fires inside the referential action's own statement,
@@ -150,10 +176,16 @@
 -- (the trigger writes as the owner), no staff arm, no pupil or guardian arm,
 -- no service-principal arm: SS12000's /duties reads the posts, not their
 -- history. GRANT SELECT to app_authenticated, guarded as every migration here
--- guards it; and INSERT, UPDATE, DELETE are REVOKEd from authenticated, anon
--- and service_role, which 20260806000000's default privileges would otherwise
--- hand them — RLS would refuse authenticated anyway, but the grant states the
--- intent, and for service_role the REVOKE and the guards are what refuse.
+-- guards it. Every privilege but SELECT is REVOKEd from authenticated and
+-- service_role, and everything from anon: 20260806000000's default
+-- privileges hand authenticated INSERT, UPDATE and DELETE, and Supabase's
+-- own default ACL in "public" hands anon, authenticated and service_role
+-- ALL — TRUNCATE, REFERENCES and TRIGGER included, as 20260914180000 found
+-- for _prisma_migrations (measured again here on a throwaway database with
+-- that ACL set: all three roles held TRUNCATE, REFERENCES and TRIGGER on this
+-- table, and `SET ROLE authenticated; TRUNCATE` emptied it). RLS would refuse
+-- authenticated's row writes anyway, but the grant states the intent; for
+-- service_role and for TRUNCATE the REVOKE and the guards are what refuse.
 
 -- ---------------------------------------------------------------------------
 -- Enums and the table
@@ -253,30 +285,35 @@ DECLARE
     CASE TG_TABLE_NAME WHEN 'TeacherEmployments' THEN 'EMPLOYMENT'::"TeacherLogEntity"
                        ELSE 'DUTY'::"TeacherLogEntity" END;
   stripped text[] := ARRAY['schoolId', 'createdAt', 'updatedAt'];
+  -- The note's text never enters the log; "noteChanged" says it was written.
+  note_written constant jsonb := '{"noteChanged": true}'::jsonb;
   old_row jsonb;
   new_row jsonb;
   actor uuid := app.current_user_id();
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    new_row := to_jsonb(NEW) - stripped;
+    new_row := to_jsonb(NEW) - stripped - 'note';
+    IF COALESCE(NEW."note", '') <> '' THEN
+      new_row := new_row || note_written;
+    END IF;
     PERFORM app.teacher_staffing_log_write(NEW."schoolId", NEW."userId", NEW."academicYearId",
                                            entity, NEW."id", 'CREATE', NULL, new_row, actor);
     RETURN NULL;
   END IF;
 
   IF TG_OP = 'DELETE' THEN
-    old_row := to_jsonb(OLD) - stripped;
+    old_row := to_jsonb(OLD) - stripped - 'note';
     PERFORM app.teacher_staffing_log_write(OLD."schoolId", OLD."userId", OLD."academicYearId",
                                            entity, OLD."id", 'DELETE', old_row, NULL, actor);
     RETURN NULL;
   END IF;
 
-  old_row := to_jsonb(OLD) - stripped;
-  new_row := to_jsonb(NEW) - stripped;
-  IF old_row = new_row AND OLD."schoolId" = NEW."schoolId" THEN
-    -- A save that changed nothing a reader can see is no version.
+  IF (to_jsonb(OLD) - stripped) = (to_jsonb(NEW) - stripped) AND OLD."schoolId" = NEW."schoolId" THEN
+    -- A save that changed nothing, the note included, is no version.
     RETURN NULL;
   END IF;
+  old_row := to_jsonb(OLD) - stripped - 'note';
+  new_row := to_jsonb(NEW) - stripped - 'note';
 
   IF OLD."userId" IS DISTINCT FROM NEW."userId"
      OR OLD."academicYearId" IS DISTINCT FROM NEW."academicYearId"
@@ -286,11 +323,17 @@ BEGIN
     -- arm ever shows them a colleague's `before`.
     PERFORM app.teacher_staffing_log_write(OLD."schoolId", OLD."userId", OLD."academicYearId",
                                            entity, OLD."id", 'DELETE', old_row, NULL, actor);
+    IF COALESCE(NEW."note", '') <> '' THEN
+      new_row := new_row || note_written;
+    END IF;
     PERFORM app.teacher_staffing_log_write(NEW."schoolId", NEW."userId", NEW."academicYearId",
                                            entity, NEW."id", 'CREATE', NULL, new_row, actor);
     RETURN NULL;
   END IF;
 
+  IF OLD."note" IS DISTINCT FROM NEW."note" THEN
+    new_row := new_row || note_written;
+  END IF;
   PERFORM app.teacher_staffing_log_write(NEW."schoolId", NEW."userId", NEW."academicYearId",
                                          entity, NEW."id", 'UPDATE', old_row, new_row, actor);
   -- An AFTER trigger's return value is ignored.
@@ -304,7 +347,8 @@ $$;
 CREATE FUNCTION app.teacher_employment_logs_append_only() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = "public", "pg_temp" AS $$
 BEGIN
-  IF pg_trigger_depth() > 1 THEN
+  -- TRUNCATE (a statement trigger): never, at any depth.
+  IF TG_OP <> 'TRUNCATE' AND pg_trigger_depth() > 1 THEN
     -- INSERT: the logging trigger's own write. UPDATE/DELETE: a parent's
     -- referential action (an id renamed, a person, year or school deleted).
     IF TG_OP = 'DELETE' THEN
@@ -333,6 +377,10 @@ CREATE TRIGGER "TeacherDuties_log"
 CREATE TRIGGER "TeacherEmploymentLogs_append_only"
     BEFORE INSERT OR UPDATE OR DELETE ON "TeacherEmploymentLogs"
     FOR EACH ROW EXECUTE FUNCTION app.teacher_employment_logs_append_only();
+
+CREATE TRIGGER "TeacherEmploymentLogs_no_truncate"
+    BEFORE TRUNCATE ON "TeacherEmploymentLogs"
+    FOR EACH STATEMENT EXECUTE FUNCTION app.teacher_employment_logs_append_only();
 
 -- ---------------------------------------------------------------------------
 -- Row-level security. See the preamble.
@@ -363,13 +411,13 @@ BEGIN
     GRANT SELECT ON "TeacherEmploymentLogs" TO "app_authenticated";
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-    REVOKE INSERT, UPDATE, DELETE ON "TeacherEmploymentLogs" FROM "authenticated";
+    REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON "TeacherEmploymentLogs" FROM "authenticated";
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
-    REVOKE INSERT, UPDATE, DELETE ON "TeacherEmploymentLogs" FROM "anon";
+    REVOKE ALL ON "TeacherEmploymentLogs" FROM "anon";
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-    REVOKE INSERT, UPDATE, DELETE ON "TeacherEmploymentLogs" FROM "service_role";
+    REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON "TeacherEmploymentLogs" FROM "service_role";
   END IF;
 END
 $$;

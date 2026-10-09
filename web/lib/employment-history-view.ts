@@ -33,6 +33,11 @@ export interface HistoryLabels {
   removed: string;
   /** blockedConstraintId set. */
   blocked: string;
+  /**
+   * The whole line for a version whose note was written or changed. The log
+   * never holds a note's text (migration 20261010090000), only that it moved.
+   */
+  noteChanged: string;
 }
 
 /** 66.667 → "66,667"; at most three decimals, as the percentages are stored. */
@@ -80,6 +85,7 @@ export function formatHistoryValue(
  */
 export function historyLines(entry: HistoryEntry, labels: HistoryLabels): string[] {
   return entry.changes.map((change: HistoryChange) => {
+    if (change.field === "noteChanged") return labels.noteChanged;
     const name = labels.field(entry.entity, change.field) ?? change.field;
     const before = formatHistoryValue(entry.entity, change.field, change.before, labels);
     const after = formatHistoryValue(entry.entity, change.field, change.after, labels);

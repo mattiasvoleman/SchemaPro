@@ -13,6 +13,11 @@
  *   UPDATE  the fields whose value changed
  *   DELETE  every field the row had (after null)
  *
+ * A note's TEXT is never in the log (migration 20261010090000: free HR text
+ * must stay correctable on the row); a version whose note was written or
+ * changed carries `noteChanged: true` in its after, and that is the change
+ * listed, in the place the note has in the form.
+ *
  * The row's own identity (id, userId, academicYearId) is not a change: the
  * log row carries the teacher and the year, and entityId the row. A key this
  * list does not know — a column added after Fas 3 — goes last, alphabetically,
@@ -37,7 +42,7 @@ export const EMPLOYMENT_FIELDS = [
   'contractKind',
   'teachingTargetMinutesPerWeek',
   'signature',
-  'note',
+  'noteChanged',
 ] as const;
 
 export const DUTY_FIELDS = [
@@ -48,7 +53,7 @@ export const DUTY_FIELDS = [
   'subjectId',
   'studentGroupId',
   'blockedConstraintId',
-  'note',
+  'noteChanged',
 ] as const;
 
 const IDENTITY = new Set(['id', 'userId', 'academicYearId', 'schoolId', 'createdAt', 'updatedAt']);
