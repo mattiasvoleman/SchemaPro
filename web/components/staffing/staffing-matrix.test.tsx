@@ -48,12 +48,25 @@ const teacher = (overrides: Partial<TeacherLoad>): TeacherLoad => ({
       percentOfFullTime: 27.8,
     },
   ],
-  annual: { assignedHoursPerYear: 600, regulatedHoursPerYear: 1088, workDaysPerYear: 194 },
+  assignments: [],
+  annual: {
+    assignedHoursPerYear: 600,
+    regulatedHoursPerYear: 1088,
+    workDaysPerYear: 194,
+    contractKind: "FERIE",
+    annualHours: null,
+    unregulatedHoursPerYear: null,
+    semesterHoursPerWeek: null,
+    dutyHoursPerYear: 0,
+    teachingWeeksPerYear: 38,
+    percentOfRegulated: null,
+  },
   ...overrides,
 });
 
 /** As the gateway sorts them: OVER first, then UNDER, OK, NO_TARGET. */
 const report: TeacherLoadReport = {
+  loadModel: "MINUTES",
   teachers: [
     teacher({
       userId: "t-bo",

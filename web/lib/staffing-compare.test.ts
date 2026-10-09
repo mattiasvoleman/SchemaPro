@@ -24,7 +24,19 @@ const load = (userId: string, overrides: Partial<TeacherLoad> = {}): TeacherLoad
   requirementCount: 3,
   dutyCount: 1,
   subjects: [],
-  annual: { assignedHoursPerYear: 600, regulatedHoursPerYear: 1360, workDaysPerYear: 194 },
+  assignments: [],
+  annual: {
+    assignedHoursPerYear: 600,
+    regulatedHoursPerYear: 1360,
+    workDaysPerYear: 194,
+    contractKind: "FERIE",
+    annualHours: null,
+    unregulatedHoursPerYear: null,
+    semesterHoursPerWeek: null,
+    dutyHoursPerYear: 0,
+    teachingWeeksPerYear: 38,
+    percentOfRegulated: null,
+  },
   ...overrides,
 });
 

@@ -37,12 +37,17 @@ describe('SubjectsService', () => {
   });
 
   describe('create', () => {
-    it('stamps the tenant from the principal and answers with the stored row', async () => {
-      const row = { id: SUBJECT_ID, name: 'Matematik' };
+    it('stamps the tenant from the principal and answers with the stored row, its factor a number', async () => {
+      // Prisma hands NUMERIC(4,3) back as a Decimal; the answer carries a number.
+      const row = { id: SUBJECT_ID, name: 'Matematik', loadFactor: new Prisma.Decimal('1.000') };
       tx.subject.create.mockResolvedValue(row);
       const user = testUser();
 
-      await expect(service.create({ name: 'Matematik' }, user)).resolves.toBe(row);
+      await expect(service.create({ name: 'Matematik' }, user)).resolves.toEqual({
+        id: SUBJECT_ID,
+        name: 'Matematik',
+        loadFactor: 1,
+      });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.subject.create).toHaveBeenCalledWith({
@@ -56,6 +61,8 @@ describe('SubjectsService', () => {
           // undervisning: today's behaviour for every existing school.
           nationalCode: null,
           countsTowardTimplan: true,
+          // The minutes as they are: what every subject reads under MINUTES.
+          loadFactor: 1,
         },
       });
       // No code given, so the reference table is not consulted at all.
@@ -90,7 +97,19 @@ describe('SubjectsService', () => {
           requiredRoomTypeId: ROOM_TYPE_ID,
           nationalCode: null,
           countsTowardTimplan: true,
+          loadFactor: 1,
         },
+      });
+    });
+
+    it('writes the factor it is given', async () => {
+      tx.subject.create.mockResolvedValue({ id: SUBJECT_ID, loadFactor: new Prisma.Decimal('0.7') });
+
+      await expect(service.create({ name: 'Slöjd', loadFactor: 0.7 }, testUser())).resolves.toMatchObject({
+        loadFactor: 0.7,
+      });
+      expect(tx.subject.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ loadFactor: 0.7 }),
       });
     });
 
@@ -183,13 +202,13 @@ describe('SubjectsService', () => {
 
   describe('update', () => {
     it('writes by id under the caller’s RLS context and answers with the row', async () => {
-      const row = { id: SUBJECT_ID, name: 'Fysik' };
+      const row = { id: SUBJECT_ID, name: 'Fysik', loadFactor: new Prisma.Decimal('1.25') };
       tx.subject.update.mockResolvedValue(row);
       const user = testUser();
 
       await expect(
         service.update(SUBJECT_ID, { name: 'Fysik' }, user),
-      ).resolves.toBe(row);
+      ).resolves.toEqual({ id: SUBJECT_ID, name: 'Fysik', loadFactor: 1.25 });
 
       expect(prisma.withRls).toHaveBeenCalledWith(user, expect.any(Function));
       expect(tx.subject.update).toHaveBeenCalledWith({
@@ -206,6 +225,7 @@ describe('SubjectsService', () => {
       ['color', { color: '#0055ff' }],
       ['requiredRoomTypeId', { requiredRoomTypeId: ROOM_TYPE_ID }],
       ['countsTowardTimplan', { countsTowardTimplan: false }],
+      ['loadFactor', { loadFactor: 0.7 }],
     ])('a PATCH naming only %s writes it', async (_field, patch) => {
       tx.subject.update.mockResolvedValue({ id: SUBJECT_ID });
 

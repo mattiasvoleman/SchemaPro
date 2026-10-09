@@ -1,5 +1,5 @@
 import { StaffingCheckMode, StaffingLoadModel, UnstaffedGenerationMode } from '@prisma/client';
-import { IsEnum, IsInt, IsNumber, IsOptional, IsPositive, Max, Min } from 'class-validator';
+import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsPositive, Max, Min } from 'class-validator';
 
 /**
  * Tjänstefördelningens inställningar: one row per school, PUT replaces it.
@@ -98,4 +98,14 @@ export class UpsertStaffingPolicyDto {
     message: 'Generering utan lärare är ALLOW eller REFUSE.',
   })
   unstaffedGeneration?: UnstaffedGenerationMode;
+
+  /**
+   * Whether GET /ss12000/v1/duties emits the post's dutyPercent and
+   * hoursPerYear (both SS12000 2.1.0 Duty fields). Default false: a key is
+   * often held by a lärplattform that needs nobody's tjänstgöringsgrad. See
+   * migration 20261010110000.
+   */
+  @IsOptional()
+  @IsBoolean({ message: 'Delning med integrationer anges med true eller false.' })
+  shareEmploymentWithIntegrations?: boolean;
 }

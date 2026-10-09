@@ -86,6 +86,32 @@ import {
  * switch this off: OFF says "do not warn about assignments", and capacity is a
  * planning figure, not a warning.
  *
+ * THE FAKTOR MODEL IS ONE FUNCTION. Under the policy's loadModel FACTOR a
+ * teacher is charged tid × the subject's loadFactor — Skola24's Faktor-modell
+ * ("tjänstgöring = tid × faktor ämne"), Untis' subject factor. The weight is
+ * resolved once per row by loadWeightOf (in readLoadInput, never here) and
+ * applied by weigh() at exactly the four places a TEACHER is charged:
+ * chargedMinutes' lead and co-teacher shares, the annual minutes and the
+ * toppvecka item. Under MINUTES the weight is 1 and weigh() returns its
+ * argument untouched — not × 1, which is the same number but a step a reader
+ * would have to prove — so a MINUTES school's every figure is the double it
+ * always was (teacher-load.minutes-identity.spec.ts runs the whole fixture
+ * with random factors to hold that). Lektionsminuter are never weighted: the
+ * pupils sit the minutes, and SCB's ämnesomfattning is undervisningstid, so
+ * an assignment carries its unweighted timeMinutesPerWeek beside the charged
+ * one. Unstaffed demand IS weighted: it is what the row would charge whoever
+ * takes it. Uppdrag are not: they are minutes the school negotiated as such.
+ * No group factor (Skola24's "Faktor grupp"): a row's teacherLoadPercent
+ * already weighs one (group, subject).
+ *
+ * ÅRSARBETSTID IS THE SCHOOL'S SETTING, STATED BESIDE THE TEACHING. The
+ * annual block reads the policy's figures — reglerad arbetstid, årsarbetstid
+ * of a ferietjänst, the semestertjänst's week, A-dagar — scaled by the post
+ * (tjänst − nedsättning), and never an agreement number of its own: the
+ * defaults the table holds are the school's until it changes them. A-dagar
+ * are the school's figure unscaled; whether they shrink with a deltid is the
+ * school's call, not this module's.
+ *
  * BEHÖRIGHET IS CHECKED ONLY WHEN THE SCHOOL HAS SAID SOMETHING. A school with
  * zero qualification rows has not recorded that nobody is qualified, it has
  * recorded nothing, and flagging all 300 of its assignments would be noise that
@@ -103,6 +129,9 @@ export interface GradeSpan {
   max: number;
 }
 
+/** MINUTES: load is lesson minutes. FACTOR: lesson minutes × the subject's loadFactor. */
+export type LoadModel = 'MINUTES' | 'FACTOR';
+
 /** The policy fields the report reads. Null policy = the school has none yet. */
 export interface LoadPolicy {
   fullTimeTeachingMinutesPerWeek: number | null;
@@ -110,6 +139,12 @@ export interface LoadPolicy {
   fullTimeRegulatedHoursPerYear: number;
   workDaysPerYear: number;
   qualificationMode: StaffingCheckMode;
+  /** Årsarbetstid of a full ferietjänst, the school's setting. Absent = the table default. */
+  fullTimeAnnualHours?: number;
+  /** The week of a full semestertjänst, the school's setting. Absent = the table default. */
+  semesterHoursPerWeek?: number;
+  /** Absent = MINUTES. The weights themselves are on the rows (loadWeight). */
+  loadModel?: LoadModel;
 }
 
 /**
@@ -123,7 +158,34 @@ export const DEFAULT_LOAD_POLICY: LoadPolicy = {
   fullTimeRegulatedHoursPerYear: 1360,
   workDaysPerYear: 194,
   qualificationMode: 'WARN',
+  fullTimeAnnualHours: 1767,
+  semesterHoursPerWeek: 40,
+  loadModel: 'MINUTES',
 };
+
+/**
+ * Skola24's Faktor-modell: tjänstgöring = tid × faktor ämne. 1 under MINUTES,
+ * whatever the subject's factor says; under FACTOR the factor, with anything
+ * not a positive finite number read as 1 (the column is NOT NULL and CHECKed
+ * 0.5..3, so that branch is for a caller that has none to give).
+ */
+export function loadWeightOf(
+  model: LoadModel | null | undefined,
+  subjectLoadFactor: number | null | undefined,
+): number {
+  if (model !== 'FACTOR') return 1;
+  const factor = subjectLoadFactor ?? 1;
+  return Number.isFinite(factor) && factor > 0 ? factor : 1;
+}
+
+/**
+ * Minutes × a row's weight — and the minutes themselves, untouched, when the
+ * weight is absent or 1, so a MINUTES school's figures are the same doubles
+ * they were before the factor existed.
+ */
+export function weigh(minutes: number, weight: number | undefined): number {
+  return weight === undefined || weight === 1 ? minutes : minutes * weight;
+}
 
 export interface LoadEmployment {
   userId: string;
@@ -154,6 +216,11 @@ export interface LoadRequirement extends TeachingPeriod {
   teacherLoadPercent: number;
   /** How much of the row the co-teacher is charged, 0..200. */
   coTeacherLoadPercent: number;
+  /**
+   * loadWeightOf(policy.loadModel, subject.loadFactor), resolved once by the
+   * reader. Absent = 1: every row a MINUTES school reads.
+   */
+  loadWeight?: number;
   /**
    * The years the group actually holds, derived as the optimisation proxy
    * derives it (room-eligibility.ts gradeSpanOf): members' home classes, the
@@ -205,10 +272,41 @@ export interface SubjectLoad {
   minutesPerWeek: number;
   /** minutes / the teacher's total, 0..1 to four decimals. */
   shareOfTeaching: number;
-  /** employmentPercent × share — SCB's "tjänsteomfattning per ämne". Null without a post. */
+  /**
+   * employmentPercent × share — SCB's "tjänsteomfattning per ämne" under
+   * MINUTES. Under FACTOR the share is of räknad tid (minutes × factor), so
+   * this is a weighted figure; the SCB underlag reads assignments'
+   * timeMinutesPerWeek instead. Null without a post.
+   */
   percentOfEmployment: number | null;
   /** minutes / the policy riktmärke. Null without one. */
   percentOfFullTime: number | null;
+}
+
+/** One row a teacher carries, as the uppdragsbeskrivning and the SCB underlag list it. */
+export interface TeacherAssignment {
+  requirementId: string;
+  role: 'TEACHER' | 'CO_TEACHER';
+  subjectId: string;
+  subjectName: string;
+  studentGroupId: string;
+  groupName: string;
+  gradeSpan: GradeSpan | null;
+  recurrence: TeachingPeriod['recurrence'] | null;
+  startDate: string | null;
+  endDate: string | null;
+  /** The row's lektionsminuter, standardvecka, at 100 % and never weighted. */
+  lessonMinutesPerWeek: number;
+  /**
+   * The role's share of the lesson time, standardvecka, never weighted: the
+   * time SCB's ämnesomfattning asks about ("hur lärarens undervisningstid
+   * fördelas"), whatever the school's load model.
+   */
+  timeMinutesPerWeek: number;
+  /** What the row charges this teacher, standardvecka: × the role's % × the weight. */
+  minutesPerWeek: number;
+  /** The charge over the year's teaching weeks, lov subtracted, one decimal. */
+  hoursPerYear: number;
 }
 
 export interface TeacherLoad {
@@ -232,12 +330,29 @@ export interface TeacherLoad {
   requirementCount: number;
   dutyCount: number;
   subjects: SubjectLoad[];
+  /** Every row the teacher carries, by group name then subject name (Swedish order). */
+  assignments: TeacherAssignment[];
   annual: {
-    /** Σ lessons × minutes × teaching weeks (lov subtracted) / 60, one decimal. */
+    /** Σ lessons × minutes × teaching weeks (lov subtracted) / 60, one decimal; charged (× factor under FACTOR). */
     assignedHoursPerYear: number;
     /** policy.fullTimeRegulatedHoursPerYear × (tjänst − nedsättning) / 100. */
     regulatedHoursPerYear: number | null;
+    /** The school's A-dagar, unscaled. */
     workDaysPerYear: number;
+    /** The post's avtalsform; null without a post. */
+    contractKind: TeacherContractKind | null;
+    /** FERIE: policy.fullTimeAnnualHours × (tjänst − nedsättning) / 100, one decimal; else null. */
+    annualHours: number | null;
+    /** FERIE: annualHours − regulatedHoursPerYear, the school's "övrig arbetstid"; else null. */
+    unregulatedHoursPerYear: number | null;
+    /** SEMESTER: policy.semesterHoursPerWeek × (tjänst − nedsättning) / 100, one decimal; else null. */
+    semesterHoursPerWeek: number | null;
+    /** dutyMinutesPerWeek over the year's teaching weeks (school-wide lov out) / 60, one decimal. */
+    dutyHoursPerYear: number;
+    /** The year's teaching weeks with school-wide lov subtracted. */
+    teachingWeeksPerYear: number;
+    /** assigned / regulated × 100, one decimal; null without a regulated figure above 0. */
+    percentOfRegulated: number | null;
   };
 }
 
@@ -282,6 +397,8 @@ export interface UnqualifiedAssignment {
 }
 
 export interface TeacherLoadReport {
+  /** The policy's model the figures were charged under. */
+  loadModel: LoadModel;
   teachers: TeacherLoad[];
   unstaffedRequirements: UnstaffedRequirement[];
   unqualifiedAssignments: UnqualifiedAssignment[];
@@ -308,6 +425,8 @@ export function round5(value: number): number {
 
 const round1 = (value: number): number => Math.round(value * 10) / 10;
 const round4 = (value: number): number => Math.round(value * 10_000) / 10_000;
+const byName = (a: string, b: string): number => a.localeCompare(b, 'sv');
+const byCode = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * How much of a standardvecka one requirement is worth, 0..1.
@@ -462,6 +581,7 @@ export function chargedMinutes(
     | 'startDate'
     | 'endDate'
     | 'gradeSpan'
+    | 'loadWeight'
   >,
   year: YearBounds,
   closures: ClosedRange[],
@@ -469,8 +589,8 @@ export function chargedMinutes(
   const lesson = weeklyMinutesOf(requirement) * standardWeekWeight(requirement, year, closures);
   return {
     lesson,
-    teacher: (lesson * requirement.teacherLoadPercent) / 100,
-    coTeacher: (lesson * requirement.coTeacherLoadPercent) / 100,
+    teacher: weigh((lesson * requirement.teacherLoadPercent) / 100, requirement.loadWeight),
+    coTeacher: weigh((lesson * requirement.coTeacherLoadPercent) / 100, requirement.loadWeight),
   };
 }
 
@@ -482,6 +602,7 @@ interface Accumulator {
   countedDutyMinutes: number;
   dutyCount: number;
   subjects: Map<string, { subjectName: string; minutes: number }>;
+  assignments: TeacherAssignment[];
 }
 
 const STATUS_ORDER: Record<LoadStatus, number> = { OVER: 0, UNDER: 1, OK: 2, NO_TARGET: 3 };
@@ -489,6 +610,9 @@ const STATUS_ORDER: Record<LoadStatus, number> = { OVER: 0, UNDER: 1, OK: 2, NO_
 export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   const policy = input.policy ?? DEFAULT_LOAD_POLICY;
   const { year, closures } = input;
+  // The year's teaching weeks with school-wide lov out: the frame uppdrag,
+  // which carry no week pattern, are taken over.
+  const schoolTeachingWeeks = teachingWeeks({}, year, closures, null);
 
   const employmentByUser = new Map(input.employments.map((row) => [row.userId, row]));
   const accumulators = new Map<string, Accumulator>();
@@ -503,6 +627,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
         countedDutyMinutes: 0,
         dutyCount: 0,
         subjects: new Map(),
+        assignments: [],
       };
       accumulators.set(userId, acc);
     }
@@ -576,10 +701,27 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       if (userId === null) continue;
       const share = percent / 100;
       const standardMinutes = role === 'TEACHER' ? charged.teacher : charged.coTeacher;
+      const annualMinutes = weigh(yearMinutes * share, requirement.loadWeight);
       const acc = accumulatorFor(userId);
       acc.assigned += standardMinutes;
-      acc.annualMinutes += yearMinutes * share;
+      acc.annualMinutes += annualMinutes;
       acc.requirementCount += 1;
+      acc.assignments.push({
+        requirementId: requirement.id,
+        role,
+        subjectId: requirement.subjectId,
+        subjectName: requirement.subjectName,
+        studentGroupId: requirement.studentGroupId,
+        groupName: requirement.groupName,
+        gradeSpan: requirement.gradeSpan,
+        recurrence: requirement.recurrence ?? null,
+        startDate: requirement.startDate ?? null,
+        endDate: requirement.endDate ?? null,
+        lessonMinutesPerWeek: Math.round(charged.lesson),
+        timeMinutesPerWeek: Math.round((charged.lesson * percent) / 100),
+        minutesPerWeek: Math.round(standardMinutes),
+        hoursPerYear: round1(annualMinutes / 60),
+      });
       const subject = acc.subjects.get(requirement.subjectId) ?? {
         subjectName: requirement.subjectName,
         minutes: 0,
@@ -588,7 +730,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       acc.subjects.set(requirement.subjectId, subject);
       peakItems.push({
         key: userId,
-        minutes: weeklyMinutes * share,
+        minutes: weigh(weeklyMinutes * share, requirement.loadWeight),
         recurrence: requirement.recurrence,
         startDate: requirement.startDate,
         endDate: requirement.endDate,
@@ -632,6 +774,14 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
     const activePercent = employment
       ? employment.employmentPercent - employment.reductionPercent
       : null;
+    const regulated =
+      activePercent === null ? null : (policy.fullTimeRegulatedHoursPerYear * activePercent) / 100;
+    const ferie = employment !== null && employment.contractKind === 'FERIE';
+    const semester = employment !== null && employment.contractKind === 'SEMESTER';
+    const annualHours =
+      ferie && activePercent !== null
+        ? ((policy.fullTimeAnnualHours ?? DEFAULT_LOAD_POLICY.fullTimeAnnualHours!) * activePercent) / 100
+        : null;
 
     // Shares are taken on the unrounded minutes, so 600 of 900 is exactly
     // two thirds whatever the rounding did to either figure. Teaching minutes
@@ -670,13 +820,31 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
       requirementCount: acc.requirementCount,
       dutyCount: acc.dutyCount,
       subjects,
+      assignments: acc.assignments.sort(
+        (a, b) =>
+          byName(a.groupName, b.groupName) ||
+          byName(a.subjectName, b.subjectName) ||
+          byCode(a.requirementId, b.requirementId) ||
+          byCode(a.role, b.role),
+      ),
       annual: {
         assignedHoursPerYear: round1(acc.annualMinutes / 60),
-        regulatedHoursPerYear:
-          activePercent === null
-            ? null
-            : round1((policy.fullTimeRegulatedHoursPerYear * activePercent) / 100),
+        regulatedHoursPerYear: regulated === null ? null : round1(regulated),
         workDaysPerYear: policy.workDaysPerYear,
+        contractKind: employment?.contractKind ?? null,
+        annualHours: annualHours === null ? null : round1(annualHours),
+        unregulatedHoursPerYear:
+          annualHours === null || regulated === null ? null : round1(annualHours - regulated),
+        semesterHoursPerWeek:
+          semester && activePercent !== null
+            ? round1(((policy.semesterHoursPerWeek ?? DEFAULT_LOAD_POLICY.semesterHoursPerWeek!) * activePercent) / 100)
+            : null,
+        dutyHoursPerYear: round1((acc.dutyMinutes * schoolTeachingWeeks) / 60),
+        teachingWeeksPerYear: schoolTeachingWeeks,
+        percentOfRegulated:
+          regulated === null || regulated <= 0
+            ? null
+            : round1((acc.annualMinutes / 60 / regulated) * 100),
       },
     });
   }
@@ -741,6 +909,7 @@ export function buildTeacherLoadReport(input: LoadInput): TeacherLoadReport {
   }
 
   return {
+    loadModel: policy.loadModel ?? 'MINUTES',
     teachers,
     unstaffedRequirements,
     unqualifiedAssignments,

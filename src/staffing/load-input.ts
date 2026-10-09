@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { gradeSpanOf, loadRosters } from '../optimization/room-eligibility';
 import { rostersOfYear, type RosterViewer } from '../year-rollover/projected-rosters';
-import type { GradeSpan, LoadInput } from './teacher-load';
+import { loadWeightOf, type GradeSpan, type LoadInput, type LoadModel } from './teacher-load';
 import type { YearBounds } from './teaching-weeks';
 
 const asDay = (value: Date): string => value.toISOString().slice(0, 10);
@@ -19,6 +19,15 @@ export interface LoadRead {
   spanOf(groupIds: string[], studentIds?: string[]): GradeSpan | null;
   /** The school's name for a group of the year, or undefined. */
   groupName(groupId: string): string | undefined;
+  /** The policy's load model; MINUTES without a policy row. */
+  loadModel: LoadModel;
+  /**
+   * loadWeightOf(loadModel, the subject's loadFactor) for ANY subject of the
+   * school — a PATCH moving a row to another subject, a lesson whose subject
+   * has no requirement — so every charge is weighed by one function. 1 under
+   * MINUTES, where no factor is read at all.
+   */
+  weightOf(subjectId: string): number;
 }
 
 /**
@@ -81,6 +90,20 @@ export async function readLoadInput(
   });
   const employments = await tx.teacherEmployment.findMany({ where: { academicYearId } });
   const policy = await tx.staffingPolicy.findUnique({ where: { schoolId } });
+  // The Faktor model's weights, read only when the school counts by factor: a
+  // MINUTES school (every school until it says otherwise) sends exactly the
+  // statements it always did, and every weight is 1 without asking.
+  const loadModel: LoadModel = policy?.loadModel ?? 'MINUTES';
+  const factorBySubject =
+    loadModel === 'FACTOR'
+      ? new Map(
+          (
+            await tx.subject.findMany({ select: { id: true, loadFactor: true } })
+          ).map((row) => [row.id, Number(row.loadFactor)]),
+        )
+      : null;
+  const weightOf = (subjectId: string): number =>
+    loadWeightOf(loadModel, factorBySubject?.get(subjectId));
   const breaks = await tx.schoolBreak.findMany({
     where: { academicYearId },
     select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
@@ -163,6 +186,10 @@ export async function readLoadInput(
           fullTimeRegulatedHoursPerYear: policy.fullTimeRegulatedHoursPerYear,
           workDaysPerYear: policy.workDaysPerYear,
           qualificationMode: policy.qualificationMode,
+          fullTimeAnnualHours: policy.fullTimeAnnualHours ?? undefined,
+          semesterHoursPerWeek:
+            policy.semesterHoursPerWeek == null ? undefined : Number(policy.semesterHoursPerWeek),
+          loadModel: policy.loadModel ?? undefined,
         }
       : null,
     employments: employments.map((row) => ({
@@ -190,6 +217,9 @@ export async function readLoadInput(
       startDate: asDayOrNull(row.startDate),
       endDate: asDayOrNull(row.endDate),
       gradeSpan: spanOf([row.studentGroupId]),
+      // Only under FACTOR: a MINUTES row carries no weight, which weigh()
+      // reads as 1 without multiplying.
+      ...(factorBySubject ? { loadWeight: weightOf(row.subjectId) } : {}),
     })),
     qualifications: qualifications.map((row) => ({
       userId: row.userId,
@@ -218,6 +248,8 @@ export async function readLoadInput(
     input,
     spanOf,
     groupName: (groupId) => groups.get(groupId)?.name,
+    loadModel,
+    weightOf,
   };
 }
 

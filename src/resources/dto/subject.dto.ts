@@ -2,10 +2,13 @@ import {
   IsBoolean,
   IsHexColor,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
+  Min,
   ValidateIf,
 } from 'class-validator';
 
@@ -29,6 +32,16 @@ import {
  */
 const COUNTS_MESSAGE =
   'countsTowardTimplan: om ämnet räknas som undervisningstid anges med true eller false.';
+
+/**
+ * Skola24's "Faktor ämne", read only under the policy's loadModel FACTOR. The
+ * bounds are Subjects_loadFactor_is_sane's (20261010100000), and null is
+ * refused for countsTowardTimplan's reason: the column is NOT NULL with a
+ * default, so null has no "cleared" meaning — 1 is how a school says "the
+ * minutes as they are".
+ */
+export const LOAD_FACTOR_MESSAGE =
+  'loadFactor: faktorn är ett tal mellan 0,5 och 3 med högst tre decimaler.';
 
 export class CreateSubjectDto {
   @IsString()
@@ -63,6 +76,13 @@ export class CreateSubjectDto {
   @ValidateIf((dto: CreateSubjectDto) => dto.countsTowardTimplan !== undefined)
   @IsBoolean({ message: COUNTS_MESSAGE })
   countsTowardTimplan?: boolean;
+
+  /** The subject's Faktor, 0.5..3 with at most three decimals. Absent means 1. */
+  @ValidateIf((dto: CreateSubjectDto) => dto.loadFactor !== undefined)
+  @IsNumber({ maxDecimalPlaces: 3, allowNaN: false, allowInfinity: false }, { message: LOAD_FACTOR_MESSAGE })
+  @Min(0.5, { message: LOAD_FACTOR_MESSAGE })
+  @Max(3, { message: LOAD_FACTOR_MESSAGE })
+  loadFactor?: number;
 }
 
 export class UpdateSubjectDto {
@@ -94,4 +114,11 @@ export class UpdateSubjectDto {
   @ValidateIf((dto: UpdateSubjectDto) => dto.countsTowardTimplan !== undefined)
   @IsBoolean({ message: COUNTS_MESSAGE })
   countsTowardTimplan?: boolean;
+
+  /** Absent leaves the factor as it is. */
+  @ValidateIf((dto: UpdateSubjectDto) => dto.loadFactor !== undefined)
+  @IsNumber({ maxDecimalPlaces: 3, allowNaN: false, allowInfinity: false }, { message: LOAD_FACTOR_MESSAGE })
+  @Min(0.5, { message: LOAD_FACTOR_MESSAGE })
+  @Max(3, { message: LOAD_FACTOR_MESSAGE })
+  loadFactor?: number;
 }

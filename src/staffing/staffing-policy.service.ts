@@ -35,6 +35,7 @@ export const STAFFING_POLICY_DEFAULTS = {
   overAllocationTolerancePercent: 10,
   loadModel: 'MINUTES',
   unstaffedGeneration: 'ALLOW',
+  shareEmploymentWithIntegrations: false,
 } as const;
 
 function toResponse(row: StaffingPolicy): StaffingPolicyResponse {
@@ -90,6 +91,9 @@ export class StaffingPolicyService {
       loadModel: dto.loadModel ?? STAFFING_POLICY_DEFAULTS.loadModel,
       unstaffedGeneration:
         dto.unstaffedGeneration ?? STAFFING_POLICY_DEFAULTS.unstaffedGeneration,
+      shareEmploymentWithIntegrations:
+        dto.shareEmploymentWithIntegrations ??
+        STAFFING_POLICY_DEFAULTS.shareEmploymentWithIntegrations,
     };
 
     // The table says the same with StaffingPolicies_regulatedHours_within_annual,

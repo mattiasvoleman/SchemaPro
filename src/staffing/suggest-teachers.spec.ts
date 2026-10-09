@@ -137,6 +137,37 @@ describe('suggestTeachers', () => {
     expect(result.candidates[0]!.remainingMinutesPerWeek).toBe(920);
   });
 
+  it('charges the row × its subject factor under FACTOR, through the one charge the report uses', () => {
+    // Anna already carries 10 × 60 of slöjd at 0.7 = 420; the 4 × 60 target
+    // row at 1.2 charges 288, so 1 080 − 420 − 288 = 372 kvar after it.
+    const weighted = suggestTeachers(
+      input({
+        policy: { ...DEFAULT_LOAD_POLICY, fullTimeTeachingMinutesPerWeek: 1080, loadModel: 'FACTOR' },
+        requirements: [
+          row('target', { loadWeight: 1.2 }),
+          row('slojd', { subjectId: 'sl', subjectName: 'Slöjd', teacherId: ANNA, lessonsPerWeek: 10, loadWeight: 0.7 }),
+        ],
+      }),
+      'target',
+      [ANNA],
+    );
+    expect(weighted.teacherMinutesPerWeek).toBe(288);
+    expect(weighted.candidates[0]!.remainingMinutesPerWeek).toBe(372);
+    // The same rows with every weight 1 — a MINUTES school — are the minutes.
+    const minutes = suggestTeachers(
+      input({
+        requirements: [
+          row('target', { loadWeight: 1 }),
+          row('slojd', { subjectId: 'sl', subjectName: 'Slöjd', teacherId: ANNA, lessonsPerWeek: 10, loadWeight: 1 }),
+        ],
+      }),
+      'target',
+      [ANNA],
+    );
+    expect(minutes.teacherMinutesPerWeek).toBe(240);
+    expect(minutes.candidates[0]!.remainingMinutesPerWeek).toBe(1080 - 600 - 240);
+  });
+
   it('says wouldExceed exactly past the tolerance, and sorts NO_TARGET last in its tier', () => {
     const result = suggestTeachers(
       input({

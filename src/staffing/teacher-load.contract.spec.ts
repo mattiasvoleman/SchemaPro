@@ -69,6 +69,22 @@ describe('the load report agrees with the shared fixture', () => {
     expect(split.some((r) => r.teacherId === null)).toBe(true);
   });
 
+  it('reaches every Fas 3 branch: a weight off 1 under FACTOR, both roles in the assignments, FERIE, SEMESTER and no post', () => {
+    expect(cases.some((c) => c.report.loadModel === 'FACTOR')).toBe(true);
+    const weights = cases.flatMap((c) => c.input.requirements.map((r) => r.loadWeight ?? 1));
+    expect(weights.some((w) => w < 1)).toBe(true);
+    expect(weights.some((w) => w > 1)).toBe(true);
+    const teachers = cases.flatMap((c) => c.report.teachers);
+    const roles = new Set(teachers.flatMap((t) => t.assignments.map((a) => a.role)));
+    expect([...roles].sort()).toEqual(['CO_TEACHER', 'TEACHER']);
+    expect(teachers.some((t) => t.assignments.some((a) => a.minutesPerWeek !== a.timeMinutesPerWeek))).toBe(true);
+    const kinds = new Set(teachers.map((t) => t.annual.contractKind));
+    expect(kinds).toEqual(new Set(['FERIE', 'SEMESTER', null]));
+    expect(teachers.some((t) => t.annual.semesterHoursPerWeek !== null)).toBe(true);
+    expect(teachers.some((t) => t.annual.unregulatedHoursPerYear !== null && t.annual.unregulatedHoursPerYear > 0)).toBe(true);
+    expect(teachers.some((t) => t.annual.percentOfRegulated === null && t.annual.regulatedHoursPerYear === 0)).toBe(true);
+  });
+
   it.each(cases.map((entry) => [entry.name, entry] as const))('%s', (_name, entry) => {
     expect(buildTeacherLoadReport(entry.input)).toEqual(entry.report);
   });
