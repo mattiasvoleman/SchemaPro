@@ -1254,9 +1254,9 @@
         "STAFFING_RANGE_INCLUDES_FUTURE": "The period reaches today ({asOfDate}) or later: lessons that have not ended show as Upcoming, while planned counts the whole day.",
         "STAFFING_RANGE_BEFORE_PUBLISHED": "The calendar starts {publishedFrom}: planned and scheduled are compared from that day, so the time before does not look like a deficit.",
         "STAFFING_RANGE_AFTER_PUBLISHED": "The calendar is published until {publishedThrough}: planned and scheduled are compared until that day.",
-        "STAFFING_RANGE_HAS_GAPS": "The calendar has gaps between publishes, {days} days between {from} and {through}. The figures are not adjusted for them.",
+        "STAFFING_RANGE_HAS_GAPS": "The calendar has gaps between publishes, {days, plural, one {# day} other {# days}} between {from} and {through}. The figures are not adjusted for them.",
         "STAFFING_RANGE_PARTIAL_WEEKS": "The comparison {from} – {to} starts or ends mid-week. Planned counts a fifth of the week per school day, scheduled and delivered count each lesson on its own day, so they can differ even when everything went to plan. Choose whole weeks, Monday to Friday, to compare line by line.",
-        "STAFFING_LEAD_BESIDE_SUBSTITUTE": "{lessons} held lessons have a teacher left beside a substitute. The time is credited to the substitute and not to them."
+        "STAFFING_LEAD_BESIDE_SUBSTITUTE": "{lessons, plural, one {# held lesson has a teacher left beside a substitute. The time is credited to the substitute and not to the teacher.} other {# held lessons have a teacher left beside a substitute. The time is credited to the substitute and not to them.}}"
       },
       "exportsTitle": "Exports",
       "exportSamverkan": "Export for consultation (CSV)",
@@ -1888,7 +1888,7 @@
     },
     "teachingHeaderFactor": "Counted time (factor) min/wk",
     "teachingPeakHeaderFactor": "Counted peak week (factor) min/wk",
-    "unitHintPercentFactor": "Under Factor the percentage is counted time: the employment rate × the subject's share of the teacher's counted time (minutes × factor). SCB's subject share is defined on teaching time and the SCB file takes it from lesson minutes, without the factor.",
+    "unitHintPercentFactor": "Under Factor the percentage is counted time: the employment rate × the subject's share of the teacher's counted time (minutes × factor). SCB's subject share is defined on teaching time and the SCB working file takes it from lesson minutes, without the factor.",
     "shareWithIntegrations": "Share employment rate and annual working time with integrations (SS12000)",
     "shareWithIntegrationsHint": "Off: /ss12000/v1/duties only shows who holds a post, with signature and mentor assignments. On: also the employment rate in percent and, for a ferietjänst, the annual hours. Reduction, own target and note are never shared. With On, a post without annual hours can still be told to be a semestertjänst. In both modes the post's modified time also moves when something not shared changes — never what changed.",
     "factor": {

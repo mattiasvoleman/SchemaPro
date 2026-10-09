@@ -36,6 +36,7 @@ const labels: HistoryLabels = {
   empty: "—",
   removed: "borttaget",
   blocked: "blockerad tid",
+  decimal: (value) => new Intl.NumberFormat("sv", { maximumFractionDigits: 3, useGrouping: false }).format(value),
   noteChanged: "Anteckningen skrevs eller ändrades (texten sparas inte i historiken).",
 };
 
@@ -153,6 +154,17 @@ describe("formatStamp and latestVersion", () => {
         entry({ version: 8 }),
       ]),
     ).toEqual({ version: 9, createdAt: "2026-10-10T08:00:00.000Z" });
+  });
+});
+
+describe("formatHistoryValue in the reader's decimal mark", () => {
+  it("writes 66,667 % for a Swedish reader and 66.667 % for an English one", () => {
+    const en: HistoryLabels = {
+      ...labels,
+      decimal: (value) => new Intl.NumberFormat("en", { maximumFractionDigits: 3, useGrouping: false }).format(value),
+    };
+    expect(formatHistoryValue("EMPLOYMENT", "employmentPercent", 66.6667, labels)).toBe("66,667 %");
+    expect(formatHistoryValue("EMPLOYMENT", "employmentPercent", "66.667", en)).toBe("66.667 %");
   });
 });
 

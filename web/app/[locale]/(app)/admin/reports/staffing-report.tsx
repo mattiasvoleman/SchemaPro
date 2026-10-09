@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { ChevronDown, ChevronRight, Download, Scale, TriangleAlert } from "lucide-react";
 import { api } from "@/lib/api";
@@ -69,6 +69,7 @@ import { useStaffingReconciliation } from "./use-staffing-reconciliation";
  */
 export function StaffingReport() {
   const t = useTranslations("reports.staffing");
+  const locale = useLocale();
   const tCause = useTranslations("timplanCoverage.delivered.cause");
   const tCommon = useTranslations("common");
   const { school } = useProfile();
@@ -297,7 +298,7 @@ export function StaffingReport() {
                 </dt>
                 <dd className="mt-1 text-2xl font-semibold tabular-nums">{t("minutes", { minutes: kpi.minutes })}</dd>
                 <dd className="text-sm text-muted-foreground tabular-nums">
-                  {t("hours", { hours: hoursText(kpi.minutes) })}
+                  {t("hours", { hours: hoursText(kpi.minutes, locale) })}
                 </dd>
               </div>
             ))}

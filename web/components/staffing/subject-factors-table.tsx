@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
@@ -29,6 +29,7 @@ import { Input } from "@/components/ui/input";
  */
 export function SubjectFactorsTable() {
   const t = useTranslations("staffing.factor");
+  const locale = useLocale();
   const tCommon = useTranslations("common");
   const queryClient = useQueryClient();
   const { data: subjects, isLoading, isError } = useSubjects();
@@ -38,7 +39,7 @@ export function SubjectFactorsTable() {
   const rows = useMemo(
     () =>
       (subjects ?? []).map((subject) => {
-        const stored = formatLoadFactor(subject.loadFactor);
+        const stored = formatLoadFactor(subject.loadFactor, locale);
         const value = drafts[subject.id] ?? stored;
         const factor = parseLoadFactor(value);
         return {
@@ -48,7 +49,7 @@ export function SubjectFactorsTable() {
           changed: factor !== null && factor !== (subject.loadFactor ?? 1),
         };
       }),
-    [subjects, drafts],
+    [subjects, drafts, locale],
   );
   const invalid = rows.some((row) => row.factor === null);
   const changed = rows.filter((row) => row.changed);

@@ -23,5 +23,9 @@ describe("formatLoadFactor", () => {
     expect(formatLoadFactor(0.8)).toBe("0,8");
     expect(formatLoadFactor(1.125)).toBe("1,125");
     expect(formatLoadFactor(undefined)).toBe("1");
+    // The reader's decimal mark: an English admin reads 0.8, as the hint says 0.5–3.
+    expect(formatLoadFactor(0.8, "en")).toBe("0.8");
+    expect(formatLoadFactor(1.125, "en")).toBe("1.125");
+    expect(parseLoadFactor(formatLoadFactor(1.125, "en"))).toBe(1.125);
   });
 });
