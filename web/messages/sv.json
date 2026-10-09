@@ -2034,6 +2034,7 @@
       "keepOrShed": "Behåller eller lämnar bara sina egna poster",
       "keepsNoTarget": "Har inget mål och behåller sina poster",
       "tooMany": "Förslaget skulle väga {teachers} lärare och {rows} timplansposter, men motorn tar högst {limitTeachers} lärare och {limitRows} poster åt gången. Behåll de poster som är klara som de är och försök igen.",
+      "tooManyRequests": "Du har beräknat många förslag på kort tid. Vänta en minut och försök igen.",
       "overLimitSelection": "Urvalet lägger läraren över gränsen; tillämpningen prövas mot skolans inställning.",
       "unstaffedTitle": "Blir kvar obemannade ({count})",
       "reason_NO_QUALIFIED_TEACHER": "ingen aktiv lärare är behörig",

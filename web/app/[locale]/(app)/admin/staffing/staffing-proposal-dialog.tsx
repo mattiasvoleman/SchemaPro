@@ -175,6 +175,8 @@ export function StaffingProposalDialog({
       return t("engineUnavailable");
     }
     if (error.status === 404) return t("yearMissing");
+    // The proposal's throttle (5 a minute): Nest's own English otherwise.
+    if (error.status === 429) return t("tooManyRequests");
     if (error.code === STAFF_MODEL_TOO_LARGE) {
       return engineMessage(tEngine, { code: error.code, message: error.message, params: error.params ?? null });
     }
@@ -283,13 +285,16 @@ export function StaffingProposalDialog({
    */
   const undo = async (yearId: string, changes: StaffingChange[], applied: StaffingApplyResult) => {
     try {
-      await apply.mutateAsync({
+      const result = await apply.mutateAsync({
         academicYearId: yearId,
         basisSha256: applied.basisSha256,
         undo: true,
         changes: reversed(changes),
       });
-      toast.success(t("undone"));
+      // Saved with warnings — a lead put back without behörighet under WARN —
+      // is said as an apply's are, not as a plain success.
+      if (result.warnings.length > 0) toast.warning(t("undone"), { description: warningLines(result) });
+      else toast.success(t("undone"));
     } catch (error) {
       if (error instanceof ApiError && error.status === 409) {
         toast.error(error.code === STAFF_PROPOSAL_STALE ? t("undoStale") : t("undoRefused", { reason: refusalText(error) }));
