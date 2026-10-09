@@ -206,6 +206,11 @@ describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
       "href",
       "/admin/staffing#unstaffed",
     );
+    // Staffing Fas 4: the proposal that staffs them all in one go, beside it.
+    expect(within(staffedLine()).getByRole("link", { name: "generate.preStaffedPropose" })).toHaveAttribute(
+      "href",
+      "/admin/staffing#propose",
+    );
     expect(runButton()).toBeEnabled();
     expect(screen.queryByText(/generate\.runBlockedUnstaffed/)).toBeNull();
   });
@@ -221,7 +226,14 @@ describe("every timplanspost has a teacher (Fas 2 pre-flight)", () => {
     expect(reason).not.toBeNull();
     expect(reason?.textContent).toContain("generate.preStaffed (generate.preStaffedMissing(1))");
     expect(reason?.textContent).toContain("generate.runBlockedUnstaffed");
-    expect(within(reason!).getByRole("link")).toHaveAttribute("href", "/admin/staffing#unstaffed");
+    expect(within(reason!).getByRole("link", { name: "generate.preStaffedLink" })).toHaveAttribute(
+      "href",
+      "/admin/staffing#unstaffed",
+    );
+    expect(within(reason!).getByRole("link", { name: "generate.preStaffedPropose" })).toHaveAttribute(
+      "href",
+      "/admin/staffing#propose",
+    );
   });
 
   it("blocks nothing while the policy has not answered: the gateway's pre-flight decides", () => {

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
@@ -218,6 +218,19 @@ vi.mock("@/i18n/navigation", () => ({
   Link: ({ children, ...rest }: { children: React.ReactNode }) => <a {...rest}>{children}</a>,
 }));
 
+/*
+ * Föreslå bemanning (staffing Fas 4): the dialog's own behaviour is
+ * staffing-proposal-dialog.test.tsx's. Here only what the page decides —
+ * the button, #propose, and what it hands the dialog.
+ */
+const proposalProps = vi.hoisted(() => [] as Record<string, unknown>[]);
+vi.mock("./staffing-proposal-dialog", () => ({
+  StaffingProposalDialog: (props: Record<string, unknown>) => {
+    proposalProps.push(props);
+    return props.open ? <div role="dialog" aria-label="proposal" /> : null;
+  },
+}));
+
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",
   useTranslations: (namespace: string) => {
@@ -411,6 +424,59 @@ describe("StaffingPage", () => {
     );
     expect(historyAsked.at(-1)).toEqual(["t-bo", "y1", false]);
   });
+
+  describe("Föreslå bemanning (staffing Fas 4)", () => {
+    beforeEach(() => {
+      proposalProps.length = 0;
+    });
+
+    it("loads nothing of the dialog until the button is pressed, then hands it the year and the report's targets", async () => {
+      const user = userEvent.setup();
+      state.policy = { fullTimeTeachingMinutesPerWeek: 1080, qualificationMode: "REFUSE", overAllocationTolerancePercent: 5 };
+      render(<StaffingPage />);
+      expect(proposalProps).toHaveLength(0);
+      await user.click(screen.getByRole("button", { name: "proposal.open" }));
+      expect(await screen.findByRole("dialog", { name: "proposal" })).toBeInTheDocument();
+      expect(proposalProps.at(-1)).toMatchObject({
+        open: true,
+        academicYearId: "y1",
+        academicYearName: "2026/2027",
+        teachersWithTarget: 1,
+        teachersTotal: 1,
+        qualificationsRecorded: false,
+        policy: state.policy,
+      });
+      const props = proposalProps.at(-1)!;
+      expect((props.subjectName as (id: string) => string)("s-ma")).toBe("Matematik");
+      expect((props.groupName as (id: string) => string)("g-7a")).toBe("7A");
+      expect((props.teacherName as (id: string) => string)("t-bo")).toBe("Bo Alm");
+    });
+
+    it("opens from /admin/generate's #propose once the report has drawn", async () => {
+      window.history.replaceState(null, "", "#propose");
+      try {
+        state.reportLoading = true;
+        const { rerender } = render(<StaffingPage />);
+        expect(proposalProps).toHaveLength(0);
+        state.reportLoading = false;
+        rerender(<StaffingPage />);
+        expect(await screen.findByRole("dialog", { name: "proposal" })).toBeInTheDocument();
+      } finally {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    });
+
+    it("stays mounted after it closes, so the applied toast's Ångra still has it", async () => {
+      const user = userEvent.setup();
+      render(<StaffingPage />);
+      await user.click(screen.getByRole("button", { name: "proposal.open" }));
+      await screen.findByRole("dialog", { name: "proposal" });
+      act(() => (proposalProps.at(-1)!.onOpenChange as (open: boolean) => void)(false));
+      expect(screen.queryByRole("dialog", { name: "proposal" })).toBeNull();
+      expect(proposalProps.at(-1)).toMatchObject({ open: false });
+    });
+  });
+
   describe("last year (staffing Fas 5)", () => {
     const lastReport = {
       ...report,

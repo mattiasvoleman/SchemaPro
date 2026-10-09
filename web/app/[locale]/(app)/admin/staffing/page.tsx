@@ -41,6 +41,13 @@
 // rolls but never enters tjänster is not nagged forever, and one that has
 // started by hand is not told to start over. Both are React.lazy, as the drawer is.
 //
+// A PROPOSAL, WHEN ASKED FOR (staffing Fas 4). "Föreslå bemanning" in the
+// header opens staffing-proposal-dialog.tsx, React.lazy like the rest: the
+// engine proposes a lead for the rows to be staffed, the admin applies what
+// they keep, and undoes from the toast. /admin/generate's staffing line links
+// here with #propose, which opens it once the report has drawn. A school that
+// never presses the button reads and writes exactly what it did before.
+//
 // The settings card lives on THIS page, behind the settings button, rather
 // than on tillgänglighet beside the lunch card it is built like: the lunch
 // card's reader is the solver, this card's only reader is the matrix above
@@ -49,7 +56,7 @@
 
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Grid3x3, Settings2, TriangleAlert, Users } from "lucide-react";
+import { Grid3x3, Settings2, Sparkles, TriangleAlert, Users } from "lucide-react";
 import {
   useAcademicYears,
   useGroups,
@@ -111,8 +118,18 @@ const StaffingCarryDialog = lazy(() =>
 const YearComparison = lazy(() =>
   import("./year-comparison").then((module) => ({ default: module.YearComparison })),
 );
+/**
+ * Föreslå bemanning (staffing Fas 4), click-opened like the carry: the
+ * dialog, its two mutations and the selection arithmetic load on the click.
+ */
+const StaffingProposalDialog = lazy(() =>
+  import("./staffing-proposal-dialog").then((module) => ({ default: module.StaffingProposalDialog })),
+);
 
 type PageView = "matrix" | "compare";
+
+/** The hash /admin/generate links with to open Föreslå bemanning. */
+const PROPOSE_HASH = "propose";
 
 export default function StaffingPage() {
   const t = useTranslations("staffing");
@@ -144,6 +161,16 @@ export default function StaffingPage() {
   const [openTeacherId, setOpenTeacherId] = useState<string | null>(null);
   const [chosenView, setView] = useState<PageView>("matrix");
   const [carryOpen, setCarryOpen] = useState(false);
+  /**
+   * Open, and mounted: the dialog stays mounted once opened, because the
+   * applied toast's Ångra calls into it after it has closed.
+   */
+  const [proposeOpen, setProposeOpen] = useState(false);
+  const [proposeMounted, setProposeMounted] = useState(false);
+  const openPropose = () => {
+    setProposeMounted(true);
+    setProposeOpen(true);
+  };
   const view: PageView = predecessor ? chosenView : "matrix";
   /**
    * Rolled without its tjänster: no post and no uppdrag here, some of either
@@ -197,6 +224,12 @@ export default function StaffingPage() {
     hashHandled.current = true;
     const id = decodeURIComponent(window.location.hash.slice(1));
     if (!id) return;
+    // /admin/generate's "Föreslå bemanning": a dialog, not a section.
+    if (id === PROPOSE_HASH) {
+      setProposeMounted(true);
+      setProposeOpen(true);
+      return;
+    }
     const target = document.getElementById(id);
     if (!target) return;
     target.scrollIntoView({ block: "start" });
@@ -239,6 +272,10 @@ export default function StaffingPage() {
                 </SelectContent>
               </Select>
             ) : null}
+            <Button variant="outline" onClick={openPropose} disabled={!report || !activeYearId}>
+              <Sparkles />
+              {t("proposal.open")}
+            </Button>
             <Button
               variant="outline"
               onClick={() => (settingsOpen ? setSettingsOpen(false) : openSettings())}
@@ -405,6 +442,28 @@ export default function StaffingPage() {
             year={activeYear}
             onOpenChange={(open) => !open && setCarryOpen(false)}
             teacherName={teacherName}
+          />
+        </Suspense>
+      ) : null}
+
+      {proposeMounted && report && activeYearId && activeYear ? (
+        <Suspense fallback={null}>
+          <StaffingProposalDialog
+            key={activeYearId}
+            open={proposeOpen}
+            onOpenChange={setProposeOpen}
+            academicYearId={activeYearId}
+            academicYearName={activeYear.name}
+            teachersWithTarget={
+              report.teachers.filter((row) => (row.targetMinutesPerWeek ?? 0) > 0).length
+            }
+            teachersTotal={report.teachers.length}
+            qualificationsRecorded={report.qualificationsRecorded}
+            policy={policy}
+            teacherName={teacherName}
+            groupName={groupName}
+            subjectName={(subjectId) => subjects?.find((subject) => subject.id === subjectId)?.name ?? "—"}
+            onOpenSettings={openSettings}
           />
         </Suspense>
       ) : null}
