@@ -373,6 +373,16 @@ describe('schemalagt mot planerat', () => {
       expect(coverage.pupils!.every((p) => p.lines.length === 1)).toBe(true);
     });
 
+    it('answers a drill-down for its group alone, as layer 3 does: its line, its pupils, its verdicts', () => {
+      const overview = compute(input);
+      expect(overview.groups.length).toBeGreaterThan(1);
+      const coverage = compute({ ...input, drillGroupId: a.id });
+      expect(coverage.groups.map((g) => g.studentGroupId)).toEqual([a.id]);
+      expect(coverage.groups[0]).toEqual(overview.groups.find((g) => g.studentGroupId === a.id));
+      expect(coverage.verdicts.every((v) => v.studentGroupId === undefined || v.studentGroupId === a.id)).toBe(true);
+      expect(coverage.pupilCount).toBe(overview.pupilCount);
+    });
+
     it('strips every pupil figure, list and verdict from a read without the pupil level', () => {
       const coverage = compute({ ...input, includePupils: false, drillGroupId: a.id });
       expect(coverage).toMatchObject({ pupilLevel: false, pupils: null, pupilsBelowPlanned: null });

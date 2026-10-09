@@ -3018,72 +3018,6 @@
         }
        }
       ]
-     },
-     {
-      "studentGroupId": "00000000-0000-4000-8000-000000000158",
-      "kind": "TEACHING_GROUP",
-      "gradeLevel": null,
-      "plannedMinutesPerWeek": 60,
-      "scheduledMinutesPerWeek": 60,
-      "linesMatching": 1,
-      "linesTotal": 1,
-      "pupilCount": 2,
-      "lines": [
-       {
-        "subjectId": "00000000-0000-4000-8000-000000000001",
-        "plannedMinutesPerWeek": 60,
-        "scheduledMinutesPerWeek": 60,
-        "parkedMinutesPerWeek": 0,
-        "deltaMinutesPerWeek": 0,
-        "percent": 100,
-        "status": "MATCH",
-        "requirementIds": [
-         "00000000-0000-4000-8000-000000000166"
-        ],
-        "masterLessonIds": [
-         "00000000-0000-4000-8000-000000000169"
-        ],
-        "pupils": {
-         "min": -60,
-         "median": -60,
-         "max": -60,
-         "below": 2
-        }
-       }
-      ]
-     },
-     {
-      "studentGroupId": "00000000-0000-4000-8000-000000000159",
-      "kind": "TEACHING_GROUP",
-      "gradeLevel": null,
-      "plannedMinutesPerWeek": 120,
-      "scheduledMinutesPerWeek": 60,
-      "linesMatching": 0,
-      "linesTotal": 1,
-      "pupilCount": 3,
-      "lines": [
-       {
-        "subjectId": "00000000-0000-4000-8000-000000000005",
-        "plannedMinutesPerWeek": 120,
-        "scheduledMinutesPerWeek": 60,
-        "parkedMinutesPerWeek": 0,
-        "deltaMinutesPerWeek": -60,
-        "percent": 50,
-        "status": "SHORT",
-        "requirementIds": [
-         "00000000-0000-4000-8000-000000000167"
-        ],
-        "masterLessonIds": [
-         "00000000-0000-4000-8000-000000000171"
-        ],
-        "pupils": {
-         "min": -60,
-         "median": -60,
-         "max": -60,
-         "below": 3
-        }
-       }
-      ]
      }
     ],
     "pupils": [
@@ -3332,22 +3266,6 @@
     "pupilsBelowPlanned": 4,
     "lessonCount": 5,
     "verdicts": [
-     {
-      "code": "TIMPLAN_SCHEDULE_SHORT",
-      "severity": "warning",
-      "studentGroupId": "00000000-0000-4000-8000-000000000159",
-      "subjectIds": [
-       "00000000-0000-4000-8000-000000000005"
-      ],
-      "params": {
-       "groupName": "Spanska 7",
-       "subjectName": "Spanska",
-       "plannedMinutesPerWeek": 120,
-       "scheduledMinutesPerWeek": 60,
-       "deltaMinutesPerWeek": -60,
-       "parkedMinutesPerWeek": 0
-      }
-     },
      {
       "code": "TIMPLAN_SCHEDULE_UNPLANNED",
       "severity": "notice",
