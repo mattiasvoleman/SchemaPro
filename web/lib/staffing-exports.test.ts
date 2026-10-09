@@ -136,6 +136,7 @@ describe("Tjänstefördelning för samverkan", () => {
     loadModel: "MINUTES" as const,
     from: "2026-08-17",
     to: "2026-10-09",
+    year: { startDate: "2026-08-17", endDate: "2027-06-11" },
     personOf,
     subjectName: (id: string) => (id === "s-ma" ? "Matematik" : "NO"),
     qualifications: null,
@@ -210,6 +211,25 @@ describe("Tjänstefördelning för samverkan", () => {
     expect(lines[0]!.endsWith(";Behörigheter")).toBe(true);
     expect(lines[1]!.endsWith(";Matematik åk 7–9 (legitimation)")).toBe(true);
     expect(csv).not.toContain("åk 4");
+  });
+
+  it("lists only behörigheter valid at some point of the läsår", () => {
+    const csv = samverkanCsv({
+      ...base,
+      load: [teacher("t-anna")],
+      reconciliation: [],
+      qualifications: [
+        // A tillåten that lapsed before the läsår: not this year's.
+        { id: "q1", userId: "t-anna", subjectId: "s-ma", minGradeLevel: 7, maxGradeLevel: 9, kind: "TILLATEN", validFrom: null, validTo: "2025-06-30", note: null },
+        // One that begins during it: listed.
+        { id: "q2", userId: "t-anna", subjectId: "s-no", minGradeLevel: 4, maxGradeLevel: 6, kind: "BEHORIG", validFrom: "2027-01-01", validTo: null, note: null },
+        // One that begins after it: not.
+        { id: "q3", userId: "t-anna", subjectId: "s-ma", minGradeLevel: 1, maxGradeLevel: 3, kind: "BEHORIG", validFrom: "2027-08-01", validTo: null, note: null },
+      ],
+    });
+    expect(linesOf(csv)[1]!.endsWith(";NO åk 4–6 (behörig)")).toBe(true);
+    expect(csv).not.toContain("tillåten");
+    expect(csv).not.toContain("åk 1–3");
   });
 });
 
