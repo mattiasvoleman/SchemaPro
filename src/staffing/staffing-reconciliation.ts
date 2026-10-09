@@ -97,7 +97,11 @@ export interface ReconciliationLine {
   subjectId: string;
   /** The owner group of the rows and lessons on the line. */
   studentGroupId: string;
-  /** Every extra group the line's lessons were also for (samläsning), sorted. */
+  /**
+   * Every extra group the line's lessons were also for (samläsning), sorted.
+   * An extra group whose row has no lessons of its own is planned HERE, not
+   * on a line of its own (see buildReconciliation).
+   */
   extraGroupIds: string[];
   planned: number;
   scheduled: number;
@@ -389,6 +393,30 @@ export function buildReconciliation(input: ReconciliationInput): StaffingReconci
     // CANCELLED_ON_BREAK, the other AHEAD_* buckets and DISPLACED_NOT_HELD (a
     // row beside a vikarie on a lesson not held: the vikarie carries it):
     // neither held nor lost.
+  }
+
+  // ---- Samläsning: an extra group's plan joins the line it is taught on.
+  // A row for 7B whose every lesson is 7A's samläst lesson has no scheduled,
+  // held or lost minutes of its own; left alone, its line reads as a full
+  // deficit and 7A's as a surplus, for a schedule that went exactly to plan.
+  // Its planned minutes move to the line whose lessons name 7B as an extra
+  // group (the first by group and subject, as lines are sorted), and its own
+  // line goes. A line with anything but a plan stays: the teacher also meets
+  // the group on its own.
+  for (const tally of tallies.values()) {
+    const ordered = [...tally.lines.entries()].sort(
+      ([, a], [, b]) => byCode(a.studentGroupId, b.studentGroupId) || byCode(a.subjectId, b.subjectId),
+    );
+    for (const [key, line] of ordered) {
+      if (line.scheduled !== 0 || line.delivered !== 0 || line.substitute !== 0 || line.lost !== 0) continue;
+      const host = ordered.find(
+        ([other, candidate]) =>
+          other !== key && tally.lines.has(other) && candidate.subjectId === line.subjectId && candidate.extra.has(line.studentGroupId),
+      );
+      if (!host) continue;
+      host[1].planned += line.planned;
+      tally.lines.delete(key);
+    }
   }
 
   // ---- Rounded once, from the unrounded sums.

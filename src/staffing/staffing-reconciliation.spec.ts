@@ -221,7 +221,32 @@ describe('buildReconciliation', () => {
     );
     // Planned 2 × (3 × 60 × 2 weeks × 50 %); scheduled and delivered six lessons at 100 %.
     expect(row(result, ANNA)).toMatchObject({ planned: 360, scheduled: 360, delivered: 360 });
-    expect(row(result, ANNA).lines.find((line) => line.studentGroupId === G7A)).toMatchObject({ extraGroupIds: [G7B] });
+    // One line, not two: 7B's row is taught on 7A's samläst lessons, so its
+    // plan sits beside them instead of reading as a full deficit of its own.
+    expect(row(result, ANNA).lines).toEqual([
+      { subjectId: MA, studentGroupId: G7A, extraGroupIds: [G7B], planned: 360, scheduled: 360, delivered: 360, substituteMinutes: 0, lostMinutes: 0 },
+    ]);
+  });
+
+  it('keeps an extra group’s own line when it also has lessons of its own', () => {
+    const rows = [
+      { ...requirement, coTeacherId: null, teacherLoadPercent: 50 },
+      { ...requirement, id: 'r-7b', studentGroupId: G7B, groupName: '7B', coTeacherId: null, teacherLoadPercent: 50 },
+    ];
+    const result = buildReconciliation(
+      base({
+        requirements: rows,
+        masters: [
+          master('m1', 1, { extraGroupIds: [G7B], coTeacherId: null }),
+          master('m3', 3, { studentGroupId: G7B, groupName: '7B', coTeacherId: null }),
+        ],
+        credits: [],
+      }),
+    );
+    expect(row(result, ANNA).lines.map((line) => [line.studentGroupId, line.planned, line.scheduled])).toEqual([
+      [G7A, 180, 120],
+      [G7B, 180, 60],
+    ]);
   });
 
   it('measures the plan from the first published day, and names the gap two publishes left', () => {
