@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { TeacherLoad, TeacherLoadReport } from "@/lib/teacher-load";
@@ -159,6 +159,18 @@ const rowNames = () =>
     .map((row) => within(row).getByRole("rowheader").textContent);
 
 describe("StaffingMatrix", () => {
+  it("names the teaching column räknad tid under the Faktor model, and only then", () => {
+    renderMatrix();
+    expect(screen.getByRole("columnheader", { name: "teachingHeader" })).toBeInTheDocument();
+    cleanup();
+    renderMatrix({ report: { ...report, loadModel: "FACTOR" } });
+    expect(screen.getByRole("columnheader", { name: "teachingHeaderFactor" })).toBeInTheDocument();
+    expect(screen.queryByRole("columnheader", { name: "teachingHeader" })).not.toBeInTheDocument();
+    cleanup();
+    renderMatrix({ report: { ...report, loadModel: "FACTOR" }, week: "peak" });
+    expect(screen.getByRole("columnheader", { name: "teachingPeakHeaderFactor" })).toBeInTheDocument();
+  });
+
   it("keeps the report's order — OVER first — and names each row's status", () => {
     renderMatrix();
     expect(rowNames()).toEqual(["Bo AlmstatusOVER", "Anna EkstatusOK", "Cilla ÖststatusNO_TARGET"]);

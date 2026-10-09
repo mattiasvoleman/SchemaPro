@@ -135,7 +135,15 @@ export function StaffingMatrix({
               {t("targetHeader")}
             </th>
             <th scope="col" className="sticky right-[21rem] top-0 z-30 min-w-24 max-w-24 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
-              {week === "peak" ? t("teachingPeakHeader") : t("teachingHeader")}
+              {/* Under the Faktor model the column is räknad tid (minutes ×
+                  the subject's factor), not lesson minutes: said in the header. */}
+              {report.loadModel === "FACTOR"
+                ? week === "peak"
+                  ? t("teachingPeakHeaderFactor")
+                  : t("teachingHeaderFactor")
+                : week === "peak"
+                  ? t("teachingPeakHeader")
+                  : t("teachingHeader")}
             </th>
             <th scope="col" className="sticky right-64 top-0 z-30 min-w-20 max-w-20 border-l bg-card px-2 py-2.5 text-right font-medium text-foreground">
               {t("dutyHeader")}

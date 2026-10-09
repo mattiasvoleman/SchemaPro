@@ -371,3 +371,37 @@ describe("the national code the school's own code already is", () => {
     expect(screen.queryByText(/^nationalCodeSuggestion/)).not.toBeInTheDocument();
   });
 });
+
+describe("the Faktor field (staffing Fas 3)", () => {
+  it("opens on the stored factor, sends a changed one as a number, and 1 for a new subject", async () => {
+    state.subjects = [{ ...subject("s-1", "Slöjd", "SL"), loadFactor: 0.8 }];
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await user.click(screen.getByRole("button", { name: "editNamed(Slöjd)" }));
+    const factor = screen.getByLabelText("loadFactor");
+    expect(factor).toHaveValue("0,8");
+    await user.clear(factor);
+    await user.type(factor, "0,75");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(updateMock).toHaveBeenCalledWith(expect.objectContaining({ id: "s-1", loadFactor: 0.75 }));
+
+    await openCreate(user);
+    expect(screen.getByLabelText("loadFactor")).toHaveValue("1");
+    await user.type(screen.getByLabelText("name"), "Bild");
+    await user.click(screen.getByRole("button", { name: "save" }));
+    expect(createMock).toHaveBeenCalledWith(expect.objectContaining({ name: "Bild", loadFactor: 1 }));
+  });
+
+  it("refuses a factor outside 0,5..3 on the field and keeps Spara disabled", async () => {
+    const user = userEvent.setup();
+    render(<SubjectsPage />);
+    await openCreate(user);
+    await user.type(screen.getByLabelText("name"), "Svenska");
+    const factor = screen.getByLabelText("loadFactor");
+    await user.clear(factor);
+    await user.type(factor, "4");
+    expect(screen.getByText("loadFactorInvalid")).toBeInTheDocument();
+    expect(factor).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "save" })).toBeDisabled();
+  });
+});

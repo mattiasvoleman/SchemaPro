@@ -310,6 +310,8 @@ describe("validatePolicyDraft", () => {
       loadModel: "MINUTES",
       // Always present: PUT replaces the row and absent means ALLOW.
       unstaffedGeneration: "ALLOW",
+      // Likewise: absent means "share nothing".
+      shareEmploymentWithIntegrations: false,
     });
     const row = {
       fullTimeTeachingMinutesPerWeek: 1080,
@@ -322,8 +324,12 @@ describe("validatePolicyDraft", () => {
       overAllocationTolerancePercent: 5,
       loadModel: "FACTOR" as const,
       unstaffedGeneration: "REFUSE" as const,
+      shareEmploymentWithIntegrations: true,
     };
     expect(policyDraftToBody(policyToDraft(row))).toEqual(row);
+    // A row from a gateway older than staffing Fas 3 shares nothing.
+    const { shareEmploymentWithIntegrations: _dropped, ...older } = row;
+    expect(policyToDraft(older).shareEmploymentWithIntegrations).toBe(false);
     expect(policyToDraft(null)).toBe(DEFAULT_POLICY_DRAFT);
   });
 });

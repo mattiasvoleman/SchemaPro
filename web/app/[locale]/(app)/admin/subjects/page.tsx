@@ -13,6 +13,8 @@ import {
 } from "@/lib/queries";
 import type { NationalSubject, RoomType, Subject } from "@/lib/types";
 import { sectionNationalSubjects } from "@/lib/national-subjects";
+import { formatLoadFactor, parseLoadFactor } from "@/lib/load-factor";
+import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { LazyCsvImportDialog } from "@/components/import/lazy-csv-import-dialog";
 import { subjectsToCsv } from "@/lib/csv-export";
 import { CsvExportButton } from "@/components/import/csv-export-button";
@@ -58,6 +60,8 @@ interface SubjectForm {
   /** A NationalSubject.code, or OUTSIDE_TIMPLAN for null. */
   nationalCode: string;
   countsTowardTimplan: boolean;
+  /** Tjänstefördelningens faktor as typed, "1" by default; see lib/load-factor.ts. */
+  loadFactor: string;
 }
 
 const ANY_ROOM = "__any__";
@@ -79,6 +83,7 @@ const EMPTY_FORM: SubjectForm = {
   // time (Mentorstid, Resurs), and a new subject is a taught one until said
   // otherwise — which is also the column's own default.
   countsTowardTimplan: true,
+  loadFactor: "1",
 };
 
 /** "Matematik (MA)" — the statute's name with the code the CSV column takes. */
@@ -96,7 +101,10 @@ export default function SubjectsPage() {
     requiredRoomTypeId?: string | null;
     nationalCode?: string | null;
     countsTowardTimplan?: boolean;
-  }>("/api/v1/subjects", [["subjects"]]);
+    loadFactor?: number;
+    // A factor moves every teacher's load under FACTOR, so the report is
+    // refetched with the list.
+  }>("/api/v1/subjects", [["subjects"], [...STAFFING_KEYS.load]]);
 
   const { data: roomTypes } = useRoomTypes();
   const roomTypeActions = useRoomTypeActions();
@@ -141,11 +149,15 @@ export default function SubjectsPage() {
       requiredRoomTypeId: subject.requiredRoomTypeId ?? ANY_ROOM,
       nationalCode: subject.nationalCode ?? OUTSIDE_TIMPLAN,
       countsTowardTimplan: subject.countsTowardTimplan,
+      loadFactor: formatLoadFactor(subject.loadFactor),
     });
     setDialogOpen(true);
   };
 
+  const loadFactor = parseLoadFactor(form.loadFactor);
+
   const submit = async () => {
+    if (loadFactor === null) return;
     const body = {
       name: form.name.trim(),
       code: form.code.trim() || null,
@@ -156,6 +168,7 @@ export default function SubjectsPage() {
       // mapping, and "Utanför timplanen" is a decision, not an omission.
       nationalCode: form.nationalCode === OUTSIDE_TIMPLAN ? null : form.nationalCode,
       countsTowardTimplan: form.countsTowardTimplan,
+      loadFactor,
     };
     try {
       if (editing) {
@@ -456,6 +469,25 @@ export default function SubjectsPage() {
                 onCheckedChange={(checked) => setForm({ ...form, countsTowardTimplan: checked })}
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="subject-load-factor">{t("loadFactor")}</Label>
+              <Input
+                id="subject-load-factor"
+                inputMode="decimal"
+                className="max-w-28"
+                value={form.loadFactor}
+                aria-invalid={loadFactor === null}
+                aria-describedby="subject-load-factor-hint"
+                onChange={(e) => setForm({ ...form, loadFactor: e.target.value })}
+              />
+              <p id="subject-load-factor-hint" className="text-xs text-muted-foreground">
+                {loadFactor === null ? (
+                  <span className="text-destructive">{t("loadFactorInvalid")}</span>
+                ) : (
+                  t("loadFactorHint")
+                )}
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
@@ -465,6 +497,7 @@ export default function SubjectsPage() {
               onClick={submit}
               disabled={
                 form.name.trim().length === 0 ||
+                loadFactor === null ||
                 mutations.create.isPending ||
                 mutations.update.isPending
               }
