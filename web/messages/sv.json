@@ -1214,6 +1214,7 @@
       "year": "Läsår",
       "noYear": "Inget läsår att visa.",
       "loadFailed": "Avstämningen kunde inte läsas.",
+      "rangeCrossed": "Från ligger efter Till. Siffrorna nedan gäller den senaste giltiga perioden.",
       "empty": "Ingen lärare har planerad, schemalagd eller genomförd tid i perioden.",
       "comparison": "Planerat och schemalagt jämförs {from} – {to}. Beräkningsmodell: {model}. Minuter, avrundat per rad.",
       "model": {

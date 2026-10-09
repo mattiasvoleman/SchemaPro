@@ -9,6 +9,7 @@ import { useProfile } from "@/components/profile-context";
 import { useAcademicYears, useGroups, usePeople, useSubjects } from "@/lib/queries";
 import { useStaffingLoad } from "@/lib/staffing-queries";
 import { compareSwedish } from "@/lib/sorting";
+import { cn } from "@/lib/utils";
 import { formatPercent } from "@/lib/staffing-view";
 import { formatStamp } from "@/lib/employment-history-view";
 import {
@@ -79,9 +80,14 @@ export function StaffingReport() {
   const [chosenYearId, setChosenYearId] = useState<string | null>(null);
   const yearId = chosenYearId ?? years?.find((year) => year.isActive)?.id ?? years?.[0]?.id ?? null;
   const year = years?.find((candidate) => candidate.id === yearId) ?? null;
+  // `range` is what the fields show once edited; `asked` is the last range
+  // that makes sense (from ≤ to) and is what the gateway is asked for, so a
+  // start typed past the end never sends a request that can only answer 400
+  // and wipe the tab.
   const [range, setRange] = useState<{ from: string | null; to: string | null }>({ from: null, to: null });
+  const [asked, setAsked] = useState<{ from: string | null; to: string | null }>({ from: null, to: null });
 
-  const rec = useStaffingReconciliation(yearId, range.from, range.to);
+  const rec = useStaffingReconciliation(yearId, asked.from, asked.to);
   const load = useStaffingLoad(yearId);
   const { data: people } = usePeople();
   const { data: subjects } = useSubjects();
@@ -120,9 +126,25 @@ export function StaffingReport() {
   const chooseYear = (id: string) => {
     setChosenYearId(id);
     setRange({ from: null, to: null });
+    setAsked({ from: null, to: null });
     setOpen(new Set());
     setScbNotices(null);
   };
+  /*
+   * One edited field fixes the other at what it shows: the gateway's default
+   * (the answer's from/to) until it is edited, so changing "Från" never
+   * blanks "Till" while the new range loads.
+   */
+  const editRange = (edit: { from?: string; to?: string }) => {
+    const next = {
+      from: edit.from ?? range.from ?? data?.from ?? null,
+      to: edit.to ?? range.to ?? data?.to ?? null,
+    };
+    setRange(next);
+    if (!(next.from && next.to && next.from > next.to)) setAsked(next);
+  };
+  const crossed = range.from !== null && range.to !== null && range.from > range.to;
+
   const toggle = (userId: string) =>
     setOpen((previous) => {
       const next = new Set(previous);
@@ -249,7 +271,7 @@ export function StaffingReport() {
             id="staffing-from"
             className="w-40"
             value={range.from ?? data?.from ?? ""}
-            onChange={(value) => value && setRange((previous) => ({ ...previous, from: value }))}
+            onChange={(value) => value && editRange({ from: value })}
           />
         </div>
         <div className="space-y-2">
@@ -259,9 +281,14 @@ export function StaffingReport() {
             id="staffing-to"
             className="w-40"
             value={range.to ?? data?.to ?? ""}
-            onChange={(value) => value && setRange((previous) => ({ ...previous, to: value }))}
+            onChange={(value) => value && editRange({ to: value })}
           />
         </div>
+        {crossed ? (
+          <p role="alert" className="pb-2 text-sm text-destructive">
+            {t("rangeCrossed")}
+          </p>
+        ) : null}
       </div>
 
       {!yearId ? (
@@ -275,7 +302,10 @@ export function StaffingReport() {
           description={rec.error instanceof Error ? rec.error.message : undefined}
         />
       ) : (
-        <div className="space-y-6">
+        <div
+          className={cn("space-y-6 transition-opacity", rec.isPlaceholderData && "opacity-60")}
+          aria-busy={rec.isPlaceholderData || undefined}
+        >
           {data.notices.length > 0 ? (
             <ul role="status" className="space-y-1 rounded-md bg-muted px-4 py-3 text-sm text-foreground">
               {data.notices.map((notice) => (

@@ -1214,6 +1214,7 @@
       "year": "School year",
       "noYear": "No school year to show.",
       "loadFailed": "The reconciliation could not be read.",
+      "rangeCrossed": "From is after To. The figures below are for the last valid period.",
       "empty": "No teacher has planned, scheduled or delivered time in the period.",
       "comparison": "Planned and scheduled are compared {from} – {to}. Model: {model}. Minutes, rounded per row.",
       "model": {

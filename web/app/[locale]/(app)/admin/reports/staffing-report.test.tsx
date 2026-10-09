@@ -159,6 +159,30 @@ describe("Rapporter › Tjänstefördelning", () => {
     expect(screen.getByText("footFactor")).toBeInTheDocument();
   });
 
+  it("keeps the other date at what it showed when one is edited, and never asks for a start after the end", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<StaffingReport />);
+    const from = container.querySelector<HTMLInputElement>("#staffing-from")!;
+    await user.clear(from);
+    await user.type(from, "2026-09-01");
+    // "Till" is fixed at the default the answer stated, not dropped to null.
+    expect(state.recArgs.at(-1)).toEqual(["y1", "2026-09-01", "2026-10-09"]);
+    expect(container.querySelector<HTMLInputElement>("#staffing-to")!.value).toBe("2026-10-09");
+
+    const asked = state.recArgs.length;
+    await user.clear(from);
+    await user.type(from, "2026-11-01");
+    expect(screen.getByRole("alert")).toHaveTextContent("rangeCrossed");
+    // The query still asks for the last range that makes sense.
+    expect(state.recArgs.slice(asked).every((args) => args[1] !== "2026-11-01")).toBe(true);
+  });
+
+  it("dims the figures it keeps while a new range loads, instead of a skeleton", () => {
+    state.rec = { data: response(), isLoading: false, isError: false, error: null, isPlaceholderData: true } as typeof state.rec;
+    render(<StaffingReport />);
+    expect(screen.getByText("minutes(2500)").closest("[aria-busy]")).toHaveClass("opacity-60");
+  });
+
   it("says the gateway's refusal rather than drawing an empty report", () => {
     state.rec = { data: undefined, isLoading: false, isError: true, error: new Error("Läsåret är inte aktiverat.") };
     render(<StaffingReport />);

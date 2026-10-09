@@ -9,8 +9,13 @@ import type { StaffingReconciliationResponse } from "@/lib/staffing-reconciliati
  * GET /staffing/delivered for one läsår and range (staffing Fas 3): planerat,
  * schemalagt och genomfört per lärare, computed by the gateway over P3's one
  * definition of held time. Null `from`/`to` lets the gateway choose its
- * defaults — the year's start and the school's today — and the answer says
- * which days it used.
+ * defaults — the year's start and the school's yesterday — and the answer
+ * says which days it used.
+ *
+ * A NEW RANGE KEEPS THE OLD FIGURES ON SCREEN while it loads (~1,7 s for a
+ * 2 000-pupil school over a year): placeholderData hands back the previous
+ * answer for the SAME läsår, flagged isPlaceholderData so the tab can dim it.
+ * Another läsår's figures are never shown as a placeholder for this one.
  *
  * Page-specific (only the report tab reads it), so it lives beside the page.
  * Under STAFFING_KEYS.load's prefix: every staffing write that moves the
@@ -20,6 +25,9 @@ import type { StaffingReconciliationResponse } from "@/lib/staffing-reconciliati
  * A rolled year that is not yet activated answers R6's 409, as /staffing/load
  * does; the tab shows the gateway's sentence.
  */
+/** Where the läsår sits in the query key. */
+const YEAR_AT = STAFFING_KEYS.load.length + 1;
+
 export function useStaffingReconciliation(
   academicYearId: string | null,
   from: string | null,
@@ -28,6 +36,8 @@ export function useStaffingReconciliation(
   return useQuery({
     queryKey: [...STAFFING_KEYS.load, "delivered", academicYearId, from, to],
     enabled: academicYearId !== null,
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[YEAR_AT] === academicYearId ? previous : undefined,
     queryFn: () => {
       const query = new URLSearchParams({ academicYearId: academicYearId! });
       if (from) query.set("from", from);
