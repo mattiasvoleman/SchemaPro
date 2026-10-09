@@ -64,7 +64,11 @@ export interface ScheduleDeltaView {
   total: number;
   /** True when every line of the groups in view is listed (one group in view). */
   allLines: boolean;
-  /** Parked minutes a week in the groups in view. */
+  /**
+   * Parked minutes a week in the groups in view, each parked lesson once
+   * however many of those groups it reaches (with `parked`; without it, the
+   * lines' own figures summed).
+   */
   parkedMinutes: number;
 }
 
@@ -82,6 +86,8 @@ export function buildScheduleDelta(
   inView: readonly string[],
   groups: readonly Named[],
   subjects: readonly Named[],
+  /** Each parked lesson's minutes a week, by id — the summary counts a lesson once. */
+  parked?: ReadonlyMap<string, number>,
 ): ScheduleDeltaView {
   const groupName = new Map(groups.map((group) => [group.id, group.name]));
   const subjectName = new Map(subjects.map((subject) => [subject.id, subject.name]));
@@ -93,6 +99,7 @@ export function buildScheduleDelta(
   let matching = 0;
   let total = 0;
   let parkedMinutes = 0;
+  const parkedSeen = new Set<string>();
   const shown: ScheduleDeltaGroup[] = [];
   for (const summary of summaries) {
     matching += summary.linesMatching;
@@ -100,7 +107,15 @@ export function buildScheduleDelta(
     const name = groupName.get(summary.studentGroupId) ?? summary.studentGroupId;
     const lines: ScheduleDeltaLine[] = [];
     for (const line of summary.lines) {
-      parkedMinutes += line.parkedMinutesPerWeek;
+      if (!parked) parkedMinutes += line.parkedMinutesPerWeek;
+      else {
+        for (const lessonId of line.masterLessonIds) {
+          const minutes = parked.get(lessonId);
+          if (minutes === undefined || parkedSeen.has(lessonId)) continue;
+          parkedSeen.add(lessonId);
+          parkedMinutes += minutes;
+        }
+      }
       if (!allLines && line.status === "MATCH") continue;
       lines.push({
         key: `${summary.studentGroupId}:${line.subjectId}`,
@@ -114,7 +129,7 @@ export function buildScheduleDelta(
     }
     if (lines.length > 0) shown.push({ studentGroupId: summary.studentGroupId, groupName: name, lines });
   }
-  return { groups: shown, matching, total, allLines, parkedMinutes };
+  return { groups: shown, matching, total, allLines, parkedMinutes: Math.round(parkedMinutes) };
 }
 
 /**

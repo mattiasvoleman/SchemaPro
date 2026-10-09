@@ -62,6 +62,15 @@ describe("buildScheduleDelta", () => {
     expect(view.groups[0]!.lines[0]!.tone).toBe("short");
   });
 
+  it("counts a parked lesson once however many lines of the groups in view it stands on", () => {
+    const shared = coverage({
+      a: [{ ...line("ma", 180, 120, 60), masterLessonIds: ["l1", "l2", "p1"] }],
+      b: [{ ...line("ma", 180, 120, 60), masterLessonIds: ["l3", "l4", "p1"] }],
+    });
+    expect(buildScheduleDelta(shared, [], GROUPS, SUBJECTS, new Map([["p1", 60]])).parkedMinutes).toBe(60);
+    expect(buildScheduleDelta(shared, ["b"], GROUPS, SUBJECTS, new Map([["p1", 60]])).parkedMinutes).toBe(60);
+  });
+
   it("shows every line of the one group in view", () => {
     const view = buildScheduleDelta(year, ["b"], GROUPS, SUBJECTS);
     expect(view.groups.map((g) => g.lines.map((l) => l.line.status))).toEqual([["MATCH"]]);

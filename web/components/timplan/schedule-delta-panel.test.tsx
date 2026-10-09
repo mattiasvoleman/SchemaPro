@@ -82,7 +82,7 @@ const LESSONS = [
   lesson("b2", "g7b", "ma", 3),
 ];
 
-const panel = (lessons: MasterLesson[], groupFilters: string[] = []) => (
+const panel = (lessons: MasterLesson[] | undefined, groupFilters: string[] = []) => (
   <ScheduleDeltaPanel
     id="lesson-time"
     year={YEAR}
@@ -163,5 +163,31 @@ describe("ScheduleDeltaPanel", () => {
     } finally {
       breaks.data = [];
     }
+  });
+
+  it("waits for the board's lessons too, and announces nothing when they arrive after the lov", () => {
+    // A reload with the panel open: the lov answer is one request, the
+    // lessons are paged. Until they land there is nothing to compare — not a
+    // year of empty lines that the arrival then "changes".
+    const { rerender } = render(panel(undefined, ["g7a"]));
+    expect(region()).toHaveTextContent("loading");
+    expect(screen.queryByText(/unscheduled/)).not.toBeInTheDocument();
+    rerender(panel(LESSONS, ["g7a"]));
+    expect(screen.getByText("line(subject=Matematik|scheduled=180|planned=180)")).toBeInTheDocument();
+    expect(live()).toHaveTextContent("");
+  });
+
+  it("announces only lines of the groups in view", () => {
+    const { rerender } = render(panel(LESSONS, ["g7a"]));
+    rerender(panel(LESSONS.filter((l) => l.id !== "b2"), ["g7a"]));
+    expect(live()).toHaveTextContent("");
+  });
+
+  it("counts a parked lesson combined across two groups once in the summary", () => {
+    const combined = [...LESSONS, lesson("p1", "g7a", "ma", 2, { isParked: true, extraGroupIds: ["g7b"] })];
+    render(panel(combined));
+    // On 7A's line and on 7B's: 60 each, but one lesson of 60.
+    expect(within(region()).getByText(/summary\(matching=2\|total=3\)/)).toHaveTextContent("parked(minutes=60)");
+    expect(within(region()).getByText(/summary/)).not.toHaveTextContent("parked(minutes=120)");
   });
 });

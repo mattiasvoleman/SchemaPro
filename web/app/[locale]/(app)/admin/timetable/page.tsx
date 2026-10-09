@@ -493,14 +493,6 @@ export default function TimetablePage() {
   const { data: lunchSittings } = useLunchSittings(shownYear?.id ?? null);
   const lunchMutations = useLunchSittingMutations();
   /*
-   * Placing a lunch by hand. A mode rather than a new gesture: a click on empty
-   * time already means "put something here", and in this mode the something is
-   * the class's meal instead of a lesson. Only with ONE class in view, for the
-   * reason the bands give — a meal belongs to a class, and on a grid of several
-   * there is no answer to "whose". Derived rather than reset on a filter
-   * change, so picking a second class simply takes the mode away.
-   */
-  /*
    * The Lektionstid panel, open or not. Remembered for the tab
    * (sessionStorage, read after mount so the server render and the first
    * client render agree), so the admin who opened it to watch 7A's minutes
@@ -519,6 +511,14 @@ export default function TimetablePage() {
       sessionStorage.setItem("timetable.lessonTime", open ? "1" : "0");
     } catch {}
   };
+  /*
+   * Placing a lunch by hand. A mode rather than a new gesture: a click on empty
+   * time already means "put something here", and in this mode the something is
+   * the class's meal instead of a lesson. Only with ONE class in view, for the
+   * reason the bands give — a meal belongs to a class, and on a grid of several
+   * there is no answer to "whose". Derived rather than reset on a filter
+   * change, so picking a second class simply takes the mode away.
+   */
   const [placingLunch, setPlacingLunch] = useState(false);
   const canPlaceLunch =
     onlyGroup !== null && lunchSettings?.lunchEnabled === true && shownYear != null;
@@ -2135,12 +2135,13 @@ export default function TimetablePage() {
         >
           <Suspense fallback={null}>
             <LessonTimePanel
+              key={shownYear.id}
               id="lesson-time"
               year={shownYear}
-              lessons={lessons ?? []}
-              requirements={requirements ?? []}
-              groups={yearGroups}
-              subjects={subjects ?? []}
+              lessons={lessons}
+              requirements={requirements}
+              groups={groups ? yearGroups : undefined}
+              subjects={subjects}
               groupFilters={groupFilters}
             />
           </Suspense>
