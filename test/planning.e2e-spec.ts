@@ -1564,6 +1564,7 @@ describe('Planning surface (e2e)', () => {
       requiredRoomTypeId: null,
       nationalCode,
       countsTowardTimplan,
+      loadFactor: new Prisma.Decimal('1.000'),
       createdAt: new Date('2026-09-01T00:00:00.000Z'),
       updatedAt: new Date('2026-09-01T00:00:00.000Z'),
     });
@@ -1664,6 +1665,39 @@ describe('Planning surface (e2e)', () => {
       });
       // Clearing is not a code to look up.
       expect(harness.tx['nationalSubject']!['findUnique']).not.toHaveBeenCalled();
+    });
+
+    it('a PATCH writes the subject’s Faktor and answers it as a number; 3,5 and four decimals are 400 in Swedish, a teacher 403', async () => {
+      harness.tx['subject']!['update']!.mockResolvedValue({
+        ...storedSubject('SL'),
+        loadFactor: new Prisma.Decimal('0.700'),
+      });
+
+      const response = await request(http())
+        .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+        .set('x-test-user', admin())
+        .send({ loadFactor: 0.7 })
+        .expect(200);
+      expect(response.body.loadFactor).toBe(0.7);
+      expect(harness.tx['subject']!['update']).toHaveBeenCalledWith({
+        where: { id: NATIONAL_SUBJECT_ID },
+        data: { loadFactor: 0.7 },
+      });
+
+      for (const loadFactor of [3.5, 0.4, 1.2345, null]) {
+        const refused = await request(http())
+          .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+          .set('x-test-user', admin())
+          .send({ loadFactor })
+          .expect(400);
+        expect(JSON.stringify(refused.body)).toContain('faktorn är ett tal mellan 0,5 och 3');
+      }
+      await request(http())
+        .patch(`/api/v1/subjects/${NATIONAL_SUBJECT_ID}`)
+        .set('x-test-user', teacher())
+        .send({ loadFactor: 0.7 })
+        .expect(403);
+      expect(harness.tx['subject']!['update']).toHaveBeenCalledTimes(1);
     });
 
     it('404s a PATCH against a subject RLS hides', async () => {
@@ -1871,6 +1905,39 @@ describe('Planning surface (e2e)', () => {
           .expect(400);
         expect(JSON.stringify(response.body)).toContain('1800 h');
         expect(harness.tx['staffingPolicy']!['upsert']).not.toHaveBeenCalled();
+      });
+
+      it('writes the SS12000 switch through the handler, off unless sent, and 400s a string', async () => {
+        harness.tx['staffingPolicy']!['upsert']!.mockResolvedValue(
+          storedPolicy({ shareEmploymentWithIntegrations: true }),
+        );
+        const written = await request(http())
+          .put('/api/v1/staffing-policy')
+          .set('x-test-user', admin())
+          .send({ fullTimeTeachingMinutesPerWeek: 1080, shareEmploymentWithIntegrations: true })
+          .expect(200);
+        expect(written.body).toMatchObject({ shareEmploymentWithIntegrations: true });
+        const args = harness.tx['staffingPolicy']!['upsert']!.mock.calls[0]?.[0] as {
+          update: Record<string, unknown>;
+        };
+        expect(args.update).toMatchObject({ shareEmploymentWithIntegrations: true });
+
+        await request(http())
+          .put('/api/v1/staffing-policy')
+          .set('x-test-user', admin())
+          .send({ fullTimeTeachingMinutesPerWeek: 1080 })
+          .expect(200);
+        const second = harness.tx['staffingPolicy']!['upsert']!.mock.calls[1]?.[0] as {
+          update: Record<string, unknown>;
+        };
+        expect(second.update).toMatchObject({ shareEmploymentWithIntegrations: false });
+
+        await request(http())
+          .put('/api/v1/staffing-policy')
+          .set('x-test-user', admin())
+          .send({ shareEmploymentWithIntegrations: 'ja' })
+          .expect(400);
+        expect(harness.tx['staffingPolicy']!['upsert']).toHaveBeenCalledTimes(2);
       });
 
       it('403s a teacher on both verbs', async () => {

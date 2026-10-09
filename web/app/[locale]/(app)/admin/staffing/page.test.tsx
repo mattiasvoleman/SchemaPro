@@ -31,6 +31,7 @@ const report: TeacherLoadReport & { academicYearId: string; horizon: "planned"; 
   academicYearId: "y1",
   horizon: "planned",
   year,
+  loadModel: "MINUTES",
   teachers: [
     {
       userId: "t-bo",
@@ -63,7 +64,19 @@ const report: TeacherLoadReport & { academicYearId: string; horizon: "planned"; 
           percentOfFullTime: 111.1,
         },
       ],
-      annual: { assignedHoursPerYear: 800, regulatedHoursPerYear: 1360, workDaysPerYear: 194 },
+      assignments: [],
+      annual: {
+        assignedHoursPerYear: 800,
+        regulatedHoursPerYear: 1360,
+        workDaysPerYear: 194,
+        contractKind: "FERIE",
+        annualHours: null,
+        unregulatedHoursPerYear: null,
+        semesterHoursPerWeek: null,
+        dutyHoursPerYear: 0,
+        teachingWeeksPerYear: 38,
+        percentOfRegulated: null,
+      },
     },
   ],
   unstaffedRequirements: [

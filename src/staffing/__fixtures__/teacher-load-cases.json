@@ -75,6 +75,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -115,10 +116,57 @@
                 "percentOfFullTime": 27.8
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-1",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 600,
+                "timeMinutesPerWeek": 600,
+                "minutesPerWeek": 600,
+                "hoursPerYear": 430
+              },
+              {
+                "requirementId": "req-2",
+                "role": "TEACHER",
+                "subjectId": "no-subject",
+                "subjectName": "NO",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 300,
+                "timeMinutesPerWeek": 300,
+                "minutesPerWeek": 300,
+                "hoursPerYear": 215
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 645,
               "regulatedHoursPerYear": 1088,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1413.6,
+              "unregulatedHoursPerYear": 325.6,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 59.3
             }
           }
         ],
@@ -193,6 +241,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -225,10 +274,38 @@
                 "percentOfFullTime": 11.1
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-4",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 120,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 86
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 86,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 6.3
             }
           },
           {
@@ -262,10 +339,38 @@
                 "percentOfFullTime": 11.1
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-4",
+                "role": "CO_TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 120,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 86
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 86,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 6.3
             }
           }
         ],
@@ -352,6 +457,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -392,10 +498,57 @@
                 "percentOfFullTime": 5.6
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-6",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ODD_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 60,
+                "timeMinutesPerWeek": 60,
+                "minutesPerWeek": 60,
+                "hoursPerYear": 44
+              },
+              {
+                "requirementId": "req-7",
+                "role": "TEACHER",
+                "subjectId": "no-subject",
+                "subjectName": "NO",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "EVEN_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 60,
+                "timeMinutesPerWeek": 60,
+                "minutesPerWeek": 60,
+                "hoursPerYear": 42
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 86,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 6.3
             }
           }
         ],
@@ -487,6 +640,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -527,10 +681,57 @@
                 "percentOfFullTime": 8.9
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-9",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 120,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 80
+              },
+              {
+                "requirementId": "req-10",
+                "role": "TEACHER",
+                "subjectId": "no-subject",
+                "subjectName": "NO",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": "2026-09-02",
+                "endDate": "2026-12-18",
+                "lessonMinutesPerWeek": 96,
+                "timeMinutesPerWeek": 96,
+                "minutesPerWeek": 96,
+                "hoursPerYear": 64
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 144,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 40,
+              "percentOfRegulated": 10.6
             }
           }
         ],
@@ -637,6 +838,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -685,10 +887,76 @@
                 "percentOfFullTime": 8.3
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-12",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 600,
+                "timeMinutesPerWeek": 600,
+                "minutesPerWeek": 600,
+                "hoursPerYear": 430
+              },
+              {
+                "requirementId": "req-13",
+                "role": "TEACHER",
+                "subjectId": "no-subject",
+                "subjectName": "NO",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": "2026-09-01",
+                "endDate": "2026-12-18",
+                "lessonMinutesPerWeek": 89,
+                "timeMinutesPerWeek": 89,
+                "minutesPerWeek": 89,
+                "hoursPerYear": 64
+              },
+              {
+                "requirementId": "req-14",
+                "role": "TEACHER",
+                "subjectId": "sv-subject",
+                "subjectName": "Svenska",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": "2027-01-11",
+                "endDate": null,
+                "lessonMinutesPerWeek": 123,
+                "timeMinutesPerWeek": 123,
+                "minutesPerWeek": 123,
+                "hoursPerYear": 88
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 582,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 42.8
             }
           }
         ],
@@ -831,6 +1099,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
@@ -863,10 +1132,38 @@
                 "percentOfFullTime": 166.7
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-17",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 1800,
+                "timeMinutesPerWeek": 1800,
+                "minutesPerWeek": 1800,
+                "hoursPerYear": 1290
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 1290,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 94.9
             }
           },
           {
@@ -900,10 +1197,38 @@
                 "percentOfFullTime": 5.6
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-16",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 60,
+                "timeMinutesPerWeek": 60,
+                "minutesPerWeek": 60,
+                "hoursPerYear": 43
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 43,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 3.2
             }
           },
           {
@@ -937,10 +1262,38 @@
                 "percentOfFullTime": 100
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-18",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 1080,
+                "timeMinutesPerWeek": 1080,
+                "minutesPerWeek": 1080,
+                "hoursPerYear": 774
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 774,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 56.9
             }
           },
           {
@@ -967,10 +1320,38 @@
                 "percentOfFullTime": 5.6
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-19",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 60,
+                "timeMinutesPerWeek": 60,
+                "minutesPerWeek": 60,
+                "hoursPerYear": 43
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 43,
               "regulatedHoursPerYear": null,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": null,
+              "annualHours": null,
+              "unregulatedHoursPerYear": null,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": null
             }
           }
         ],
@@ -1085,6 +1466,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
@@ -1125,10 +1507,57 @@
                 "percentOfFullTime": 1.4
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-22",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 1188,
+                "timeMinutesPerWeek": 1188,
+                "minutesPerWeek": 1188,
+                "hoursPerYear": 851.4
+              },
+              {
+                "requirementId": "req-23",
+                "role": "TEACHER",
+                "subjectId": "no-subject",
+                "subjectName": "NO",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 15,
+                "timeMinutesPerWeek": 15,
+                "minutesPerWeek": 15,
+                "hoursPerYear": 10.8
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 862.2,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 63.4
             }
           },
           {
@@ -1162,10 +1591,38 @@
                 "percentOfFullTime": 110
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-21",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 1188,
+                "timeMinutesPerWeek": 1188,
+                "minutesPerWeek": 1188,
+                "hoursPerYear": 851.4
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 851.4,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 62.6
             }
           }
         ],
@@ -1232,6 +1689,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -1264,10 +1722,38 @@
                 "percentOfFullTime": null
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-25",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 2400,
+                "timeMinutesPerWeek": 2400,
+                "minutesPerWeek": 2400,
+                "hoursPerYear": 1720
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 1720,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 126.5
             }
           }
         ],
@@ -1328,6 +1814,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -1360,10 +1847,38 @@
                 "percentOfFullTime": null
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-27",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 129,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 9.5
             }
           }
         ],
@@ -1446,6 +1961,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -1478,10 +1994,38 @@
                 "percentOfFullTime": null
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-28",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 600,
+                "timeMinutesPerWeek": 600,
+                "minutesPerWeek": 600,
+                "hoursPerYear": 430
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 430,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 31.6
             }
           },
           {
@@ -1506,10 +2050,18 @@
             "requirementCount": 0,
             "dutyCount": 0,
             "subjects": [],
+            "assignments": [],
             "annual": {
               "assignedHoursPerYear": 0,
               "regulatedHoursPerYear": 816,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1060.2,
+              "unregulatedHoursPerYear": 244.2,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 0
             }
           },
           {
@@ -1534,10 +2086,18 @@
             "requirementCount": 0,
             "dutyCount": 0,
             "subjects": [],
+            "assignments": [],
             "annual": {
               "assignedHoursPerYear": 0,
               "regulatedHoursPerYear": 906.7,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1178,
+              "unregulatedHoursPerYear": 271.3,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 0
             }
           }
         ],
@@ -1615,6 +2175,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
@@ -1640,10 +2201,38 @@
                 "percentOfFullTime": 16.7
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-31",
+                "role": "CO_TEACHER",
+                "subjectId": "no-subject",
+                "subjectName": "NO",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 129,
               "regulatedHoursPerYear": null,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": null,
+              "annualHours": null,
+              "unregulatedHoursPerYear": null,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": null
             }
           }
         ],
@@ -1839,6 +2428,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -1879,10 +2469,54 @@
                 "percentOfFullTime": 16.7
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-33",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 9
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              },
+              {
+                "requirementId": "req-35",
+                "role": "CO_TEACHER",
+                "subjectId": "no-subject",
+                "subjectName": "NO",
+                "studentGroupId": "g-ma71",
+                "groupName": "Ma71",
+                "gradeSpan": null,
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 258,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 19
             }
           },
           {
@@ -1932,10 +2566,73 @@
                 "percentOfFullTime": 16.7
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-34",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-4a",
+                "groupName": "4A",
+                "gradeSpan": {
+                  "min": 4,
+                  "max": 4
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              },
+              {
+                "requirementId": "req-36",
+                "role": "TEACHER",
+                "subjectId": "sv-subject",
+                "subjectName": "Svenska",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              },
+              {
+                "requirementId": "req-35",
+                "role": "TEACHER",
+                "subjectId": "no-subject",
+                "subjectName": "NO",
+                "studentGroupId": "g-ma71",
+                "groupName": "Ma71",
+                "gradeSpan": null,
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 387,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 28.5
             }
           }
         ],
@@ -2033,6 +2730,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -2056,10 +2754,18 @@
             "requirementCount": 0,
             "dutyCount": 0,
             "subjects": [],
+            "assignments": [],
             "annual": {
               "assignedHoursPerYear": 0,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 0
             }
           },
           {
@@ -2086,10 +2792,38 @@
                 "percentOfFullTime": 16.7
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-38",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 129,
               "regulatedHoursPerYear": null,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": null,
+              "annualHours": null,
+              "unregulatedHoursPerYear": null,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": null
             }
           }
         ],
@@ -2191,6 +2925,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -2223,10 +2958,38 @@
                 "percentOfFullTime": 8.6
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-40",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-2a",
+                "groupName": "2A",
+                "gradeSpan": {
+                  "min": 2,
+                  "max": 2
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": "2027-01-11",
+                "endDate": null,
+                "lessonMinutesPerWeek": 93,
+                "timeMinutesPerWeek": 93,
+                "minutesPerWeek": 93,
+                "hoursPerYear": 66
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 66,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 4.9
             }
           },
           {
@@ -2260,10 +3023,38 @@
                 "percentOfFullTime": 8.5
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-41",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-sl",
+                "groupName": "Sl24",
+                "gradeSpan": {
+                  "min": 2,
+                  "max": 4
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": "2027-01-11",
+                "endDate": null,
+                "lessonMinutesPerWeek": 92,
+                "timeMinutesPerWeek": 92,
+                "minutesPerWeek": 92,
+                "hoursPerYear": 66
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 66,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 4.9
             }
           }
         ],
@@ -2386,6 +3177,7 @@
         ]
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -2426,10 +3218,57 @@
                 "percentOfFullTime": 16.7
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-50",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 240,
+                "timeMinutesPerWeek": 240,
+                "minutesPerWeek": 240,
+                "hoursPerYear": 172
+              },
+              {
+                "requirementId": "r-0",
+                "role": "TEACHER",
+                "subjectId": "sv-subject",
+                "subjectName": "Svenska",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 301,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 22.1
             }
           },
           {
@@ -2463,10 +3302,38 @@
                 "percentOfFullTime": 11.1
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-50",
+                "role": "CO_TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 240,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 86
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 86,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 6.3
             }
           },
           {
@@ -2508,10 +3375,57 @@
                 "percentOfFullTime": 0
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-0",
+                "role": "CO_TEACHER",
+                "subjectId": "sv-subject",
+                "subjectName": "Svenska",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 0,
+                "minutesPerWeek": 0,
+                "hoursPerYear": 0
+              },
+              {
+                "requirementId": "r-200",
+                "role": "TEACHER",
+                "subjectId": "id-subject",
+                "subjectName": "Idrott",
+                "studentGroupId": "g-7b",
+                "groupName": "7B",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 110,
+                "timeMinutesPerWeek": 220,
+                "minutesPerWeek": 220,
+                "hoursPerYear": 157.7
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 157.7,
               "regulatedHoursPerYear": 680,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 883.5,
+              "unregulatedHoursPerYear": 203.5,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 23.2
             }
           }
         ],
@@ -2626,6 +3540,7 @@
         ]
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -2658,10 +3573,57 @@
                 "percentOfFullTime": 9.3
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-even",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "EVEN_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 80,
+                "timeMinutesPerWeek": 60,
+                "minutesPerWeek": 60,
+                "hoursPerYear": 42
+              },
+              {
+                "requirementId": "r-odd",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ODD_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 80,
+                "timeMinutesPerWeek": 40,
+                "minutesPerWeek": 40,
+                "hoursPerYear": 29.3
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 71.3,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 5.2
             }
           },
           {
@@ -2703,10 +3665,57 @@
                 "percentOfFullTime": 6.8
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-odd",
+                "role": "CO_TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ODD_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 80,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 88
+              },
+              {
+                "requirementId": "r-term",
+                "role": "TEACHER",
+                "subjectId": "tk-subject",
+                "subjectName": "Teknik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": "2026-08-17",
+                "endDate": "2027-01-15",
+                "lessonMinutesPerWeek": 61,
+                "timeMinutesPerWeek": 74,
+                "minutesPerWeek": 74,
+                "hoursPerYear": 52.8
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 140.8,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 10.4
             }
           }
         ],
@@ -2827,6 +3836,7 @@
         ]
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
@@ -2859,10 +3869,38 @@
                 "percentOfFullTime": 55.6
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-c",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 600,
+                "timeMinutesPerWeek": 600,
+                "minutesPerWeek": 600,
+                "hoursPerYear": 430
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 430,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 286.7,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 31.6
             }
           },
           {
@@ -2896,10 +3934,38 @@
                 "percentOfFullTime": 83.3
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-a",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 900,
+                "timeMinutesPerWeek": 900,
+                "minutesPerWeek": 900,
+                "hoursPerYear": 645
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 645,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 129,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 47.4
             }
           },
           {
@@ -2917,10 +3983,18 @@
             "requirementCount": 0,
             "dutyCount": 1,
             "subjects": [],
+            "assignments": [],
             "annual": {
               "assignedHoursPerYear": 0,
               "regulatedHoursPerYear": null,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": null,
+              "annualHours": null,
+              "unregulatedHoursPerYear": null,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 28.7,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": null
             }
           }
         ],
@@ -3184,6 +4258,7 @@
         ]
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
@@ -3216,10 +4291,38 @@
                 "percentOfFullTime": 55.6
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-d",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 600,
+                "timeMinutesPerWeek": 600,
+                "minutesPerWeek": 600,
+                "hoursPerYear": 430
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 430,
               "regulatedHoursPerYear": 680,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 883.5,
+              "unregulatedHoursPerYear": 203.5,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 63.2
             }
           },
           {
@@ -3244,10 +4347,18 @@
             "requirementCount": 0,
             "dutyCount": 0,
             "subjects": [],
+            "assignments": [],
             "annual": {
               "assignedHoursPerYear": 0,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 0
             }
           },
           {
@@ -3289,10 +4400,57 @@
                 "percentOfFullTime": 11.1
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-a",
+                "role": "TEACHER",
+                "subjectId": "no-subject",
+                "subjectName": "NO",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 900,
+                "timeMinutesPerWeek": 900,
+                "minutesPerWeek": 900,
+                "hoursPerYear": 645
+              },
+              {
+                "requirementId": "r-ma-co",
+                "role": "CO_TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-9a",
+                "groupName": "9A",
+                "gradeSpan": {
+                  "min": 9,
+                  "max": 9
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 120,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 86
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 731,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 43,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 53.8
             }
           }
         ],
@@ -3476,6 +4634,7 @@
         ]
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -3508,10 +4667,38 @@
                 "percentOfFullTime": 16.7
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-2",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 129,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 9.5
             }
           }
         ],
@@ -3642,6 +4829,7 @@
         ]
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -3665,10 +4853,18 @@
             "requirementCount": 0,
             "dutyCount": 0,
             "subjects": [],
+            "assignments": [],
             "annual": {
               "assignedHoursPerYear": 0,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 0
             }
           },
           {
@@ -3702,10 +4898,38 @@
                 "percentOfFullTime": 11.1
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "r-ma-8a",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-8a",
+                "groupName": "8A",
+                "gradeSpan": {
+                  "min": 8,
+                  "max": 8
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 120,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 86
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 86,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 6.3
             }
           }
         ],
@@ -3903,6 +5127,7 @@
         "duties": []
       },
       "report": {
+        "loadModel": "MINUTES",
         "teachers": [
           {
             "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -3943,10 +5168,95 @@
                 "percentOfFullTime": 16.7
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-split",
+                "role": "TEACHER",
+                "subjectId": "idh-subject",
+                "subjectName": "Idrott och hälsa",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 120,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 86
+              },
+              {
+                "requirementId": "req-uniform",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 129
+              },
+              {
+                "requirementId": "req-split-odd",
+                "role": "TEACHER",
+                "subjectId": "idh-subject",
+                "subjectName": "Idrott och hälsa",
+                "studentGroupId": "g-7b",
+                "groupName": "7B",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ODD_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 80,
+                "timeMinutesPerWeek": 80,
+                "minutesPerWeek": 80,
+                "hoursPerYear": 58.7
+              },
+              {
+                "requirementId": "req-split-co",
+                "role": "TEACHER",
+                "subjectId": "idh-subject",
+                "subjectName": "Idrott och hälsa",
+                "studentGroupId": "g-7c",
+                "groupName": "7C",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 120,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 86
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 359.7,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 26.4
             }
           },
           {
@@ -3980,10 +5290,38 @@
                 "percentOfFullTime": 5.6
               }
             ],
+            "assignments": [
+              {
+                "requirementId": "req-split-co",
+                "role": "CO_TEACHER",
+                "subjectId": "idh-subject",
+                "subjectName": "Idrott och hälsa",
+                "studentGroupId": "g-7c",
+                "groupName": "7C",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 120,
+                "timeMinutesPerWeek": 60,
+                "minutesPerWeek": 60,
+                "hoursPerYear": 43
+              }
+            ],
             "annual": {
               "assignedHoursPerYear": 43,
               "regulatedHoursPerYear": 1360,
-              "workDaysPerYear": 194
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 43,
+              "percentOfRegulated": 3.2
             }
           }
         ],
@@ -4010,6 +5348,1391 @@
           "teacherMinutesPerWeek": 560,
           "lessonMinutesPerWeek": 620,
           "dutyMinutesPerWeek": 0
+        }
+      }
+    },
+    {
+      "name": "Fas 3: slöjd at 0.7 and svenska at 1.2 under FACTOR — co-teacher at 50 %, a term course in the toppvecka, unstaffed demand weighted, lesson minutes not",
+      "input": {
+        "year": {
+          "startDate": "2026-08-17",
+          "endDate": "2027-06-11"
+        },
+        "policy": {
+          "fullTimeTeachingMinutesPerWeek": 1080,
+          "overAllocationTolerancePercent": 10,
+          "fullTimeRegulatedHoursPerYear": 1360,
+          "workDaysPerYear": 194,
+          "qualificationMode": "WARN",
+          "fullTimeAnnualHours": 1767,
+          "semesterHoursPerWeek": 40,
+          "loadModel": "FACTOR"
+        },
+        "employments": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": "ANN"
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "employmentPercent": 60,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": "BOB"
+          }
+        ],
+        "requirements": [
+          {
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "coTeacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 80,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 50,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "id": "r-sl",
+            "loadWeight": 0.7
+          },
+          {
+            "subjectId": "sv-subject",
+            "subjectName": "Svenska",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "coTeacherId": null,
+            "lessonsPerWeek": 4,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "id": "r-sv",
+            "loadWeight": 1.2
+          },
+          {
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "coTeacherId": null,
+            "lessonsPerWeek": 3,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "id": "r-ma",
+            "loadWeight": 1
+          },
+          {
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-8a",
+            "groupName": "8A",
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "coTeacherId": null,
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": "2026-08-17",
+            "endDate": "2026-12-18",
+            "gradeSpan": {
+              "min": 8,
+              "max": 8
+            },
+            "id": "r-sl-ht",
+            "loadWeight": 0.7
+          },
+          {
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-9a",
+            "groupName": "9A",
+            "teacherId": null,
+            "coTeacherId": null,
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 9,
+              "max": 9
+            },
+            "id": "r-sl-open",
+            "loadWeight": 0.7
+          }
+        ],
+        "qualifications": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "subjectId": "sl-subject",
+            "minGradeLevel": 7,
+            "maxGradeLevel": 9,
+            "kind": "LEGITIMATION",
+            "validFrom": null,
+            "validTo": null
+          }
+        ],
+        "closures": [
+          {
+            "startDate": "2026-12-21",
+            "endDate": "2027-01-06",
+            "minGradeLevel": null,
+            "maxGradeLevel": null
+          }
+        ],
+        "duties": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "minutesPerWeek": 60,
+            "countsAsTeaching": false
+          }
+        ]
+      },
+      "report": {
+        "loadModel": "FACTOR",
+        "teachers": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "employment": {
+              "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": "ANN"
+            },
+            "targetMinutesPerWeek": 1080,
+            "assignedMinutesPerWeek": 400,
+            "peakMinutesPerWeek": 400,
+            "dutyMinutesPerWeek": 60,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 400,
+            "balanceMinutesPerWeek": 680,
+            "percentOfTarget": 37,
+            "status": "UNDER",
+            "requirementCount": 2,
+            "dutyCount": 1,
+            "subjects": [
+              {
+                "subjectId": "sv-subject",
+                "subjectName": "Svenska",
+                "minutesPerWeek": 288,
+                "shareOfTeaching": 0.72,
+                "percentOfEmployment": 72,
+                "percentOfFullTime": 26.7
+              },
+              {
+                "subjectId": "sl-subject",
+                "subjectName": "Slöjd",
+                "minutesPerWeek": 112,
+                "shareOfTeaching": 0.28,
+                "percentOfEmployment": 28,
+                "percentOfFullTime": 10.4
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "r-sl",
+                "role": "TEACHER",
+                "subjectId": "sl-subject",
+                "subjectName": "Slöjd",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 160,
+                "timeMinutesPerWeek": 160,
+                "minutesPerWeek": 112,
+                "hoursPerYear": 75.4
+              },
+              {
+                "requirementId": "r-sv",
+                "role": "TEACHER",
+                "subjectId": "sv-subject",
+                "subjectName": "Svenska",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 240,
+                "timeMinutesPerWeek": 240,
+                "minutesPerWeek": 288,
+                "hoursPerYear": 193.9
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 269.3,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 40.4,
+              "teachingWeeksPerYear": 40.4,
+              "percentOfRegulated": 19.8
+            }
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "employment": {
+              "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "employmentPercent": 60,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": "BOB"
+            },
+            "targetMinutesPerWeek": 650,
+            "assignedMinutesPerWeek": 273,
+            "peakMinutesPerWeek": 320,
+            "dutyMinutesPerWeek": 0,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 273,
+            "balanceMinutesPerWeek": 377,
+            "percentOfTarget": 42.1,
+            "status": "UNDER",
+            "requirementCount": 3,
+            "dutyCount": 0,
+            "subjects": [
+              {
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "minutesPerWeek": 180,
+                "shareOfTeaching": 0.6583,
+                "percentOfEmployment": 39.5,
+                "percentOfFullTime": 16.7
+              },
+              {
+                "subjectId": "sl-subject",
+                "subjectName": "Slöjd",
+                "minutesPerWeek": 93,
+                "shareOfTeaching": 0.3417,
+                "percentOfEmployment": 20.5,
+                "percentOfFullTime": 8.7
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "r-ma",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 121.2
+              },
+              {
+                "requirementId": "r-sl",
+                "role": "CO_TEACHER",
+                "subjectId": "sl-subject",
+                "subjectName": "Slöjd",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 160,
+                "timeMinutesPerWeek": 80,
+                "minutesPerWeek": 56,
+                "hoursPerYear": 37.7
+              },
+              {
+                "requirementId": "r-sl-ht",
+                "role": "TEACHER",
+                "subjectId": "sl-subject",
+                "subjectName": "Slöjd",
+                "studentGroupId": "g-8a",
+                "groupName": "8A",
+                "gradeSpan": {
+                  "min": 8,
+                  "max": 8
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": "2026-08-17",
+                "endDate": "2026-12-18",
+                "lessonMinutesPerWeek": 53,
+                "timeMinutesPerWeek": 53,
+                "minutesPerWeek": 37,
+                "hoursPerYear": 25.2
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 184.1,
+              "regulatedHoursPerYear": 816,
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1060.2,
+              "unregulatedHoursPerYear": 244.2,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 40.4,
+              "percentOfRegulated": 22.6
+            }
+          }
+        ],
+        "unstaffedRequirements": [
+          {
+            "requirementId": "r-sl-open",
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-9a",
+            "groupName": "9A",
+            "minutesPerWeek": 120,
+            "teacherMinutesPerWeek": 84,
+            "gradeSpan": {
+              "min": 9,
+              "max": 9
+            }
+          }
+        ],
+        "unqualifiedAssignments": [
+          {
+            "requirementId": "r-sl",
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "role": "CO_TEACHER",
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "requirementId": "r-sv",
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "role": "TEACHER",
+            "subjectId": "sv-subject",
+            "subjectName": "Svenska",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "requirementId": "r-ma",
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "role": "TEACHER",
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "requirementId": "r-sl-ht",
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "role": "TEACHER",
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-8a",
+            "groupName": "8A",
+            "gradeSpan": {
+              "min": 8,
+              "max": 8
+            }
+          }
+        ],
+        "qualificationsRecorded": true,
+        "subjectBottlenecks": [
+          {
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "unstaffedCount": 1,
+            "demandedMinutesPerWeek": 84,
+            "qualifiedRemainingMinutesPerWeek": 680,
+            "qualifiedTeacherCount": 1,
+            "qualifiedNoTargetCount": 0,
+            "short": false
+          }
+        ],
+        "bottlenecksComputed": true,
+        "totals": {
+          "teacherMinutesPerWeek": 673,
+          "lessonMinutesPerWeek": 753,
+          "dutyMinutesPerWeek": 60
+        }
+      }
+    },
+    {
+      "name": "Fas 3: the same rows under MINUTES — every weight 1, the figures are the minutes",
+      "input": {
+        "year": {
+          "startDate": "2026-08-17",
+          "endDate": "2027-06-11"
+        },
+        "policy": {
+          "fullTimeTeachingMinutesPerWeek": 1080,
+          "overAllocationTolerancePercent": 10,
+          "fullTimeRegulatedHoursPerYear": 1360,
+          "workDaysPerYear": 194,
+          "qualificationMode": "WARN",
+          "fullTimeAnnualHours": 1767,
+          "semesterHoursPerWeek": 40,
+          "loadModel": "MINUTES"
+        },
+        "employments": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": "ANN"
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "employmentPercent": 60,
+            "reductionPercent": 0,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": "BOB"
+          }
+        ],
+        "requirements": [
+          {
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "coTeacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 80,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 50,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "id": "r-sl",
+            "loadWeight": 1
+          },
+          {
+            "subjectId": "sv-subject",
+            "subjectName": "Svenska",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "coTeacherId": null,
+            "lessonsPerWeek": 4,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "id": "r-sv",
+            "loadWeight": 1
+          },
+          {
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "coTeacherId": null,
+            "lessonsPerWeek": 3,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "id": "r-ma",
+            "loadWeight": 1
+          },
+          {
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-8a",
+            "groupName": "8A",
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "coTeacherId": null,
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": "2026-08-17",
+            "endDate": "2026-12-18",
+            "gradeSpan": {
+              "min": 8,
+              "max": 8
+            },
+            "id": "r-sl-ht",
+            "loadWeight": 1
+          },
+          {
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-9a",
+            "groupName": "9A",
+            "teacherId": null,
+            "coTeacherId": null,
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 9,
+              "max": 9
+            },
+            "id": "r-sl-open",
+            "loadWeight": 1
+          }
+        ],
+        "qualifications": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "subjectId": "sl-subject",
+            "minGradeLevel": 7,
+            "maxGradeLevel": 9,
+            "kind": "LEGITIMATION",
+            "validFrom": null,
+            "validTo": null
+          }
+        ],
+        "closures": [
+          {
+            "startDate": "2026-12-21",
+            "endDate": "2027-01-06",
+            "minGradeLevel": null,
+            "maxGradeLevel": null
+          }
+        ],
+        "duties": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "minutesPerWeek": 60,
+            "countsAsTeaching": false
+          }
+        ]
+      },
+      "report": {
+        "loadModel": "MINUTES",
+        "teachers": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "employment": {
+              "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": "ANN"
+            },
+            "targetMinutesPerWeek": 1080,
+            "assignedMinutesPerWeek": 400,
+            "peakMinutesPerWeek": 400,
+            "dutyMinutesPerWeek": 60,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 400,
+            "balanceMinutesPerWeek": 680,
+            "percentOfTarget": 37,
+            "status": "UNDER",
+            "requirementCount": 2,
+            "dutyCount": 1,
+            "subjects": [
+              {
+                "subjectId": "sv-subject",
+                "subjectName": "Svenska",
+                "minutesPerWeek": 240,
+                "shareOfTeaching": 0.6,
+                "percentOfEmployment": 60,
+                "percentOfFullTime": 22.2
+              },
+              {
+                "subjectId": "sl-subject",
+                "subjectName": "Slöjd",
+                "minutesPerWeek": 160,
+                "shareOfTeaching": 0.4,
+                "percentOfEmployment": 40,
+                "percentOfFullTime": 14.8
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "r-sl",
+                "role": "TEACHER",
+                "subjectId": "sl-subject",
+                "subjectName": "Slöjd",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 160,
+                "timeMinutesPerWeek": 160,
+                "minutesPerWeek": 160,
+                "hoursPerYear": 107.7
+              },
+              {
+                "requirementId": "r-sv",
+                "role": "TEACHER",
+                "subjectId": "sv-subject",
+                "subjectName": "Svenska",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 240,
+                "timeMinutesPerWeek": 240,
+                "minutesPerWeek": 240,
+                "hoursPerYear": 161.6
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 269.3,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1767,
+              "unregulatedHoursPerYear": 407,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 40.4,
+              "teachingWeeksPerYear": 40.4,
+              "percentOfRegulated": 19.8
+            }
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "employment": {
+              "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "employmentPercent": 60,
+              "reductionPercent": 0,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": "BOB"
+            },
+            "targetMinutesPerWeek": 650,
+            "assignedMinutesPerWeek": 313,
+            "peakMinutesPerWeek": 380,
+            "dutyMinutesPerWeek": 0,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 313,
+            "balanceMinutesPerWeek": 337,
+            "percentOfTarget": 48.2,
+            "status": "UNDER",
+            "requirementCount": 3,
+            "dutyCount": 0,
+            "subjects": [
+              {
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "minutesPerWeek": 180,
+                "shareOfTeaching": 0.5742,
+                "percentOfEmployment": 34.5,
+                "percentOfFullTime": 16.7
+              },
+              {
+                "subjectId": "sl-subject",
+                "subjectName": "Slöjd",
+                "minutesPerWeek": 133,
+                "shareOfTeaching": 0.4258,
+                "percentOfEmployment": 25.5,
+                "percentOfFullTime": 12.4
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "r-ma",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 180,
+                "timeMinutesPerWeek": 180,
+                "minutesPerWeek": 180,
+                "hoursPerYear": 121.2
+              },
+              {
+                "requirementId": "r-sl",
+                "role": "CO_TEACHER",
+                "subjectId": "sl-subject",
+                "subjectName": "Slöjd",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 160,
+                "timeMinutesPerWeek": 80,
+                "minutesPerWeek": 80,
+                "hoursPerYear": 53.9
+              },
+              {
+                "requirementId": "r-sl-ht",
+                "role": "TEACHER",
+                "subjectId": "sl-subject",
+                "subjectName": "Slöjd",
+                "studentGroupId": "g-8a",
+                "groupName": "8A",
+                "gradeSpan": {
+                  "min": 8,
+                  "max": 8
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": "2026-08-17",
+                "endDate": "2026-12-18",
+                "lessonMinutesPerWeek": 53,
+                "timeMinutesPerWeek": 53,
+                "minutesPerWeek": 53,
+                "hoursPerYear": 36
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 211.1,
+              "regulatedHoursPerYear": 816,
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1060.2,
+              "unregulatedHoursPerYear": 244.2,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 40.4,
+              "percentOfRegulated": 25.9
+            }
+          }
+        ],
+        "unstaffedRequirements": [
+          {
+            "requirementId": "r-sl-open",
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-9a",
+            "groupName": "9A",
+            "minutesPerWeek": 120,
+            "teacherMinutesPerWeek": 120,
+            "gradeSpan": {
+              "min": 9,
+              "max": 9
+            }
+          }
+        ],
+        "unqualifiedAssignments": [
+          {
+            "requirementId": "r-sl",
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "role": "CO_TEACHER",
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "requirementId": "r-sv",
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "role": "TEACHER",
+            "subjectId": "sv-subject",
+            "subjectName": "Svenska",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "requirementId": "r-ma",
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "role": "TEACHER",
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            }
+          },
+          {
+            "requirementId": "r-sl-ht",
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "role": "TEACHER",
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "studentGroupId": "g-8a",
+            "groupName": "8A",
+            "gradeSpan": {
+              "min": 8,
+              "max": 8
+            }
+          }
+        ],
+        "qualificationsRecorded": true,
+        "subjectBottlenecks": [
+          {
+            "subjectId": "sl-subject",
+            "subjectName": "Slöjd",
+            "unstaffedCount": 1,
+            "demandedMinutesPerWeek": 120,
+            "qualifiedRemainingMinutesPerWeek": 680,
+            "qualifiedTeacherCount": 1,
+            "qualifiedNoTargetCount": 0,
+            "short": false
+          }
+        ],
+        "bottlenecksComputed": true,
+        "totals": {
+          "teacherMinutesPerWeek": 713,
+          "lessonMinutesPerWeek": 753,
+          "dutyMinutesPerWeek": 60
+        }
+      }
+    },
+    {
+      "name": "Fas 3: årsarbetstid — FERIE with nedsättning, SEMESTER, a co-teacher without a post, a wholly reduced post; assignments in Swedish order",
+      "input": {
+        "year": {
+          "startDate": "2026-08-17",
+          "endDate": "2027-06-11"
+        },
+        "policy": {
+          "fullTimeTeachingMinutesPerWeek": 1080,
+          "overAllocationTolerancePercent": 10,
+          "fullTimeRegulatedHoursPerYear": 1360,
+          "workDaysPerYear": 194,
+          "qualificationMode": "WARN",
+          "fullTimeAnnualHours": 1767,
+          "semesterHoursPerWeek": 40,
+          "loadModel": "MINUTES"
+        },
+        "employments": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "employmentPercent": 80,
+            "reductionPercent": 10,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": null
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "employmentPercent": 100,
+            "reductionPercent": 0,
+            "contractKind": "SEMESTER",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": null
+          },
+          {
+            "userId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            "employmentPercent": 50,
+            "reductionPercent": 50,
+            "contractKind": "FERIE",
+            "teachingTargetMinutesPerWeek": null,
+            "signature": null
+          }
+        ],
+        "requirements": [
+          {
+            "subjectId": "ma-subject",
+            "subjectName": "Matematik",
+            "studentGroupId": "g-åk7",
+            "groupName": "Åk 7 grupp",
+            "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "coTeacherId": null,
+            "lessonsPerWeek": 5,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "id": "a-1"
+          },
+          {
+            "subjectId": "en-subject",
+            "subjectName": "Engelska",
+            "studentGroupId": "g-7a",
+            "groupName": "7A",
+            "teacherId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "coTeacherId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            "lessonsPerWeek": 3,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 50,
+            "recurrence": "ODD_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "id": "a-2"
+          },
+          {
+            "subjectId": "bi-subject",
+            "subjectName": "Biologi",
+            "studentGroupId": "g-äk",
+            "groupName": "Ämnesgrupp",
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "coTeacherId": null,
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "id": "a-3"
+          },
+          {
+            "subjectId": "bi-subject",
+            "subjectName": "Biologi",
+            "studentGroupId": "g-7b",
+            "groupName": "7B",
+            "teacherId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "coTeacherId": null,
+            "lessonsPerWeek": 2,
+            "minutesPerLesson": 60,
+            "lessonLengths": [],
+            "teacherLoadPercent": 100,
+            "coTeacherLoadPercent": 100,
+            "recurrence": "ALL_WEEKS",
+            "startDate": null,
+            "endDate": null,
+            "gradeSpan": {
+              "min": 7,
+              "max": 7
+            },
+            "id": "a-4"
+          }
+        ],
+        "qualifications": [],
+        "closures": [
+          {
+            "startDate": "2026-12-21",
+            "endDate": "2027-01-06",
+            "minGradeLevel": null,
+            "maxGradeLevel": null
+          },
+          {
+            "startDate": "2027-02-15",
+            "endDate": "2027-02-19",
+            "minGradeLevel": null,
+            "maxGradeLevel": null
+          }
+        ],
+        "duties": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "minutesPerWeek": 90,
+            "countsAsTeaching": true
+          },
+          {
+            "userId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            "minutesPerWeek": 30,
+            "countsAsTeaching": false
+          }
+        ]
+      },
+      "report": {
+        "loadModel": "MINUTES",
+        "teachers": [
+          {
+            "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "employment": {
+              "userId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "employmentPercent": 80,
+              "reductionPercent": 10,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": null
+            },
+            "targetMinutesPerWeek": 755,
+            "assignedMinutesPerWeek": 390,
+            "peakMinutesPerWeek": 480,
+            "dutyMinutesPerWeek": 90,
+            "countedDutyMinutesPerWeek": 90,
+            "countedMinutesPerWeek": 480,
+            "balanceMinutesPerWeek": 275,
+            "percentOfTarget": 63.6,
+            "status": "UNDER",
+            "requirementCount": 2,
+            "dutyCount": 1,
+            "subjects": [
+              {
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "minutesPerWeek": 300,
+                "shareOfTeaching": 0.7692,
+                "percentOfEmployment": 61.5,
+                "percentOfFullTime": 27.8
+              },
+              {
+                "subjectId": "en-subject",
+                "subjectName": "Engelska",
+                "minutesPerWeek": 90,
+                "shareOfTeaching": 0.2308,
+                "percentOfEmployment": 18.5,
+                "percentOfFullTime": 8.3
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "a-2",
+                "role": "TEACHER",
+                "subjectId": "en-subject",
+                "subjectName": "Engelska",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ODD_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 90,
+                "timeMinutesPerWeek": 90,
+                "minutesPerWeek": 90,
+                "hoursPerYear": 58.2
+              },
+              {
+                "requirementId": "a-1",
+                "role": "TEACHER",
+                "subjectId": "ma-subject",
+                "subjectName": "Matematik",
+                "studentGroupId": "g-åk7",
+                "groupName": "Åk 7 grupp",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 300,
+                "timeMinutesPerWeek": 300,
+                "minutesPerWeek": 300,
+                "hoursPerYear": 197
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 255.2,
+              "regulatedHoursPerYear": 952,
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 1236.9,
+              "unregulatedHoursPerYear": 284.9,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 59.1,
+              "teachingWeeksPerYear": 39.4,
+              "percentOfRegulated": 26.8
+            }
+          },
+          {
+            "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "employment": {
+              "userId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+              "employmentPercent": 100,
+              "reductionPercent": 0,
+              "contractKind": "SEMESTER",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": null
+            },
+            "targetMinutesPerWeek": 1080,
+            "assignedMinutesPerWeek": 240,
+            "peakMinutesPerWeek": 240,
+            "dutyMinutesPerWeek": 0,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 240,
+            "balanceMinutesPerWeek": 840,
+            "percentOfTarget": 22.2,
+            "status": "UNDER",
+            "requirementCount": 2,
+            "dutyCount": 0,
+            "subjects": [
+              {
+                "subjectId": "bi-subject",
+                "subjectName": "Biologi",
+                "minutesPerWeek": 240,
+                "shareOfTeaching": 1,
+                "percentOfEmployment": 100,
+                "percentOfFullTime": 22.2
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "a-4",
+                "role": "TEACHER",
+                "subjectId": "bi-subject",
+                "subjectName": "Biologi",
+                "studentGroupId": "g-7b",
+                "groupName": "7B",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 120,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 78.8
+              },
+              {
+                "requirementId": "a-3",
+                "role": "TEACHER",
+                "subjectId": "bi-subject",
+                "subjectName": "Biologi",
+                "studentGroupId": "g-äk",
+                "groupName": "Ämnesgrupp",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ALL_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 120,
+                "timeMinutesPerWeek": 120,
+                "minutesPerWeek": 120,
+                "hoursPerYear": 78.8
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 157.6,
+              "regulatedHoursPerYear": 1360,
+              "workDaysPerYear": 194,
+              "contractKind": "SEMESTER",
+              "annualHours": null,
+              "unregulatedHoursPerYear": null,
+              "semesterHoursPerWeek": 40,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 39.4,
+              "percentOfRegulated": 11.6
+            }
+          },
+          {
+            "userId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            "employment": {
+              "userId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+              "employmentPercent": 50,
+              "reductionPercent": 50,
+              "contractKind": "FERIE",
+              "teachingTargetMinutesPerWeek": null,
+              "signature": null
+            },
+            "targetMinutesPerWeek": 0,
+            "assignedMinutesPerWeek": 0,
+            "peakMinutesPerWeek": 0,
+            "dutyMinutesPerWeek": 30,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 0,
+            "balanceMinutesPerWeek": 0,
+            "percentOfTarget": null,
+            "status": "OK",
+            "requirementCount": 0,
+            "dutyCount": 1,
+            "subjects": [],
+            "assignments": [],
+            "annual": {
+              "assignedHoursPerYear": 0,
+              "regulatedHoursPerYear": 0,
+              "workDaysPerYear": 194,
+              "contractKind": "FERIE",
+              "annualHours": 0,
+              "unregulatedHoursPerYear": 0,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 19.7,
+              "teachingWeeksPerYear": 39.4,
+              "percentOfRegulated": null
+            }
+          },
+          {
+            "userId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            "employment": null,
+            "targetMinutesPerWeek": null,
+            "assignedMinutesPerWeek": 45,
+            "peakMinutesPerWeek": 90,
+            "dutyMinutesPerWeek": 0,
+            "countedDutyMinutesPerWeek": 0,
+            "countedMinutesPerWeek": 45,
+            "balanceMinutesPerWeek": null,
+            "percentOfTarget": null,
+            "status": "NO_TARGET",
+            "requirementCount": 1,
+            "dutyCount": 0,
+            "subjects": [
+              {
+                "subjectId": "en-subject",
+                "subjectName": "Engelska",
+                "minutesPerWeek": 45,
+                "shareOfTeaching": 1,
+                "percentOfEmployment": null,
+                "percentOfFullTime": 4.2
+              }
+            ],
+            "assignments": [
+              {
+                "requirementId": "a-2",
+                "role": "CO_TEACHER",
+                "subjectId": "en-subject",
+                "subjectName": "Engelska",
+                "studentGroupId": "g-7a",
+                "groupName": "7A",
+                "gradeSpan": {
+                  "min": 7,
+                  "max": 7
+                },
+                "recurrence": "ODD_WEEKS",
+                "startDate": null,
+                "endDate": null,
+                "lessonMinutesPerWeek": 90,
+                "timeMinutesPerWeek": 45,
+                "minutesPerWeek": 45,
+                "hoursPerYear": 29.1
+              }
+            ],
+            "annual": {
+              "assignedHoursPerYear": 29.1,
+              "regulatedHoursPerYear": null,
+              "workDaysPerYear": 194,
+              "contractKind": null,
+              "annualHours": null,
+              "unregulatedHoursPerYear": null,
+              "semesterHoursPerWeek": null,
+              "dutyHoursPerYear": 0,
+              "teachingWeeksPerYear": 39.4,
+              "percentOfRegulated": null
+            }
+          }
+        ],
+        "unstaffedRequirements": [],
+        "unqualifiedAssignments": [],
+        "qualificationsRecorded": false,
+        "subjectBottlenecks": [],
+        "bottlenecksComputed": false,
+        "totals": {
+          "teacherMinutesPerWeek": 675,
+          "lessonMinutesPerWeek": 630,
+          "dutyMinutesPerWeek": 120
         }
       }
     }

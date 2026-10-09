@@ -55,6 +55,15 @@ describe("the load report agrees with the gateway's fixture", () => {
     expect(split.some((r) => r.teacherId === null)).toBe(true);
   });
 
+  it("reaches the Fas 3 factor and årsarbetstid branches", () => {
+    // Skola24's Faktor model: a weight off 1 under FACTOR, never on lesson minutes.
+    expect(cases.some((entry) => entry.report.loadModel === "FACTOR")).toBe(true);
+    expect(cases.some((entry) => entry.input.requirements.some((r) => (r.loadWeight ?? 1) !== 1))).toBe(true);
+    const teachers = cases.flatMap((entry) => entry.report.teachers);
+    expect(teachers.some((t) => t.assignments.some((a) => a.minutesPerWeek !== a.timeMinutesPerWeek))).toBe(true);
+    expect(new Set(teachers.map((t) => t.annual.contractKind))).toEqual(new Set(["FERIE", "SEMESTER", null]));
+  });
+
   it.each(cases.map((entry) => [entry.name, entry] as const))("%s", (_name, entry) => {
     expect(buildTeacherLoadReport(entry.input)).toEqual(entry.report);
   });

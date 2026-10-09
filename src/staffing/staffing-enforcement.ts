@@ -13,7 +13,7 @@ import {
   type StaffingRole,
   type StaffingWarning,
 } from './staffing-checks';
-import type { LoadInput, LoadQualification, LoadRequirement } from './teacher-load';
+import type { LoadInput, LoadModel, LoadQualification, LoadRequirement } from './teacher-load';
 import type { YearBounds } from './teaching-weeks';
 
 /**
@@ -167,10 +167,17 @@ export function touchesStaffing(patch: object): boolean {
   );
 }
 
-/** A row as the write leaves it: `patch` over `before`, or over a create's defaults. */
+/**
+ * A row as the write leaves it: `patch` over `before`, or over a create's
+ * defaults. `base` carries what the patch cannot set — and the row's load
+ * weight for the subject it ends up in (loadWeightOf, LoadRead.weightOf): the
+ * result is a fresh object, and a weight left behind would judge a FACTOR
+ * school's write unweighted, so the load would seem to drop and
+ * STAFF_TEACHER_OVER_TARGET could never fire.
+ */
 export function mergeRequirement(
   before: LoadRequirement | null,
-  base: Pick<LoadRequirement, 'id' | 'subjectId' | 'subjectName' | 'studentGroupId' | 'groupName' | 'gradeSpan'>,
+  base: Pick<LoadRequirement, 'id' | 'subjectId' | 'subjectName' | 'studentGroupId' | 'groupName' | 'gradeSpan' | 'loadWeight'>,
   patch: RequirementPatch,
 ): LoadRequirement {
   const field = <K extends keyof RequirementPatch & keyof LoadRequirement>(
@@ -264,6 +271,7 @@ export async function enforceRequirementWrite(
       studentGroupId: args.studentGroupId,
       groupName: stored?.groupName ?? read.groupName(args.studentGroupId) ?? '',
       gradeSpan: stored?.gradeSpan ?? read.spanOf([args.studentGroupId]),
+      ...weightField(read.loadModel, read.weightOf(args.subjectId)),
     },
     patch,
   );
@@ -288,6 +296,7 @@ export class RequirementImportChecks {
     private readonly policy: CheckPolicy,
     private readonly input: LoadInput,
     private readonly spanOf: (groupIds: string[]) => ReturnType<typeof gradeSpanOf>,
+    private readonly weight: (subjectId: string) => Pick<LoadRequirement, 'loadWeight'>,
   ) {}
 
   static async open(
@@ -317,6 +326,7 @@ export class RequirementImportChecks {
       asksLoad ? policy : { ...policy, overAllocationMode: 'OFF' },
       { ...read.input, requirements: [...read.input.requirements] },
       (groupIds) => read.spanOf(groupIds),
+      (subjectId) => weightField(read.loadModel, read.weightOf(subjectId)),
     );
   }
 
@@ -349,6 +359,7 @@ export class RequirementImportChecks {
         studentGroupId: args.studentGroupId,
         groupName: args.groupName,
         gradeSpan: before?.gradeSpan ?? this.spanOf([args.studentGroupId]),
+        ...this.weight(args.subjectId),
       },
       args.patch,
     );
@@ -368,6 +379,14 @@ export class RequirementImportChecks {
     if (index === -1) this.input.requirements.push(after);
     else this.input.requirements[index] = after;
   }
+}
+
+/**
+ * A merged row's weight, as readLoadInput sets it on the stored rows: present
+ * only under FACTOR, so a MINUTES school's rows stay the objects they were.
+ */
+function weightField(model: LoadModel, weight: number): Pick<LoadRequirement, 'loadWeight'> {
+  return model === 'FACTOR' ? { loadWeight: weight } : {};
 }
 
 /**

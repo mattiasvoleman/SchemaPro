@@ -256,6 +256,40 @@ describe('StaffingLoadService', () => {
     });
   });
 
+  it('under MINUTES reads no factor at all and charges the minutes', async () => {
+    const report = await service.load(YEAR_ID, 'planned', testUser());
+
+    expect(tx.subject.findMany).not.toHaveBeenCalled();
+    expect(report.loadModel).toBe('MINUTES');
+    expect(report.teachers[0]!.assignedMinutesPerWeek).toBe(600);
+  });
+
+  it('under FACTOR reads every subject’s factor in one statement and charges minutes × factor, never the lesson minutes', async () => {
+    tx.staffingPolicy.findUnique.mockResolvedValue({
+      fullTimeTeachingMinutesPerWeek: 1080,
+      overAllocationTolerancePercent: 10,
+      fullTimeRegulatedHoursPerYear: 1360,
+      fullTimeAnnualHours: 1767,
+      workDaysPerYear: 194,
+      semesterHoursPerWeek: new Prisma.Decimal('40.0'),
+      qualificationMode: 'WARN',
+      loadModel: 'FACTOR',
+    });
+    tx.subject.findMany.mockResolvedValue([{ id: MA, loadFactor: new Prisma.Decimal('0.700') }]);
+
+    const report = await service.load(YEAR_ID, 'planned', testUser());
+
+    expect(tx.subject.findMany).toHaveBeenCalledTimes(1);
+    expect(tx.subject.findMany).toHaveBeenCalledWith({ select: { id: true, loadFactor: true } });
+    expect(report.loadModel).toBe('FACTOR');
+    // 10 × 60 × 0.7: the teacher; the unstaffed row's demand 2 × 60 × 0.7;
+    // the pupils' lesson minutes stay 120.
+    expect(report.teachers[0]!.assignedMinutesPerWeek).toBe(420);
+    expect(report.teachers[0]!.assignments[0]).toMatchObject({ lessonMinutesPerWeek: 600, timeMinutesPerWeek: 600, minutesPerWeek: 420 });
+    expect(report.unstaffedRequirements[0]).toMatchObject({ minutesPerWeek: 120, teacherMinutesPerWeek: 84 });
+    expect(report.totals.lessonMinutesPerWeek).toBe(720);
+  });
+
   it('refuses a horizon that does not exist yet, before reading anything', async () => {
     await expect(service.load(YEAR_ID, 'scheduled', testUser())).rejects.toBeInstanceOf(
       BadRequestException,

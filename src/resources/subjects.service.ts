@@ -13,6 +13,20 @@ import { assertNationalCodeIsKnown, normalizeNationalCode } from './national-cod
 import type { CreateSubjectDto, UpdateSubjectDto } from './dto/subject.dto';
 
 /**
+ * A subject as the client sees it: the Decimal loadFactor as a number.
+ * Prisma hands NUMERIC(4,3) back as a Decimal, which JSON renders as the
+ * string "0.7" — a form multiplying by it would get NaN. Converted once here,
+ * like the policy's semesterHoursPerWeek.
+ */
+export interface SubjectResponse extends Omit<Subject, 'loadFactor'> {
+  loadFactor: number;
+}
+
+export function toSubjectResponse(row: Subject): SubjectResponse {
+  return { ...row, loadFactor: Number(row.loadFactor) };
+}
+
+/**
  * A school's subjects, and since the national timplan became reference data,
  * each one's place in it.
  *
@@ -27,7 +41,7 @@ import type { CreateSubjectDto, UpdateSubjectDto } from './dto/subject.dto';
 export class SubjectsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateSubjectDto, user: AuthenticatedUser): Promise<Subject> {
+  async create(dto: CreateSubjectDto, user: AuthenticatedUser): Promise<SubjectResponse> {
     const schoolId = requireSchoolId(user);
     const nationalCode = normalizeNationalCode(dto.nationalCode);
     try {
@@ -35,7 +49,7 @@ export class SubjectsService {
         if (nationalCode !== null) {
           await assertNationalCodeIsKnown(tx, nationalCode);
         }
-        return tx.subject.create({
+        const row = await tx.subject.create({
           data: {
             schoolId,
             name: dto.name,
@@ -46,8 +60,10 @@ export class SubjectsService {
             // Explicit rather than left to the column default, so the create
             // call states the whole row and a spec can read the default here.
             countsTowardTimplan: dto.countsTowardTimplan ?? true,
+            loadFactor: dto.loadFactor ?? 1,
           },
         });
+        return toSubjectResponse(row);
       });
     } catch (error) {
       rethrowPrismaError(error);
@@ -58,7 +74,7 @@ export class SubjectsService {
     id: string,
     dto: UpdateSubjectDto,
     user: AuthenticatedUser,
-  ): Promise<Subject> {
+  ): Promise<SubjectResponse> {
     // Three states, not two: absent leaves the mapping alone, null clears it,
     // a string is looked up. normalizeNationalCode folds '' into null, so a
     // form that posts its empty option as an empty string clears too.
@@ -69,7 +85,7 @@ export class SubjectsService {
         if (nationalCode != null) {
           await assertNationalCodeIsKnown(tx, nationalCode);
         }
-        return tx.subject.update({
+        const row = await tx.subject.update({
           where: { id },
           data: {
             ...(dto.name !== undefined ? { name: dto.name } : {}),
@@ -82,8 +98,10 @@ export class SubjectsService {
             ...(dto.countsTowardTimplan !== undefined
               ? { countsTowardTimplan: dto.countsTowardTimplan }
               : {}),
+            ...(dto.loadFactor !== undefined ? { loadFactor: dto.loadFactor } : {}),
           },
         });
+        return toSubjectResponse(row);
       });
     } catch (error) {
       rethrowPrismaError(error);

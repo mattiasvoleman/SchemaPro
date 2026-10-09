@@ -66,4 +66,23 @@ describe.each([
       ]);
     });
   });
+
+  describe('the load factor (staffing Fas 3)', () => {
+    it('accepts the bounds and three decimals, and an absence', async () => {
+      for (const loadFactor of [0.5, 0.7, 1, 1.25, 1.333, 3]) {
+        await expect(failing(cls, { ...base, loadFactor })).resolves.toEqual([]);
+      }
+      await expect(failing(cls, { ...base })).resolves.toEqual([]);
+    });
+
+    it('refuses below 0,5, above 3, four decimals, null and a string — the CHECK’s range, in Swedish', async () => {
+      for (const loadFactor of [0.499, 3.001, 0, -1, 1.2345, null, '0.7', Number.NaN]) {
+        const errors = await validate(plainToInstance(cls, { ...base, loadFactor }));
+        expect(errors.map((error) => error.property)).toEqual(['loadFactor']);
+        expect(Object.values(errors[0]!.constraints ?? {})).toContain(
+          'loadFactor: faktorn är ett tal mellan 0,5 och 3 med högst tre decimaler.',
+        );
+      }
+    });
+  });
 });

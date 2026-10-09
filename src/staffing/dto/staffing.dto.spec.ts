@@ -109,6 +109,14 @@ describe('UpsertStaffingPolicyDto mirrors the table CHECKs, bound for bound', ()
     ]);
   });
 
+  it('takes the integrations switch as a boolean, and nothing else', async () => {
+    await expect(failing(UpsertStaffingPolicyDto, { shareEmploymentWithIntegrations: true })).resolves.toEqual([]);
+    await expect(failing(UpsertStaffingPolicyDto, { shareEmploymentWithIntegrations: false })).resolves.toEqual([]);
+    await expect(failing(UpsertStaffingPolicyDto, { shareEmploymentWithIntegrations: 'ja' })).resolves.toEqual([
+      'shareEmploymentWithIntegrations',
+    ]);
+  });
+
   it('says why in Swedish, because an admin reads these in the settings card', async () => {
     await expect(
       messagesOf(UpsertStaffingPolicyDto, { fullTimeTeachingMinutesPerWeek: 2401 }),

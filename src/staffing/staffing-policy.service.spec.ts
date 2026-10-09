@@ -86,12 +86,25 @@ describe('StaffingPolicyService', () => {
         overAllocationTolerancePercent: 10,
         loadModel: 'MINUTES',
         unstaffedGeneration: 'ALLOW',
+        // Off unless the admin says otherwise: /ss12000/v1/duties then names
+        // no tjänstgöringsgrad (migration 20261010110000).
+        shareEmploymentWithIntegrations: false,
       };
       expect(tx.staffingPolicy.upsert).toHaveBeenCalledWith({
         where: { schoolId: SCHOOL_ID },
         create: { schoolId: SCHOOL_ID, ...data },
         update: data,
       });
+    });
+
+    it('writes the integrations switch when the form turns it on', async () => {
+      tx.staffingPolicy.upsert.mockResolvedValue(storedRow({ shareEmploymentWithIntegrations: true }));
+
+      await service.upsert({ shareEmploymentWithIntegrations: true }, testUser());
+
+      expect(tx.staffingPolicy.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ update: expect.objectContaining({ shareEmploymentWithIntegrations: true }) }),
+      );
     });
 
     it('writes what the form said, and reads the answer back as numbers', async () => {
