@@ -3,7 +3,7 @@
 import { useAcademicYears, useGroups, usePeople, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
 import { useEmploymentHistory } from "@/lib/staffing-history-queries";
-import { latestVersion } from "@/lib/employment-history-view";
+import { versionStampOf } from "@/lib/employment-history-view";
 
 /**
  * What the admin's uppdragsbeskrivning reads, for one teacher and one läsår:
@@ -39,7 +39,8 @@ export function useAdminUppdragsbeskrivning(teacherId: string | null, yearId: st
     duties: (duties.data ?? []).filter((duty) => duty.userId === teacherId),
     subjectName: (id: string) => subjects.data?.find((subject) => subject.id === id)?.name ?? null,
     groupName: (id: string) => groups.data?.find((group) => group.id === id)?.name ?? null,
-    // A history that failed to read leaves the stamp out; it never stops the page.
-    version: latestVersion(history.data?.entries),
+    // Never stops the page; a read in flight or failed is said as such, and
+    // only a successful read can say "no version" (versionStampOf).
+    version: versionStampOf(history),
   };
 }

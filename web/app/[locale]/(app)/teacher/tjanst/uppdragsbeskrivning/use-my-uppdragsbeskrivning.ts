@@ -3,7 +3,7 @@
 import { useActiveYear, useGroups, useSubjects } from "@/lib/queries";
 import { useStaffingLoad, useTeacherDuties } from "@/lib/staffing-queries";
 import { useEmploymentHistory } from "@/lib/staffing-history-queries";
-import { latestVersion } from "@/lib/employment-history-view";
+import { versionStampOf } from "@/lib/employment-history-view";
 
 /**
  * What the teacher's own uppdragsbeskrivning reads: the same own-row report
@@ -33,6 +33,7 @@ export function useMyUppdragsbeskrivning(userId: string, askedYearId: string | n
     duties: (duties.data ?? []).filter((duty) => duty.userId === userId),
     subjectName: (id: string) => subjects.data?.find((subject) => subject.id === id)?.name ?? null,
     groupName: (id: string) => groups.data?.find((group) => group.id === id)?.name ?? null,
-    version: latestVersion(history.data?.entries),
+    // Only a successful read can say "no version" (versionStampOf).
+    version: versionStampOf(history),
   };
 }

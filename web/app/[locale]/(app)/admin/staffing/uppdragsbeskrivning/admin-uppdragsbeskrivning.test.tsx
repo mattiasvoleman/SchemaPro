@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   teachers: [] as unknown[],
   dutyArgs: [] as unknown[][],
   historyArgs: [] as unknown[][],
+  history: { isSuccess: true, isError: false, data: { entries: [] as unknown[], truncated: false } } as Record<string, unknown>,
 }));
 
 vi.mock("@/lib/queries", () => ({
@@ -34,7 +35,7 @@ vi.mock("@/lib/staffing-queries", () => ({
 vi.mock("@/lib/staffing-history-queries", () => ({
   useEmploymentHistory: (...args: unknown[]) => {
     state.historyArgs.push(args);
-    return { data: { entries: [], truncated: false } };
+    return state.history;
   },
 }));
 vi.mock("@/components/profile-context", () => ({
@@ -50,6 +51,7 @@ describe("the admin's uppdragsbeskrivning", () => {
   beforeEach(() => {
     state.dutyArgs = [];
     state.historyArgs = [];
+    state.history = { isSuccess: true, isError: false, data: { entries: [], truncated: false } };
     state.teachers = [{ ...uppdragLoad, userId: "t-bo", employment: { ...uppdragLoad.employment!, userId: "t-bo", signature: "BOA" } }];
   });
 
@@ -77,5 +79,13 @@ describe("the admin's uppdragsbeskrivning", () => {
     expect(screen.queryByText("BOA")).not.toBeInTheDocument();
     expect(state.dutyArgs.at(-1)).toEqual(["y1", "t-anna"]);
     expect(state.historyArgs.at(-1)).toEqual(["t-anna", "y1"]);
+  });
+
+  it("does not print \"no version\" when the history read failed (an old API in the deploy window)", () => {
+    state.teachers = [uppdragLoad];
+    state.history = { isSuccess: false, isError: true, data: undefined };
+    render(<AdminUppdragsbeskrivning teacherId="t-anna" yearId="y1" />);
+    expect(screen.getByText(/uppdrag\.stampUnreadable/)).toBeInTheDocument();
+    expect(screen.queryByText(/uppdrag\.stampNoVersion/)).toBeNull();
   });
 });

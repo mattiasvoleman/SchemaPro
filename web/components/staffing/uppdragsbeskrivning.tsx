@@ -3,7 +3,7 @@
 import { useLocale, useTranslations } from "next-intl";
 import { Printer } from "lucide-react";
 import { formatPercent } from "@/lib/staffing-view";
-import { formatStamp } from "@/lib/employment-history-view";
+import { formatStamp, type VersionStamp } from "@/lib/employment-history-view";
 import { periodOf, tickedBoxes, UPPDRAG_BOXES, type AssignmentPeriod } from "@/lib/uppdrag-view";
 import type { LoadModel, TeacherLoad } from "@/lib/teacher-load";
 import type { TeacherDuty } from "@/lib/types";
@@ -21,8 +21,12 @@ export interface UppdragsbeskrivningProps {
   duties: readonly TeacherDuty[];
   subjectName: (id: string) => string | null;
   groupName: (id: string) => string | null;
-  /** The newest version of the tjänst (TeacherEmploymentLogs), or null before the first write. */
-  version: { version: number; createdAt: string } | null;
+  /**
+   * The newest version of post and uppdrag (TeacherEmploymentLogs); null only
+   * when the history was READ and holds none; "loading" / "unreadable" while
+   * the read is in flight or after it failed (versionStampOf).
+   */
+  version: VersionStamp;
   timeZone: string;
   /** Today in the school's zone, yyyy-mm-dd. */
   printedOn: string;
@@ -43,10 +47,14 @@ export interface UppdragsbeskrivningProps {
  * the load row's assignments, annual and target — so the paper and the
  * screen agree, and every agreement figure is labelled the school's setting.
  *
- * THE VERSION STAMP. The footer cites "Tjänstens version N (datum)" from the
- * teacher's history: the newest version of post AND uppdrag, since a protokoll
- * that cites the post without its uppdrag cites half the tjänst — which is
- * why it is not employment.updatedAt.
+ * THE VERSION STAMP. The footer cites "Tjänst och uppdrag: version N (datum)"
+ * from the teacher's history: the newest version of post AND uppdrag, since a
+ * protokoll that cites the post without its uppdrag cites half the tjänst —
+ * which is why it is not employment.updatedAt. It says what it proves and no
+ * more: the teaching table comes from the timplansposter, which the history
+ * does not log, so the stamp names the undervisning as the tjänstefördelning
+ * on the day printed. While the history is still being read, Skriv ut waits;
+ * a history that could not be read is said so, never as "no version".
  *
  * PRINT. Tailwind's print: variants; the app shell's sidebar and header are
  * print:hidden, the page is A4 with 15 mm margins (globals.css), sections
@@ -128,7 +136,12 @@ export function Uppdragsbeskrivning({
             {t("subtitle", { name: teacherName, year: yearName })}
           </p>
         </div>
-        <Button variant="outline" className="print:hidden" onClick={() => window.print()}>
+        <Button
+          variant="outline"
+          className="print:hidden"
+          disabled={version === "loading"}
+          onClick={() => window.print()}
+        >
           <Printer />
           {t("print")}
         </Button>
@@ -296,13 +309,17 @@ export function Uppdragsbeskrivning({
 
       <footer className="break-inside-avoid space-y-6 border-t pt-3">
         <p className="text-xs text-muted-foreground print:text-foreground">
-          {version
-            ? t("stamp", {
-                printed: printedOn,
-                version: version.version,
-                date: formatStamp(version.createdAt, timeZone),
-              })
-            : t("stampNoVersion", { printed: printedOn })}
+          {version === "loading"
+            ? t("stampLoading", { printed: printedOn })
+            : version === "unreadable"
+              ? t("stampUnreadable", { printed: printedOn })
+              : version
+                ? t("stamp", {
+                    printed: printedOn,
+                    version: version.version,
+                    date: formatStamp(version.createdAt, timeZone),
+                  })
+                : t("stampNoVersion", { printed: printedOn })}
         </p>
         <div className="grid grid-cols-3 gap-6">
           {(["signRektor", "signTeacher", "signDate"] as const).map((key) => (
