@@ -25,13 +25,13 @@
 //
 // Loaded with lazy() when the tab is first chosen.
 
-import { useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { CalendarClock, TriangleAlert } from "lucide-react";
 import { useDeliveredCoverage } from "@/lib/timplan-delivered-queries";
 import {
   buildDeliveredMatrix,
-  hoursOf,
+  hoursOf as formatHours,
   isDetail,
   lostShares,
   ownFindingPupils,
@@ -59,12 +59,19 @@ const CAUSE_FILL: Record<LostCause, string> = {
   otherStatus: "bg-secondary-foreground/40",
 };
 
+/** Hours to the tenth in the reader's language: "105,0 h", "105.0 h". */
+function useHours(): (minutes: number) => string {
+  const locale = useLocale();
+  return (minutes) => formatHours(minutes, locale);
+}
+
 /** The year's projection against the planned year less the days nothing records. */
 const deltaOf = (line: DeliveredLineSummary): number =>
   line.projectedMinutes - (line.plannedYearMinutes - line.unrecordedMinutes);
 
 export function CoverageDeliveredTab({ year, linkedGroup, groupName, subjects, pupilName, gradeName }: CoverageTabProps) {
   const t = useTranslations("timplanCoverage");
+  const hoursOf = useHours();
   const overview = useDeliveredCoverage(year.id);
   const [chosen, setChosen] = useState<string | null>(null);
   const groupId = chosen ?? linkedGroup;
@@ -72,6 +79,14 @@ export function CoverageDeliveredTab({ year, linkedGroup, groupName, subjects, p
   const matrix = useMemo(() => (coverage ? buildDeliveredMatrix(coverage, subjects) : null), [coverage, subjects]);
   const selected = coverage?.groups.find((g) => g.studentGroupId === groupId) ?? null;
   const columnName = (name: string | null) => name ?? t("noSubject");
+
+  // A group reached by a link (the timetable's "Se alla i Täckning") is
+  // scrolled to once its drill-down is on screen — it opens below the whole
+  // table, and P2's tab does the same for its class.
+  useEffect(() => {
+    if (!selected || chosen !== null) return;
+    document.getElementById("tackning-delivered-group")?.scrollIntoView?.({ block: "start" });
+  }, [selected, chosen]);
 
   if (overview.isLoading || (!coverage && !overview.isError)) return <Skeleton className="h-96 w-full" />;
   if (overview.isError || !coverage || !matrix) {
@@ -203,16 +218,37 @@ export function CoverageDeliveredTab({ year, linkedGroup, groupName, subjects, p
 /** A year-wide notice in the reader's language, from the verdict's figures. */
 function YearNotice({ verdict }: { verdict: DeliveredVerdict }) {
   const tNotice = useTranslations("timplanCoverage.delivered.notice");
+  const hoursOf = useHours();
   const p = verdict.params;
   switch (verdict.code) {
     case "TIMPLAN_PUBLISHED_LATE":
       return <>{tNotice("publishedLate", { from: p.from, yearStart: p.yearStart, hours: hoursOf(Number(p.unrecordedMinutes)) })}</>;
     case "TIMPLAN_PUBLISHED_BEHIND":
-      return <>{tNotice("publishedBehind", { through: p.through })}</>;
+      return <>{tNotice("publishedBehind", { through: p.through, hours: hoursOf(Number(p.unrecordedMinutes)) })}</>;
+    case "TIMPLAN_PUBLISHED_GAP":
+      return (
+        <>
+          {tNotice("publishedGap", {
+            from: p.from,
+            through: p.through,
+            days: Number(p.days),
+            hours: hoursOf(Number(p.unrecordedMinutes)),
+          })}
+        </>
+      );
     case "TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS":
       return <>{tNotice("pastYearRosters", { yearEnd: p.yearEnd })}</>;
     case "TIMPLAN_CALENDAR_DRIFT":
-      return <>{tNotice("drift", { minutes: Math.abs(Number(p.minutes)), lessons: Number(p.lessons) })}</>;
+      // Two directions, each its own sentence part: summed they cancel out.
+      return (
+        <>
+          {tNotice("drift", {
+            extra: Number(p.extraMinutes ?? 0),
+            missing: Number(p.missingMinutes ?? 0),
+            lessons: Number(p.lessons),
+          })}
+        </>
+      );
     case "TIMPLAN_CREDIT_OUTSIDE_YEAR":
       return <>{tNotice("creditOutsideYear", { name: p.creditName, date: p.date, yearStart: p.yearStart, yearEnd: p.yearEnd })}</>;
     case "TIMPLAN_CREDIT_REACHES_NOBODY":
@@ -253,6 +289,7 @@ interface RowProps {
 
 function DeliveredRow({ summary, name, columns, columnName, open, gradeName, onToggle }: RowProps) {
   const t = useTranslations("timplanCoverage");
+  const hoursOf = useHours();
   const lines = new Map(summary.lines.map((line) => [line.key, line]));
   const short = summary.lines.filter((line) => line.status === "SHORT").length;
   return (
@@ -286,7 +323,10 @@ function DeliveredRow({ summary, name, columns, columnName, open, gradeName, onT
       })}
       <td className="px-3 py-1.5 text-right tabular-nums">{hoursOf(summary.totals.lost)}</td>
       <td className="px-3 py-1.5 text-right tabular-nums">
-        {hoursOf(summary.totals.projected)} / {hoursOf(summary.totals.plannedYear)}
+        {/* Against what the lines are judged against: the planned year less
+            the days nothing records, so a row beside cells that read "På väg"
+            does not show a shortfall of days never published (R3). */}
+        {hoursOf(summary.totals.projected)} / {hoursOf(summary.totals.plannedYear - (summary.totals.unrecorded ?? 0))}
       </td>
     </tr>
   );
@@ -294,6 +334,7 @@ function DeliveredRow({ summary, name, columns, columnName, open, gradeName, onT
 
 function DeliveredCell({ line, name }: { line: DeliveredLineSummary; name: string }) {
   const t = useTranslations("timplanCoverage");
+  const hoursOf = useHours();
   const delta = deltaOf(line);
   const pill =
     line.status === "SHORT"
@@ -349,6 +390,7 @@ interface DrillProps {
 
 function DeliveredDrillDown({ yearId, summary, overview, name, lineName, groupName, pupilName, gradeName }: DrillProps) {
   const t = useTranslations("timplanCoverage");
+  const hoursOf = useHours();
   // The breakdowns come with the drill-down, for this group alone (R20).
   const drill = useDeliveredCoverage(yearId, summary.studentGroupId);
   const [showAll, setShowAll] = useState(false);
@@ -358,7 +400,17 @@ function DeliveredDrillDown({ yearId, summary, overview, name, lineName, groupNa
       : null;
   const own = useMemo(() => ownFindingPupils(overview), [overview]);
   const pupils = drill.data?.pupils ?? [];
-  const listed = showAll ? pupils : pupils.filter((pupil) => own.has(pupil.pupilId));
+  // A pupil's own finding belongs to a subject. Under this group it is
+  // listed only in a subject the group has a line in, and only that line is
+  // shown — Bea's Matematik is not news in her Spanska group. "Visa alla"
+  // shows every pupil with every line.
+  const groupKeys = new Set(summary.lines.map((line) => line.key));
+  const ownLine = (pupilId: string, key: string) => groupKeys.has(key) && own.has(`${pupilId}|${key}`);
+  const listed = showAll
+    ? pupils
+    : pupils
+        .map((pupil) => ({ ...pupil, lines: pupil.lines.filter((line) => ownLine(pupil.pupilId, line.key)) }))
+        .filter((pupil) => pupil.lines.length > 0);
   const pupilLevel = overview.pupilLevel;
 
   return (
@@ -470,6 +522,7 @@ function DeliveredLineCard({
   const t = useTranslations("timplanCoverage");
   const tCause = useTranslations("timplanCoverage.delivered.cause");
   const tPart = useTranslations("timplanCoverage.delivered.projection");
+  const hoursOf = useHours();
   const detail = isDetail(line) ? line : null;
   const shares = detail ? lostShares(detail.lost) : [];
   const delta = deltaOf(line);

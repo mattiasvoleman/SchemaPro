@@ -66,6 +66,7 @@ import {
 import type { PupilLine } from "@/lib/timplan-planned";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/layout/page-header";
+import { DialogLoadBoundary } from "@/components/schedule/dialog-load-boundary";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -84,21 +85,28 @@ const hoursText = (hours: number): string => {
   return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1).replace(".", ",")} h`;
 };
 
-/**
- * The Mål mode's tones (components/timplan/requirements-target.tsx, whose
- * header measures their contrast): amber under, red with a border for no
- * posts, neutral for a class carried by its groups, the accent otherwise.
+/*
+ * The other two layers' tabs, fetched on first choice. A chunk that does not
+ * arrive (a deploy between the page's load and the click) is caught by a
+ * DialogLoadBoundary, said in the panel, and the lazy wrapper made again so
+ * the next choice of a tab fetches afresh — rather than climbing to the root,
+ * where Next draws its client-exception screen over the page (the app has no
+ * error.tsx). The timetable's Lektionstid panel does the same.
  */
-const CoverageScheduledTab = lazy(() =>
-  import("@/components/timplan/coverage-scheduled-tab").then((module) => ({
-    default: module.CoverageScheduledTab,
-  })),
-);
-const CoverageDeliveredTab = lazy(() =>
-  import("@/components/timplan/coverage-delivered-tab").then((module) => ({
-    default: module.CoverageDeliveredTab,
-  })),
-);
+const lazyScheduledTab = () =>
+  lazy(() =>
+    import("@/components/timplan/coverage-scheduled-tab").then((module) => ({
+      default: module.CoverageScheduledTab,
+    })),
+  );
+const lazyDeliveredTab = () =>
+  lazy(() =>
+    import("@/components/timplan/coverage-delivered-tab").then((module) => ({
+      default: module.CoverageDeliveredTab,
+    })),
+  );
+let CoverageScheduledTab = lazyScheduledTab();
+let CoverageDeliveredTab = lazyDeliveredTab();
 
 const LAYERS = ["planned", "scheduled", "delivered"] as const;
 type Layer = (typeof LAYERS)[number];
@@ -108,6 +116,11 @@ const LAYER_LABEL: Record<Layer, string> = {
   delivered: "layerDelivered",
 };
 
+/**
+ * The Mål mode's tones (components/timplan/requirements-target.tsx, whose
+ * header measures their contrast): amber under, red with a border for no
+ * posts, neutral for a class carried by its groups, the accent otherwise.
+ */
 const TONE: Record<CoverageTone, string> = {
   unplanned: "border border-destructive text-destructive",
   under: "bg-warning/15 text-warning-foreground dark:text-warning",
@@ -154,6 +167,13 @@ export default function TimplanCoveragePage() {
   // does not first ask the gateway for layer 1.
   const layer: Layer | null = chosenLayer ?? (link === null ? null : (link.layer ?? "planned"));
   const shownTab: Layer = layer ?? "planned";
+  // A tab whose chunk failed to load says so in its panel until a tab is
+  // chosen again, which mounts a fresh boundary and fetches afresh.
+  const [tabLoad, setTabLoad] = useState({ failed: false, attempt: 0 });
+  const chooseLayer = (entry: Layer) => {
+    setChosenLayer(entry);
+    setTabLoad((state) => (state.failed ? { failed: false, attempt: state.attempt + 1 } : state));
+  };
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const onTabKey = (event: KeyboardEvent<HTMLButtonElement>) => {
     const index = LAYERS.indexOf(shownTab);
@@ -169,7 +189,7 @@ export default function TimplanCoveragePage() {
               : null;
     if (next === null) return;
     event.preventDefault();
-    setChosenLayer(LAYERS[next]!);
+    chooseLayer(LAYERS[next]!);
     tabs.current[next]?.focus();
   };
 
@@ -262,7 +282,7 @@ export default function TimplanCoveragePage() {
             aria-selected={shownTab === entry}
             aria-controls="tackning-panel"
             tabIndex={shownTab === entry ? 0 : -1}
-            onClick={() => setChosenLayer(entry)}
+            onClick={() => chooseLayer(entry)}
             onKeyDown={onTabKey}
             className={cn(
               "-mb-px border-b-2 px-3 py-2 text-sm font-medium",
@@ -286,7 +306,17 @@ export default function TimplanCoveragePage() {
           <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />
         ) : !year ? (
           <EmptyState icon={Target} title={t("noYearTitle")} description={t("noYearBody")} />
+        ) : tabLoad.failed ? (
+          <EmptyState icon={TriangleAlert} title={t("loadFailed")} description={t("loadFailedHint")} />
         ) : (
+          <DialogLoadBoundary
+            key={tabLoad.attempt}
+            onError={() => {
+              CoverageScheduledTab = lazyScheduledTab();
+              CoverageDeliveredTab = lazyDeliveredTab();
+              setTabLoad((state) => ({ ...state, failed: true }));
+            }}
+          >
           <Suspense fallback={<Skeleton className="h-96 w-full" />}>
             {layer === "scheduled" ? (
               <CoverageScheduledTab
@@ -310,6 +340,7 @@ export default function TimplanCoveragePage() {
               />
             )}
           </Suspense>
+          </DialogLoadBoundary>
         )
       ) : loading ? (
         <Skeleton className="h-96 w-full" />

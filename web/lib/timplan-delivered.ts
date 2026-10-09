@@ -11,9 +11,9 @@
 // (the gateway's file imports Prisma-free calendar code the web has no copy
 // of); a field added there is added here in the same commit.
 //
-// HOURS TO THE TENTH WITH A DECIMAL COMMA, as P2's Täckning prints a year:
-// the gateway answers in whole minutes, and a läsår of minutes reads as
-// noise.
+// HOURS TO THE TENTH, as P2's Täckning prints a year — with the reader's
+// decimal sign ("105,0 h", "105.0 h"): the gateway answers in whole minutes,
+// and a läsår of minutes reads as noise.
 
 /** Lost minutes by cause; a cause with nothing lost is absent. */
 export type LostCause =
@@ -103,6 +103,8 @@ export interface DeliveredGroupSummary {
     credited: number;
     projected: number;
     plannedYear: number;
+    /** The planned minutes of days nothing records, inside plannedYear; projected is judged against the rest. */
+    unrecorded: number;
   };
   lostByCause: Partial<Record<LostCause, number>>;
   lines: (DeliveredLineSummary | DeliveredLineDetail)[];
@@ -130,6 +132,7 @@ export type DeliveredVerdictCode =
   | "TIMPLAN_NOT_PUBLISHED"
   | "TIMPLAN_PUBLISHED_LATE"
   | "TIMPLAN_PUBLISHED_BEHIND"
+  | "TIMPLAN_PUBLISHED_GAP"
   | "TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS"
   | "TIMPLAN_CALENDAR_DRIFT"
   | "TIMPLAN_DELIVERED_TEACHERLESS"
@@ -167,7 +170,8 @@ export interface DeliveredCoverageResponse {
   pupilCount: number;
   pupilsBelowPlanned: number | null;
   credits: { count: number; minutes: number };
-  drift: { minutes: number; lessons: number } | null;
+  /** extraMinutes: rows the grundschema would not write; missingMinutes: occurrences with no row; minutes = missing − extra. */
+  drift: { minutes: number; extraMinutes: number; missingMinutes: number; lessons: number } | null;
   verdicts: DeliveredVerdict[];
 }
 
@@ -175,6 +179,7 @@ export interface DeliveredCoverageResponse {
 export const YEAR_NOTICES: readonly DeliveredVerdictCode[] = [
   "TIMPLAN_PUBLISHED_LATE",
   "TIMPLAN_PUBLISHED_BEHIND",
+  "TIMPLAN_PUBLISHED_GAP",
   "TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS",
   "TIMPLAN_CALENDAR_DRIFT",
   "TIMPLAN_CREDIT_OUTSIDE_YEAR",
@@ -183,12 +188,20 @@ export const YEAR_NOTICES: readonly DeliveredVerdictCode[] = [
   "TIMPLAN_CALENDAR_ON_BREAK",
 ];
 
-/** Minutes as hours to the tenth with a decimal comma: 6300 → "105,0 h". */
-export function hoursOf(minutes: number): string {
+/**
+ * Minutes as hours to the tenth in the reader's language: 6300 → "105,0 h"
+ * in Swedish, "105.0 h" in English. A real minus sign either way, and no
+ * thousands grouping — a year's hours are read as one figure.
+ */
+export function hoursOf(minutes: number, locale = "sv"): string {
   const tenths = Math.round(minutes / 6);
   const sign = tenths < 0 ? "−" : "";
-  const abs = Math.abs(tenths);
-  return `${sign}${Math.floor(abs / 10)},${abs % 10} h`;
+  const number = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+    useGrouping: false,
+  }).format(Math.abs(tenths) / 10);
+  return `${sign}${number} h`;
 }
 
 export const isDetail = (
@@ -240,7 +253,11 @@ export function buildDeliveredMatrix(
   };
 }
 
-/** The pupils with a finding of their own: the ids the pupil verdicts name. */
+/**
+ * The pupils' findings of their own, as "pupilId|lineKey" — a finding is
+ * about one subject (or "none"), and a drill-down lists the pupil under that
+ * subject only.
+ */
 export function ownFindingPupils(coverage: Pick<DeliveredCoverageResponse, "verdicts">): Set<string> {
   return new Set(
     coverage.verdicts
@@ -248,7 +265,11 @@ export function ownFindingPupils(coverage: Pick<DeliveredCoverageResponse, "verd
         (verdict) =>
           verdict.code === "TIMPLAN_PUPIL_PROJECTION_SHORT" || verdict.code === "TIMPLAN_PUPIL_NOTHING_DELIVERED",
       )
-      .flatMap((verdict) => (verdict.pupilId ? [verdict.pupilId] : [])),
+      .flatMap((verdict) =>
+        verdict.pupilId
+          ? [`${verdict.pupilId}|${verdict.subjectIds?.[0] ? `subject:${verdict.subjectIds[0]}` : "none"}`]
+          : [],
+      ),
   );
 }
 

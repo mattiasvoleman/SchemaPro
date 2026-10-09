@@ -10,6 +10,15 @@ import {
 } from "@/lib/timplan-delivered";
 
 describe("hoursOf", () => {
+  it("writes the reader's decimal sign: a point in English, a comma in Swedish", () => {
+    expect([hoursOf(6300, "en"), hoursOf(-252, "en"), hoursOf(6300, "sv"), hoursOf(70_000, "sv")]).toEqual([
+      "105.0 h",
+      "−4.2 h",
+      "105,0 h",
+      "1166,7 h",
+    ]);
+  });
+
   it("writes minutes as hours to the tenth with a decimal comma and a real minus", () => {
     expect([hoursOf(6300), hoursOf(6552), hoursOf(0), hoursOf(-252), hoursOf(-12), hoursOf(29)]).toEqual([
       "105,0 h",
@@ -55,7 +64,7 @@ describe("the drill-down's helpers", () => {
     expect(lostShares({})).toEqual([]);
   });
 
-  it("lists as own findings exactly the pupils a pupil verdict names", () => {
-    expect([...ownFindingPupils(DELIVERED_OVERVIEW)]).toEqual([DELIVERED_IDS.bea]);
+  it("lists as own findings exactly the pupils a pupil verdict names, each with the line it is about", () => {
+    expect([...ownFindingPupils(DELIVERED_OVERVIEW)]).toEqual([`${DELIVERED_IDS.bea}|subject:${DELIVERED_IDS.ma}`]);
   });
 });

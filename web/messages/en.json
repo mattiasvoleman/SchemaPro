@@ -2347,9 +2347,10 @@
       "sharedWith": "(the same lessons as {groups})",
       "notice": {
         "publishedLate": "The calendar starts {from}, but the year {yearStart}. The days before count as neither delivered nor lost ({hours} of planned time for the classes).",
-        "publishedBehind": "The calendar is published through {through}. The days after it up to today count as neither delivered nor lost — publish further for them to count.",
+        "publishedBehind": "The calendar is published through {through}. The days after it up to today count as neither delivered nor lost ({hours} of planned time for the classes) — publish further for them to count.",
+        "publishedGap": "The calendar has no lessons on {days, plural, one {one school day} other {# school days}} between {from} and {through}, which no publish wrote. They count as neither delivered nor lost ({hours} of planned time for the classes).",
         "pastYearRosters": "The year ended {yearEnd}. Pupils are counted by today's classes and groups, so a finished year's classes may have no pupils.",
-        "drift": "The calendar ahead differs from the master timetable by {minutes} min ({lessons, plural, one {# lesson} other {# lessons}}). Publish again for the calendar to follow the master timetable.",
+        "drift": "The calendar ahead holds {extra} min the master timetable does not and lacks {missing} min it does ({lessons, plural, one {# lesson} other {# lessons}}). Publish again for the calendar to follow the master timetable.",
         "creditOutsideYear": "“{name}” ({date}) lies outside the year ({yearStart} – {yearEnd}) and does not count.",
         "creditSubjectNotCounted": "“{name}” ({date}) is for a subject that does not count toward the timplan, and does not count.",
         "creditReachesNobody": "“{name}” ({date}) applies to no class or group of the year, and does not count.",
