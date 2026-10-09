@@ -2320,6 +2320,14 @@ describe("formula injection", () => {
     expect(serializeCsv(["n"], [["-5"]])).not.toContain("'-5");
   });
 
+  it("leaves a Swedish negative decimal a number, and still guards one with more after it", () => {
+    // Staffing Fas 3's exports write "-12,5" (hours, decimal comma), which
+    // Number() refuses but Swedish Excel reads as a number (C15).
+    expect(serializeCsv(["n"], [["-12,5"]]).split("\r\n")[1]).toBe("-12,5");
+    expect(serializeCsv(["n"], [["-12,5+A1"]]).split("\r\n")[1]).toBe("'-12,5+A1");
+    expect(serializeCsv(["n"], [["-1,2,3"]]).split("\r\n")[1]).toBe("'-1,2,3");
+  });
+
   it("leaves an ordinary name alone", () => {
     expect(serializeCsv(["name"], [["Öberg"]])).toContain("Öberg");
     expect(serializeCsv(["name"], [["Öberg"]])).not.toContain("'Öberg");

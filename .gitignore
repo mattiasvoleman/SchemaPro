@@ -16,6 +16,9 @@ build/
 # numbers that matter are recorded in docs/verification-baseline.md.
 coverage/
 reports/
+# …but not the admin's Rapporter page, which is source: a file added beside
+# its page.tsx was silently left out of a commit (staffing Fas 3, 2026-10-09).
+!/web/app/**/admin/reports/
 .stryker-tmp/
 optimization-engine/.coverage
 optimization-engine/coverage.xml

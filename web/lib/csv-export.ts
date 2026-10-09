@@ -256,11 +256,16 @@ function escapeField(value: string): string {
  * survives export → import → export unchanged.
  *
  * Numbers are left alone, so a legitimate -5 stays a number rather than
- * becoming text that no longer sums.
+ * becoming text that no longer sums — and so does a Swedish decimal, "-12,5"
+ * (staffing Fas 3's exports write hours with a decimal comma): JavaScript's
+ * Number() refuses the comma, but a run of digits with one comma is never a
+ * formula, and Swedish Excel reads it as the number it is. Import is
+ * unaffected: readFormulaGuard only strips a leading apostrophe.
  */
 function neutralizeFormula(value: string): string {
   if (!/^[\s\t]*[=+\-@\t\r]/.test(value)) return value;
   if (value.trim() !== "" && Number.isFinite(Number(value.trim()))) return value;
+  if (/^-?\d+(,\d+)?$/.test(value)) return value;
   return `'${value}`;
 }
 
