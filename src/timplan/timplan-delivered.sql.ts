@@ -229,7 +229,11 @@ export function datesStatement(window: DeliveredWindow, dates: string[]): Prisma
  *        class, and the other row is what a master lesson's teacher change
  *        re-created on top of an assigned vikarie (calendar data written before
  *        master-lessons.service stopped doing so). Nobody is credited for it;
- *        the reconciliation counts it for the admin's notice.
+ *        the reconciliation counts it for the admin's notice. The same row on
+ *        a lesson NOT held — cancelled, ahead, on a lov — is
+ *        DISPLACED_NOT_HELD: the vikarie carries that lesson's lost or coming
+ *        minutes, and the row beside them must not carry them a second time
+ *        (the bortfall per teacher would otherwise be twice the group's).
  *   'C'  covered by others: per grundschema slot (the master lesson's CURRENT
  *        lead and co-teacher) the DELIVERED minutes of its lessons that a
  *        substitute other than that person took.
@@ -263,10 +267,11 @@ export function staffingCreditStatement(
     WITH l AS MATERIALIZED (${lessons})
     SELECT 'T' AS "kind", t."teacherId" AS "personId", t."role"::text AS "role", l."subjectId", l."studentGroupId",
            l."extraGroupIds",
-           CASE WHEN l."bucket" = 'DELIVERED' AND t."role" <> 'SUBSTITUTE'
+           CASE WHEN t."role" <> 'SUBSTITUTE'
                      AND EXISTS (SELECT 1 FROM "CalendarLessonTeachers" x
                                   WHERE x."calendarLessonId" = l."id" AND x."role" = 'SUBSTITUTE')
-                THEN 'DISPLACED' ELSE l."bucket" END AS "bucket",
+                THEN CASE WHEN l."bucket" = 'DELIVERED' THEN 'DISPLACED' ELSE 'DISPLACED_NOT_HELD' END
+                ELSE l."bucket" END AS "bucket",
            SUM(l."minutes")::int AS "minutes", COUNT(*)::int AS "lessons"
       FROM l JOIN "CalendarLessonTeachers" t ON t."calendarLessonId" = l."id"
      ${ownTeacher}
@@ -294,7 +299,7 @@ export interface StaffingCreditRow {
   subjectId: string;
   studentGroupId: string;
   extraGroupIds: string[] | null;
-  /** A DeliveredBucket, or DISPLACED (T only). */
+  /** A DeliveredBucket, or DISPLACED / DISPLACED_NOT_HELD (T only). */
   bucket: string;
   minutes: number;
   lessons: number;

@@ -3282,18 +3282,22 @@ async function runChecks(
           ),
           [
             // t1: L1 and the mentorstid lesson held; L2 and L4 covered; L3 lost; L6 ahead; L4's LEAD displaced.
+            // The legacy LEAD rows beside a vikarie on the cancelled L7 and the coming L8 charge t1 nothing.
             [120, 0, 120, 60, 60, 2, 1],
             // t2 at 50 %: L1; L2 and L4 covered; L3 lost; L6 ahead.
             [30, 0, 60, 30, 30, 1, 0],
-            // t3 the vikarie: L2 and L4 at 100 %.
-            [120, 120, 0, 0, 0, 2, 0],
+            // t3 the vikarie: L2 and L4 at 100 %; L7 lost and L8 ahead, theirs alone.
+            [120, 120, 0, 60, 60, 2, 0],
           ],
+          'a LEAD beside a SUBSTITUTE was charged lost or coming minutes — one lesson counted twice',
         );
         assert.ok(admin.notices.some((notice) => notice.code === 'STAFFING_LEAD_BESIDE_SUBSTITUTE' && notice.params.lessons === 1));
         assert.deepEqual(
           admin.groupLosses.map((loss) => [loss.studentGroupId, loss.subjectId, loss.cancelledTeacherUnavailable, loss.lessons]),
-          [[f3.class7a, f3.ma, 60, 1]],
+          [[f3.class7a, f3.ma, 120, 2]],
         );
+        // The teachers' bortfall is the group's, not twice it.
+        assert.equal(admin.totals?.lostMinutes, 60 + 30 + 60);
         assert.equal(admin.totals?.delivered, 270);
 
         const own = await loads.delivered(range, f3.teacher(f3.t1));
@@ -4115,6 +4119,11 @@ async function givenFas3School(owner: Client): Promise<Fas3School> {
   // Mentorstid, made by hand: no master, no row — t1's teaching at 100 %.
   await lesson(-10, 'SCHEDULED', [[t1, 'LEAD']], { subjectId: mentor.id, masterId: null });
   await lesson(5, 'SCHEDULED', [[t1, 'LEAD'], [t2, 'ASSISTANT']]);
+  // Legacy rows (before C5b): a LEAD beside a vikarie on a lesson later
+  // cancelled, and on one still ahead — the lost and coming minutes are the
+  // vikarie's alone, never the lead's as well.
+  await lesson(-9, 'CANCELLED', [[t3, 'SUBSTITUTE'], [t1, 'LEAD']], { cause: 'TEACHER_UNAVAILABLE' });
+  await lesson(6, 'SCHEDULED', [[t3, 'SUBSTITUTE'], [t1, 'LEAD']]);
   // (ö2): a second master, t1 leading, with two lessons a month ahead.
   const second = await master(t1.id, null, 3);
   const withSub = await lesson(30, 'SCHEDULED', [[t1, 'LEAD']], { masterId: second.id });

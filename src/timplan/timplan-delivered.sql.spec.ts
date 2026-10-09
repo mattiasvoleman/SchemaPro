@@ -80,6 +80,10 @@ describe('staffingCreditStatement (statement E)', () => {
     expect(sql).not.toContain('countsTowardTimplan');
     expect(sql).not.toContain('"CalendarLessonStudents"');
     expect(sql).toContain(`THEN 'DISPLACED'`);
+    // A row beside a vikarie is displaced whatever the lesson's bucket, so a
+    // cancelled or coming lesson's minutes are never charged to it as well.
+    expect(sql).toContain(`ELSE 'DISPLACED_NOT_HELD' END`);
+    expect(sql).not.toMatch(/WHEN l\."bucket" = 'DELIVERED' AND t\."role" <> 'SUBSTITUTE'/);
     expect(sql).toContain(`VALUES (m."teacherId", 'LEAD'), (m."coTeacherId", 'ASSISTANT')`);
   });
 

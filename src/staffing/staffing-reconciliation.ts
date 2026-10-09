@@ -40,7 +40,9 @@ import type { ClosedRange, YearBounds } from './teaching-weeks';
  *                - LEAD and ASSISTANT at their slot's percentage; a SUBSTITUTE
  *                  at 100 % (Lectio credits the vikarie the same way);
  *                - a LEAD/ASSISTANT row beside a SUBSTITUTE is DISPLACED and
- *                  credits nobody (counted for the admin's notice);
+ *                  credits nobody (held lessons are counted for the admin's
+ *                  notice); on a lesson not held it carries no lost or
+ *                  coming minutes either — the vikarie does;
  *                - the lessons a substitute OTHER than the grundschema's lead
  *                  or co-teacher took are those people's coveredByOthers —
  *                  read off the master lesson's CURRENT slots;
@@ -384,7 +386,9 @@ export function buildReconciliation(input: ReconciliationInput): StaffingReconci
     } else if (row.bucket === 'AHEAD') {
       tally.ahead += charged;
     }
-    // CANCELLED_ON_BREAK and the other AHEAD_* buckets: neither held nor lost.
+    // CANCELLED_ON_BREAK, the other AHEAD_* buckets and DISPLACED_NOT_HELD (a
+    // row beside a vikarie on a lesson not held: the vikarie carries it):
+    // neither held nor lost.
   }
 
   // ---- Rounded once, from the unrounded sums.

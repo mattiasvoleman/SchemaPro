@@ -157,6 +157,22 @@ describe('buildReconciliation', () => {
     expect(result.notices).toContainEqual({ code: 'STAFFING_LEAD_BESIDE_SUBSTITUTE', params: { lessons: 1 } });
   });
 
+  it('charges a row beside a vikarie no lost or coming minutes: the vikarie carries them, once', () => {
+    const result = buildReconciliation(
+      base({
+        credits: [
+          t(CY, 'SUBSTITUTE', 'CANCELLED_TEACHER_UNAVAILABLE', 60, 1),
+          t(DAG, 'LEAD', 'DISPLACED_NOT_HELD', 60, 1),
+          t(CY, 'SUBSTITUTE', 'AHEAD', 60, 1),
+          t(DAG, 'LEAD', 'DISPLACED_NOT_HELD', 60, 1),
+        ],
+      }),
+    );
+    expect(row(result, CY)).toMatchObject({ lostMinutes: 60, aheadMinutes: 60 });
+    expect(row(result, DAG)).toMatchObject({ lostMinutes: 0, aheadMinutes: 0, displacedLessons: 0, lines: [] });
+    expect(result.notices.map((notice) => notice.code)).not.toContain('STAFFING_LEAD_BESIDE_SUBSTITUTE');
+  });
+
   it('lists the bortfall per group in the pupils’ minutes, with teacherless lessons, for the admin', () => {
     const result = buildReconciliation(base());
     expect(result.groupLosses).toEqual([
