@@ -24,18 +24,28 @@ export function describeDeliveredVerdict(verdict: DeliveredVerdict): string {
     case 'TIMPLAN_PUBLISHED_BEHIND':
       return (
         `Kalendern är publicerad till och med ${p.through}. Dagarna därefter fram till i dag räknas varken ` +
-        'som genomförda eller förlorade — publicera vidare för att de ska räknas.'
+        `som genomförda eller förlorade (${hours(p.unrecordedMinutes)} planerad tid för klasserna) — publicera vidare för att de ska räknas.`
+      );
+    case 'TIMPLAN_PUBLISHED_GAP':
+      return (
+        `Kalendern saknar lektioner ${Number(p.days) === 1 ? 'en skoldag' : `${p.days} skoldagar`} mellan ${p.from} och ${p.through}, ` +
+        `som ingen publicering skrev. De räknas varken som genomförda eller förlorade (${hours(p.unrecordedMinutes)} planerad tid för klasserna).`
       );
     case 'TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS':
       return (
         `Läsåret slutade ${p.yearEnd}. Eleverna räknas efter dagens klasser och grupper, så ett avslutat ` +
         'läsårs klasser kan sakna elever.'
       );
-    case 'TIMPLAN_CALENDAR_DRIFT':
+    case 'TIMPLAN_CALENDAR_DRIFT': {
+      const parts = [
+        Number(p.extraMinutes) > 0 ? `${min(p.extraMinutes)} som grundschemat inte har` : null,
+        Number(p.missingMinutes) > 0 ? `saknar ${min(p.missingMinutes)} som grundschemat har` : null,
+      ].filter((part): part is string => part !== null);
       return (
-        `Kalendern framåt skiljer sig från grundschemat med ${Math.abs(Number(p.minutes))} min ` +
+        `Kalendern framåt har ${parts.join(' och ')} ` +
         `(${p.lessons} ${Number(p.lessons) === 1 ? 'lektion' : 'lektioner'} i grundschemat). Publicera igen för att kalendern ska följa det.`
       );
+    }
     case 'TIMPLAN_DELIVERED_TEACHERLESS':
       return `${p.groupName}: ${min(p.minutes)} har legat i kalendern utan lärare och räknas som förlorad tid.`;
     case 'TIMPLAN_PROJECTION_SHORT':

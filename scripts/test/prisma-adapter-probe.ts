@@ -1989,6 +1989,13 @@ async function runChecks(
        VALUES ($1, $2, $3, $4::date, $4::date, now())`,
       [fixture.schoolId, year.id, MARKER, dayAt(-7)],
     );
+    // And one in two weeks, entered after publish too: the cancelled row
+    // standing on it is neither lost nor projected before its day either.
+    await owner.query(
+      `INSERT INTO "SchoolBreaks" ("schoolId", "academicYearId", name, "startDate", "endDate", "updatedAt")
+       VALUES ($1, $2, $3 || ' framåt', $4::date, $4::date, now())`,
+      [fixture.schoolId, year.id, MARKER, dayAt(15)],
+    );
     const masterLesson = (dayOfWeek: number, extra: string = '') =>
       one<{ id: string }>(
         `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "dayOfWeek", "startTime", "endTime", "isParked", "updatedAt")
@@ -2046,6 +2053,7 @@ async function runChecks(
     await lesson(1, 'SCHEDULED', { masterLessonId: published.id });
     await lesson(8, 'CANCELLED', { masterLessonId: published.id, cause: 'MANUAL' });
     await lesson(9, 'SCHEDULED', { masterLessonId: parked.id });
+    await lesson(15, 'CANCELLED', { cause: 'TEACHER_UNAVAILABLE' });
     // A credit on a day that had a delivered lesson in its scope.
     await owner.query(
       `INSERT INTO "TimplanCredits" ("schoolId", "academicYearId", date, minutes, "subjectId", "studentGroupId", name, "updatedAt")
@@ -2080,8 +2088,14 @@ async function runChecks(
     assert.deepEqual(bucket('OTHER'), [[60, 1]]);
     assert.deepEqual(bucket('AHEAD'), [[120, 2]]);
     assert.deepEqual(bucket('AHEAD_CANCELLED'), [[60, 1]]);
+    assert.deepEqual(bucket('AHEAD_CANCELLED_ON_BREAK'), [[60, 1]], 'a cancelled row on a lov ahead read as cancelled ahead');
     assert.ok(!forAdmin.audiences.some((row) => row.subjectId === mentor.id), 'a subject that does not count reached a bucket');
-    assert.deepEqual(forAdmin.published, { from: dayAt(-14), through: dayAt(9) });
+    assert.deepEqual(forAdmin.published, { from: dayAt(-14), through: dayAt(15) });
+    // Every date holding a row, of any subject and status: the gaps are the rest.
+    assert.deepEqual(
+      forAdmin.publishedDays,
+      [-14, -13, -12, -11, -10, -9, -7, -6, -5, -4, -3, 1, 8, 9, 15].map(dayAt),
+    );
     assert.deepEqual(
       forAdmin.horizon.map((row) => [row.masterLessonId, row.aheadRows, row.lastDate]),
       [
@@ -2101,6 +2115,8 @@ async function runChecks(
     );
     const projection = (line as DeliveredLineDetail).projection;
     assert.equal(projection.calendarAhead, 120);
+    assert.equal(projection.aheadCancelled, 60, 'the cancelled row on the lov ahead counted as cancelled ahead');
+    assert.equal((line as DeliveredLineDetail).cancelledOnBreak, 120);
     assert.ok(projection.masterAhead > 0, 'the master lesson with no calendar row was not projected');
     assert.deepEqual(answer.drift?.lessons, 1, `the parked lesson's standing row is not drift: ${JSON.stringify(answer.drift)}`);
     // The drill-down answers for 7A alone; 8A's line is the overview's.

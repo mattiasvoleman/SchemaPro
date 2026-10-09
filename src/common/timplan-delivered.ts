@@ -55,9 +55,14 @@ import { zonedTimeToUtc } from './utils/time';
  *   creditsAhead     = credits in scope dated today or later (R9)
  *   projected        = delivered + credited + calendarAhead + masterAhead + creditsAhead
  *   plannedYear      = Σ weeklyMinutesOf(post) × teachingWeeks(post, year, lov, grade)
+ *                      at the group's own årskurs — a teaching group's too
+ *                      when it carries one, since publish and the walk skip
+ *                      its lessons by that årskurs (gradeOfGroup)
  *   unrecorded       = the planned minutes of the teaching days nothing records:
- *                      before the first published day, and after the last one
- *                      up to yesterday (R3) — neither delivered nor lost
+ *                      before the first published day, after the last one up
+ *                      to yesterday (R3), and the past weekdays between them
+ *                      on which the school's calendar holds no row at all —
+ *                      a gap two publishes left — neither delivered nor lost
  *   delta            = projected − (plannedYear − unrecorded)
  *   scheduleGap      = (projected + lost + aheadCancelled + aheadTeacherless)
  *                      − (plannedYear − unrecorded)   (R4: the schedule's own
@@ -72,11 +77,16 @@ import { zonedTimeToUtc } from './utils/time';
  * ## Credits
  *
  * A credit reaches: the whole school — every home pupil of a class of the
- * year, every class line and every teaching-group line; a grade span — pupils
- * whose HOME class's årskurs is inside it, the class lines inside it, and a
- * teaching group's line when its members' span (their home classes' grades,
- * or the group's own årskurs without members) lies wholly inside (R8); a group
- * — its pupils and its line. A non-counting subject, an empty scope or a group
+ * year and every class line; a grade span — pupils whose HOME class's årskurs
+ * is inside it and the class lines inside it; a group — its pupils and its
+ * line. Teaching-group lines are reached only in the credit's subject where
+ * the group studies it (a post or a lesson in it): from a whole-school credit,
+ * from a span wholly holding its members' span (their home classes' grades,
+ * or the group's own årskurs without members, R8), and from a class credit
+ * when every member's home class is that class — the 7AB-tjej rule for one
+ * class. A Spanska group gets no "Idrott tillgodoräknat" line from a
+ * friluftsdag; its pupils have the minutes through their class. A credit
+ * without a subject reaches class lines only. A non-counting subject, an empty scope or a group
  * of another year reaches nobody (TIMPLAN_CREDIT_REACHES_NOBODY); a date
  * outside the year counts nowhere (TIMPLAN_CREDIT_OUTSIDE_YEAR). A credit on a
  * day that still has delivered lessons owned in its scope is never subtracted
@@ -106,6 +116,7 @@ export type DeliveredBucket =
   | 'AHEAD'
   | 'AHEAD_TEACHERLESS'
   | 'AHEAD_CANCELLED'
+  | 'AHEAD_CANCELLED_ON_BREAK'
   | 'AHEAD_OTHER';
 
 export type LostCause =
@@ -204,6 +215,12 @@ export interface DeliveredCoverageInput {
   asOfDate: string;
   /** The year's first and last dated row; null when nothing is published. */
   published: { from: string; through: string } | null;
+  /**
+   * Every date the year's calendar holds a row on (statement C). A past
+   * weekday between `published.from` and `through` missing from it is a gap
+   * two publishes left. Absent: no gap is looked for.
+   */
+  publishedDays?: string[];
   /** The drill-down: detail lines for this group, and (admin) every pupil of it. */
   drillGroupId: string | null;
 }
@@ -268,7 +285,8 @@ export interface DeliveredGroupSummary {
   kind: 'CLASS' | 'TEACHING_GROUP';
   gradeLevel: number | null;
   pupilCount: number;
-  totals: { published: number; delivered: number; lost: number; credited: number; projected: number; plannedYear: number };
+  /** unrecorded: the planned minutes of days nothing records, inside plannedYear (projected is judged against plannedYear − unrecorded). */
+  totals: { published: number; delivered: number; lost: number; credited: number; projected: number; plannedYear: number; unrecorded: number };
   lostByCause: Partial<Record<LostCause, number>>;
   lines: (DeliveredLineSummary | DeliveredLineDetail)[];
 }
@@ -292,6 +310,7 @@ export type DeliveredVerdictCode =
   | 'TIMPLAN_NOT_PUBLISHED'
   | 'TIMPLAN_PUBLISHED_LATE'
   | 'TIMPLAN_PUBLISHED_BEHIND'
+  | 'TIMPLAN_PUBLISHED_GAP'
   | 'TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS'
   | 'TIMPLAN_CALENDAR_DRIFT'
   | 'TIMPLAN_DELIVERED_TEACHERLESS'
@@ -324,8 +343,14 @@ export interface DeliveredCoverage {
   pupilCount: number;
   pupilsBelowPlanned: number | null;
   credits: { count: number; minutes: number };
-  /** Signed: master − calendar ahead of today, in minutes and lessons drifting. */
-  drift: { minutes: number; lessons: number } | null;
+  /**
+   * The calendar ahead of today against the grundschema. extraMinutes: rows
+   * the grundschema would not write (a parked lesson's, a narrowed window's);
+   * missingMinutes: occurrences it would write that have no row. minutes is
+   * missing − extra, kept signed for the reader that wants one figure — the
+   * two parts are what to act on, since they cancel each other in it.
+   */
+  drift: { minutes: number; extraMinutes: number; missingMinutes: number; lessons: number } | null;
   verdicts: DeliveredVerdict[];
 }
 
@@ -333,16 +358,17 @@ const VERDICT_ORDER: Record<DeliveredVerdictCode, number> = {
   TIMPLAN_NOT_PUBLISHED: 0,
   TIMPLAN_PUBLISHED_LATE: 1,
   TIMPLAN_PUBLISHED_BEHIND: 2,
-  TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS: 3,
-  TIMPLAN_CALENDAR_DRIFT: 4,
-  TIMPLAN_DELIVERED_TEACHERLESS: 5,
-  TIMPLAN_PROJECTION_SHORT: 6,
-  TIMPLAN_PUPIL_PROJECTION_SHORT: 7,
-  TIMPLAN_PUPIL_NOTHING_DELIVERED: 8,
-  TIMPLAN_CREDIT_OUTSIDE_YEAR: 9,
-  TIMPLAN_CREDIT_REACHES_NOBODY: 10,
-  TIMPLAN_CREDIT_OVERLAPS_DELIVERED: 11,
-  TIMPLAN_CALENDAR_ON_BREAK: 12,
+  TIMPLAN_PUBLISHED_GAP: 3,
+  TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS: 4,
+  TIMPLAN_CALENDAR_DRIFT: 5,
+  TIMPLAN_DELIVERED_TEACHERLESS: 6,
+  TIMPLAN_PROJECTION_SHORT: 7,
+  TIMPLAN_PUPIL_PROJECTION_SHORT: 8,
+  TIMPLAN_PUPIL_NOTHING_DELIVERED: 9,
+  TIMPLAN_CREDIT_OUTSIDE_YEAR: 10,
+  TIMPLAN_CREDIT_REACHES_NOBODY: 11,
+  TIMPLAN_CREDIT_OVERLAPS_DELIVERED: 12,
+  TIMPLAN_CALENDAR_ON_BREAK: 13,
 };
 
 const NONE = 'none';
@@ -433,6 +459,14 @@ export function deliveredDatesToAsk(
   return [...dates].sort();
 }
 
+/** Planned minutes of days nothing records, by where they lie (R3). */
+interface UnrecordedParts {
+  late: number;
+  behind: number;
+  gap: number;
+}
+const unrecordedTotal = (parts: UnrecordedParts): number => parts.late + parts.behind + parts.gap;
+
 /** A line being assembled for one group or one pupil. */
 interface Tally {
   buckets: Map<DeliveredBucket, number>;
@@ -443,7 +477,8 @@ interface Tally {
   masterAheadTeacherless: number;
   masterLessonIds: Set<string>;
   plannedYear: number;
-  unrecorded: number;
+  /** By window: before the calendar, after it, and gaps inside it. */
+  unrecorded: UnrecordedParts;
   target: number | null;
   shortest: number;
   /** pupils only: delivered minutes per via group, and the groups shared with. */
@@ -461,7 +496,7 @@ const newTally = (): Tally => ({
   masterAheadTeacherless: 0,
   masterLessonIds: new Set(),
   plannedYear: 0,
-  unrecorded: 0,
+  unrecorded: { late: 0, behind: 0, gap: 0 },
   target: null,
   shortest: Infinity,
 });
@@ -506,7 +541,8 @@ function figuresOf(tally: Tally): Figures {
   const aheadCancelled = b('AHEAD_CANCELLED') + b('AHEAD_OTHER');
   const deliveredSoFar = delivered + credited;
   const projected = deliveredSoFar + calendarAhead + tally.masterAhead + tally.creditsAhead;
-  const measured = tally.plannedYear - tally.unrecorded;
+  const unrecorded = unrecordedTotal(tally.unrecorded);
+  const measured = tally.plannedYear - unrecorded;
   const plannedYear = Math.round(tally.plannedYear);
   const delta = Math.round(projected - measured);
   const status: Figures['status'] =
@@ -516,7 +552,10 @@ function figuresOf(tally: Tally): Figures {
     delivered: Math.round(delivered),
     lost: Math.round(lost),
     lostByCause,
-    cancelledOnBreak: Math.round(b('CANCELLED_ON_BREAK')),
+    // Past or ahead, a cancelled row on a lov day is neither lost nor
+    // projected: the plan does not count the day, so the row reads the same
+    // before its day and after it.
+    cancelledOnBreak: Math.round(b('CANCELLED_ON_BREAK') + b('AHEAD_CANCELLED_ON_BREAK')),
     credited: Math.round(credited),
     calendarAhead: Math.round(calendarAhead),
     aheadTeacherless: Math.round(aheadTeacherless),
@@ -526,7 +565,7 @@ function figuresOf(tally: Tally): Figures {
     deliveredSoFar: Math.round(deliveredSoFar),
     projected: Math.round(projected),
     plannedYear,
-    unrecorded: Math.round(tally.unrecorded),
+    unrecorded: Math.round(unrecorded),
     delta,
     scheduleGap: Math.round(projected + lost + aheadCancelled + aheadTeacherless - measured),
     status,
@@ -568,8 +607,16 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
     return byName(subjects.get(sa)?.name ?? '', subjects.get(sb)?.name ?? '') || byCode(sa, sb);
   };
   const keyOf = (subjectId: string | null): string => (subjectId === null ? NONE : `subject:${subjectId}`);
-  /** The årskurs a post or the lov is judged at: a class's, none for a teaching group. */
-  const judgedGrade = (group: PlannedGroup): number | null => (group.kind === 'CLASS' ? group.gradeLevel : null);
+  /**
+   * The årskurs a group's posts and the lov are judged at: the group's own,
+   * for a teaching group too. Publish skips a lesson on a lov by its owner's
+   * gradeLevel (gradeOfGroup, breakCoversGroup) and the walk ahead does the
+   * same, so a nivågrupp with årskurs 9 loses the åk 9 prao week on the
+   * calendar side; judged at no årskurs, its planned year kept that week and
+   * the line read a week SHORT with nothing lost. Layer 2 weighs both sides
+   * at none and stays consistent by itself; layer 3 has a walk to agree with.
+   */
+  const judgedGrade = (group: PlannedGroup): number | null => group.gradeLevel;
 
   // ---- Pupils on today's rosters: home class of this year, teaching groups.
   interface Pupil {
@@ -634,7 +681,8 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
   const horizon = new Map(input.horizon.map((row) => [row.masterLessonId, row]));
   const masterLessons = input.masterLessons.filter((m) => subjects.has(m.subjectId) && groups.has(m.studentGroupId));
   const aheadOf = new Map<string, number>();
-  let driftMinutes = 0;
+  let driftExtra = 0;
+  let driftMissing = 0;
   let driftLessons = 0;
   for (const m of masterLessons) {
     const row = horizon.get(m.id);
@@ -642,7 +690,7 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
     if (m.isParked) {
       // The calendar still holds it; the master does not (R1).
       if (row && row.aheadRows > 0) {
-        driftMinutes -= row.aheadRows * minutes;
+        driftExtra += row.aheadRows * minutes;
         driftLessons += 1;
       }
       continue;
@@ -667,7 +715,8 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
       let walked = 0;
       for (let day = firstFrom(asOfDate); day <= row.lastDate; day = addDays(day, 7)) if (runs(day)) walked += 1;
       if (walked !== row.aheadRows) {
-        driftMinutes += (walked - row.aheadRows) * minutes;
+        if (walked > row.aheadRows) driftMissing += (walked - row.aheadRows) * minutes;
+        else driftExtra += (row.aheadRows - walked) * minutes;
         driftLessons += 1;
       }
     }
@@ -685,6 +734,26 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
       if (groups.has(groupId)) addMaster(groupTally(groupId, keyOf(m.subjectId)), m);
     }
   }
+
+  // The posts per group, for the planned side below and for which subjects a
+  // group studies here.
+  const rowsByGroup = new Map<string, PlannedRequirement[]>();
+  for (const row of planned.requirements) {
+    if (!subjects.has(row.subjectId) || !groups.has(row.studentGroupId)) continue;
+    const list = rowsByGroup.get(row.studentGroupId) ?? [];
+    list.push(row);
+    rowsByGroup.set(row.studentGroupId, list);
+  }
+  /** Whether a group studies a subject: a post in it, or a calendar or grundschema lesson reaching it. */
+  const studied = new Map<string, Set<string>>();
+  for (const [groupId, lines] of groupTallies) studied.set(groupId, new Set(lines.keys()));
+  for (const [groupId, rows] of rowsByGroup) {
+    const keys = studied.get(groupId) ?? new Set<string>();
+    for (const row of rows) keys.add(keyOf(row.subjectId));
+    studied.set(groupId, keys);
+  }
+  const studies = (groupId: string, subjectId: string | null): boolean =>
+    subjectId !== null && (studied.get(groupId)?.has(keyOf(subjectId)) ?? false);
 
   // ---- Credits: who each reaches, and what is said about it.
   const verdicts: DeliveredVerdict[] = [];
@@ -714,21 +783,29 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
     }
     let groupIds: string[];
     let reached: Pupil[];
+    const studying = teachingGroups.filter((g) => studies(g.id, credit.subjectId));
     if (credit.studentGroupId !== null) {
       const group = groups.get(credit.studentGroupId);
       groupIds = group ? [group.id] : [];
       reached = group
         ? (membersOf.get(group.id) ?? []).filter((p) => group.kind === 'TEACHING_GROUP' || p.home.id === group.id)
         : [];
+      // R8 for one class: a teaching group made of this class's pupils only.
+      if (group?.kind === 'CLASS') {
+        for (const g of studying) {
+          const members = membersOf.get(g.id) ?? [];
+          if (members.length > 0 && members.every((p) => p.home.id === group.id)) groupIds.push(g.id);
+        }
+      }
     } else if (credit.minGradeLevel === null || credit.maxGradeLevel === null) {
-      groupIds = planned.groups.map((g) => g.id);
+      groupIds = [...classes.map((g) => g.id), ...studying.map((g) => g.id)];
       reached = pupils;
     } else {
       const inside = (grade: number | null) =>
         typeof grade === 'number' && grade >= credit.minGradeLevel! && grade <= credit.maxGradeLevel!;
       groupIds = [
         ...classes.filter((g) => inside(g.gradeLevel)).map((g) => g.id),
-        ...teachingGroups
+        ...studying
           .filter((g) => {
             const span = spanOf(g);
             return span !== null && inside(span.min) && inside(span.max);
@@ -799,32 +876,59 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
   }
 
   // ---- Planned side: the posts, the year, and the days nothing records.
-  const unrecordedWindows: [string, string][] = [];
+  const windows: Record<keyof UnrecordedParts, [string, string][]> = { late: [], behind: [], gap: [] };
   const yesterday = addDays(asOfDate, -1);
+  const lastRecorded = input.published.through < yesterday ? input.published.through : yesterday;
   {
     const end = [addDays(input.published.from, -1), yesterday].reduce((a, b) => (a < b ? a : b));
-    if (end >= year.startDate) unrecordedWindows.push([year.startDate, end]);
+    if (end >= year.startDate) windows.late.push([year.startDate, end]);
     const after = addDays(input.published.through, 1);
-    if (after <= yesterday && after >= year.startDate) unrecordedWindows.push([after, yesterday < year.endDate ? yesterday : year.endDate]);
+    if (after <= yesterday && after >= year.startDate) windows.behind.push([after, yesterday < year.endDate ? yesterday : year.endDate]);
   }
-  const rowsByGroup = new Map<string, PlannedRequirement[]>();
-  for (const row of planned.requirements) {
-    if (!subjects.has(row.subjectId) || !groups.has(row.studentGroupId)) continue;
-    const list = rowsByGroup.get(row.studentGroupId) ?? [];
-    list.push(row);
-    rowsByGroup.set(row.studentGroupId, list);
+  // Gaps inside the published range: a past weekday no lov closes for the
+  // whole school on which the calendar holds no row at all. Publishing from
+  // today by default, a school that published to Christmas and again from
+  // 18 January never wrote 11–15 January; without this the week sat inside
+  // [from, through] as neither unrecorded nor drift (the drift walk starts at
+  // today) and the line turned SHORT, blamed on the schedule, the moment the
+  // second publish ran. A day's rows are all or nothing for this test — any
+  // group's row records the day — so a grade's own lov is no gap, and a day
+  // a lov closes for every class is no gap either (nothing was to be written).
+  let gapDays = 0;
+  const gapRange: string[] = [];
+  if (input.publishedDays) {
+    const recorded = new Set(input.publishedDays);
+    const classGrades = [...new Set(classes.map((g) => g.gradeLevel))];
+    const closedForAll = (day: string): boolean =>
+      classGrades.every((grade) =>
+        planned.closures.some((c) => day >= c.startDate && day <= c.endDate && closesGrade(c, grade)),
+      );
+    let run: [string, string] | null = null;
+    for (let day = input.published.from; day <= lastRecorded; day = addDays(day, 1)) {
+      const weekday = isoWeekday(day);
+      if (weekday > 5) continue;
+      if (recorded.has(day) || closedForAll(day)) {
+        run = null;
+        continue;
+      }
+      gapDays += 1;
+      if (gapRange.length === 0) gapRange.push(day);
+      gapRange[1] = day;
+      // One window per run of weekdays; the weekend inside a run adds nothing.
+      if (run && addDays(run[1], weekday === 1 ? 3 : 1) === day) run[1] = day;
+      else windows.gap.push((run = [day, day]));
+    }
   }
-  const plannedCache = new Map<string, { year: number; unrecorded: number }>();
+  const plannedCache = new Map<string, { year: number; unrecorded: UnrecordedParts }>();
   const plannedOf = (row: PlannedRequirement, grade: number | null) => {
     const cacheKey = `${row.id}:${grade}`;
     let found = plannedCache.get(cacheKey);
     if (!found) {
+      const between = (list: [string, string][]) =>
+        list.reduce((sum, [from, to]) => sum + plannedMinutesBetween(row, from, to, year, planned.closures, grade), 0);
       found = {
         year: weeklyMinutesOf(row) * teachingWeeks(row, year, planned.closures, grade),
-        unrecorded: unrecordedWindows.reduce(
-          (sum, [from, to]) => sum + plannedMinutesBetween(row, from, to, year, planned.closures, grade),
-          0,
-        ),
+        unrecorded: { late: between(windows.late), behind: between(windows.behind), gap: between(windows.gap) },
       };
       plannedCache.set(cacheKey, found);
     }
@@ -833,7 +937,9 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
   const addPlanned = (tally: Tally, row: PlannedRequirement, grade: number | null) => {
     const share = plannedOf(row, grade);
     tally.plannedYear += share.year;
-    tally.unrecorded += share.unrecorded;
+    tally.unrecorded.late += share.unrecorded.late;
+    tally.unrecorded.behind += share.unrecorded.behind;
+    tally.unrecorded.gap += share.unrecorded.gap;
     const shortest = shortestLessonOf(row);
     if (shortest > 0) tally.shortest = Math.min(tally.shortest, shortest);
   };
@@ -995,7 +1101,7 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
     const keys = [...tallies.keys()].filter((key) => keepLine(figuresByKey.get(key)!, tallies.get(key)!)).sort(keyOrder);
     if (group.kind === 'TEACHING_GROUP' && keys.length === 0) continue;
     const statPupils = (membersOf.get(group.id) ?? []).filter((p) => group.kind === 'TEACHING_GROUP' || p.home.id === group.id);
-    const totals = { published: 0, delivered: 0, lost: 0, credited: 0, projected: 0, plannedYear: 0 };
+    const totals = { published: 0, delivered: 0, lost: 0, credited: 0, projected: 0, plannedYear: 0, unrecorded: 0 };
     const lostByCause: Partial<Record<LostCause, number>> = {};
     let teacherless = 0;
     const lines: (DeliveredLineSummary | DeliveredLineDetail)[] = [];
@@ -1008,6 +1114,7 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
       totals.credited += figures.credited;
       totals.projected += figures.projected;
       totals.plannedYear += figures.plannedYear;
+      totals.unrecorded += figures.unrecorded;
       for (const cause of CAUSE_ORDER) {
         const minutes = figures.lostByCause[cause];
         if (minutes) lostByCause[cause] = (lostByCause[cause] ?? 0) + minutes;
@@ -1171,28 +1278,53 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
   }
 
   // ---- The year's notices.
-  const classUnrecorded = summaries
-    .filter((s) => s.kind === 'CLASS')
-    .reduce((sum, s) => sum + s.lines.reduce((acc, line) => acc + line.unrecordedMinutes, 0), 0);
-  if (input.published.from > year.startDate && year.startDate < asOfDate) {
+  // Each window's own planned minutes over the class lines, so a notice
+  // names only the days it speaks of — and is raised only when they hold
+  // planned time: a year starting on a Saturday and published from Monday is
+  // not late.
+  const classUnrecorded: UnrecordedParts = { late: 0, behind: 0, gap: 0 };
+  for (const group of classes) {
+    for (const tally of groupTallies.get(group.id)?.values() ?? []) {
+      classUnrecorded.late += tally.unrecorded.late;
+      classUnrecorded.behind += tally.unrecorded.behind;
+      classUnrecorded.gap += tally.unrecorded.gap;
+    }
+  }
+  if (Math.round(classUnrecorded.late) > 0) {
     verdicts.push({
       code: 'TIMPLAN_PUBLISHED_LATE',
       severity: 'notice',
-      params: { from: input.published.from, yearStart: year.startDate, unrecordedMinutes: classUnrecorded },
+      params: { from: input.published.from, yearStart: year.startDate, unrecordedMinutes: Math.round(classUnrecorded.late) },
     });
   }
-  if (addDays(input.published.through, 1) <= yesterday && input.published.through < year.endDate) {
+  if (Math.round(classUnrecorded.behind) > 0) {
     verdicts.push({
       code: 'TIMPLAN_PUBLISHED_BEHIND',
       severity: 'notice',
-      params: { through: input.published.through, asOfDate, unrecordedMinutes: classUnrecorded },
+      params: { through: input.published.through, asOfDate, unrecordedMinutes: Math.round(classUnrecorded.behind) },
+    });
+  }
+  if (Math.round(classUnrecorded.gap) > 0) {
+    verdicts.push({
+      code: 'TIMPLAN_PUBLISHED_GAP',
+      severity: 'notice',
+      params: {
+        from: gapRange[0]!,
+        through: gapRange[1]!,
+        days: gapDays,
+        unrecordedMinutes: Math.round(classUnrecorded.gap),
+      },
     });
   }
   if (year.endDate < asOfDate) {
     verdicts.push({ code: 'TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS', severity: 'notice', params: { yearEnd: year.endDate } });
   }
-  if (driftLessons > 0) {
-    verdicts.push({ code: 'TIMPLAN_CALENDAR_DRIFT', severity: 'notice', params: { minutes: driftMinutes, lessons: driftLessons } });
+  const drift =
+    driftLessons > 0
+      ? { minutes: driftMissing - driftExtra, extraMinutes: driftExtra, missingMinutes: driftMissing, lessons: driftLessons }
+      : null;
+  if (drift) {
+    verdicts.push({ code: 'TIMPLAN_CALENDAR_DRIFT', severity: 'notice', params: { ...drift } });
   }
 
   verdicts.sort((a, b) => VERDICT_ORDER[a.code] - VERDICT_ORDER[b.code]);
@@ -1215,7 +1347,7 @@ export function computeDeliveredCoverage(input: DeliveredCoverageInput): Deliver
     pupilCount: pupils.length,
     pupilsBelowPlanned: includePupils ? pupilsBelow : null,
     credits: { count: creditCount, minutes: creditMinutes },
-    drift: driftLessons > 0 ? { minutes: driftMinutes, lessons: driftLessons } : null,
+    drift,
     verdicts: verdicts.filter(
       (verdict) => (includePupils || verdict.pupilId === undefined) && inDrill(verdict.studentGroupId),
     ),
