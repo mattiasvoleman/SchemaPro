@@ -351,6 +351,111 @@ describe('Ss12000Service', () => {
     });
   });
 
+  describe('duties (SS12000 2.1.0 Duty)', () => {
+    const YEAR = { id: 'year-1', startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: new Date('2027-06-11T00:00:00.000Z') };
+    const post = (overrides: Record<string, unknown> = {}) => ({
+      id: 'emp-1',
+      userId: 'user-1',
+      employmentPercent: { toString: () => '80.000' },
+      reductionPercent: '20.000',
+      contractKind: 'FERIE',
+      teachingTargetMinutesPerWeek: 700,
+      signature: 'ANN',
+      note: 'Förhandlat 2026-04-14',
+      createdAt: new Date('2026-08-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+      ...overrides,
+    });
+    const arrange = (share: boolean | null, posts = [post()]) => {
+      tx.academicYear.findFirst.mockResolvedValue(YEAR);
+      tx.staffingPolicy.findUnique.mockResolvedValue(
+        share === null ? null : { shareEmploymentWithIntegrations: share, fullTimeAnnualHours: 1767 },
+      );
+      tx.teacherEmployment.count.mockResolvedValue(posts.length);
+      tx.teacherEmployment.findMany.mockImplementation((args: { select: Record<string, unknown> }) =>
+        Promise.resolve(posts.map((row) => asSelected({ ...row, employmentPercent: Number(String(row.employmentPercent)) }, args.select))),
+      );
+      tx.teacherDuty.findMany.mockResolvedValue([
+        { userId: 'user-1', studentGroupId: 'g-7b', updatedAt: new Date('2026-09-15T00:00:00.000Z') },
+      ]);
+    };
+
+    it('maps a post to a Duty: the person, the school, Lärare, the signature, the mentorship, the year’s dates', async () => {
+      arrange(false);
+      const page = await service.duties(SCHOOL_ID);
+      expect(prisma.withServicePrincipal).toHaveBeenCalledWith(SCHOOL_ID, expect.any(Function));
+      expect(page).toEqual({
+        totalCount: 1,
+        limit: 100,
+        offset: 0,
+        data: [
+          {
+            id: 'emp-1',
+            meta: { created: '2026-08-01T00:00:00.000Z', modified: '2026-09-15T00:00:00.000Z' },
+            person: { id: 'user-1' },
+            assignmentRole: [{ group: { id: 'g-7b' }, assignmentRoleType: 'Mentor', startDate: '2026-08-17', endDate: '2027-06-11' }],
+            dutyAt: { id: SCHOOL_ID },
+            dutyRole: 'Lärare',
+            signature: 'ANN',
+            startDate: '2026-08-17',
+            endDate: '2027-06-11',
+          },
+        ],
+      });
+    });
+
+    it('never selects the nedsättning, the target or the note — with the switch off or on', async () => {
+      for (const share of [false, true]) {
+        arrange(share);
+        await service.duties(SCHOOL_ID);
+        const select = (tx.teacherEmployment.findMany.mock.calls.at(-1)![0] as { select: Record<string, unknown> }).select;
+        expect(Object.keys(select).sort()).toEqual(
+          ['createdAt', 'employmentPercent', 'id', 'signature', 'updatedAt', 'userId', ...(share ? ['contractKind'] : [])].sort(),
+        );
+        expect(select).not.toHaveProperty('reductionPercent');
+        expect(select).not.toHaveProperty('teachingTargetMinutesPerWeek');
+        expect(select).not.toHaveProperty('note');
+      }
+    });
+
+    it('emits dutyPercent and hoursPerYear only when the school shares them, hoursPerYear for a ferietjänst only, from the post', async () => {
+      arrange(true, [post(), post({ id: 'emp-2', userId: 'user-2', contractKind: 'SEMESTER', employmentPercent: { toString: () => '100.000' } })]);
+      const { data } = await service.duties(SCHOOL_ID);
+      // 80 % of 1 767: never (post − nedsättning).
+      expect(data[0]).toMatchObject({ dutyPercent: 80, hoursPerYear: 1414 });
+      expect(data[1]).toMatchObject({ dutyPercent: 100 });
+      expect(data[1]).not.toHaveProperty('hoursPerYear');
+      arrange(null);
+      const off = await service.duties(SCHOOL_ID);
+      expect(off.data[0]).not.toHaveProperty('dutyPercent');
+      expect(off.data[0]).not.toHaveProperty('hoursPerYear');
+    });
+
+    it('reads the active year’s posts of active users, and only mentorships on classes of that year', async () => {
+      arrange(false);
+      await service.duties(SCHOOL_ID, '10', '20');
+      expect(tx.teacherEmployment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { schoolId: SCHOOL_ID, academicYearId: 'year-1', user: { isActive: true } },
+          orderBy: { id: 'asc' },
+          take: 10,
+          skip: 20,
+        }),
+      );
+      expect(tx.teacherDuty.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ kind: 'MENTORSKAP', academicYearId: 'year-1', studentGroup: { academicYearId: 'year-1' } }),
+        }),
+      );
+    });
+
+    it('answers an empty page for a school with no active year, asking nothing more', async () => {
+      tx.academicYear.findFirst.mockResolvedValue(null);
+      await expect(service.duties(SCHOOL_ID)).resolves.toEqual({ totalCount: 0, limit: 100, offset: 0, data: [] });
+      expect(tx.teacherEmployment.findMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe('activities', () => {
     it('sends the kommun no lesson that is set aside', async () => {
       await service.activities(SCHOOL_ID);

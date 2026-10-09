@@ -454,6 +454,55 @@ describe('Portal and platform surfaces (e2e)', () => {
         .set('x-test-user', admin())
         .expect(401);
     });
+
+    describe('/duties (SS12000 2.1.0 Duty)', () => {
+      const givenPosts = (share: boolean) => {
+        harness.tx['integrationApiKey']!['findFirst']!.mockResolvedValue({ id: RECORD_ID, schoolId: SCHOOL_ID });
+        harness.tx['academicYear']!['findFirst']!.mockResolvedValue({
+          id: 'year-1',
+          startDate: new Date('2026-08-17T00:00:00.000Z'),
+          endDate: new Date('2027-06-11T00:00:00.000Z'),
+        });
+        harness.tx['staffingPolicy']!['findUnique']!.mockResolvedValue({ shareEmploymentWithIntegrations: share, fullTimeAnnualHours: 1767 });
+        harness.tx['teacherEmployment']!['count']!.mockResolvedValue(1);
+        harness.tx['teacherEmployment']!['findMany']!.mockResolvedValue([
+          {
+            id: 'emp-1',
+            userId: 'user-1',
+            employmentPercent: 80,
+            signature: 'ANN',
+            createdAt: new Date('2026-08-01T00:00:00.000Z'),
+            updatedAt: new Date('2026-09-01T00:00:00.000Z'),
+            ...(share ? { contractKind: 'FERIE' } : {}),
+          },
+        ]);
+        harness.tx['teacherDuty']!['findMany']!.mockResolvedValue([]);
+      };
+
+      it('a key reads its school’s posts as Duty objects, with no tjänstgöringsgrad unless the school shares it', async () => {
+        givenPosts(false);
+        const off = await request(http()).get('/ss12000/v1/duties').set('x-api-key', `sp_${'b'.repeat(48)}`).expect(200);
+        expect(off.body).toMatchObject({
+          totalCount: 1,
+          data: [{ id: 'emp-1', person: { id: 'user-1' }, dutyAt: { id: SCHOOL_ID }, dutyRole: 'Lärare', startDate: '2026-08-17' }],
+        });
+        expect(off.body.data[0]).not.toHaveProperty('dutyPercent');
+        const select = (harness.tx['teacherEmployment']!['findMany']!.mock.calls[0]![0] as { select: Record<string, unknown> }).select;
+        expect(select).not.toHaveProperty('reductionPercent');
+
+        givenPosts(true);
+        const on = await request(http()).get('/ss12000/v1/duties').set('x-api-key', `sp_${'b'.repeat(48)}`).expect(200);
+        expect(on.body.data[0]).toMatchObject({ dutyPercent: 80, hoursPerYear: 1414 });
+      });
+
+      it('401s with no key, a revoked or unknown key, and a bearer token', async () => {
+        await request(http()).get('/ss12000/v1/duties').expect(401);
+        harness.tx['integrationApiKey']!['findFirst']!.mockResolvedValue(null);
+        await request(http()).get('/ss12000/v1/duties').set('x-api-key', `sp_${'c'.repeat(48)}`).expect(401);
+        await request(http()).get('/ss12000/v1/duties').set('x-test-user', admin()).expect(401);
+        expect(harness.tx['teacherEmployment']!['findMany']).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('probes', () => {
