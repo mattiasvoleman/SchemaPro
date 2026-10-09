@@ -5121,6 +5121,33 @@ describe('Planning surface (e2e)', () => {
       expect(lead(world, r(6))).toBe(IDS.anna);
     });
 
+    it('undoes, under REFUSE, an apply that took a row from a teacher already over her target', async () => {
+      // Riktmärke 600: Anna (70.5 %) 425, already far over. The apply hands her
+      // Ma 7A to Cecilia; putting it back grows her from today's minutes, but
+      // to no more than she had before the apply, so the undo is not refused.
+      const world = givenStaff({ overAllocationMode: 'REFUSE' });
+      const proposal = await propose().expect(200);
+      const applied = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({ academicYearId: IDS.yearA, basisSha256: proposal.body.basisSha256, changes: [{ requirementId: r(1), fromTeacherId: IDS.anna, toTeacherId: IDS.cecilia }] })
+        .expect(200);
+      expect(lead(world, r(1))).toBe(IDS.cecilia);
+      const undone = await request(http())
+        .post(APPLY)
+        .set('x-test-user', admin())
+        .send({
+          academicYearId: IDS.yearA,
+          basisSha256: applied.body.basisSha256,
+          undo: true,
+          changes: [{ requirementId: r(1), fromTeacherId: IDS.cecilia, toTeacherId: IDS.anna }],
+        })
+        .expect(200);
+      expect(lead(world, r(1))).toBe(IDS.anna);
+      expect(undone.body.basisSha256).toBe(proposal.body.basisSha256);
+      expect(world.rows['scheduleChangeLog']).toHaveLength(2);
+    });
+
     it('400s a co-teacher made lead, and 409s a change from a lead the row does not have', async () => {
       const world = givenStaff();
       world.rows['teachingRequirement']!.find((row) => row['id'] === r(6))!['coTeacherId'] = IDS.cecilia;

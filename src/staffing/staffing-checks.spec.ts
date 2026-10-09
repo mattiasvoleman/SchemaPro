@@ -418,6 +418,58 @@ describe('judgeRequirementBatch', () => {
       judgeRequirementBatch({ input: school(), policy: refuse, changes: [{ requirementId: 'nope', teacherId: ANNA }] }),
     ).toThrow('nope');
   });
+
+  describe('undoing an apply, judged against the state the apply found', () => {
+    // Before the apply Anna carried 1 200 (OVER her 1 100), r-extra among it,
+    // in a subject she holds no behörighet for. The apply gave r-extra to Cy;
+    // she now carries 1 080. Putting it back is a "growth" from today, but no
+    // more than she carried a minute ago.
+    const applied = () =>
+      school({
+        requirements: [
+          ...school().requirements,
+          requirement({ id: 'r-extra', subjectId: 'y', teacherId: CY }),
+        ],
+      });
+    const undo = [{ requirementId: 'r-extra', teacherId: ANNA }];
+    const restoring = new Map<string, string | null>([['r-extra', ANNA]]);
+
+    it('is refused as a fresh write — the reproduction — but not as the undo it is', () => {
+      expect(
+        judgeRequirementBatch({ input: applied(), policy: refuse, changes: undo }).map((f) => [f.code, f.userId]),
+      ).toEqual([
+        [STAFF_TEACHER_NOT_QUALIFIED, ANNA],
+        [STAFF_TEACHER_OVER_TARGET, ANNA],
+      ]);
+      expect(judgeRequirementBatch({ input: applied(), policy: refuse, changes: undo, restoring })).toEqual([]);
+    });
+
+    it('still asks about a lead the row did not have, and a load past both today and before the apply', () => {
+      const findings = judgeRequirementBatch({
+        input: applied(),
+        policy: refuse,
+        changes: [...undo, { requirementId: 'r-open', teacherId: ANNA }],
+        restoring,
+      });
+      expect(findings.map((f) => [f.code, f.userId, f.requirementIds])).toEqual([
+        [STAFF_TEACHER_OVER_TARGET, ANNA, ['r-extra', 'r-open']],
+      ]);
+      expect(findings[0]!.params).toMatchObject({ minutes: 1320 });
+
+      // Restoring r-extra to Bo, who never had it, is a new assignment.
+      expect(
+        judgeRequirementBatch({
+          input: applied(),
+          policy: refuse,
+          changes: [{ requirementId: 'r-extra', teacherId: BO }],
+          restoring,
+        }).map((f) => [f.code, f.userId]),
+      ).toEqual([
+        [STAFF_TEACHER_NOT_QUALIFIED, BO],
+        [STAFF_TEACHER_OVER_TARGET, BO],
+      ]);
+    });
+  });
 });
 
 describe('settleFindings', () => {
