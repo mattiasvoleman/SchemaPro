@@ -11,6 +11,7 @@ import {
   scbColumnApplies,
   scbColumnOf,
   scbUnderlag,
+  SAMVERKAN_HEADERS,
   SCB_PEDPERS_2026,
   SCB_SYSTEM_VERSION,
   type ScbInput,
@@ -167,6 +168,32 @@ describe("Tjänstefördelning för samverkan", () => {
     expect(vik[21]).toBe("600");
     expect(csv).not.toContain("−");
     expect(csv).not.toContain("Behörigheter");
+  });
+
+  it("under FACTOR calls the charged figures räknad tid and writes the lesson time beside them; MINUTES is unchanged", () => {
+    // Ma at factor 1,5: three 60-minute lessons are 180 minutes taught, 270 charged.
+    const factor = teacher("t-anna", {
+      assignedMinutesPerWeek: 270,
+      peakMinutesPerWeek: 270,
+      countedMinutesPerWeek: 270,
+      subjects: [{ subjectId: "s-ma", subjectName: "Matematik", minutesPerWeek: 270, shareOfTeaching: 1, percentOfEmployment: 25, percentOfFullTime: null }],
+      assignments: [assignment({ lessonMinutesPerWeek: 180, timeMinutesPerWeek: 180, minutesPerWeek: 270, hoursPerYear: 171 })],
+      annual: { ...teacher("t-anna").annual, assignedHoursPerYear: 171 },
+    });
+    const parsed = parseCsv(samverkanCsv({ ...base, loadModel: "FACTOR", load: [factor], reconciliation: [reconciliation("t-anna")] }));
+    const cell = (header: string) => parsed.rows[0]![parsed.headers.indexOf(header)];
+    expect(parsed.headers).toHaveLength(29);
+    expect(parsed.headers).not.toContain("Undervisning min/v (standardvecka)");
+    expect(parsed.headers).not.toContain("Undervisning h/år");
+    expect(cell("Räknad undervisning min/v (standardvecka, faktor)")).toBe("270");
+    expect(cell("Undervisningstid min/v (standardvecka, utan faktor)")).toBe("180");
+    expect(cell("Räknad undervisning h/år (faktor)")).toBe("171");
+    expect(cell("Ämnen räknad tid min/v (faktor)")).toBe("Matematik 270");
+    expect(cell("Genomfört i perioden min (räknad tid, faktor, avrundat per rad)")).toBe("4210");
+    expect(cell("Beräkningsmodell")).toBe("Faktor");
+    // MINUTES: the file of before, header for header.
+    const minutes = parseCsv(samverkanCsv({ ...base, load: [teacher("t-anna")], reconciliation: [] }));
+    expect(minutes.headers).toEqual([...SAMVERKAN_HEADERS]);
   });
 
   it("carries behörigheter only when the admin ticked them, legitimation named as a kind", () => {

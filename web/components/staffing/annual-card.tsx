@@ -68,7 +68,7 @@ export function AnnualCard({
     rows.push({ label: t("workDays"), value: String(annual.workDaysPerYear) });
     if (annual.percentOfRegulated !== null) {
       rows.push({
-        label: t("percentOfRegulated"),
+        label: loadModel === "FACTOR" ? t("percentOfRegulatedFactor") : t("percentOfRegulated"),
         value: `${formatPercent(annual.percentOfRegulated)} %`,
       });
     }
