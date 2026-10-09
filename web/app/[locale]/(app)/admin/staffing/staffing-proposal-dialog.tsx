@@ -687,7 +687,8 @@ function ProposalResult({
                           {teacherName(teacher.userId)}
                           {teacher.keepOrShed ? (
                             <span className="block text-xs font-normal text-muted-foreground">
-                              {t("keepOrShed")}
+                              {/* No target: the gateway keeps their rows fixed. */}
+                              {teacher.targetMinutesPerWeek === null ? t("keepsNoTarget") : t("keepOrShed")}
                             </span>
                           ) : null}
                         </th>

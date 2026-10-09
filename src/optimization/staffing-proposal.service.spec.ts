@@ -338,6 +338,30 @@ describe('StaffingProposalService.propose', () => {
     expect(payload.teachers[0]!.fixedTenths).toBe(600);
   });
 
+  it('with onlyUnstaffed off, leaves a teacher with no target their rows — fixed, never shed — and lets a full nedsättning give theirs up', async () => {
+    // The review's live case: Johan had no post (no target) and led three
+    // rows; balance on the receivers outweighed keepCurrent, and all three
+    // went to teachers under target — 660 → 0, against the manual's "får inga
+    // nya poster men behåller sina". Unknown room is not no room.
+    const rows = schoolRows();
+    const R_CY = '00000000-0000-4000-8000-0000000000c2';
+    const R_DAG = '00000000-0000-4000-8000-0000000000c3';
+    rows['teachingRequirement']!.push(
+      requirement(R_CY, G7A, SV, { teacherId: CY, lessonsPerWeek: 4 }),
+      requirement(R_DAG, G8A, MA, { teacherId: DAG }),
+    );
+    const { service, sent } = setup(rows);
+    const proposal = await service.propose(ask({ onlyUnstaffed: false }), admin());
+    const payload = sent()[0]!;
+    expect(sentRow(payload, R_CY, rows)).toMatchObject({ fixed: true, currentTeacherId: payload.teachers[2]!.id });
+    // Cy's row is fixed load, so it is his present in 7A and counted as kept.
+    expect(payload.teachers[2]!.fixedTenths).toBe(2400);
+    // Dag's 0-minute target says he should teach nothing: his row may move.
+    expect(sentRow(payload, R_DAG, rows)).toMatchObject({ fixed: false, currentTeacherId: payload.teachers[3]!.id });
+    expect(proposal.counts).toMatchObject({ keptRequirements: 2, fixedRequirements: 2 });
+    expect(proposal.teachers.find((t) => t.userId === CY)).toMatchObject({ keepOrShed: true, targetMinutesPerWeek: null });
+  });
+
   it('keeps a pinned row as it is, and reports only the pins this year holds', async () => {
     const { service, sent } = setup();
     const stranger = '00000000-0000-4000-8000-0000000000ee';

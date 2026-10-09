@@ -123,12 +123,13 @@ const proposal = (overrides: Partial<StaffingProposal> = {}): StaffingProposal =
       after: point(600, 600, "OK"),
     },
     {
+      // A full nedsättning: a target of 0, so she may only give rows up.
       userId: "t-cilla",
-      targetMinutesPerWeek: null,
-      limitMinutesPerWeek: null,
+      targetMinutesPerWeek: 0,
+      limitMinutesPerWeek: 0,
       keepOrShed: true,
-      before: point(300, null, "NO_TARGET"),
-      after: point(180, null, "NO_TARGET"),
+      before: point(300, 0, "OVER"),
+      after: point(180, 0, "OVER"),
     },
     {
       userId: "t-dan",
@@ -137,6 +138,15 @@ const proposal = (overrides: Partial<StaffingProposal> = {}): StaffingProposal =
       keepOrShed: false,
       before: point(900, 900, "OK"),
       after: point(900, 900, "OK"),
+    },
+    {
+      // No target: her rows are not the proposal's to move.
+      userId: "t-eva",
+      targetMinutesPerWeek: null,
+      limitMinutesPerWeek: null,
+      keepOrShed: true,
+      before: point(240, null, "NO_TARGET"),
+      after: point(240, null, "NO_TARGET"),
     },
   ],
   unstaffed: [
@@ -410,8 +420,12 @@ describe("StaffingProposalDialog", () => {
       expect(within(cilla).getByText("180 min/v")).toBeInTheDocument();
       // Dan is untouched: listed only after "Visa alla".
       expect(screen.queryByRole("rowheader", { name: /t-dan/ })).toBeNull();
-      await user.click(screen.getByRole("button", { name: "Visa alla (4)" }));
+      await user.click(screen.getByRole("button", { name: "Visa alla (5)" }));
       expect(screen.getByRole("rowheader", { name: /t-dan/ })).toBeInTheDocument();
+      // A teacher with no target keeps every row: not "keeps or gives up".
+      const eva = screen.getByRole("rowheader", { name: /t-eva/ });
+      expect(within(eva).getByText("Har inget mål och behåller sina poster")).toBeInTheDocument();
+      expect(within(eva).queryByText("Behåller eller lämnar bara sina egna poster")).toBeNull();
     });
 
     it("says why each remaining row stays unstaffed, and the engine's sentences in Swedish with the teacher named", async () => {

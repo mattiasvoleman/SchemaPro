@@ -2032,6 +2032,7 @@
       "minutes": "{minutes} min/wk",
       "minutesPercent": "{minutes} min/wk · {percent} %",
       "keepOrShed": "Keeps or gives up only their own entries",
+      "keepsNoTarget": "Has no target and keeps their entries",
       "overLimitSelection": "The selection puts the teacher over the limit; the apply is judged against the school's settings.",
       "unstaffedTitle": "Stay unstaffed ({count})",
       "reason_NO_QUALIFIED_TEACHER": "no active teacher is qualified",
