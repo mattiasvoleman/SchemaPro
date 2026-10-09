@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { Prisma, type TeacherEmployment } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { Role } from '../auth/enums/role.enum';
@@ -7,6 +7,34 @@ import { requireSchoolId, requireUserId } from '../common/utils/request-context'
 import { rethrowPrismaError } from '../common/utils/prisma-errors';
 import { lockStaffRow } from './staff-lock';
 import type { UpsertTeacherEmploymentDto } from './dto/teacher-employment.dto';
+import { diffLogEntry, type LogChange } from './employment-log-diff';
+
+/** One version of a tjänst, as the Historik card and a protokoll cite it. */
+export interface TeacherHistoryEntry {
+  id: string;
+  /** 1, 2, 3 … per teacher and year: "Version 7". */
+  version: number;
+  entity: 'EMPLOYMENT' | 'DUTY';
+  entityId: string;
+  action: 'CREATE' | 'UPDATE' | 'DELETE';
+  /** Who wrote it; null for a migration, the seed or the database owner. */
+  actorId: string | null;
+  createdAt: Date;
+  changes: LogChange[];
+}
+
+export interface TeacherHistoryResponse {
+  /** Newest first. */
+  entries: TeacherHistoryEntry[];
+  /** True when there were more than HISTORY_LIMIT versions; the oldest are left out. */
+  truncated: boolean;
+}
+
+/** The versions one read hands back. A year's tjänst rarely has a tenth of it. */
+export const HISTORY_LIMIT = 200;
+
+/** A TEACHER asking for a colleague's history: refused before anything is read. */
+export const HISTORY_OWN_ONLY = 'Du kan bara läsa historiken för din egen tjänst.';
 
 /**
  * A post as the client sees it: the two Decimal columns as numbers.
@@ -44,7 +72,62 @@ export function toEmploymentResponse(row: TeacherEmployment): TeacherEmploymentR
  */
 @Injectable()
 export class TeacherEmploymentsService {
+  private readonly logger = new Logger(TeacherEmploymentsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * One teacher's tjänst for one year, version by version: every change to
+   * their post and their uppdrag the database recorded (TeacherEmploymentLogs,
+   * written by a trigger on every writer — the routes here, the imports, the
+   * rollover, PostgREST). Newest first, at most HISTORY_LIMIT.
+   *
+   * HR DATA, TWICE GUARDED. A TEACHER asking for anybody but themselves gets
+   * 403 before a statement is sent; RLS (teacher_own_select) would hand them
+   * nothing anyway, and a route whose only guard is the policy is one
+   * refactor from a colleague's nedsättning. The admin reads any teacher.
+   * The application log carries ids and a count, never a value.
+   */
+  async history(
+    userId: string,
+    academicYearId: string,
+    user: AuthenticatedUser,
+  ): Promise<TeacherHistoryResponse> {
+    requireSchoolId(user);
+    if (user.role !== Role.SCHOOL_ADMIN && userId !== requireUserId(user)) {
+      throw new ForbiddenException(HISTORY_OWN_ONLY);
+    }
+    const rows = await this.prisma.withRls(user, (tx) =>
+      tx.teacherEmploymentLog.findMany({
+        where: { userId, academicYearId },
+        orderBy: { version: 'desc' },
+        take: HISTORY_LIMIT + 1,
+        select: {
+          id: true,
+          version: true,
+          entity: true,
+          entityId: true,
+          action: true,
+          before: true,
+          after: true,
+          actorId: true,
+          createdAt: true,
+        },
+      }),
+    );
+    const entries = rows.slice(0, HISTORY_LIMIT).map((row) => ({
+      id: row.id,
+      version: row.version,
+      entity: row.entity,
+      entityId: row.entityId,
+      action: row.action,
+      actorId: row.actorId,
+      createdAt: row.createdAt,
+      changes: diffLogEntry(row.entity, row.before, row.after),
+    }));
+    this.logger.log(`History read [user=${userId}, year=${academicYearId}, entries=${entries.length}]`);
+    return { entries, truncated: rows.length > HISTORY_LIMIT };
+  }
 
   /**
    * The year's posts: the whole school for an admin, the caller's own for a

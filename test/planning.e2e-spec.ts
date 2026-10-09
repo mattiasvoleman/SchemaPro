@@ -2049,6 +2049,74 @@ describe('Planning surface (e2e)', () => {
         expect(harness.tx['teacherEmployment']!['upsert']).not.toHaveBeenCalled();
       });
 
+      describe('historik (GET /teacher-employments/:userId/history)', () => {
+        const version = (n: number, overrides: Record<string, unknown> = {}) => ({
+          id: `0000000${n}-0000-4000-8000-000000000000`,
+          version: n,
+          entity: 'EMPLOYMENT',
+          entityId: '12121212-1212-4212-8212-121212121212',
+          action: n === 1 ? 'CREATE' : 'UPDATE',
+          before: n === 1 ? null : { id: 'e', userId: COLLEAGUE_ID, academicYearId: YEAR_ID, employmentPercent: 100 },
+          after: { id: 'e', userId: COLLEAGUE_ID, academicYearId: YEAR_ID, employmentPercent: n === 1 ? 100 : 80 },
+          actorId: '11111111-1111-4111-8111-111111111111',
+          createdAt: new Date(`2026-10-0${n}T12:00:00.000Z`),
+          ...overrides,
+        });
+
+        it('an admin reads a teacher’s versions, newest first, with what each changed', async () => {
+          harness.tx['teacherEmploymentLog']!['findMany']!.mockResolvedValue([version(2), version(1)]);
+          const response = await request(http())
+            .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', admin())
+            .expect(200);
+          expect(response.body.truncated).toBe(false);
+          expect(response.body.entries.map((entry: { version: number }) => entry.version)).toEqual([2, 1]);
+          expect(response.body.entries[0]).toMatchObject({
+            action: 'UPDATE',
+            changes: [{ field: 'employmentPercent', before: 100, after: 80 }],
+          });
+          expect(harness.tx['teacherEmploymentLog']!['findMany']).toHaveBeenCalledWith(
+            expect.objectContaining({ where: { userId: COLLEAGUE_ID, academicYearId: YEAR_ID } }),
+          );
+        });
+
+        it('a teacher reads their own and gets 403 for a colleague before anything is read', async () => {
+          harness.tx['teacherEmploymentLog']!['findMany']!.mockResolvedValue([]);
+          await request(http())
+            .get(`/api/v1/teacher-employments/${TEACHER_ID}/history?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', teacher())
+            .expect(200);
+          const refused = await request(http())
+            .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', teacher())
+            .expect(403);
+          expect(JSON.stringify(refused.body)).toContain('din egen tjänst');
+          expect(harness.tx['teacherEmploymentLog']!['findMany']).toHaveBeenCalledTimes(1);
+        });
+
+        it('403s a pupil and a guardian, 401s an integration key, 400s a malformed id or year', async () => {
+          for (const role of ['STUDENT', 'GUARDIAN']) {
+            await request(http())
+              .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=${YEAR_ID}`)
+              .set('x-test-user', asUser({ role: role as never }))
+              .expect(403);
+          }
+          await request(http())
+            .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=${YEAR_ID}`)
+            .set('x-api-key', `sp_${'a'.repeat(48)}`)
+            .expect(401);
+          await request(http())
+            .get(`/api/v1/teacher-employments/not-a-uuid/history?academicYearId=${YEAR_ID}`)
+            .set('x-test-user', admin())
+            .expect(400);
+          await request(http())
+            .get(`/api/v1/teacher-employments/${COLLEAGUE_ID}/history?academicYearId=2026`)
+            .set('x-test-user', admin())
+            .expect(400);
+          expect(harness.tx['teacherEmploymentLog']!['findMany']).not.toHaveBeenCalled();
+        });
+      });
+
       it('400s a missing or malformed academicYearId before anything else', async () => {
         await request(http())
           .get('/api/v1/teacher-employments')

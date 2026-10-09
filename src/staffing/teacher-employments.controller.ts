@@ -20,6 +20,7 @@ import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.in
 import {
   TeacherEmploymentsService,
   type TeacherEmploymentResponse,
+  type TeacherHistoryResponse,
 } from './teacher-employments.service';
 import { UpsertTeacherEmploymentDto } from './dto/teacher-employment.dto';
 
@@ -52,6 +53,20 @@ export class TeacherEmploymentsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<TeacherEmploymentResponse[]> {
     return this.employments.list(academicYearId, user);
+  }
+
+  /**
+   * `/:userId/history?academicYearId=` — the teacher's tjänst for the year,
+   * version by version (staffing Fas 3). The admin reads any teacher; a
+   * teacher their own, and a colleague's is 403.
+   */
+  @Get(':userId/history')
+  history(
+    @Param('userId', uuid()) userId: string,
+    @Query('academicYearId', uuid()) academicYearId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<TeacherHistoryResponse> {
+    return this.employments.history(userId, academicYearId, user);
   }
 
   @Put(':userId')
