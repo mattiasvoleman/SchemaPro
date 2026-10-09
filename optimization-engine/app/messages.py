@@ -564,8 +564,8 @@ MESSAGES: dict[str, str] = {
     # a school is refused with from web/messages/*.json under engineMessages, and
     # the parity fixture generated from this dict is what keeps that file whole.
     # A second catalogue for three gateway codes would be two sources for one
-    # screen. Phase 4's staffing solver will send its own STAFF_* codes beside
-    # these. `role` is the row's lead, its co-teacher or a vikarie, never a name;
+    # screen. The staffing proposal's own STAFF_* codes follow below.
+    # `role` is the row's lead, its co-teacher or a vikarie, never a name;
     # `grades` is "7", "7–9" or "any", as _grade_span_text writes a span.
     "STAFF_TEACHER_NOT_QUALIFIED": (
         "{role, select, CO_TEACHER {The co-teacher} SUBSTITUTE {The substitute} "
@@ -583,5 +583,38 @@ MESSAGES: dict[str, str] = {
         "teacher, and the school's staffing policy refuses to generate a timetable until every "
         "entry has one. Staff the entries named here, or allow generation without a teacher in "
         "the staffing settings."
+    ),
+
+    # ---- The staffing proposal (POST /api/v1/staff) -----------------------
+    # Sent by THIS engine, from app/solver/staffing_solver.py. None of them
+    # names a person: `subject` is an opaque id the gateway realises to the
+    # subject's name, and a teacher reaches the page only as an id in the
+    # conflict's own teacherIds, which the page names from its staff list.
+    # Minutes are whole minutes, converted from the wire's tenths.
+    "STAFF_NO_QUALIFIED_TEACHER_FOR_REQUIREMENT": (
+        "{count, plural, one {# curriculum entry} other {# curriculum entries}} in {subject}"
+        "{grades, select, any {} other { for years {grades}}} cannot be staffed: no active "
+        "teacher holds a qualification that covers {count, plural, one {it} other {them}}. "
+        "Record a qualification, or propose without respecting qualifications."
+    ),
+    # The Fach-Engpass, computed before the model: a lower bound on what stays
+    # unstaffed, whatever the search finds.
+    "STAFF_CAPACITY_EXHAUSTED_FOR_SUBJECT": (
+        "{subject} needs {demandedMinutes} minutes a week across "
+        "{count, plural, one {# curriculum entry} other {# curriculum entries}}, and the "
+        "teachers who may take them have at most {availableMinutes} minutes left below their "
+        "limits, so at least {shortMinutes} minutes will stay unstaffed. Raise a target or the "
+        "tolerance, record more qualifications, or reduce the subject's time."
+    ),
+    # The page puts the teacher's name in front of this sentence.
+    "STAFF_TEACHER_CAPACITY_ZERO": (
+        "Already carries {fixedMinutes} minutes a week against a limit of {limitMinutes}, so "
+        "no further curriculum entry fits."
+    ),
+    "STAFF_MODEL_TOO_LARGE": (
+        "There are too many possible teacher assignments to weigh in one go: about "
+        "{variables} model variables against a limit of {limit}. Keep the entries that are "
+        "settled as they are, or record qualifications so that fewer teachers are candidates "
+        "for each entry, and try again."
     ),
 }
