@@ -46,6 +46,10 @@ export default function NotificationSettingsPage() {
   };
 
   const change = async (types: readonly NotificationPreference[], entry: NotificationPreference, enabled: boolean) => {
+    // One save at a time: the gateway replaces the whole set. The switches
+    // stay focusable meanwhile (a disabled control that has focus drops it to
+    // <body>), so a second choice is ignored here rather than disabled away.
+    if (save.isPending) return;
     try {
       await save.mutateAsync(withChoice(types, entry.type, enabled));
       toast.success(t("saved"));
@@ -91,7 +95,8 @@ export default function NotificationSettingsPage() {
                     <Switch
                       id={id}
                       checked={entry.enabled}
-                      disabled={entry.required || save.isPending}
+                      disabled={entry.required}
+                      aria-disabled={save.isPending || undefined}
                       aria-describedby={text ? `${id}-hint` : undefined}
                       onCheckedChange={(checked) => void change(types, entry, checked)}
                     />
