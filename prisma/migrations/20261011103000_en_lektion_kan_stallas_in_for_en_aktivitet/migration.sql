@@ -1,0 +1,24 @@
+-- En lektion kan ställas in för en aktivitet.
+--
+-- Bulk avbokning (20261011110000) cancels every lesson of a day, a week, a
+-- class or a span of years for one reason the school names: prao, a
+-- friluftsdag, a studiedag. Those cancellations are neither a teacher's
+-- absence nor a room's, and calling them MANUAL would make "inställd av
+-- skolan" mean two things in the timplan's lost-minutes split, where
+-- Skolinspektionen reads them apart. EVENT is that category.
+--
+-- The timplan's classification spells a cancelled row's bucket from this
+-- value (timplan-delivered.sql.ts: 'CANCELLED_' || cancelCause), so the new
+-- value is CANCELLED_EVENT there with no SQL changed; the pure modules count
+-- it as lost (cancelledEvent) unless the school credits the day
+-- (TimplanCredits), and the staffing reconciliation shows it only when a
+-- row has it, so no response of a school that never uses it changes.
+--
+-- Its own migration: a value added to an enum cannot be used in the same
+-- transaction that adds it, and the next migration's CHECK names it.
+--
+-- PATCH /calendar-lessons/:id/cancel does not take it: its DTO lists the
+-- causes a single cancel may give (lesson-action.dto.ts), and EVENT is the
+-- batch's.
+
+ALTER TYPE "LessonCancelCause" ADD VALUE IF NOT EXISTS 'EVENT';

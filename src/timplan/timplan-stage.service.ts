@@ -574,13 +574,28 @@ export async function computeStages(
           });
     const credits = await tx.timplanCredit.findMany({
       where: { academicYearId: candidate.id },
-      select: { id: true, date: true, minutes: true, subjectId: true, studentGroupId: true, minGradeLevel: true, maxGradeLevel: true, name: true },
+      select: {
+        id: true,
+        date: true,
+        minutes: true,
+        subjectId: true,
+        studentGroupId: true,
+        minGradeLevel: true,
+        maxGradeLevel: true,
+        name: true,
+        // A bulk avbokning's credit stays out of the schedule gap (TimplanCreditRow).
+        _count: { select: { batchLinks: true } },
+      },
       orderBy: [{ date: 'asc' }, { id: 'asc' }],
     });
     const window = { academicYearId: candidate.id, yearStart: bounds.startDate, yearEnd: bounds.endDate, asOf: now };
     const closures = await readPublishClosures(tx, window);
     const breaks = publishBreaksOf(rows.closures);
-    const creditRows = credits.map((row) => ({ ...row, date: asDay(row.date) }));
+    const creditRows = credits.map(({ _count, ...row }) => ({
+      ...row,
+      date: asDay(row.date),
+      ...((_count?.batchLinks ?? 0) > 0 ? { fromCancellationBatch: true } : {}),
+    }));
     const boundaries = boundariesOf(yearSegments, bounds);
     const families =
       options.forFamilies && candidate.id === academicYearId

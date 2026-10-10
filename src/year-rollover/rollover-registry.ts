@@ -529,6 +529,24 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     parent: 'TimetablePublication',
     reason: 'The lessons a publication of the old year published.',
   },
+  /**
+   * Bulk avbokning (20261011110000): a batch is a decision about dates of
+   * ITS year — prao in week 12 — and its rows are that year's lessons.
+   */
+  CancellationBatch: {
+    kind: 'SKIPPED',
+    reason: 'A bulk avbokning cancelled dates of the old year; the new year has its own.',
+  },
+  CancellationBatchLesson: {
+    kind: 'FOLLOWS',
+    parent: 'CancellationBatch',
+    reason: 'The lessons a batch of the old year cancelled.',
+  },
+  CancellationBatchCredit: {
+    kind: 'FOLLOWS',
+    parent: 'CancellationBatch',
+    reason: 'The credits a batch of the old year handed off.',
+  },
   PublicationPendingRemoval: {
     kind: 'FOLLOWS',
     parent: 'CalendarLesson',

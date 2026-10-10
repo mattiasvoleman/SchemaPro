@@ -77,6 +77,9 @@ enum LessonCancelCause {
   ROOM_UNAVAILABLE
   /// Cancelled by the school with no cause given.
   MANUAL
+  /// Cancelled by a bulk avbokning for an activity the school names (prao,
+  /// friluftsdag, studiedag); migration 20261011103000.
+  EVENT
 }
 
 enum AttendanceStatus {
@@ -691,6 +694,9 @@ model TimplanCredit {
   subject      Subject?      @relation(fields: [subjectId, schoolId], references: [id, schoolId], onDelete: Cascade)
   studentGroup StudentGroup? @relation(fields: [studentGroupId, schoolId], references: [id, schoolId], onDelete: Cascade)
 
+  batchLinks CancellationBatchCredit[]
+
+  @@unique([id, schoolId])
   @@index([schoolId, academicYearId, date])
   @@index([studentGroupId, schoolId])
   @@index([subjectId, schoolId])
@@ -980,6 +986,73 @@ model PublicationPendingRemoval {
   @@index([academicYearId, schoolId])
   @@index([schoolId])
   @@map("PublicationPendingRemovals")
+}
+
+/// A bulk avbokning (migration 20261011110000): the selection, the rows it
+/// cancelled and how it was reversed. The admin's record; families read the
+/// cancelled lessons in the calendar.
+model CancellationBatch {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String            @db.Uuid
+  academicYearId   String            @db.Uuid
+  name             String
+  /// EVENT or MANUAL only (CHECK).
+  cause            LessonCancelCause
+  fromDate         DateTime          @db.Date
+  /// At most 30 days after fromDate (CHECK): 31 days inclusive.
+  toDate           DateTime          @db.Date
+  startTime        DateTime?         @db.Time(6)
+  endTime          DateTime?         @db.Time(6)
+  /// SCHOOL, GRADES or GROUPS (CHECK).
+  scope            String
+  minGradeLevel    Int?
+  maxGradeLevel    Int?
+  groupIds         String[]          @default([]) @db.Uuid
+  cancelled        Int               @default(0)
+  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
+  createdByUserId  String?           @db.Uuid
+  reversedAt       DateTime?         @db.Timestamptz(6)
+  reversedByUserId String?           @db.Uuid
+  reinstated       Int               @default(0)
+  skippedRoomTaken Int               @default(0)
+
+  lessons CancellationBatchLesson[]
+  credits CancellationBatchCredit[]
+
+  @@unique([id, schoolId])
+  @@index([academicYearId, schoolId, fromDate])
+  @@index([createdByUserId, schoolId])
+  @@index([reversedByUserId, schoolId])
+  @@map("CancellationBatches")
+}
+
+model CancellationBatchLesson {
+  batchId          String  @db.Uuid
+  calendarLessonId String  @db.Uuid
+  schoolId         String  @db.Uuid
+  /// The note the lesson carried before the batch; restored on reversal.
+  previousNote     String?
+
+  batch          CancellationBatch @relation(fields: [batchId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  calendarLesson CalendarLesson    @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@id([batchId, calendarLessonId])
+  @@index([calendarLessonId, schoolId])
+  @@index([schoolId])
+  @@map("CancellationBatchLessons")
+}
+
+model CancellationBatchCredit {
+  batchId  String @db.Uuid
+  creditId String @unique @db.Uuid
+  schoolId String @db.Uuid
+
+  batch  CancellationBatch @relation(fields: [batchId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  credit TimplanCredit     @relation(fields: [creditId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@id([batchId, creditId])
+  @@index([schoolId])
+  @@map("CancellationBatchCredits")
 }
 
 model AcademicYear {
@@ -1364,6 +1437,7 @@ model CalendarLesson {
   participants      CalendarLessonStudent[]
   /// Set while the lesson's template was deleted in a DRAFT school and no publish has settled it.
   pendingRemovals   PublicationPendingRemoval[]
+  batchLessons      CancellationBatchLesson[]
 
   // Not visible here, and load-bearing: an EXCLUDE constraint on
   // (roomId, tstzrange(startsAt, endsAt)) refuses a second SCHEDULED lesson in

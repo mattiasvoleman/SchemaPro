@@ -6,6 +6,8 @@ import { TimplanModule } from '../timplan/timplan.module';
 import { PublicationsController } from './publications.controller';
 import { PublicationsService } from './publications.service';
 import { DraftService } from './draft.service';
+import { CancellationBatchesController } from './cancellation-batches.controller';
+import { CancellationBatchesService } from './cancellation-batches.service';
 
 /**
  * Publicering: validity-dated publications, the school's gate policy and the
@@ -18,8 +20,8 @@ import { DraftService } from './draft.service';
  */
 @Module({
   imports: [CalendarModule, StaffingModule, TimplanModule],
-  controllers: [CalendarController, PublicationsController],
-  providers: [PublicationsService, DraftService],
+  controllers: [CalendarController, PublicationsController, CancellationBatchesController],
+  providers: [PublicationsService, DraftService, CancellationBatchesService],
   exports: [PublicationsService],
 })
 export class PublicationModule {}

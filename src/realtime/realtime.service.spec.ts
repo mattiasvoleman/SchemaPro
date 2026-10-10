@@ -287,4 +287,32 @@ describe('RealtimeService', () => {
       expect(warn).toHaveBeenCalledWith(expect.stringContaining(LESSON_ID));
     });
   });
+
+  describe('notifyLessonsChanged (a bulk avbokning)', () => {
+    it('reads every lesson in ONE statement with the single read\'s select, and emits each', async () => {
+      arrangeLesson(lessonRow());
+      await service.notifyLessonChanged(client(), LESSON_ID);
+      const single = tx.calendarLesson.findUnique.mock.calls[0]![0].select;
+
+      gateway.emitLessonUpdated.mockClear();
+      tx.calendarLesson.findMany.mockImplementation(({ select }: { select?: Record<string, unknown> }) =>
+        Promise.resolve([asSelected(lessonRow(), select), asSelected(lessonRow({ id: 'lesson-2' }), select)]),
+      );
+      await service.notifyLessonsChanged(client(), [LESSON_ID, 'lesson-2']);
+      expect(tx.calendarLesson.findMany).toHaveBeenCalledTimes(1);
+      expect(tx.calendarLesson.findMany.mock.calls[0]![0]).toEqual({
+        where: { id: { in: [LESSON_ID, 'lesson-2'] } },
+        select: single,
+      });
+      expect(gateway.emitLessonUpdated).toHaveBeenCalledTimes(2);
+    });
+
+    it('asks nothing for no lesson, and swallows a failure', async () => {
+      await service.notifyLessonsChanged(client(), []);
+      expect(tx.calendarLesson.findMany).not.toHaveBeenCalled();
+      tx.calendarLesson.findMany.mockRejectedValue(new Error('connection reset'));
+      await expect(service.notifyLessonsChanged(client(), [LESSON_ID])).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalled();
+    });
+  });
 });

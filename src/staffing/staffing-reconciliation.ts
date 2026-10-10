@@ -79,8 +79,12 @@ const LOST_BUCKETS = {
   CANCELLED_MANUAL: 'cancelledManual',
   CANCELLED_UNKNOWN: 'cancelledUnknown',
   OTHER: 'otherStatus',
+  // A bulk avbokning's (Publicering). OPTIONAL in LostMinutes: the key is
+  // written only when such a row is counted, so no response of a school that
+  // never uses one gains a key (every other key is always present).
+  CANCELLED_EVENT: 'cancelledEvent',
 } as const;
-type LostKey = (typeof LOST_BUCKETS)[keyof typeof LOST_BUCKETS];
+type LostKey = Exclude<(typeof LOST_BUCKETS)[keyof typeof LOST_BUCKETS], 'cancelledEvent'>;
 
 export type StaffingNoticeCode =
   | 'STAFFING_NOTHING_PUBLISHED'
@@ -97,7 +101,7 @@ export interface StaffingNotice {
   params: Record<string, string | number>;
 }
 
-export type LostMinutes = Record<LostKey, number>;
+export type LostMinutes = Record<LostKey, number> & { cancelledEvent?: number };
 
 export interface ReconciliationLine {
   subjectId: string;
@@ -247,7 +251,14 @@ const noLoss = (): LostMinutes => ({
   otherStatus: 0,
 });
 
-const lostTotal = (lost: LostMinutes): number => Object.values(lost).reduce((sum, value) => sum + value, 0);
+const lostTotal = (lost: LostMinutes): number =>
+  Object.values(lost).reduce((sum: number, value) => sum + (value ?? 0), 0);
+
+/** Adds to a cause; the optional cancelledEvent key appears with its first minutes. */
+function addLoss(lost: LostMinutes, key: LostKey | 'cancelledEvent', minutes: number): void {
+  if (key === 'cancelledEvent') lost.cancelledEvent = (lost.cancelledEvent ?? 0) + minutes;
+  else lost[key] += minutes;
+}
 
 export function buildReconciliation(input: ReconciliationInput): StaffingReconciliation {
   const { from, to, published } = input;
@@ -381,7 +392,7 @@ export function buildReconciliation(input: ReconciliationInput): StaffingReconci
         lessons: 0,
       };
       if (row.bucket === 'TEACHERLESS') loss.teacherless += row.minutes;
-      else if (row.bucket in LOST_BUCKETS) loss[LOST_BUCKETS[row.bucket as keyof typeof LOST_BUCKETS]] += row.minutes;
+      else if (row.bucket in LOST_BUCKETS) addLoss(loss, LOST_BUCKETS[row.bucket as keyof typeof LOST_BUCKETS], row.minutes);
       loss.lessons += row.lessons;
       groupLosses.set(key, loss);
       continue;
@@ -405,7 +416,7 @@ export function buildReconciliation(input: ReconciliationInput): StaffingReconci
       for (const id of extras) if (id !== row.studentGroupId) line.extra.add(id);
       tally.deliveredLessons += row.lessons;
     } else if (row.bucket in LOST_BUCKETS) {
-      tally.lost[LOST_BUCKETS[row.bucket as keyof typeof LOST_BUCKETS]] += charged;
+      addLoss(tally.lost, LOST_BUCKETS[row.bucket as keyof typeof LOST_BUCKETS], charged);
       lineOf(row.personId, row.subjectId, row.studentGroupId).lost += charged;
     } else if (row.bucket === 'AHEAD') {
       tally.ahead += charged;

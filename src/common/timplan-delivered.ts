@@ -110,6 +110,7 @@ export type DeliveredBucket =
   | 'CANCELLED_TEACHER_UNAVAILABLE'
   | 'CANCELLED_ROOM_UNAVAILABLE'
   | 'CANCELLED_MANUAL'
+  | 'CANCELLED_EVENT'
   | 'CANCELLED_UNKNOWN'
   | 'CANCELLED_ON_BREAK'
   | 'OTHER'
@@ -123,6 +124,7 @@ export type LostCause =
   | 'cancelledTeacherUnavailable'
   | 'cancelledRoomUnavailable'
   | 'cancelledManual'
+  | 'cancelledEvent'
   | 'cancelledUnknown'
   | 'teacherless'
   | 'otherStatus';
@@ -131,6 +133,9 @@ const LOST: Partial<Record<DeliveredBucket, LostCause>> = {
   CANCELLED_TEACHER_UNAVAILABLE: 'cancelledTeacherUnavailable',
   CANCELLED_ROOM_UNAVAILABLE: 'cancelledRoomUnavailable',
   CANCELLED_MANUAL: 'cancelledManual',
+  // A bulk avbokning (prao, friluftsdag): lost, unless the school credits
+  // the day (TimplanCredits) — then the credit makes it up, as for any day.
+  CANCELLED_EVENT: 'cancelledEvent',
   CANCELLED_UNKNOWN: 'cancelledUnknown',
   TEACHERLESS: 'teacherless',
   OTHER: 'otherStatus',
@@ -139,6 +144,7 @@ const CAUSE_ORDER: LostCause[] = [
   'cancelledTeacherUnavailable',
   'cancelledRoomUnavailable',
   'cancelledManual',
+  'cancelledEvent',
   'cancelledUnknown',
   'teacherless',
   'otherStatus',
@@ -198,6 +204,14 @@ export interface TimplanCreditRow {
   minGradeLevel: number | null;
   maxGradeLevel: number | null;
   name: string;
+  /**
+   * Handed off by a bulk avbokning (CancellationBatchCredits, Publicering):
+   * the day's lessons are cancelled AND credited. The cancelled minutes are
+   * already added back to the schedule gap as lost or ahead-cancelled, so
+   * these credited minutes stay out of it, or the schedule would read as
+   * that many minutes better than it is. Absent is false.
+   */
+  fromCancellationBatch?: boolean;
 }
 
 export interface DeliveredCoverageInput {
@@ -570,6 +584,8 @@ interface Tally {
   buckets: Map<DeliveredBucket, number>;
   creditsPast: number;
   creditsAhead: number;
+  /** Of the two above, the minutes a bulk avbokning credited (out of scheduleGap). */
+  batchCredits: number;
   creditIds: string[];
   masterAhead: number;
   masterAheadTeacherless: number;
@@ -589,6 +605,7 @@ const newTally = (): Tally => ({
   buckets: new Map(),
   creditsPast: 0,
   creditsAhead: 0,
+  batchCredits: 0,
   creditIds: [],
   masterAhead: 0,
   masterAheadTeacherless: 0,
@@ -665,7 +682,7 @@ function figuresOf(tally: Tally): Figures {
     plannedYear,
     unrecorded: Math.round(unrecorded),
     delta,
-    scheduleGap: Math.round(projected + lost + aheadCancelled + aheadTeacherless - measured),
+    scheduleGap: Math.round(projected - tally.batchCredits + lost + aheadCancelled + aheadTeacherless - measured),
     status,
   };
 }
@@ -966,6 +983,7 @@ export function computeDeliveredCoverage(
       const tally = groupTally(groupId, key);
       if (past) tally.creditsPast += credit.minutes;
       else tally.creditsAhead += credit.minutes;
+      if (credit.fromCancellationBatch) tally.batchCredits += credit.minutes;
       tally.creditIds.push(credit.id);
     }
     reaches.push({ credit, key, past, groupIds, pupilIds: new Set(reached.map((p) => p.id)) });
@@ -1167,6 +1185,7 @@ export function computeDeliveredCoverage(
       const tally = tallyFor(reach.key);
       if (reach.past) tally.creditsPast += reach.credit.minutes;
       else tally.creditsAhead += reach.credit.minutes;
+      if (reach.credit.fromCancellationBatch) tally.batchCredits += reach.credit.minutes;
       tally.creditIds.push(reach.credit.id);
     }
     for (const groupId of pupil.groupIds) {

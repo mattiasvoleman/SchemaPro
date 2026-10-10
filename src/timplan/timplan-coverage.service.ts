@@ -189,13 +189,21 @@ export class TimplanCoverageService {
           minGradeLevel: true,
           maxGradeLevel: true,
           name: true,
+          // Handed off by a bulk avbokning: kept out of the schedule gap
+          // (TimplanCreditRow.fromCancellationBatch). A count inside this
+          // statement, not a relation load of its own.
+          _count: { select: { batchLinks: true } },
         },
         orderBy: [{ date: 'asc' }, { id: 'asc' }],
       });
       // What publish skips by besides the lov: dated closures of a class or an årskurs.
       const closures = await readPublishClosures(tx, window);
       const breaks = publishBreaksOf(planned.closures);
-      const creditRows = credits.map((row) => ({ ...row, date: asDay(row.date) }));
+      const creditRows = credits.map(({ _count, ...row }) => ({
+        ...row,
+        date: asDay(row.date),
+        ...((_count?.batchLinks ?? 0) > 0 ? { fromCancellationBatch: true } : {}),
+      }));
       const rows = await readDeliveredRows(
         tx,
         window,

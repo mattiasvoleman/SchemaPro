@@ -19,6 +19,7 @@ import { TimplanCoverageService } from '../timplan/timplan-coverage.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { carryDraft, draftWindow } from './draft-publish';
+import { reapplyActiveBatches } from './cancellation-batches.service';
 import { readDraftMasters, snapshotMasters, type PublishedMaster } from './published-grundschema';
 import { enterPublication } from './publish-mode';
 import {
@@ -133,6 +134,8 @@ export interface DraftCounts {
   adopted: number;
   /** Rows moved onto a closure and written CANCELLED. */
   cancelledByMove: number;
+  /** Rows an unreversed bulk avbokning took again after the publish wrote them (S7). */
+  cancelledByBatch: number;
 }
 
 /** Thrown inside a transaction to roll it back while carrying its answer out. */
@@ -336,7 +339,7 @@ export class PublicationsService {
               validTo: new Date(`${context.validTo}T00:00:00.000Z`),
               publishedByUserId: user.userId ?? null,
               created: result.created,
-              cancelled: result.cancelled + (draft?.cancelledByMove ?? 0),
+              cancelled: result.cancelled + (draft?.cancelledByMove ?? 0) + (draft?.cancelledByBatch ?? 0) + run.batchCancelled,
               skipped: result.skipped,
               moved: draft?.moved ?? 0,
               removed: draft?.removed ?? 0,
@@ -401,6 +404,8 @@ export class PublicationsService {
     draft?: DraftCounts;
     masters?: PublishedMaster[];
     changedMasterIds?: string[];
+    /** DIRECT: rows an unreversed bulk avbokning took again (DRAFT carries it in `draft`). */
+    batchCancelled: number;
     gates: GateItem[];
     verdict: ReturnType<typeof gateVerdict>;
   }> {
@@ -418,6 +423,7 @@ export class PublicationsService {
     let draft: DraftCounts | undefined;
     let masters: PublishedMaster[] | undefined;
     let changedMasterIds: string[] | undefined;
+    let batchCancelled = 0;
     try {
       if (context.mode === 'DRAFT') {
         const now = new Date();
@@ -432,7 +438,15 @@ export class PublicationsService {
           now,
         });
         result = await this.calendar.materialise(tx, schoolId, this.windowDto(context), { notBefore: now });
-        draft = { moved: carry.moved, removed: carry.removed, adopted: carry.adopted, cancelledByMove: carry.cancelled };
+        draft = {
+          moved: carry.moved,
+          removed: carry.removed,
+          adopted: carry.adopted,
+          cancelledByMove: carry.cancelled,
+          cancelledByBatch: (
+            await reapplyActiveBatches(tx, schoolId, context.year.id, context.validFrom, context.validTo, context.year.timezone)
+          ).length,
+        };
         changedMasterIds = carry.changedMasterIds;
         findings.push(
           { code: 'PUB_WEEK_SPLIT', count: carry.weekSplit.length, entries: carry.weekSplit, params: { validFrom: context.validFrom } },
@@ -453,6 +467,17 @@ export class PublicationsService {
         );
       } else {
         result = await this.calendar.materialise(tx, schoolId, this.windowDto(context));
+        // A bulk avbokning still in force takes what this materialised into
+        // its range (S7). A school that never made one asks one statement.
+        const batched = await reapplyActiveBatches(
+          tx,
+          schoolId,
+          context.year.id,
+          context.validFrom,
+          context.validTo,
+          context.year.timezone,
+        );
+        batchCancelled = batched.length;
       }
     } catch (error) {
       if (!options.dryRun || error instanceof Rollback) throw error;
@@ -467,7 +492,7 @@ export class PublicationsService {
       result.created + result.cancelled + (draft ? draft.moved + draft.removed + draft.adopted : 0) === 0;
     findings.push({ code: 'PUB_NOTHING_TO_PUBLISH', count: changedNothing ? 1 : 0, info: true });
     const gates = settleGates(findings, context.policy);
-    return { context, result, draft, masters, changedMasterIds, gates, verdict: gateVerdict(gates) };
+    return { context, result, draft, masters, changedMasterIds, batchCancelled, gates, verdict: gateVerdict(gates) };
   }
 
   /**

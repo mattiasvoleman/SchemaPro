@@ -293,6 +293,153 @@ describe('Publicering (e2e)', () => {
     });
   });
 
+  describe('bulk avbokning', () => {
+    const BATCH_ID = '66666666-6666-4666-8666-666666666666';
+    const future = (n: number) => ({
+      id: `aaaaaaaa-0000-4000-8000-00000000000${n}`,
+      date: day('2099-03-0' + n),
+      startsAt: new Date(`2099-03-0${n}T07:00:00.000Z`),
+      endsAt: new Date(`2099-03-0${n}T08:00:00.000Z`),
+      status: 'SCHEDULED',
+      note: null,
+      studentGroupId: 'g9a',
+      studentGroup: { name: '9A', gradeLevel: 9 },
+      subject: { name: 'Matematik' },
+      extraGroups: [],
+      _count: { attendanceRecords: 0 },
+    });
+    const selection = {
+      academicYearId: YEAR_ID,
+      name: 'Prao åk 9',
+      cause: 'EVENT',
+      fromDate: '2027-03-01',
+      toDate: '2027-03-05',
+      scope: 'GRADES',
+      minGradeLevel: 9,
+      maxGradeLevel: 9,
+    };
+    const stored = {
+      id: BATCH_ID,
+      academicYearId: YEAR_ID,
+      name: 'Prao åk 9',
+      cause: 'EVENT',
+      fromDate: day('2027-03-01'),
+      toDate: day('2027-03-05'),
+      startTime: null,
+      endTime: null,
+      scope: 'GRADES',
+      minGradeLevel: 9,
+      maxGradeLevel: 9,
+      groupIds: [],
+      cancelled: 2,
+      createdAt: new Date('2026-10-12T08:00:00Z'),
+      createdByUserId: null,
+      reversedAt: null,
+      reinstated: 0,
+      skippedRoomTaken: 0,
+      _count: { credits: 0 },
+    };
+
+    beforeEach(() => {
+      harness.tx.calendarLesson.findMany.mockResolvedValue([future(1), future(2)]);
+      harness.tx.cancellationBatch.create.mockResolvedValue({ id: BATCH_ID });
+      harness.tx.cancellationBatch.update.mockResolvedValue(stored);
+      harness.tx.cancellationBatch.findUnique.mockResolvedValue(stored);
+      harness.tx.calendarLesson.updateMany.mockResolvedValue({ count: 2 });
+    });
+
+    it('previews, then cancels what it previewed, with the note pupils read and the cause the timplan counts', async () => {
+      const preview = await request(http())
+        .post('/api/v1/cancellation-batches/preview')
+        .set('x-test-user', admin())
+        .send(selection)
+        .expect(200);
+      expect(preview.body).toMatchObject({ matched: 2, excluded: { started: 0, notScheduled: 0, attendance: 0 } });
+      expect(preview.body.lessons[0]).toEqual(expect.objectContaining({ subjectName: 'Matematik', groupName: '9A' }));
+      expect(JSON.stringify(preview.body)).not.toMatch(/studentId|firstName|email/);
+
+      const created = await request(http())
+        .post('/api/v1/cancellation-batches')
+        .set('x-test-user', admin())
+        .send({ ...selection, expectedDigest: preview.body.digest })
+        .expect(201);
+      expect(created.body).toMatchObject({ cancelled: 2, credits: 0, batch: { id: BATCH_ID, cause: 'EVENT' } });
+      expect(harness.tx.calendarLesson.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: 'CANCELLED', cancelCause: 'EVENT', note: 'Inställd: Prao åk 9' } }),
+      );
+      expect(harness.tx.cancellationBatchLesson.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({ batchId: BATCH_ID, previousNote: null }),
+          expect.objectContaining({ batchId: BATCH_ID, previousNote: null }),
+        ],
+      });
+    });
+
+    it('answers 409 when the lessons changed since the preview', async () => {
+      const response = await request(http())
+        .post('/api/v1/cancellation-batches')
+        .set('x-test-user', admin())
+        .send({ ...selection, expectedDigest: 'a'.repeat(64) })
+        .expect(409);
+      expect(response.body.code).toBe('CANCELLATION_STALE');
+      expect(harness.tx.calendarLesson.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses what the table refuses, with the field named', async () => {
+      const cases: Array<[Record<string, unknown>, number]> = [
+        [{ ...selection, toDate: '2027-04-02' }, 400], // 33 days
+        [{ ...selection, cause: 'TEACHER_UNAVAILABLE' }, 400],
+        [{ ...selection, scope: 'GRADES', minGradeLevel: undefined }, 400],
+        [{ ...selection, scope: 'SCHOOL' }, 400], // a span on SCHOOL
+        [{ ...selection, startTime: '13:00' }, 400], // half a window
+        [{ ...selection, name: '' }, 400],
+      ];
+      for (const [body, status] of cases) {
+        await request(http()).post('/api/v1/cancellation-batches/preview').set('x-test-user', admin()).send(body).expect(status);
+      }
+    });
+
+    it('refuses a credit for a batch with a time window: a day partly held is not a whole day to count', async () => {
+      const response = await request(http())
+        .post('/api/v1/cancellation-batches')
+        .set('x-test-user', admin())
+        .send({ ...selection, startTime: '08:00', endTime: '12:00', credit: { minutes: 300 } })
+        .expect(400);
+      expect(response.body.code).toBe('CANCELLATION_CREDIT');
+    });
+
+    it('lists, previews the reversal, reverses once, and refuses a second time', async () => {
+      harness.tx.cancellationBatch.findMany.mockResolvedValue([{ ...stored, toDate: day('2026-01-01') }]);
+      const list = await request(http())
+        .get(`/api/v1/cancellation-batches?academicYearId=${YEAR_ID}`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(list.body).toEqual([expect.objectContaining({ id: BATCH_ID, addedSince: 0 })]);
+
+      harness.tx.cancellationBatchLesson.findMany.mockResolvedValue([
+        { previousNote: 'Ta med böcker', calendarLesson: { ...future(1), status: 'CANCELLED', cancelCause: 'EVENT', roomId: null } },
+        { previousNote: null, calendarLesson: { ...future(2), status: 'CANCELLED', cancelCause: 'EVENT', roomId: 'room' } },
+      ]);
+      harness.tx.calendarLesson.findFirst.mockResolvedValue({ id: 'someone-else' });
+      const preview = await request(http())
+        .post(`/api/v1/cancellation-batches/${BATCH_ID}/reverse/preview`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(preview.body).toMatchObject({ reinstate: 1, notReinstatable: 0, creditsDeleted: 0 });
+      expect(preview.body.skippedRoomTaken).toEqual([expect.objectContaining({ roomId: 'room', by: 'LESSON' })]);
+
+      await request(http()).post(`/api/v1/cancellation-batches/${BATCH_ID}/reverse`).set('x-test-user', admin()).expect(200);
+      expect(harness.tx.calendarLesson.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: [future(1).id] }, status: 'CANCELLED', cancelCause: 'EVENT' },
+        data: { status: 'SCHEDULED', cancelCause: null, note: 'Ta med böcker' },
+      });
+
+      harness.tx.cancellationBatch.findUnique.mockResolvedValue({ ...stored, reversedAt: new Date() });
+      const again = await request(http()).post(`/api/v1/cancellation-batches/${BATCH_ID}/reverse`).set('x-test-user', admin()).expect(409);
+      expect(again.body.code).toBe('CANCELLATION_REVERSED');
+    });
+  });
+
   describe('every route is the admin\'s', () => {
     const routes = [
       ['GET', '/api/v1/publication-settings'],
@@ -305,6 +452,12 @@ describe('Publicering (e2e)', () => {
       ['POST', '/api/v1/publications/discard'],
       ['POST', '/api/v1/publications/refill'],
       ['POST', '/api/v1/calendar/publish'],
+      ['POST', '/api/v1/cancellation-batches/preview'],
+      ['POST', '/api/v1/cancellation-batches'],
+      ['GET', `/api/v1/cancellation-batches?academicYearId=${YEAR_ID}`],
+      ['POST', '/api/v1/cancellation-batches/66666666-6666-4666-8666-666666666666/reapply'],
+      ['POST', '/api/v1/cancellation-batches/66666666-6666-4666-8666-666666666666/reverse/preview'],
+      ['POST', '/api/v1/cancellation-batches/66666666-6666-4666-8666-666666666666/reverse'],
     ] as const;
     const send = (method: string, path: string) => {
       const agent = request(http());

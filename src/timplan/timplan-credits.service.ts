@@ -43,7 +43,7 @@ const SELECT = {
 
 type CreditRow = Prisma.TimplanCreditGetPayload<{ select: typeof SELECT }>;
 
-interface Scope {
+export interface Scope {
   studentGroupId: string | null;
   minGradeLevel: number | null;
   maxGradeLevel: number | null;
@@ -105,27 +105,7 @@ export class TimplanCreditsService {
       maxGradeLevel: dto.maxGradeLevel ?? null,
     });
     try {
-      const row = await this.prisma.withRls(user, async (tx) => {
-        const year = await tx.academicYear.findUnique({
-          where: { id: dto.academicYearId },
-          select: { id: true, name: true, startDate: true, endDate: true },
-        });
-        if (!year) throw new BadRequestException('academicYearId: läsåret finns inte.');
-        await checkRow(tx, year, dto.date, scope.studentGroupId, dto.subjectId ?? null);
-        return tx.timplanCredit.create({
-          data: {
-            schoolId,
-            academicYearId: year.id,
-            date: parseDay(dto.date),
-            minutes: dto.minutes,
-            subjectId: dto.subjectId ?? null,
-            ...scope,
-            name: dto.name.trim(),
-            note: noteOf(dto.note),
-          },
-          select: SELECT,
-        });
-      });
+      const row = await this.prisma.withRls(user, (tx) => createCreditInTransaction(tx, schoolId, dto, scope));
       return toResponse(row);
     } catch (error) {
       rethrowCreditError(error);
@@ -219,6 +199,40 @@ function noteOf(note: string | null | undefined): string | null {
 }
 
 /** A group, a whole span in order, or neither — never both. */
+/**
+ * create() inside a transaction the CALLER holds: the same checks and the
+ * same row. A bulk avbokning that counts its day as teaching hands its
+ * credits off through this (src/publication/cancellation-batches.service.ts),
+ * in the transaction that cancels the lessons, so a refused credit leaves no
+ * lesson cancelled. `scope` must have passed checkScope.
+ */
+export async function createCreditInTransaction(
+  tx: Prisma.TransactionClient,
+  schoolId: string,
+  dto: CreateTimplanCreditDto,
+  scope: Scope,
+) {
+  const year = await tx.academicYear.findUnique({
+    where: { id: dto.academicYearId },
+    select: { id: true, name: true, startDate: true, endDate: true },
+  });
+  if (!year) throw new BadRequestException('academicYearId: läsåret finns inte.');
+  await checkRow(tx, year, dto.date, scope.studentGroupId, dto.subjectId ?? null);
+  return tx.timplanCredit.create({
+    data: {
+      schoolId,
+      academicYearId: year.id,
+      date: parseDay(dto.date),
+      minutes: dto.minutes,
+      subjectId: dto.subjectId ?? null,
+      ...scope,
+      name: dto.name.trim(),
+      note: noteOf(dto.note),
+    },
+    select: SELECT,
+  });
+}
+
 export function checkScope(scope: Scope): Scope {
   const refuse = (message: string, fields: string) =>
     new BadRequestException({ message, code: TIMPLAN_CREDIT_SCOPE, params: { fields } });
