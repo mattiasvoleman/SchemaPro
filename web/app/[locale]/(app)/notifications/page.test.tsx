@@ -18,6 +18,8 @@ const state = vi.hoisted(() => ({
   role: "GUARDIAN",
   types: [] as NotificationPreference[],
   puts: [] as unknown[],
+  /** When set, a PUT waits for it: a save in flight. */
+  hold: null as Promise<void> | null,
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -26,6 +28,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
     get: async () => ({ types: state.types }),
     put: async (_path: string, body: { optOut: string[] }) => {
       state.puts.push(body);
+      if (state.hold) await state.hold;
       return { types: state.types.map((entry) => ({ ...entry, enabled: entry.required || !body.optOut.includes(entry.type) })) };
     },
   },
@@ -62,6 +65,7 @@ beforeEach(() => {
   state.role = "GUARDIAN";
   state.types = family;
   state.puts = [];
+  state.hold = null;
 });
 
 describe("the choice of what leaves SchemaPro", () => {
@@ -89,6 +93,29 @@ describe("the choice of what leaves SchemaPro", () => {
     expect(screen.getByText("notificationSettings.substituteStaffHint")).toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "notificationSettings.types.LESSON_COVER_WITHDRAWN" })).toBeDisabled();
     expect(screen.getByText("notificationSettings.requiredCover")).toBeInTheDocument();
+  });
+
+  it("keeps keyboard focus on a switch while its save is in flight, and takes no second choice meanwhile", async () => {
+    const user = userEvent.setup();
+    let release: () => void = () => undefined;
+    state.hold = new Promise((resolve) => {
+      release = resolve;
+    });
+    renderPage();
+    const cancelled = await screen.findByRole("switch", { name: "notificationSettings.types.LESSON_CANCELLED" });
+    const substitute = screen.getByRole("switch", { name: "notificationSettings.types.LESSON_SUBSTITUTE" });
+    cancelled.focus();
+    await user.keyboard(" ");
+    await waitFor(() => expect(state.puts).toHaveLength(1));
+    // A disabled control drops the browser's focus to <body>; these stay focusable.
+    expect(cancelled).toBeEnabled();
+    expect(substitute).toBeEnabled();
+    expect(cancelled).toHaveAttribute("aria-disabled", "true");
+    expect(document.activeElement).toBe(cancelled);
+    await user.click(substitute);
+    expect(state.puts).toHaveLength(1);
+    release();
+    await waitFor(() => expect(cancelled).not.toHaveAttribute("aria-disabled", "true"));
   });
 
   it("says so when the role has nothing to choose", async () => {

@@ -135,8 +135,13 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
   const shown = data && data.student.id === selected.id ? data : null;
   const days = shown ? familyDays(shown) : [];
   const todayDay = shown ? days.find((day) => day.date === shown.today) ?? null : null;
+  // Never `disabled`: a disabled button that has focus drops it to <body>,
+  // so a keyboard reader would start from the top after every step. While a
+  // week loads, or at a bound, the button says so (aria-disabled) and a press
+  // does nothing.
+  const blocked = (direction: -1 | 1) => !shown || !canStep(shown, direction) || isFetching;
   const step = (direction: -1 | 1) => {
-    if (!shown) return;
+    if (!shown || blocked(direction)) return;
     setView("week");
     setWeek(shiftDate(shown.week.from, 7 * direction));
   };
@@ -198,7 +203,8 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
             variant="outline"
             size="icon"
             onClick={() => step(-1)}
-            disabled={!canStep(shown, -1) || isFetching}
+            aria-disabled={blocked(-1)}
+            className={cn(blocked(-1) && "cursor-not-allowed opacity-50")}
             aria-label={t("previousWeek")}
           >
             <ChevronLeft />
@@ -210,7 +216,8 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
             variant="outline"
             size="icon"
             onClick={() => step(1)}
-            disabled={!canStep(shown, 1) || isFetching}
+            aria-disabled={blocked(1)}
+            className={cn(blocked(1) && "cursor-not-allowed opacity-50")}
             aria-label={t("nextWeek")}
           >
             <ChevronRight />

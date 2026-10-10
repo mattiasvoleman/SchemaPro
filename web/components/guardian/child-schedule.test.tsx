@@ -158,9 +158,41 @@ describe("the guardian's Schema card", () => {
     await user.click(screen.getByRole("button", { name: "guardian.schedule.previousWeek" }));
     await waitFor(() => expect(screen.getByText("guardian.schedule.weekLabel(42)")).toBeInTheDocument());
     expect(param(state.asked.at(-1)!, "week")).toBe("2026-10-12");
-    await waitFor(() => expect(screen.getByRole("button", { name: "guardian.schedule.previousWeek" })).toBeDisabled());
-    expect(screen.getByRole("button", { name: "guardian.schedule.nextWeek" })).toBeEnabled();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "guardian.schedule.previousWeek" })).toHaveAttribute("aria-disabled", "true"),
+    );
+    expect(screen.getByRole("button", { name: "guardian.schedule.nextWeek" })).not.toHaveAttribute("aria-disabled", "true");
+    // At the bound a press asks for nothing.
+    const asked = state.asked.length;
+    await user.click(screen.getByRole("button", { name: "guardian.schedule.previousWeek" }));
+    expect(state.asked).toHaveLength(asked);
   });
+
+  it("keeps keyboard focus on the stepper while the next week loads: never disabled, and one press asks once", async () => {
+    const user = userEvent.setup();
+    renderCard();
+    await screen.findByText("Matematik Alva");
+    await user.click(screen.getByRole("button", { name: "guardian.schedule.week" }));
+    let release: () => void = () => undefined;
+    state.answer = (path) =>
+      new Promise((resolve) => {
+        release = () => resolve(week(ALVA, "Alva", param(path, "week") ?? "2026-10-19"));
+      });
+    const next = screen.getByRole("button", { name: "guardian.schedule.nextWeek" });
+    next.focus();
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(param(state.asked.at(-1)!, "week")).toBe("2026-10-26"));
+    // A disabled button drops the browser's focus to <body>; this one stays focusable.
+    expect(next).toBeEnabled();
+    expect(next).toHaveAttribute("aria-disabled", "true");
+    expect(document.activeElement).toBe(next);
+    const asked = state.asked.length;
+    await user.keyboard("{Enter}");
+    expect(state.asked).toHaveLength(asked);
+    release();
+    await waitFor(() => expect(next).not.toHaveAttribute("aria-disabled", "true"));
+  });
+
 
   it("switches child, asks for that child, and never shows one child's week under the other's name", async () => {
     const user = userEvent.setup();
