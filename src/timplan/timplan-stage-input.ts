@@ -43,7 +43,12 @@ import type { SegmentedAudienceRow } from './timplan-delivered.sql';
  * teachingWeeks charges a partly covered edge week whole, so a window that
  * ends mid-week and the next that begins in it both count that week's
  * planned minutes: a moved pupil's planned figure is at most one week per
- * move high. It never makes a shortfall; it can hide one under a week.
+ * move high. It never makes a shortfall; it can hide one under a week. In a
+ * year nothing was published for (below) the same week can reach the
+ * PROJECTED figure of the current year's last window, whose days ahead are
+ * counted at plan as plannedYear − atPlan: up to the edge week's remaining
+ * days per move, again never a shortfall. A window that ends on or before
+ * today has nothing ahead, so a year that has ended carries none of it.
  *
  * ## Recorded share
  *
@@ -261,6 +266,7 @@ export function recordedBlocksOfYear(
     });
 
     const share = Math.round((weekdaysBetween(window.from, window.to) * 1000) / yearWeekdays);
+    const daysAhead = window.to > addDays(asOfDate, 1);
     for (const pupil of window.pupils) {
       // The class's årskurs as P2 and P3 judged it; the segment carries the same (kept in step).
       const grade = groupsById.get(pupil.homeGroupId)?.gradeLevel ?? pupil.gradeLevel;
@@ -305,8 +311,12 @@ export function recordedBlocksOfYear(
         line.creditedMinutes += figure.credited;
         line.atPlanMinutes += figure.atPlan;
         // Nothing published: the days ahead are at plan too (see the header),
-        // never the shortfall of a calendar the school has not written.
-        line.aheadMinutes += read.published === null ? Math.max(figure.ahead, figure.plannedYear - figure.atPlan) : figure.ahead;
+        // never the shortfall of a calendar the school has not written. A
+        // window with no day after today has nothing ahead: plannedYear
+        // charges its edge weeks whole while atPlan counts days, and the
+        // difference is not time still to come.
+        line.aheadMinutes +=
+          read.published === null && daysAhead ? Math.max(figure.ahead, figure.plannedYear - figure.atPlan) : figure.ahead;
       }
     }
   }
