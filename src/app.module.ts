@@ -35,6 +35,7 @@ import { StaffingModule } from './staffing/staffing.module';
 import { TimplanModule } from './timplan/timplan.module';
 import { PublicationModule } from './publication/publication.module';
 import { YearRolloverModule } from './year-rollover/year-rollover.module';
+import { CoverModule } from './cover/cover.module';
 import type { ThrottleConfig } from './config/configuration';
 
 /**
@@ -121,6 +122,7 @@ import type { ThrottleConfig } from './config/configuration';
     TimplanModule,
     YearRolloverModule,
     PublicationModule,
+    CoverModule,
   ],
 
   providers: [
