@@ -210,8 +210,9 @@ export async function readSegmentedDeliveredRows(
   window: DeliveredWindow,
   dates: string[],
   boundaries: string[],
+  key: PublishedKey | null = null,
 ): Promise<Omit<DeliveredRows, 'audiences'> & { audiences: SegmentedAudienceRow[] }> {
-  const { horizon, published, publishedDays } = await readPublishedSpans(tx, window);
+  const { horizon, published, publishedDays } = await readPublishedSpans(tx, window, key);
   if (published === null) {
     return { audiences: [], horizon: [], published: null, publishedDays: [], dates: [] };
   }
@@ -240,8 +241,9 @@ export async function readSegmentedDeliveredRows(
  * gaps two publishes left; so one statement answers all three. A year with no
  * row at all answers the total row with nulls.
  */
-export function horizonStatement(window: DeliveredWindow): Prisma.Sql {
+export function horizonStatement(window: DeliveredWindow, published: PublishedKey | null = null): Prisma.Sql {
   const { academicYearId, yearStart, yearEnd, asOf } = window;
+  if (published !== null) return publishedHorizonStatement(window);
   return Prisma.sql`
     SELECT cl."masterLessonId",
            GROUPING(cl."masterLessonId")::int AS "total",
@@ -254,6 +256,46 @@ export function horizonStatement(window: DeliveredWindow): Prisma.Sql {
      WHERE g."academicYearId" = ${academicYearId}::uuid
        AND cl."date" BETWEEN ${yearStart}::date AND ${yearEnd}::date
      GROUP BY GROUPING SETS ((cl."masterLessonId"), (cl."date"), ())
+  `;
+}
+
+/**
+ * READ IN A DRAFT SCHOOL BY SOMEBODY WHO MUST NOT SEE THE DRAFT (Publicering,
+ * 20261011100000): the statements keyed on a lesson's master lesson key it on
+ * the PUBLISHED key, coalesce(cl."masterLessonId", ppr."masterLessonId"). A
+ * lesson deleted in the draft has had its key set to null by the foreign key,
+ * and PublicationPendingRemovals remembers whose it was until a publish
+ * settles it; without the coalesce the deleted master — still in the
+ * published snapshot a teacher reads — would have no horizon row and its
+ * orphaned rows would count twice, so a draft delete would move a teacher's
+ * figure before anything was published. `publicationId` is the snapshot the
+ * reader was shown (published-grundschema.ts). Null — every DIRECT school,
+ * and every admin — is the default statement, byte for byte.
+ */
+export interface PublishedKey {
+  publicationId: string | null;
+}
+
+/** C, keyed on the published key. */
+function publishedHorizonStatement(window: DeliveredWindow): Prisma.Sql {
+  const { academicYearId, yearStart, yearEnd, asOf } = window;
+  return Prisma.sql`
+    WITH k AS (
+      SELECT coalesce(cl."masterLessonId", ppr."masterLessonId") AS "masterLessonId", cl."date", cl."endsAt"
+        FROM "CalendarLessons" cl
+        JOIN "StudentGroups" g ON g."id" = cl."studentGroupId"
+        LEFT JOIN "PublicationPendingRemovals" ppr ON ppr."calendarLessonId" = cl."id"
+       WHERE g."academicYearId" = ${academicYearId}::uuid
+         AND cl."date" BETWEEN ${yearStart}::date AND ${yearEnd}::date
+    )
+    SELECT k."masterLessonId",
+           GROUPING(k."masterLessonId")::int AS "total",
+           (CASE WHEN GROUPING(k."date") = 0 THEN k."date"::text END) AS "day",
+           (COUNT(*) FILTER (WHERE k."endsAt" > ${asOf}::timestamptz))::int AS "aheadRows",
+           MIN(k."date")::text AS "firstDate",
+           MAX(k."date")::text AS "lastDate"
+      FROM k
+     GROUP BY GROUPING SETS ((k."masterLessonId"), (k."date"), ())
   `;
 }
 
@@ -304,6 +346,7 @@ export function staffingCreditStatement(
   window: DeliveredWindow,
   range: { from: string; to: string },
   own: string | null,
+  published: PublishedKey | null = null,
 ): Prisma.Sql {
   const lessons = deliveredLessons(window, { subjects: 'all', audience: 'groups', range });
   const ownTeacher = own === null ? Prisma.empty : Prisma.sql`WHERE t."teacherId" = ${own}::uuid`;
@@ -319,6 +362,15 @@ export function staffingCreditStatement(
                           'CANCELLED_MANUAL', 'CANCELLED_UNKNOWN', 'OTHER')
      GROUP BY 4, 5, 7`
       : Prisma.empty;
+  // The grundschema slot a substitute covered: the master lesson's, or — read
+  // by a teacher in a DRAFT school — the published snapshot's, on the
+  // published key (see PublishedKey).
+  const slotSource =
+    published === null
+      ? Prisma.sql`JOIN "MasterLessons" m ON m."id" = l."masterLessonId"`
+      : Prisma.sql`LEFT JOIN "PublicationPendingRemovals" ppr ON ppr."calendarLessonId" = l."id"
+      JOIN "PublishedLessons" m ON m."publicationId" = ${published.publicationId}::uuid
+                               AND m."masterLessonId" = coalesce(l."masterLessonId", ppr."masterLessonId")`;
   return Prisma.sql`
     WITH l AS MATERIALIZED (${lessons})
     SELECT 'T' AS "kind", t."teacherId" AS "personId", t."role"::text AS "role", l."subjectId", l."studentGroupId",
@@ -335,7 +387,7 @@ export function staffingCreditStatement(
     UNION ALL
     SELECT 'C', s."person", s."slot", l."subjectId", l."studentGroupId", l."extraGroupIds", l."bucket",
            SUM(l."minutes")::int, COUNT(*)::int
-      FROM l JOIN "MasterLessons" m ON m."id" = l."masterLessonId"
+      FROM l ${slotSource}
      CROSS JOIN LATERAL (VALUES (m."teacherId", 'LEAD'), (m."coTeacherId", 'ASSISTANT')) AS s("person", "slot")
      WHERE l."bucket" = 'DELIVERED' AND s."person" IS NOT NULL
        AND EXISTS (SELECT 1 FROM "CalendarLessonTeachers" x
@@ -370,10 +422,11 @@ export interface StaffingCreditRow {
 export async function readPublishedSpans(
   tx: Prisma.TransactionClient,
   window: DeliveredWindow,
+  published: PublishedKey | null = null,
 ): Promise<Pick<DeliveredRows, 'horizon' | 'published' | 'publishedDays'>> {
   const spans = await tx.$queryRaw<
     { masterLessonId: string | null; total: number; day?: string | null; aheadRows: number; firstDate: string | null; lastDate: string | null }[]
-  >(horizonStatement(window));
+  >(horizonStatement(window, published));
   const total = spans.find((row) => row.total === 1 && (row.day ?? null) === null);
   if (!total || total.firstDate === null || total.lastDate === null) {
     return { horizon: [], published: null, publishedDays: [] };
@@ -408,8 +461,9 @@ export async function readDeliveredRows(
   tx: Prisma.TransactionClient,
   window: DeliveredWindow,
   dates: string[],
+  key: PublishedKey | null = null,
 ): Promise<DeliveredRows> {
-  const { horizon, published, publishedDays } = await readPublishedSpans(tx, window);
+  const { horizon, published, publishedDays } = await readPublishedSpans(tx, window, key);
   if (published === null) {
     return { audiences: [], horizon: [], published: null, publishedDays: [], dates: [] };
   }

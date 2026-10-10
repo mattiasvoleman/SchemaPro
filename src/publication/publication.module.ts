@@ -5,6 +5,7 @@ import { StaffingModule } from '../staffing/staffing.module';
 import { TimplanModule } from '../timplan/timplan.module';
 import { PublicationsController } from './publications.controller';
 import { PublicationsService } from './publications.service';
+import { DraftService } from './draft.service';
 
 /**
  * Publicering: validity-dated publications, the school's gate policy and the
@@ -18,7 +19,7 @@ import { PublicationsService } from './publications.service';
 @Module({
   imports: [CalendarModule, StaffingModule, TimplanModule],
   controllers: [CalendarController, PublicationsController],
-  providers: [PublicationsService],
+  providers: [PublicationsService, DraftService],
   exports: [PublicationsService],
 })
 export class PublicationModule {}

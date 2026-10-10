@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { Role } from '../auth/enums/role.enum';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
@@ -26,6 +26,7 @@ import {
 import { todayInZone } from '../common/utils/time';
 import type { TimplanCoverageQueryDto } from './dto/timplan-coverage.dto';
 import { describeDeliveredVerdict } from './timplan-delivered-messages';
+import { readGrundschema } from '../publication/published-grundschema';
 import { readDeliveredRows } from './timplan-delivered.sql';
 import { publishBreaksOf, readPublishClosures } from './publish-context';
 import { describePlannedVerdict } from './timplan-planned-messages';
@@ -148,26 +149,35 @@ export class TimplanCoverageService {
         yearEnd: planned.year.endDate,
         asOf: now,
       };
-      const masters = await tx.masterLesson.findMany({
-        where: { academicYearId: query.academicYearId },
-        select: {
-          id: true,
-          studentGroupId: true,
-          subjectId: true,
-          teacherId: true,
-          coTeacherId: true,
-          dayOfWeek: true,
-          startTime: true,
-          endTime: true,
-          recurrence: true,
-          startDate: true,
-          endDate: true,
-          isParked: true,
-          extraGroups: { select: { studentGroupId: true } },
-          participants: { select: { studentId: true } },
-        },
-        orderBy: { id: 'asc' },
-      });
+      // A teacher in a DRAFT school reads the published grundschema, and the
+      // calendar on its published key (published-grundschema.ts).
+      const { rows: masters, source } = await readGrundschema(
+        tx,
+        { role: user.role, schoolId: requireSchoolId(user) },
+        query.academicYearId,
+        () =>
+          tx.masterLesson.findMany({
+            where: { academicYearId: query.academicYearId },
+            select: {
+              id: true,
+              studentGroupId: true,
+              subjectId: true,
+              teacherId: true,
+              coTeacherId: true,
+              dayOfWeek: true,
+              startTime: true,
+              endTime: true,
+              recurrence: true,
+              startDate: true,
+              endDate: true,
+              isParked: true,
+              extraGroups: { select: { studentGroupId: true } },
+              participants: { select: { studentId: true } },
+            },
+            orderBy: { id: 'asc' },
+          }),
+        { timezone },
+      );
       const credits = await tx.timplanCredit.findMany({
         where: { academicYearId: query.academicYearId },
         select: {
@@ -190,6 +200,7 @@ export class TimplanCoverageService {
         tx,
         window,
         deliveredDatesToAsk(creditRows, breaks, planned.year, asOfDate),
+        source.kind === 'PUBLISHED' ? { publicationId: source.publicationId } : null,
       );
       return computeDeliveredCoverage({
         planned,
@@ -281,13 +292,13 @@ export class TimplanCoverageService {
  */
 export async function readScheduledInput(
   tx: Prisma.TransactionClient,
-  viewer: RosterViewer,
+  viewer: RosterViewer & { schoolId?: string | null },
   academicYearId: string,
   includePupils: boolean,
 ): Promise<{ planned: PlannedCoverageInput; lessons: ScheduledLessonInput[] } | null> {
   const planned = await readPlannedInput(tx, viewer, academicYearId, includePupils);
   if (!planned) return null;
-  const rows = await tx.masterLesson.findMany({
+  const live = () => tx.masterLesson.findMany({
     where: { academicYearId },
     select: {
       id: true,
@@ -304,6 +315,10 @@ export async function readScheduledInput(
     },
     orderBy: { id: 'asc' },
   });
+  // A teacher in a DRAFT school reads the published grundschema (published-grundschema.ts).
+  const rows = viewer.schoolId
+    ? (await readGrundschema(tx as PrismaClient, { role: viewer.role, schoolId: viewer.schoolId }, academicYearId, live)).rows
+    : await live();
   return {
     planned,
     lessons: rows.map((row) => ({

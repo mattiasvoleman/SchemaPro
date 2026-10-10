@@ -962,6 +962,26 @@ model PublishedLesson {
   @@map("PublishedLessons")
 }
 
+/// A calendar row whose template was deleted in a DRAFT school
+/// (20261011100000). Written only by the trigger on MasterLessons; the next
+/// publish adopts, deletes or leaves the row, and its record with it.
+model PublicationPendingRemoval {
+  calendarLessonId String   @id @db.Uuid
+  schoolId         String   @db.Uuid
+  academicYearId   String   @db.Uuid
+  /// The deleted template's id: the row's published key until it is settled.
+  masterLessonId   String   @db.Uuid
+  /// Whether the row was still SCHEDULED when its template was deleted.
+  reconcilable     Boolean
+  recordedAt       DateTime @default(now()) @db.Timestamptz(6)
+
+  calendarLesson CalendarLesson @relation(fields: [calendarLessonId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@index([academicYearId, schoolId])
+  @@index([schoolId])
+  @@map("PublicationPendingRemovals")
+}
+
 model AcademicYear {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId  String   @db.Uuid
@@ -1342,6 +1362,8 @@ model CalendarLesson {
   attendanceRecords AttendanceRecord[]
   extraGroups       CalendarLessonGroup[]
   participants      CalendarLessonStudent[]
+  /// Set while the lesson's template was deleted in a DRAFT school and no publish has settled it.
+  pendingRemovals   PublicationPendingRemoval[]
 
   // Not visible here, and load-bearing: an EXCLUDE constraint on
   // (roomId, tstzrange(startsAt, endsAt)) refuses a second SCHEDULED lesson in
@@ -1359,6 +1381,8 @@ model CalendarLesson {
   @@index([masterLessonId])
   @@index([date])
   @@index([startsAt])
+  /// The target of composite keys from Publicering's tables (20261011100000).
+  @@unique([id, schoolId])
   @@map("CalendarLessons")
 }
 

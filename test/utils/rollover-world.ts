@@ -708,7 +708,12 @@ export function givenRolloverWorld(
     get(target, key) {
       if (typeof key !== 'string') return undefined;
       if (key === '$queryRaw') {
-        return async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        // Both forms the client takes: a tagged template, or a Prisma.sql
+        // object (publish-mode.ts's mode read).
+        return async (first: TemplateStringsArray | { strings: readonly string[]; values: unknown[] }, ...rest: unknown[]) => {
+          const isSql = !Array.isArray(first) && 'strings' in first;
+          const strings = isSql ? (first as { strings: readonly string[] }).strings : (first as TemplateStringsArray);
+          const values = isSql ? (first as { values: unknown[] }).values : rest;
           const sql = strings.join('?').replace(/\s+/g, ' ').trim();
           calls.push({ model: '$queryRaw', method: '$queryRaw', args: null, sql, values });
           return world.queryRaw(sql, values);

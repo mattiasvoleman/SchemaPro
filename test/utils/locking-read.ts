@@ -10,8 +10,11 @@ import type { PrismaMock } from './prisma-mock';
  */
 
 /** Reconstructs the SQL text of a tagged-template $queryRaw call. */
-export const rawSql = (call: unknown[]): string =>
-  (call[0] as readonly string[]).join('?');
+export const rawSql = (call: unknown[]): string => {
+  // A tagged template's strings, or a Prisma.sql object's (publish-mode.ts).
+  const first = call[0] as readonly string[] | { strings: readonly string[] };
+  return (Array.isArray(first) ? first : (first as { strings: readonly string[] }).strings).join('?');
+};
 
 /** A table as a locking read of one of its rows has to name it. */
 export interface LockedTable {

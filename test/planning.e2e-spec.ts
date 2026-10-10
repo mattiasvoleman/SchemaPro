@@ -3563,6 +3563,9 @@ describe('Planning surface (e2e)', () => {
       givenTheYear();
       const queryRaw = jest.fn((query: { sql?: string; strings?: string[] }) => {
         const text = query.sql ?? (query.strings ?? []).join('?');
+        // A reader that is not the admin and finds no master lesson asks the
+        // school's publish mode (published-grundschema.ts): DIRECT here.
+        if (text.includes('app.school_publish_mode')) return Promise.resolve([{ mode: 'DIRECT' }]);
         if (text.includes('"aheadRows"')) {
           // Only the grand total of GROUPING SETS: no master lesson has rows.
           return Promise.resolve([

@@ -217,13 +217,93 @@ describe('Publicering (e2e)', () => {
     });
   });
 
+  describe('the draft layer', () => {
+    it('switches to DRAFT, recording a BASELINE per year with a grundschema', async () => {
+      harness.tx.school.findUnique.mockResolvedValue({ timezone: 'Europe/Stockholm' });
+      harness.tx.academicYear.findMany.mockResolvedValue([
+        { id: YEAR_ID, name: '2026/27', startDate: day('2026-08-17'), endDate: day('2027-06-11') },
+      ]);
+      harness.tx.publishedLesson.createMany.mockResolvedValue({ count: 1 });
+      const response = await request(http())
+        .post('/api/v1/publication-settings/mode')
+        .set('x-test-user', admin())
+        .send({ publishMode: 'DRAFT' })
+        .expect(200);
+      expect(response.body.publishMode).toBe('DRAFT');
+      expect(response.body.baselines).toEqual([
+        expect.objectContaining({ academicYearId: YEAR_ID, validTo: '2027-06-11', lessonCount: 1 }),
+      ]);
+      expect(harness.tx.timetablePublication.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ kind: 'BASELINE', publishMode: 'DRAFT', lessonCount: 1 }) }),
+      );
+      // The exclusive lock first.
+      expect(harness.tx.$queryRaw.mock.calls[0]![0].strings.join('?')).toContain('app.enter_publication');
+    });
+
+    it('refuses a mode that is not DIRECT or DRAFT', async () => {
+      await request(http())
+        .post('/api/v1/publication-settings/mode')
+        .set('x-test-user', admin())
+        .send({ publishMode: 'LIVE' })
+        .expect(400);
+    });
+
+    it('answers the draft state against what is published', async () => {
+      harness.tx.publicationPendingRemoval.count.mockResolvedValue(0);
+      const response = await request(http())
+        .get(`/api/v1/publications/state?academicYearId=${YEAR_ID}`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(response.body).toMatchObject({ academicYearId: YEAR_ID, publishMode: 'DIRECT', pendingRemovals: 0 });
+      expect(response.body.added).toHaveLength(1);
+    });
+
+    it('refuses discard and refill to a DIRECT school, and the old route to a DRAFT one', async () => {
+      const discard = await request(http())
+        .post('/api/v1/publications/discard')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID })
+        .expect(409);
+      expect(discard.body.code).toBe('PUBLISH_NOT_DRAFT');
+      const refill = await request(http())
+        .post('/api/v1/publications/refill')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID })
+        .expect(409);
+      expect(refill.body.code).toBe('PUBLISH_NOT_DRAFT');
+
+      harness.tx.publicationSettings.findUnique.mockResolvedValue({ publishMode: 'DRAFT' });
+      const legacy = await request(http())
+        .post('/api/v1/calendar/publish')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID })
+        .expect(409);
+      expect(legacy.body.code).toBe('PUBLISH_MODE_DRAFT');
+      expect(harness.tx.calendarLesson.create).not.toHaveBeenCalled();
+    });
+
+    it('never publishes a draft from a day that has begun', async () => {
+      harness.tx.publicationSettings.findUnique.mockResolvedValue({ publishMode: 'DRAFT' });
+      const response = await request(http())
+        .post('/api/v1/publications/preview')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, validFrom: '2026-08-17' })
+        .expect(400);
+      expect(response.body.code).toBe('PUBLISH_FROM_IN_PAST');
+    });
+  });
+
   describe('every route is the admin\'s', () => {
     const routes = [
       ['GET', '/api/v1/publication-settings'],
       ['PUT', '/api/v1/publication-settings'],
+      ['POST', '/api/v1/publication-settings/mode'],
       ['GET', `/api/v1/publications?academicYearId=${YEAR_ID}`],
+      ['GET', `/api/v1/publications/state?academicYearId=${YEAR_ID}`],
       ['POST', '/api/v1/publications/preview'],
       ['POST', '/api/v1/publications'],
+      ['POST', '/api/v1/publications/discard'],
+      ['POST', '/api/v1/publications/refill'],
       ['POST', '/api/v1/calendar/publish'],
     ] as const;
     const send = (method: string, path: string) => {

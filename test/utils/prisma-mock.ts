@@ -45,10 +45,20 @@ export function createTxMock(): TxMock {
   // fresh database would give. Left as a bare jest.fn() it resolves undefined,
   // and a service that iterates the result dies with "x is not iterable": a
   // crash that says nothing about the code under test, only about the mock.
-  return vivify(() =>
-    vivify((method) =>
-      method === 'findMany' ? jest.fn().mockResolvedValue([]) : jest.fn(),
-    ),
+  // The raw-statement methods are functions on a real client, not models. A
+  // grundschema writer's first statement is one (publish-mode.ts), so an
+  // unstubbed one answers as an empty result — DIRECT, the default mode —
+  // rather than "is not a function". A spec that asserts on raw SQL still
+  // replaces them with its own jest.fn(), and one that deletes its own gets
+  // this default back on the next touch.
+  return vivify((key) =>
+    key === '$queryRaw'
+      ? jest.fn().mockResolvedValue([])
+      : key === '$executeRaw'
+        ? jest.fn().mockResolvedValue(0)
+        : vivify((method) =>
+            method === 'findMany' ? jest.fn().mockResolvedValue([]) : jest.fn(),
+          ),
   ) as TxMock;
 }
 

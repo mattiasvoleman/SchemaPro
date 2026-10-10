@@ -147,6 +147,10 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
 
     const rooms = [`user:${profile.id}`];
     if (isStaff(socketProfile)) rooms.push(`staff:${profile.schoolId}`);
+    // The admins alone: a DRAFT school's grundschema edits are a draft that
+    // teachers do not see (Publicering, 20261011100000), so they are announced
+    // here and not in the staff room.
+    if (socketProfile.role === 'SCHOOL_ADMIN') rooms.push(`admin:${profile.schoolId}`);
     await client.join(rooms);
     // Only opaque ids in logs — never emails or names.
     this.logger.log(`Socket connected [user=${profile.id}]`);
@@ -222,10 +226,13 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     this.server.to(`staff:${schoolId}`).emit(TIMETABLE_PRESENCE_EVENT, { peers });
   }
 
-  /** Notifies a school that the master timetable changed (clients refetch). */
-  emitMasterTimetableUpdated(schoolId: string): void {
+  /**
+   * Notifies a school that the master timetable changed (clients refetch).
+   * `admin`: a draft edit, announced to the school's admins only.
+   */
+  emitMasterTimetableUpdated(schoolId: string, audience: 'staff' | 'admin' = 'staff'): void {
     this.server
-      .to(`staff:${schoolId}`)
+      .to(`${audience}:${schoolId}`)
       .emit(MASTER_TIMETABLE_UPDATED_EVENT, { changedAt: new Date().toISOString() });
   }
 

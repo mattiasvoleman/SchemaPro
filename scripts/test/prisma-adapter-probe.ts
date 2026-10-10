@@ -105,6 +105,8 @@ import type { RealtimeService } from '../../src/realtime/realtime.service';
 import type { ScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CalendarService } from '../../src/calendar/calendar.service';
 import { PublicationsService } from '../../src/publication/publications.service';
+import { DraftService } from '../../src/publication/draft.service';
+import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 
 /** Marks every row the probe writes that has a text column to mark. */
 const MARKER = 'prisma-adapter-probe';
@@ -3581,14 +3583,22 @@ async function runChecks(
         {
           'suggest a substitute': 20,
           'assign a substitute': 21,
-          'PATCH a new teacher': 33,
-          'PATCH a drag': 20,
-          'PATCH a drag back beside 8A': 23,
+          // +1 each since Publicering: app.enter_grundschema_write, the shared
+          // publication lock and the mode in one statement, first (below).
+          'PATCH a new teacher': 34,
+          'PATCH a drag': 21,
+          'PATCH a drag back beside 8A': 24,
           'place a meal': 7,
           'give a timplanspost a teacher': 22,
         },
         JSON.stringify(sent, null, 1),
       );
+      // The PATCH's first statement after BEGIN and the claims is the
+      // publication lock with its argument, the school.
+      for (const name of ['PATCH a new teacher', 'PATCH a drag', 'PATCH a drag back beside 8A']) {
+        const first = sent[name].find((statement) => !/^(BEGIN|SELECT set_config)/.test(statement));
+        assert.match(String(first), /app\.enter_grundschema_write\(\$1::uuid\)/, `${name} began with ${first}`);
+      }
       // A drag reads no läsår row at all: no scan, no relation load.
       for (const name of ['PATCH a drag', 'PATCH a drag back beside 8A']) {
         const years = sent[name].filter((statement) => /^SELECT "public"\."AcademicYears"/.test(statement));
@@ -3870,6 +3880,8 @@ async function runChecks(
   });
 
   await publicationChecks(owner, api);
+  await draftChecks(owner, api);
+  await equivalenceCheck(owner, api);
 }
 
 
@@ -4343,8 +4355,10 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   // (u5)'s school, whole, for a run that stopped inside it.
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-elevhistorik'`, [MARKER]);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
-  // The publicering checks' school, whole, for a run that stopped inside them.
-  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-publicering'`, [MARKER]);
+  // The publicering checks' schools, whole, for a run that stopped inside them.
+  await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b')`, [
+    MARKER,
+  ]);
   // (u4)'s pupil, for a run that stopped before deleting it.
   await owner.query(`DELETE FROM "Users" WHERE "schoolId" = $1 AND email = $2 || '-gf@example.invalid'`, [schoolId, MARKER]);
   // The throwaway person (p) deletes through the service; this is for a run that stopped first.
@@ -4444,8 +4458,10 @@ interface Fas3School {
  */
 async function givenFas3School(owner: Client): Promise<Fas3School> {
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
-  // The publicering checks' school, whole, for a run that stopped inside them.
-  await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-publicering'`, [MARKER]);
+  // The publicering checks' schools, whole, for a run that stopped inside them.
+  await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b')`, [
+    MARKER,
+  ]);
   const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
   const DAY = 24 * 60 * 60 * 1000;
   const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
@@ -4793,18 +4809,18 @@ interface PublicationSchool {
  * room, two weekly lessons and lunch switched on. Written as the owner; every
  * assertion then runs through the real services as app_authenticated.
  */
-async function givenPublicationSchool(owner: Client): Promise<PublicationSchool> {
+async function givenPublicationSchool(owner: Client, suffix = 'publicering'): Promise<PublicationSchool> {
   const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> =>
     (await owner.query<T>(sql, params)).rows[0];
   const school = await one<{ id: string }>(
     `INSERT INTO "Schools" (name, slug, timezone, "updatedAt") VALUES ($1, $2, 'Europe/Stockholm', now()) RETURNING id`,
-    [`${MARKER} publicering`, `${MARKER}-publicering`],
+    [`${MARKER} ${suffix}`, `${MARKER}-${suffix}`],
   );
   const person = (role: string, email: string, groupId: string | null = null) =>
     one<{ id: string; authId: string }>(
       `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "studentGroupId", "updatedAt")
        VALUES ($1, $2, 'Probe', 'Publicering', $3::"UserRole", gen_random_uuid(), true, $4, now()) RETURNING id, "authId"`,
-      [school.id, `${MARKER}-pub-${email}@example.invalid`, role, groupId],
+      [school.id, `${MARKER}-${suffix}-${email}@example.invalid`, role, groupId],
     );
   const admin = await person('SCHOOL_ADMIN', 'admin');
   const teacher = await person('TEACHER', 't1');
@@ -4841,6 +4857,17 @@ async function givenPublicationSchool(owner: Client): Promise<PublicationSchool>
     );
   const monday = await lesson(1, '08:00', '09:00', room.id);
   const wednesday = await lesson(3, '10:00', '11:00', null);
+  // A timplanspost and a post, so the teacher's figures have rows to show.
+  await owner.query(
+    `INSERT INTO "TeachingRequirements" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "lessonsPerWeek", "minutesPerLesson", "updatedAt")
+     VALUES ($1, $2, $3, $4, $5, 2, 60, now())`,
+    [school.id, year.id, subject.id, g7a.id, teacher.id],
+  );
+  await owner.query(
+    `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", "updatedAt")
+     VALUES ($1, $2, $3, 100, now())`,
+    [school.id, teacher.id, year.id],
+  );
   return {
     schoolId: school.id,
     yearId: year.id,
@@ -4862,6 +4889,8 @@ function publicationServicesFor(api: PrismaService): { calendar: CalendarService
     calendar,
     new TimplanCoverageService(api),
     new StaffingLoadService(api),
+    { recipientsForGroups: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
   );
   return { calendar, publications };
 }
@@ -4988,5 +5017,281 @@ async function publicationChecks(owner: Client, api: PrismaService): Promise<voi
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-publicering'`, [MARKER]);
+  }
+}
+
+/**
+ * DRAFT (20261011100000), end to end against Postgres, in a school of its own:
+ * the empty draft changes nothing a teacher or SS12000 reads (S8); a draft
+ * edit and a draft delete move no published row and no teacher figure (B2);
+ * the publish carries both over and only then do the figures move; the mode
+ * switch back is refused while the draft differs; discard, the legacy
+ * route's refusal, a restore's adoption and the refill.
+ */
+async function draftChecks(owner: Client, api: PrismaService): Promise<void> {
+  const school = await givenPublicationSchool(owner, 'utkast');
+  const { publications, calendar } = publicationServicesFor(api);
+  const drafts = new DraftService(
+    api,
+    calendar,
+    new RealScheduleVersionsService(api),
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+  );
+  const silent = {
+    recipientsForGroups: async () => [],
+    notifyUsers: async () => undefined,
+  } as unknown as NotificationsService;
+  const announced: Array<{ schoolId: string; draft: boolean }> = [];
+  const lessons = new MasterLessonsService(
+    api,
+    {
+      notifyMasterTimetableChanged: (schoolId: string, options?: { draft?: boolean }) =>
+        announced.push({ schoolId, draft: options?.draft === true }),
+    } as unknown as RealtimeService,
+    silent,
+  );
+  const rows = async (sql: string, params: unknown[] = [school.schoolId]) => (await owner.query(sql, params)).rows;
+  const calendarRows = () =>
+    rows(
+      `SELECT "masterLessonId", date::text, to_char("startsAt" AT TIME ZONE 'Europe/Stockholm', 'Dy HH24:MI') AS at, status::text
+         FROM "CalendarLessons" WHERE "schoolId" = $1 ORDER BY date, "startsAt"`,
+    );
+  const ss12000 = new Ss12000Service(api);
+  const load = new StaffingLoadService(api);
+  const coverage = new TimplanCoverageService(api);
+  const range = { academicYearId: school.yearId, from: '2096-09-01', to: '2096-12-31' };
+  /** Everything a teacher and the kommun read about the grundschema, in one object. */
+  const nonAdminReads = async () => ({
+    loadScheduled: await load.load(school.yearId, 'scheduled', school.teacher),
+    delivered: await load.delivered(range, school.teacher),
+    coverageScheduled: await coverage.scheduled({ academicYearId: school.yearId, layer: 'scheduled' }, school.teacher),
+    coverageDelivered: await coverage.delivered({ academicYearId: school.yearId, layer: 'delivered' }, school.teacher),
+    activities: await ss12000.activities(school.schoolId).then((page) => ({
+      ...page,
+      data: [...page.data].sort((a, b) => (a.id < b.id ? -1 : 1)),
+    })),
+    events: await ss12000.calendarEvents(school.schoolId, '2096-08-13', '2097-06-11', '500'),
+  });
+  // asOf/generated instants differ between two reads; everything else must not.
+  const stable = (value: unknown) => JSON.parse(JSON.stringify(value, (key, v) => (key === 'asOf' ? undefined : v)));
+  try {
+    // A published year in DIRECT, as the school has today.
+    await publications.legacyPublish({ academicYearId: school.yearId, fromDate: '2096-08-13' }, school.admin);
+    const before = stable(await nonAdminReads());
+    const publishedBefore = await calendarRows();
+
+    await check('(pub-b) S8: switching to DRAFT with no edit changes nothing a teacher or SS12000 reads', async () => {
+      const switched = await drafts.switchMode('DRAFT', school.admin);
+      assert.equal(switched.baselines.length, 1);
+      assert.equal(switched.baselines[0]!.lessonCount, 2);
+      assert.deepEqual(stable(await nonAdminReads()), before);
+      // The teacher's RLS now shows no master lesson; the admin's shows both.
+      const teacherSees = await api.withRls(school.teacher, (tx) => tx.masterLesson.count({ where: { academicYearId: school.yearId } }));
+      const adminSees = await api.withRls(school.admin, (tx) => tx.masterLesson.count({ where: { academicYearId: school.yearId } }));
+      assert.deepEqual([teacherSees, adminSees], [0, 2]);
+    });
+
+    await check('(pub-b) a draft edit and a draft delete move no published row and no teacher figure (B2)', async () => {
+      const moved = await lessons.update(school.monday, { dayOfWeek: 2 }, school.admin);
+      assert.deepEqual([moved.propagatedLessons, moved.removedCalendarLessons], [0, 0]);
+      assert.deepEqual(announced.at(-1), { schoolId: school.schoolId, draft: true });
+      const removed = await lessons.remove(school.wednesday, school.admin);
+      assert.equal(removed.removedCalendarLessons, 0);
+      // The deleted lesson's published rows are kept, their key nulled, and recorded.
+      const pending = await rows(`SELECT count(*)::int AS n FROM "PublicationPendingRemovals" WHERE "schoolId" = $1`);
+      const wednesdays = publishedBefore.filter((row) => row.masterLessonId === school.wednesday).length;
+      assert.ok(wednesdays > 30, `only ${wednesdays} published Wednesdays`);
+      assert.equal(pending[0].n, wednesdays);
+      assert.deepEqual(
+        (await calendarRows()).map((row) => [row.date, row.at, row.status]),
+        publishedBefore.map((row) => [row.date, row.at, row.status]),
+      );
+      assert.deepEqual(stable(await nonAdminReads()), before);
+      const state = await drafts.state(school.yearId, school.admin);
+      assert.deepEqual([state.added.length, state.changed.length, state.removed.length, state.pendingRemovals], [0, 1, 1, wednesdays]);
+    });
+
+    await check('(pub-b) the old route answers 409 in DRAFT; switching back is refused while the draft differs', async () => {
+      await assert.rejects(
+        publications.legacyPublish({ academicYearId: school.yearId }, school.admin),
+        (error: unknown) => error instanceof ConflictException && JSON.stringify(error.getResponse()).includes('PUBLISH_MODE_DRAFT'),
+      );
+      await assert.rejects(
+        drafts.switchMode('DIRECT', school.admin),
+        (error: unknown) => error instanceof ConflictException && JSON.stringify(error.getResponse()).includes('PUBLISH_DRAFT_PENDING'),
+      );
+    });
+
+    await check('(pub-b) the publish carries the draft over from its validFrom, and only then do the figures move', async () => {
+      const preview = await publications.preview({ academicYearId: school.yearId, validFrom: '2096-09-07' }, school.admin);
+      assert.equal(preview.publishMode, 'DRAFT');
+      assert.equal((await rows(`SELECT count(*)::int AS n FROM "PublicationPendingRemovals" WHERE "schoolId" = $1`))[0].n > 0, true);
+      const outcome = await publications.publish(
+        { academicYearId: school.yearId, validFrom: '2096-09-07', acknowledgeWarnings: true, expectedDigest: preview.digest },
+        school.admin,
+      );
+      assert.deepEqual(outcome.draft, preview.draft);
+      const after = await calendarRows();
+      // Before 7 September: as published. From it: Tuesday, no Wednesday.
+      const early = (list: typeof after) => list.filter((row) => row.date < '2096-09-07');
+      assert.deepEqual(early(after), early(publishedBefore).map((row) =>
+        row.masterLessonId === school.wednesday ? { ...row, masterLessonId: null } : row,
+      ));
+      const late = after.filter((row) => row.date >= '2096-09-07');
+      assert.ok(late.length > 30);
+      assert.ok(late.every((row) => row.at.startsWith('Tue 08:00') && row.masterLessonId === school.monday), JSON.stringify(late.slice(0, 3)));
+      const [log] = await rows(
+        `SELECT kind::text, "publishMode"::text, "validFrom"::text, "lessonCount", moved, removed, adopted
+           FROM "TimetablePublications" WHERE "schoolId" = $1 AND kind = 'PUBLISH'`,
+      );
+      assert.deepEqual(log, {
+        kind: 'PUBLISH',
+        publishMode: 'DRAFT',
+        validFrom: '2096-09-07',
+        lessonCount: 1,
+        moved: outcome.draft!.moved,
+        removed: outcome.draft!.removed,
+        adopted: 0,
+      });
+      assert.ok(outcome.draft!.moved > 30 && outcome.draft!.removed > 30);
+      // The deleted lesson's four Wednesdays before validFrom stay published,
+      // and recorded, until a publish covers them.
+      const left = await rows(
+        `SELECT cl.date::text FROM "PublicationPendingRemovals" p JOIN "CalendarLessons" cl ON cl.id = p."calendarLessonId"
+          WHERE p."schoolId" = $1 ORDER BY 1`,
+      );
+      assert.deepEqual(left.map((row) => row.date), ['2096-08-15', '2096-08-22', '2096-08-29', '2096-09-05']);
+      // A reader is shown the grundschema valid today, else the nearest one
+      // ahead: in this 2096 school that is still the BASELINE's first weeks.
+      assert.deepEqual(stable(await nonAdminReads()).activities, before.activities);
+    });
+
+    await check('(pub-b) with the draft published to the year’s end, the school may go back to DIRECT, and a DIRECT edit moves the calendar at once', async () => {
+      await assert.rejects(drafts.switchMode('DIRECT', school.admin), (error: unknown) => error instanceof ConflictException);
+      const all = await publications.publish({ academicYearId: school.yearId, acknowledgeWarnings: true }, school.admin);
+      assert.equal(all.publication.validFrom, '2096-08-13');
+      assert.equal((await rows(`SELECT count(*)::int AS n FROM "PublicationPendingRemovals" WHERE "schoolId" = $1`))[0].n, 0);
+      // Now the published grundschema the readers are shown is the draft's.
+      const now = stable(await nonAdminReads());
+      assert.equal(now.activities.data.length, 1);
+      assert.equal(now.activities.data[0].dayOfWeek, 2);
+      assert.notDeepEqual(now.delivered, before.delivered);
+      const back = await drafts.switchMode('DIRECT', school.admin);
+      assert.equal(back.publishMode, 'DIRECT');
+      const moved = await lessons.update(school.monday, { startTime: '09:00', endTime: '10:00' }, school.admin);
+      assert.ok(moved.propagatedLessons > 30);
+      assert.deepEqual(announced.at(-1), { schoolId: school.schoolId, draft: false });
+    });
+
+    await check('(pub-b) a restore in DRAFT keeps a vikarie through adoption, and writes no twin', async () => {
+      const versions = new RealScheduleVersionsService(api);
+      const saved = await versions.create(school.yearId, `${MARKER} före`, school.admin);
+      await drafts.switchMode('DRAFT', school.admin);
+      const [target] = await rows(
+        `SELECT id, date::text FROM "CalendarLessons" WHERE "schoolId" = $1 AND "masterLessonId" = $2 AND date >= '2096-10-01' ORDER BY date LIMIT 1`,
+        [school.schoolId, school.monday],
+      );
+      await owner.query(`DELETE FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = $1`, [target.id]);
+      await owner.query(
+        `INSERT INTO "CalendarLessonTeachers" ("schoolId", "calendarLessonId", "teacherId", role) VALUES ($1, $2, $3, 'SUBSTITUTE')`,
+        [school.schoolId, target.id, school.teacherId],
+      );
+      // The restore recreates every master under a new id.
+      await versions.restore(saved.id, school.admin);
+      const pending = (await rows(`SELECT count(*)::int AS n FROM "PublicationPendingRemovals" WHERE "schoolId" = $1`))[0].n;
+      assert.ok(pending > 30, `${pending} recorded`);
+      const outcome = await publications.publish({ academicYearId: school.yearId, acknowledgeWarnings: true }, school.admin);
+      assert.ok(outcome.draft!.adopted >= pending - 1, JSON.stringify(outcome.draft));
+      const kept = await rows(`SELECT role::text FROM "CalendarLessonTeachers" WHERE "calendarLessonId" = $1`, [target.id]);
+      assert.deepEqual(kept, [{ role: 'SUBSTITUTE' }]);
+      const twins = await rows(
+        `SELECT date::text, count(*)::int AS n FROM "CalendarLessons" WHERE "schoolId" = $1 AND date >= '2096-10-01' GROUP BY date HAVING count(*) > 1`,
+      );
+      assert.deepEqual(twins, []);
+    });
+
+    await check('(pub-b) a refill re-materialises the PUBLISHED snapshot, never the draft, and changes no validity', async () => {
+      await owner.query(`DELETE FROM "CalendarLessons" WHERE "schoolId" = $1 AND date BETWEEN '2096-11-02' AND '2096-11-08'`, [school.schoolId]);
+      // A draft edit the refill must not publish.
+      const [master] = await rows(`SELECT id FROM "MasterLessons" WHERE "schoolId" = $1 LIMIT 1`);
+      await lessons.update(master.id, { dayOfWeek: 4 }, school.admin);
+      const refill = await drafts.refill(
+        { academicYearId: school.yearId, validFrom: '2096-11-02', validTo: '2096-11-08' },
+        school.admin,
+      );
+      assert.equal(refill.result.created, 1);
+      const week = await rows(
+        `SELECT to_char("startsAt" AT TIME ZONE 'Europe/Stockholm', 'Dy') AS day FROM "CalendarLessons" WHERE "schoolId" = $1 AND date BETWEEN '2096-11-02' AND '2096-11-08'`,
+      );
+      assert.deepEqual(week, [{ day: 'Tue' }]);
+      const timeline = await publications.timeline(school.yearId, school.admin);
+      assert.ok(timeline.publications.some((row) => row.kind === 'REFILL'));
+      assert.ok(timeline.segments.every((segment) => timeline.publications.find((row) => row.id === segment.publicationId)?.kind !== 'REFILL'));
+    });
+
+    await check('(pub-b) discard puts the masters back under their own ids, and the school may leave DRAFT', async () => {
+      const discarded = await drafts.discard(school.yearId, school.admin);
+      assert.ok(discarded.restored >= 1);
+      const state = await drafts.state(school.yearId, school.admin);
+      assert.deepEqual([state.added.length, state.changed.length, state.removed.length], [0, 0, 0]);
+      assert.equal((await drafts.switchMode('DIRECT', school.admin)).publishMode, 'DIRECT');
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-utkast'`, [MARKER]);
+  }
+}
+
+/**
+ * The equivalence the DRAFT publish is built to: the same edits made in a
+ * DIRECT school (each reaching the calendar at once, then the old publish)
+ * and in a DRAFT school (kept as a draft, then published from today to the
+ * year's end) leave the same calendar. Two twin schools, compared on what a
+ * row is — date, times, status, room, subject — since their ids differ. The
+ * fixture has no day operations and no lov, so none of the documented
+ * divergences applies.
+ */
+async function equivalenceCheck(owner: Client, api: PrismaService): Promise<void> {
+  const direct = await givenPublicationSchool(owner, 'tvilling-a');
+  const draft = await givenPublicationSchool(owner, 'tvilling-b');
+  const { publications, calendar } = publicationServicesFor(api);
+  const drafts = new DraftService(
+    api,
+    calendar,
+    new RealScheduleVersionsService(api),
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+  );
+  const lessons = new MasterLessonsService(
+    api,
+    { notifyMasterTimetableChanged: () => undefined } as unknown as RealtimeService,
+    { recipientsForGroups: async () => [], notifyUsers: async () => undefined } as unknown as NotificationsService,
+  );
+  const shape = async (schoolId: string) =>
+    (
+      await owner.query(
+        `SELECT cl.date::text, cl."startsAt", cl."endsAt", cl.status::text, (cl."roomId" IS NULL) AS "noRoom",
+                cl."masterLessonId" IS NULL AS orphan, (SELECT count(*)::int FROM "CalendarLessonTeachers" t WHERE t."calendarLessonId" = cl.id) AS teachers
+           FROM "CalendarLessons" cl WHERE cl."schoolId" = $1 ORDER BY cl."startsAt", cl.date`,
+        [schoolId],
+      )
+    ).rows;
+  try {
+    await check('(pub-c) DRAFT edits and a publish to the year’s end leave the calendar DIRECT edits and the old publish leave', async () => {
+      for (const school of [direct, draft]) {
+        await publications.legacyPublish({ academicYearId: school.yearId, fromDate: '2096-08-13' }, school.admin);
+      }
+      await drafts.switchMode('DRAFT', draft.admin);
+      for (const school of [direct, draft]) {
+        await lessons.update(school.monday, { dayOfWeek: 2, startTime: '10:00', endTime: '11:00', roomId: null }, school.admin);
+        await lessons.remove(school.wednesday, school.admin);
+      }
+      await publications.legacyPublish({ academicYearId: direct.yearId }, direct.admin);
+      await publications.publish({ academicYearId: draft.yearId, acknowledgeWarnings: true }, draft.admin);
+      const a = await shape(direct.schoolId);
+      const b = await shape(draft.schoolId);
+      assert.ok(a.length > 30, `${a.length} rows`);
+      assert.deepEqual(b, a);
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug IN ($1 || '-tvilling-a', $1 || '-tvilling-b')`, [MARKER]);
   }
 }

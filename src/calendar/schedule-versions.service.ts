@@ -7,6 +7,8 @@ import {
 import type { LessonRecurrence, Prisma, PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
+import { requireSchoolId } from '../common/utils/request-context';
+import { enterGrundschemaWrite } from '../publication/publish-mode';
 
 /**
  * One lesson inside a version snapshot (times as `HH:MM`, dates as
@@ -177,6 +179,10 @@ export class ScheduleVersionsService {
     user: AuthenticatedUser,
   ): Promise<{ restoredLessons: number; safetyVersionId: string }> {
     return this.prisma.withRls(user, async (tx) => {
+      // The publication lock and the mode, first (publish-mode.ts). A restore
+      // writes no calendar row in either mode; in DRAFT the delete below records
+      // the published rows of the replaced masters for the next publish.
+      await enterGrundschemaWrite(tx, requireSchoolId(user));
       const version = await tx.scheduleVersion.findUnique({
         where: { id: versionId },
         select: {

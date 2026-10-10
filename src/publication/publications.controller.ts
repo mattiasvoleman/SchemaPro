@@ -7,11 +7,17 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import {
+  DiscardDraftDto,
   PublicationListQueryDto,
   PublicationRangeDto,
   PublishTimetableDto,
+  RefillPublicationDto,
+  SwitchPublishModeDto,
   UpsertPublicationSettingsDto,
 } from './dto/publication.dto';
+import { DraftService, type DraftState, type ModeSwitchResult } from './draft.service';
+import type { PublishResult } from '../calendar/calendar.service';
+import type { GateItem } from './publication-gates';
 import {
   PublicationsService,
   type PublicationOutcome,
@@ -32,7 +38,10 @@ import {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.SCHOOL_ADMIN)
 export class PublicationsController {
-  constructor(private readonly publications: PublicationsService) {}
+  constructor(
+    private readonly publications: PublicationsService,
+    private readonly drafts: DraftService,
+  ) {}
 
   @Get('publication-settings')
   settings(@CurrentUser() user: AuthenticatedUser): Promise<PublicationSettingsResponse> {
@@ -73,5 +82,43 @@ export class PublicationsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<PublicationOutcome> {
     return this.publications.publish(dto, user);
+  }
+
+  /** DIRECT ↔ DRAFT. To DRAFT records a BASELINE; back to DIRECT only with nothing unpublished. */
+  @Post('publication-settings/mode')
+  @HttpCode(HttpStatus.OK)
+  switchMode(
+    @Body() dto: SwitchPublishModeDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ModeSwitchResult> {
+    return this.drafts.switchMode(dto.publishMode, user);
+  }
+
+  /** The draft against what is published: added, changed, removed, pending. */
+  @Get('publications/state')
+  state(
+    @Query() query: PublicationListQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<DraftState> {
+    return this.drafts.state(query.academicYearId, user);
+  }
+
+  @Post('publications/discard')
+  @HttpCode(HttpStatus.OK)
+  discard(
+    @Body() dto: DiscardDraftDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ restored: number; removed: number; safetyVersionId: string }> {
+    return this.drafts.discard(dto.academicYearId, user);
+  }
+
+  @Post('publications/refill')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  refill(
+    @Body() dto: RefillPublicationDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ result: PublishResult; gates: GateItem[]; publicationId: string }> {
+    return this.drafts.refill(dto, user);
   }
 }

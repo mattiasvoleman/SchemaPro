@@ -529,6 +529,11 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     parent: 'TimetablePublication',
     reason: 'The lessons a publication of the old year published.',
   },
+  PublicationPendingRemoval: {
+    kind: 'FOLLOWS',
+    parent: 'CalendarLesson',
+    reason: 'A dated lesson of the old year whose template a draft deleted; it stays with its lesson.',
+  },
 };
 
 const isOn = (disposition: Disposition, options: RolloverOptions): boolean =>

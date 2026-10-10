@@ -9,6 +9,8 @@ import type { PrismaService } from '../database/prisma.service';
 import type { CalendarService } from '../calendar/calendar.service';
 import type { StaffingLoadService } from '../staffing/staffing-load.service';
 import type { TimplanCoverageService } from '../timplan/timplan-coverage.service';
+import type { NotificationsService } from '../notifications/notifications.service';
+import type { RealtimeService } from '../realtime/realtime.service';
 import {
   PUBLISH_GATES_REFUSED,
   PUBLISH_STALE,
@@ -103,6 +105,8 @@ describe('PublicationsService (DIRECT)', () => {
       calendar as unknown as CalendarService,
       coverage as unknown as TimplanCoverageService,
       load as unknown as StaffingLoadService,
+      { recipientsForGroups: jest.fn(async () => []), notifyUsers: jest.fn() } as unknown as NotificationsService,
+      { notifyMasterTimetableChanged: jest.fn() } as unknown as RealtimeService,
     );
   });
 

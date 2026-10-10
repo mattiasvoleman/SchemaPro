@@ -4,7 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import type { PrismaClient } from '@prisma/client';
+import type { LessonRecurrence, PrismaClient } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../database/prisma.service';
 import { runsOn } from './lesson-recurrence';
@@ -58,6 +58,39 @@ export interface PublishResult {
   skipped: number;
   fromDate: string;
   toDate: string;
+}
+
+/** One template as materialise reads it: the master lesson select below. */
+export interface MaterialiseTemplate {
+  id: string;
+  subjectId: string;
+  studentGroupId: string;
+  teacherId: string | null;
+  coTeacherId: string | null;
+  extraGroups: { studentGroupId: string }[];
+  participants: { studentId: string }[];
+  roomId: string | null;
+  recurrence: LessonRecurrence;
+  startDate: Date | null;
+  endDate: Date | null;
+  dayOfWeek: number;
+  startTime: Date;
+  endTime: Date;
+}
+
+/**
+ * What only Publicering asks of the materialiser. Absent — the old route, and
+ * every DIRECT publish — the materialiser is what it always was.
+ */
+export interface MaterialiseOptions {
+  /**
+   * The templates to materialise instead of the year's master lessons: a
+   * DRAFT school's refill publishes its PUBLISHED snapshot, not its draft.
+   * The caller leaves the parked ones out, as the default read does.
+   */
+  templates?: MaterialiseTemplate[];
+  /** Write no lesson starting at or before this instant (DRAFT never writes the past). */
+  notBefore?: Date;
 }
 
 /**
@@ -141,6 +174,7 @@ export class CalendarService {
     tx: PrismaClient,
     schoolId: string,
     dto: PublishScheduleDto,
+    options: MaterialiseOptions = {},
   ): Promise<PublishResult> {
     const year = await tx.academicYear.findUnique({
       where: { id: dto.academicYearId },
@@ -158,7 +192,7 @@ export class CalendarService {
     const timezone = year.school.timezone;
     const { fromDate, toDate } = publishWindow(year, dto);
 
-    const masterLessons = await tx.masterLesson.findMany({
+    const masterLessons = options.templates ?? await tx.masterLesson.findMany({
       // A parked lesson is not on the timetable, so it is not on the
       // calendar either. Its remembered slot is not a placement.
       where: { academicYearId: dto.academicYearId, isParked: false },
@@ -540,6 +574,15 @@ export class CalendarService {
 
         const startsAt = zonedTimeToUtc(date, timeToString(template.startTime), timezone);
         const endsAt = zonedTimeToUtc(date, timeToString(template.endTime), timezone);
+
+        // A DRAFT publish never writes a lesson that has already begun
+        // (Publicering): the past is not rewritten, and a row created there
+        // would be one the calendar says was held. The old route has no
+        // such bound, and is untouched by this line.
+        if (options.notBefore !== undefined && startsAt <= options.notBefore) {
+          skipped++;
+          continue;
+        }
 
         /*
          * Who is unavailable decides what to write, and the split is the

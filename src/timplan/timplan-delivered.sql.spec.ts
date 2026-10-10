@@ -125,3 +125,41 @@ describe('staffingCreditStatement (statement E)', () => {
     });
   });
 });
+
+describe('the published key (Publicering), read in a DRAFT school by somebody who must not see the draft', () => {
+  const key = { publicationId: '77777777-7777-4777-8777-777777777777' };
+  const range = { from: '2026-09-07', to: '2026-09-18' };
+
+  it('leaves every default statement as it was: no key, no change', () => {
+    expect(hash(horizonStatement(WINDOW, null))).toBe(hash(horizonStatement(WINDOW)));
+    expect(hash(staffingCreditStatement(WINDOW, range, 'me', null))).toBe(hash(staffingCreditStatement(WINDOW, range, 'me')));
+    expect(staffingCreditStatement(WINDOW, range, null).sql).toContain('JOIN "MasterLessons" m ON m."id" = l."masterLessonId"');
+  });
+
+  it('keys C on coalesce(the row\'s master, the pending record\'s)', () => {
+    const { sql } = horizonStatement(WINDOW, key);
+    expect(sql).toContain('coalesce(cl."masterLessonId", ppr."masterLessonId") AS "masterLessonId"');
+    expect(sql).toContain('LEFT JOIN "PublicationPendingRemovals" ppr ON ppr."calendarLessonId" = cl."id"');
+    expect(sql).toContain('GROUP BY GROUPING SETS ((k."masterLessonId"), (k."date"), ())');
+  });
+
+  it('reads the slot a substitute covered from the published snapshot on that key', () => {
+    const statement = staffingCreditStatement(WINDOW, range, 'me', key);
+    expect(statement.sql).not.toContain('"MasterLessons"');
+    expect(statement.sql).toContain('JOIN "PublishedLessons" m ON m."publicationId" = ');
+    expect(statement.sql).toContain('m."masterLessonId" = coalesce(l."masterLessonId", ppr."masterLessonId")');
+    expect(statement.values).toContain(key.publicationId);
+  });
+
+  // Pinned as P3's are, so a change to a variant is a decision taken here.
+  it.each([
+    ['horizonStatement(published)', () => horizonStatement(WINDOW, key), '186464a356afa4dd51d0745ae39fd8bcecb2e0cd59442aceceda0c97ca796a99'],
+    [
+      'staffingCreditStatement(published)',
+      () => staffingCreditStatement(WINDOW, range, 'me', key),
+      '9012dedced0dff85e750392bbfa3709335c183e29c5b48894ec1c5acbd0781ba',
+    ],
+  ] as const)('%s is pinned', (_name, build, expected) => {
+    expect(hash(build())).toBe(expected);
+  });
+});
