@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { FamilyController } from './family.controller';
 import type { FamilyService } from './family.service';
+import type { FamilyScheduleService } from './family-schedule.service';
 import type {
   CreateAbsenceReportDto,
   CreateGuardianLinkDto,
@@ -26,6 +27,7 @@ describe('FamilyController', () => {
     createLeaveRequest: jest.Mock;
     decideLeaveRequest: jest.Mock;
   };
+  let schedule: { week: jest.Mock };
   let controller: FamilyController;
   const user = testUser();
 
@@ -40,7 +42,11 @@ describe('FamilyController', () => {
         .fn()
         .mockResolvedValue({ id: REQUEST_ID, status: 'APPROVED', absenceDays: 2 }),
     };
-    controller = new FamilyController(family as unknown as FamilyService);
+    schedule = { week: jest.fn().mockResolvedValue({ lessons: [] }) };
+    controller = new FamilyController(
+      family as unknown as FamilyService,
+      schedule as unknown as FamilyScheduleService,
+    );
   });
 
   describe('delegation', () => {
@@ -168,5 +174,18 @@ describe('FamilyController', () => {
         Role.SCHOOL_ADMIN,
       ]);
     });
+
+    it('opens the child schedule to guardians and admins, not pupils or teachers', () => {
+      expect(rolesOf(FamilyController.prototype.childSchedule)).toEqual([
+        Role.GUARDIAN,
+        Role.SCHOOL_ADMIN,
+      ]);
+    });
+  });
+
+  it('childSchedule passes the query and the principal', async () => {
+    const query = { studentId: '55555555-5555-4555-8555-555555555555', week: '2026-10-13' };
+    await expect(controller.childSchedule(query, user)).resolves.toEqual({ lessons: [] });
+    expect(schedule.week).toHaveBeenCalledWith(query, user);
   });
 });
