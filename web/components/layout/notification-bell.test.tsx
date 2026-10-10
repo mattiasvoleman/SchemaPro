@@ -283,6 +283,9 @@ describe("NotificationBell inbox", () => {
     const startsAt = "2026-10-14T06:00:00.000Z";
     const endsAt = "2026-10-15T22:00:00.000Z";
     const when = new Date(startsAt).toLocaleString();
+    // The reader's local midnights, as the school's are for a reader in the school.
+    const dayStart = new Date(2026, 9, 12).toISOString();
+    const dayEnd = new Date(2026, 9, 13).toISOString();
     supabaseState.selectResults.push(
       ok([
         notif({
@@ -293,7 +296,15 @@ describe("NotificationBell inbox", () => {
           type: "LESSON_COVER_WITHDRAWN",
           meta: { subjectName: "Engelska", startsAt, groupName: "8B", roomName: "—" },
         }),
-        notif({ type: "TEACHER_ABSENCE_REPORTED", meta: { absenceId: "a-1", startsAt, endsAt } }),
+        notif({
+          type: "TEACHER_ABSENCE_REPORTED",
+          meta: { absenceId: "a-1", userId: "t-1", teacherName: "Karin Ek", startsAt, endsAt, wholeDays: false },
+        }),
+        // "Sjuk i dag": one whole day, midnight to midnight, is that one day.
+        notif({
+          type: "TEACHER_ABSENCE_REPORTED",
+          meta: { absenceId: "a-2", userId: "t-2", teacherName: "Bo Ek", startsAt: dayStart, endsAt: dayEnd, wholeDays: true },
+        }),
       ]),
     );
     renderBell();
@@ -308,7 +319,10 @@ describe("NotificationBell inbox", () => {
       screen.getByText(`lessonCoverWithdrawn(subject=Engelska|when=${when}|group=8B|room=—)`),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(`teacherAbsenceReported(from=${when}|to=${new Date(endsAt).toLocaleString()})`),
+      screen.getByText(`teacherAbsenceReported(teacher=Karin Ek|period=${when} – ${new Date(endsAt).toLocaleString()})`),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(`teacherAbsenceReported(teacher=Bo Ek|period=${new Date(dayStart).toLocaleDateString()})`),
     ).toBeInTheDocument();
   });
 

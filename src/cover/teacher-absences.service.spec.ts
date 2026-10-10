@@ -151,11 +151,24 @@ describe('TeacherAbsencesService', () => {
       tx.user.findMany.mockResolvedValue([{ id: ADMIN }]);
       const view = await service.create({ userId: ME, from: '2026-10-14', to: '2026-10-14', reasonId: REASON }, teacher);
       expect(view.selfReported).toBe(true);
+      tx.user.findUnique.mockImplementation((query: { select: Record<string, boolean> }) =>
+        Promise.resolve(query.select.firstName ? { firstName: 'Karin', lastName: 'Ek' } : { id: ME, role: 'TEACHER', isActive: true }),
+      );
+      notifications.notifyUsers.mockClear();
+      await service.create({ userId: ME, from: '2026-10-14', to: '2026-10-14', reasonId: REASON }, teacher);
+      // Who and when, so the admin need not open the register to know; never why.
       expect(notifications.notifyUsers).toHaveBeenCalledWith(tx, {
         schoolId: SCHOOL,
         userIds: [ADMIN],
         type: 'TEACHER_ABSENCE_REPORTED',
-        meta: { absenceId: ABSENCE, startsAt: '2026-10-13T22:00:00.000Z', endsAt: '2026-10-14T22:00:00.000Z' },
+        meta: {
+          absenceId: ABSENCE,
+          userId: ME,
+          teacherName: 'Karin Ek',
+          startsAt: '2026-10-13T22:00:00.000Z',
+          endsAt: '2026-10-14T22:00:00.000Z',
+          wholeDays: true,
+        },
       });
       expect(JSON.stringify(notifications.notifyUsers.mock.calls)).not.toContain(REASON);
     });

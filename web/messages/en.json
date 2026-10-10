@@ -1410,7 +1410,7 @@
     "roomBookingRejected": "Your booking of {room} on {when} was rejected.",
     "lessonSubstituteCover": "You are covering: {subject} on {when}, {group}, {room}.",
     "lessonCoverWithdrawn": "Cover cancelled: {subject} on {when}, {group}, {room}. You do not need to come.",
-    "teacherAbsenceReported": "A teacher has reported an absence {from} – {to}. See Teacher absence."
+    "teacherAbsenceReported": "{teacher} has reported an absence {period}. See Teacher absence."
   },
   "integrations": {
     "title": "Integrations",
