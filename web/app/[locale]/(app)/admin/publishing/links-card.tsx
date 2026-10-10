@@ -14,13 +14,13 @@
  */
 
 import { useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Copy } from "lucide-react";
 import type { MessageLookup } from "@/lib/engine-message";
 import { publicationErrorText } from "@/lib/publication-messages";
 import type { PublicationSettings, PublicLink, PublicScopeKind } from "@/lib/publication-types";
-import { publicViewerUrl } from "@/lib/publication-view";
+import { formatInstant, publicViewerUrl } from "@/lib/publication-view";
 import type { AcademicYear, Person, Room, StudentGroup } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,7 @@ interface LinksCardProps {
 
 export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: LinksCardProps) {
   const t = useTranslations("publishing");
+  const locale = useLocale();
   const tErrors = useTranslations("publishing.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
   const links = usePublicLinks(year.id);
@@ -230,7 +231,7 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
                     <TableCell>{t(`linkKinds.${link.kind}`)}</TableCell>
                     <TableCell>{targetName(link)}</TableCell>
                     <TableCell>{link.label ?? "–"}</TableCell>
-                    <TableCell className="tabular-nums">{link.lastUsedAt?.slice(0, 10) ?? "–"}</TableCell>
+                    <TableCell className="tabular-nums">{link.lastUsedAt ? formatInstant(link.lastUsedAt, locale) : "–"}</TableCell>
                     <TableCell>
                       <Badge variant={link.revokedAt || link.notShownBecause ? "outline" : "success"}>
                         {link.revokedAt

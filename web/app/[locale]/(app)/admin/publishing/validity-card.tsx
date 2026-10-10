@@ -22,7 +22,7 @@
  */
 
 import { useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { MessageLookup } from "@/lib/engine-message";
 import {
@@ -33,7 +33,7 @@ import {
 } from "@/lib/publication-queries";
 import { publicationErrorText, warningCodes } from "@/lib/publication-messages";
 import type { PublishMode } from "@/lib/publication-types";
-import { pendingCount, segmentViews, tallyGates } from "@/lib/publication-view";
+import { formatInstant, pendingCount, segmentViews, tallyGates } from "@/lib/publication-view";
 import type { AcademicYear } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,6 +63,7 @@ export function ValidityCard({
   onReview: () => void;
 }) {
   const t = useTranslations("publishing");
+  const locale = useLocale();
   const tErrors = useTranslations("publishing.errors") as unknown as MessageLookup;
   const tCommon = useTranslations("common");
   const timeline = usePublicationTimeline(year.id);
@@ -144,7 +145,7 @@ export function ValidityCard({
                     <TableCell className="tabular-nums">{segment.to}</TableCell>
                     <TableCell>{segment.publication ? t(`kind.${segment.publication.kind}`) : "–"}</TableCell>
                     <TableCell className="tabular-nums">
-                      {segment.publication?.publishedAt.slice(0, 10) ?? "–"}
+                      {segment.publication ? formatInstant(segment.publication.publishedAt, locale) : "–"}
                     </TableCell>
                     <TableCell>
                       <Badge variant={WHEN_VARIANT[segment.when]}>{t(`when.${segment.when}`)}</Badge>
@@ -258,7 +259,7 @@ export function ValidityCard({
                     const tally = tallyGates(row.gates);
                     return (
                       <TableRow key={row.id}>
-                        <TableCell className="tabular-nums">{row.publishedAt.slice(0, 16).replace("T", " ")}</TableCell>
+                        <TableCell className="tabular-nums">{formatInstant(row.publishedAt, locale, { withTime: true })}</TableCell>
                         <TableCell>
                           {t(`kind.${row.kind}`)}
                           {row.outcome === "REFUSED" ? ` · ${t("outcomeRefused")}` : ""}
