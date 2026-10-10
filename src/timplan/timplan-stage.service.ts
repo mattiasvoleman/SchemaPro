@@ -134,6 +134,16 @@ export interface TeachingTimeCardResponse {
  * counts it). Nothing here classifies a lesson: held time is P3's ONE
  * definition (timplan-delivered.sql.ts) and the arithmetic P2's and P3's.
  *
+ * ONLY THE HOME CLASS HAS HISTORY. Teaching-group membership
+ * (StudentGroupMember) is today's set: StudentGroupsService.setMembers
+ * replaces it (deleteMany + createMany), and nothing records when a pupil
+ * joined or left. Every window and every past year therefore reads the
+ * groups a pupil is in NOW: a pupil who left the Spanska group in March of a
+ * recorded year loses that group's whole year, one who joined mid-year gets
+ * all of it. This is P2's and P3's own reading of a group (inherited, not
+ * new); it can create or hide a finding in an M2 or nivågrupp cell of a
+ * complete stage. A membership history is a later step.
+ *
  * THE ACTIVE YEAR ONLY. The view answers for the active year as of the
  * school's today; any other year answers isActiveYear: false and nothing
  * else (no R6 refusal is added: no roster basis is asked).
