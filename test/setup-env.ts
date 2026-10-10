@@ -33,3 +33,5 @@ process.env['AI_ENGINE_API_KEY'] = 'test-key';
 process.env['AI_ENGINE_TIMEOUT_MS'] = '15000';
 process.env['THROTTLE_TTL_SECONDS'] = '60';
 process.env['THROTTLE_LIMIT'] = '1000';
+// The public viewer trusts X-Viewer-Client-Ip only beside this key.
+process.env['PUBLIC_VIEWER_PROXY_KEY'] = 'test-viewer-proxy-key-of-at-least-32-chars';

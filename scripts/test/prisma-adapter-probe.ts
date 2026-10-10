@@ -107,6 +107,8 @@ import { CalendarService } from '../../src/calendar/calendar.service';
 import { PublicationsService } from '../../src/publication/publications.service';
 import { DraftService } from '../../src/publication/draft.service';
 import { CancellationBatchesService } from '../../src/publication/cancellation-batches.service';
+import { PublicLinksService } from '../../src/publication/public-links.service';
+import { tokenHashOf } from '../../src/publication/public-token';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 
 /** Marks every row the probe writes that has a text column to mark. */
@@ -3884,6 +3886,7 @@ async function runChecks(
   await draftChecks(owner, api);
   await equivalenceCheck(owner, api);
   await batchChecks(owner, api);
+  await viewerChecks(owner, api);
 }
 
 
@@ -4359,7 +4362,7 @@ async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
   // The publicering checks' schools, whole, for a run that stopped inside them.
   await owner.query(
-    `DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b', $1 || '-avbokning')`,
+    `DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b', $1 || '-avbokning', $1 || '-visare')`,
     [MARKER],
   );
   // (u4)'s pupil, for a run that stopped before deleting it.
@@ -4463,7 +4466,7 @@ async function givenFas3School(owner: Client): Promise<Fas3School> {
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-fas3'`, [MARKER]);
   // The publicering checks' schools, whole, for a run that stopped inside them.
   await owner.query(
-    `DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b', $1 || '-avbokning')`,
+    `DELETE FROM "Schools" WHERE slug IN ($1 || '-publicering', $1 || '-utkast', $1 || '-tvilling-a', $1 || '-tvilling-b', $1 || '-avbokning', $1 || '-visare')`,
     [MARKER],
   );
   const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0]!;
@@ -5426,5 +5429,185 @@ async function batchChecks(owner: Client, api: PrismaService): Promise<void> {
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-avbokning'`, [MARKER]);
+  }
+}
+
+/**
+ * The public viewer (20261011120000) against Postgres: what the one door,
+ * app.public_timetable(), answers through PrismaService.withPublicViewer — no
+ * principal, a 2 s statement timeout — for a class, a room and a teacher, and
+ * that it answers nothing for every link that does not resolve. The payload
+ * is asserted on its exact keys and searched for every pupil's name and
+ * e-mail, and for the cancelled lesson's note, which must never appear.
+ */
+async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
+  const one = async <T extends object>(sql: string, params: unknown[]): Promise<T> => (await owner.query<T>(sql, params)).rows[0];
+  const school = await givenPublicationSchool(owner, 'visare');
+  const links = new PublicLinksService(api);
+  const { publications } = publicationServicesFor(api);
+  // A second teacher, hidden later; signatures on both posts.
+  const hidden = await one<{ id: string }>(
+    `INSERT INTO "Users" ("schoolId", email, "firstName", "lastName", role, "authId", "isActive", "updatedAt")
+     VALUES ($1, $2, 'Skyddad', 'Lärare', 'TEACHER', gen_random_uuid(), true, now()) RETURNING id`,
+    [school.schoolId, `${MARKER}-visare-hidden@example.invalid`],
+  );
+  await owner.query(`UPDATE "TeacherEmployments" SET signature = 'ANLI' WHERE "userId" = $1`, [school.teacherId]);
+  await owner.query(
+    `INSERT INTO "TeacherEmployments" ("schoolId", "userId", "academicYearId", "employmentPercent", signature, "updatedAt")
+     VALUES ($1, $2, $3, 100, 'SKYD', now())`,
+    [school.schoolId, hidden.id, school.yearId],
+  );
+  // A teaching group of one pupil, named after him, and a big one.
+  const pupils = (await owner.query<{ id: string; firstName: string; lastName: string; email: string }>(
+    `SELECT id, "firstName", "lastName", email FROM "Users" WHERE "schoolId" = $1 AND role = 'STUDENT'`,
+    [school.schoolId],
+  )).rows;
+  await owner.query(`UPDATE "Users" SET "firstName" = 'Ahmed', "lastName" = 'Probesson' WHERE id = $1`, [pupils[0]!.id]);
+  const small = await one<{ id: string }>(
+    `INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+     VALUES ($1, $2, 'Sva – Ahmed', 'TEACHING_GROUP', now()) RETURNING id`,
+    [school.schoolId, school.yearId],
+  );
+  await owner.query(`INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES ($1, $2, $3)`, [
+    school.schoolId,
+    small.id,
+    pupils[0]!.id,
+  ]);
+  const lesson = (groupId: string, day: number, start: string, end: string, teacherId: string) =>
+    one<{ id: string }>(
+      `INSERT INTO "MasterLessons" ("schoolId", "academicYearId", "subjectId", "studentGroupId", "teacherId", "roomId", "dayOfWeek", "startTime", "endTime", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::time, $9::time, now()) RETURNING id`,
+      [school.schoolId, school.yearId, school.subject, groupId, teacherId, school.room, day, start, end],
+    );
+  await lesson(small.id, 2, '10:00', '11:00', school.teacherId);
+  const named = await lesson(school.class7a, 4, '09:00', '10:00', school.teacherId);
+  await owner.query(`INSERT INTO "MasterLessonStudents" ("schoolId", "masterLessonId", "studentId") VALUES ($1, $2, $3)`, [
+    school.schoolId,
+    named.id,
+    pupils[1]!.id,
+  ]);
+  await lesson(school.class7a, 5, '08:00', '09:00', hidden.id);
+  // The week of Monday 1 October 2096, published.
+  await publications.legacyPublish({ academicYearId: school.yearId, fromDate: '2096-10-01', toDate: '2096-10-07' }, school.admin);
+  await owner.query(
+    `INSERT INTO "CalendarLunches" ("schoolId", "studentGroupId", date, "startsAt", "endsAt", "updatedAt")
+     VALUES ($1, $2, '2096-10-01', '2096-10-01T10:30:00Z', '2096-10-01T11:00:00Z', now())`,
+    [school.schoolId, school.class7a],
+  ).catch(() => undefined);
+  await owner.query(
+    `UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'TEACHER_UNAVAILABLE', note = 'Läraren är sjukskriven'
+      WHERE "schoolId" = $1 AND date = '2096-10-05'`,
+    [school.schoolId],
+  );
+  const view = (token: string, target: string | null = null, date = '2096-10-03') =>
+    api.withPublicViewer(async (tx) => {
+      const [row] = await tx.$queryRaw<{ doc: Record<string, unknown> | null }[]>`
+        SELECT app.public_timetable(${tokenHashOf(token)}, ${target}::uuid, ${date}::date) AS "doc"`;
+      return row?.doc ?? null;
+    });
+  const secrets = (doc: unknown) => {
+    const text = JSON.stringify(doc);
+    for (const pupil of pupils) {
+      for (const value of [pupil.email, pupil.firstName, pupil.lastName, 'Ahmed', 'Probesson']) {
+        assert.ok(!text.includes(value), `the viewer leaked ${value}`);
+      }
+    }
+    for (const value of ['sjukskriven', 'TEACHER_UNAVAILABLE', 'Skyddad', 'SKYD', 'Sva – Ahmed', 'cancelCause', 'note', 'id"']) {
+      assert.ok(!text.includes(value), `the viewer leaked ${value}`);
+    }
+  };
+  try {
+    await publications.upsertSettings(
+      {
+        publicViewerEnabled: true,
+        publicGroups: true,
+        publicTeachers: true,
+        publicRooms: true,
+        publicTeacherDisplay: 'SIGNATURE',
+      },
+      school.admin,
+    );
+    await links.setHidden(hidden.id, true, school.admin);
+    const klass = await links.create({ academicYearId: school.yearId, kind: 'GROUP', targetId: school.class7a }, school.admin);
+    const room = await links.create({ academicYearId: school.yearId, kind: 'ROOM', targetId: school.room }, school.admin);
+    const teacher = await links.create({ academicYearId: school.yearId, kind: 'TEACHER', targetId: school.teacherId }, school.admin);
+    const index = await links.create({ academicYearId: school.yearId, kind: 'GROUP' }, school.admin);
+
+    await check('(pub-e) a class\'s week: the whitelist\'s keys, a hidden teacher unnamed, a cancelled lesson without its cause, no pupil anywhere', async () => {
+      const doc = (await view(klass.token)) as {
+        days: Array<{ date: string; lessons: Array<Record<string, unknown>>; meals?: unknown[] }>;
+      } & Record<string, unknown>;
+      assert.ok(doc, 'the class link did not resolve');
+      assert.deepEqual(Object.keys(doc).sort(), ['days', 'kind', 'school', 'title', 'week']);
+      assert.deepEqual(doc.week, { from: '2096-10-01', to: '2096-10-07', isoWeek: '2096-W40' });
+      assert.equal(doc.days.length, 7);
+      assert.deepEqual(Object.keys(doc.days[0]!).sort(), ['date', 'lessons', 'meals']);
+      const lessons = doc.days.flatMap((day) => day.lessons.map((entry) => ({ date: day.date, ...entry })));
+      for (const entry of lessons) {
+        assert.deepEqual(Object.keys(entry).sort(), ['cancelled', 'date', 'end', 'groups', 'room', 'start', 'subject', 'teachers']);
+      }
+      // Monday and Wednesday as published; Thursday's is a named pupil's (left out); Friday's teacher is hidden.
+      assert.deepEqual(
+        lessons.map((entry) => [entry.date, entry.start, entry.teachers, entry.cancelled]),
+        [
+          ['2096-10-01', '08:00', ['ANLI'], false],
+          ['2096-10-03', '10:00', ['ANLI'], false],
+          ['2096-10-05', '08:00', [], true],
+        ],
+      );
+      secrets(doc);
+    });
+
+    await check('(pub-e) a room\'s week shows a named pupil\'s lesson as busy, and a one-pupil group without its name', async () => {
+      const doc = (await view(room.token)) as { days: Array<{ date: string; lessons: Array<Record<string, unknown>> }> };
+      const lessons = doc.days.flatMap((day) => day.lessons.map((entry) => ({ date: day.date, ...entry })));
+      const thursday = lessons.find((entry) => entry.date === '2096-10-04');
+      assert.deepEqual(thursday, { date: '2096-10-04', start: '09:00', end: '10:00', busy: true });
+      const tuesday = lessons.find((entry) => entry.date === '2096-10-02');
+      assert.deepEqual(tuesday?.groups, [null]);
+      assert.ok(!('meals' in doc.days[0]!), 'a room has no meals');
+      secrets(doc);
+    });
+
+    await check('(pub-e) a teacher\'s week shows only what is held as scheduled, with no cancelled field', async () => {
+      const doc = (await view(teacher.token)) as { title: string; days: Array<{ lessons: Array<Record<string, unknown>> }> };
+      assert.equal(doc.title, 'ANLI');
+      const lessons = doc.days.flatMap((day) => day.lessons);
+      assert.equal(lessons.length, 3);
+      for (const entry of lessons) assert.ok(!('cancelled' in entry), 'a teacher\'s page says a lesson is cancelled');
+      secrets(doc);
+    });
+
+    await check('(pub-e) an index lists classes and big enough groups only; a small group and a hidden teacher cannot be linked', async () => {
+      const doc = (await view(index.token)) as { targets: Array<{ id: string; label: string }> };
+      assert.deepEqual(doc.targets.map((target) => target.label), [`${MARKER} 7A`]);
+      assert.ok(await view(index.token, school.class7a));
+      assert.equal(await view(index.token, small.id), null);
+      await assert.rejects(
+        links.create({ academicYearId: school.yearId, kind: 'GROUP', targetId: small.id }, school.admin),
+        (error: unknown) => JSON.stringify((error as { getResponse?: () => unknown }).getResponse?.()).includes('PUBLIC_GROUP_TOO_SMALL'),
+      );
+      await assert.rejects(
+        links.create({ academicYearId: school.yearId, kind: 'TEACHER', targetId: hidden.id }, school.admin),
+        (error: unknown) => JSON.stringify((error as { getResponse?: () => unknown }).getResponse?.()).includes('PUBLIC_TEACHER_NOT_SHOWABLE'),
+      );
+    });
+
+    await check('(pub-e) nothing for a revoked link, a scope switched off, the viewer switched off, an unknown token; and 2 s at most', async () => {
+      const timeout = await api.withPublicViewer((tx) => tx.$queryRaw<{ statement_timeout: string }[]>`SHOW statement_timeout`);
+      assert.equal(timeout[0]!.statement_timeout, '2s');
+      await links.revoke(room.link.id, school.admin);
+      assert.equal(await view(room.token), null);
+      await publications.upsertSettings({ publicTeachers: false }, school.admin);
+      assert.equal(await view(teacher.token), null);
+      await publications.upsertSettings({ publicViewerEnabled: false }, school.admin);
+      assert.equal(await view(klass.token), null);
+      assert.equal(await view('A'.repeat(43)), null);
+      // Without a principal the API role reads no link and no setting itself.
+      const direct = await api.withPublicViewer((tx) => tx.publicTimetableLink.count());
+      assert.equal(direct, 0);
+    });
+  } finally {
+    await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-visare'`, [MARKER]);
   }
 }

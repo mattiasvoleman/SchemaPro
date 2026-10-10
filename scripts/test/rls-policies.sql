@@ -8433,3 +8433,115 @@ BEGIN
     IF bad IS NOT NULL THEN RAISE EXCEPTION 'batch: % holds % on the batch tables', api_role, bad; END IF;
   END LOOP;
 END $$;
+
+-- ---------------------------------------------------------------------------
+-- Section 27h: skolans schema kan visas utan inloggning.
+--
+-- PublicTimetableLinks and TeacherPublicLabels (20261011120000): the admin's
+-- tables, with CHECKs on the link's shape and a guard on its target; the
+-- viewer's columns on PublicationSettings with theirs. The one door,
+-- app.public_timetable(), is the API role's to execute and nobody else's:
+-- PostgREST's anon and authenticated cannot call it. What it answers is the
+-- adapter probe's to assert, against a published week.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  y uuid; grp uuid; pupil uuid; teacher uuid; n bigint;
+BEGIN
+  SELECT id INTO y FROM "AcademicYears" WHERE "schoolId" = school AND "isActive";
+  SELECT id INTO teacher FROM "Users" WHERE "schoolId" = school AND role = 'TEACHER' AND "isActive" ORDER BY id LIMIT 1;
+  SELECT id INTO pupil FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" ORDER BY id LIMIT 1;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, kind, "updatedAt")
+  VALUES (school, y, 'rls27h liten grupp', 'TEACHING_GROUP', now()) RETURNING id INTO grp;
+  INSERT INTO "StudentGroupMembers" ("schoolId", "studentGroupId", "studentId") VALUES (school, grp, pupil);
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetGroupId", "tokenHash")
+    VALUES (school, y, 'GROUP', grp, repeat('a', 64));
+    RAISE EXCEPTION 'viewer: a one-pupil group was linked';
+  EXCEPTION WHEN SQLSTATE 'PB400' THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetTeacherId", "tokenHash", label)
+    VALUES (school, y, 'TEACHER', teacher, repeat('b', 64), 'Anna');
+    RAISE EXCEPTION 'viewer: a teacher link took a free-text name';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "tokenHash")
+    VALUES (school, y, 'TEACHER', repeat('c', 64));
+    RAISE EXCEPTION 'viewer: an index of teachers was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "tokenHash")
+    VALUES (school, y, 'ROOM', 'the-token-itself');
+    RAISE EXCEPTION 'viewer: a token was stored instead of its hash';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  INSERT INTO "TeacherPublicLabels" ("userId", "schoolId", hidden) VALUES (teacher, school, true);
+  BEGIN
+    INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "targetTeacherId", "tokenHash")
+    VALUES (school, y, 'TEACHER', teacher, repeat('d', 64));
+    RAISE EXCEPTION 'viewer: a hidden teacher was linked';
+  EXCEPTION WHEN SQLSTATE 'PB400' THEN NULL;
+  END;
+  INSERT INTO "PublicTimetableLinks" ("schoolId", "academicYearId", kind, "tokenHash") VALUES (school, y, 'ROOM', repeat('e', 64));
+  BEGIN
+    INSERT INTO "PublicationSettings" ("schoolId", "publicTeachers", "publicTeacherDisplay") VALUES (school, true, 'NONE')
+    ON CONFLICT ("schoolId") DO UPDATE SET "publicTeachers" = true, "publicTeacherDisplay" = 'NONE';
+    RAISE EXCEPTION 'viewer: teachers'' pages naming nobody were stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "PublicationSettings" ("schoolId", "publicMinGroupSize") VALUES (school, 2)
+    ON CONFLICT ("schoolId") DO UPDATE SET "publicMinGroupSize" = 2;
+    RAISE EXCEPTION 'viewer: a minimum group of 2 was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  PERFORM set_config('app.test_rls27h_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE id = teacher), true);
+END $$;
+
+SELECT set_config('request.jwt.claims', json_build_object('sub', current_setting('app.test_rls27h_teacher_sub'))::text, true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT (SELECT count(*) FROM "PublicTimetableLinks") + (SELECT count(*) FROM "TeacherPublicLabels") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'viewer: a teacher reads % link or label row(s) — even their own hidden flag', n; END IF;
+END $$;
+ROLLBACK;
+
+DO $$
+DECLARE bad text; api_role text;
+BEGIN
+  SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
+   WHERE polrelid IN ('public."PublicTimetableLinks"'::regclass, 'public."TeacherPublicLabels"'::regclass);
+  IF bad IS DISTINCT FROM 'public_timetable_links_admin_all:*,teacher_public_labels_admin_all:*' THEN
+    RAISE EXCEPTION 'viewer: policies are %', bad;
+  END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role') LOOP
+    IF has_function_privilege(api_role, 'app.public_timetable(text, uuid, date)', 'EXECUTE') THEN
+      RAISE EXCEPTION 'viewer: % may call the viewer''s door', api_role;
+    END IF;
+    SELECT string_agg(p, ', ') INTO bad FROM unnest(ARRAY['TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."PublicTimetableLinks"', p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'viewer: % holds % on the links', api_role, bad; END IF;
+  END LOOP;
+  IF NOT has_function_privilege('app_authenticated', 'app.public_timetable(text, uuid, date)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'viewer: the API cannot call the viewer''s door';
+  END IF;
+  IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = 'app.public_timetable(text, uuid, date)'::regprocedure) THEN
+    RAISE EXCEPTION 'viewer: the door is not SECURITY DEFINER';
+  END IF;
+END $$;
+
+-- With no principal the API role still reads no link itself: only the door does.
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "PublicTimetableLinks") <> 0 OR (SELECT count(*) FROM "TeacherPublicLabels") <> 0 THEN
+    RAISE EXCEPTION 'viewer: links are readable without a principal';
+  END IF;
+END $$;

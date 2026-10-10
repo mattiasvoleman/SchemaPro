@@ -16,7 +16,9 @@ import { createTestApp, type TestHarness } from './utils/test-app';
  */
 
 /** Route paths that are deliberately reachable without a principal. */
-const PUBLIC_PATHS = ['health', 'ss12000/v1'];
+// public/v1/timetables: Schemavisaren, behind share links and its own rate
+// limit (src/publication/public-timetable.controller.ts).
+const PUBLIC_PATHS = ['health', 'public/v1/timetables', 'ss12000/v1'];
 
 interface RouteInfo {
   controller: string;
@@ -84,7 +86,7 @@ describe('Route guard coverage (e2e)', () => {
     expect(ungated.map((r) => `${r.controller}.${r.method}`)).toEqual([]);
   });
 
-  it('keeps the public surface to the health probes and SS12000', () => {
+  it('keeps the public surface to the health probes, the public viewer and SS12000', () => {
     const publicPaths = [
       ...new Set(routes.filter((r) => r.isPublic).map((r) => r.path)),
     ].sort();

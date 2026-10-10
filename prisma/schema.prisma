@@ -872,6 +872,18 @@ enum PublicationOutcome {
   REFUSED
 }
 
+enum PublicScopeKind {
+  GROUP
+  TEACHER
+  ROOM
+}
+
+enum TeacherDisplay {
+  NONE
+  SIGNATURE
+  NAME
+}
+
 /// At most one row per school; no row means every default (DIRECT, all WARN).
 model PublicationSettings {
   id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -891,6 +903,16 @@ model PublicationSettings {
   gateWeekSplit      PublishGateMode @default(WARN)
   gateGap            PublishGateMode @default(WARN)
   gateDayOpsLost     PublishGateMode @default(WARN)
+  /// The public viewer (20261011120000): everything off by default.
+  publicViewerEnabled  Boolean        @default(false)
+  publicGroups         Boolean        @default(false)
+  publicTeachers       Boolean        @default(false)
+  publicRooms          Boolean        @default(false)
+  /// NONE by default; the TEACHER scope requires another (CHECK).
+  publicTeacherDisplay TeacherDisplay @default(NONE)
+  publicShowMeals      Boolean        @default(true)
+  /// The smallest teaching group shown by name. 3..30.
+  publicMinGroupSize   Int            @default(5)
   createdAt          DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime        @default(now()) @updatedAt @db.Timestamptz(6)
 
@@ -1053,6 +1075,40 @@ model CancellationBatchCredit {
   @@id([batchId, creditId])
   @@index([schoolId])
   @@map("CancellationBatchCredits")
+}
+
+/// A shared, revocable link to the public viewer (20261011120000). Only the
+/// token's sha256 is stored. The keys to the school, year, target and creator
+/// are composite (id, schoolId) foreign keys in the migration; the API reads
+/// and writes this table through the admin's RLS and never navigates them.
+model PublicTimetableLink {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String          @db.Uuid
+  academicYearId  String          @db.Uuid
+  kind            PublicScopeKind
+  targetGroupId   String?         @db.Uuid
+  targetTeacherId String?         @db.Uuid
+  targetRoomId    String?         @db.Uuid
+  tokenHash       String          @unique
+  label           String?
+  createdAt       DateTime        @default(now()) @db.Timestamptz(6)
+  createdByUserId String?         @db.Uuid
+  revokedAt       DateTime?       @db.Timestamptz(6)
+  lastUsedAt      DateTime?       @db.Timestamptz(6)
+
+  @@index([schoolId, academicYearId])
+  @@map("PublicTimetableLinks")
+}
+
+/// A teacher never shown on a public timetable (skyddad identitet).
+model TeacherPublicLabel {
+  userId    String   @id @db.Uuid
+  schoolId  String   @db.Uuid
+  hidden    Boolean  @default(false)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([schoolId])
+  @@map("TeacherPublicLabels")
 }
 
 model AcademicYear {

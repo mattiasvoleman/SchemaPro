@@ -440,6 +440,85 @@ describe('Publicering (e2e)', () => {
     });
   });
 
+  describe('the public viewer\'s links', () => {
+    const LINK_ID = '77777777-7777-4777-8777-777777777777';
+    const TEACHER_ID = '88888888-8888-4888-8888-888888888888';
+    const row = (data: Record<string, unknown>) => ({
+      id: LINK_ID,
+      academicYearId: YEAR_ID,
+      kind: data.kind,
+      targetGroupId: data.targetGroupId ?? null,
+      targetTeacherId: data.targetTeacherId ?? null,
+      targetRoomId: data.targetRoomId ?? null,
+      label: data.label ?? null,
+      createdAt: new Date('2026-10-12T08:00:00Z'),
+      revokedAt: null,
+      lastUsedAt: null,
+    });
+
+    it('makes a link and shows its token once, storing only the hash', async () => {
+      harness.tx.publicTimetableLink.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => row(data));
+      const response = await request(http())
+        .post('/api/v1/public-links')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID, kind: 'TEACHER', targetId: TEACHER_ID })
+        .expect(201);
+      expect(response.body.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      const stored = harness.tx.publicTimetableLink.create.mock.calls[0]![0].data;
+      expect(stored.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(JSON.stringify(stored)).not.toContain(response.body.token);
+      expect(response.body.link).toEqual(expect.objectContaining({ kind: 'TEACHER', targetId: TEACHER_ID }));
+      expect(response.body.link).not.toHaveProperty('tokenHash');
+    });
+
+    it('refuses a teacher link without its teacher or with a name of its own', async () => {
+      for (const body of [
+        { academicYearId: YEAR_ID, kind: 'TEACHER' },
+        { academicYearId: YEAR_ID, kind: 'TEACHER', targetId: TEACHER_ID, label: 'Anna' },
+      ]) {
+        const response = await request(http()).post('/api/v1/public-links').set('x-test-user', admin()).send(body).expect(400);
+        expect(response.body.code).toBe('PUBLIC_LINK_SHAPE');
+      }
+    });
+
+    it('lists without tokens and revokes', async () => {
+      harness.tx.publicTimetableLink.findMany.mockResolvedValue([row({ kind: 'ROOM' })]);
+      const list = await request(http()).get(`/api/v1/public-links?academicYearId=${YEAR_ID}`).set('x-test-user', admin()).expect(200);
+      expect(JSON.stringify(list.body)).not.toMatch(/token/i);
+      harness.tx.publicTimetableLink.findUnique.mockResolvedValue({ id: LINK_ID, revokedAt: null });
+      harness.tx.publicTimetableLink.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+        ...row({ kind: 'ROOM' }),
+        revokedAt: data.revokedAt,
+      }));
+      const revoked = await request(http()).post(`/api/v1/public-links/${LINK_ID}/revoke`).set('x-test-user', admin()).expect(200);
+      expect(revoked.body.revokedAt).not.toBeNull();
+    });
+
+    it('hides a teacher from every public timetable', async () => {
+      harness.tx.teacherPublicLabel.upsert.mockResolvedValue({ userId: TEACHER_ID, hidden: true });
+      await request(http()).put(`/api/v1/teacher-public-labels/${TEACHER_ID}`).set('x-test-user', admin()).send({ hidden: true }).expect(200);
+      expect(harness.tx.teacherPublicLabel.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ create: expect.objectContaining({ userId: TEACHER_ID, hidden: true }) }),
+      );
+    });
+
+    it('refuses teachers\' pages that would name nobody, and a minimum outside 3..30', async () => {
+      const unnamed = await request(http())
+        .put('/api/v1/publication-settings')
+        .set('x-test-user', admin())
+        .send({ publicViewerEnabled: true, publicTeachers: true })
+        .expect(400);
+      expect(unnamed.body.code).toBe('PUBLIC_TEACHERS_UNNAMED');
+      await request(http()).put('/api/v1/publication-settings').set('x-test-user', admin()).send({ publicMinGroupSize: 2 }).expect(400);
+      const ok = await request(http())
+        .put('/api/v1/publication-settings')
+        .set('x-test-user', admin())
+        .send({ publicTeachers: true, publicTeacherDisplay: 'SIGNATURE' })
+        .expect(200);
+      expect(ok.body).toMatchObject({ publicTeachers: true, publicTeacherDisplay: 'SIGNATURE', publicViewerEnabled: false });
+    });
+  });
+
   describe('every route is the admin\'s', () => {
     const routes = [
       ['GET', '/api/v1/publication-settings'],
@@ -458,6 +537,11 @@ describe('Publicering (e2e)', () => {
       ['POST', '/api/v1/cancellation-batches/66666666-6666-4666-8666-666666666666/reapply'],
       ['POST', '/api/v1/cancellation-batches/66666666-6666-4666-8666-666666666666/reverse/preview'],
       ['POST', '/api/v1/cancellation-batches/66666666-6666-4666-8666-666666666666/reverse'],
+      ['GET', `/api/v1/public-links?academicYearId=${YEAR_ID}`],
+      ['POST', '/api/v1/public-links'],
+      ['POST', '/api/v1/public-links/77777777-7777-4777-8777-777777777777/revoke'],
+      ['GET', '/api/v1/teacher-public-labels'],
+      ['PUT', '/api/v1/teacher-public-labels/88888888-8888-4888-8888-888888888888'],
     ] as const;
     const send = (method: string, path: string) => {
       const agent = request(http());

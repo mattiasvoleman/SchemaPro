@@ -56,7 +56,29 @@ import type {
 
 export type PublishModeName = 'DIRECT' | 'DRAFT';
 
-export interface PublicationSettingsResponse extends GatePolicy {
+export interface PublicViewerSettings {
+  publicViewerEnabled: boolean;
+  publicGroups: boolean;
+  publicTeachers: boolean;
+  publicRooms: boolean;
+  publicTeacherDisplay: 'NONE' | 'SIGNATURE' | 'NAME';
+  publicShowMeals: boolean;
+  publicMinGroupSize: number;
+}
+
+export const DEFAULT_VIEWER_SETTINGS: PublicViewerSettings = {
+  publicViewerEnabled: false,
+  publicGroups: false,
+  publicTeachers: false,
+  publicRooms: false,
+  publicTeacherDisplay: 'NONE',
+  publicShowMeals: true,
+  publicMinGroupSize: 5,
+};
+
+const VIEWER_KEYS = Object.keys(DEFAULT_VIEWER_SETTINGS) as (keyof PublicViewerSettings)[];
+
+export interface PublicationSettingsResponse extends GatePolicy, PublicViewerSettings {
   publishMode: PublishModeName;
   /** False when the school has no row: every value above is the default. */
   stored: boolean;
@@ -126,6 +148,7 @@ export const PUBLISH_RANGE_EMPTY = 'PUBLISH_RANGE_EMPTY';
 export const PUBLISH_DRAFT_PENDING = 'PUBLISH_DRAFT_PENDING';
 export const PUBLISH_NOT_DRAFT = 'PUBLISH_NOT_DRAFT';
 export const PUBLISH_NOTHING_PUBLISHED = 'PUBLISH_NOTHING_PUBLISHED';
+export const PUBLIC_TEACHERS_UNNAMED = 'PUBLIC_TEACHERS_UNNAMED';
 
 /** What a DRAFT publish did beside materialising. */
 export interface DraftCounts {
@@ -235,13 +258,27 @@ export class PublicationsService {
     for (const key of GATE_POLICY_KEYS) {
       if (dto[key] !== undefined) gates[key] = dto[key];
     }
-    const row = await this.prisma.withRls(user, (tx) =>
-      tx.publicationSettings.upsert({
+    const viewer: Partial<PublicViewerSettings> = {};
+    for (const key of VIEWER_KEYS) {
+      if (dto[key] !== undefined) (viewer as Record<string, unknown>)[key] = dto[key];
+    }
+    const row = await this.prisma.withRls(user, async (tx) => {
+      const current = toSettings(await tx.publicationSettings.findUnique({ where: { schoolId } }));
+      const merged = { ...current, ...viewer };
+      // The table's CHECK, said with the fields named: a teacher's page that
+      // names nobody would be a grid of anonymous lessons.
+      if (merged.publicTeachers && merged.publicTeacherDisplay === 'NONE') {
+        throw new BadRequestException({
+          message: 'publicTeacherDisplay: lärarscheman visar läraren som signatur eller namn; välj ett av dem.',
+          code: PUBLIC_TEACHERS_UNNAMED,
+        });
+      }
+      return tx.publicationSettings.upsert({
         where: { schoolId },
-        create: { schoolId, ...gates },
-        update: gates,
-      }),
-    );
+        create: { schoolId, ...gates, ...viewer },
+        update: { ...gates, ...viewer },
+      });
+    });
     return toSettings(row);
   }
 
@@ -890,11 +927,13 @@ export interface PublishContext {
 }
 
 function toSettings(
-  row: (GatePolicy & { publishMode: PublishModeName }) | null,
+  row: (GatePolicy & Partial<PublicViewerSettings> & { publishMode: PublishModeName }) | null,
 ): PublicationSettingsResponse {
   const policy = { ...DEFAULT_GATE_POLICY };
   if (row) for (const key of GATE_POLICY_KEYS) policy[key] = row[key];
-  return { publishMode: row?.publishMode ?? 'DIRECT', ...policy, stored: row != null };
+  const viewer = { ...DEFAULT_VIEWER_SETTINGS };
+  if (row) for (const key of VIEWER_KEYS) if (row[key] !== undefined) (viewer as Record<string, unknown>)[key] = row[key];
+  return { publishMode: row?.publishMode ?? 'DIRECT', ...policy, ...viewer, stored: row != null };
 }
 
 /** Which log rows decide validity: every PUBLISHED one but a refill of an older one. */

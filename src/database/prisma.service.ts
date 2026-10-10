@@ -372,6 +372,24 @@ export class PrismaService
   }
 
   /**
+   * The public viewer's door (Publicering, 20261011120000): a transaction
+   * with no principal at all — RLS answers nothing in it — and a 2 s
+   * statement_timeout, in which the only thing worth doing is calling
+   * app.public_timetable(), the SECURITY DEFINER function that decides what
+   * a share link may see. The timeout bounds what an anonymous caller can
+   * make the database do per request.
+   */
+  async withPublicViewer<T>(fn: (tx: PrismaClient) => Promise<T>): Promise<T> {
+    return this.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SET LOCAL statement_timeout = '2s'`;
+        return fn(tx as unknown as PrismaClient);
+      },
+      { timeout: 5_000 },
+    );
+  }
+
+  /**
    * Execute `fn` inside a plain transaction with no RLS session variables set.
    *
    * ## This does NOT bypass row-level security

@@ -15,6 +15,7 @@ export interface PrismaMock {
   withServiceKeyLookup: jest.Mock;
   withServicePrincipal: jest.Mock;
   withSystemTransaction: jest.Mock;
+  withPublicViewer: jest.Mock;
 }
 
 /**
@@ -96,6 +97,7 @@ export function createPrismaMock(tx: TxMock): PrismaMock {
         run(fn),
     ),
     withSystemTransaction: jest.fn(run),
+    withPublicViewer: jest.fn(run),
   };
 }
 
