@@ -62,6 +62,15 @@ vi.mock("@/utils/supabase/client", () => ({
   }),
 }));
 
+// next-intl's Link needs the intl provider; an anchor is what it renders.
+vi.mock("@/i18n/navigation", () => ({
+  Link: ({ href, className, children }: { href: string; className?: string; children: React.ReactNode }) => (
+    <a href={href} className={className}>
+      {children}
+    </a>
+  ),
+}));
+
 // Key echo that also surfaces interpolated values, so each notification type's
 // message key AND its meta extraction can be asserted from the rendered text.
 vi.mock("next-intl", () => ({
@@ -201,6 +210,16 @@ describe("NotificationBell badge", () => {
 // ---------------------------------------------------------------------------
 
 describe("NotificationBell inbox", () => {
+  it("links to the page where each person chooses what leaves SchemaPro", async () => {
+    const user = userEvent.setup();
+    supabaseState.selectResults.push(ok([]));
+    renderBell();
+    await user.click(bellButton());
+    const link = await screen.findByRole("link", { name: "settingsLink" });
+    expect(link).toHaveAttribute("href", "/notifications");
+  });
+
+
   it("shows the empty message and no mark-all button when there is nothing", async () => {
     const user = userEvent.setup();
     supabaseState.selectResults.push(ok([]));
