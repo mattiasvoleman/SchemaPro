@@ -53,6 +53,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'PROJECTED',
     why: 'PUB_CLASHES: pupils shared between groups, the board’s question asked of the whole year; memberships as they are',
   },
+  'src/publication/public-links.service.ts': {
+    basis: 'CURRENT',
+    why: 'whether a share link answers: app.public_timetable counts a teaching group’s active members as they are, so the list asks the same',
+  },
   'src/year-rollover/activation-plan.ts': { basis: 'SOURCE', why: 'what the projection and the activation are computed from' },
   'src/year-rollover/rollover-source.ts': {
     basis: 'SOURCE',
@@ -164,9 +168,12 @@ describe('the roster-reader inventory', () => {
     for (const path of ['src/year-rollover/projected-rosters.ts', 'src/year-rollover/activation-plan.ts', 'src/attendance/attendance.service.ts']) {
       expect(where).toContain(path);
     }
-    // The relation reads too: realtime's members selects, SS12000's.
+    // The relation reads too: realtime's members selects, SS12000's, and the
+    // share-link list's count of a teaching group's members.
     const relations = new Set(queries.filter((query) => query.model === 'relation').map((query) => query.path));
-    expect(relations).toEqual(new Set(['src/realtime/realtime.service.ts', 'src/integration/ss12000.service.ts']));
+    expect(relations).toEqual(
+      new Set(['src/realtime/realtime.service.ts', 'src/integration/ss12000.service.ts', 'src/publication/public-links.service.ts']),
+    );
   });
 
   it('has every roster query in a classified file', () => {

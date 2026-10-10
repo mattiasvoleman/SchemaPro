@@ -529,6 +529,11 @@ export const ROLLOVER_REGISTRY: Readonly<Record<string, Disposition>> = {
     parent: 'TimetablePublication',
     reason: 'The lessons a publication of the old year published.',
   },
+  PublishedLunchSitting: {
+    kind: 'FOLLOWS',
+    parent: 'TimetablePublication',
+    reason: 'The meals a publication of the old year published (20261011130000).',
+  },
   /**
    * Bulk avbokning (20261011110000): a batch is a decision about dates of
    * ITS year — prao in week 12 — and its rows are that year's lessons.

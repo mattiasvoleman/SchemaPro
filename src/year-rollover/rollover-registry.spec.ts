@@ -235,7 +235,7 @@ describe('the rollover registry', () => {
     // TeacherEmploymentLog (staffing Fas 3) are the tables added since, and
     // are asserted beside it — skipped, not counted — so fa4a3d6's own list
     // stays pinned byte for byte. The statement tables (timplan P4) likewise,
-    // and the publication log (Publicering).
+    // and the publication log and its snapshots (Publicering).
     const skipped = skippedModels();
     const added = [
       'TimplanCredit',
@@ -244,6 +244,7 @@ describe('the rollover registry', () => {
       'TimplanStatement',
       'TimetablePublication',
       'PublishedLesson',
+      'PublishedLunchSitting',
       'CancellationBatch',
       'CancellationBatchLesson',
       'CancellationBatchCredit',
@@ -255,13 +256,14 @@ describe('the rollover registry', () => {
         .update(JSON.stringify(skipped.filter((entry) => !added.includes(entry.model))))
         .digest('hex'),
     ).toBe('15e270c65904cbdbf7c54b605def4014bb038dc836dd29dae22f91c0b23ad113');
-    expect(skipped.slice(-11)).toEqual([
+    expect(skipped.slice(-12)).toEqual([
       expect.objectContaining({ model: 'TimplanCredit', counted: false }),
       expect.objectContaining({ model: 'TeacherEmploymentLog', counted: false }),
       expect.objectContaining({ model: 'TimplanStatementPublication', counted: false }),
       expect.objectContaining({ model: 'TimplanStatement', counted: false }),
       expect.objectContaining({ model: 'TimetablePublication', counted: false }),
       expect.objectContaining({ model: 'PublishedLesson', counted: false }),
+      expect.objectContaining({ model: 'PublishedLunchSitting', counted: false }),
       expect.objectContaining({ model: 'CancellationBatch', counted: false }),
       expect.objectContaining({ model: 'CancellationBatchLesson', counted: false }),
       expect.objectContaining({ model: 'CancellationBatchCredit', counted: false }),
