@@ -196,6 +196,26 @@ describe('recordedBlocksOfYear', () => {
     expect(coverage.pupils[0]!.stages.find((entry) => entry.stage === 'HOG')).toMatchObject({ recordedGrades: [], unrecordedGrades: [7, 8, 9], complete: false });
   });
 
+  it('puts nothing ahead in a year that has ended when nothing was published: a mover projects what a stayer with the same lessons does', () => {
+    // 7A and 7B both 3 × 60 a week; Anna moves on a Wednesday, Bo stays.
+    // teachingWeeks charges each window's edge week whole, so the mover's
+    // planned figure is up to a week high (documented); in a year that has
+    // ended that must not leak into what is "ahead".
+    const anna = id(101);
+    const bo = id(102);
+    const segments = [seg(anna, g7a, '2026-08-17', '2026-11-04'), seg(anna, g7b, '2026-11-04', null), seg(bo, g7a, '2026-08-17', null)];
+    const same = read({
+      boundaries: boundariesOf(segments, YEAR),
+      planned: { ...read().planned, requirements: [req(g7a, MA, 3), req(g7b, MA, 3)] },
+    });
+    const blocks = recordedBlocksOfYear(same, segments, '2027-08-02T08:00:00.000Z', '2027-08-02');
+    const ma = (pupil: string) => blocks.get(pupil)![0]!.lines.find((line) => line.code === 'MA')!;
+    expect(ma(bo).aheadMinutes).toBe(0);
+    expect(ma(anna).aheadMinutes).toBe(0);
+    const projected = (pupil: string) => ma(pupil).deliveredMinutes + ma(pupil).atPlanMinutes + ma(pupil).creditedMinutes + ma(pupil).aheadMinutes;
+    expect(projected(anna)).toBe(projected(bo));
+  });
+
   it('names a backfilled segment', () => {
     const anna = id(101);
     const segments = [seg(anna, g7a, '2026-08-17', null, { source: 'BACKFILL' })];
