@@ -129,6 +129,20 @@ describe('FamilyScheduleService', () => {
     expect(tx.calendarLesson.findMany).not.toHaveBeenCalled();
   });
 
+  it('names the school’s today and the first and last week that may be asked for', async () => {
+    const result = await run('2026-10-13');
+    expect(result.today).toBe('2026-10-14');
+    expect(result.bounds).toEqual({ earliest: '2026-10-05', latest: '2027-06-07' });
+    // A Monday today: today − 7 is itself a Monday, and its week is the first.
+    today = '2026-10-12';
+    expect((await run()).bounds.earliest).toBe('2026-10-05');
+    // A Sunday today: today − 7 is the Sunday of the week before last.
+    today = '2026-10-18';
+    expect((await run()).bounds.earliest).toBe('2026-10-05');
+    tx.academicYear.findFirst.mockResolvedValue(null);
+    expect((await run()).bounds.latest).toBeNull();
+  });
+
   it('shows last week, and the year’s last week, and any week without an active year', async () => {
     await expect(run('2026-10-05')).resolves.toMatchObject({ week: { from: '2026-10-05' } });
     await expect(run('2027-06-07')).resolves.toMatchObject({ week: { from: '2027-06-07' } });
@@ -192,6 +206,7 @@ describe('FamilyScheduleService', () => {
       new Set([
         'student', 'student.id', 'student.firstName',
         'week', 'week.from', 'week.to', 'week.isoWeek',
+        'today', 'bounds', 'bounds.earliest', 'bounds.latest',
         'timezone',
         'lessons', 'lessons.id', 'lessons.date', 'lessons.start', 'lessons.end', 'lessons.startsAt', 'lessons.endsAt',
         'lessons.subjectId', 'lessons.subject', 'lessons.subjectColor', 'lessons.room', 'lessons.teachers', 'lessons.status',

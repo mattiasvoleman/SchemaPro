@@ -69,6 +69,14 @@ export interface FamilyRast extends FamilyMeal {
 export interface FamilySchedule {
   student: { id: string; firstName: string };
   week: { from: string; to: string; isoWeek: string };
+  /** The school's today, so the reader's "i dag" is the school's and not the device's. */
+  today: string;
+  /**
+   * The Mondays of the first and the last week that may be asked for (the
+   * viewer's bound below); `latest` null without an active year. The pages
+   * disable stepping past them rather than meeting WEEK_OUT_OF_RANGE.
+   */
+  bounds: { earliest: string; latest: string | null };
   timezone: string;
   lessons: FamilyLesson[];
   lunches: FamilyMeal[];
@@ -133,7 +141,7 @@ export class FamilyScheduleService {
       const timezone = await schoolTimezone(tx, schoolId);
       const today = await this.schoolToday(tx, timezone);
       const { from, to } = isoWeekOf(query.week ?? today);
-      await this.assertWeekInRange(tx, from, to, today);
+      const bounds = await this.assertWeekInRange(tx, from, to, today);
 
       const home = child.studentGroupId;
       const teaching = (
@@ -203,6 +211,8 @@ export class FamilyScheduleService {
       return {
         student: { id: child.id, firstName: child.firstName },
         week: { from, to, isoWeek: isoWeekLabel(from) },
+        today,
+        bounds,
         timezone,
         lessons: lessons.map((row) => {
           const said = staff.get(row.id);
@@ -256,12 +266,21 @@ export class FamilyScheduleService {
    * a week past the year has nothing published. Without an active year only
    * the first bound applies.
    */
-  private async assertWeekInRange(tx: PrismaClient, from: string, to: string, today: string): Promise<void> {
+  private async assertWeekInRange(
+    tx: PrismaClient,
+    from: string,
+    to: string,
+    today: string,
+  ): Promise<{ earliest: string; latest: string | null }> {
     const year = await tx.academicYear.findFirst({ where: { isActive: true }, select: { endDate: true } });
     const yearEnd = year ? asDay(year.endDate) : null;
     if (to < shiftDay(today, -7) || (yearEnd !== null && from > yearEnd)) {
       throw new BadRequestException({ message: 'Veckan ligger utanför det som går att visa.', code: WEEK_OUT_OF_RANGE });
     }
+    // The same rule read as Mondays: the week holding today − 7 is the first
+    // whose Sunday is not before it, the week holding the year's last day the
+    // last that starts inside the year.
+    return { earliest: isoWeekOf(shiftDay(today, -7)).from, latest: yearEnd === null ? null : isoWeekOf(yearEnd).from };
   }
 
   /**
