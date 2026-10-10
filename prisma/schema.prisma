@@ -1916,11 +1916,40 @@ model IntegrationApiKey {
   lastUsedAt  DateTime? @db.Timestamptz(6)
   revokedAt   DateTime? @db.Timestamptz(6)
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  /// What the key may reach (20261014120000): ss12000.v1, ss12000.v1.import
+  /// and the v2.0 provider's <resource>.read and subscriptions.write. The
+  /// default is the backfill: every key that existed keeps exactly today's
+  /// reach. A CHECK holds it to the known scopes (src/integration/
+  /// ss12000-v2/scopes.ts).
+  scopes      String[]  @default(["ss12000.v1", "ss12000.v1.import"])
 
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
+  /// The target of the composite keys a webhook secret and a subscription use.
+  @@unique([id, schoolId])
   @@index([schoolId])
   @@map("IntegrationApiKeys")
+}
+
+/// A key's webhook signing secret, AES-256-GCM (20261014120000). RLS with
+/// no arm and no grant: only the app.*webhook_secret* functions touch it.
+model IntegrationKeyWebhookSecret {
+  keyId              String    @id @db.Uuid
+  schoolId           String    @db.Uuid
+  ciphertext         Bytes
+  iv                 Bytes
+  authTag            Bytes
+  encKeyId           String
+  setAt              DateTime  @default(now()) @db.Timestamptz(6)
+  setById            String?   @db.Uuid
+  previousCiphertext Bytes?
+  previousIv         Bytes?
+  previousAuthTag    Bytes?
+  previousEncKeyId   String?
+  previousValidUntil DateTime? @db.Timestamptz(6)
+
+  @@index([schoolId])
+  @@map("IntegrationKeyWebhookSecrets")
 }
 
 // -----------------------------------------------------------------------------
@@ -3150,4 +3179,82 @@ model Ss12000SyncChange {
   @@unique([runId, seq])
   @@index([runId, schoolId])
   @@map("Ss12000SyncChanges")
+}
+
+/// When an object the SS12000 v2.0 provider emits last changed
+/// (20261014130000): one row per (school, resource, entity), written only by
+/// statement-level triggers. xid is the changing transaction's id, the
+/// webhook delivery's watermark; Prisma cannot read the type.
+model Ss12000EntityVersion {
+  schoolId   String                 @db.Uuid
+  resource   String
+  entityId   String                 @db.Uuid
+  createdAt  DateTime               @default(now()) @db.Timestamptz(6)
+  modifiedAt DateTime               @default(now()) @db.Timestamptz(6)
+  xid        Unsupported("xid8")    @default(dbgenerated("pg_current_xact_id()"))
+
+  @@id([schoolId, resource, entityId])
+  @@index([schoolId, resource, modifiedAt], map: "Ss12000EntityVersions_modified_idx")
+  @@index([schoolId, xid], map: "Ss12000EntityVersions_xid_idx")
+  @@map("Ss12000EntityVersions")
+}
+
+/// An id the provider no longer emits (/deletedEntities), keyed by the id
+/// the consumer was given; written only by the same triggers, kept 400 days.
+/// 'AdhocActivity' rows hold a lesson id the gateway turns into its UUIDv5.
+model Ss12000Tombstone {
+  schoolId  String              @db.Uuid
+  resource  String
+  emittedId String              @db.Uuid
+  removedAt DateTime            @default(now()) @db.Timestamptz(6)
+  xid       Unsupported("xid8") @default(dbgenerated("pg_current_xact_id()"))
+
+  @@id([schoolId, resource, emittedId])
+  @@index([schoolId, removedAt], map: "Ss12000Tombstones_removedAt_idx")
+  @@index([schoolId, xid], map: "Ss12000Tombstones_xid_idx")
+  @@map("Ss12000Tombstones")
+}
+
+/// An S1 subscription (POST /ss12000/v2.0/subscriptions) of one key. The
+/// delivery columns are written by the app.ss12000_*notification* functions.
+model Ss12000Subscription {
+  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String              @db.Uuid
+  keyId           String              @db.Uuid
+  name            String
+  target          String
+  resourceTypes   String[]
+  expiresAt       DateTime            @default(dbgenerated("(now() + '30 days'::interval)")) @db.Timestamptz(6)
+  endedAt         DateTime?           @db.Timestamptz(6)
+  suspendedAt     DateTime?           @db.Timestamptz(6)
+  /// FAILING (72 h of failed deliveries) or ADMIN (the school paused it).
+  suspendedReason String?
+  watermark       Unsupported("xid8") @default(dbgenerated("pg_snapshot_xmin(pg_current_snapshot())"))
+  lastNotifiedAt  DateTime?           @db.Timestamptz(6)
+  nextAttemptAt   DateTime            @default(now()) @db.Timestamptz(6)
+  attempts        Int                 @default(0)
+  failingSince    DateTime?           @db.Timestamptz(6)
+  claimedAt       DateTime?           @db.Timestamptz(6)
+  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([id, schoolId])
+  @@index([keyId, schoolId], map: "Ss12000Subscriptions_key_idx")
+  @@map("Ss12000Subscriptions")
+}
+
+/// One delivery attempt: status, outcome code and duration, no body and no
+/// header. Kept 30 days.
+model Ss12000SubscriptionDelivery {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String   @db.Uuid
+  subscriptionId String   @db.Uuid
+  attemptedAt    DateTime @default(now()) @db.Timestamptz(6)
+  httpStatus     Int?
+  outcome        String
+  durationMs     Int
+
+  @@index([subscriptionId, schoolId, attemptedAt], map: "Ss12000SubscriptionDeliveries_subscription_idx")
+  @@index([attemptedAt], map: "Ss12000SubscriptionDeliveries_attemptedAt_idx")
+  @@map("Ss12000SubscriptionDeliveries")
 }

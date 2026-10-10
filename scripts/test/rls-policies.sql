@@ -2748,14 +2748,17 @@ END $$;
 -- policy must carry. That rule needs 26 exemptions here — the service role
 -- crosses tenants by design, and a policy keyed on the caller's own id is
 -- already inside one school — and a rule with 26 exemptions rots into a list
--- nobody maintains. This one has three exemptions, from its no-policy half
+-- nobody maintains. This one has four exemptions, from its no-policy half
 -- only, and all for the same reason: no API role is meant to reach the table
 -- at all. `_prisma_migrations` is Prisma's own history (section 14);
 -- `PushTickets` (20261013110000) holds Expo receipt ids that only the
 -- SECURITY DEFINER app.push_* functions touch, with no grant to any API role
 -- (section 29f); `Ss12000SourceSecrets` (20261014090000) holds the SS12000
 -- source's sealed credentials that only the app.ss12000_*secret* functions
--- touch, likewise with no grant (section 30i). A new table cannot be added
+-- touch, likewise with no grant (section 30i); `IntegrationKeyWebhookSecrets`
+-- (20261014120000) holds the keys' sealed webhook signing secrets that only
+-- the app.*webhook_secret* functions touch, with no grant (section 31f). A
+-- new table cannot be added
 -- without either satisfying the rule or changing it on purpose.
 --
 -- The floor guards the query itself: a catalog filter that quietly stopped
@@ -2792,7 +2795,7 @@ BEGIN
   SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO policyless
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
   WHERE n.nspname = 'public' AND c.relkind = 'r'
-    AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets')
+    AND c.relname NOT IN ('_prisma_migrations', 'PushTickets', 'Ss12000SourceSecrets', 'IntegrationKeyWebhookSecrets')
     AND c.relrowsecurity
     AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid);
 
@@ -4018,7 +4021,10 @@ $$;
 ROLLBACK;
 
 -- The catalog half: both tables carry exactly the three arms, both triggers
--- are there and enabled, and their functions run as the owner.
+-- are there and enabled, and their functions run as the owner. LocalTimplans
+-- has a fourth since 20261014130000: local_timplans_service_select, the
+-- SS12000 v2.0 provider's read of a plan's schoolForm (a group's and an
+-- enrolment's schoolType), for the service principal of the row's school.
 DO $$
 DECLARE tbl text; n integer;
 BEGIN
@@ -4027,7 +4033,9 @@ BEGIN
     IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = format('public.%I', tbl)::regclass) THEN
       RAISE EXCEPTION 'timplan: row security is off on %', tbl;
     END IF;
-    SELECT count(*) INTO n FROM pg_policy WHERE polrelid = format('public.%I', tbl)::regclass;
+    SELECT count(*) INTO n FROM pg_policy WHERE polrelid = format('public.%I', tbl)::regclass
+       AND NOT (tbl = 'LocalTimplans' AND polname = 'local_timplans_service_select'
+                AND pg_get_expr(polqual, polrelid) = '("schoolId" = app.current_service_school_id())');
     IF n <> 3 THEN
       RAISE EXCEPTION 'timplan: % has % policies, expected admin_all, staff_select and family_select', tbl, n;
     END IF;
@@ -5007,7 +5015,11 @@ BEGIN
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."AcademicYearTimplans"'::regclass) THEN
     RAISE EXCEPTION 'year timplans: row security is off on AcademicYearTimplans';
   END IF;
-  SELECT count(*) INTO n FROM pg_policy WHERE polrelid = 'public."AcademicYearTimplans"'::regclass;
+  -- The fourth arm since 20261014130000 is the v2.0 provider's read of the
+  -- school types, for the service principal of the row's school only.
+  SELECT count(*) INTO n FROM pg_policy WHERE polrelid = 'public."AcademicYearTimplans"'::regclass
+     AND NOT (polname = 'academic_year_timplans_service_select'
+              AND pg_get_expr(polqual, polrelid) = '("schoolId" = app.current_service_school_id())');
   IF n <> 3 THEN
     RAISE EXCEPTION 'year timplans: AcademicYearTimplans has % policies, expected admin_all, staff_select and family_select', n;
   END IF;
@@ -7578,14 +7590,20 @@ BEGIN
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public."StudentEnrollments"'::regclass) THEN
     RAISE EXCEPTION 'enrolment: row security is off on StudentEnrollments';
   END IF;
+  -- Five since 20261014130000: student_enrollments_service_select is the
+  -- SS12000 v2.0 provider's read (a class's groupMemberships, a pupil's
+  -- enrolments), for the service principal of the row's school only, and it
+  -- is held to exactly that predicate below instead of a role.
   SELECT string_agg(polname || ':' || polcmd::text, ',' ORDER BY polname) INTO bad FROM pg_policy
    WHERE polrelid = 'public."StudentEnrollments"'::regclass;
-  IF bad IS DISTINCT FROM 'student_enrollments_admin_select:r,student_enrollments_guardian_select:r,student_enrollments_staff_select:r,student_enrollments_student_select:r' THEN
-    RAISE EXCEPTION 'enrolment: StudentEnrollments has policies (%), expected the four SELECT arms', bad;
+  IF bad IS DISTINCT FROM 'student_enrollments_admin_select:r,student_enrollments_guardian_select:r,student_enrollments_service_select:r,student_enrollments_staff_select:r,student_enrollments_student_select:r' THEN
+    RAISE EXCEPTION 'enrolment: StudentEnrollments has policies (%), expected the four SELECT arms and the service''s', bad;
   END IF;
   SELECT string_agg(polname, ',') INTO bad FROM pg_policy
    WHERE polrelid = 'public."StudentEnrollments"'::regclass
-     AND pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%';
+     AND pg_get_expr(polqual, polrelid) NOT LIKE '%current_user_role%'
+     AND NOT (polname = 'student_enrollments_service_select'
+              AND pg_get_expr(polqual, polrelid) = '("schoolId" = app.current_service_school_id())');
   IF bad IS NOT NULL THEN
     RAISE EXCEPTION 'enrolment: policies without the role in USING: %', bad;
   END IF;
@@ -10592,5 +10610,418 @@ BEGIN
     IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'ss30i: the API may not call %', fn; END IF;
     IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'ss30i: % is not SECURITY DEFINER', fn; END IF;
   END LOOP;
+END $$;
+ROLLBACK;
+
+-- ---------------------------------------------------------------------------
+-- 31: the SS12000 v2.0 provider (20261014120000, 20261014130000). Keys carry
+-- scopes, the key lookup writes lastUsedAt and nothing else, and a key's
+-- webhook signing secret is reachable only through its functions — never by
+-- a TEACHER, STUDENT or GUARDIAN, the service principal or an admin reading
+-- it back. Versions and tombstones are written by the triggers alone and
+-- read by the service principal of their school alone; a future year's group
+-- and a DRAFT school's master edit record nothing; the service principal
+-- reads the source's organisation ids through app.ss12000_provider_identity
+-- and has no arm on the source. A key reads and writes its own subscriptions
+-- only, and the delivery claims, settles and stops at a revoked key.
+-- Everything planted here is rolled back.
+--   31a writes as the admin; 31b what the triggers recorded, read by the
+--   service principal; 31c subscriptions per key; 31d TEACHER / STUDENT /
+--   GUARDIAN; 31e the delivery; 31f the catalogue.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+SELECT set_config('app.test_rls31_school_b', :'school_b', true);
+
+-- 31a
+DO $$
+DECLARE
+  school uuid := app.current_school_id();
+  r uuid; pupil uuid; leaver uuid; fy uuid; fg uuid; k uuid; k2 uuid; master uuid; n bigint; stamped timestamptz;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'SCHOOL_ADMIN' THEN RAISE EXCEPTION 'ss31a: expected the admin'; END IF;
+  PERFORM set_config('app.test_rls31_school', school::text, true);
+
+  -- A key's scopes: today's v1 reach by default, the known scopes only.
+  INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash") VALUES (school, 'RLS 31 v1', repeat('1', 64)) RETURNING id INTO k;
+  IF (SELECT scopes FROM "IntegrationApiKeys" WHERE id = k) IS DISTINCT FROM '{ss12000.v1,ss12000.v1.import}'::text[] THEN
+    RAISE EXCEPTION 'ss31a: a key made without scopes did not get today''s v1 reach';
+  END IF;
+  BEGIN
+    UPDATE "IntegrationApiKeys" SET scopes = '{admin.everything}' WHERE id = k;
+    RAISE EXCEPTION 'ss31a: an unknown scope was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "IntegrationApiKeys" SET scopes = '{}' WHERE id = k;
+    RAISE EXCEPTION 'ss31a: a key with no scope was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  INSERT INTO "IntegrationApiKeys" ("schoolId", name, "keyHash", scopes)
+  VALUES (school, 'RLS 31 v2', repeat('2', 64), '{groups.read,rooms.read,subscriptions.write}') RETURNING id INTO k2;
+  PERFORM set_config('app.test_rls31_key', k2::text, true);
+  PERFORM set_config('app.test_rls31_key_v1', k::text, true);
+
+  -- The signing secret goes in through the function and comes out as presence only.
+  stamped := app.integration_key_set_webhook_secret(k2, '\x0102'::bytea, decode(repeat('00', 12), 'hex'), decode(repeat('00', 16), 'hex'), 'abcdef0123456789');
+  IF stamped IS NULL THEN RAISE EXCEPTION 'ss31a: the webhook secret was not stored'; END IF;
+  PERFORM app.integration_key_set_webhook_secret(k2, '\x0304'::bytea, decode(repeat('00', 12), 'hex'), decode(repeat('00', 16), 'hex'), 'abcdef0123456789');
+  SELECT count(*) INTO n FROM app.integration_key_webhook_secret_presence() WHERE key_id = k2 AND previous_valid_until > now();
+  IF n <> 1 THEN RAISE EXCEPTION 'ss31a: a replaced secret left no 24-hour predecessor'; END IF;
+  BEGIN
+    PERFORM count(*) FROM app.ss12000_webhook_secrets(k2);
+    RAISE EXCEPTION 'ss31a: the admin read a signing secret back';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  BEGIN
+    PERFORM count(*) FROM "IntegrationKeyWebhookSecrets";
+    RAISE EXCEPTION 'ss31a: the admin reads the signing secrets table';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM app.integration_key_set_webhook_secret(gen_random_uuid(), '\x01'::bytea, decode(repeat('00', 12), 'hex'), decode(repeat('00', 16), 'hex'), 'abcdef0123456789');
+    RAISE EXCEPTION 'ss31a: a secret was stored for a key the school does not have';
+  EXCEPTION WHEN SQLSTATE 'SS404' THEN NULL;
+  END;
+
+  -- Writes the triggers must record.
+  INSERT INTO "Rooms" ("schoolId", name, "updatedAt") VALUES (school, 'RLS 31 sal', now()) RETURNING id INTO r;
+  PERFORM set_config('app.test_rls31_room', r::text, true);
+  SELECT id INTO pupil FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" AND "ss12000Id" IS NULL ORDER BY id LIMIT 1;
+  SELECT id INTO leaver FROM "Users" WHERE "schoolId" = school AND role = 'STUDENT' AND "isActive" AND "ss12000Id" IS NULL AND id <> pupil ORDER BY id LIMIT 1;
+  PERFORM set_config('app.test_rls31_pupil', pupil::text, true);
+  PERFORM set_config('app.test_rls31_leaver', leaver::text, true);
+  UPDATE "Users" SET "ss12000Id" = 'bbbbbbbb-0000-1000-8000-000000000031' WHERE id = pupil;
+  UPDATE "Users" SET "isActive" = false WHERE id = leaver;
+
+  -- A future year's group records nothing.
+  INSERT INTO "AcademicYears" ("schoolId", name, "startDate", "endDate", "updatedAt")
+  VALUES (school, 'RLS 31 framtid', '2099-08-01', '2100-06-01', now()) RETURNING id INTO fy;
+  INSERT INTO "StudentGroups" ("schoolId", "academicYearId", name, "updatedAt") VALUES (school, fy, 'RLS 31 F', now()) RETURNING id INTO fg;
+  PERFORM set_config('app.test_rls31_future_group', fg::text, true);
+
+  -- A DRAFT school's master edit records nothing.
+  SELECT m.id INTO master FROM "MasterLessons" m JOIN "AcademicYears" y ON y.id = m."academicYearId" AND y."isActive"
+   WHERE m."schoolId" = school AND NOT m."isParked" ORDER BY m.id LIMIT 1;
+  IF master IS NULL THEN RAISE EXCEPTION 'ss31a: the fixtures have no master lesson of the active year'; END IF;
+  PERFORM set_config('app.test_rls31_master', master::text, true);
+  INSERT INTO "PublicationSettings" ("schoolId", "publishMode") VALUES (school, 'DRAFT')
+  ON CONFLICT ("schoolId") DO UPDATE SET "publishMode" = 'DRAFT';
+END $$;
+
+-- 31b: what the triggers recorded, as the service principal of the school.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls31_school'), true);
+DO $$
+DECLARE
+  school uuid := current_setting('app.test_rls31_school')::uuid;
+  pupil uuid := current_setting('app.test_rls31_pupil')::uuid;
+  leaver uuid := current_setting('app.test_rls31_leaver')::uuid;
+  master uuid := current_setting('app.test_rls31_master')::uuid;
+  before_xid xid8; n bigint; orgs uuid[];
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE resource = 'Room' AND "entityId" = current_setting('app.test_rls31_room')::uuid) THEN
+    RAISE EXCEPTION 'ss31b: a new room has no version';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE resource = 'Person' AND "entityId" = pupil) THEN
+    RAISE EXCEPTION 'ss31b: a relinked person has no version';
+  END IF;
+  -- The relink buried the id the consumer had; the deactivation buried the leaver.
+  SELECT count(*) INTO n FROM "Ss12000Tombstones" WHERE resource = 'Person' AND "emittedId" IN (pupil, leaver);
+  IF n <> 2 THEN RAISE EXCEPTION 'ss31b: % of the two superseded or deactivated person ids were buried', n; END IF;
+  IF EXISTS (SELECT 1 FROM "Ss12000Tombstones" WHERE "emittedId" = 'bbbbbbbb-0000-1000-8000-000000000031') THEN
+    RAISE EXCEPTION 'ss31b: the live emitted id was buried';
+  END IF;
+  -- The relink moved the groups the pupil is listed in.
+  SELECT count(*) INTO n FROM "Ss12000EntityVersions" v
+   WHERE v.resource = 'Group' AND v."entityId" IN (SELECT e."studentGroupId" FROM "StudentEnrollments" e WHERE e."studentId" = pupil);
+  IF n < 1 THEN RAISE EXCEPTION 'ss31b: the relinked pupil''s class did not move'; END IF;
+  IF EXISTS (SELECT 1 FROM "Ss12000EntityVersions" WHERE "entityId" = current_setting('app.test_rls31_future_group')::uuid) THEN
+    RAISE EXCEPTION 'ss31b: a future year''s group was recorded';
+  END IF;
+  -- Nothing of another school.
+  SELECT count(*) INTO n FROM "Ss12000EntityVersions" WHERE "schoolId" <> school;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss31b: the service reads % versions of another school', n; END IF;
+  -- The provider identity, and no arm on the source.
+  SELECT organisation_ids INTO orgs FROM app.ss12000_provider_identity();
+  SELECT count(*) INTO n FROM "Ss12000Sources";
+  IF n <> 0 THEN RAISE EXCEPTION 'ss31b: the service principal reads the source''s row'; END IF;
+  -- The v2 reads the migration added: its own school only.
+  SELECT count(*) INTO n FROM "StudentEnrollments" WHERE "schoolId" <> school;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss31b: the service reads another school''s class history'; END IF;
+  SELECT count(*) INTO n FROM "StudentEnrollments";
+  IF n = 0 THEN RAISE EXCEPTION 'ss31b: the service reads no class history of its own school'; END IF;
+  SELECT count(*) INTO n FROM "StudentGroupMembers" WHERE "schoolId" <> school;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss31b: the service reads another school''s teaching groups'; END IF;
+  -- Direct writes are refused, by privilege before the guard.
+  BEGIN
+    INSERT INTO "Ss12000EntityVersions" ("schoolId", resource, "entityId") VALUES (school, 'Room', gen_random_uuid());
+    RAISE EXCEPTION 'ss31b: the API wrote a version';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    DELETE FROM "Ss12000Tombstones";
+    RAISE EXCEPTION 'ss31b: the API deleted tombstones';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    TRUNCATE "Ss12000EntityVersions";
+    RAISE EXCEPTION 'ss31b: the API truncated the versions';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  PERFORM set_config('app.test_rls31_master_xid', coalesce((SELECT xid::text FROM "Ss12000EntityVersions" WHERE resource = 'Activity' AND "entityId" = master), ''), true);
+END $$;
+SELECT set_config('app.service_school_id', '', true);
+
+-- A DRAFT school's master edit, by the admin: no Activity version moves.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+UPDATE "MasterLessons" SET "endDate" = NULL, "startDate" = "startDate" WHERE id = current_setting('app.test_rls31_master')::uuid;
+UPDATE "MasterLessons" SET "isParked" = true WHERE id = current_setting('app.test_rls31_master')::uuid;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls31_school'), true);
+DO $$
+DECLARE master uuid := current_setting('app.test_rls31_master')::uuid;
+BEGIN
+  IF coalesce((SELECT xid::text FROM "Ss12000EntityVersions" WHERE resource = 'Activity' AND "entityId" = master), '')
+     IS DISTINCT FROM current_setting('app.test_rls31_master_xid') THEN
+    RAISE EXCEPTION 'ss31b: a DRAFT school''s master edit moved the activity''s version';
+  END IF;
+  IF EXISTS (SELECT 1 FROM "Ss12000Tombstones" WHERE resource = 'Activity' AND "emittedId" = master) THEN
+    RAISE EXCEPTION 'ss31b: parking a DRAFT school''s master buried a published activity';
+  END IF;
+END $$;
+
+-- 31c: subscriptions, per key.
+SELECT set_config('app.service_key_id', current_setting('app.test_rls31_key'), true);
+DO $$
+DECLARE school uuid := current_setting('app.test_rls31_school')::uuid; k uuid := current_setting('app.test_rls31_key')::uuid; s uuid; n bigint;
+BEGIN
+  IF NOT app.ss12000_webhook_secret_exists() THEN RAISE EXCEPTION 'ss31c: the key''s secret is not seen as present'; END IF;
+  INSERT INTO "Ss12000Subscriptions" ("schoolId", "keyId", name, target, "resourceTypes")
+  VALUES (school, k, 'RLS 31', 'https://hooks.example.invalid/ss12000?x=1', '{Room,Group}') RETURNING id INTO s;
+  PERFORM set_config('app.test_rls31_subscription', s::text, true);
+  BEGIN
+    INSERT INTO "Ss12000Subscriptions" ("schoolId", "keyId", name, target, "resourceTypes")
+    VALUES (school, current_setting('app.test_rls31_key_v1')::uuid, 'other key', 'https://hooks.example.invalid/', '{Room}');
+    RAISE EXCEPTION 'ss31c: a key made a subscription for another key';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "Ss12000Subscriptions" ("schoolId", "keyId", name, target, "resourceTypes") VALUES (school, k, 'x', 'http://hooks.example.invalid/', '{Room}');
+    RAISE EXCEPTION 'ss31c: an http target was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO "Ss12000Subscriptions" ("schoolId", "keyId", name, target, "resourceTypes") VALUES (school, k, 'x', 'https://hooks.example.invalid/', '{Absence}');
+    RAISE EXCEPTION 'ss31c: a resource the provider does not emit was stored';
+  EXCEPTION WHEN check_violation THEN NULL;
+  END;
+  BEGIN
+    UPDATE "Ss12000Subscriptions" SET target = 'https://elsewhere.example.invalid/' WHERE id = s;
+    RAISE EXCEPTION 'ss31c: a key rewrote its subscription''s target';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  UPDATE "Ss12000Subscriptions" SET "expiresAt" = now() + interval '30 days' WHERE id = s;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'ss31c: a key could not renew its subscription'; END IF;
+END $$;
+SELECT set_config('app.service_key_id', current_setting('app.test_rls31_key_v1'), true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM "Ss12000Subscriptions";
+  IF n <> 0 THEN RAISE EXCEPTION 'ss31c: another key reads % subscriptions', n; END IF;
+  UPDATE "Ss12000Subscriptions" SET "endedAt" = now() WHERE id = current_setting('app.test_rls31_subscription')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss31c: another key ended a subscription'; END IF;
+  IF app.ss12000_webhook_secret_exists() THEN RAISE EXCEPTION 'ss31c: a key without a secret is told it has one'; END IF;
+END $$;
+SELECT set_config('app.service_key_id', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls31_school_b'), true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT (SELECT count(*) FROM "Ss12000EntityVersions" WHERE "schoolId" = current_setting('app.test_rls31_school')::uuid)
+       + (SELECT count(*) FROM "Ss12000Tombstones" WHERE "schoolId" = current_setting('app.test_rls31_school')::uuid)
+       + (SELECT count(*) FROM "Ss12000Subscriptions") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss31c: another school''s service principal reads % of these rows', n; END IF;
+END $$;
+SELECT set_config('app.service_school_id', '', true);
+
+-- 31d: TEACHER, STUDENT and GUARDIAN read none of it and reach no secret.
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "Ss12000Subscriptions") < 1 THEN RAISE EXCEPTION 'ss31d: the admin reads no subscription'; END IF;
+  PERFORM set_config('app.test_rls31_teacher_sub', (SELECT "authId"::text FROM "Users" WHERE "schoolId" = app.current_school_id() AND role = 'TEACHER' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+  PERFORM set_config('app.test_rls31_student_sub', (SELECT "authId"::text FROM "Users" WHERE "schoolId" = app.current_school_id() AND role = 'STUDENT' AND "isActive" ORDER BY "authId" LIMIT 1), true);
+END $$;
+CREATE TEMP TABLE rls31_subs (sub text, role text) ON COMMIT DROP;
+INSERT INTO rls31_subs VALUES
+  (current_setting('app.test_rls31_teacher_sub'), 'TEACHER'),
+  (current_setting('app.test_rls31_student_sub'), 'STUDENT'),
+  ('00000000-0000-4000-8000-000000000004', 'GUARDIAN');
+DO $$
+DECLARE who record; n bigint;
+BEGIN
+  FOR who IN SELECT sub, role FROM rls31_subs LOOP
+    PERFORM set_config('request.jwt.claims', json_build_object('sub', who.sub)::text, true);
+    IF app.current_user_role()::text IS DISTINCT FROM who.role THEN RAISE EXCEPTION 'ss31d: expected a %', who.role; END IF;
+    SELECT (SELECT count(*) FROM "Ss12000Subscriptions") + (SELECT count(*) FROM "Ss12000SubscriptionDeliveries")
+         + (SELECT count(*) FROM "Ss12000EntityVersions") + (SELECT count(*) FROM "Ss12000Tombstones") INTO n;
+    IF n <> 0 THEN RAISE EXCEPTION 'ss31d: a % reads % provider rows', who.role, n; END IF;
+    BEGIN
+      PERFORM count(*) FROM app.ss12000_webhook_secrets(current_setting('app.test_rls31_key')::uuid);
+      RAISE EXCEPTION 'ss31d: a % read a signing secret', who.role;
+    EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+    END;
+    BEGIN
+      PERFORM count(*) FROM app.integration_key_webhook_secret_presence();
+      RAISE EXCEPTION 'ss31d: a % read which keys can sign', who.role;
+    EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+    END;
+    BEGIN
+      PERFORM count(*) FROM app.ss12000_due_notifications(10);
+      RAISE EXCEPTION 'ss31d: a % claimed notices', who.role;
+    EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+    END;
+  END LOOP;
+END $$;
+
+-- The service principal reaches no secret either.
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls31_school'), true);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM count(*) FROM app.ss12000_webhook_secrets(current_setting('app.test_rls31_key')::uuid);
+    RAISE EXCEPTION 'ss31d: the service principal read a signing secret';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+END $$;
+SELECT set_config('app.service_school_id', '', true);
+
+-- 31e: the delivery, with no principal at all.
+DO $$
+DECLARE d record; n bigint; verdict text; secret_rows bigint;
+BEGIN
+  IF app.current_user_id() IS NOT NULL THEN RAISE EXCEPTION 'ss31e: expected no principal'; END IF;
+  SELECT count(*) INTO secret_rows FROM app.ss12000_webhook_secrets(current_setting('app.test_rls31_key')::uuid) WHERE previous_ciphertext IS NOT NULL;
+  IF secret_rows <> 1 THEN RAISE EXCEPTION 'ss31e: the delivery did not get the current and the previous secret'; END IF;
+  -- The room this transaction made is a change below no horizon yet (this
+  -- transaction is still running): nothing is due until it commits.
+  SELECT count(*) INTO n FROM app.ss12000_due_notifications(10) WHERE subscription_id = current_setting('app.test_rls31_subscription')::uuid;
+  IF n <> 0 THEN RAISE EXCEPTION 'ss31e: a notice was claimed for a change not yet committed'; END IF;
+  verdict := app.ss12000_notification_settled(current_setting('app.test_rls31_subscription')::uuid, false, 500, 'HTTP_500', '1', 12, now() + interval '1 minute');
+  IF verdict <> 'RETRY' THEN RAISE EXCEPTION 'ss31e: a failed delivery settled as %', verdict; END IF;
+  SELECT count(*) INTO n FROM "Ss12000SubscriptionDeliveries";
+  IF n <> 0 THEN RAISE EXCEPTION 'ss31e: no principal reads delivery rows directly'; END IF;
+END $$;
+SELECT set_config('request.jwt.claims', json_build_object('sub', :'admin_auth_id')::text, true);
+DO $$
+BEGIN
+  IF (SELECT attempts FROM "Ss12000Subscriptions" WHERE id = current_setting('app.test_rls31_subscription')::uuid) <> 1 THEN
+    RAISE EXCEPTION 'ss31e: the failed attempt was not counted';
+  END IF;
+  IF (SELECT count(*) FROM "Ss12000SubscriptionDeliveries" WHERE "subscriptionId" = current_setting('app.test_rls31_subscription')::uuid AND outcome = 'HTTP_500') <> 1 THEN
+    RAISE EXCEPTION 'ss31e: the admin does not see the attempt';
+  END IF;
+  -- The school pauses it; a key cannot lift the school's pause.
+  UPDATE "Ss12000Subscriptions" SET "suspendedAt" = now(), "suspendedReason" = 'ADMIN' WHERE id = current_setting('app.test_rls31_subscription')::uuid;
+  BEGIN
+    UPDATE "Ss12000Subscriptions" SET name = 'renamed' WHERE id = current_setting('app.test_rls31_subscription')::uuid;
+    RAISE EXCEPTION 'ss31e: the admin renamed a key''s subscription';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+  -- A revoked key's subscriptions are never claimed.
+  UPDATE "IntegrationApiKeys" SET "revokedAt" = now() WHERE id = current_setting('app.test_rls31_key')::uuid;
+END $$;
+SELECT set_config('request.jwt.claims', '', true);
+SELECT set_config('app.service_school_id', current_setting('app.test_rls31_school'), true);
+SELECT set_config('app.service_key_id', current_setting('app.test_rls31_key'), true);
+DO $$
+BEGIN
+  BEGIN
+    UPDATE "Ss12000Subscriptions" SET "suspendedAt" = NULL, "suspendedReason" = NULL WHERE id = current_setting('app.test_rls31_subscription')::uuid;
+    RAISE EXCEPTION 'ss31e: a key lifted the school''s pause';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+END $$;
+SELECT set_config('app.service_key_id', '', true);
+SELECT set_config('app.service_school_id', '', true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  SELECT count(*) INTO n FROM app.ss12000_webhook_secrets(current_setting('app.test_rls31_key')::uuid);
+  IF n <> 0 THEN RAISE EXCEPTION 'ss31e: a revoked key''s secret is still handed out'; END IF;
+END $$;
+
+-- 31f: the catalogue, and the key lookup's narrow write.
+SELECT set_config('app.service_key_lookup', 'on', true);
+DO $$
+DECLARE n bigint;
+BEGIN
+  UPDATE "IntegrationApiKeys" SET "lastUsedAt" = now() WHERE id = current_setting('app.test_rls31_key_v1')::uuid;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n <> 1 THEN RAISE EXCEPTION 'ss31f: the lookup can no longer stamp lastUsedAt'; END IF;
+  BEGIN
+    UPDATE "IntegrationApiKeys" SET scopes = '{ss12000.v1,persons.read}' WHERE id = current_setting('app.test_rls31_key_v1')::uuid;
+    RAISE EXCEPTION 'ss31f: the key lookup widened a key''s scopes';
+  EXCEPTION WHEN SQLSTATE 'SS403' THEN NULL;
+  END;
+END $$;
+SELECT set_config('app.service_key_lookup', '', true);
+DO $$
+DECLARE bad text; api_role text; fn text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'IntegrationKeyWebhookSecrets') THEN RAISE EXCEPTION 'ss31f: the signing secrets have an arm'; END IF;
+  SELECT string_agg(policyname, ',' ORDER BY policyname) INTO bad FROM pg_policies WHERE tablename IN ('Ss12000EntityVersions', 'Ss12000Tombstones');
+  IF bad IS DISTINCT FROM 'ss12000_entity_versions_service_select,ss12000_tombstones_service_select' THEN
+    RAISE EXCEPTION 'ss31f: versions and tombstones have the arms %', bad;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'Ss12000Sources' AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%current_service_school_id()%') THEN
+    RAISE EXCEPTION 'ss31f: the service principal has an arm on the source';
+  END IF;
+  FOR api_role IN SELECT rolname FROM pg_roles WHERE rolname IN ('anon', 'authenticated', 'service_role', 'app_authenticated') LOOP
+    SELECT string_agg(p, ', ') INTO bad
+      FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
+     WHERE has_table_privilege(api_role, 'public."IntegrationKeyWebhookSecrets"', p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'ss31f: % holds % on the signing secrets', api_role, bad; END IF;
+    SELECT string_agg(t || ':' || p, ', ') INTO bad
+      FROM unnest(ARRAY['Ss12000EntityVersions', 'Ss12000Tombstones', 'Ss12000Subscriptions', 'Ss12000SubscriptionDeliveries']) t,
+           unnest(ARRAY['DELETE', 'TRUNCATE']) p
+     WHERE has_table_privilege(api_role, format('public.%I', t), p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'ss31f: % holds %', api_role, bad; END IF;
+    SELECT string_agg(t || ':' || p, ', ') INTO bad
+      FROM unnest(ARRAY['Ss12000EntityVersions', 'Ss12000Tombstones', 'Ss12000SubscriptionDeliveries']) t,
+           unnest(ARRAY['INSERT', 'UPDATE']) p
+     WHERE has_table_privilege(api_role, format('public.%I', t), p);
+    IF bad IS NOT NULL THEN RAISE EXCEPTION 'ss31f: % may write %', api_role, bad; END IF;
+  END LOOP;
+  FOREACH fn IN ARRAY ARRAY[
+    'app.integration_key_set_webhook_secret(uuid, bytea, bytea, bytea, text)',
+    'app.integration_key_webhook_secret_presence()',
+    'app.ss12000_webhook_secrets(uuid)',
+    'app.ss12000_webhook_secret_exists()',
+    'app.ss12000_provider_identity()',
+    'app.ss12000_due_notifications(integer)',
+    'app.ss12000_notification_settled(uuid, boolean, integer, text, text, integer, timestamptz)',
+    'app.ss12000_provider_housekeeping(timestamptz)'] LOOP
+    FOREACH api_role IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = api_role) AND has_function_privilege(api_role, fn, 'EXECUTE') THEN
+        RAISE EXCEPTION 'ss31f: % may call %', api_role, fn;
+      END IF;
+    END LOOP;
+    IF NOT has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'ss31f: the API may not call %', fn; END IF;
+    IF NOT (SELECT prosecdef FROM pg_proc WHERE oid = fn::regprocedure) THEN RAISE EXCEPTION 'ss31f: % is not SECURITY DEFINER', fn; END IF;
+  END LOOP;
+  -- The recorders: nobody calls them but the triggers.
+  FOREACH fn IN ARRAY ARRAY['app.ss12000_bump(uuid, text, uuid[])', 'app.ss12000_bury(uuid, text, uuid[])', 'app.ss12000_unbury(uuid, text, uuid[])', 'app.ss12000_bump_school(uuid)'] LOOP
+    IF has_function_privilege('app_authenticated', fn, 'EXECUTE') THEN RAISE EXCEPTION 'ss31f: the API may call %', fn; END IF;
+  END LOOP;
+  -- Statement triggers without column lists, three events at most per table.
+  SELECT count(*) INTO bad FROM pg_trigger WHERE tgname LIKE '%_ss12000_versions_%' AND NOT tgisinternal AND tgattr::text <> '';
+  IF bad::int <> 0 THEN RAISE EXCEPTION 'ss31f: % version triggers name columns', bad; END IF;
 END $$;
 ROLLBACK;
