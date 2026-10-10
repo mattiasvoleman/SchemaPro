@@ -18,6 +18,10 @@ const STEP_OF: Record<string, RolloverStep> = {
   YEAR_NAME_TAKEN: "year",
   YEAR_DATES_OVERLAP: "year",
   GRADUATING_GRADE_REQUIRED: "year",
+  // The new year's start date is what raises it (a year from HT 2028, the
+  // tioårig grundskola), so it is said where that date is typed — and again on
+  // the review, beside the classes whose grades it asks the admin to check.
+  ROLLOVER_2028_RENUMBERING: "year",
   ROLLOVER_NAME_COLLISION: "groups",
   ROLLOVER_NAME_CASE_COLLISION: "groups",
   ROLLOVER_GROUP_CHOICE_INVALID: "groups",

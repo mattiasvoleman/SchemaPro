@@ -564,6 +564,45 @@ describe("RolloverWizard", () => {
     expect(await screen.findByRole("button", { name: "Skapa 2027/28" })).toBeDisabled();
   });
 
+  it("warns on the year step, without blocking, that a year from HT 2028 moves pupils two grades", async () => {
+    post.mockImplementation(async (_path: string, body: RolloverOptions) =>
+      previewFor(body, {
+        problems: [
+          {
+            code: "ROLLOVER_2028_RENUMBERING",
+            blocking: false,
+            params: { startYear: 2028, source: "SFS 2025:729, övergångsbestämmelse 4" },
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    renderWizard();
+    const warning = await screen.findByText(/Det nya läsåret börjar 2028: enligt SFS 2025:729, övergångsbestämmelse 4/);
+    expect(warning.closest("li")).not.toHaveAttribute("role", "alert");
+    await user.click(screen.getByRole("button", { name: /Granska/ }));
+    // A warning, not a refusal: the year can still be created.
+    const create = await screen.findByRole("button", { name: "Skapa 2027/28" });
+    await waitFor(() => expect(create).toBeEnabled());
+    expect(screen.getByText(/går eleverna som redan går i skolan upp två årskurser/)).toBeInTheDocument();
+  });
+
+  it("says once what happens to the published undervisningstid, and not its rows in the registry's words", async () => {
+    post.mockImplementation(async (_path: string, body: RolloverOptions) =>
+      previewFor(body, {
+        skipped: [
+          { model: "TimplanStatementPublication", reason: "…", count: null },
+          { model: "TimplanStatement", reason: "The rows of a statement that is not carried.", count: null },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    renderWizard();
+    await user.click(await screen.findByRole("button", { name: /Granska/ }));
+    expect(await screen.findByText(/Undervisningstiden som visas för elever och vårdnadshavare/)).toBeInTheDocument();
+    expect(screen.queryByText(/TimplanStatement/)).not.toBeInTheDocument();
+  });
+
   it("is refused as a whole for a year already rolled, naming where it went", async () => {
     post.mockRejectedValue(
       new ApiError(409, "Läsåret 2026/27 har redan rullats vidare till 2027/28.", "YEAR_HAS_SUCCESSOR", {

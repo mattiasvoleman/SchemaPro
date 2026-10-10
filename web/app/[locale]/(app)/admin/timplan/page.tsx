@@ -52,13 +52,23 @@
 // timplansposter" (the plan's minutes as the posts a year's classes miss, on
 // the plan shown) and a link to Täckning, where the posts are held against
 // the plan per class and pupil.
+//
+// P4 ADDS "TIMPLANER PER ÅRSKULL" below the plan: per cohort of the active
+// year's classes (and its rolled successor's), and for the first cohort of
+// the tioårig grundskola (HT 2028), which lydelse each stadium is judged
+// against — read-only, the reference data's sources named. Computed in the
+// browser from lib/timplan-cohorts.ts, the gateway's module mirrored and held
+// to its fixture, in components/timplan/school-cohort-notice.tsx, which this
+// page loads with lazy(): imported statically it cost the route 1,5 KB, and
+// the review gave it 1,0. The Stadium tab on Täckning shows the same rows
+// from the gateway; that file says where the two may differ.
 
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState, type ComponentType } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { CalendarRange, Download, FileUp, ListPlus, Plus, Target, TriangleAlert } from "lucide-react";
 import { Link } from "@/i18n/navigation";
-import { useAcademicYears, useNationalTimplans, usePeople, useSubjects } from "@/lib/queries";
+import { useAcademicYears, useGroups, useNationalTimplans, usePeople, useSubjects } from "@/lib/queries";
 import {
   useLocalTimplan,
   useLocalTimplanActions,
@@ -86,6 +96,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { TimplanGrid } from "@/components/timplan/timplan-grid";
 import { WarningsRail } from "@/components/timplan/warnings-rail";
+import type { SchoolCohortNoticeProps } from "@/components/timplan/school-cohort-notice";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -116,6 +127,13 @@ const YearTimplansDialog = lazy(() =>
   import("@/components/timplan/year-timplans-dialog").then((module) => ({
     default: module.YearTimplansDialog,
   })),
+);
+// A chunk that does not arrive draws no notice rather than the root's error screen.
+const SchoolCohortNotice = lazy<ComponentType<SchoolCohortNoticeProps>>(() =>
+  import("@/components/timplan/school-cohort-notice").then(
+    (module) => ({ default: module.SchoolCohortNotice }),
+    () => ({ default: () => null }),
+  ),
 );
 const TimplanImportDialog = lazy(() =>
   import("@/components/timplan/timplan-import-dialog").then((module) => ({
@@ -160,6 +178,7 @@ export default function TimplanPage() {
   const { data: subjects, isLoading: subjectsLoading, isError: subjectsFailed } = useSubjects();
   const { data: people } = usePeople();
   const { data: years } = useAcademicYears();
+  const { data: groups } = useGroups();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const activeId =
@@ -610,6 +629,15 @@ export default function TimplanPage() {
       )}
 
       <Suspense fallback={null}>
+        {!loading && !failed && years && groups && national ? (
+          <SchoolCohortNotice
+            years={years}
+            groups={groups}
+            versions={national.versions}
+            planForms={(plans ?? []).map((entry) => entry.schoolForm)}
+            className="mt-6"
+          />
+        ) : null}
         {dialog === "create" ? (
           <CreateDialog
             open

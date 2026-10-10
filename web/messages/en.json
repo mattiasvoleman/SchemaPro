@@ -2120,7 +2120,7 @@
     "moveStragglers": "Move remaining pupils",
     "deleteNamed": "Delete {name}",
     "deleteTitle": "Delete {name}?",
-    "deleteBody": "The year is deleted with its classes, groups, teaching requirements, holidays and class rules. This is possible only while no pupils have their classes in it — before activation, that is how a rollover is undone.",
+    "deleteBody": "The year is deleted with its classes, groups, teaching requirements, holidays and class rules. This is possible only while no pupils have their classes in it — before activation, that is how a rollover is undone. No pupil's class history is lost: a coming year has none until pupils are moved into its classes.",
     "deleted": "{name} was deleted.",
     "activationTitle": "Activate {name}",
     "activationIntro": "The preview shows which pupils move to which class.",
