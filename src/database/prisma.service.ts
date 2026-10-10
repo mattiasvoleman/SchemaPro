@@ -434,17 +434,31 @@ export class PrismaService
    *
    * `set_config(..., true)` is transaction-local, so the principal cannot
    * outlive the transaction or leak onto a pooled connection.
+   *
+   * `keyId` (the SS12000 v2.0 provider, 20261014130000) also sets
+   * `app.service_key_id`, which the subscription arms name: a key reads and
+   * writes its own subscriptions only. Like `schoolId` it MUST come from the
+   * verified key. Without it — every v1 call — the statement is the one it
+   * always was.
    */
   async withServicePrincipal<T>(
     schoolId: string,
     fn: (tx: PrismaClient) => Promise<T>,
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number; keyId?: string },
   ): Promise<T> {
+    const keyId = options?.keyId;
     return this.$transaction(
       async (tx) => {
-        await tx.$executeRaw`
+        if (keyId === undefined) {
+          await tx.$executeRaw`
           SELECT set_config('app.service_school_id', ${schoolId}, true)
         `;
+        } else {
+          await tx.$executeRaw`
+          SELECT set_config('app.service_school_id', ${schoolId}, true),
+                 set_config('app.service_key_id', ${keyId}, true)
+        `;
+        }
         return fn(tx as unknown as PrismaClient);
       },
       { timeout: options?.timeoutMs ?? 30_000 },
