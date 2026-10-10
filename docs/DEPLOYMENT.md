@@ -172,6 +172,7 @@ Run it with (see `.env.example` for the full annotated list):
 | `AI_ENGINE_API_KEY` | the shared secret from step 0 |
 | `AI_ENGINE_TIMEOUT_MS` | `90000` (must exceed the solver timeout) |
 | `THROTTLE_TTL_SECONDS` / `THROTTLE_LIMIT` | `60` / `120` |
+| `PUBLIC_VIEWER_PROXY_KEY` | optional, at least 32 random characters, the **same value as on the web app**. Schemavisaren (`/v/<token>`) is fetched by the web server, so without it every family shares the web server's rate-limit bucket (120 a minute); with it the API trusts the viewer's address the web server forwards |
 
 No `DIRECT_URL` here: that is the owner connection from step 2, and the API
 never reads it. Keeping owner credentials out of the API's environment is the
@@ -189,9 +190,13 @@ On Vercel: import the repo, set the **root directory to `web/`**, and add:
 | `NEXT_PUBLIC_SUPABASE_URL` | project URL |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | publishable key |
 | `NEXT_PUBLIC_API_BASE_URL` | the API origin, e.g. `https://api.yourschool.example` |
+| `PUBLIC_VIEWER_PROXY_KEY` | optional; the API's value (above). Read at runtime by the server, never sent to a browser |
+| `PUBLIC_VIEWER_API_BASE_URL` | optional; the API origin as the web **server** reaches it (a private network address), when that differs from `NEXT_PUBLIC_API_BASE_URL` |
 
 Verify: visiting `/` redirects to `/sv/login`; the language switcher flips to
-English; `/sv/admin` redirects to login when signed out.
+English; `/sv/admin` redirects to login when signed out; `/v/x` answers
+"Schemat finns inte" without a redirect, with `X-Robots-Tag: noindex, nofollow`
+and no `Set-Cookie`.
 
 ---
 
