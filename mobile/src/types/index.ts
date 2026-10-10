@@ -96,6 +96,8 @@ export interface ChildRow {
   readonly id: string;
   readonly firstName: string;
   readonly lastName: string;
+  /** False for a pupil who has left: still linked, but no week to show. */
+  readonly isActive: boolean;
 }
 
 export type AbsenceReportType = 'SICK' | 'APPOINTMENT' | 'OTHER';
