@@ -71,8 +71,21 @@ export function viewerQueryOf(params: { target?: string | string[]; date?: strin
   const date = one(params.date);
   return {
     target: target && UUID.test(target) ? target.toLowerCase() : null,
-    date: date && DATE.test(date) && !Number.isNaN(Date.parse(`${date}T00:00:00Z`)) ? date : null,
+    date: date && isCalendarDay(date) ? date : null,
   };
+}
+
+/**
+ * A real day, round-tripped: `Date.parse` accepts 2026-02-30 (V8 rolls it
+ * into March), and the gateway answers its one 404 for such a date. Dropped
+ * here, so the page shows the current week rather than "not available".
+ */
+function isCalendarDay(value: string): boolean {
+  if (!DATE.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  if (year < 2000 || year > 2100) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
 /**

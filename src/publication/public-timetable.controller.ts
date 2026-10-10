@@ -12,6 +12,20 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * A real calendar day in a sane span. `Date.parse` is no test: V8 rolls
+ * 2026-02-30 over into March, and Postgres then refuses the ::date cast with
+ * 22008 — an unauthenticated 500 and an ERROR line per request, before the
+ * token is even looked up. Round-tripped instead, as the web's own check is.
+ */
+export function isViewerDate(value: string): boolean {
+  if (!DATE.test(value)) return false;
+  const year = Number(value.slice(0, 4));
+  if (year < 2000 || year > 2100) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+/**
  * Schemavisaren: the PUBLISHED timetable of a class, a teacher or a room,
  * without logging in, behind a share link (migration 20261011120000).
  *
@@ -68,7 +82,7 @@ export class PublicTimetableController {
   private async read(token: string, target: string | undefined, date: string | undefined): Promise<unknown | null> {
     if (!TOKEN_PATTERN.test(token)) return null;
     if (target !== undefined && !UUID.test(target)) return null;
-    if (date !== undefined && (!DATE.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)))) return null;
+    if (date !== undefined && (typeof date !== 'string' || !isViewerDate(date))) return null;
     const hash = tokenHashOf(token);
     const rows = await this.prisma.withPublicViewer((tx) =>
       tx.$queryRaw<{ doc: unknown }[]>(

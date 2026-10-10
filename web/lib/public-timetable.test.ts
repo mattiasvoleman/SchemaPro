@@ -43,6 +43,11 @@ describe("the viewer's request to the gateway", () => {
       `http://api/public/v1/timetables/${TOKEN}?target=${UUID}&date=2026-10-12`,
     );
     expect(viewerQueryOf({ target: "1 OR 1=1", date: "2026-13-45" })).toEqual({ target: null, date: null });
+    // Days the engine rolls over, and a year nobody means: dropped, never sent.
+    for (const date of ["2026-02-30", "2026-04-31", "0000-01-01"]) {
+      expect(viewerQueryOf({ date }).date).toBeNull();
+    }
+    expect(viewerQueryOf({ date: "2028-02-29" }).date).toBe("2028-02-29");
     expect(viewerQueryOf({ target: [UUID.toUpperCase(), "x"], date: "2026-10-12" })).toEqual({ target: UUID, date: "2026-10-12" });
     expect(viewerFetchOf("http://api", TOKEN, { target: null, date: null }, null, undefined).url).toBe(
       `http://api/public/v1/timetables/${TOKEN}`,
