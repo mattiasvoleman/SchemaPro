@@ -128,6 +128,10 @@ const ADMIN_NAV: NavSection[] = [
       // thing to it, and no new icon on every route's bill.
       { labelKey: "cancellations", href: "/admin/cancellations", icon: CalendarOff },
       { labelKey: "teacherAbsence", href: "/admin/teacher-absence", icon: UserX },
+      // Beside the absence register whose lessons it covers. The day
+      // planner's clock icon, already in the shell: no new glyph on every
+      // route's bill for a page about the same dated lessons.
+      { labelKey: "coverBoard", href: "/admin/cover", icon: CalendarClock },
       { labelKey: "roomBookings", href: "/admin/room-bookings", icon: MapPin },
       { labelKey: "leaveRequests", href: "/admin/leave", icon: ClipboardCheck },
       { labelKey: "reports", href: "/admin/reports", icon: BarChart3 },
@@ -147,6 +151,9 @@ const TEACHER_NAV: NavSection[] = [
       // icon, already in this module: the same thing seen from the other side,
       // and a second glyph would be bytes on every route for nothing.
       { labelKey: "myStaffing", href: "/teacher/tjanst", icon: Scale },
+      // Mina vikariepass and Min frånvaro: the admin's Lärarfrånvaro icon,
+      // the same subject from the teacher's side.
+      { labelKey: "myCover", href: "/teacher/franvaro", icon: UserX },
     ],
 
   },
