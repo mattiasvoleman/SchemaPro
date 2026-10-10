@@ -50,6 +50,10 @@ enum NotificationType {
   LESSON_ROOM_CHANGED
   SCHEDULE_CHANGED
   ROOM_BOOKING_DECIDED
+  /// A teacher registered their own absence; to the school's admins, no reason (20261012120000).
+  TEACHER_ABSENCE_REPORTED
+  /// A booked substitute is no longer needed (20261012120000).
+  LESSON_COVER_WITHDRAWN
 }
 
 enum RoomBookingStatus {
@@ -278,6 +282,10 @@ model User {
   notifications       Notification[]    @relation("NotificationRecipient")
   roomBookings        RoomBooking[]     @relation("RoomBookingBooker")
   decidedRoomBookings RoomBooking[]     @relation("RoomBookingDecider")
+  /// Membership of the substitute pool (20261012110000): at most one row, a
+  /// list for the composite key's sake as workRules. readActiveStaffIds
+  /// filters on it.
+  substitutePoolMemberships SubstitutePoolMember[] @relation("PoolMemberUser")
 
   @@unique([schoolId, email])
   /// The target a tenant-scoped composite foreign key needs. Redundant as an
@@ -2712,4 +2720,141 @@ model RoomPreferenceRoom {
   @@unique([preferenceId, roomId])
   @@index([schoolId])
   @@map("RoomPreferenceRooms")
+}
+
+// -----------------------------------------------------------------------------
+// Vikarieplanering: absences, cover decisions, the substitute pool
+// (migrations 20261012090000–20261012120000). The composite (x, schoolId) keys,
+// the EXCLUDE on overlapping absences, the CHECKs, the guard triggers and the
+// partial unique indexes live in the migrations; Prisma knows only the columns
+// the API reads and writes. An absence's reason is read by the admin and the
+// absent teacher alone (RLS); nothing else carries it.
+// -----------------------------------------------------------------------------
+
+enum TeacherAbsenceStatus {
+  ACTIVE
+  WITHDRAWN
+}
+
+/// The five categories every school starts with; labels are localised by the client.
+enum AbsenceReasonBuiltin {
+  SICK
+  CHILD_CARE
+  WORK_TRAVEL
+  PROFESSIONAL_DEVELOPMENT
+  OTHER
+}
+
+enum CoverDecisionKind {
+  SUBSTITUTE
+  CANCELLED
+  SUPERVISED_STUDY
+  CO_TEACHER
+}
+
+enum CoverPoolPreference {
+  PREFER
+  NEUTRAL
+  LAST_RESORT
+}
+
+/// The school's list of absence categories: a built-in or a label, never both.
+model TeacherAbsenceReason {
+  id         String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId   String                @db.Uuid
+  builtin    AbsenceReasonBuiltin?
+  label      String?
+  sortOrder  Int                   @default(0)
+  archivedAt DateTime?             @db.Timestamptz(6)
+  createdAt  DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt  DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([id, schoolId])
+  @@map("TeacherAbsenceReasons")
+}
+
+/// A teacher away over [startsAt, endsAt). Its lessons are derived, never stored.
+model TeacherAbsence {
+  id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId          String               @db.Uuid
+  userId            String               @db.Uuid
+  startsAt          DateTime             @db.Timestamptz(6)
+  endsAt            DateTime             @db.Timestamptz(6)
+  wholeDays         Boolean              @default(true)
+  /// Null = "ej angiven". Read only by the admin and the absent teacher.
+  reasonId          String?              @db.Uuid
+  status            TeacherAbsenceStatus @default(ACTIVE)
+  createdByUserId   String?              @db.Uuid
+  withdrawnAt       DateTime?            @db.Timestamptz(6)
+  withdrawnByUserId String?              @db.Uuid
+  createdAt         DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([id, schoolId])
+  @@unique([id, userId, schoolId])
+  @@index([schoolId, userId, startsAt])
+  @@map("TeacherAbsences")
+}
+
+/// One decision per (absence, lesson): what the school did about the lesson.
+model TeacherAbsenceCover {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId         String            @db.Uuid
+  absenceId        String            @db.Uuid
+  calendarLessonId String            @db.Uuid
+  absentTeacherId  String            @db.Uuid
+  /// The CalendarLessonTeachers rows this decision removed: [{teacherId, role}].
+  removedTeachers  Json              @default("[]")
+  decision         CoverDecisionKind
+  /// Audit only; the calendar row is the truth.
+  substituteId     String?           @db.Uuid
+  previousNote     String?
+  decidedByUserId  String?           @db.Uuid
+  decidedAt        DateTime          @default(now()) @db.Timestamptz(6)
+
+  @@unique([absenceId, calendarLessonId])
+  @@index([calendarLessonId, schoolId])
+  @@index([schoolId, decidedAt])
+  @@map("TeacherAbsenceCovers")
+}
+
+/// One row per school; no row = every default.
+model CoverSettings {
+  schoolId          String              @id @db.Uuid
+  poolPreference    CoverPoolPreference @default(NEUTRAL)
+  teacherSelfReport Boolean             @default(false)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime            @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("CoverSettings")
+}
+
+/// A TEACHER user who covers without (necessarily) a post: a timvikarie.
+model SubstitutePoolMember {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId        String   @db.Uuid
+  userId          String   @unique @db.Uuid
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+  createdByUserId String?  @db.Uuid
+
+  user User @relation("PoolMemberUser", fields: [userId, schoolId], references: [id, schoolId], onDelete: Cascade)
+
+  @@unique([userId, schoolId])
+  @@index([schoolId])
+  @@map("SubstitutePoolMembers")
+}
+
+/// When a pool member can work: a date or a weekday, a window of the day.
+model SubstituteAvailability {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId  String    @db.Uuid
+  userId    String    @db.Uuid
+  date      DateTime? @db.Date
+  dayOfWeek Int?
+  startTime DateTime  @db.Time(0)
+  endTime   DateTime  @db.Time(0)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([schoolId, userId, date])
+  @@map("SubstituteAvailabilities")
 }
