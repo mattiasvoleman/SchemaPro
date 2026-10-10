@@ -54,7 +54,7 @@ describe("stadiesummor agree with the gateway's fixture", () => {
     // and 61 minutes, a grade recorded at 994 and 995 per mille — so a mirror
     // that moves one by a minute or a per mille fails here.
     expect(cases.map((entry) => Number(entry.name.split(".")[0]))).toEqual(
-      Array.from({ length: 24 }, (_, i) => i + 1),
+      Array.from({ length: 25 }, (_, i) => i + 1),
     );
     expect(cohortCases.length).toBeGreaterThanOrEqual(2);
     const statuses = new Set(

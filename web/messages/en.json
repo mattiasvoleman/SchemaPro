@@ -2647,6 +2647,7 @@
         "TIMPLAN_STAGE_OLD_COHORT_DISTRIBUTION_ASSUMED": "Distribution assumed after 2028",
         "TIMPLAN_PUPIL_STAGE_FORM_CHANGED": "School form changed during the stage",
         "TIMPLAN_PUPIL_STAGE_GRADE_UNKNOWN": "A class without a grade",
+        "TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS": "Home group that is not a class",
         "TIMPLAN_PUPIL_STAGE_GRADE_REPEATED": "Repeated a grade",
         "TIMPLAN_PUPIL_STAGE_PRESCHOOL_AFTER_2028": "Preschool class after 2028",
         "TIMPLAN_PUPIL_STAGE_SUBJECTS_UNMAPPED": "No subjects with a national code"
@@ -2725,6 +2726,7 @@
         "assumed": "{stageTitle}: from autumn 2028 it is compared with {version} according to the reference data. The distribution for older cohorts after 2028 is not published; SFS 2025:729 keeps only the total.",
         "formChanged": "{stageTitle}: the stage's years follow timplans for different school forms, and the comparison uses the latest.",
         "gradeUnknown": "The class in the year {year} has no grade, so the year counts towards no stage.",
+        "homeNotClass": "In the year {year} the pupil had a teaching group rather than a class as home group. Those days count as unrecorded, not as zero hours.",
         "gradeRepeated": "{stageTitle}: the pupil has taken {grade} twice, and both years count.",
         "preschoolAfter2028": "In the year {year} the pupil was in a class with grade 0. The preschool class ends in 2028, so the year does not count.",
         "subjectsUnmapped": "{stageTitle}: none of the pupil's subjects has a national subject code ({planned} planned), so no national comparison is made."

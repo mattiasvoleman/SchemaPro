@@ -44,7 +44,7 @@ const { cases, cohortCases } = fixture as unknown as { cases: FixtureCase[]; coh
 
 describe('stadiesummor agree with the shared fixture', () => {
   it('has the 21 cases of the spec, the two boundary cases and the review’s cases, and reaches every verdict code and every cell status', () => {
-    expect(cases.map((entry) => Number(entry.name.split('.')[0]))).toEqual(Array.from({ length: 24 }, (_, i) => i + 1));
+    expect(cases.map((entry) => Number(entry.name.split('.')[0]))).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
     const codes = new Set(cases.flatMap((entry) => entry.coverage.pupils.flatMap((pupil) => pupil.verdicts.map((verdict) => verdict.code))));
     expect([...codes].sort()).toEqual([
       'TIMPLAN_PUPIL_STAGE_BACKFILLED',
@@ -53,6 +53,7 @@ describe('stadiesummor agree with the shared fixture', () => {
       'TIMPLAN_PUPIL_STAGE_GRADE_REPEATED',
       'TIMPLAN_PUPIL_STAGE_GRADE_UNKNOWN',
       'TIMPLAN_PUPIL_STAGE_GROUP_MINIMUM_UNMET',
+      'TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS',
       'TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED',
       'TIMPLAN_PUPIL_STAGE_PROJECTED_BELOW_NATIONAL',
       'TIMPLAN_PUPIL_STAGE_SUBJECTS_UNMAPPED',

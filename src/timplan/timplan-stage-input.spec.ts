@@ -11,6 +11,7 @@ import {
   type StageYearRead,
 } from './timplan-stage-input';
 import type { SegmentedAudienceRow } from './timplan-delivered.sql';
+import { computePupilStages } from '../common/timplan-stage';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const YEAR = { id: id(900), startDate: '2026-08-17', endDate: '2027-06-11' };
@@ -153,6 +154,46 @@ describe('recordedBlocksOfYear', () => {
     expect(blocks.get(anna)![0]!.recordedPermille).toBeLessThan(400);
     expect(blocks.get(cleo)![0]!.recordedPermille).toBeLessThan(600);
     expect(blocks.get(cleo)![0]!.recordedFrom).toBe('2027-01-11');
+  });
+
+  it('reads a home group that is not a class as unrecorded, as P2 and P3 do — never as a year recorded in full at 0 h', () => {
+    // Users.studentGroupId may name a teaching group; P3 drops a pupil whose
+    // home is not a CLASS, so their figures would be empty while the trigger
+    // records the segment.
+    const tg8: PlannedGroup = { id: id(81), name: 'Ma8 nivå', kind: 'TEACHING_GROUP', gradeLevel: 8 };
+    const dag = id(104);
+    const eva = id(105);
+    const segments = [
+      seg(dag, tg8, '2026-08-17', null, { gradeLevel: 8 }),
+      seg(eva, tg8, '2026-08-17', '2026-11-02', { gradeLevel: 8 }),
+      seg(eva, g7a, '2026-11-02', null),
+    ];
+    const blocks = recordedBlocksOfYear(
+      read({ boundaries: boundariesOf(segments, YEAR), planned: { ...read().planned, groups: [g7a, g7b, tg8] } }),
+      segments,
+      '2026-10-10T08:00:00.000Z',
+      '2026-10-10',
+    );
+    expect(blocks.get(dag)).toEqual([
+      expect.objectContaining({ gradeLevel: 8, recordedPermille: 0, recordedFrom: null, homeNotClass: true, lines: [] }),
+    ]);
+    // Eva's months in 7A are recorded; the months before are not.
+    const [evaBlock] = blocks.get(eva)!;
+    expect(evaBlock).toMatchObject({ gradeLevel: 7, recordedFrom: '2026-11-02', homeNotClass: true });
+    expect(evaBlock!.recordedPermille).toBeLessThan(800);
+
+    // And the module reads Dag's year as no class: unrecorded, a notice, no shortfall.
+    const coverage = computePupilStages({
+      asOfDate: '2026-10-10',
+      activeYearId: YEAR.id,
+      versions: [],
+      nationalSubjects: [],
+      pupils: [{ id: dag, homeGroupId: tg8.id, years: blocks.get(dag)! }],
+    });
+    const verdicts = coverage.pupils[0]!.verdicts.map((verdict) => verdict.code);
+    expect(verdicts).toEqual(expect.arrayContaining(['TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS', 'TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED']));
+    expect(verdicts.filter((code) => code.includes('BELOW'))).toEqual([]);
+    expect(coverage.pupils[0]!.stages.find((entry) => entry.stage === 'HOG')).toMatchObject({ recordedGrades: [], unrecordedGrades: [7, 8, 9], complete: false });
   });
 
   it('names a backfilled segment', () => {

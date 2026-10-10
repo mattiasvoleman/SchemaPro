@@ -206,6 +206,11 @@ const cases: Case[] = [
   { name: '24. a whole grade in a class since deleted is unrecorded, never zero', activeHT: 2026, pupils: [
     pupil(24, c7a, [year(y(2024), 2024, 7, hog()), year(y(2025), 2025, 8, [], { recordedPermille: 0, recordedFrom: null, classDeleted: true }), current(y(2026), 2026, 9, hog())]),
   ] },
+  // A home group that is not a class (a teaching group): P2 and P3 count no
+  // pupil without a CLASS home, so the year is unrecorded and named.
+  { name: '25. a home group that is not a class: the year is unrecorded and named, never 0 h', activeHT: 2026, pupils: [
+    pupil(25, c7a, [year(y(2024), 2024, 7, hog()), year(y(2025), 2025, 8, [], { recordedPermille: 0, recordedFrom: null, homeNotClass: true }), current(y(2026), 2026, 9, hog())]),
+  ] },
 ];
 
 const out = cases.map((c) => {

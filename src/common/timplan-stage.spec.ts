@@ -215,6 +215,13 @@ describe('stadiesummor, case by case', () => {
     expect(pupil!.verdicts[0]!.params).toMatchObject({ unrecordedGrades: '8', classDeleted: 1 });
   });
 
+  it('25: a home group that is not a class leaves the year unrecorded and names it', () => {
+    const [pupil] = run(25);
+    expect(stage(pupil!, 'HOG')).toMatchObject({ recordedGrades: [7, 9], unrecordedGrades: [8], complete: false });
+    expect(codes(pupil!)).toEqual(['TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS', 'TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED']);
+    expect(pupil!.verdicts[0]!.params).toEqual({ yearStartHT: 2025 });
+  });
+
   it('never refuses: an empty input is an empty answer', () => {
     expect(computePupilStages({ ...cases[0]!.input, pupils: [] })).toEqual({ asOfDate: cases[0]!.input.asOfDate, pupils: [] });
   });
