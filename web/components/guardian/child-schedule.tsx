@@ -45,7 +45,9 @@ function DayList({ day, label, empty }: { day: FamilyDay; label: string; empty: 
   const t = useTranslations("guardian.schedule");
   return (
     <section aria-label={label} className="space-y-1.5">
-      <h3 className="text-sm font-medium capitalize">{label}</h3>
+      {/* No CSS capitalize: the day names come capitalised, and it would
+          also capitalise the month ("Måndag 12 Oktober"). */}
+      <h3 className="text-sm font-medium">{label}</h3>
       {day.entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
@@ -119,7 +121,7 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
   const [week, setWeek] = useState<string | null>(null);
 
   const selected = childList.find((child) => child.id === childId) ?? childList[0] ?? null;
-  const { data, error, isLoading, isFetching } = useFamilySchedule(selected?.id ?? null, week);
+  const { data, error, isLoading, isFetching, isPlaceholderData } = useFamilySchedule(selected?.id ?? null, week);
   if (!selected) return null;
 
   const dayMonth = (date: string) => {
@@ -230,7 +232,9 @@ export function ChildSchedule({ childList }: { childList: ChildScheduleChild[] }
           <p role="alert" className="text-sm text-destructive">
             {message}
           </p>
-        ) : isLoading || !shown ? (
+        ) : isLoading || !shown || (view === "today" && isPlaceholderData) ? (
+          // In today view a kept-over week (another week's answer while
+          // today's loads) would read as "nothing today".
           <p className="text-sm text-muted-foreground">{t("loading")}</p>
         ) : view === "today" ? (
           todayDay ? (

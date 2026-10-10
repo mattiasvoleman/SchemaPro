@@ -12,7 +12,7 @@ import GuardianPage from "./page";
 
 const state = vi.hoisted(() => ({
   role: "GUARDIAN",
-  children: [] as { id: string; firstName: string; lastName: string }[],
+  children: [] as { id: string; firstName: string; lastName: string; isActive: boolean }[],
 }));
 
 vi.mock("@/components/profile-context", () => ({
@@ -56,8 +56,8 @@ vi.mock("next-intl", () => ({
 beforeEach(() => {
   state.role = "GUARDIAN";
   state.children = [
-    { id: "c-1", firstName: "Alva", lastName: "Elev" },
-    { id: "c-2", firstName: "Bo", lastName: "Elev" },
+    { id: "c-1", firstName: "Alva", lastName: "Elev", isActive: true },
+    { id: "c-2", firstName: "Bo", lastName: "Elev", isActive: true },
   ];
 });
 
@@ -92,6 +92,20 @@ describe("the guardian's Schema card", () => {
   it("is given exactly the guardian's own children", async () => {
     render(<GuardianPage />);
     expect(await screen.findByText("child-schedule c-1,c-2")).toBeInTheDocument();
+  });
+
+  it("leaves out a child who has left, whose week the gateway never answers, and is not there when every child has", async () => {
+    state.children = [
+      { id: "c-1", firstName: "Alva", lastName: "Elev", isActive: false },
+      { id: "c-2", firstName: "Bo", lastName: "Elev", isActive: true },
+    ];
+    const { unmount } = render(<GuardianPage />);
+    expect(await screen.findByText("child-schedule c-2")).toBeInTheDocument();
+    unmount();
+    state.children = [{ id: "c-1", firstName: "Alva", lastName: "Elev", isActive: false }];
+    render(<GuardianPage />);
+    expect(await screen.findByText("guardian.reportTitle")).toBeInTheDocument();
+    expect(screen.queryByText(/^child-schedule/)).not.toBeInTheDocument();
   });
 
   it("is not there for another role or for a guardian without children", async () => {
