@@ -111,6 +111,7 @@ import { snapshotRanges } from '../../src/publication/published-grundschema';
 import { CancellationBatchesService } from '../../src/publication/cancellation-batches.service';
 import { PublicLinksService } from '../../src/publication/public-links.service';
 import { tokenHashOf } from '../../src/publication/public-token';
+import { familyPushChecks, sweepFamilySchool } from './probe-family-push';
 import { ScheduleVersionsService as RealScheduleVersionsService } from '../../src/calendar/schedule-versions.service';
 import { CoverService } from '../../src/cover/cover.service';
 import { TeacherAbsencesService } from '../../src/cover/teacher-absences.service';
@@ -3911,6 +3912,7 @@ async function runChecks(
   await batchMoveChecks(owner, api);
   await viewerChecks(owner, api);
   await coverChecks(owner, api, open, appUrl);
+  await familyPushChecks(owner, api, MARKER, check);
 }
 
 
@@ -4354,6 +4356,8 @@ async function findFixture(owner: Client): Promise<Fixture> {
 /** Removes what the probe writes. Narrow enough to touch nothing else. */
 async function sweep(owner: Client, schoolId: string): Promise<void> {
   await owner.query('DELETE FROM "RoomBookings" WHERE title = $1', [MARKER]);
+  // Elev- och vårdnadshavarytan's school, whole, for a run that stopped inside it.
+  await sweepFamilySchool(owner, MARKER);
   await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-vikarie'`, [MARKER]);
   // Duties first: TeacherDuties_take_their_block deletes each one's slot with
   // it (the service writes the slot's reason as the bare word "Uppdrag", so a
