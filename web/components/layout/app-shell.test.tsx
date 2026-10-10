@@ -104,6 +104,7 @@ describe("AppShell navigation", () => {
     expect(link("nav.generate")).toHaveAttribute("href", "/admin/generate");
     expect(link("nav.timetable")).toHaveAttribute("href", "/admin/timetable");
     expect(link("nav.integrations")).toHaveAttribute("href", "/admin/integrations");
+    expect(link("nav.coverBoard")).toHaveAttribute("href", "/admin/cover");
   });
 
   it("gives the name Timplan to the lokal timplan and keeps the requirements route under its new label", () => {
@@ -187,10 +188,12 @@ describe("AppShell navigation", () => {
     expect(link("nav.attendance")).toHaveAttribute("href", "/teacher/attendance");
     expect(link("nav.roomBooking")).toHaveAttribute("href", "/teacher/rooms");
     expect(link("nav.myStaffing")).toHaveAttribute("href", "/teacher/tjanst");
+    expect(link("nav.myCover")).toHaveAttribute("href", "/teacher/franvaro");
 
     expect(screen.queryByRole("link", { name: "nav.subjects" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "nav.coverBoard" })).not.toBeInTheDocument();
     expect(screen.queryByText("nav.planning")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("link")).toHaveLength(4);
+    expect(screen.getAllByRole("link")).toHaveLength(5);
 
   });
 

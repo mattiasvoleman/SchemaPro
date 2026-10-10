@@ -278,6 +278,40 @@ describe("NotificationBell inbox", () => {
     ).toBeInTheDocument();
   });
 
+  it("tells a substitute their own cover and its withdrawal, and an admin a self-report, with no reason", async () => {
+    const user = userEvent.setup();
+    const startsAt = "2026-10-14T06:00:00.000Z";
+    const endsAt = "2026-10-15T22:00:00.000Z";
+    const when = new Date(startsAt).toLocaleString();
+    supabaseState.selectResults.push(
+      ok([
+        notif({
+          type: "LESSON_SUBSTITUTE",
+          meta: { subjectName: "Matematik", startsAt, cover: true, groupName: "7A", roomName: "Sal 12" },
+        }),
+        notif({
+          type: "LESSON_COVER_WITHDRAWN",
+          meta: { subjectName: "Engelska", startsAt, groupName: "8B", roomName: "—" },
+        }),
+        notif({ type: "TEACHER_ABSENCE_REPORTED", meta: { absenceId: "a-1", startsAt, endsAt } }),
+      ]),
+    );
+    renderBell();
+
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    await user.click(bellButton());
+
+    expect(
+      screen.getByText(`lessonSubstituteCover(subject=Matematik|when=${when}|group=7A|room=Sal 12)`),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(`lessonCoverWithdrawn(subject=Engelska|when=${when}|group=8B|room=—)`),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(`teacherAbsenceReported(from=${when}|to=${new Date(endsAt).toLocaleString()})`),
+    ).toBeInTheDocument();
+  });
+
   it("renders a null meta as empty interpolation values and shows the created time", async () => {
     const user = userEvent.setup();
     const createdAt = "2026-08-06T09:30:00.000Z";

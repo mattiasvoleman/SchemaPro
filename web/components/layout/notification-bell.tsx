@@ -22,7 +22,9 @@ interface NotificationRow {
     | "LESSON_SUBSTITUTE"
     | "LESSON_ROOM_CHANGED"
     | "SCHEDULE_CHANGED"
-    | "ROOM_BOOKING_DECIDED";
+    | "ROOM_BOOKING_DECIDED"
+    | "TEACHER_ABSENCE_REPORTED"
+    | "LESSON_COVER_WITHDRAWN";
   meta: Record<string, unknown> | null;
   readAt: string | null;
   createdAt: string;
@@ -88,9 +90,19 @@ export function NotificationBell() {
           when: new Date(str("startsAt")).toLocaleString(),
         });
       case "LESSON_SUBSTITUTE":
-        return t("lessonSubstitute", {
-          subject: str("subjectName"),
-          when: new Date(str("startsAt")).toLocaleString(),
+      case "LESSON_COVER_WITHDRAWN": {
+        // The substitute's own notice (`cover: true`) and its withdrawal name
+        // the group and room; neither says whom they replace, or why.
+        const when = new Date(str("startsAt")).toLocaleString();
+        const own = { subject: str("subjectName"), when, group: str("groupName"), room: str("roomName") };
+        if (entry.type === "LESSON_COVER_WITHDRAWN") return t("lessonCoverWithdrawn", own);
+        return meta.cover === true ? t("lessonSubstituteCover", own) : t("lessonSubstitute", { subject: own.subject, when });
+      }
+      case "TEACHER_ABSENCE_REPORTED":
+        // The period only: the reason is never in a notice.
+        return t("teacherAbsenceReported", {
+          from: new Date(str("startsAt")).toLocaleString(),
+          to: new Date(str("endsAt")).toLocaleString(),
         });
       case "LESSON_ROOM_CHANGED":
         return t("lessonRoomChanged", {
