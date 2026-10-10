@@ -51,6 +51,7 @@ async function request<T>(
   method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
   path: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   if (!API_BASE_URL) {
     throw new ApiError(0, "NEXT_PUBLIC_API_BASE_URL is not configured.");
@@ -65,6 +66,7 @@ async function request<T>(
     method,
     headers,
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    ...(signal ? { signal } : {}),
   });
 
   if (!response.ok) {
@@ -97,7 +99,8 @@ async function request<T>(
 
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
-  post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+  /** `signal`: a superseded read sent as a POST (a dry run) is cancelled, not left to finish. */
+  post: <T>(path: string, body?: unknown, signal?: AbortSignal) => request<T>("POST", path, body, signal),
   put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
   delete: <T>(path: string) => request<T>("DELETE", path),

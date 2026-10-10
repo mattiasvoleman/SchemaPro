@@ -153,11 +153,12 @@ describe("PublishReviewDialog", () => {
     expect(screen.getByText("Matematik · 7A · Tisdag 09:00–09:50 · Anna Berg · Sal 12")).toBeInTheDocument();
     expect(await screen.findByText("Utkastet flyttar 1, tar bort 0 och behåller dagsändringar på 4 lektioner.")).toBeInTheDocument();
     await waitFor(() =>
-      expect(post).toHaveBeenCalledWith("/api/v1/publications/preview", {
-        academicYearId: "y26",
-        validFrom: "2026-10-12",
-        validTo: "2027-06-11",
-      }),
+      expect(post).toHaveBeenCalledWith(
+        "/api/v1/publications/preview",
+        { academicYearId: "y26", validFrom: "2026-10-12", validTo: "2027-06-11" },
+        // A dry run the dates have moved past is cancelled, not left holding the lock.
+        expect.any(AbortSignal),
+      ),
     );
   });
 });
