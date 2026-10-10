@@ -1430,7 +1430,8 @@
     "roomBookingRejected": "Your booking of {room} on {when} was rejected.",
     "lessonSubstituteCover": "You are covering: {subject} on {when}, {group}, {room}.",
     "lessonCoverWithdrawn": "Cover cancelled: {subject} on {when}, {group}, {room}. You do not need to come.",
-    "teacherAbsenceReported": "{teacher} has reported an absence {period}. See Teacher absence."
+    "teacherAbsenceReported": "{teacher} has reported an absence {period}. See Teacher absence.",
+    "settingsLink": "Choose what is sent to you"
   },
   "integrations": {
     "title": "Integrations",
@@ -3567,5 +3568,30 @@
     "withdraw": "Withdraw",
     "privacy": "Only you and the school leadership see the reason. Colleagues, students and guardians see only that a lesson has a substitute or is cancelled.",
     "availabilityTitle": "My availability"
+  },
+  "notificationSettings": {
+    "title": "Notifications",
+    "subtitle": "Choose what is sent to you outside SchemaPro.",
+    "cardTitle": "E-mail and push",
+    "cardBody": "What you switch off is not sent as e-mail or push. The notification is still here in SchemaPro.",
+    "loading": "Loading your choices …",
+    "empty": "There are no notifications to choose between for your role.",
+    "saved": "Your choice is saved.",
+    "required": "Always sent.",
+    "requiredAbsence": "Always sent. The school must tell guardians the same day when a pupil is absent without notice.",
+    "requiredCover": "Always sent, so that you do not go to a lesson that is no longer yours.",
+    "substituteStaffHint": "Your own cover lessons always arrive, whatever you choose here.",
+    "types": {
+      "ABSENCE_UNREPORTED": "Unreported absence",
+      "LEAVE_DECIDED": "Leave decisions",
+      "LESSON_CANCELLED": "Cancelled lessons",
+      "LESSON_SUBSTITUTE": "Lessons with a substitute",
+      "LESSON_SUBSTITUTE_STAFF": "Substitutes on my lessons",
+      "LESSON_ROOM_CHANGED": "Room changes",
+      "SCHEDULE_CHANGED": "Schedule changes",
+      "ROOM_BOOKING_DECIDED": "Room booking decisions",
+      "TEACHER_ABSENCE_REPORTED": "Teacher absence",
+      "LESSON_COVER_WITHDRAWN": "Withdrawn cover lessons"
+    }
   }
 }

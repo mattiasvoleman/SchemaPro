@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { Link } from "@/i18n/navigation";
 
 interface NotificationRow {
   id: string;
@@ -172,6 +173,14 @@ export function NotificationBell() {
               </div>
             ))
           )}
+        </div>
+        {/* What leaves SchemaPro as e-mail and push, chosen per type. The
+            shell already carries next-intl's Link, so this costs no module;
+            no icon, because every route pays for what the bell carries. */}
+        <div className="border-t px-3 py-2">
+          <Link href="/notifications" className="text-xs font-medium text-primary hover:underline">
+            {t("settingsLink")}
+          </Link>
         </div>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -1430,7 +1430,8 @@
     "roomBookingRejected": "Din bokning av {room} den {when} avslogs.",
     "lessonSubstituteCover": "Du vikarierar: {subject} den {when}, {group}, {room}.",
     "lessonCoverWithdrawn": "Vikariepasset är avbokat: {subject} den {when}, {group}, {room}. Du behöver inte komma.",
-    "teacherAbsenceReported": "{teacher} har anmält frånvaro {period}. Se Lärarfrånvaro."
+    "teacherAbsenceReported": "{teacher} har anmält frånvaro {period}. Se Lärarfrånvaro.",
+    "settingsLink": "Välj vad som skickas till dig"
   },
   "integrations": {
     "title": "Integrationer",
@@ -3567,5 +3568,30 @@
     "withdraw": "Återkalla",
     "privacy": "Orsaken ser bara du och skolledningen. Kollegor, elever och vårdnadshavare ser bara att lektionen har en vikarie eller är inställd.",
     "availabilityTitle": "Min tillgänglighet"
+  },
+  "notificationSettings": {
+    "title": "Notiser",
+    "subtitle": "Välj vad som skickas till dig utanför SchemaPro.",
+    "cardTitle": "E-post och push",
+    "cardBody": "Det du slår av skickas inte som e-post eller push. Notisen finns ändå kvar här i SchemaPro.",
+    "loading": "Hämtar dina val …",
+    "empty": "Det finns inga notiser att välja bland för din roll.",
+    "saved": "Ditt val är sparat.",
+    "required": "Skickas alltid.",
+    "requiredAbsence": "Skickas alltid. Skolan ska meddela vårdnadshavare samma dag när en elev är borta utan anmälan.",
+    "requiredCover": "Skickas alltid, så att du inte går till ett pass som inte längre är ditt.",
+    "substituteStaffHint": "Dina egna vikariepass kommer alltid fram, vad du än väljer här.",
+    "types": {
+      "ABSENCE_UNREPORTED": "Oanmäld frånvaro",
+      "LEAVE_DECIDED": "Beslut om ledighet",
+      "LESSON_CANCELLED": "Inställda lektioner",
+      "LESSON_SUBSTITUTE": "Lektioner med vikarie",
+      "LESSON_SUBSTITUTE_STAFF": "Vikarier på mina lektioner",
+      "LESSON_ROOM_CHANGED": "Byte av sal",
+      "SCHEDULE_CHANGED": "Ändringar i schemat",
+      "ROOM_BOOKING_DECIDED": "Beslut om lokalbokning",
+      "TEACHER_ABSENCE_REPORTED": "Lärarfrånvaro",
+      "LESSON_COVER_WITHDRAWN": "Avbokade vikariepass"
+    }
   }
 }
