@@ -50,6 +50,7 @@ const HOURS: Hours = {
     { userId: "u-pool", kind: "POOL", lessons: 1, minutes: 50 },
   ],
   planned: [{ userId: "u-pool", lessons: 3, minutes: 150 }],
+  toCheck: [],
 };
 
 const NAMES: HoursNames = {

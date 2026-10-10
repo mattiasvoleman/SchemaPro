@@ -60,6 +60,31 @@ describe('CoverReportsService', () => {
       expect(JSON.stringify(answer)).not.toMatch(/absen|reason/i);
     });
 
+    it('a cover held by a substitute who was themself away is left out of the payroll rows and listed to check — never saying why', async () => {
+      tx.academicYear.findMany.mockResolvedValue([
+        { id: 'y2', startDate: new Date('2026-08-17T00:00:00Z'), endDate: new Date('2027-06-11T00:00:00Z') },
+      ]);
+      tx.teacherEmployment.findMany.mockResolvedValue([]);
+      tx.$queryRaw.mockResolvedValue([row(S, '2026-09-01', 60), row(S, '2026-09-02', 60)]);
+      // S fell ill on 1 September and nobody re-covered the lesson before it ended.
+      tx.teacherAbsence.findMany.mockResolvedValue([
+        { userId: S, startsAt: new Date('2026-08-31T22:00:00Z'), endsAt: new Date('2026-09-01T22:00:00Z') },
+      ]);
+
+      const answer = await service.hours('2026-09-01', '2026-09-30', undefined, testUser());
+
+      expect(answer.rows.map((r) => r.date)).toEqual(['2026-09-02']);
+      expect(answer.summary).toEqual([{ userId: S, kind: 'STAFF', lessons: 1, minutes: 60 }]);
+      expect(answer.toCheck.map((r) => [r.userId, r.date, r.minutes])).toEqual([[S, '2026-09-01', 60]]);
+      expect(tx.teacherAbsence.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ status: 'ACTIVE', userId: { in: [S] } }),
+          select: { userId: true, startsAt: true, endsAt: true },
+        }),
+      );
+      expect(JSON.stringify(answer)).not.toMatch(/absen|reason/i);
+    });
+
     it('a pool member with a post that year is STAFF', async () => {
       tx.academicYear.findMany.mockResolvedValue([
         { id: 'y2', startDate: new Date('2026-08-17T00:00:00Z'), endDate: new Date('2027-06-11T00:00:00Z') },

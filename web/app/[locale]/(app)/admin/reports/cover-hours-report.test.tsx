@@ -59,6 +59,7 @@ const HOURS: Hours = {
   ],
   summary: [{ userId: "u-pool", kind: "POOL", lessons: 1, minutes: 90 }],
   planned: [{ userId: "u-staff", lessons: 2, minutes: 120 }],
+  toCheck: [],
 };
 
 function renderReport() {
@@ -103,6 +104,22 @@ describe("Vikarietimmar", () => {
     const [filename, csv] = download.mock.calls[0] as [string, string];
     expect(filename).toBe("vikarietimmar-lektioner-2026-09-01-2026-09-30.csv");
     expect(csv).toContain("Cia Holm;cia@example.se;Vikariepool;2026-09-14;08:00;09:30;90;Matematik;7A;");
+  });
+
+  it("lists, outside the files, a cover the calendar credits to a substitute who was away themself — to check, without saying why", async () => {
+    const user = userEvent.setup();
+    get.mockResolvedValue({
+      ...HOURS,
+      toCheck: [{ ...HOURS.rows[0]!, lessonId: "l-2", userId: "u-staff", kind: "STAFF", date: "2026-09-15", startsAt: "2026-09-15T06:00:00.000Z", endsAt: "2026-09-15T07:00:00.000Z", minutes: 60 }],
+    });
+    renderReport();
+    const note = await screen.findByRole("region", { name: "Kontrollera innan lönen" });
+    expect(within(note).getByText(/Bo Ek/)).toHaveTextContent("Bo Ek · 2026-09-15 08:00–09:00 · Matematik · 7A");
+    expect(note).not.toHaveTextContent(/sjuk|orsak/i);
+    // Not in the payroll file.
+    await user.click(screen.getByRole("button", { name: "Exportera pass (CSV)" }));
+    await waitFor(() => expect(download).toHaveBeenCalledTimes(1));
+    expect((download.mock.calls[0] as [string, string])[1]).not.toContain("Bo Ek");
   });
 
   it("refuses a period longer than the gateway's 93 days before asking it", async () => {

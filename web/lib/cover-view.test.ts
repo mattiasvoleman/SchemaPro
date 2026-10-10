@@ -298,7 +298,6 @@ describe("the other-teacher pick", () => {
 
   it("lists only who the gateway would put in with a warning — never the suggested, the lesson's own, the busy or the absent", () => {
     const options = otherTeacherOptions(teachers, item({ teachers: [{ teacherId: "t-anna", role: "LEAD" }] }), {
-      lessonId: "l-1",
       candidates: [{ userId: "t-bo" }],
       excluded: [
         { userId: "t-cia", codes: [{ code: "BUSY_LESSON", params: { lessonId: "l-2" } }] },
