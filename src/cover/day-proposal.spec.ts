@@ -105,6 +105,45 @@ describe('Fördela dagen (greedy proposal)', () => {
     expect(two).toEqual(one);
   });
 
+  describe('two pairs of one lesson (a co-taught lesson whose two teachers are both away)', () => {
+    const pair = (id: string, absenceId: string, from: number, to: number, candidates: string[]): ProposalLesson => ({
+      lessonId: id,
+      absenceId,
+      target: { id, date: D, start: t(from), end: t(to), teacherIds: ['A', 'B'] },
+      candidates,
+    });
+
+    it('names a different person for each pair, never one person twice on the lesson', () => {
+      const lessons = [pair('L', 'absA', 10, 11, ['C1', 'C2', 'C3']), pair('L', 'absB', 10, 11, ['C1', 'C2', 'C3'])];
+      const proposal = proposeDay(lessons, deps([person('C1'), person('C2'), person('C3')], { L: { C1: 50, C2: 40, C3: 10 } }, 6));
+      expect(proposal.items.map((item) => [item.lessonId, item.absenceId, item.userId])).toEqual([
+        ['L', 'absA', 'C1'],
+        ['L', 'absB', 'C2'],
+      ]);
+      expect(proposal.unassigned).toEqual([]);
+    });
+
+    it('with an overlapping lesson and two free people, both are used and nobody is named twice', () => {
+      const lessons = [
+        pair('L', 'absA', 10, 11, ['C1', 'C2']),
+        pair('L', 'absB', 10, 11, ['C1', 'C2']),
+        lesson('M', 10, 11, ['C1', 'C2']),
+      ];
+      const proposal = proposeDay(lessons, deps([person('C1'), person('C2')], { L: { C1: 50, C2: 49 }, M: { C1: 1, C2: 1 } }, 6));
+      const users = proposal.items.map((item) => item.userId);
+      expect(new Set(users).size).toBe(users.length);
+      expect(users.sort()).toEqual(['C1', 'C2']);
+      expect(proposal.unassigned).toHaveLength(1);
+    });
+
+    it('a lone candidate takes one pair; the other is CONSUMED, not given to them again', () => {
+      const lessons = [pair('L', 'absA', 10, 11, ['C1']), pair('L', 'absB', 10, 11, ['C1'])];
+      const proposal = proposeDay(lessons, deps([person('C1')], { L: { C1: 5 } }));
+      expect(proposal.items.map((item) => [item.absenceId, item.userId])).toEqual([['absA', 'C1']]);
+      expect(proposal.unassigned).toEqual([{ lessonId: 'L', absenceId: 'absB', why: 'CONSUMED' }]);
+    });
+  });
+
   describe('property: 200 seeded random days', () => {
     /** mulberry32 — a fixed seed per day, so a failure names its day. */
     const rng = (seed: number) => () => {
@@ -118,6 +157,8 @@ describe('Fördela dagen (greedy proposal)', () => {
     /** Every item feasible against the day with the OTHER items of the subset applied. */
     function holds(people: Map<string, PersonDay>, lessons: Map<string, CoverTarget>, items: { lessonId: string; userId: string }[]): boolean {
       return items.every((item) => {
+        // One person on two pairs of one lesson is never a valid proposal.
+        if (items.some((other) => other !== item && other.userId === item.userId && other.lessonId === item.lessonId)) return false;
         const others = items
           .filter((other) => other.userId === item.userId && other.lessonId !== item.lessonId)
           .map((other) => {
@@ -151,16 +192,21 @@ describe('Fördela dagen (greedy proposal)', () => {
       });
       const scores: Record<string, Record<string, number>> = {};
       for (const entry of lessons) scores[entry.lessonId] = Object.fromEntries(ids.map((id) => [id, Math.floor(random() * 60)]));
+      // Some lessons are co-taught with both teachers away: a second pair of
+      // the same lesson (its own stream, so the days above are unchanged).
+      const twin = rng(seed + 10_001);
+      for (const entry of [...lessons]) {
+        if (twin() < 0.3) lessons.push({ ...entry, absenceId: `${entry.absenceId}-2` });
+      }
 
       const proposal = proposeDay(lessons, deps(people, scores, 5));
       const byPerson = new Map(people.map((p) => [p.userId, p]));
       const byLesson = new Map(lessons.map((entry) => [entry.lessonId, entry.target]));
       const items = proposal.items.map(({ lessonId, userId }) => ({ lessonId, userId }));
 
-      // Every lesson is either proposed or named, once.
-      expect([...proposal.items.map((i) => i.lessonId), ...proposal.unassigned.map((u) => u.lessonId)].sort()).toEqual(
-        lessons.map((entry) => entry.lessonId).sort(),
-      );
+      // Every pair is either proposed or named, once.
+      const pairKey = (entry: { lessonId: string; absenceId: string }) => `${entry.lessonId}:${entry.absenceId}`;
+      expect([...proposal.items.map(pairKey), ...proposal.unassigned.map(pairKey)].sort()).toEqual(lessons.map(pairKey).sort());
       // Every subset: all of them for a small day, 64 random ones otherwise.
       const masks =
         items.length <= 8

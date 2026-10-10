@@ -258,11 +258,20 @@ export class CoverService {
         if (!args.substituteId) {
           throw new BadRequestException({ message: 'substituteId: vem som vikarierar.', code: COVER_SUBSTITUTE_REQUIRED });
         }
+        // The absent row is gone once a decision removed it. If that
+        // decision's vikarie still holds the lesson but is away themself
+        // (why the pair is OPEN again), the new vikarie takes THEIR row —
+        // never a second one beside them. recordAssignment then records the
+        // away vikarie's own pair as well, and tells them.
+        const staleSubstitute =
+          !absentRow && state.decision?.decision === 'SUBSTITUTE' && state.decision.substituteId
+            ? (lesson.teachers ?? []).find((t) => t.teacherId === state.decision!.substituteId && t.role === 'SUBSTITUTE')
+            : undefined;
         const outcome = await this.calendarLessons.assignInTransaction(
           tx,
           lesson.id,
           args.substituteId,
-          absentRow ? absence.userId : null,
+          absentRow ? absence.userId : (staleSubstitute?.teacherId ?? null),
           user,
           { locked: true, decision: { absenceId: absence.id, absentTeacherId: absence.userId } },
         );
@@ -550,8 +559,8 @@ function notAffected(): NotFoundException {
   return new NotFoundException({ message: 'Lektionen berörs inte av frånvaron.', code: COVER_NOT_AFFECTED });
 }
 
-/** A bulk item's refusal, with the lesson it was about (in params, which the error filter passes). */
-function naming(error: unknown, lessonId: string): unknown {
+/** A bulk or apply item's refusal, with the lesson it was about (in params, which the error filter passes). */
+export function naming(error: unknown, lessonId: string): unknown {
   if (!(error instanceof HttpException)) return error;
   const body = error.getResponse();
   const record = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : { message: body };

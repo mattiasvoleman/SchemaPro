@@ -25,7 +25,7 @@ import {
 import { lockCoverDay, lockLessons, lockTeachers } from './cover-decisions';
 import { compareRanked, rankCandidate, type RankReason } from './cover-rank';
 import { hardFindings, holdsTime, overlaps, prefersFree, type CoverTarget, type PersonLesson, type RuleFinding } from './cover-rules';
-import { CoverService, emptyEffects, merge } from './cover.service';
+import { CoverService, emptyEffects, merge, naming } from './cover.service';
 import { proposeDay, type DayProposal, type ProposalLesson } from './day-proposal';
 import type { ApplyDto } from './dto/cover.dto';
 
@@ -168,20 +168,28 @@ export class CoverSuggestionsService {
         const day = read.days.get(item.userId);
         if (!lesson || lesson.date !== date || !day) throw proposalStale(item.lessonId);
         const target = targetOf(lesson);
-        if (hardFindings(day, target, given.get(item.userId) ?? []).length > 0) throw proposalStale(item.lessonId);
-        given.set(item.userId, [...(given.get(item.userId) ?? []), pickOf(target)]);
+        const earlier = given.get(item.userId) ?? [];
+        // The rules skip the lesson's own id when they look for an overlap,
+        // so one person on two pairs of one lesson is refused here.
+        if (earlier.some((pick) => pick.id === target.id)) throw proposalStale(item.lessonId);
+        if (hardFindings(day, target, earlier).length > 0) throw proposalStale(item.lessonId);
+        given.set(item.userId, [...earlier, pickOf(target)]);
       }
 
       const all = emptyEffects();
       for (const item of dto.items) {
-        merge(
-          all,
-          await this.cover.decideInTransaction(
-            tx,
-            { lessonId: item.lessonId, absenceId: item.absenceId, kind: 'SUBSTITUTE', substituteId: item.userId, expected: 'OPEN' },
-            user,
-          ),
-        );
+        try {
+          merge(
+            all,
+            await this.cover.decideInTransaction(
+              tx,
+              { lessonId: item.lessonId, absenceId: item.absenceId, kind: 'SUBSTITUTE', substituteId: item.userId, expected: 'OPEN' },
+              user,
+            ),
+          );
+        } catch (error) {
+          throw naming(error, item.lessonId);
+        }
       }
       return all;
     });
@@ -205,7 +213,7 @@ export class CoverSuggestionsService {
       (await tx.$queryRaw<PairRow[]>(pairsStatement({ kind: 'window', from: date, to: date, winFrom: bounds.start, winTo: bounds.end }))) ??
       [];
     const now = this.cover.now();
-    const open = rows.map((row) => toBoardItem(row, now)).filter((item) => item.status === 'OPEN' && !item.passed);
+    const open = coveredTogether(rows.map((row) => toBoardItem(row, now)).filter((item) => item.status === 'OPEN' && !item.passed));
     if (open.length === 0) return { items: [], unassigned: [] };
     const lessons = new Map((await this.readLessons(tx, open.map((item) => item.lessonId))).map((lesson) => [lesson.id, lesson]));
     const year = await this.yearOf(tx, [...lessons.values()][0]!.studentGroupId);
@@ -480,4 +488,31 @@ export async function basisOf(tx: PrismaClient, date: string, timezone: string):
     decisions: decisions.map((d) => [d.id, d.absenceId, d.calendarLessonId, d.decision, d.substituteId]),
   };
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+}
+
+/**
+ * The open pairs a proposal covers, one decision each — less one case: a
+ * substitute who is themself away (their own pair is OPEN) beside the stale
+ * SUBSTITUTE decision of the absence they were covering. Covering their pair
+ * replaces their row and moves that decision on to the new person
+ * (recordAssignment), so the stale pair is covered by the same assignment;
+ * proposing it as well would put a second vikarie on the lesson, or meet
+ * COVER_STALE once the first item has covered it.
+ */
+export function coveredTogether<T extends { lessonId: string; absentTeacherId: string; decision: string | null; decisionStale: boolean; teachers: { teacherId: string; role: string }[] }>(
+  open: readonly T[],
+): T[] {
+  return open.filter(
+    (item) =>
+      !(
+        item.decisionStale &&
+        item.decision === 'SUBSTITUTE' &&
+        open.some(
+          (other) =>
+            other !== item &&
+            other.lessonId === item.lessonId &&
+            item.teachers.some((t) => t.teacherId === other.absentTeacherId && t.role === 'SUBSTITUTE'),
+        )
+      ),
+  );
 }

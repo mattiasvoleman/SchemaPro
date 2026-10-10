@@ -229,5 +229,123 @@ describe('CoverSuggestionsService', () => {
       ).rejects.toMatchObject({ response: { code: 'COVER_PROPOSAL_STALE', params: { lessonId: second } } });
       expect(cover.decideInTransaction).not.toHaveBeenCalled();
     });
+
+    describe('two pairs of one lesson', () => {
+      const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      const ABSENCE_B = '56565656-5656-4565-8565-565656565656';
+      const ABSENCE_S = '57575757-5757-4575-8575-575757575757';
+      const lessonWith = (teacherIds: string[], roles: string[]) =>
+        tx.calendarLesson.findMany.mockImplementation((query: { where: { id?: unknown } }) =>
+          Promise.resolve(
+            query.where.id
+              ? [
+                  {
+                    id: LESSON,
+                    schoolId: 'school',
+                    date: new Date(`${D}T00:00:00.000Z`),
+                    startsAt: START,
+                    endsAt: END,
+                    subjectId: 'ma',
+                    studentGroupId: '7a',
+                    teachers: teacherIds.map((teacherId) => ({ teacherId })),
+                    extraGroups: [],
+                    participants: [],
+                  },
+                ]
+              : [
+                  {
+                    id: LESSON,
+                    startsAt: START,
+                    endsAt: END,
+                    status: 'SCHEDULED',
+                    teachers: teacherIds.map((teacherId, i) => ({ teacherId, role: roles[i] })),
+                  },
+                ],
+          ),
+        );
+
+      it('both co-teachers away: two different people, and the apply takes the proposal as it is', async () => {
+        lessonWith([A, B], ['LEAD', 'ASSISTANT']);
+        tx.user.findMany.mockResolvedValue([
+          { id: A, role: 'TEACHER', isActive: true },
+          { id: B, role: 'TEACHER', isActive: true },
+          { id: BUSY, role: 'TEACHER', isActive: true },
+          { id: P, role: 'TEACHER', isActive: true },
+          { id: S, role: 'TEACHER', isActive: true },
+        ]);
+        tx.teacherAbsence.findMany.mockResolvedValue([
+          { id: ABSENCE, userId: A, startsAt: new Date('2026-10-13T22:00:00Z'), endsAt: new Date('2026-10-14T22:00:00Z') },
+          { id: ABSENCE_B, userId: B, startsAt: new Date('2026-10-13T22:00:00Z'), endsAt: new Date('2026-10-14T22:00:00Z') },
+        ]);
+        const teachers = [{ teacherId: A, role: 'LEAD' }, { teacherId: B, role: 'ASSISTANT' }];
+        tx.$queryRaw.mockResolvedValue([
+          { ...pair, teachers },
+          { ...pair, absenceId: ABSENCE_B, absentTeacherId: B, teachers },
+        ]);
+        const proposal = await service.proposal(D, [], testUser());
+        expect(proposal.items.map((item) => [item.absenceId, item.userId]).sort()).toEqual(
+          [
+            [ABSENCE, S],
+            [ABSENCE_B, P],
+          ].sort(),
+        );
+        const basis = await basisOf(tx as never, D, 'Europe/Stockholm');
+        await expect(
+          service.apply(D, { basis, items: proposal.items.map(({ lessonId, absenceId, userId }) => ({ lessonId, absenceId, userId })) }, testUser()),
+        ).resolves.toEqual({ applied: 2 });
+      });
+
+      it('apply refuses one person on two pairs of one lesson, naming the lesson, before anything is written', async () => {
+        lessonWith([A, B], ['LEAD', 'ASSISTANT']);
+        const basis = await basisOf(tx as never, D, 'Europe/Stockholm');
+        await expect(
+          service.apply(
+            D,
+            {
+              basis,
+              items: [
+                { lessonId: LESSON, absenceId: ABSENCE, userId: S },
+                { lessonId: LESSON, absenceId: ABSENCE_B, userId: S },
+              ],
+            },
+            testUser(),
+          ),
+        ).rejects.toMatchObject({ response: { code: 'COVER_PROPOSAL_STALE', params: { lessonId: LESSON } } });
+        expect(cover.decideInTransaction).not.toHaveBeenCalled();
+      });
+
+      it('a substitute who is away beside the stale decision they held: only their pair is proposed, which covers both', async () => {
+        lessonWith([S], ['SUBSTITUTE']);
+        tx.teacherAbsence.findMany.mockResolvedValue([
+          { id: ABSENCE, userId: A, startsAt: new Date('2026-10-13T22:00:00Z'), endsAt: new Date('2026-10-14T22:00:00Z') },
+          { id: ABSENCE_S, userId: S, startsAt: new Date('2026-10-13T22:00:00Z'), endsAt: new Date('2026-10-14T22:00:00Z') },
+        ]);
+        const teachers = [{ teacherId: S, role: 'SUBSTITUTE' }];
+        tx.$queryRaw.mockResolvedValue([
+          {
+            ...pair,
+            isLive: false,
+            decisionId: 'd-a',
+            decision: 'SUBSTITUTE',
+            decidedAt: new Date('2026-10-13T12:00:00Z'),
+            removedTeachers: [{ teacherId: A, role: 'LEAD' }],
+            teachers,
+          },
+          { ...pair, absenceId: ABSENCE_S, absentTeacherId: S, teachers },
+        ]);
+        const proposal = await service.proposal(D, [], testUser());
+        expect(proposal.items.map((item) => [item.absenceId, item.userId])).toEqual([[ABSENCE_S, P]]);
+        expect(proposal.unassigned).toEqual([]);
+      });
+
+      it('an item the board refuses during the apply names its lesson, as a bulk does', async () => {
+        const basis = await basisOf(tx as never, D, 'Europe/Stockholm');
+        const { ConflictException } = await import('@nestjs/common');
+        cover.decideInTransaction.mockRejectedValueOnce(new ConflictException({ message: 'x', code: 'COVER_STALE', params: { current: 'COVERED' } }));
+        await expect(
+          service.apply(D, { basis, items: [{ lessonId: LESSON, absenceId: ABSENCE, userId: S }] }, testUser()),
+        ).rejects.toMatchObject({ response: { code: 'COVER_STALE', params: { current: 'COVERED', lessonId: LESSON } } });
+      });
+    });
   });
 });
