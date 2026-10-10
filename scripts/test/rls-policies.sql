@@ -9374,6 +9374,28 @@ BEGIN
   IF n <> 1 THEN RAISE EXCEPTION 'family: the guardian reads % rasts, not the home class''s one', n; END IF;
 END $$;
 
+-- 29a: the same guardian through PostgREST's role reads no lesson row at
+-- all. A row carries the cancellation's free-text note and cause and goes
+-- back a year; the endpoint's whitelist and week bound are the only way a
+-- family reads a lesson. The meals, which carry no free text, still answer.
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE l uuid[] := string_to_array(current_setting('app.test_rls29_lessons'), ',')::uuid[]; n bigint;
+BEGIN
+  IF app.current_user_role() IS DISTINCT FROM 'GUARDIAN' THEN RAISE EXCEPTION 'family: expected the GUARDIAN'; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessons" WHERE id = ANY (l);
+  IF n <> 0 THEN RAISE EXCEPTION 'family: the guardian reads % lesson row(s) through PostgREST''s role', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarLessons";
+  IF n <> 0 THEN RAISE EXCEPTION 'family: the guardian reads % lesson row(s) anywhere through PostgREST''s role', n; END IF;
+  SELECT (SELECT count(*) FROM "CalendarLessonGroups") + (SELECT count(*) FROM "CalendarLessonStudents") INTO n;
+  IF n <> 0 THEN RAISE EXCEPTION 'family: the guardian reads % extra-group or named-pupil row(s) through PostgREST''s role', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarLunches" WHERE date = DATE '2095-04-02';
+  IF n <> 1 THEN RAISE EXCEPTION 'family: through PostgREST''s role the guardian reads % lunches, not the home class''s one', n; END IF;
+  SELECT count(*) INTO n FROM "CalendarRasts" WHERE date = DATE '2095-04-02';
+  IF n <> 1 THEN RAISE EXCEPTION 'family: through PostgREST''s role the guardian reads % rasts, not the home class''s one', n; END IF;
+END $$;
+SET LOCAL ROLE app_authenticated;
+
 -- 29a: the pupil's own arms are unchanged: the home class, the class as an
 -- extra group, the lesson naming them and their teaching group's own lesson —
 -- and not the lesson carrying their teaching group as an extra group, which
@@ -9489,7 +9511,14 @@ BEGIN
     RAISE EXCEPTION 'family: authenticated may call the staff function';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
-  PERFORM app.current_guardian_child_ids(), app.current_guardian_class_ids(), app.current_guardian_group_ids(), app.current_guardian_lesson_ids();
+  -- The lesson-id helper serves only the lesson arm and the staff function,
+  -- both the API's alone.
+  BEGIN
+    PERFORM app.current_guardian_lesson_ids();
+    RAISE EXCEPTION 'family: authenticated may call the lesson-id helper';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  PERFORM app.current_guardian_child_ids(), app.current_guardian_class_ids(), app.current_guardian_group_ids();
 END $$;
 SET LOCAL ROLE app_authenticated;
 DO $$
@@ -9509,12 +9538,14 @@ BEGIN
     END IF;
   END LOOP;
   -- The guard, re-read: the guardian arms and no teacher-row arm.
-  SELECT string_agg(tablename || '.' || policyname, ',' ORDER BY tablename, policyname) INTO bad
+  SELECT string_agg(tablename || '.' || policyname || ':' || array_to_string(roles, '+'), ',' ORDER BY tablename, policyname) INTO bad
     FROM pg_policies
    WHERE schemaname = 'public' AND (policyname LIKE '%guardian%' OR qual LIKE '%current_guardian_%')
      AND tablename IN ('CalendarLessons', 'CalendarLessonGroups', 'CalendarLessonStudents', 'CalendarLunches', 'CalendarRasts', 'CalendarLessonTeachers');
-  IF bad IS DISTINCT FROM 'CalendarLessonGroups.calendar_lesson_groups_guardian_select,CalendarLessonStudents.calendar_lesson_students_guardian_select,'
-     'CalendarLessons.calendar_lessons_guardian_select,CalendarLunches.calendar_lunches_guardian_select,CalendarRasts.calendar_rasts_guardian_select' THEN
+  IF bad IS DISTINCT FROM 'CalendarLessonGroups.calendar_lesson_groups_guardian_select:app_authenticated,'
+     'CalendarLessonStudents.calendar_lesson_students_guardian_select:app_authenticated,'
+     'CalendarLessons.calendar_lessons_guardian_select:app_authenticated,'
+     'CalendarLunches.calendar_lunches_guardian_select:authenticated,CalendarRasts.calendar_rasts_guardian_select:authenticated' THEN
     RAISE EXCEPTION 'family: the guardian arms are %', bad;
   END IF;
 END $$;

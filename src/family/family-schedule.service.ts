@@ -12,9 +12,13 @@ import type { FamilyScheduleQueryDto } from './dto/family-schedule.dto';
  * GET /api/v1/family/schedule, for a GUARDIAN (their own children) and the
  * SCHOOL_ADMIN (any pupil of the school: "see what a family sees"). Runs in
  * one transaction under the caller's own RLS, where the arms of
- * 20261013090000 are the boundary: a guardian reads the lessons their
- * children are taught in and nothing else, whatever this service does. On
- * top of RLS it adds three things:
+ * 20261013090000 are the boundary on WHICH lessons: a guardian reads the
+ * lessons their children are taught in and nothing else, whatever this
+ * service does. Which COLUMNS, which weeks and the class history are this
+ * service's alone, so the lesson arms are granted to the API's role
+ * (app_authenticated) and not to PostgREST's: a direct read would carry the
+ * note and cancel cause of a whole year of cancellations. On top of RLS it
+ * adds three things:
  *
  *   * the per-child split. A guardian of two children reads both children's
  *     lessons in one table, so a sibling's lesson must not appear under the
