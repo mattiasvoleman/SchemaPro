@@ -68,13 +68,29 @@ vi.mock("@/components/profile-context", () => ({
 }));
 
 // next-intl's Link needs the intl provider; an anchor is what it renders.
-vi.mock("@/i18n/navigation", () => ({
-  Link: ({ href, className, children }: { href: string; className?: string; children: React.ReactNode }) => (
-    <a href={href} className={className}>
-      {children}
-    </a>
-  ),
-}));
+// It forwards every prop and the ref, as next-intl's does, so a Radix item
+// rendered asChild can make it a menu item.
+vi.mock("@/i18n/navigation", async () => {
+  const { forwardRef } = await import("react");
+  const Link = forwardRef<HTMLAnchorElement, React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }>(
+    function Link({ href, children, onClick, ...rest }, ref) {
+      return (
+        <a
+          ref={ref}
+          href={href}
+          {...rest}
+          onClick={(event) => {
+            onClick?.(event);
+            event.preventDefault();
+          }}
+        >
+          {children}
+        </a>
+      );
+    },
+  );
+  return { Link };
+});
 
 // Key echo that also surfaces interpolated values, so each notification type's
 // message key AND its meta extraction can be asserted from the rendered text.
@@ -227,8 +243,29 @@ describe("NotificationBell inbox", () => {
     supabaseState.selectResults.push(ok([]));
     renderBell();
     await user.click(bellButton());
-    const link = await screen.findByRole("link", { name: "settingsLink" });
+    const link = await screen.findByRole("menuitem", { name: "settingsLink" });
     expect(link).toHaveAttribute("href", "/notifications");
+  });
+
+  it("lets a keyboard user reach the settings link: it is a menu item the arrow keys move to", async () => {
+    const user = userEvent.setup();
+    supabaseState.selectResults.push(ok([]));
+    renderBell();
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    bellButton().focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("menu");
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toHaveAttribute("href", "/notifications");
+  });
+
+  it("closes the menu when the settings link is followed", async () => {
+    const user = userEvent.setup();
+    supabaseState.selectResults.push(ok([]));
+    renderBell();
+    await user.click(bellButton());
+    await user.click(await screen.findByRole("menuitem", { name: "settingsLink" }));
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
   });
 
 

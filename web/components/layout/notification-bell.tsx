@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -183,11 +184,14 @@ export function NotificationBell() {
         </div>
         {/* What leaves SchemaPro as e-mail and push, chosen per type. The
             shell already carries next-intl's Link, so this costs no module;
-            no icon, because every route pays for what the bell carries. */}
-        <div className="border-t px-3 py-2">
-          <Link href="/notifications" className="text-xs font-medium text-primary hover:underline">
-            {t("settingsLink")}
-          </Link>
+            no icon, because every route pays for what the bell carries. A
+            menu item, not a bare link: Radix's menu keeps Tab inside and
+            moves the arrow keys between items only, and choosing an item
+            closes the menu before the page changes under it. */}
+        <div className="border-t p-1">
+          <DropdownMenuItem asChild className="text-xs font-medium text-primary">
+            <Link href="/notifications">{t("settingsLink")}</Link>
+          </DropdownMenuItem>
         </div>
       </DropdownMenuContent>
     </DropdownMenu>
