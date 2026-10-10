@@ -246,14 +246,6 @@ export class Ss12000SyncService {
             });
             return 'FETCH_FAILED' as const;
           }
-          if (diff.changes.length === 0) {
-            await tx.ss12000SyncRun.update({ where: { id: runId }, data: { ...common, status: 'NO_CHANGES', finishedAt: new Date() } });
-            await tx.ss12000Source.update({
-              where: { id: fresh.id },
-              data: { modifiedCursor: cursorTo, deletedCursor: cursorTo, ...(roster.mode === 'FULL' ? { lastFullAt: run.startedAt } : {}) },
-            });
-            return 'NO_CHANGES' as const;
-          }
           const rows = diff.changes.map((change, seq) => ({
             runId,
             schoolId,
@@ -271,6 +263,19 @@ export class Ss12000SyncService {
           }));
           for (let at = 0; at < rows.length; at += 1000) {
             await tx.ss12000SyncChange.createMany({ data: rows.slice(at, at + 1000) });
+          }
+          // Nothing to apply and nothing to resolve — at most notes (a pupil
+          // enrolled from next month, a group spanning two läsår): the run is
+          // NO_CHANGES and the cursors move, or a standing note would keep
+          // every night's run waiting for an admin. The notes stay, with
+          // their codes and ids; the status minimises their payloads.
+          if (diff.changes.every((change) => change.op === 'INFO')) {
+            await tx.ss12000SyncRun.update({ where: { id: runId }, data: { ...common, status: 'NO_CHANGES', finishedAt: new Date() } });
+            await tx.ss12000Source.update({
+              where: { id: fresh.id },
+              data: { modifiedCursor: cursorTo, deletedCursor: cursorTo, ...(roster.mode === 'FULL' ? { lastFullAt: run.startedAt } : {}) },
+            });
+            return 'NO_CHANGES' as const;
           }
           // Only the newest diff can be applied.
           await tx.ss12000SyncRun.updateMany({
@@ -445,9 +450,12 @@ export class Ss12000SyncService {
           const outcome = await applyChanges(tx, schoolId, chosen.map(storedOf), stamp);
           // The admin's choice, recorded as made.
           const chosenIds = new Set(chosen.map((change) => change.id));
-          const flip = open.filter((change) => change.selected !== chosenIds.has(change.id));
-          for (const change of flip) {
-            await tx.ss12000SyncChange.update({ where: { id: change.id }, data: { selected: chosenIds.has(change.id) } });
+          const nowSelected = open.filter((change) => !change.selected && chosenIds.has(change.id)).map((change) => change.id);
+          const nowDeselected = open.filter((change) => change.selected && !chosenIds.has(change.id)).map((change) => change.id);
+          for (const [ids, selected] of [[nowSelected, true], [nowDeselected, false]] as const) {
+            for (let at = 0; at < ids.length; at += 1000) {
+              await tx.ss12000SyncChange.updateMany({ where: { id: { in: ids.slice(at, at + 1000) }, schoolId }, data: { selected } });
+            }
           }
           await this.markApplied(tx, schoolId, outcome.applied);
           const errors = [...asArray(run.errors), ...outcome.skipped.map(({ code, entity, externalId }) => ({ code, entity, externalId }))].slice(0, 200);

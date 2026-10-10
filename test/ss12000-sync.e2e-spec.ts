@@ -334,6 +334,17 @@ describe('SS12000 sync (e2e)', () => {
       expect(w.changes).toHaveLength(0);
     });
 
+    it('calls a run with nothing but notes NO_CHANGES and moves the cursors, keeping the note without its payload', async () => {
+      await configured();
+      provider.world.persons = [s1Pupil(PUPIL, 'Ny', 'Elev', 'ny@skola.se', ORG, { startDate: isoDay(30) })];
+      provider.world.groups = [];
+      provider.world.duties = [];
+      const run = await runOnce();
+      expect(run).toMatchObject({ status: 'NO_CHANGES' });
+      expect(w.changes).toEqual([expect.objectContaining({ op: 'INFO', conflictCode: 'PERSON_NOT_YET_ENROLLED', externalId: PUPIL })]);
+      expect(w.source!['modifiedCursor']).toBeInstanceOf(Date);
+    });
+
     it('refuses a second "Synka nu" while one runs, and a run without a chosen skolenhet', async () => {
       await configured();
       w.runs.push({ id: '99999999-0000-4000-8000-000000000001', schoolId: SCHOOL, sourceId: w.source!['id'], status: 'RUNNING', trigger: 'MANUAL', mode: 'FULL', startedAt: new Date() });
