@@ -50,6 +50,16 @@ vi.mock("@/lib/queries", () => ({
   }),
   useSubstituteSuggestions: () => ({ data: [], isLoading: false }),
 }));
+vi.mock("@/lib/cover-queries", () => ({
+  useAbsences: () => ({ data: [], isLoading: false }),
+  useAbsenceReasons: () => ({ data: [] }),
+  useAbsenceActions: () => ({
+    create: { mutateAsync: vi.fn(), isPending: false },
+    update: { mutateAsync: vi.fn(), isPending: false },
+    end: { mutateAsync: vi.fn(), isPending: false },
+    withdraw: { mutateAsync: vi.fn(), isPending: false },
+  }),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 vi.mock("next-intl", () => ({
   useLocale: () => "sv",

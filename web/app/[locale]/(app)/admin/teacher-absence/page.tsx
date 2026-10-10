@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, lazy, useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import type { MessageLookup } from "@/lib/engine-message";
 import { savedToast } from "@/lib/staffing-warnings";
+import { chainLookup } from "@/lib/cover-view";
 import {
+  CalendarPlus,
   CalendarX2,
   Loader2,
   MapPin,
@@ -24,6 +26,7 @@ import {
   type DayLessonRow,
 } from "@/lib/queries";
 import { PageHeader } from "@/components/layout/page-header";
+import { AbsenceRegister } from "./absence-register";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +59,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
+/** Registrera frånvaro: the form is loaded on its first click (React.lazy). */
+const AbsenceDialog = lazy(() =>
+  import("@/components/cover/absence-dialog").then((module) => ({ default: module.AbsenceDialog })),
+);
+
 // Sentinel for "no room" — Radix Select forbids an empty-string item value.
 const NO_ROOM = "__none__";
 
@@ -80,6 +88,8 @@ export default function TeacherAbsencePage() {
   const tDay = useTranslations("dayPlanner");
   const tCommon = useTranslations("common");
   const tEngine = useTranslations("engineMessages") as unknown as MessageLookup;
+  // The vikarie's warnings mix the engine's STAFF_* with the cover's COVER_*.
+  const tWarnings = chainLookup(useTranslations("coverErrors") as unknown as MessageLookup, tEngine);
 
   const today = toDateInput(new Date());
   const [teacherId, setTeacherId] = useState("");
@@ -106,6 +116,8 @@ export default function TeacherAbsencePage() {
   const [roomTarget, setRoomTarget] = useState<DayLessonRow | null>(null);
   const [roomValue, setRoomValue] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [registering, setRegistering] = useState(false);
+  const [registerOpened, setRegisterOpened] = useState(false);
 
   const { data: suggestions, isLoading: suggestionsLoading } =
     useSubstituteSuggestions(subTarget?.id ?? null);
@@ -113,6 +125,10 @@ export default function TeacherAbsencePage() {
   const teachers = useMemo(
     () => (people ?? []).filter((p) => p.role === "TEACHER" && p.isActive),
     [people],
+  );
+  const teacherOptions = useMemo(
+    () => teachers.map((teacher) => ({ id: teacher.id, name: `${teacher.firstName} ${teacher.lastName}` })),
+    [teachers],
   );
   const teacherById = useMemo(
     () => new Map(teachers.map((teacher) => [teacher.id, teacher])),
@@ -165,7 +181,7 @@ export default function TeacherAbsencePage() {
       });
       // A vikarie is never refused, only warned: the warning is the rektor's
       // one signal that the cover lacks behörighet, so it is said here.
-      savedToast(tEngine, tDay("substitutedToast"), result.warnings);
+      savedToast(tWarnings, tDay("substitutedToast"), result.warnings);
       setSubTarget(null);
       setSubTeacher("");
       setSubNote("");
@@ -212,6 +228,14 @@ export default function TeacherAbsencePage() {
     <div>
       <PageHeader title={t("title")} subtitle={t("subtitle")} />
 
+      {/*
+       * The register: absences as entities, whose lessons land on the cover
+       * board (Vikarietavla). Below it the preview this page always had — a
+       * teacher and a range, the lessons, and the per-lesson actions — kept
+       * exactly, with "Registrera frånvaro" turning the range into an absence.
+       */}
+      <AbsenceRegister teachers={teacherOptions} />
+
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <div className="space-y-1.5">
           <Label>{t("selectTeacher")}</Label>
@@ -248,6 +272,15 @@ export default function TeacherAbsencePage() {
             onChange={(value) => value && setTo(value)}
           />
         </div>
+        <Button
+          onClick={() => {
+            setRegisterOpened(true);
+            setRegistering(true);
+          }}
+        >
+          <CalendarPlus />
+          {t("register")}
+        </Button>
         {teacherId && lessons && lessons.length > 0 ? (
           <Button
             variant="outline"
@@ -346,6 +379,18 @@ export default function TeacherAbsencePage() {
           </div>
         </>
       )}
+
+      {registerOpened ? (
+        <Suspense fallback={null}>
+          <AbsenceDialog
+            open={registering}
+            onOpenChange={setRegistering}
+            mode="ADMIN"
+            teachers={teacherOptions}
+            initial={{ userId: teacherId, from, to: to < from ? from : to }}
+          />
+        </Suspense>
+      ) : null}
 
       {/* Cancel dialog */}
       <Dialog
