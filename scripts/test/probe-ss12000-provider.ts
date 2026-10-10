@@ -189,7 +189,7 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       assert.ok(String(after.data[0]!['displayName']) === '7A Ek');
     });
 
-    await check('(sp-c) a deactivation is buried and served by /deletedEntities, and the person is gone from /persons', async () => {
+    await check('(sp-c) a deactivation is buried and served by /deletedEntities, the person is gone from /persons, and only the triggers write either table', async () => {
       const before = new Date().toISOString();
       await new Promise((resolve) => setTimeout(resolve, 15));
       await owner.query(`UPDATE "Users" SET "isActive" = false WHERE id = $1`, [leaver.id]);
@@ -197,6 +197,18 @@ export async function ss12000ProviderChecks(owner: Client, api: PrismaService, m
       assert.deepEqual(deleted.data, { persons: [leaver.id] });
       const persons = await provider.listPersons(caller, {});
       assert.ok(!persons.data.some((row) => row.id === leaver.id), 'a deactivated person is still served');
+      // Only the triggers write them — not even the owner, and nobody truncates them.
+      const refused = async (sql: string, params: unknown[]) => {
+        try {
+          await owner.query(sql, params);
+        } catch (error) {
+          return (error as { code?: string }).code;
+        }
+        return 'written';
+      };
+      assert.equal(await refused(`INSERT INTO "Ss12000Tombstones" ("schoolId", resource, "emittedId") VALUES ($1, 'Person', gen_random_uuid())`, [school.id]), 'SV403');
+      assert.equal(await refused(`UPDATE "Ss12000EntityVersions" SET "modifiedAt" = now() WHERE "schoolId" = $1`, [school.id]), 'SV403');
+      assert.equal(await refused(`TRUNCATE "Ss12000EntityVersions"`, []), 'SV403');
     });
 
     await check('(sp-d) a subscription needs the sealed secret; a committed change is delivered once, signed; a revoked key gets nothing', async () => {
