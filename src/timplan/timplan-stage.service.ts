@@ -95,8 +95,13 @@ export interface TeachingTimeStage {
   complete: boolean;
   recordedFrom: string | null;
   plannedGrades: number[];
+  /** Grades with no class history. */
   unrecordedGrades: number[];
+  /** Grades ahead that no plan carries yet. */
+  unplannedGrades: number[];
   backfilled: boolean;
+  /** When backfilled: the day the class history began; the class before it is assumed. */
+  historyFrom: string | null;
   lines: TeachingTimeLine[];
 }
 
@@ -346,7 +351,9 @@ export class TimplanStageService {
                 recordedFrom: asDayOrNull(row.recordedFrom),
                 plannedGrades: row.plannedGrades,
                 unrecordedGrades: row.unrecordedGrades,
+                unplannedGrades: row.unplannedGrades,
                 backfilled: row.backfilled,
+                historyFrom: asDayOrNull(row.historyFrom),
                 lines: [],
               }),
             );
@@ -416,8 +423,10 @@ export function statementRows(coverage: StageCoverage) {
           complete: stage.complete,
           recordedFrom: stage.recordedFrom === null ? null : new Date(`${stage.recordedFrom}T00:00:00.000Z`),
           plannedGrades: stage.plannedGrades,
-          unrecordedGrades: [...stage.unrecordedGrades, ...stage.unplannedGrades].sort((a, b) => a - b),
+          unrecordedGrades: stage.unrecordedGrades,
+          unplannedGrades: stage.unplannedGrades,
           backfilled: stage.backfilled,
+          historyFrom: stage.historyFrom === null ? null : new Date(`${stage.historyFrom}T00:00:00.000Z`),
         })),
       ),
   );
@@ -481,6 +490,7 @@ export async function computeStages(
               validFrom: true,
               validTo: true,
               source: true,
+              createdAt: true,
             },
             orderBy: [{ studentId: 'asc' }, { validFrom: 'asc' }],
           })
@@ -492,6 +502,8 @@ export async function computeStages(
           from: asDay(row.validFrom),
           to: asDayOrNull(row.validTo),
           source: row.source,
+          // The school's day the row was written: a BACKFILL row's is the day the history began.
+          writtenOn: asDay(todayInZone(timezone, row.createdAt)),
         }));
 
   // The years the pupils were enrolled in, back to the longest stage.

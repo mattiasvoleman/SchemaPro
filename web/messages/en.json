@@ -2627,7 +2627,7 @@
     },
     "stage": {
       "asOf": "Computed {date} for the year {year}",
-      "definition": "Pupils' hours over the whole stage, year by year from the class history, against the timplan in the version that applies to the pupil's cohort according to SchemaPro's reference data. Planned is the teaching requirements the pupil had. Outcome is delivered and credited time. The projection is the outcome plus the rest of the year and the coming grades' timplan. Absence is not subtracted.",
+      "definition": "Pupils' hours over the whole stage, year by year from the class history, against the timplan in the version that applies to the pupil's cohort according to SchemaPro's reference data. Planned is the teaching requirements the pupil had. Outcome is delivered and credited time, and for days with no published schedule, the planned time. The projection is the outcome plus the rest of the year and the coming grades' timplan. Absence is not subtracted.",
       "expectation": "In the first years with SchemaPro, nearly every stage is only partly recorded. Its hours are then shown as recorded since the class history began and are not compared with the timplan, because a year before SchemaPro never counts as zero. Warnings therefore come mainly from the projection for pupils who began a stage in 2026/27 or later.",
       "notActiveTitle": "Stage totals are computed for the active year",
       "notActiveBody": "Choose the active year. Earlier years are part of the stage totals through the pupils' class history.",
@@ -2723,6 +2723,7 @@
         "partUnplanned": "grade {grades} has no timplan yet",
         "partClassDeleted": "a class the pupil was in has been deleted",
         "backfilled": "The class before {from} is assumed from where the pupil was when the class history began; a move before then does not show.",
+        "backfilledUntil": "The class from {from} to {until} is assumed: it is the class the pupil had when the class history began, and a move before then does not show.",
         "versionMissing": "{stageTitle}: the version that applies is older than the reference data, so no national comparison is made.",
         "unpublished": "{stageTitle}: according to the reference data ({version}) the total is {total}, but the distribution by subject is not published, so the stage is not compared subject by subject.",
         "assumed": "{stageTitle}: from autumn 2028 it is compared with {version} according to the reference data. The distribution for older cohorts after 2028 is not published; SFS 2025:729 keeps only the total.",
@@ -2744,10 +2745,14 @@
     "soFar": "So far",
     "since": "Since {date}",
     "planned": "Planned for the stage",
+    "plannedGrades": "Planned, grade {grades}",
     "timplan": "Timplan",
+    "timplanWhenComplete": "The timplan's hours cover the whole stage and are shown once every grade of the stage is in SchemaPro.",
     "unrecorded": "Grade {grades} is not part of the figures, because the time is not recorded in SchemaPro.",
+    "unplanned": "Grade {grades} has no timplan in SchemaPro yet, so it is not part of Planned.",
+    "backfilled": "The class until {date} is the one the pupil had when SchemaPro began keeping class history. A change of class before then does not show.",
     "unpublished": "The national distribution by subject for this stage is not published yet, so the timplan's hours are not shown.",
-    "footer": "Teaching time is the time the school offers; absence is not subtracted. So far is delivered and credited time, and planned covers the whole stage according to the school's timplan.{versions, select, none {} other { The timplan's hours are SchemaPro's reference data ({versions}).}}"
+    "footer": "Teaching time is the time the school offers; absence is not subtracted. So far is delivered and credited time, and for days the school has published no schedule, the planned time. Planned is the school's timplan for the stage, or for the grades the column names.{versions, select, none {} other { The timplan's hours are SchemaPro's reference data ({versions}).}}"
   },
   "timplanCohorts": {
     "title": "Timplans per cohort",

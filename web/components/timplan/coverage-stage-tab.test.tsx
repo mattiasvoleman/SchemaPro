@@ -228,16 +228,18 @@ describe("CoverageStageTab", () => {
     await user.click(screen.getByRole("button", { name: "timplanCoverage.stage.publish" }));
     expect(state.published).toBe(1);
 
+    // Published at 00:30 Swedish time on 10 October: the instant is 9 October
+    // in UTC, the school's day is the 10th — and the panel says the 10th.
     const publication: StagePublicationSummary = {
       academicYearId: "y-1",
-      publishedAt: "2026-10-10T08:00:00.000Z",
+      publishedAt: "2026-10-09T22:30:00.000Z",
       publishedByUserId: "admin",
       asOfDate: "2026-10-10",
       pupils: 5,
     };
     state.stages[""] = { ...overview, publication };
     rerender(<CoverageStageTab {...props()} />);
-    expect(screen.getByText(/timplanCoverage\.stage\.publicationCurrent\(.*\|5\|/)).toBeInTheDocument();
+    expect(screen.getByText("timplanCoverage.stage.publicationCurrent(10 oktober 2026|5|10 oktober 2026)")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "timplanCoverage.stage.republish" }));
     await user.click(screen.getByRole("button", { name: "timplanCoverage.stage.withdraw" }));
     expect(state.published).toBe(2);

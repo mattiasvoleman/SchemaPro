@@ -813,8 +813,13 @@ model TimplanStatement {
   /// The first recorded day of the stage: "… timmar sedan {recordedFrom}".
   recordedFrom          DateTime?    @db.Date
   plannedGrades         Int[]        @default([])
+  /// Grades of the stage with no class history.
   unrecordedGrades      Int[]        @default([])
+  /// Grades ahead that no plan carries yet.
+  unplannedGrades       Int[]        @default([])
   backfilled            Boolean      @default(false)
+  /// When backfilled: the day the class history began; the class before it is assumed.
+  historyFrom           DateTime?    @db.Date
 
   school      School                      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   publication TimplanStatementPublication @relation(fields: [publicationId, academicYearId, asOfDate, schoolId], references: [id, academicYearId, asOfDate, schoolId], onDelete: Cascade)

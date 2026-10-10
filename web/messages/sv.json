@@ -2627,7 +2627,7 @@
     },
     "stage": {
       "asOf": "Räknat {date} för läsåret {year}",
-      "definition": "Elevernas timmar över hela stadiet, läsår för läsår ur klasshistoriken, mot timplanen i den lydelse som gäller elevens årskull enligt SchemaPros referensdata. Planerat är timplansposterna eleven hade. Utfall är genomförd och tillgodoräknad tid. Prognosen är utfallet plus resten av läsåret och kommande årskursers timplan. Frånvaro dras inte av.",
+      "definition": "Elevernas timmar över hela stadiet, läsår för läsår ur klasshistoriken, mot timplanen i den lydelse som gäller elevens årskull enligt SchemaPros referensdata. Planerat är timplansposterna eleven hade. Utfall är genomförd och tillgodoräknad tid, och för dagar utan publicerat schema den planerade tiden. Prognosen är utfallet plus resten av läsåret och kommande årskursers timplan. Frånvaro dras inte av.",
       "expectation": "De första läsåren med SchemaPro är nästan varje stadium bara delvis registrerat. Timmarna visas då som registrerat sedan klasshistoriken började och jämförs inte med timplanen, eftersom ett läsår före SchemaPro aldrig räknas som noll. Varningar kommer därför främst från prognosen för elever som började ett stadium 2026/27 eller senare.",
       "notActiveTitle": "Stadiesummorna räknas för det aktiva läsåret",
       "notActiveBody": "Välj det aktiva läsåret. Tidigare läsår ingår i stadiesummorna genom elevernas klasshistorik.",
@@ -2723,6 +2723,7 @@
         "partUnplanned": "åk {grades} har ingen timplan ännu",
         "partClassDeleted": "en klass eleven gick i har tagits bort",
         "backfilled": "Klassen före {from} är antagen från läget när klasshistoriken började föras; en flytt före dess syns inte.",
+        "backfilledUntil": "Klassen från {from} till {until} är antagen: det är den klass eleven hade när klasshistoriken började föras, och en flytt före dess syns inte.",
         "versionMissing": "{stageTitle}: lydelsen som gäller är äldre än referensdatan, så ingen nationell jämförelse görs.",
         "unpublished": "{stageTitle}: enligt referensdata ({version}) är totalen {total}, men fördelningen på ämnen är inte publicerad, så stadiet jämförs inte ämne för ämne.",
         "assumed": "{stageTitle}: från hösten 2028 jämförs med {version} enligt referensdata. Fördelningen för äldre årskullar efter 2028 är inte publicerad; SFS 2025:729 behåller bara totalen.",
@@ -2744,10 +2745,14 @@
     "soFar": "Hittills",
     "since": "Sedan {date}",
     "planned": "Planerat för stadiet",
+    "plannedGrades": "Planerat åk {grades}",
     "timplan": "Timplanen",
+    "timplanWhenComplete": "Timplanens timmar gäller hela stadiet och visas när alla årskurser i stadiet finns i SchemaPro.",
     "unrecorded": "Åk {grades} ingår inte i siffrorna, eftersom tiden inte finns registrerad i SchemaPro.",
+    "unplanned": "Åk {grades} har ingen timplan i SchemaPro ännu, så de ingår inte i Planerat.",
+    "backfilled": "Klassen fram till {date} är den klass eleven hade när SchemaPro började spara klasshistorik. Har eleven bytt klass före dess syns det inte.",
     "unpublished": "Den nationella fördelningen per ämne för stadiet är inte publicerad ännu, så timplanens timmar visas inte.",
-    "footer": "Undervisningstid är den tid skolan erbjuder; frånvaro dras inte av. Hittills är genomförd och tillgodoräknad tid, och planerat gäller hela stadiet enligt skolans timplan.{versions, select, none {} other { Timplanens timmar är SchemaPros referensdata ({versions}).}}"
+    "footer": "Undervisningstid är den tid skolan erbjuder; frånvaro dras inte av. Hittills är genomförd och tillgodoräknad tid, och för dagar då skolan inte har publicerat något schema den planerade tiden. Planerat är skolans timplan för stadiet, eller för de årskurser kolumnen anger.{versions, select, none {} other { Timplanens timmar är SchemaPros referensdata ({versions}).}}"
   },
   "timplanCohorts": {
     "title": "Timplaner per årskull",

@@ -90,6 +90,12 @@ export interface StageYearCells {
   recordedFrom: string | null;
   /** A segment of this block was written by the migration's backfill. */
   backfilled: boolean;
+  /**
+   * For a backfilled block: the school's day the class history began (the
+   * backfill's own day). The class before it is the one the pupil had then —
+   * assumed, not recorded. Absent or null otherwise.
+   */
+  historyFrom?: string | null;
   /** Some of the pupil's days this year were in a class since deleted (unrecorded). */
   classDeleted: boolean;
   /**
@@ -164,6 +170,8 @@ export interface PupilStage {
   complete: boolean;
   recordedFrom: string | null;
   backfilled: boolean;
+  /** The day the class history began, when a block was backfilled: the class before it is assumed. */
+  historyFrom: string | null;
   classDeleted: boolean;
   /** A PRE_2028 stage read against SFS 2023:945's cells for a year from HT 2028. */
   distributionAssumed: boolean;
@@ -362,6 +370,11 @@ function stagesOfPupil(
     const froms = recordedBlocks.map((block) => block.year.recordedFrom).filter((from): from is string => from !== null).sort();
     const recordedFrom = froms[0] ?? null;
     const backfilled = recordedBlocks.some((block) => block.year.backfilled);
+    const histories = recordedBlocks
+      .map((block) => (block.year.backfilled ? (block.year.historyFrom ?? null) : null))
+      .filter((day): day is string => day !== null)
+      .sort();
+    const historyFrom = histories.length > 0 ? histories[histories.length - 1]! : null;
     const classDeleted = recordedBlocks.some((block) => block.year.classDeleted);
     const assumed = version !== null && stageAssumesOldDistribution(regime, inStage.map((block) => block.year.yearStartHT));
     const published = (version?.entries.length ?? 0) > 0;
@@ -407,7 +420,12 @@ function stagesOfPupil(
         });
       }
       if (backfilled) {
-        say({ code: "TIMPLAN_PUPIL_STAGE_BACKFILLED", severity: "notice", stage: stageKey, params: { recordedFrom: recordedFrom ?? "" } });
+        say({
+          code: "TIMPLAN_PUPIL_STAGE_BACKFILLED",
+          severity: "notice",
+          stage: stageKey,
+          params: { recordedFrom: recordedFrom ?? "", historyFrom: historyFrom ?? "" },
+        });
       }
     }
 
@@ -540,6 +558,7 @@ function stagesOfPupil(
       complete,
       recordedFrom,
       backfilled,
+      historyFrom,
       classDeleted,
       distributionAssumed: assumed,
       cells,

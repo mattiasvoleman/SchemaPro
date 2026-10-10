@@ -57,10 +57,10 @@ export function describeStageVerdict(verdict: StageVerdict, subjectNames: Readon
       );
     }
     case 'TIMPLAN_PUPIL_STAGE_BACKFILLED':
-      return (
-        `Klassen före ${p.recordedFrom} är enligt läget när klasshistoriken började föras; ` +
-        'en flytt före dess syns inte.'
-      );
+      return p.historyFrom
+        ? `Klassen från ${p.recordedFrom} till ${p.historyFrom} är antagen: det är den klass eleven hade när ` +
+            'klasshistoriken började föras, och en flytt före dess syns inte.'
+        : `Klassen före ${p.recordedFrom} är enligt läget när klasshistoriken började föras; en flytt före dess syns inte.`;
     case 'TIMPLAN_STAGE_VERSION_NOT_IN_REFERENCE':
       return `Den timplan som gäller för ${stage} för den här eleven är äldre än SchemaPros referensdata, så ingen nationell jämförelse görs.`;
     case 'TIMPLAN_STAGE_DISTRIBUTION_UNPUBLISHED':
