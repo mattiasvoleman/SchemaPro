@@ -12,7 +12,7 @@ import { sortByName, sortByPersonName } from "@/lib/sorting";
 import { STAFFING_KEYS } from "@/lib/staffing-keys";
 import { GUARDIAN_KEYS } from "@/lib/guardian-keys";
 import type {
-  LessonCancelCause,
+  SingleCancelCause,
   LessonRecurrence,
   LunchSettings,
   RoomType,
@@ -1180,7 +1180,7 @@ export function useLessonActions() {
     // `cause`: why, as a category the timplan's lost minutes are split by
     // (CalendarLessons.cancelCause). The absence page says TEACHER_UNAVAILABLE;
     // a cancel without one is the school's own, MANUAL on the gateway.
-    mutationFn: ({ id, reason, cause }: { id: string; reason?: string; cause?: LessonCancelCause }) =>
+    mutationFn: ({ id, reason, cause }: { id: string; reason?: string; cause?: SingleCancelCause }) =>
       api.patch(`/api/v1/calendar-lessons/${id}/cancel`, {
         ...(reason ? { reason } : {}),
         ...(cause ? { cause } : {}),

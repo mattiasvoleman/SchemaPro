@@ -2594,6 +2594,7 @@
         "cancelledTeacherUnavailable": "Inställd – läraren inte tillgänglig",
         "cancelledRoomUnavailable": "Inställd – salen inte tillgänglig",
         "cancelledManual": "Inställd av skolan",
+        "cancelledEvent": "Inställd – avbokning (prao, friluftsdag)",
         "cancelledUnknown": "Inställd – orsak ej registrerad",
         "teacherless": "Utan lärare",
         "otherStatus": "Annan status",

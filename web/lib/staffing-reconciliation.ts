@@ -46,7 +46,12 @@ export const LOST_CAUSES = [
   "otherStatus",
 ] as const;
 export type LostCause = (typeof LOST_CAUSES)[number];
-export type LostMinutes = Record<LostCause, number>;
+/**
+ * `cancelledEvent` — a bulk avbokning's lessons (prao, friluftsdag) — is
+ * OPTIONAL, as the gateway sends it: present only above 0, so a school that
+ * never cancels in bulk reads the same rows as before Publicering.
+ */
+export type LostMinutes = Record<LostCause, number> & { cancelledEvent?: number };
 
 export interface ReconciliationLine {
   subjectId: string;
@@ -122,5 +127,5 @@ export function hoursText(minutes: number, locale = "sv"): string {
 
 /** The sum of a group loss's minutes, every cause and the teacherless. */
 export function groupLossMinutes(loss: GroupLoss): number {
-  return LOST_CAUSES.reduce((sum, cause) => sum + loss[cause], loss.teacherless);
+  return LOST_CAUSES.reduce((sum, cause) => sum + loss[cause], loss.teacherless + (loss.cancelledEvent ?? 0));
 }

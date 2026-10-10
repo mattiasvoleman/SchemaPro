@@ -20,6 +20,7 @@ export type LostCause =
   | "cancelledTeacherUnavailable"
   | "cancelledRoomUnavailable"
   | "cancelledManual"
+  | "cancelledEvent"
   | "cancelledUnknown"
   | "teacherless"
   | "otherStatus";
@@ -29,6 +30,9 @@ export const LOST_CAUSES: readonly LostCause[] = [
   "cancelledTeacherUnavailable",
   "cancelledRoomUnavailable",
   "cancelledManual",
+  // A bulk avbokning (prao, friluftsdag): lost unless the school credits the
+  // day, in the gateway's CAUSE_ORDER (src/common/timplan-delivered.ts).
+  "cancelledEvent",
   "cancelledUnknown",
   "teacherless",
   "otherStatus",

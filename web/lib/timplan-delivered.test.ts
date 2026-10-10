@@ -64,6 +64,14 @@ describe("the drill-down's helpers", () => {
     expect(lostShares({})).toEqual([]);
   });
 
+  it("puts a bulk avbokning's minutes after the school's own cancellations, as the gateway orders them", () => {
+    expect(lostShares({ cancelledEvent: 300, cancelledManual: 100, teacherless: 100 }).map((share) => share.cause)).toEqual([
+      "cancelledManual",
+      "cancelledEvent",
+      "teacherless",
+    ]);
+  });
+
   it("lists as own findings exactly the pupils a pupil verdict names, each with the line it is about", () => {
     expect([...ownFindingPupils(DELIVERED_OVERVIEW)]).toEqual([`${DELIVERED_IDS.bea}|subject:${DELIVERED_IDS.ma}`]);
   });

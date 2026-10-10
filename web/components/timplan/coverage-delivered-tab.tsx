@@ -57,6 +57,7 @@ const CAUSE_FILL: Record<LostCause, string> = {
   cancelledTeacherUnavailable: "bg-destructive/80",
   cancelledRoomUnavailable: "bg-warning",
   cancelledManual: "bg-primary/70",
+  cancelledEvent: "bg-primary/40",
   cancelledUnknown: "bg-muted-foreground/60",
   teacherless: "bg-destructive/40",
   otherStatus: "bg-secondary-foreground/40",
