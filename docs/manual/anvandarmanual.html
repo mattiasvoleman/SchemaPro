@@ -52,10 +52,14 @@
       <li><span>5.3 Granska och justera grundschemat</span><span class="dots"></span><span class="pg" data-pg="s53"></span></li>
       <li><span>5.4 Salsoptimering</span><span class="dots"></span><span class="pg" data-pg="s54"></span></li>
       <li><span>5.5 Versioner</span><span class="dots"></span><span class="pg" data-pg="s55"></span></li>
-      <li><span>5.6 Publicera till kalender</span><span class="dots"></span><span class="pg" data-pg="s56"></span></li>
+      <li><span>5.6 Publicera schemat</span><span class="dots"></span><span class="pg" data-pg="s56"></span></li>
+      <li><span>5.7 Utkastläge, giltighet och påfyllning</span><span class="dots"></span><span class="pg" data-pg="s57"></span></li>
     </ol>
     <li><span>6 · Fas 4 — Daglig drift</span><span class="dots"></span><span class="pg" data-pg="ch6"></span></li>
     <li><span>7 · Integrationer</span><span class="dots"></span><span class="pg" data-pg="ch7"></span></li>
+    <ol>
+      <li><span>7.1 Schemavisaren</span><span class="dots"></span><span class="pg" data-pg="s71"></span></li>
+    </ol>
     <li><span>8 · Årscykel</span><span class="dots"></span><span class="pg" data-pg="ch8"></span></li>
     <ol>
       <li><span>8.1 Rulla vidare till nästa läsår</span><span class="dots"></span><span class="pg" data-pg="s81"></span></li>
@@ -1040,6 +1044,11 @@
     Eleverna får tiden genom sin klass i båda fallen. Ett beslut utan ämne
     står bara på klassernas rader. Tiden räknas som genomförd från dagen
     efter datumet.
+  </p>
+  <p>
+    Ska dagens lektioner stå kvar som inställda i stället för att tas bort
+    som av ett lov, används <span class="path">Drift › Avbokning</span> (6.7),
+    som kan skriva beslutet om tillgodoräknad tid i samma steg.
   </p>
   <div class="warn">
     <span class="label">Lektioner samma dag räknas också</span>
@@ -2180,34 +2189,68 @@
     </p>
   </div>
 
-  <h3 id="s56"><span class="num">5.6</span>Publicera till kalender</h3>
+  <h3 id="s56"><span class="num">5.6</span>Publicera schemat</h3>
   <p>
     När grundschemat är granskat och godkänt klickar du
-    <span class="ui">Publicera till kalender</span> och anger en period.
-    Veckomallen omvandlas då till daterade lektioner. Först efter publicering ser
-    lärare och elever sitt schema, och först då kan närvaro registreras.
+    <span class="ui">Publicera till kalender</span> i schemat. Veckomallen
+    omvandlas då till daterade lektioner. Först efter publicering ser lärare och
+    elever sitt schema, och först då kan närvaro registreras.
+  </p>
+  <p>
+    Publiceringen granskas innan något skrivs. Dialogen visar:
+  </p>
+  <ul>
+    <li><strong>Giltighet</strong>: från och med och till och med vilket datum
+      publiceringen gäller (förval: i dag till läsårets slut), och vilket
+      publicerat schema som gäller i dag.</li>
+    <li><strong>Provkörning</strong>: hur många lektioner kalendern får, hur
+      många som skrivs som inställda (läraren eller salen är upptagen) och hur
+      många som redan finns eller faller på lov. Provkörningen är publiceringen
+      själv, gjord och ångrad, så talen är de som publiceringen ger.</li>
+    <li><strong>Kontroller</strong>: krockar, parkerade lektioner, lektioner
+      utan lärare eller sal, timplansposter utan lärare eller som inte fått sina
+      minuter, tjänstefördelningens stoppregler, timplanen under nivån,
+      giltighet som delar period med ett annat publicerat schema, skoldagar utan
+      publicerat schema, en giltighet som börjar före i dag eller mitt i en
+      vecka, lunch som inte är inställd, och dagsändringar som försvinner. Varje
+      kontroll visar upp till 20 av de lektioner eller dagar den gäller.</li>
+  </ul>
+  <p>
+    En kontroll <em>varnar</em> eller <em>stoppar</em>, efter vad skolan valt
+    under <span class="path">Schemaläggning › Publicering</span>. Alla varnar
+    tills skolan väljer något annat, så inget som gick att publicera förut
+    stoppas nu. Med varningar heter knappen <span class="ui">Publicera
+    ändå</span>, och att publiceringen gjordes trots varningarna står i loggen.
+    En kontroll som stoppar lämnar ingen knapp att trycka på. Har grundschemat
+    ändrats mellan provkörningen och publiceringen görs provkörningen om, i
+    stället för att publicera något ingen har sett.
   </p>
   <div class="note">
     <span class="label">Publicering lägger bara till det som saknas</span>
     <p>
-      Lektioner som redan finns i kalendern för den valda perioden lämnas
-      orörda: publiceringen skapar bara de datum som saknas och skriver aldrig
-      över en lektion som redan finns. Därför går det att publicera om samma
-      period — till exempel när en lektion lagts till i grundschemat — utan att
-      en lektion med registrerad närvaro rörs. Luncher och raster i perioden
+      Lektioner som redan finns i kalendern för perioden lämnas orörda:
+      publiceringen skapar bara de datum som saknas och skriver aldrig över en
+      lektion som redan finns. Därför går det att publicera om samma period —
+      till exempel när en lektion lagts till i grundschemat — utan att en
+      lektion med registrerad närvaro rörs. Luncher och raster i perioden
       skrivs däremot om efter grundschemat som det ser ut nu, eftersom de inte
-      bär någon närvaro. Vill du ersätta lektioner som redan publicerats
-      behöver de tas bort först.
+      bär någon närvaro.
     </p>
   </div>
   <p>
-    Behöver du senare ändra en enskild lektion i grundschemat följer framtida
-    publicerade lektioner automatiskt med, förutsatt att närvaro ännu inte
-    registrerats på dem. En lektion som redan har börjat — också en som hölls
-    tidigare i dag — lämnas orörd, både när lektionen ändras och när den tas
-    bort ur grundschemat. Och en lektion flyttas aldrig till en tid som redan
-    varit: flyttar du en lektion klockan tio från 13:00 till 08:00 tas dagens
-    lektion bort ur kalendern, och från nästa vecka ligger den på 08:00.
+    Publicerar skolan direkt (förvalet) följer framtida publicerade lektioner
+    automatiskt med när du ändrar en lektion i grundschemat, förutsatt att
+    närvaro ännu inte registrerats på dem. En lektion som redan har börjat —
+    också en som hölls tidigare i dag — lämnas orörd, både när lektionen ändras
+    och när den tas bort ur grundschemat. Och en lektion flyttas aldrig till en
+    tid som redan varit: flyttar du en lektion klockan tio från 13:00 till
+    08:00 tas dagens lektion bort ur kalendern, och från nästa vecka ligger den
+    på 08:00. I utkastläge (5.7) väntar ändringen i stället på nästa
+    publicering.
+  </p>
+  <p>
+    Exporterar du schemat till PDF eller kalenderfil medan ett utkast skiljer
+    sig från det publicerade, märks filen <em>Utkast – ej publicerat</em>.
   </p>
 
   <div class="check">
@@ -2218,6 +2261,67 @@
       rätt tider och salar.
     </p>
   </div>
+
+  <h3 id="s57"><span class="num">5.7</span>Utkastläge, giltighet och påfyllning</h3>
+  <p>
+    Under <span class="path">Schemaläggning › Publicering</span> väljer skolan
+    <strong>publiceringsläge</strong>. <em>Direkt</em> är förvalet och hur
+    SchemaPro alltid har fungerat: varje ändring i grundschemat når kalendern
+    när den sparas. I <em>utkastläge</em> är ändringar i grundschemat ett utkast
+    som bara administratörer ser. Lärare, elever, vårdnadshavare, appen,
+    exporterna via API och Schemavisaren ser det publicerade schemat tills någon
+    publicerar utkastet. Det går att planera om vårterminen i lugn och ro
+    medan höstterminens schema gäller.
+  </p>
+  <p>
+    När skolan byter till utkastläge blir det som är publicerat utgångsläget.
+    Över schemat visar ett märke <em>Utkast: 3 ändringar ej publicerade</em>,
+    och granskningen visar utkastet mot det publicerade: nya, ändrade (med vad
+    som ändrats) och borttagna lektioner. Tillbaka till direkt publicering går
+    bara när inget utkast väntar. Publicera utkastet från i dag till läsårets
+    slut, eller kassera det, först.
+  </p>
+  <h4>Giltighet</h4>
+  <p>
+    Varje publicering gäller från och med ett datum till och med ett annat,
+    till exempel en för höstterminen och en för vårterminen. Ett senare
+    publicerat schema tar över från sitt första datum. Dagar före det skrivs
+    aldrig om, och det som redan har hänt ändras aldrig. Sidan visar vilket
+    publicerat schema som gäller när, vilket som gäller i dag, och en logg över
+    varje publicering med vad den skrev och vilka kontroller den mötte.
+  </p>
+  <div class="warn">
+    <span class="label">Börja giltigheten på en måndag</span>
+    <p>
+      I utkastläge föreslås nästa måndag. Börjar giltigheten mitt i en vecka
+      och en lektion flyttas från en dag före datumet till en dag efter, hålls
+      den två gånger den veckan. Flyttas den åt andra hållet hålls den inte
+      alls. Kontrollen <em>Giltigheten börjar mitt i en vecka</em> visar vilka
+      lektioner det gäller.
+    </p>
+  </div>
+  <p>
+    När utkastet publiceras behålls dagsändringarna: en vikarie, ett salsbyte,
+    en anteckning eller en inställd lektion följer med lektionen där den finns
+    kvar. Det gäller också efter att en version återställts eller schemat
+    genererats om. En dagsändring på en lektion som tas bort försvinner med
+    den, och kontrollen <em>Dagsändringar som försvinner</em> säger det
+    först.
+  </p>
+  <h4>Kassera och fyll på</h4>
+  <p>
+    <span class="ui">Kassera utkast</span> återställer grundschemat till det
+    publicerade. En version sparas först, <em>Före kasserat utkast</em>, så att
+    utkastet går att hämta under Versioner.
+  </p>
+  <p>
+    <span class="ui">Fyll på publicerat schema</span> skriver det
+    <em>publicerade</em> schemat i kalendern igen för en period, aldrig
+    utkastet och aldrig en dag som har börjat. Använd det när ett lov har
+    kortats eller tagits bort, eller en stängning lyfts, och lektionerna ska
+    tillbaka. Påfyllningen syns i loggen men ändrar inte vilket schema som
+    gäller.
+  </p>
 </section>
 
 <!-- ============================ 6 ============================ -->
@@ -2429,6 +2533,62 @@
       innan det används skarpt.
     </p>
   </div>
+
+  <h3 id="s67"><span class="num">6.7</span>Avbokning</h3>
+  <p>
+    <span class="path">Drift › Avbokning</span> ställer in många lektioner på
+    en gång: en dag, en vecka, en årskurs eller några klasser, för prao, en
+    friluftsdag eller en studiedag. Ge avbokningen ett namn, välj dagar (högst
+    31) och vilka den gäller: hela skolan, årskurser eller namngivna klasser och
+    grupper. Med ett tidsfönster ställs bara de lektioner in som ligger helt
+    eller delvis inom det.
+  </p>
+  <p>
+    Lektionerna står kvar som <em>inställda</em> med anteckningen
+    <em>Inställd: Prao åk 9</em>, så att elever, vårdnadshavare och lärare ser
+    varför timmen är tom. Ett lov tar i stället bort lektionerna. Välj
+    avbokning när dagen ska synas och kunna tas tillbaka, och lov när skolan
+    inte undervisar alls.
+  </p>
+  <p>
+    Inget ställs in före en <span class="ui">förhandsgranskning</span>. Den
+    visar hur många lektioner som ställs in och vilka, och vad som lämnas
+    orört: lektioner som har börjat, redan är inställda eller har närvaro rörs
+    aldrig. Vid årskurser räknas en lektion in när någon av dess klasser har en
+    årskurs i spannet. En undervisningsgrupp utan egen årskurs räknas inte in,
+    och förhandsgranskningen namnger sådana grupper så att du kan välja dem
+    med namn. Ändrar du formuläret efter förhandsgranskningen behöver den göras
+    om.
+  </p>
+  <h4>Undervisningstid och Täckning</h4>
+  <p>
+    En lektion som ställs in för en aktivitet räknas som förlorad tid i
+    Täckning (<em>Inställd – avbokning</em>), om inte skolan räknar dagen som
+    undervisningstid. Slå då på <span class="ui">Dagen räknas som
+    undervisningstid</span> och ange minuter och ämne. En tillgodoräkning
+    skrivs för varje hel dag efter i dag. En dag med tidsfönster kan inte
+    tillgodoräknas, eftersom förmiddagens lektioner då skulle räknas två
+    gånger. Tillgodoräkningen förbättrar avvikelsen mot timplanen men inte
+    <em>schemat mot planerat</em>: den visar fortfarande att lektionerna inte
+    hölls, så att schemat inte ser bättre ut än det är.
+  </p>
+  <h4>Ta tillbaka och tillämpa igen</h4>
+  <p>
+    <span class="ui">Ta tillbaka</span> visar först vad som händer: hur många
+    lektioner som återställs (med sin tidigare anteckning), vilka som förblir
+    inställda för att salen har bokats eller fått en annan lektion under
+    tiden, vad som har börjat och lämnas, och vilka tillgodoräkningar som tas
+    bort. En lektion som förblir inställd namnges med datum och sal, så att du
+    kan lösa salen för hand. En avbokning tas tillbaka en gång.
+  </p>
+  <p>
+    Publiceras schemat igen efter en avbokning, eller fylls det på, skrivs nya
+    lektioner i avbokningens dagar som inställda direkt. Har lektioner ändå
+    tillkommit visar listan <em>N lektioner har tillkommit sedan
+    avbokningen</em> med <span class="ui">Tillämpa igen</span>. Avbokningar
+    skickar ingen notis. Anteckningen på varje lektion är det elever och
+    vårdnadshavare läser.
+  </p>
 </section>
 
 <!-- ============================ 7 ============================ -->
@@ -2489,6 +2649,48 @@
     nedsättningen): systemet kan se <em>att</em> något ändrades och när, aldrig
     <em>vad</em>.
   </p>
+
+  <h3 id="s71"><span class="num">7.1</span>Schemavisaren</h3>
+  <p>
+    Schemavisaren visar skolans <em>publicerade</em> schema utan inloggning,
+    per klass, lärare eller sal: det som annars sitter på klassrumsdörren. Den
+    visar tider, ämne, grupp, sal och läraren som skolan väljer, aldrig
+    elevnamn, närvaro, anteckningar eller orsaker. Varje vecka går att skriva
+    ut på ett liggande A4. Allt är avstängt tills skolan slår på det under
+    <span class="path">Schemaläggning › Publicering › Schemavisaren</span>.
+  </p>
+  <ul>
+    <li><strong>Vad som visas</strong>: klasser och grupper, lärare och salar
+      slås på var för sig.</li>
+    <li><strong>Läraren</strong> visas som signatur, namn eller inte alls.
+      Förvalet är inte alls. Signaturen är skolans egen, den som står på
+      lärarens tjänst för läsåret, och hittas aldrig på. En lärare utan
+      signatur visas inte. Lärarnas egna veckor kräver signatur eller namn, och
+      de visar aldrig inställda lektioner eller vem som är vikarie, eftersom det
+      kan avslöja frånvaro.</li>
+    <li><strong>Små grupper</strong>: en undervisningsgrupp med färre elever än
+      skolans gräns (förval 5) visas som <em>Grupp</em> och får ingen egen
+      länk, så att ingen elev kan pekas ut. En lektion för namngivna elever
+      syns i salens vecka bara som upptagen tid.</li>
+    <li><strong>Lärare som aldrig visas</strong>: en lärare med skyddad
+      identitet markeras här och syns då inte någonstans i Schemavisaren.</li>
+  </ul>
+  <p>
+    En <strong>länk</strong> gäller en klass, en lärare eller en sal, eller är
+    ett register över läsårets klasser och grupper eller skolans salar.
+    Adressen är slumpad och går inte att gissa. Den visas en enda gång, när
+    länken skapas, så kopiera den då. Sidan bakom länken indexeras inte av
+    sökmotorer.
+  </p>
+  <div class="warn">
+    <span class="label">Återkalla en länk som spridits för brett</span>
+    <p>
+      En återkallad länk slutar fungera inom en minut. Det är så länge ett
+      svar får sparas på vägen. Skapa en ny länk om den behövs igen. Visaren
+      tål att en hel klass öppnar länken samtidigt, men begränsar hur ofta en
+      enskild besökare och en enskild länk kan hämta.
+    </p>
+  </div>
 </section>
 
 <!-- ============================ 8 ============================ -->
@@ -2800,8 +3002,18 @@
       </tr>
       <tr>
         <td class="k">Ändring i grundschemat slår inte igenom</td>
-        <td>Den berörda lektionen har redan registrerad närvaro, eller ligger bakåt i tiden.</td>
-        <td>Genomförda lektioner ändras avsiktligt inte. Justera i så fall den enskilda lektionen via dagsplaneringen.</td>
+        <td>Skolan publicerar via utkast, eller den berörda lektionen har redan registrerad närvaro eller ligger bakåt i tiden.</td>
+        <td>I utkastläge: publicera utkastet (5.7). Genomförda lektioner ändras avsiktligt inte; justera i så fall den enskilda lektionen via dagsplaneringen.</td>
+      </tr>
+      <tr>
+        <td class="k">Publicera går inte att trycka på</td>
+        <td>En kontroll som skolan satt till Stoppar har hittat något.</td>
+        <td>Läs kontrollen i granskningen och åtgärda det den pekar på, eller ändra regeln under <span class="path">Publicering</span> (5.6).</td>
+      </tr>
+      <tr>
+        <td class="k">En länk till Schemavisaren visar ”Schemat finns inte”</td>
+        <td>Länken är återkallad, Schemavisaren eller länkens sort är avstängd, gruppen är för liten eller läraren visas aldrig.</td>
+        <td>Kontrollera under <span class="path">Publicering › Schemavisaren</span>. Svaret är detsamma i alla fallen, så att en gissad adress inte avslöjar något.</td>
       </tr>
       <tr>
         <td class="k">En sal går inte att boka</td>
@@ -2856,7 +3068,7 @@
       <tr><td class="k">9</td><td>Schema genererat</td><td>Resultatet är Optimal eller Fungerande.</td></tr>
       <tr><td class="k">10</td><td>Schemat granskat</td><td>Klass för klass och lärare för lärare.</td></tr>
       <tr><td class="k">11</td><td>Version sparad</td><td>En namngiven version finns.</td></tr>
-      <tr><td class="k">12</td><td>Publicerat</td><td>Lärare ser sitt schema under Mitt schema.</td></tr>
+      <tr><td class="k">12</td><td>Publicerat</td><td>Lärare ser sitt schema under Mitt schema, och loggen under Publicering visar vilket schema som gäller från vilken dag.</td></tr>
     </tbody>
   </table>
 
