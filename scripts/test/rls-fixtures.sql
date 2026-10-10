@@ -211,10 +211,11 @@ WHERE s.slug = 'rls-fixture-school' AND y.name = 'RLS Fixture Year'
 ON CONFLICT ("schoolId") DO NOTHING;
 
 INSERT INTO "TimplanStatements"
-  ("schoolId", "publicationId", "studentId", stage, "subjectCode", "versionCode", "distributionPublished",
-   "gradesFrom", "gradesTo", "nationalHours", "plannedHours", "outcomeHours", "projectedHours",
+  ("schoolId", "publicationId", "academicYearId", "asOfDate", "studentId", stage, "subjectCode", "versionCode",
+   "distributionPublished", "gradesFrom", "gradesTo", "nationalHours", "plannedHours", "outcomeHours", "projectedHours",
    status, "projectedStatus", complete)
-SELECT p."schoolId", p.id, u.id, 'HOG', 'MA', 'SFS2023:945/B1', true, 7, 9, 400, 403, 100, 403, 'UNRECORDED', 'UNRECORDED', false
+SELECT p."schoolId", p.id, p."academicYearId", p."asOfDate", u.id, 'HOG', 'MA', 'SFS2023:945/B1', true, 7, 9, 400, 403, 100, 403,
+       'UNRECORDED', 'UNRECORDED', false
 FROM "TimplanStatementPublications" p
 JOIN "Schools" s ON s.id = p."schoolId"
 JOIN "Users" u ON u."authId" = '00000000-0000-4000-8000-000000000007'

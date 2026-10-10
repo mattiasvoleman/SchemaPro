@@ -61,7 +61,6 @@ const statement = (stages: TeachingTimeStage[]): TeachingTimeCardResponse => ({
   statement: {
     studentId: PUPIL,
     academicYearId: "y-1",
-    publishedAt: "2026-10-10T08:00:00.000Z",
     asOfDate: "2026-10-10",
     stages,
   },

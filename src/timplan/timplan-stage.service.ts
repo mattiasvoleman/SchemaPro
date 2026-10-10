@@ -104,7 +104,7 @@ export interface TeachingTimeCardResponse {
   statement: {
     studentId: string;
     academicYearId: string;
-    publishedAt: string;
+    /** The school's day the statement was computed and published: "Uppdaterad {asOfDate}". */
     asOfDate: string;
     stages: TeachingTimeStage[];
   } | null;
@@ -251,8 +251,11 @@ export class TimplanStageService {
             select: { id: true, publishedAt: true },
           });
           if (rows.length > 0) {
+            // The rows carry their publication's year and day (the key holds
+            // them equal): families read the card without the publication row.
+            const asOfDate = new Date(`${computed.asOfDate}T00:00:00.000Z`);
             await tx.timplanStatement.createMany({
-              data: rows.map((row) => ({ ...row, schoolId, publicationId: publication.id })),
+              data: rows.map((row) => ({ ...row, schoolId, publicationId: publication.id, academicYearId: dto.academicYearId, asOfDate })),
             });
           }
           return {
@@ -301,7 +304,9 @@ export class TimplanStageService {
    * card renders nothing — when the school has not published, when the
    * statement is for a year that is no longer the active one, or when the
    * caller may not read the pupil's rows (RLS answers that, as for every
-   * other read).
+   * other read). Only the statement's own rows are read — never the
+   * publication row, which a family cannot read (it names the publishing
+   * admin); each row carries its year and the school's day it was published.
    */
   async card(query: { studentId?: string }, user: AuthenticatedUser): Promise<TeachingTimeCardResponse> {
     requireSchoolId(user);
@@ -311,20 +316,15 @@ export class TimplanStageService {
     }
     try {
       return await this.prisma.withRls(user, async (tx) => {
-        const publication = await tx.timplanStatementPublication.findFirst({
-          select: { id: true, academicYearId: true, publishedAt: true, asOfDate: true },
-        });
-        if (!publication) return { statement: null };
-        const year = await tx.academicYear.findUnique({
-          where: { id: publication.academicYearId },
-          select: { isActive: true },
-        });
-        if (!year?.isActive) return { statement: null };
+        // At most one publication per school, so a pupil's rows are one statement.
         const rows = await tx.timplanStatement.findMany({
-          where: { publicationId: publication.id, studentId },
+          where: { studentId },
           orderBy: [{ stage: 'asc' }, { subjectCode: 'asc' }],
         });
         if (rows.length === 0) return { statement: null };
+        const { academicYearId, asOfDate } = rows[0]!;
+        const year = await tx.academicYear.findUnique({ where: { id: academicYearId }, select: { isActive: true } });
+        if (!year?.isActive) return { statement: null };
         const subjects = await tx.nationalSubject.findMany({
           where: { code: { in: [...new Set(rows.map((row) => row.subjectCode))] } },
           select: { code: true, name: true },
@@ -366,9 +366,8 @@ export class TimplanStageService {
         return {
           statement: {
             studentId,
-            academicYearId: publication.academicYearId,
-            publishedAt: publication.publishedAt.toISOString(),
-            asOfDate: asDay(publication.asOfDate),
+            academicYearId,
+            asOfDate: asDay(asOfDate),
             stages: [...stages.values()].sort((a, b) => order.indexOf(a.stage) - order.indexOf(b.stage)),
           },
         };
