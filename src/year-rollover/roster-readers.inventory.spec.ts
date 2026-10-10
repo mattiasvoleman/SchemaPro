@@ -76,6 +76,10 @@ const CLASSIFIED: Record<string, { basis: Basis; why: string }> = {
     basis: 'CURRENT',
     why: 'the provisioning list: linked people as they are now, with their current class',
   },
+  'src/integration/ss12000-v2/slice.ts': {
+    basis: 'CURRENT',
+    why: 'the SS12000 v2.0 provider: an external export of the active and past years as they are (a future year never leaves); class memberships from the history (ENROLLED, below), teaching groups as they are — they carry no dates',
+  },
   'src/resources/academic-years.service.ts': { basis: 'CURRENT', why: 'YEAR_HAS_HOME_PUPILS guards real rows' },
   'src/resources/student-groups.service.ts': { basis: 'CURRENT', why: 'shows and writes a group’s members as facts' },
   'src/users/users.service.ts': { basis: 'CURRENT', why: 'a user’s own class, read before it is written' },
@@ -109,6 +113,8 @@ const ENROLLED: Record<string, string> = {
     'stage totals: the active year’s pupils (their open segments) and every year they sat in, window by window; no roster basis is asked',
   'src/family/family-schedule.service.ts':
     'one child’s segments over one week: a lesson matched only through the home class is shown on the days the history names that class',
+  'src/integration/ss12000-v2/slice.ts':
+    'SS12000 Group.groupMemberships (a class’s segments, S1’s inclusive endDate) and Person.enrolments (the unbroken chain’s start): who sat where, as recorded, for the active and past years',
 };
 
 const STAFF = new Set(['SCHOOL_ADMIN', 'TEACHER']);
