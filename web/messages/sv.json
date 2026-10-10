@@ -2120,7 +2120,7 @@
     "moveStragglers": "Flytta kvarvarande elever",
     "deleteNamed": "Ta bort {name}",
     "deleteTitle": "Ta bort {name}?",
-    "deleteBody": "Läsåret tas bort med sina klasser, grupper, timplansposter, lov och klassregler. Det går bara så länge inga elever har sina klasser i det — före aktiveringen är det så en rullning ångras.",
+    "deleteBody": "Läsåret tas bort med sina klasser, grupper, timplansposter, lov och klassregler. Det går bara så länge inga elever har sina klasser i det — före aktiveringen är det så en rullning ångras. Ingen elevs klasshistorik försvinner: ett kommande läsår har ingen förrän eleverna flyttas in i dess klasser.",
     "deleted": "{name} togs bort.",
     "activationTitle": "Aktivera {name}",
     "activationIntro": "Förhandsvisningen visar vilka elever som flyttar till vilken klass.",

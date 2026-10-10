@@ -34,6 +34,13 @@ const HISTORY = new Set([
 ]);
 
 /**
+ * Rows whose parent's sentence already says what happens to them: a
+ * published statement's rows (timplan P4) go wherever the statement goes, and
+ * skipped.TimplanStatementPublication says where.
+ */
+const SAID_BY_PARENT = new Set(["TimplanStatement"]);
+
+/**
  * Steg 4, Granska: everything the rollover will write and everything it
  * leaves behind, before "Skapa läsåret".
  *
@@ -275,7 +282,10 @@ export function RolloverReview({
               </li>
             ))}
           {plan.skipped
-            .filter((entry) => !t.has(`skipped.${entry.model}`) && !HISTORY.has(entry.model))
+            .filter(
+              (entry) =>
+                !t.has(`skipped.${entry.model}`) && !HISTORY.has(entry.model) && !SAID_BY_PARENT.has(entry.model),
+            )
             .map((entry) => (
               <li key={entry.model}>
                 {entry.model}: {entry.reason}

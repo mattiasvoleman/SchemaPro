@@ -99,16 +99,19 @@ const state = vi.hoisted(() => ({
   check: null as unknown,
   actions: null as unknown as Record<string, { mutateAsync: ReturnType<typeof vi.fn>; isPending: boolean }>,
   download: vi.fn(),
+  groups: [] as unknown[],
 }));
 
 const YEARS = [
-  { id: "y-1", name: "2026/27", startDate: "2026-08-17", endDate: "2027-06-11", isActive: true },
+  { id: "y-0", name: "2025/26", startDate: "2025-08-18", endDate: "2026-06-12", isActive: false, predecessorId: null },
+  { id: "y-1", name: "2026/27", startDate: "2026-08-17", endDate: "2027-06-11", isActive: true, predecessorId: "y-0" },
+  { id: "y-2", name: "2027/28", startDate: "2027-08-16", endDate: "2028-06-09", isActive: false, predecessorId: "y-1" },
 ];
 
 vi.mock("@/lib/queries", () => ({
   useAcademicYears: () => ({ data: YEARS }),
   useRequirements: () => ({ data: [] }),
-  useGroups: () => ({ data: [], isLoading: false, isError: false }),
+  useGroups: () => ({ data: state.groups, isLoading: false, isError: false }),
   useNationalTimplans: () => ({ data: NATIONAL, isLoading: false, isError: false }),
   useSubjects: () => ({ data: state.subjects ?? SUBJECTS, isLoading: false, isError: false }),
   usePeople: () => ({
@@ -165,6 +168,7 @@ function show(plan: LocalTimplanDetail, check: LocalTimplanCheckResponse | null 
 }
 
 beforeEach(() => {
+  state.groups = [];
   state.actions = {
     create: mutation(),
     update: mutation(),
@@ -420,5 +424,34 @@ describe("TimplanPage: subjects without a national code", () => {
   it("says nothing when every counted subject has a code", () => {
     render(<TimplanPage />);
     expect(screen.queryByText(/uncodedNotice/)).not.toBeInTheDocument();
+  });
+});
+
+describe("TimplanPage: Timplaner per årskull", () => {
+  it("names, per cohort of this year's and next year's classes, the lydelse each stadium is judged against", async () => {
+    state.groups = [
+      { id: "g-7a", academicYearId: "y-1", name: "7A", kind: "CLASS", gradeLevel: 7 },
+      { id: "g-1a", academicYearId: "y-2", name: "1A", kind: "CLASS", gradeLevel: 1 },
+      { id: "g-ma", academicYearId: "y-1", name: "Ma-grupp", kind: "TEACHING_GROUP", gradeLevel: 7 },
+      { id: "g-9a", academicYearId: "y-0", name: "9A", kind: "CLASS", gradeLevel: 9 },
+    ];
+    render(<TimplanPage />);
+    const notice = (await screen.findByText("title", { selector: "summary" })).closest("details")!;
+    const rows = within(notice).getAllByRole("listitem").map((item) => item.textContent);
+    // 7A began åk 1 in 2020: lågstadiet finished June 2023, before SFS 2023:945
+    // (no lydelse in the reference data); mellanstadiet reads bilaga 1; its
+    // högstadium reaches 2028/29, read against bilaga 1 as an assumption.
+    expect(rows[0]).toContain("cohort(PRE_2028|2020) · 7A");
+    expect(rows[0]).toContain("stageVersion(LAG||missing)");
+    expect(rows[0]).toContain("stageVersion(MELLAN|SFS 2023:945 B1|published)");
+    expect(rows[0]).toContain("stageVersion(HOG|SFS 2023:945 B1|assumed)");
+    // Next year's 1A, and the first cohort of the tioårig grundskola, which
+    // has a total and no published distribution.
+    expect(rows[1]).toContain("cohort(PRE_2028|2027) · 1A");
+    expect(rows[2]).toContain("cohort(REFORMED_2028|2028) · noClasses");
+    expect(rows[2]).toContain("stageVersion(LAG|SFS 2025:729|unpublished)");
+    // A teaching group and a finished year's class are no cohort here.
+    expect(notice).not.toHaveTextContent(/Ma-grupp|9A/);
+    expect(notice).toHaveTextContent("sources");
   });
 });
