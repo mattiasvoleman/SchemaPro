@@ -287,6 +287,43 @@ describe("Vikarietavla", () => {
     expect(toast.success).toHaveBeenCalledWith("2 lektioner uppdaterade");
   });
 
+  it("asks before a bulk cancel or undo, naming how many, and sends nothing until it is confirmed", async () => {
+    post.mockResolvedValue({ done: 2 });
+    const user = userEvent.setup();
+    renderBoard();
+    await screen.findByRole("cell", { name: "Matematik" });
+    for (const box of screen.getAllByRole("checkbox")) await user.click(box);
+    await user.click(screen.getByRole("button", { name: "Ställ in valda (2)" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Ställ in 2 lektioner?");
+    expect(post).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Ställ in" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/api/v1/cover/bulk", expect.objectContaining({ action: "CANCELLED" })));
+
+    post.mockClear();
+    for (const box of screen.getAllByRole("checkbox")) if (!(box as HTMLInputElement).checked) await user.click(box);
+    await user.click(screen.getByRole("button", { name: "Ångra valda (1)" }));
+    const undoDialog = await screen.findByRole("dialog");
+    expect(undoDialog).toHaveTextContent("Ångra 1 beslut?");
+    await user.click(within(undoDialog).getByRole("button", { name: "Avbryt" }));
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("drops the publication banner once the board has been read again", async () => {
+    post.mockRejectedValue(new ApiError(409, "En publicering pågår.", "PUBLISH_IN_PROGRESS"));
+    const user = userEvent.setup();
+    renderBoard();
+    await screen.findByRole("cell", { name: "Matematik" });
+    await user.click(within(rowOf("Matematik")).getByRole("button", { name: /Fler val/ }));
+    await user.click(await screen.findByRole("menuitem", { name: "Självstudier under tillsyn" }));
+    expect(await screen.findByText("En publicering pågår. Tavlan väntar – försök igen om en stund.")).toBeInTheDocument();
+    // The next read of the board (another day, a realtime refetch, the poll) is after the publish.
+    await user.click(screen.getByRole("button", { name: "Nästa" }));
+    await waitFor(() =>
+      expect(screen.queryByText("En publicering pågår. Tavlan väntar – försök igen om en stund.")).not.toBeInTheDocument(),
+    );
+  });
+
   it("applies the day's proposal as ticked, with its basis, and asks again when the day moved", async () => {
     let applies = 0;
     post.mockImplementation(async (path: string) => {
