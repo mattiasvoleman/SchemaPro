@@ -34,16 +34,14 @@ module.exports = {
     '!src/**/*.d.ts',
   ],
   coverageThreshold: {
-    // Floors set just under what the suite measures today: 12.83 statements,
-    // 12.86 lines, 17.07 functions, 11.80 branches.
-    //
-    // They are low because they are honest. This runner exists as of today and
-    // covers three things — the roster union, the queue's owner filter and
-    // Swedish ordering — all of which were shipped untested and all of which
-    // decide what a teacher sees about a child. Auth, the sync worker, the
-    // network guard and the hooks are still uncovered, and that is what the gap
-    // between this number and a good one means. Raise these as tests land;
+    // Floors set just under what the suite measures: 61.94 statements, 62.84
+    // lines, 63.05 functions, 66.66 branches (2026-10-10, with src/i18n
+    // counted). They were 12/12/16/11 when this runner arrived; the step is the
+    // gateway client, the family schedule, push registration, the catalogue and
+    // its formats, notice wording and the auth codes, all tested where they
+    // live. Auth storage, the WebSocket client and the hooks are still
+    // uncovered, and that is the gap that remains. Raise these as tests land;
     // never lower one to green a build.
-    global: { statements: 12, lines: 12, functions: 16, branches: 11 },
+    global: { statements: 61, lines: 62, functions: 62, branches: 66 },
   },
 };

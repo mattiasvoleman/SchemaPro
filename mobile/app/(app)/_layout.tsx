@@ -8,9 +8,11 @@ function TabGlyph({ glyph, color }: { readonly glyph: string; readonly color: Co
 }
 
 /**
- * Protected app shell — bottom tabs for the two teacher workflows:
- * schedule (read-only, RLS reads) and attendance (offline-first queue).
- * Navigation guards are handled by AuthGate in the root _layout.tsx.
+ * Teacher and admin shell: schedule (read-only, RLS reads), attendance
+ * (offline-first queue), the notification inbox — the tab a push opens, and
+ * staff receive pushes too (cover bookings, withdrawals, room bookings,
+ * lesson changes) — and settings. Navigation guards are handled by AuthGate
+ * in the root _layout.tsx.
  */
 export default function AppLayout(): React.JSX.Element {
   const { t } = useI18n();
@@ -38,6 +40,20 @@ export default function AppLayout(): React.JSX.Element {
         options={{
           title: t('tabs.attendance'),
           tabBarIcon: ({ color }) => <TabGlyph glyph="✓" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="notifications"
+        options={{
+          title: t('tabs.notifications'),
+          tabBarIcon: ({ color }) => <TabGlyph glyph="🔔" color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: t('tabs.settings'),
+          tabBarIcon: ({ color }) => <TabGlyph glyph="⚙" color={color} />,
         }}
       />
     </Tabs>
