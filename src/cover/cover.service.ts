@@ -191,6 +191,7 @@ export class CoverService {
       await enterGrundschemaWrite(tx, schoolId);
       const lessonIds = dto.items.map((item) => item.lessonId);
       await lockLessons(tx, lessonIds);
+      let items = dto.items;
       if (dto.action === 'UNDO') {
         // Everybody an undo of the batch could put back, locked once, in
         // order, before any of them is: two bulks never wait on each other
@@ -200,9 +201,13 @@ export class CoverService {
           tx,
           decisions.flatMap((row) => row.removedTeachers.map((removed) => removed.teacherId)),
         );
+        // Undo is LIFO per lesson (COVER_UNDO_ORDER), and the board lists a
+        // lesson's pairs by teacher, not by when they were decided: the
+        // batch is taken newest first per lesson, read here under the locks.
+        items = newestFirstPerLesson(dto.items, decisions);
       }
       const all = emptyEffects();
-      for (const item of dto.items) {
+      for (const item of items) {
         try {
           const one =
             dto.action === 'UNDO'
@@ -523,6 +528,23 @@ export function merge(into: CoverEffects, from: CoverEffects): void {
   into.dates.push(...from.dates);
   into.notices.push(...from.notices);
   into.warnings.push(...from.warnings);
+}
+
+/**
+ * A batch of undos, the decisions on each lesson newest first (the order
+ * undoInTransaction demands), lessons in the order they were sent. An item
+ * with no decision keeps its place last on its lesson and is refused there.
+ */
+export function newestFirstPerLesson<T extends { lessonId: string; absenceId: string }>(
+  items: readonly T[],
+  decisions: readonly DecisionRow[],
+): T[] {
+  const rank = new Map(decisions.map((row, index) => [`${row.calendarLessonId}:${row.absenceId}`, index]));
+  const byLesson = new Map<string, T[]>();
+  for (const item of items) byLesson.set(item.lessonId, [...(byLesson.get(item.lessonId) ?? []), item]);
+  // decisionsOn reads oldest first (decidedAt, id): a higher index is newer.
+  const at = (item: T) => rank.get(`${item.lessonId}:${item.absenceId}`) ?? -1;
+  return [...byLesson.values()].flatMap((group) => [...group].sort((a, b) => at(b) - at(a)));
 }
 
 /** from ≤ to, at most `days` days inclusive. */

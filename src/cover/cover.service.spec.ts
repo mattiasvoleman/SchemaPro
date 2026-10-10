@@ -389,6 +389,44 @@ describe('CoverService', () => {
       expect(realtime.notifyCoverBoardChanged).not.toHaveBeenCalled();
     });
 
+    it('UNDO takes the decisions on one lesson newest first, whatever order the board sent them in', async () => {
+      const ABSENCE_B = '56565656-5656-4565-8565-565656565656';
+      world({ teachers: [{ teacherId: S, role: 'SUBSTITUTE' }] });
+      // A covered by S at 06:00, then B's "the co-teacher holds" at 06:30.
+      let rows = [
+        decision({ id: 'dec-a', decidedAt: new Date('2026-10-14T04:00:00.000Z') }),
+        decision({
+          id: 'dec-b',
+          absenceId: ABSENCE_B,
+          absentTeacherId: B,
+          removedTeachers: [{ teacherId: B, role: 'ASSISTANT' }],
+          decision: 'CO_TEACHER',
+          substituteId: null,
+          decidedAt: new Date('2026-10-14T04:30:00.000Z'),
+        }),
+      ];
+      tx.teacherAbsenceCover.findMany.mockImplementation(() => Promise.resolve(rows));
+      tx.teacherAbsenceCover.delete.mockImplementation(({ where }: { where: { id: string } }) => {
+        rows = rows.filter((row) => row.id !== where.id);
+        return Promise.resolve({});
+      });
+
+      await expect(
+        cover.bulk(
+          {
+            action: 'UNDO',
+            items: [
+              { lessonId: LESSON, absenceId: ABSENCE, expected: 'COVERED' },
+              { lessonId: LESSON, absenceId: ABSENCE_B, expected: 'HANDLED' },
+            ],
+          },
+          testUser(),
+        ),
+      ).resolves.toEqual({ done: 2 });
+      expect(tx.teacherAbsenceCover.delete.mock.calls.map(([arg]) => arg.where.id)).toEqual(['dec-b', 'dec-a']);
+      expect(rows).toEqual([]);
+    });
+
     it('locks every lesson, then every person an UNDO could restore, each in id order, before the first item', async () => {
       world({ teachers: [{ teacherId: S, role: 'SUBSTITUTE' }] }, [
         decision({ removedTeachers: [{ teacherId: B, role: 'ASSISTANT' }, { teacherId: A, role: 'LEAD' }] }),
