@@ -205,6 +205,18 @@ export function shiftWeek(monday: string, weeks: number): string {
   return new Date(Date.parse(`${monday}T00:00:00Z`) + weeks * 7 * 86_400_000).toISOString().slice(0, 10);
 }
 
+/**
+ * Whether the week before `monday` is one the gateway still shows: a share
+ * link reads this week and last week, never further back (20261011133000).
+ * Judged on the UTC day the server renders on, which can trail the school's
+ * by an hour at midnight — then the link leads to the shared not-found page.
+ */
+export function canGoBack(monday: string, today: string): boolean {
+  const at = Date.parse(`${today}T00:00:00Z`);
+  const thisMonday = new Date(at - ((new Date(at).getUTCDay() + 6) % 7) * 86_400_000).toISOString().slice(0, 10);
+  return shiftWeek(monday, -1) >= shiftWeek(thisMonday, -1);
+}
+
 /** A link inside the viewer: the same token, with what to show. */
 export function viewerHref(token: string, params: { target?: string | null; date?: string | null; lang?: string | null }): string {
   const search = new URLSearchParams();

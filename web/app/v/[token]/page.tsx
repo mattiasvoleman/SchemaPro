@@ -16,6 +16,7 @@ import {
   viewerHref,
   viewerQueryOf,
   weekSpan,
+  canGoBack,
   type PublicIndex,
   type PublicLesson,
   type PublicWeek,
@@ -205,9 +206,11 @@ function WeekView({
               {t("backToIndex")}
             </a>
           ) : null}
-          <a href={nav(shiftWeek(document.week.from, -1))} className="underline underline-offset-4">
-            ← {t("previous")}
-          </a>
+          {canGoBack(document.week.from, new Date().toISOString().slice(0, 10)) ? (
+            <a href={nav(shiftWeek(document.week.from, -1))} className="underline underline-offset-4">
+              ← {t("previous")}
+            </a>
+          ) : null}
           <a href={nav(null)} className="underline underline-offset-4">
             {t("thisWeek")}
           </a>

@@ -5700,6 +5700,29 @@ async function pastRowChecks(owner: Client, api: PrismaService): Promise<void> {
       assert.ok(held.every((event) => event.activityId === null), JSON.stringify(held.slice(0, 2)));
       assert.equal((await drafts.switchMode('DIRECT', school.admin)).publishMode, 'DIRECT');
     });
+
+    await check('(pub-e) a share link shows this week and last week, never further back', async () => {
+      await publications.upsertSettings({ publicViewerEnabled: true, publicGroups: true }, school.admin);
+      const link = await new PublicLinksService(api).create(
+        { academicYearId: school.yearId, kind: 'GROUP', targetId: school.class7a },
+        school.admin,
+      );
+      const view = (date: string | null) =>
+        api.withPublicViewer(async (tx) => {
+          const [row] = await tx.$queryRaw<{ doc: unknown }[]>`
+            SELECT app.public_timetable(${tokenHashOf(link.token)}, ${null}::uuid, ${date}::date) AS "doc"`;
+          return row?.doc ?? null;
+        });
+      const day = (offset: number) => {
+        const at = new Date();
+        at.setUTCDate(at.getUTCDate() + offset);
+        return at.toISOString().slice(0, 10);
+      };
+      assert.ok(await view(null), 'today');
+      assert.ok(await view(day(-7)), 'last week');
+      assert.equal(await view(day(-15)), null);
+      assert.equal(await view(dates.start), null);
+    });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-dagens'`, [MARKER]);
   }
@@ -5993,6 +6016,33 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
         links.create({ academicYearId: school.yearId, kind: 'TEACHER', targetId: hidden.id }, school.admin),
         (error: unknown) => JSON.stringify((error as { getResponse?: () => unknown }).getResponse?.()).includes('PUBLIC_TEACHER_NOT_SHOWABLE'),
       );
+    });
+
+    await check('(pub-e) a class\'s and a room\'s week name no teacher on a cancelled lesson and never a vikarie; no week outside the link\'s year', async () => {
+      // Monday's lesson cancelled for the teacher's absence; Wednesday's taken by a vikarie.
+      await owner.query(
+        `UPDATE "CalendarLessons" SET status = 'CANCELLED', "cancelCause" = 'TEACHER_UNAVAILABLE' WHERE "schoolId" = $1 AND date = '2096-10-01'`,
+        [school.schoolId],
+      );
+      await owner.query(
+        `UPDATE "CalendarLessonTeachers" SET role = 'SUBSTITUTE'
+          WHERE "calendarLessonId" IN (SELECT id FROM "CalendarLessons" WHERE "schoolId" = $1 AND date = '2096-10-03')`,
+        [school.schoolId],
+      );
+      const week = async (token: string) => {
+        const doc = (await view(token)) as { days: Array<{ date: string; lessons: Array<Record<string, unknown>> }> };
+        secrets(doc);
+        return new Map(doc.days.map((day) => [day.date, day.lessons.map((entry) => [entry.teachers, entry.cancelled])]));
+      };
+      const classWeek = await week(klass.token);
+      assert.deepEqual(classWeek.get('2096-10-01'), [[[], true]]);
+      assert.deepEqual(classWeek.get('2096-10-03'), [[[], false]]);
+      // The room holds Monday's lesson (Wednesday's has no room).
+      assert.deepEqual((await week(room.token)).get('2096-10-01'), [[[], true]]);
+      // A week before the link's läsår, or after it: the one not-found.
+      assert.equal(await view(room.token, null, '2019-10-14'), null);
+      assert.equal(await view(klass.token, null, '2097-09-01'), null);
+      assert.ok(await view(klass.token, null, '2097-06-09'));
     });
 
     await check('(pub-e) nothing for a revoked link, a scope switched off, the viewer switched off, an unknown token; and 2 s at most', async () => {
