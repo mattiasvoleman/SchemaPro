@@ -552,6 +552,64 @@ A run's `before`/`after` hold names and emails only while it is `DIFF_READY`;
 they are nulled the moment it reaches any other status, and a `DIFF_READY` run
 expires after 30 days.
 
+## The admin page (`/admin/integrations`)
+
+Both directions are administered on one page, SCHOOL_ADMIN only, in two tabs.
+It calls only the admin routes above; nothing on it reads or writes the
+database directly. The manual describes it for the school in 7.2 and 7.3
+(`docs/manual/anvandarmanual.html`).
+
+**Elevregister** (the consumer):
+
+* *Källsystem* — `PUT /api/v1/ss12000-source`. The address and token URL are
+  checked in the browser against the gateway's rule (https, no user info, no
+  query or fragment, no trailing slash) before they are sent; the gateway
+  decides. A 409 `SS12000_SOURCE_RELINK_REQUIRED` opens a confirmation naming
+  how many people and groups are linked, and only the confirmation sends
+  `confirmRelink: true`.
+* *Inloggningsuppgifter* — one write-only field per credential the sign-in
+  needs (`secrets/:kind`). The field is never filled from the server, is
+  cleared once the request settles (also on a refusal), and the row shows only
+  *Sparad <när>* or *Saknas*. A PEM key or certificate is a textarea; the
+  gateway parses it at save.
+* *Testa anslutning* — `POST …/test`; the outcome is shown as the code's
+  sentence (`integrations.codes.*`), never the provider's words, and the
+  listed skolenheter (at most 5 chosen) are saved with the source's stored
+  configuration plus `organisationIds`.
+* *Synk* — *Synka nu* (`INCREMENTAL`; the gateway falls back to FULL when it
+  must) and *Full synk*; the history (`GET …/runs?limit=20`) polls every 3 s
+  while a run is `RUNNING` and names each status, trigger, mode, counts and
+  status code.
+* *Granska* — loads **every** change of the run (500 a page, up to the DTO's
+  20 000) before anything can be applied, so the count shown is the count
+  applied. The gateway's defaults arrive ticked or unticked; the apply sends
+  only the difference (`select` / `deselect`) with the run's `basisHash`.
+  Conflicts, notes, already auto-applied changes and every row of a run that
+  is no longer `DIFF_READY` are not selectable. `RESPONSIBLE_ENDED_AT_SOURCE`
+  rows are listed with a link to `/admin/people?guardians=<pupil id>` (the
+  people register's guardian dialog), and the apply stays disabled until the
+  admin ticks that they have seen them. A 409 `SS12000_MASS_DEACTIVATION`
+  shows its `deactivations` and `limit` and must be confirmed explicitly
+  (`confirmMassDeactivation: true`); `SS12000_DIFF_STALE` disables the apply
+  and says to sync again. A run past `DIFF_READY` opens read-only, by kind,
+  operation and code (its names were nulled).
+* *Nattlig synk* — `PATCH …/schedule`. Automatic apply is offered only while
+  the schedule is on, with the exact set it covers and never covers.
+* *Nya personer* — `GET /api/v1/ss12000-sync/provisioning`; nothing is
+  pre-ticked, and *Bjud in valda* calls `POST /api/v1/users/invitations` 500
+  ids at a time, summing the reports (a chunk that fails as a whole counts
+  against each of its ids).
+
+**API-nycklar** (the provider): `GET /api/v1/integration-keys/provider`. A new
+key starts with the default scopes (`ss12000.v1`, `ss12000.v1.import`) ticked
+and can be given any of the twelve; *Ändra omfång* is `PATCH /:id {scopes}`
+and refuses an empty set. *Skapa / Byt signeringshemlighet* is
+`POST /:id/webhook-secret`; the secret, like the key, is shown once and held
+only until the admin closes the notice. Each key lists its subscriptions
+(target host only, resource types, expiry, last notice, failing since) with
+*Pausa* / *Återuppta* (`POST /:id/subscriptions/:sid/pause|resume`). Revoking
+a key asks first.
+
 ## Security model
 
 **A key resolves to one school.** `IntegrationKeyGuard` hashes the
