@@ -159,6 +159,18 @@ describe("Rapporter › Tjänstefördelning", () => {
     expect(screen.getByText("footFactor")).toBeInTheDocument();
   });
 
+  it("adds the avbokning column only when a bulk avbokning cost minutes, and counts them in the row's total", () => {
+    const { unmount } = render(<StaffingReport />);
+    expect(screen.queryByRole("columnheader", { name: "cause.cancelledEvent" })).not.toBeInTheDocument();
+    unmount();
+    const withEvent = response();
+    withEvent.groupLosses = [{ ...withEvent.groupLosses[0]!, cancelledEvent: 60 }];
+    state.rec = { data: withEvent, isLoading: false, isError: false, error: null };
+    render(<StaffingReport />);
+    expect(screen.getByRole("columnheader", { name: "cause.cancelledEvent" })).toBeInTheDocument();
+    expect(screen.getByText("7A · Matematik").closest("tr")).toHaveTextContent("7A · Matematik40008000603180");
+  });
+
   it("keeps the other date at what it showed when one is edited, and never asks for a start after the end", async () => {
     const user = userEvent.setup();
     const { container } = render(<StaffingReport />);

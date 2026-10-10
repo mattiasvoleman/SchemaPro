@@ -19,7 +19,14 @@ export type LessonStatus = "SCHEDULED" | "CANCELLED" | "COMPLETED" | "RESCHEDULE
  * before P3 with a note nobody can categorise. The free-text reason stays in
  * `note`.
  */
-export type LessonCancelCause = "TEACHER_UNAVAILABLE" | "ROOM_UNAVAILABLE" | "MANUAL";
+export type LessonCancelCause = "TEACHER_UNAVAILABLE" | "ROOM_UNAVAILABLE" | "MANUAL" | "EVENT";
+/**
+ * The causes a single cancel may send (the gateway's LESSON_CANCEL_CAUSES).
+ * EVENT is written only by a bulk avbokning (Publicering, migration
+ * 20261011103000), which says the day's name in the note; a lesson cancelled
+ * one by one is the school's own or a closure's.
+ */
+export type SingleCancelCause = Exclude<LessonCancelCause, "EVENT">;
 export type AttendanceStatus = "UNKNOWN" | "PRESENT" | "ABSENT" | "LATE" | "EXCUSED";
 /**
  * GRADE_LEVEL is the one target that is not a row anywhere: there is no

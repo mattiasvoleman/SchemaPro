@@ -2594,6 +2594,7 @@
         "cancelledTeacherUnavailable": "Cancelled – teacher unavailable",
         "cancelledRoomUnavailable": "Cancelled – room unavailable",
         "cancelledManual": "Cancelled by the school",
+        "cancelledEvent": "Cancelled – bulk cancellation (work experience, outdoor day)",
         "cancelledUnknown": "Cancelled – no cause recorded",
         "teacherless": "No teacher",
         "otherStatus": "Other status",

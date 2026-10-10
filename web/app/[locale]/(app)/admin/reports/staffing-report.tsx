@@ -112,6 +112,7 @@ export function StaffingReport() {
   const groupName = (id: string) => groups?.find((group) => group.id === id)?.name ?? "—";
 
   const data = rec.data;
+  const eventLosses = (data?.groupLosses ?? []).some((loss) => (loss.cancelledEvent ?? 0) > 0);
   // By family name, Swedish order; a teacher the roster cannot name by their
   // signature (or id), like the staffing matrix.
   const teachers = useMemo(() => {
@@ -440,6 +441,11 @@ export function StaffingReport() {
                           {tCause(cause)}
                         </TableHead>
                       ))}
+                      {/* Only when a bulk avbokning cost something: the
+                          gateway sends the key above 0 alone. */}
+                      {eventLosses ? (
+                        <TableHead className="text-right">{tCause("cancelledEvent")}</TableHead>
+                      ) : null}
                       <TableHead className="text-right">{t("lessons")}</TableHead>
                       <TableHead className="text-right">{t("lost")}</TableHead>
                     </TableRow>
@@ -456,6 +462,9 @@ export function StaffingReport() {
                             {loss[cause]}
                           </TableCell>
                         ))}
+                        {eventLosses ? (
+                          <TableCell className="text-right tabular-nums">{loss.cancelledEvent ?? 0}</TableCell>
+                        ) : null}
                         <TableCell className="text-right tabular-nums">{loss.lessons}</TableCell>
                         <TableCell className="text-right tabular-nums">{groupLossMinutes(loss)}</TableCell>
                       </TableRow>
