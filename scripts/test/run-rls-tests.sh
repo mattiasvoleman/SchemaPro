@@ -311,6 +311,18 @@ if [ "${foreign_enrolments:-0}" = "0" ]; then
   exit 1
 fi
 
+# The second school's published statement (section 26d), likewise.
+foreign_statements="$(
+  compose exec -T "$DB_SERVICE" psql -U "$DB_OWNER" -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 -tAc \
+    "SELECT count(*) FROM \"TimplanStatements\" WHERE \"schoolId\" = '${school_b}'" \
+  | tr -d '[:space:]'
+)"
+if [ "${foreign_statements:-0}" = "0" ]; then
+  echo "FAIL: no published statement in the second school; fixtures did not run." >&2
+  exit 1
+fi
+
 echo "==> Running policy assertions as ${APP_ROLE} (the role the API uses)"
 compose exec -T "$DB_SERVICE" env "PGPASSWORD=${APP_PASSWORD}" \
   psql -U "$APP_ROLE" -h localhost -d "$DB_NAME" \

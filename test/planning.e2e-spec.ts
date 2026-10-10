@@ -4013,6 +4013,215 @@ describe('Planning surface (e2e)', () => {
     });
   });
 
+  describe('stadiesummor och undervisningstid (timplan-stages)', () => {
+    /*
+     * /timplan-stages over HTTP: the admin's round trip — the Stadium view,
+     * the drill-down into a class, publishing the families' statement and
+     * withdrawing it — reaches every handler; the card is a pupil's own and a
+     * guardian's child's; teachers, pupils and guardians are stopped at the
+     * guard on the admin's routes, and a teacher on the card. The world: an
+     * active 2026/27 with 7A and 7B, Anna in 7A all year and Bo moved 7A → 7B
+     * on 2 November, matematik mapped to MA, nothing published.
+     */
+    const ANNA = 'a1a1a1a1-0000-4000-8000-00000000000a';
+    const BO = 'a1a1a1a1-0000-4000-8000-00000000000b';
+    const C7A = 'c7c7c7c7-0000-4000-8000-0000000007a0';
+    const C7B = 'c7c7c7c7-0000-4000-8000-0000000007b0';
+    const MA = 'd0d0d0d0-0000-4000-8000-0000000000aa';
+    const PUBLICATION = 'f0f0f0f0-0000-4000-8000-000000000001';
+    const MODELS = [
+      'academicYear', 'studentEnrollment', 'nationalTimplanVersion', 'nationalSubject', 'academicYearTimplan',
+      'localTimplan', 'subject', 'studentGroup', 'teachingRequirement', 'schoolBreak', 'studentGroupMember',
+      'timplanCredit', 'availabilityConstraint', 'masterLesson', 'timplanStatementPublication', 'timplanStatement',
+    ];
+    const resetModels = () => {
+      for (const model of MODELS) {
+        for (const method of Object.values(harness.tx[model]!)) method.mockReset();
+        harness.tx[model]!['findMany']!.mockResolvedValue([]);
+      }
+    };
+    beforeEach(resetModels);
+    afterEach(resetModels);
+    const seg = (studentId: string, group: string, from: string, to: string | null) => ({
+      studentId,
+      academicYearId: YEAR_ID,
+      studentGroupId: group,
+      gradeLevel: 7,
+      validFrom: new Date(`${from}T00:00:00.000Z`),
+      validTo: to === null ? null : new Date(`${to}T00:00:00.000Z`),
+      source: 'RECORDED',
+    });
+    const givenTheSchool = (isActive = true) => {
+      const tx = harness.tx;
+      Object.assign(tx, { $queryRaw: jest.fn().mockResolvedValue([]) });
+      tx['academicYear']!['findUnique']!.mockResolvedValue({
+        id: YEAR_ID,
+        startDate: new Date('2026-08-17T00:00:00.000Z'),
+        endDate: new Date('2027-06-11T00:00:00.000Z'),
+        isActive,
+        school: { timezone: 'Europe/Stockholm' },
+      });
+      tx['academicYear']!['findMany']!.mockResolvedValue([
+        { id: YEAR_ID, name: '2026/27', startDate: new Date('2026-08-17T00:00:00.000Z'), endDate: new Date('2027-06-11T00:00:00.000Z'), predecessorId: null },
+      ]);
+      tx['studentEnrollment']!['findMany']!
+        .mockResolvedValueOnce([
+          { studentId: ANNA, studentGroupId: C7A, gradeLevel: 7 },
+          { studentId: BO, studentGroupId: C7B, gradeLevel: 7 },
+        ])
+        .mockResolvedValueOnce([
+          seg(ANNA, C7A, '2026-08-17', null),
+          seg(BO, C7A, '2026-08-17', '2026-11-02'),
+          seg(BO, C7B, '2026-11-02', null),
+        ]);
+      tx['nationalTimplanVersion']!['findMany']!.mockResolvedValue([
+        {
+          code: 'SFS2023:945/B1', schoolForm: 'GRUNDSKOLA', totalHours: 6890, reductionCapPercent: 20,
+          appliesFromCohortTerm: 'HT2024', appliesBy: 'STAGES_NOT_COMPLETED',
+          entries: [{ subjectCode: 'MA', stage: 'HOG', hours: 400, minimumHoursPerChild: null, protectedFromReduction: true }],
+        },
+      ]);
+      tx['nationalSubject']!['findMany']!.mockResolvedValue([{ code: 'MA', name: 'Matematik', parentCode: null }]);
+      tx['subject']!['findMany']!.mockResolvedValue([{ id: MA, name: 'Matematik', nationalCode: 'MA', countsTowardTimplan: true }]);
+      tx['studentGroup']!['findMany']!.mockResolvedValue([
+        { id: C7A, name: '7A', kind: 'CLASS', gradeLevel: 7 },
+        { id: C7B, name: '7B', kind: 'CLASS', gradeLevel: 7 },
+      ]);
+      tx['teachingRequirement']!['findMany']!.mockResolvedValue([
+        { id: 'r7a', studentGroupId: C7A, subjectId: MA, lessonsPerWeek: 3, minutesPerLesson: 60, lessonLengths: [], recurrence: 'ALL_WEEKS', startDate: null, endDate: null },
+        { id: 'r7b', studentGroupId: C7B, subjectId: MA, lessonsPerWeek: 4, minutesPerLesson: 60, lessonLengths: [], recurrence: 'ALL_WEEKS', startDate: null, endDate: null },
+      ]);
+    };
+
+    it('an admin reads the Stadium view per class, carrying no pupil id, and drills into a class', async () => {
+      givenTheSchool();
+      const overview = await request(http())
+        .get(`/api/v1/timplan-stages?academicYearId=${YEAR_ID}`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(overview.body).toMatchObject({ academicYearId: YEAR_ID, isActiveYear: true, pupils: null, publication: null });
+      expect(overview.body.classes.map((entry: { studentGroupId: string; stage: string; pupils: number }) => [entry.studentGroupId, entry.stage, entry.pupils]).sort()).toEqual([
+        [C7A, 'HOG', 1],
+        [C7B, 'HOG', 1],
+      ]);
+      const text = JSON.stringify(overview.body);
+      expect(text).not.toContain(ANNA);
+      expect(text).not.toContain(BO);
+      // Bo's year is read in two windows, cut where he moved.
+      expect(harness.tx['studentEnrollment']!['findMany']!).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: { academicYearId: YEAR_ID, validTo: null } }));
+
+      givenTheSchool();
+      harness.tx['studentEnrollment']!['findMany']!.mockReset();
+      harness.tx['studentEnrollment']!['findMany']!
+        .mockResolvedValueOnce([{ studentId: BO, studentGroupId: C7B, gradeLevel: 7 }])
+        .mockResolvedValueOnce([seg(BO, C7A, '2026-08-17', '2026-11-02'), seg(BO, C7B, '2026-11-02', null)]);
+      const drill = await request(http())
+        .get(`/api/v1/timplan-stages?academicYearId=${YEAR_ID}&studentGroupId=${C7B}`)
+        .set('x-test-user', admin())
+        .expect(200);
+      expect(drill.body.pupils).toEqual([
+        expect.objectContaining({
+          pupilId: BO,
+          homeGroupId: C7B,
+          // Åk 7 recorded in full across the move (33 h of 7A's 3 × 60 and 128 h of
+          // 7B's 4 × 60 over the mock's 43 lov-free weeks); åk 8 and 9 no plan carries.
+          stages: [expect.objectContaining({ stage: 'HOG', versionCode: 'SFS2023:945/B1', recordedGrades: [7], unplannedGrades: [8, 9] })],
+          verdicts: expect.arrayContaining([expect.objectContaining({ code: 'TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED', message: expect.stringContaining('åk 8 och 9 har ingen timplan ännu') })]),
+        }),
+      ]);
+      expect(drill.body.pupils[0].stages[0].cells).toEqual([expect.objectContaining({ code: 'MA', nationalHours: 400, plannedHours: 161, status: 'UNRECORDED' })]);
+      expect(harness.tx['studentEnrollment']!['findMany']!).toHaveBeenNthCalledWith(1, expect.objectContaining({ where: { academicYearId: YEAR_ID, validTo: null, studentGroupId: C7B } }));
+    });
+
+    it('answers a year that is not the active one with isActiveYear false', async () => {
+      givenTheSchool(false);
+      const response = await request(http()).get(`/api/v1/timplan-stages?academicYearId=${YEAR_ID}`).set('x-test-user', admin()).expect(200);
+      expect(response.body).toMatchObject({ isActiveYear: false, classes: [], pupils: null });
+    });
+
+    it('an admin publishes the families’ statement — the current stage only — and withdraws it', async () => {
+      givenTheSchool();
+      harness.tx['timplanStatementPublication']!['create']!.mockResolvedValue({ id: PUBLICATION, publishedAt: new Date('2026-10-10T08:00:00.000Z') });
+      const published = await request(http())
+        .post('/api/v1/timplan-stages/statements')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID })
+        .expect(201);
+      expect(published.body).toMatchObject({ academicYearId: YEAR_ID, pupils: 2, rows: 2, publishedByUserId: '22222222-2222-4222-8222-222222222222' });
+      const created = harness.tx['timplanStatement']!['createMany']!.mock.calls[0]![0] as { data: Record<string, unknown>[] };
+      expect(created.data.map((row) => [row['studentId'], row['stage'], row['subjectCode'], row['publicationId'], row['schoolId']]).sort()).toEqual([
+        [ANNA, 'HOG', 'MA', PUBLICATION, SCHOOL_ID],
+        [BO, 'HOG', 'MA', PUBLICATION, SCHOOL_ID],
+      ]);
+
+      await request(http()).delete('/api/v1/timplan-stages/statements').set('x-test-user', admin()).expect(204);
+      expect(harness.tx['timplanStatementPublication']!['deleteMany']!).toHaveBeenCalled();
+    });
+
+    it('refuses to publish for a year that is not active', async () => {
+      givenTheSchool(false);
+      const response = await request(http())
+        .post('/api/v1/timplan-stages/statements')
+        .set('x-test-user', admin())
+        .send({ academicYearId: YEAR_ID })
+        .expect(409);
+      expect(response.body).toMatchObject({ code: 'TIMPLAN_STAGE_NOT_ACTIVE_YEAR' });
+      expect(harness.tx['timplanStatement']!['createMany']!).not.toHaveBeenCalled();
+    });
+
+    it('a pupil reads their OWN card — whatever id is sent — and a guardian the child they name', async () => {
+      const tx = harness.tx;
+      tx['timplanStatementPublication']!['findFirst']!.mockResolvedValue({
+        id: PUBLICATION, academicYearId: YEAR_ID, publishedAt: new Date('2026-10-01T08:00:00.000Z'), asOfDate: new Date('2026-10-01T00:00:00.000Z'),
+      });
+      tx['academicYear']!['findUnique']!.mockResolvedValue({ isActive: true });
+      tx['timplanStatement']!['findMany']!.mockResolvedValue([]);
+      const pupil = asUser({ role: 'STUDENT' as never, userId: ANNA });
+      const own = await request(http()).get(`/api/v1/timplan-stages/card?studentId=${BO}`).set('x-test-user', pupil).expect(200);
+      expect(own.body).toEqual({ statement: null });
+      expect(tx['timplanStatement']!['findMany']!).toHaveBeenCalledWith(expect.objectContaining({ where: { publicationId: PUBLICATION, studentId: ANNA } }));
+
+      const guardian = asUser({ role: 'GUARDIAN' as never });
+      await request(http()).get(`/api/v1/timplan-stages/card?studentId=${BO}`).set('x-test-user', guardian).expect(200);
+      expect(tx['timplanStatement']!['findMany']!).toHaveBeenLastCalledWith(expect.objectContaining({ where: { publicationId: PUBLICATION, studentId: BO } }));
+      await request(http()).get('/api/v1/timplan-stages/card').set('x-test-user', guardian).expect(400);
+    });
+
+    it.each([
+      ['GET', `/api/v1/timplan-stages?academicYearId=${YEAR_ID}`],
+      ['POST', '/api/v1/timplan-stages/statements'],
+      ['DELETE', '/api/v1/timplan-stages/statements'],
+    ] as const)('stops a pupil, a guardian and a teacher at the guard on %s %s', async (method, path) => {
+      for (const role of ['STUDENT', 'GUARDIAN', 'TEACHER']) {
+        const agent = request(http());
+        const call = method === 'GET' ? agent.get(path) : method === 'POST' ? agent.post(path) : agent.delete(path);
+        await call.set('x-test-user', asUser({ role: role as never })).send({ academicYearId: YEAR_ID }).expect(403);
+      }
+      expect(harness.tx['studentEnrollment']!['findMany']!).not.toHaveBeenCalled();
+      expect(harness.tx['timplanStatementPublication']!['deleteMany']!).not.toHaveBeenCalled();
+    });
+
+    it('stops a teacher at the card', async () => {
+      await request(http()).get(`/api/v1/timplan-stages/card?studentId=${ANNA}`).set('x-test-user', asUser({ role: 'TEACHER' as never })).expect(403);
+      expect(harness.tx['timplanStatement']!['findMany']!).not.toHaveBeenCalled();
+    });
+
+    it('a class with pupils’ class history keeps its year: PATCH /student-groups answers 409', async () => {
+      const tx = harness.tx;
+      tx['studentGroup']!['findUnique']!.mockResolvedValue({ academicYearId: YEAR_ID, academicYear: { name: '2026/27' } });
+      tx['studentEnrollment']!['count']!.mockResolvedValue(2);
+      const response = await request(http())
+        .patch(`/api/v1/student-groups/${C7A}`)
+        .set('x-test-user', admin())
+        .send({ academicYearId: GROUP_ID })
+        .expect(409);
+      expect(response.body).toMatchObject({ code: 'STUDENT_GROUP_HAS_ENROLMENT_HISTORY', params: { year: '2026/27' } });
+      expect(tx['studentGroup']!['update']!).not.toHaveBeenCalled();
+      for (const method of Object.values(tx['studentGroup']!)) method.mockReset();
+      tx['studentEnrollment']!['count']!.mockReset();
+    });
+  });
+
   describe('year rollover', () => {
     /*
      * The four läsårsrullning routes over HTTP, against a small school held

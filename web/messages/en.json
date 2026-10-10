@@ -2312,7 +2312,8 @@
       "LunchSitting": "The lunch sittings ({count}) — they are placed against the new schedule.",
       "TeacherEmployment": "The teaching posts ({count}) — turn on Teaching posts and duties are carried over in step 2, or bring them over later from the staffing page.",
       "TeacherDuty": "The duties ({count}), with their blocked slots and mentorships.",
-      "TimplanCredit": "Credited teaching time — the decisions are about dates in the old year. Next year's outdoor days have their own dates and are decided again under Holidays and staff days."
+      "TimplanCredit": "Credited teaching time — the decisions are about dates in the old year. Next year's outdoor days have their own dates and are decided again under Holidays and staff days.",
+      "TimplanStatementPublication": "The teaching time shown to pupils and guardians — it belongs to the old year and stops showing when the new one is activated. Publish it again under Timplan → Coverage → Stage."
     },
     "skippedHistory": "The old year’s history — the calendar, attendance, saved versions and generation runs — stays with it.",
     "sharedSettings": "Frame times, breaks, lunch flows, the lunch setting, per-grade rules, teachers’ working-time rules and room preferences belong to no year: they apply to both years, and a change takes effect in both at once.",

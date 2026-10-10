@@ -378,6 +378,64 @@ export async function readPlannedInput(
   // not yet activated (projected-rosters.ts).
   const basis = enrolled ? null : await rostersOfYear(tx, viewer, academicYearId, year);
 
+  const { attachments, plans, subjects, groups, requirements, closures } = await readPlannedRows(tx, academicYearId);
+
+  const classIds = groups.filter((g) => g.kind === 'CLASS').map((g) => g.id);
+  const teachingIds = groups.filter((g) => g.kind === 'TEACHING_GROUP').map((g) => g.id);
+  // From the history: the last segment each pupil had in the year (ordered by
+  // validFrom), its class or none (a class since deleted).
+  const lastHome = new Map<string, string | null>();
+  for (const segment of enrolled ?? []) lastHome.set(segment.studentId, segment.studentGroupId);
+  const homes = enrolled
+    ? [...lastHome].map(([id, studentGroupId]) => ({ id, studentGroupId }))
+    : classIds.length === 0
+      ? []
+      : await readHomePupils(tx, basis!, { role: 'STUDENT', isActive: true }, classIds);
+  const memberships =
+    teachingIds.length === 0
+      ? []
+      : await tx.studentGroupMember.findMany({
+          where: enrolled
+            ? { studentGroupId: { in: teachingIds }, studentId: { in: [...lastHome.keys()] } }
+            : { studentGroupId: { in: teachingIds }, student: { isActive: true } },
+          select: { studentId: true, studentGroupId: true },
+        });
+
+  const pupils = new Map<string, PlannedPupilInput>();
+  for (const row of homes) {
+    pupils.set(row.id, { id: row.id, homeGroupId: row.studentGroupId, groupIds: [] });
+  }
+  for (const row of memberships) {
+    const pupil = pupils.get(row.studentId) ?? { id: row.studentId, homeGroupId: null, groupIds: [] };
+    pupil.groupIds.push(row.studentGroupId);
+    pupils.set(row.studentId, pupil);
+  }
+
+  return {
+    year: { startDate: asDay(year.startDate), endDate: asDay(year.endDate) },
+    closures,
+    plans,
+    attachments,
+    subjects,
+    groups,
+    requirements,
+    pupils: [...pupils.values()],
+    includePupils,
+    ...(enrolled ? { rostersFrom: 'ENROLLMENT' as const } : {}),
+  };
+}
+
+/**
+ * P2's rows of a year without its pupils: the attachments and their plans,
+ * the school's subjects, the year's groups, timplansposter and lov. Shared by
+ * readPlannedInput (which adds the rosters) and the stage totals (timplan P4,
+ * whose rosters are the class history's), so both read the same rows in the
+ * same statements. Five or six statements in the caller's transaction.
+ */
+export async function readPlannedRows(
+  tx: Prisma.TransactionClient,
+  academicYearId: string,
+): Promise<Omit<PlannedCoverageInput, 'year' | 'pupils' | 'includePupils' | 'rostersFrom'>> {
   const attachments = await tx.academicYearTimplan.findMany({
     where: { academicYearId },
     select: { gradeLevel: true, localTimplanId: true },
@@ -422,39 +480,7 @@ export async function readPlannedInput(
     select: { startDate: true, endDate: true, minGradeLevel: true, maxGradeLevel: true },
   });
 
-  const classIds = groups.filter((g) => g.kind === 'CLASS').map((g) => g.id);
-  const teachingIds = groups.filter((g) => g.kind === 'TEACHING_GROUP').map((g) => g.id);
-  // From the history: the last segment each pupil had in the year (ordered by
-  // validFrom), its class or none (a class since deleted).
-  const lastHome = new Map<string, string | null>();
-  for (const segment of enrolled ?? []) lastHome.set(segment.studentId, segment.studentGroupId);
-  const homes = enrolled
-    ? [...lastHome].map(([id, studentGroupId]) => ({ id, studentGroupId }))
-    : classIds.length === 0
-      ? []
-      : await readHomePupils(tx, basis!, { role: 'STUDENT', isActive: true }, classIds);
-  const memberships =
-    teachingIds.length === 0
-      ? []
-      : await tx.studentGroupMember.findMany({
-          where: enrolled
-            ? { studentGroupId: { in: teachingIds }, studentId: { in: [...lastHome.keys()] } }
-            : { studentGroupId: { in: teachingIds }, student: { isActive: true } },
-          select: { studentId: true, studentGroupId: true },
-        });
-
-  const pupils = new Map<string, PlannedPupilInput>();
-  for (const row of homes) {
-    pupils.set(row.id, { id: row.id, homeGroupId: row.studentGroupId, groupIds: [] });
-  }
-  for (const row of memberships) {
-    const pupil = pupils.get(row.studentId) ?? { id: row.studentId, homeGroupId: null, groupIds: [] };
-    pupil.groupIds.push(row.studentGroupId);
-    pupils.set(row.studentId, pupil);
-  }
-
   return {
-    year: { startDate: asDay(year.startDate), endDate: asDay(year.endDate) },
     closures: breaks.map((row) => ({
       startDate: asDay(row.startDate),
       endDate: asDay(row.endDate),
@@ -470,8 +496,5 @@ export async function readPlannedInput(
       startDate: asDayOrNull(row.startDate),
       endDate: asDayOrNull(row.endDate),
     })),
-    pupils: [...pupils.values()],
-    includePupils,
-    ...(enrolled ? { rostersFrom: 'ENROLLMENT' as const } : {}),
   };
 }

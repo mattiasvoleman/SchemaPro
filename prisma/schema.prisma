@@ -177,6 +177,8 @@ model School {
   academicYearTimplans    AcademicYearTimplan[]
   timplanCredits          TimplanCredit[]
   studentEnrollments      StudentEnrollment[]
+  timplanStatementPublications TimplanStatementPublication[]
+  timplanStatements       TimplanStatement[]
 
   @@map("Schools")
 }
@@ -252,6 +254,10 @@ model User {
   /// The home-class history (timplan P4), written only by a trigger on this
   /// table; see StudentEnrollment.
   enrollments         StudentEnrollment[]     @relation("EnrollmentStudent")
+  /// The school's published "Undervisningstid" statement about this pupil (timplan P4).
+  timplanStatements   TimplanStatement[]      @relation("StatementStudent")
+  /// Statements this admin published; SET NULL when the admin is removed.
+  publishedTimplanStatements TimplanStatementPublication[] @relation("StatementPublisher")
 
   // Guardian <-> student relations.
   guardianLinks       GuardianStudent[] @relation("GuardianSide")
@@ -476,6 +482,7 @@ model NationalTimplanVersion {
   supersedes   NationalTimplanVersion[] @relation("TimplanSupersession")
   entries      NationalTimplanEntry[]
   localTimplans LocalTimplan[]
+  statements    TimplanStatement[]
 
   /// The target LocalTimplan's (nationalTimplanVersionId, schoolForm) key
   /// needs: redundant as an index, load-bearing as the rule that a local plan
@@ -498,6 +505,7 @@ model NationalSubject {
   children NationalSubject[] @relation("NationalSubjectGroup")
   entries  NationalTimplanEntry[]
   subjects Subject[]
+  statements TimplanStatement[]
 
   @@map("NationalSubjects")
 }
@@ -742,6 +750,77 @@ model StudentEnrollment {
   @@map("StudentEnrollments")
 }
 
+/// The school's published "Undervisningstid" statement (timplan P4): at most
+/// one per school, computed for the active year by the stage module and read
+/// by pupils and guardians on their cards while that year is the active one.
+/// RLS: admin all; STUDENT and GUARDIAN read the row (date and year only).
+/// See migration 20261010140000.
+model TimplanStatementPublication {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId          String   @unique @db.Uuid
+  academicYearId    String   @db.Uuid
+  publishedAt       DateTime @default(now()) @db.Timestamptz(6)
+  /// Cleared — that column only, ON DELETE SET NULL ("publishedByUserId"),
+  /// which Prisma cannot say — when the publishing admin is removed.
+  publishedByUserId String?  @db.Uuid
+  asOfDate          DateTime @db.Date
+  pupils            Int
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+
+  school       School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  academicYear AcademicYear       @relation(fields: [academicYearId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  publishedBy  User?              @relation("StatementPublisher", fields: [publishedByUserId, schoolId], references: [id, schoolId], onDelete: SetNull, onUpdate: NoAction)
+  statements   TimplanStatement[]
+
+  @@unique([id, schoolId])
+  @@index([academicYearId, schoolId])
+  @@index([publishedByUserId, schoolId])
+  @@map("TimplanStatementPublications")
+}
+
+/// One row of a published statement: a pupil's hours in one national cell of
+/// the stadium they are in now. No teacher, group or other pupil in it. RLS:
+/// admin all; a STUDENT their own rows; a GUARDIAN their children's.
+model TimplanStatement {
+  id                    String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId              String       @db.Uuid
+  publicationId         String       @db.Uuid
+  studentId             String       @db.Uuid
+  stage                 TimplanStage
+  /// A top-level national code (MA, SV_SVA, NO …).
+  subjectCode           String
+  /// The lydelse the cell is judged against; null when the reference data has none.
+  versionCode           String?
+  distributionPublished Boolean
+  gradesFrom            Int
+  gradesTo              Int
+  nationalHours         Decimal?     @db.Decimal(6, 1)
+  plannedHours          Decimal      @db.Decimal(6, 1)
+  outcomeHours          Decimal      @db.Decimal(6, 1)
+  projectedHours        Decimal      @db.Decimal(6, 1)
+  /// MET | BELOW | BELOW_WITHIN_CAP | UNRECORDED | NO_NATIONAL (DB CHECK).
+  status                String
+  projectedStatus       String
+  /// Every grade of the stage recorded in full or planned ahead.
+  complete              Boolean
+  /// The first recorded day of the stage: "… timmar sedan {recordedFrom}".
+  recordedFrom          DateTime?    @db.Date
+  plannedGrades         Int[]        @default([])
+  unrecordedGrades      Int[]        @default([])
+  backfilled            Boolean      @default(false)
+
+  school      School                      @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  publication TimplanStatementPublication @relation(fields: [publicationId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  student     User                        @relation("StatementStudent", fields: [studentId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  subject     NationalSubject             @relation(fields: [subjectCode], references: [code], onDelete: Restrict)
+  version     NationalTimplanVersion?     @relation(fields: [versionCode], references: [code], onDelete: Restrict)
+
+  @@unique([publicationId, studentId, stage, subjectCode])
+  @@index([studentId])
+  @@index([schoolId])
+  @@map("TimplanStatements")
+}
+
 model AcademicYear {
   id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   schoolId  String   @db.Uuid
@@ -780,6 +859,8 @@ model AcademicYear {
   timplanCredits       TimplanCredit[]
   /// Who sat in which class this year (timplan P4).
   studentEnrollments   StudentEnrollment[]
+  /// The published "Undervisningstid" statement computed for this year.
+  timplanStatementPublications TimplanStatementPublication[]
 
   @@unique([schoolId, name])
   /// The target a tenant-scoped composite foreign key needs; see User.

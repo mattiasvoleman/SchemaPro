@@ -2312,7 +2312,8 @@
       "LunchSitting": "Lunchsittningarna ({count}) — de läggs mot det nya schemat.",
       "TeacherEmployment": "Tjänsterna ({count}) — slå på Tjänster och uppdrag följer med i steg 2, eller ta med dem senare från tjänstefördelningssidan.",
       "TeacherDuty": "Uppdragen ({count}), med sina spärrade pass och mentorskap.",
-      "TimplanCredit": "Tillgodoräknad tid — besluten gäller sina datum i det gamla läsåret. Nästa läsårs friluftsdagar har egna datum och beslutas på nytt under Lov och studiedagar."
+      "TimplanCredit": "Tillgodoräknad tid — besluten gäller sina datum i det gamla läsåret. Nästa läsårs friluftsdagar har egna datum och beslutas på nytt under Lov och studiedagar.",
+      "TimplanStatementPublication": "Undervisningstiden som visas för elever och vårdnadshavare — den gäller det gamla läsåret och slutar visas när det nya aktiveras. Publicera den på nytt under Timplan → Täckning → Stadium."
     },
     "skippedHistory": "Det gamla läsårets historik — kalendern, närvaron, sparade versioner och genereringar — stannar hos det.",
     "sharedSettings": "Ramtider, raster, lunchsittningarnas flöden, lunchinställningen, regler per årskurs, lärarnas arbetstidsregler och salspreferenser hör inte till något läsår: de gäller båda läsåren, och en ändring slår igenom i båda direkt.",
