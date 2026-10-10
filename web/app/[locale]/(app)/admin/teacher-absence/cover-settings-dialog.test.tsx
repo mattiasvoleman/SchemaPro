@@ -96,6 +96,14 @@ describe("Frånvaro och vikarier", () => {
     );
   });
 
+  it("says, where a reason is named, that every teacher reads the list — a category, never a name or a diagnosis", async () => {
+    renderDialog();
+    const input = await screen.findByLabelText("Ny orsak");
+    expect(input).toHaveAccessibleDescription(
+      "Listan syns för all personal, också vikariepoolen – skriv en kategori, aldrig ett namn eller en diagnos.",
+    );
+  });
+
   it("adds a teacher to the pool and shows a member's contact, never a reason", async () => {
     post.mockResolvedValue({ userId: "t-dan" });
     const user = userEvent.setup();
