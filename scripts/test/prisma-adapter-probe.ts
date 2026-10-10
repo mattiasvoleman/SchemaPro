@@ -106,6 +106,7 @@ import type { ScheduleVersionsService } from '../../src/calendar/schedule-versio
 import { CalendarService } from '../../src/calendar/calendar.service';
 import { PublicationsService } from '../../src/publication/publications.service';
 import { DraftService } from '../../src/publication/draft.service';
+import { snapshotRanges } from '../../src/publication/published-grundschema';
 import { CancellationBatchesService } from '../../src/publication/cancellation-batches.service';
 import { PublicLinksService } from '../../src/publication/public-links.service';
 import { tokenHashOf } from '../../src/publication/public-token';
@@ -5371,6 +5372,30 @@ async function weekEdgeChecks(owner: Client, api: PrismaService): Promise<void> 
       assert.ok(outcome.gates.some((gate) => gate.code === 'PUB_WEEK_SPLIT'));
       assert.deepEqual(await rows('2096-08-13', '2096-12-04', school.wednesday), before);
       assert.deepEqual(await rows('2096-12-05', '2096-12-16', school.wednesday), ['2096-12-10 Mon 10:00']);
+    });
+
+    await check('(pub-f) a teacher reads no row of the log — no refusal, no gates naming the draft — only the snapshot ranges', async () => {
+      await publications.upsertSettings({ gateWeekSplit: 'REFUSE' }, school.admin);
+      // Thursday 08:00 (as published) → Monday in the draft, published from Wed 16 Jan 2097: refused.
+      await lessons.update(school.monday, { dayOfWeek: 1 }, school.admin);
+      await assert.rejects(
+        publications.publish({ academicYearId: school.yearId, validFrom: '2097-01-16', acknowledgeWarnings: true }, school.admin),
+        (error: unknown) => error instanceof ConflictException && JSON.stringify(error.getResponse()).includes('PUBLISH_GATES_REFUSED'),
+      );
+      const refused = await owner.query(
+        `SELECT gates::text FROM "TimetablePublications" WHERE "schoolId" = $1 AND outcome = 'REFUSED'`,
+        [school.schoolId],
+      );
+      assert.ok(refused.rows.some((row) => row.gates.includes('PUB_WEEK_SPLIT')), JSON.stringify(refused.rows));
+      const seen = await api.withRls(school.teacher, async (tx) => ({
+        log: await tx.timetablePublication.findMany({ select: { id: true, gates: true } }),
+        ranges: await snapshotRanges(tx, school.yearId),
+      }));
+      assert.deepEqual(seen.log, []);
+      const asAdmin = await api.withRls(school.admin, (tx) => snapshotRanges(tx, school.yearId));
+      // The BASELINE and the three publishes above; the refusal is none of them.
+      assert.equal(asAdmin.length, 4);
+      assert.deepEqual(seen.ranges, asAdmin);
     });
   } finally {
     await owner.query(`DELETE FROM "Schools" WHERE slug = $1 || '-veckokant'`, [MARKER]);
