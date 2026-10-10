@@ -631,12 +631,49 @@
   <div class="warn">
     <span class="label">2028 års timplan</span>
     <p>
-      Den tioåriga grundskolan (SFS 2025:729) gäller utbildning från höstterminen
-      2028, men fördelningen mellan ämnen och stadier är inte publicerad ännu.
-      En plan mot den visar <em>fördelning ej publicerad</em> och jämförs bara
-      mot den garanterade totalen, 7 424 timmar — inte ämne för ämne.
+      Den tioåriga grundskolan (SFS 2025:729, utfärdad 19 juni 2025) gäller
+      utbildning från höstterminen 2028, men fördelningen mellan ämnen och
+      stadier är inte publicerad ännu. En plan mot den visar
+      <em>fördelning ej publicerad</em> och jämförs bara mot den garanterade
+      totalen, 7 424 timmar — inte ämne för ämne. Referensdatan har också
+      lagens nya totaler för anpassade grundskolan (7 424 timmar i ämnen,
+      7 199 i ämnesområden) och sameskolan (5 007 timmar). Specialskolans
+      8 604 timmar saknas än, eftersom specialskolan får elva årskurser.
+    </p>
+    <p>
+      Fördelningen kommer inte som en ändring i skollagen. Genom SFS 2026:1243
+      (prop. 2025/26:194) blir timplanerna en del av läroplanerna, och
+      Skolverkets förslag ska lämnas senast 14 maj 2027 (regeringsbeslut
+      U2026/01483, 20 augusti 2026). När förordningen är utfärdad läggs den in
+      som en ny lydelse i referensdatan. Uppgifterna är lästa 10 oktober 2026.
     </p>
   </div>
+
+  <h4>Timplaner per årskull</h4>
+  <p>
+    Längst ned på sidan finns rutan <span class="ui">Timplaner per årskull</span>.
+    Den har en rad per årskull bland det aktiva läsårets och nästa läsårs
+    klasser, och alltid en rad för den första årskullen i den tioåriga
+    grundskolan, den som börjar åk 1 hösten 2028. Raden säger vilken lydelse
+    varje stadium jämförs med under <span class="ui">Stadium</span> i Täckning
+    (nedan).
+  </p>
+  <table>
+    <thead><tr><th style="width:36%">Står det</th><th>Betyder det</th></tr></thead>
+    <tbody>
+      <tr><td class="k">SFS 2023:945 B1</td><td>Bilaga 1 i skolförordningen. Den gäller stadier som eleven inte hade avslutat 1 juli 2024 (övergångsbestämmelse 3). B3 och B4 är specialskolans och sameskolans bilagor, och SFS 2022:1619 B2A/B2B anpassade grundskolans.</td></tr>
+      <tr><td class="k">äldre lydelse, inte i referensdatan</td><td>Stadiet avslutades före 1 juli 2024, och den lydelse som gällde då finns inte i SchemaPro. Ingen nationell jämförelse görs.</td></tr>
+      <tr><td class="k">bara totalen</td><td>SFS 2025:729. Totalen finns, men inte fördelningen per ämne.</td></tr>
+      <tr><td class="k">fördelningen antagen efter 2028</td><td>En årskull som redan går i skolan hösten 2028 behåller 6 890 timmar totalt (övergångsbestämmelse 12), men lagen säger inget om fördelningen per ämne efter 2028. Referensdatan läser då vidare mot bilaga 1, och det sägs överallt där det gäller.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Från hösten 2028 läses årskurserna i den nya numreringen. Den som går i
+    förskoleklass 2027/28 börjar direkt i åk 2, och alla som redan går i
+    skolan hoppar en årskurs (övergångsbestämmelse 4). Undantag som beslutas
+    för en enskild elev finns inte i SchemaPro. Rutan återger
+    referensdatans källor; den är inget lagbesked för en enskild elev.
+  </p>
 
   <h4>Timplan per årskurs</h4>
   <p>
@@ -717,8 +754,10 @@
     (timplansposterna mot den lokala timplanen),
     <span class="ui">Schemalagt mot planerat</span> (grundschemat mot
     timplansposterna) och <span class="ui">Genomfört mot schemalagt</span>
-    (kalenderns hållna lektioner mot det publicerade). Flikarna finns också när
-    läsåret saknar klasser eller timplan — de två senare behöver ingen timplan.
+    (kalenderns hållna lektioner mot det publicerade). En fjärde flik,
+    <span class="ui">Stadium</span>, summerar varje elevs timmar över hela
+    stadiet, läsår för läsår. Flikarna finns också när läsåret saknar klasser
+    eller timplan — Schemalagt och Genomfört behöver ingen timplan.
   </p>
   <p>
     Den första fliken ställer läsårets
@@ -787,7 +826,7 @@
     timmar hittills i läsåret och hur stor andel som hölls. Pillret är
     prognosen för hela läsåret mot planerat: <em>På väg</em>, eller hur många
     timmar under. Överst står när det räknades, hur långt kalendern är
-    publicerad, och att det räknas efter dagens klasser och grupper.
+    publicerad, och efter vems klasser det räknas (nedan).
   </p>
   <div class="check">
     <span class="label">Så räknas genomförd tid</span>
@@ -842,10 +881,12 @@
       vecka, medan schemat tappar just den dagens lektioner.
     </p>
     <p>
-      Det siffrorna inte kan veta: en elev som bytt klass eller grupp under
-      läsåret räknas efter den klass och de grupper eleven har i dag, och ett
-      avslutat läsårs klasser kan sakna elever. Klasshistorik kommer i en
-      senare version.
+      Vems klasser: under det aktiva läsåret räknas en elev efter den klass och
+      de grupper eleven har i dag, så en elev som bytt klass i oktober bär den
+      nya klassens läsår. Ett tidigare läsår räknas efter klasshistoriken (se
+      Stadium nedan): eleverna är de som gick i klasserna det året, också de
+      som har slutat sedan. Har historiken inget för läsåret, för att det var
+      före den började föras, räknas dagens klasser, och fliken säger det.
     </p>
   </div>
   <p>
@@ -856,6 +897,98 @@
     inte fått någon tid i ett ämne där klassen fått tid, listas med namn;
     <span class="ui">Visa alla elever</span> listar hela gruppen. Lärare ser
     grupperna men inga enskilda elever.
+  </p>
+
+  <h4>Stadium</h4>
+  <p>
+    Fliken <span class="ui">Stadium</span> summerar för varje elev timmarna
+    över hela stadiet — lågstadiet, mellanstadiet och högstadiet, och hem- och
+    konsumentkunskap över låg- och mellanstadiet, som timplanen har som en
+    cell — och ställer dem mot timplanen i den lydelse som gäller elevens
+    årskull (Timplaner per årskull, ovan). Tre tal per ämne:
+    <em>planerat</em> är timplansposterna eleven hade under stadiets läsår och
+    kommande årskursers timplan; <em>utfall</em> är genomförd och
+    tillgodoräknad tid, med samma definition som Genomfört mot schemalagt;
+    <em>prognos</em> är utfallet plus resten av läsåret och kommande årskurser.
+    Fliken räknar det aktiva läsåret, och bara skoladmin ser den.
+  </p>
+  <p>
+    Tidigare läsår hämtas ur <em>klasshistoriken</em>. Sedan versionen med
+    klasshistorik installerades minns SchemaPro vilken klass varje elev har
+    gått i och från vilken dag.
+    Databasen skriver det själv vid varje flytt, vem eller vad som än flyttar
+    eleven: <span class="path">Personer</span>, CSV-importen, synken från
+    elevregistret och aktiveringen av ett nytt läsår. En elev som inaktiveras
+    har ingen klass i historiken från den dagen, och de dagarna räknas inte.
+    Historiken började med den klass varje
+    elev hade när den infördes; en flytt dessförinnan syns inte, och sådana
+    elever märks <em>antagen klass</em>. Historiken kan inte ändras för hand.
+  </p>
+  <div class="note">
+    <span class="label">Ett läsår före SchemaPro är aldrig noll</span>
+    <p>
+      En årskurs utan klasshistorik, dagar då eleven inte gick i någon klass och
+      en kommande årskurs som ingen timplan bär räknas inte alls. Stadiet
+      visar då sina timmar som <em>registrerat sedan</em> ett datum och jämförs
+      inte med timplanen. De första läsåren är därför nästan varje stadium bara
+      delvis registrerat, och varningar kommer främst från prognosen för elever
+      som började ett stadium 2026/27 eller senare. Det är rätt, inte trasigt.
+    </p>
+  </div>
+  <p>
+    Tabellen har en del per stadium, en rad per klass och en ruta per ämne.
+    Rutan visar prognosens median över klassens elever mot timplanens timmar,
+    och lägst – högst under. Gul betyder att minst en elevs prognos ligger
+    under timplanen; <em>N under</em> säger hur många, och
+    <em>N ej jämförda</em> hur många vars stadium inte är registrerat i sin
+    helhet. Kolumnen längst till höger säger vilken lydelse klassens elever
+    jämförs med.
+  </p>
+  <p>
+    Klicka på en klass för att se ämne för ämne — planerat och prognos som
+    lägst, median och högst, hur många som ligger under — och därunder
+    eleverna med en varning. <span class="ui">Visa alla elever</span> visar
+    hela klassen. För varje elev står årskullen, vilka årskurser som är
+    registrerade, delvis registrerade, saknar historik eller är planerade
+    framåt, ämnenas timmar och bedömningarna i ord.
+  </p>
+  <table>
+    <thead><tr><th style="width:36%">Bedömning</th><th>När</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Planerat / prognosen under timplanen</td><td>Stadiet är registrerat i sin helhet (eller planerat framåt), lydelsen har en fördelning och bristen är minst en timme. Mindre är avrundning: standardveckan avrundar ungefär en halvtimme per år. En brist på 61 minuter står som 1,1 h — den avrundas uppåt. En varning; en notis när ämnet inte är skyddat och bristen ryms inom taket, eftersom den då kan vara skolans val.</td></tr>
+      <tr><td class="k">Under minsta tiden i ett NO- eller SO-ämne</td><td>Ett ämne i gruppen, till exempel biologi, ligger under sin egen minsta tid. En varning.</td></tr>
+      <tr><td class="k">Stadiet bara delvis registrerat</td><td>Någon årskurs saknar historik, är bara delvis registrerad eller har ingen timplan framåt, eller en klass eleven gick i har tagits bort. En notis; stadiet jämförs inte.</td></tr>
+      <tr><td class="k">Lydelsen saknas, fördelningen ej publicerad, fördelningen antagen</td><td>Som i Timplaner per årskull. Notiser.</td></tr>
+      <tr><td class="k">Gått om en årskurs, bytt skolform, klass utan årskurs, förskoleklass efter 2028, inga ämnen med nationell kod</td><td>Båda läsåren räknas när en årskurs går om. Ett läsår i en klass utan årskurs räknas inte till något stadium. Notiser.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    Ingenting på fliken hindrar något. Ämnen utan nationell kod står för sig
+    per elev, utanför cellerna. Tidigare läsår läses med skolans ämneskoder
+    som de är i dag, eftersom koderna gäller skolan och inte ett visst läsår.
+  </p>
+
+  <h4>Undervisningstid för elever och vårdnadshavare</h4>
+  <p>
+    Överst på Stadium-fliken publicerar du elevernas
+    <span class="ui">Undervisningstid</span>. <span class="ui">Publicera</span>
+    sparar en ögonblicksbild för det aktiva läsåret: varje elevs nuvarande
+    stadium, ämne för ämne. Eleven ser den som ett kort på sin startsida och
+    vårdnadshavaren ett kort per barn. Kortet visar timmar hittills, planerat
+    för hela stadiet och timplanens timmar där fördelningen är publicerad,
+    och när det uppdaterades. Är stadiet inte registrerat från början står
+    <em>Sedan 1 oktober 2026</em> i stället för <em>Hittills</em>, och
+    årskurserna som inte ingår namnges. Kortet har ingen bedömning och ingen
+    färg: det är skolan som följer upp siffrorna.
+  </p>
+  <p>
+    Siffrorna ändras inte av sig själva. Tryck <span class="ui">Publicera igen</span>
+    när du vill att familjerna ska se läget i dag, eller
+    <span class="ui">Dra tillbaka</span> för att ta bort korten. När ett nytt
+    läsår aktiveras slutar korten visas tills du publicerar för det nya
+    läsåret. En elev ser bara sitt eget kort och en vårdnadshavare bara sina
+    egna barns; lärare ser inga kort, och kortet innehåller inget om
+    lärarna.
   </p>
 
   <h4>Tillgodoräknad tid</h4>
@@ -2367,7 +2500,7 @@
   <table>
     <thead><tr><th style="width:24%">Steg</th><th>Vad du gör</th></tr></thead>
     <tbody>
-      <tr><td class="k">Nytt läsår</td><td>Namn och datum föreslås ett år fram (samma veckodag som i år). Välj <span class="ui">Årskursen som går ut</span> — förslaget kommer från den senast beslutade lokala timplanen, annars från den högsta klassen. Säger de olika måste du välja.</td></tr>
+      <tr><td class="k">Nytt läsår</td><td>Namn och datum föreslås ett år fram (samma veckodag som i år). Välj <span class="ui">Årskursen som går ut</span> — förslaget kommer från den senast beslutade lokala timplanen, annars från den högsta klassen. Säger de olika måste du välja. Börjar läsåret hösten 2028 eller senare varnar guiden: enligt SFS 2025:729 övergångsbestämmelse 4 går eleverna som redan går i skolan upp två årskurser, men rullningen flyttar ännu bara upp en. Kontrollera klassernas årskurser innan läsåret aktiveras.</td></tr>
       <tr><td class="k">Klasser och grupper</td><td>Varje klass flyttas upp en årskurs och byter namn därefter: <em>7A</em> blir <em>8A</em>, <em>FA</em> blir <em>1A</em>. Den högsta årskursen går ut. Ändra namnet eller utfallet för en enskild grupp (<span class="ui">Följer med oförändrad</span>, <span class="ui">Följer inte med</span>). För den lägsta årskursen kan du välja <span class="ui">Flyttas upp + ny klass för intaget</span>: 7A blir 8A med sina elever, och en ny, tom 7A öppnas med samma timplansposter men utan lärare. Fem brytare styr om undervisningsgrupper, gruppernas elever, lärarna, klassernas veckoregler och tjänster och uppdrag följer med.</td></tr>
       <tr><td class="k">Lov</td><td>Inget lov följer med om du inte bockar för det. Datumen föreslås — jullovet flyttas hela veckor, påsklovet följer påsken, övriga behåller sitt veckonummer — och kan ändras. Ett lov vars vecka inte finns nästa år måste få datum. Besluten om tillgodoräknad tid (4.1) följer inte med: de gäller sina datum, och nästa läsårs friluftsdagar beslutas på nytt.</td></tr>
       <tr><td class="k">Granska</td><td>Allt som skapas och allt som lämnas kvar. Läs särskilt lärare som tas bort från en post (inaktiva, eller utan behörighet för nästa årskurs när behörighetskontrollen står på Vägra), poster vars period hamnar utanför det nya läsåret, och under <span class="ui">Tjänster och uppdrag</span> de lärare vars nedsättning eller eget riktmärke följer med.</td></tr>
@@ -2536,6 +2669,15 @@
     läsåret aktivt och flyttar eleverna i ett enda steg. Elever som går ut
     behåller aktiva konton utan klass; placera eleverna utan klass under
     <span class="path">Planering › Personer</span>.
+  </p>
+  <p>
+    Flytten skrivs i klasshistoriken (4.1, Stadium) i samma steg. Aktiveras
+    läsåret efter sin första dag räknas flytten ändå från läsårets första dag.
+    Det gamla läsårets historik stannar hos det. Elevernas
+    <span class="ui">Undervisningstid</span> slutar visas tills den publiceras
+    för det nya läsåret. En klass som har klasshistorik kan inte flyttas till
+    ett annat läsår i efterhand; flytta eleverna till en klass i rätt läsår i
+    stället.
   </p>
   <div class="warn">
     <span class="label">Aktivera inte genom att bara byta aktivt läsår</span>
