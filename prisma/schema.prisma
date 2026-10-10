@@ -218,6 +218,11 @@ model User {
   // placeholder that matches no Supabase identity, so they cannot sign in
   // until an admin chooses to invite them.
   invitedAt DateTime? @db.Timestamptz(6)
+  /// The person's id at the school's SS12000 source (20261014100000), written
+  /// only by an admin's apply (a trigger refuses every other writer, SQLSTATE
+  /// SS403). Unique per school where set: the partial unique index
+  /// Users_schoolId_ss12000Id_key, which schema.prisma cannot state.
+  ss12000Id String?   @db.Uuid
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @db.Timestamptz(6)
 
@@ -1229,6 +1234,10 @@ model StudentGroup {
   /// either way in its year (ROLLOVER_GROUP_IS_LINKED). One successor per
   /// group. See 20261007150000.
   predecessorId  String?          @db.Uuid
+  /// The group's id at the school's SS12000 source (20261014100000); written
+  /// only by an admin's apply. Unique per school where set (partial index
+  /// StudentGroups_schoolId_ss12000Id_key).
+  ss12000Id      String?          @db.Uuid
   createdAt      DateTime         @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime         @updatedAt @db.Timestamptz(6)
 
@@ -1788,6 +1797,8 @@ model GuardianStudent {
   schoolId   String   @db.Uuid
   guardianId String   @db.Uuid
   studentId  String   @db.Uuid
+  /// Who made the link: a person (MANUAL) or an applied SS12000 sync.
+  origin     GuardianLinkOrigin @default(MANUAL)
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
 
   school   School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
@@ -2914,4 +2925,229 @@ model SubstituteAvailability {
 
   @@index([schoolId, userId, date])
   @@map("SubstituteAvailabilities")
+}
+
+// -----------------------------------------------------------------------------
+// SS12000 consumer: the school's source, its run log and its diff
+// (20261014090000-20261014110000). SIS TK450 SS12000 OpenAPI 2.1.0.
+// Composite keys, CHECKs, guards and RLS live in the migrations.
+// -----------------------------------------------------------------------------
+
+enum GuardianLinkOrigin {
+  MANUAL
+  SS12000
+}
+
+enum Ss12000AuthKind {
+  OAUTH2_CLIENT_CREDENTIALS
+  BEARER_TOKEN
+  MTLS_CLIENT_CERT
+}
+
+enum Ss12000TokenAuthStyle {
+  BASIC
+  FORM
+}
+
+enum Ss12000SecretKind {
+  CLIENT_SECRET
+  BEARER_TOKEN
+  CLIENT_KEY_PEM
+  CLIENT_CERT_PEM
+}
+
+enum Ss12000RunTrigger {
+  MANUAL
+  SCHEDULED
+}
+
+enum Ss12000RunMode {
+  FULL
+  INCREMENTAL
+}
+
+enum Ss12000RunStatus {
+  RUNNING
+  FETCH_FAILED
+  NO_CHANGES
+  DIFF_READY
+  APPLIED
+  APPLY_FAILED
+  DISCARDED
+  SUPERSEDED
+  SKIPPED
+}
+
+enum Ss12000ChangeEntity {
+  PERSON
+  GROUP
+  CLASS_MEMBERSHIP
+  GROUP_MEMBERSHIP
+  RESPONSIBLE
+  DUTY_LINK
+  ORGANISATION
+}
+
+enum Ss12000ChangeOp {
+  CREATE
+  LINK
+  RELINK
+  UPDATE
+  MOVE
+  DEACTIVATE
+  REACTIVATE
+  ADD
+  END
+  CONFLICT
+  INFO
+}
+
+/// The school's SS12000 provider (one per school). No secret lives here:
+/// credentials are Ss12000SourceSecrets, reachable only through functions.
+model Ss12000Source {
+  id                     String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId               String                @unique @db.Uuid
+  name                   String
+  /// https, up to and including the provider's "/v2.0"; no userinfo, query or fragment.
+  baseUrl                String
+  authKind               Ss12000AuthKind
+  tokenUrl               String?
+  clientId               String?
+  tokenScope             String?
+  tokenAuthStyle         Ss12000TokenAuthStyle @default(BASIC)
+  /// The source's skolenhet ids this school is, 0..5.
+  organisationIds        String[]              @default([]) @db.Uuid
+  schoolUnitCodes        String[]              @default([])
+  pageSize               Int                   @default(1000)
+  enabled                Boolean               @default(true)
+  scheduleEnabled        Boolean               @default(false)
+  scheduleAutoApply      Boolean               @default(false)
+  scheduleHourLocal      Int                   @default(2)
+  fullEveryDays          Int                   @default(7)
+  incrementalUnsupported Boolean               @default(false)
+  modifiedCursor         DateTime?             @db.Timestamptz(6)
+  deletedCursor          DateTime?             @db.Timestamptz(6)
+  lastFullAt             DateTime?             @db.Timestamptz(6)
+  lastAppliedAt          DateTime?             @db.Timestamptz(6)
+  lastTestedAt           DateTime?             @db.Timestamptz(6)
+  lastTestOutcome        String?
+  schedulerClaimedAt     DateTime?             @db.Timestamptz(6)
+  lastScheduledLocalDate DateTime?             @db.Date
+  createdById            String?               @db.Uuid
+  createdAt              DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime              @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([id, schoolId])
+  @@map("Ss12000Sources")
+}
+
+/// One encrypted credential (AES-256-GCM). RLS with no arm and no grant:
+/// only the app.ss12000_*secret* functions touch it.
+model Ss12000SourceSecret {
+  sourceId   String            @db.Uuid
+  schoolId   String            @db.Uuid
+  kind       Ss12000SecretKind
+  ciphertext Bytes
+  iv         Bytes
+  authTag    Bytes
+  keyId      String
+  setAt      DateTime          @default(now()) @db.Timestamptz(6)
+  setById    String?           @db.Uuid
+
+  @@id([sourceId, kind])
+  @@map("Ss12000SourceSecrets")
+}
+
+/// Which source Duty a person holds in a läsår. No HR figure.
+model Ss12000DutyLink {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId       String    @db.Uuid
+  userId         String    @db.Uuid
+  academicYearId String    @db.Uuid
+  ss12000DutyId  String    @db.Uuid
+  /// S1's DutyRole, spelled as S1 spells it.
+  dutyRole       String
+  startDate      DateTime  @db.Date
+  endDate        DateTime? @db.Date
+  /// Set when the duty ended or was deleted at the source; the row stays.
+  endedAt        DateTime? @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([schoolId, academicYearId, ss12000DutyId])
+  @@index([userId, schoolId])
+  @@map("Ss12000DutyLinks")
+}
+
+/// Every guardian unlink, written by an AFTER DELETE trigger on
+/// GuardianStudents; ids only.
+model GuardianStudentHistory {
+  id           String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId     String             @db.Uuid
+  guardianId   String             @db.Uuid
+  studentId    String             @db.Uuid
+  origin       GuardianLinkOrigin
+  linkedAt     DateTime           @db.Timestamptz(6)
+  unlinkedAt   DateTime           @default(now()) @db.Timestamptz(6)
+  unlinkedById String?            @db.Uuid
+
+  @@index([schoolId, studentId])
+  @@map("GuardianStudentHistory")
+}
+
+/// One run of the sync: the log, newest first in Synkhistorik.
+model Ss12000SyncRun {
+  id                     String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  schoolId               String            @db.Uuid
+  sourceId               String            @db.Uuid
+  trigger                Ss12000RunTrigger
+  mode                   Ss12000RunMode
+  status                 Ss12000RunStatus  @default(RUNNING)
+  statusCode             String?
+  requestedById          String?           @db.Uuid
+  startedAt              DateTime          @default(now()) @db.Timestamptz(6)
+  fetchedAt              DateTime?         @db.Timestamptz(6)
+  finishedAt             DateTime?         @db.Timestamptz(6)
+  appliedAt              DateTime?         @db.Timestamptz(6)
+  appliedById            String?           @db.Uuid
+  autoApplied            Boolean           @default(false)
+  providerClock          DateTime?         @db.Timestamptz(6)
+  cursorFromModified     DateTime?         @db.Timestamptz(6)
+  cursorFromDeleted      DateTime?         @db.Timestamptz(6)
+  cursorTo               DateTime?         @db.Timestamptz(6)
+  /// Ids and numbers only.
+  counts                 Json              @default("{}")
+  /// [{code, entity, externalId?}], at most 200.
+  errors                 Json              @default("[]")
+  basisHash              String?
+  autoApplyBlockedReason String?
+
+  @@unique([id, schoolId])
+  @@index([schoolId, startedAt(sort: Desc)])
+  @@map("Ss12000SyncRuns")
+}
+
+/// One change a run proposes. before/after hold names and emails only while
+/// the run is DIFF_READY; a trigger nulls them on every other status.
+model Ss12000SyncChange {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId             String              @db.Uuid
+  schoolId          String              @db.Uuid
+  seq               Int
+  entity            Ss12000ChangeEntity
+  op                Ss12000ChangeOp
+  externalId        String?             @db.Uuid
+  localId           String?             @db.Uuid
+  before            Json?
+  after             Json?
+  conflictCode      String?
+  selected          Boolean
+  autoApplicable    Boolean             @default(false)
+  protectedIdentity Boolean             @default(false)
+  applied           Boolean             @default(false)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(6)
+
+  @@unique([runId, seq])
+  @@index([runId, schoolId])
+  @@map("Ss12000SyncChanges")
 }
