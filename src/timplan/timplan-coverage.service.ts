@@ -362,16 +362,25 @@ export async function readPlannedInput(
   // history says nothing about reads today's rosters, as before, and P3
   // says so (TIMPLAN_DELIVERED_PAST_YEAR_ROSTERS). The active year asks
   // nothing more.
+  //
+  // Only segments holding a day of the year count, the stage view's
+  // clipToYear rule: the trigger opens a pupil placed in an ENDED year's
+  // class at endDate + 1 (a straggler, in the summer before the activation
+  // moves them on), so that pupil never sat a day of it.
   let enrolled: { studentId: string; studentGroupId: string | null }[] | null = null;
   if (!year.isActive) {
     const active = await tx.academicYear.findFirst({ where: { isActive: true }, select: { startDate: true } });
     if (enrolmentBasisOf(year, active)) {
-      const segments = await tx.studentEnrollment.findMany({
-        where: { academicYearId },
-        select: { studentId: true, studentGroupId: true },
-        orderBy: [{ studentId: 'asc' }, { validFrom: 'asc' }],
-      });
-      if (segments.length > 0) enrolled = segments;
+      const first = asDay(year.startDate);
+      const last = asDay(year.endDate);
+      const segments = (
+        await tx.studentEnrollment.findMany({
+          where: { academicYearId },
+          select: { studentId: true, studentGroupId: true, validFrom: true, validTo: true },
+          orderBy: [{ studentId: 'asc' }, { validFrom: 'asc' }],
+        })
+      ).filter((segment) => asDay(segment.validFrom) <= last && (segment.validTo === null || asDay(segment.validTo) > first));
+      if (segments.length > 0) enrolled = segments.map(({ studentId, studentGroupId }) => ({ studentId, studentGroupId }));
     }
   }
   // The pupils as the year's activation would place them, for a rolled year
