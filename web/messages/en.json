@@ -3120,5 +3120,37 @@
     "reverseCredits": "{count, plural, one {# credited day is removed} other {# credited days are removed}}.",
     "reverseConfirm": "Take back",
     "reversed": "{count, plural, one {# lesson was restored} other {# lessons were restored}}."
+  },
+  "publicViewer": {
+    "title": "Timetable",
+    "week": "Week {week}",
+    "previous": "Previous week",
+    "thisWeek": "This week",
+    "next": "Next week",
+    "index": {
+      "GROUP": "Classes and groups",
+      "ROOM": "Rooms"
+    },
+    "indexEmpty": "There is nothing to show.",
+    "backToIndex": "All",
+    "kind": {
+      "GROUP": "Class or group",
+      "TEACHER": "Teacher",
+      "ROOM": "Room"
+    },
+    "group": "Group",
+    "cancelled": "Cancelled",
+    "busy": "Busy",
+    "meal": "Lunch",
+    "noLessons": "No lessons",
+    "footer": "The school's published timetable. A change shows here within a minute.",
+    "printHint": "Print with the browser's print: the week fits one landscape A4 page.",
+    "otherLanguage": "På svenska",
+    "notFoundTitle": "No such timetable",
+    "notFoundBody": "The link is wrong, has been revoked or is no longer shown.",
+    "busyTitle": "Too many views right now",
+    "busyBody": "Try again in a minute.",
+    "unavailableTitle": "The timetable could not be fetched",
+    "unavailableBody": "Try again in a while."
   }
 }

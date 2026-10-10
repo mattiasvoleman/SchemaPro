@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useTranslations } from "next-intl";
 import { Check, Lock, TriangleAlert, X } from "lucide-react";
+import { layoutDay } from "@/lib/day-lanes";
 import { cn } from "@/lib/utils";
 
 export interface TimetableLesson {
@@ -236,28 +237,6 @@ interface GhostState {
   startMinutes: number;
   endMinutes: number;
   valid: boolean;
-}
-
-/** Assigns overlapping lessons within a day to side-by-side lanes. */
-function layoutDay(lessons: TimetableLesson[]): PositionedLesson[] {
-  const sorted = [...lessons].sort(
-    (a, b) => a.startMinutes - b.startMinutes || a.endMinutes - b.endMinutes,
-  );
-  const laneEnds: number[] = [];
-  const positioned: Array<TimetableLesson & { lane: number }> = [];
-
-  for (const lesson of sorted) {
-    let lane = laneEnds.findIndex((end) => end <= lesson.startMinutes);
-    if (lane === -1) {
-      lane = laneEnds.length;
-      laneEnds.push(0);
-    }
-    laneEnds[lane] = lesson.endMinutes;
-    positioned.push({ ...lesson, lane });
-  }
-
-  const laneCount = Math.max(1, laneEnds.length);
-  return positioned.map((lesson) => ({ ...lesson, laneCount }));
 }
 
 function snap(minutes: number, step: number): number {

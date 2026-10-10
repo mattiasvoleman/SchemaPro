@@ -3120,5 +3120,37 @@
     "reverseCredits": "{count, plural, one {# tillgodoräknad dag tas bort} other {# tillgodoräknade dagar tas bort}}.",
     "reverseConfirm": "Ta tillbaka",
     "reversed": "{count, plural, one {# lektion återställdes} other {# lektioner återställdes}}."
+  },
+  "publicViewer": {
+    "title": "Schema",
+    "week": "Vecka {week}",
+    "previous": "Föregående vecka",
+    "thisWeek": "Denna vecka",
+    "next": "Nästa vecka",
+    "index": {
+      "GROUP": "Klasser och grupper",
+      "ROOM": "Salar"
+    },
+    "indexEmpty": "Det finns inget att visa.",
+    "backToIndex": "Alla",
+    "kind": {
+      "GROUP": "Klass eller grupp",
+      "TEACHER": "Lärare",
+      "ROOM": "Sal"
+    },
+    "group": "Grupp",
+    "cancelled": "Inställd",
+    "busy": "Upptagen",
+    "meal": "Lunch",
+    "noLessons": "Inga lektioner",
+    "footer": "Skolans publicerade schema. En ändring syns här inom en minut.",
+    "printHint": "Skriv ut med webbläsarens utskrift: veckan får plats på ett liggande A4.",
+    "otherLanguage": "In English",
+    "notFoundTitle": "Schemat finns inte",
+    "notFoundBody": "Länken är fel, har återkallats eller visas inte längre.",
+    "busyTitle": "För många visningar just nu",
+    "busyBody": "Försök igen om en minut.",
+    "unavailableTitle": "Schemat kunde inte hämtas",
+    "unavailableBody": "Försök igen om en stund."
   }
 }
