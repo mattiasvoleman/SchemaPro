@@ -201,6 +201,8 @@ describe("/admin/publishing", () => {
         validTo: "2027-06-11",
       }),
     );
+    // The warning is named before it can be acknowledged.
+    expect(await screen.findByRole("status")).toHaveTextContent("Lunch är inte inställd");
     await user.click(await screen.findByRole("button", { name: "Fyll på ändå" }));
     await waitFor(() =>
       expect(post).toHaveBeenLastCalledWith("/api/v1/publications/refill", {
@@ -211,6 +213,20 @@ describe("/admin/publishing", () => {
       }),
     );
     expect(toast.success).toHaveBeenCalledWith("12 lektioner skrevs i kalendern.");
+  });
+
+  it("forgets an acknowledgement when the refill's range changes", async () => {
+    server.settings = { ...SETTINGS, publishMode: "DRAFT", stored: true };
+    post.mockRejectedValueOnce(new ApiError(409, "…", "PUBLISH_WARNINGS_UNACKNOWLEDGED", { warnings: "PUB_LUNCH_NOT_SET" }));
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Fyll på" }));
+    expect(await screen.findByRole("button", { name: "Fyll på ändå" })).toBeInTheDocument();
+    const to = screen.getByRole("textbox", { name: "Giltig t.o.m." });
+    await user.clear(to);
+    await user.type(to, "2027-05-31");
+    expect(await screen.findByRole("button", { name: "Fyll på" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Fyll på ändå" })).toBeNull();
   });
 
   it("discards a pending draft after a confirmation that names the safety version", async () => {

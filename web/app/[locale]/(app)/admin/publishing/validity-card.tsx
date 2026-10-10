@@ -31,7 +31,7 @@ import {
   usePublicationTimeline,
   useRefillPublication,
 } from "@/lib/publication-queries";
-import { errorCode, publicationErrorText } from "@/lib/publication-messages";
+import { publicationErrorText, warningCodes } from "@/lib/publication-messages";
 import type { PublishMode } from "@/lib/publication-types";
 import { pendingCount, segmentViews, tallyGates } from "@/lib/publication-view";
 import type { AcademicYear } from "@/lib/types";
@@ -71,7 +71,9 @@ export function ValidityCard({
   const refill = useRefillPublication();
   const [discarding, setDiscarding] = useState(false);
   const [refillRange, setRefillRange] = useState<{ from?: string; to?: string }>({});
-  const [refillNeedsAck, setRefillNeedsAck] = useState(false);
+  // The warnings the gateway named for this range; "Fyll på ändå" only once they are on screen.
+  const [refillWarnings, setRefillWarnings] = useState<string[]>([]);
+  const refillNeedsAck = refillWarnings.length > 0;
   const [problem, setProblem] = useState<string | null>(null);
 
   const today = timeline.data?.today ?? "";
@@ -99,11 +101,12 @@ export function ValidityCard({
         validTo: refillTo,
         ...(acknowledge ? { acknowledgeWarnings: true } : {}),
       });
-      setRefillNeedsAck(false);
+      setRefillWarnings([]);
       toast.success(t("refilled", { count: outcome.result.created }));
     } catch (error) {
-      if (errorCode(error) === "PUBLISH_WARNINGS_UNACKNOWLEDGED") setRefillNeedsAck(true);
-      setProblem(publicationErrorText(tErrors, error, tCommon("error")));
+      const warnings = warningCodes(error);
+      setRefillWarnings(warnings);
+      if (warnings.length === 0) setProblem(publicationErrorText(tErrors, error, tCommon("error")));
     }
   };
 
@@ -189,7 +192,10 @@ export function ValidityCard({
                   value={refillFrom}
                   min={today > year.startDate ? today : year.startDate}
                   max={year.endDate}
-                  onChange={(value) => setRefillRange((previous) => ({ ...previous, from: value }))}
+                  onChange={(value) => {
+                    setRefillWarnings([]);
+                    setRefillRange((previous) => ({ ...previous, from: value }));
+                  }}
                 />
               </div>
               <div className="space-y-1">
@@ -200,10 +206,23 @@ export function ValidityCard({
                   value={refillTo}
                   min={year.startDate}
                   max={year.endDate}
-                  onChange={(value) => setRefillRange((previous) => ({ ...previous, to: value }))}
+                  onChange={(value) => {
+                    setRefillWarnings([]);
+                    setRefillRange((previous) => ({ ...previous, to: value }));
+                  }}
                 />
               </div>
             </div>
+            {refillNeedsAck ? (
+              <div role="status" className="space-y-1">
+                <p className="font-medium">{t("refillWarnings")}</p>
+                <ul className="list-disc pl-5">
+                  {refillWarnings.map((code) => (
+                    <li key={code}>{t.has(`policy.${code}`) ? t(`policy.${code}`) : code}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <Button
               variant="outline"
               onClick={() => void doRefill(refillNeedsAck)}

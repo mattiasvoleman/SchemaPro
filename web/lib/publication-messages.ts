@@ -25,3 +25,10 @@ export function publicationErrorText(t: MessageLookup, error: unknown, fallback:
 export function errorCode(error: unknown): string | undefined {
   return error instanceof ApiError ? error.code : undefined;
 }
+
+/** The gate codes a PUBLISH_WARNINGS_UNACKNOWLEDGED names (params.warnings, comma-separated). */
+export function warningCodes(error: unknown): string[] {
+  if (!(error instanceof ApiError) || error.code !== "PUBLISH_WARNINGS_UNACKNOWLEDGED") return [];
+  const raw = error.params?.["warnings"];
+  return typeof raw === "string" ? raw.split(",").map((code) => code.trim()).filter((code) => /^PUB_[A-Z_]+$/.test(code)) : [];
+}
