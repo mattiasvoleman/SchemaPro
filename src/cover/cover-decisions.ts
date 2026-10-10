@@ -19,6 +19,7 @@ export const SUPERVISED_STUDY_NOTE = 'Självstudier under tillsyn';
 
 export const SUBSTITUTE_IS_ABSENT = 'SUBSTITUTE_IS_ABSENT';
 export const SUBSTITUTE_ON_LESSON = 'SUBSTITUTE_ON_LESSON';
+export const SUBSTITUTE_HAS_LESSON = 'SUBSTITUTE_HAS_LESSON';
 export const REPLACED_TEACHER_NOT_ON_LESSON = 'REPLACED_TEACHER_NOT_ON_LESSON';
 
 export interface RemovedTeacher {

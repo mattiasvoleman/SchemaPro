@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import type { Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/utils/supabase/client";
-import { ALL_COVER } from "@/lib/cover-keys";
+import { ALL_COVER, COVER_KEYS } from "@/lib/cover-keys";
 import { windowsOverlap } from "@/lib/cover-view";
 
 /*
@@ -28,6 +28,13 @@ import { windowsOverlap } from "@/lib/cover-view";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 export const COVER_BOARD_UPDATED_EVENT = "cover_board_updated";
+
+/**
+ * What an event refetches: the board, the register's counts and the counter
+ * (one prefix), and an open "Tillsätt vikarie" list — another admin's
+ * booking can take one of its candidates.
+ */
+export const REFETCHED_ON_EVENT = [ALL_COVER, COVER_KEYS.candidates] as const;
 export const MASTER_TIMETABLE_UPDATED_EVENT = "master_timetable_updated";
 
 /** What an event means for a board showing `window`: refetch, or not. */
@@ -67,7 +74,7 @@ export function useCoverRealtime(range: { from: string; to: string }): void {
       for (const event of [COVER_BOARD_UPDATED_EVENT, MASTER_TIMETABLE_UPDATED_EVENT]) {
         socket.on(event, (payload: unknown) => {
           if (shouldRefetch(event, payload, current.current)) {
-            void queryClient.invalidateQueries({ queryKey: ALL_COVER });
+            for (const queryKey of REFETCHED_ON_EVENT) void queryClient.invalidateQueries({ queryKey });
           }
         });
       }

@@ -13,6 +13,7 @@ import {
   coverErrorText,
   groupByDate,
   groupByLesson,
+  otherTeacherOptions,
   pairActions,
   pairKey,
   reasonName,
@@ -263,7 +264,7 @@ describe("cover refusals", () => {
       "COVER_STALE", "COVER_LESSON_HELD", "COVER_LESSON_STARTED", "COVER_NOT_AFFECTED", "COVER_NO_DECISION",
       "CO_TEACHER_MISSING", "COVER_UNDO_ORDER", "COVER_UNDO_CONFLICT", "COVER_UNDO_CLASH", "COVER_RANGE",
       "COVER_SUBSTITUTE_REQUIRED", "COVER_PROPOSAL_STALE", "COVER_DUPLICATE", "COVER_INVALID",
-      "SUBSTITUTE_IS_ABSENT", "SUBSTITUTE_ON_LESSON", "PUBLISH_IN_PROGRESS", "ABSENCE_OVERLAPS",
+      "SUBSTITUTE_IS_ABSENT", "SUBSTITUTE_ON_LESSON", "SUBSTITUTE_HAS_LESSON", "PUBLISH_IN_PROGRESS", "ABSENCE_OVERLAPS",
       "ABSENCE_HAS_DECISIONS", "ABSENCE_HAS_HELD_DECISIONS", "ABSENCE_NOT_YOURS", "ABSENCE_PERSON",
       "ABSENCE_PERSON_IS_FIXED", "ABSENCE_RANGE", "ABSENCE_REASON", "ABSENCE_SELF_EDIT_NARROW",
       "ABSENCE_SELF_REPORT_OFF", "ABSENCE_TOO_FAR_BACK", "ABSENCE_WITHDRAWN", "ABSENCE_WITHDRAW_TOO_LATE",
@@ -275,12 +276,37 @@ describe("cover refusals", () => {
     expect(codes.filter((code) => !(code in en.coverErrors))).toEqual([]);
   });
 
+  it("say a substitute's own lesson then in the reader's language, not the gateway's English", () => {
+    const error = new ApiError(409, "The substitute already teaches another lesson at this time.", "SUBSTITUTE_HAS_LESSON");
+    expect(coverErrorText(t, error, "x")).toBe("Vikarien har en egen lektion då och kan inte tillsättas.");
+    expect(coverErrorText(lookup(en.coverErrors as Record<string, string>), error, "x")).toBe(
+      "The substitute has a lesson of their own then and cannot be assigned.",
+    );
+  });
+
   it("read the cover's own warnings first and the engine's second, for a vikarie's toast", () => {
     const engine = lookup({ STAFF_TEACHER_NOT_QUALIFIED: "Inte behörig i {subject}." });
     const chained = chainLookup(t, engine);
     expect(chained("COVER_BREAKS_LUNCH", { minutes: 30 })).toBe("Vikarien förlorar sin lunch på 30 min.");
     expect(chained("STAFF_TEACHER_NOT_QUALIFIED", { subject: "Kemi" })).toBe("Inte behörig i Kemi.");
     expect(chained.has("NOPE")).toBe(false);
+  });
+});
+
+describe("the other-teacher pick", () => {
+  const teachers = ["t-anna", "t-bo", "t-cia", "t-dan", "t-eva", "t-fia"].map((id) => ({ id, name: id }));
+
+  it("lists only who the gateway would put in with a warning — never the suggested, the lesson's own, the busy or the absent", () => {
+    const options = otherTeacherOptions(teachers, item({ teachers: [{ teacherId: "t-anna", role: "LEAD" }] }), {
+      lessonId: "l-1",
+      candidates: [{ userId: "t-bo" }],
+      excluded: [
+        { userId: "t-cia", codes: [{ code: "BUSY_LESSON", params: { lessonId: "l-2" } }] },
+        { userId: "t-dan", codes: [{ code: "ABSENT", params: {} }] },
+        { userId: "t-eva", codes: [{ code: "LUNCH", params: { minutes: 30 } }, { code: "POOL_NOT_DECLARED", params: {} }] },
+      ],
+    });
+    expect(options.map((teacher) => teacher.id)).toEqual(["t-eva", "t-fia"]);
   });
 });
 

@@ -24,6 +24,7 @@ import {
   lockTeachers,
   mergeRemoved,
   REPLACED_TEACHER_NOT_ON_LESSON,
+  SUBSTITUTE_HAS_LESSON,
   SUBSTITUTE_ON_LESSON,
   substituteIsAbsent,
   writeDecision,
@@ -434,11 +435,14 @@ export class CalendarLessonsService {
 
     await lockTeachers(tx, [teacherId]);
 
-    // The substitute must not already teach an overlapping lesson.
+    // The substitute must not already teach an overlapping lesson. The
+    // message is the old page's; the code lets the board and the old page
+    // say it in Swedish.
     if (await this.teacherHasClash(tx, teacherId, lesson)) {
-      throw new ConflictException(
-        'The substitute already teaches another lesson at this time.',
-      );
+      throw new ConflictException({
+        message: 'The substitute already teaches another lesson at this time.',
+        code: SUBSTITUTE_HAS_LESSON,
+      });
     }
 
     // One read for the substitute's absence and the leaving teachers' (for
@@ -937,7 +941,12 @@ export class CalendarLessonsService {
     );
   }
 
-  /** True when the teacher already teaches another scheduled lesson that overlaps. */
+  /**
+   * True when the teacher already teaches another lesson that overlaps and
+   * holds its time: SCHEDULED, or COMPLETED (held). A cancelled lesson frees
+   * it. The same set the cover rules' BUSY_LESSON and the undo's clash
+   * count (amendment N), so a pick the suggestions refuse is refused here.
+   */
   async teacherHasClash(
     tx: PrismaClient,
     teacherId: string,
@@ -946,7 +955,7 @@ export class CalendarLessonsService {
     const clash = await tx.calendarLesson.findFirst({
       where: {
         id: { not: lesson.id },
-        status: 'SCHEDULED',
+        status: { in: ['SCHEDULED', 'COMPLETED'] },
         startsAt: { lt: lesson.endsAt },
         endsAt: { gt: lesson.startsAt },
         teachers: { some: { teacherId } },
