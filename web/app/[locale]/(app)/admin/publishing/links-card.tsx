@@ -232,8 +232,12 @@ export function LinksCard({ year, settings, groups, teachers, rooms, hidden }: L
                     <TableCell>{link.label ?? "–"}</TableCell>
                     <TableCell className="tabular-nums">{link.lastUsedAt?.slice(0, 10) ?? "–"}</TableCell>
                     <TableCell>
-                      <Badge variant={link.revokedAt ? "outline" : "success"}>
-                        {t(link.revokedAt ? "linkStateRevoked" : "linkStateActive")}
+                      <Badge variant={link.revokedAt || link.notShownBecause ? "outline" : "success"}>
+                        {link.revokedAt
+                          ? t("linkStateRevoked")
+                          : link.notShownBecause
+                            ? t(`linkNotShown.${link.notShownBecause}`)
+                            : t("linkStateActive")}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">

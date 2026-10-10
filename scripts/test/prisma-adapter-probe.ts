@@ -6048,6 +6048,33 @@ async function viewerChecks(owner: Client, api: PrismaService): Promise<void> {
       assert.ok(await view(klass.token, null, '2097-06-09'));
     });
 
+    await check('(pub-e) the link list says which links answer, by the same rule as the viewer, and why the others do not', async () => {
+      const agree = async () => {
+        const listed = await links.list(school.yearId, school.admin);
+        const byId = new Map(listed.map((entry) => [entry.id, entry.notShownBecause]));
+        const out: Record<string, string | null> = {};
+        for (const [name, made] of Object.entries({ klass, room, teacher, index })) {
+          const reason = byId.get(made.link.id) ?? null;
+          assert.equal(reason === null, (await view(made.token)) !== null, `${name}: listed ${reason}`);
+          out[name] = reason;
+        }
+        return out;
+      };
+      assert.deepEqual(await agree(), { klass: null, room: null, teacher: null, index: null });
+      await owner.query(`UPDATE "TeacherEmployments" SET signature = NULL WHERE "userId" = $1`, [school.teacherId]);
+      assert.equal((await agree()).teacher, 'NO_SIGNATURE');
+      await owner.query(`UPDATE "TeacherEmployments" SET signature = 'ANLI' WHERE "userId" = $1`, [school.teacherId]);
+      await links.setHidden(school.teacherId, true, school.admin);
+      assert.equal((await agree()).teacher, 'TEACHER_HIDDEN');
+      await links.setHidden(school.teacherId, false, school.admin);
+      await publications.upsertSettings({ publicRooms: false }, school.admin);
+      assert.equal((await agree()).room, 'SCOPE_OFF');
+      await publications.upsertSettings({ publicRooms: true }, school.admin);
+      await publications.upsertSettings({ publicViewerEnabled: false }, school.admin);
+      assert.deepEqual(await agree(), { klass: 'VIEWER_OFF', room: 'VIEWER_OFF', teacher: 'VIEWER_OFF', index: 'VIEWER_OFF' });
+      await publications.upsertSettings({ publicViewerEnabled: true }, school.admin);
+    });
+
     await check('(pub-e) nothing for a revoked link, a scope switched off, the viewer switched off, an unknown token; and 2 s at most', async () => {
       const timeout = await api.withPublicViewer((tx) => tx.$queryRaw<{ statement_timeout: string }[]>`SHOW statement_timeout`);
       assert.equal(timeout[0]!.statement_timeout, '2s');
