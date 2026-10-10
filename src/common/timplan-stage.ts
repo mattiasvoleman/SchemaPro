@@ -612,8 +612,11 @@ export interface ClassStageCell {
   /** The national hours when every pupil's version prints the same figure; null otherwise. */
   nationalHours: number | null;
   pupils: number;
-  planned: HourStats;
-  projected: HourStats;
+  /** The pupils whose stage is complete: the stats are theirs alone. */
+  compared: number;
+  /** Over the compared pupils; null when none is. */
+  planned: HourStats | null;
+  projected: HourStats | null;
   belowNational: number;
   projectedBelowNational: number;
   unrecordedPupils: number;
@@ -632,8 +635,13 @@ export interface ClassStageSummary {
 
 /**
  * Per home class and CURRENT stage, per cell: min / median / max over the
- * class's pupils, how many are below, how many unrecorded. Carries no pupil
- * id — the overview is per class; the drill-down is the pupils.
+ * class's COMPARED pupils (whose stage is complete), how many are below, how
+ * many unrecorded. A partly recorded pupil's figure covers only the grades
+ * SchemaPro has seen, so it is counted (unrecordedPupils) and never put in a
+ * median printed beside the national hours of the whole stage: a class whose
+ * every compared pupil meets the timplan must not read as short because of
+ * the years before SchemaPro. No compared pupil: no figure (null). Carries no
+ * pupil id — the overview is per class; the drill-down is the pupils.
  */
 export function summarizeClassStages(coverage: StageCoverage): ClassStageSummary[] {
   const groups = new Map<string, { classId: string; stage: TimplanStage; entries: { pupil: StagePupil; stage: PupilStage }[] }>();
@@ -653,14 +661,19 @@ export function summarizeClassStages(coverage: StageCoverage): ClassStageSummary
     const cells: ClassStageCell[] = codes.map((code) => {
       const found = group.entries.map((entry) => entry.stage.cells.find((cell) => cell.code === code) ?? null);
       const present = found.filter((cell): cell is StageCell => cell !== null);
+      const compared = group.entries
+        .filter((entry) => entry.stage.complete)
+        .map((entry) => entry.stage.cells.find((cell) => cell.code === code) ?? null)
+        .filter((cell): cell is StageCell => cell !== null);
       const nationals = new Set(present.map((cell) => cell.nationalHours));
       const below = (status: StageCellStatus) => status === 'BELOW' || status === 'BELOW_WITHIN_CAP';
       return {
         code,
         nationalHours: nationals.size === 1 ? [...nationals][0]! : null,
         pupils: present.length,
-        planned: statsOf(present.map((cell) => cell.plannedHours)),
-        projected: statsOf(present.map((cell) => cell.projectedHours)),
+        compared: compared.length,
+        planned: compared.length === 0 ? null : statsOf(compared.map((cell) => cell.plannedHours)),
+        projected: compared.length === 0 ? null : statsOf(compared.map((cell) => cell.projectedHours)),
         belowNational: present.filter((cell) => below(cell.status)).length,
         projectedBelowNational: present.filter((cell) => below(cell.projectedStatus)).length,
         unrecordedPupils: present.filter((cell) => cell.status === 'UNRECORDED').length,

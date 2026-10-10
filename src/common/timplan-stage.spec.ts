@@ -1,7 +1,7 @@
 import fixture from './__fixtures__/timplan-stage-cases.json';
 import { cohortStartYear, htOf, pupilRegime, stageVersionFor, versionGradeOf } from './timplan-cohorts';
 import { cohortStartYear as rolloverCohortStartYear } from '../year-rollover/rollover-timplans';
-import { computePupilStages, type StageCoverage, type StageInput, type StagePupil } from './timplan-stage';
+import { computePupilStages, summarizeClassStages, type StageCoverage, type StageInput, type StagePupil } from './timplan-stage';
 
 /**
  * What each fixture case MEANS, asserted on its own: the contract spec only
@@ -220,6 +220,27 @@ describe('stadiesummor, case by case', () => {
     expect(stage(pupil!, 'HOG')).toMatchObject({ recordedGrades: [7, 9], unrecordedGrades: [8], complete: false });
     expect(codes(pupil!)).toEqual(['TIMPLAN_PUPIL_STAGE_HOME_NOT_A_CLASS', 'TIMPLAN_PUPIL_STAGE_PARTLY_UNRECORDED']);
     expect(pupil!.verdicts[0]!.params).toEqual({ yearStartHT: 2025 });
+  });
+
+  it('summarises a class over the pupils whose stage is compared: a partial projection never sits beside the national hours', () => {
+    // Case 14: one pupil's mellanstadium is complete (åk 5 and 6 planned),
+    // the other's is not (no plan carries åk 6). The class row's figures are
+    // the complete pupil's; the other is counted, not averaged in.
+    const input = cases.find((entry) => entry.name.startsWith('14.'))!.input;
+    const row = summarizeClassStages(computePupilStages(input)).find((entry) => entry.stage === 'MELLAN');
+    const ma = row!.cells.find((entry) => entry.code === 'MA')!;
+    const complete = computePupilStages(input).pupils.find((pupil) => stage(pupil, 'MELLAN').complete)!;
+    const figure = cell(complete, 'MELLAN', 'MA');
+    expect(ma).toMatchObject({
+      pupils: 2,
+      compared: 1,
+      unrecordedPupils: 1,
+      planned: { min: figure.plannedHours, median: figure.plannedHours, max: figure.plannedHours },
+      projected: { min: figure.projectedHours, median: figure.projectedHours, max: figure.projectedHours },
+    });
+    // Case 5: nobody in the class is compared, so there is no figure to set beside 400 h.
+    const partial = summarizeClassStages(computePupilStages(cases.find((entry) => entry.name.startsWith('5.'))!.input)).find((entry) => entry.stage === 'HOG');
+    expect(partial!.cells.find((entry) => entry.code === 'MA')).toMatchObject({ pupils: 1, compared: 0, planned: null, projected: null, unrecordedPupils: 1 });
   });
 
   it('never refuses: an empty input is an empty answer', () => {

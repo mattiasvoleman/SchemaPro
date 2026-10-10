@@ -339,6 +339,21 @@ function OverviewCell({ cell, name }: { cell: ClassStageCell; name: string }) {
   const t = useTranslations("timplanCoverage.stage");
   const hours = useHours();
   const below = cell.projectedBelowNational;
+  // The figures are the compared pupils' alone (summarizeClassStages): with
+  // none compared there is no figure to set beside the national hours.
+  if (cell.projected === null) {
+    return (
+      <div className="mx-auto flex min-h-12 min-w-20 flex-col items-center justify-center rounded-md border border-dashed px-1 py-0.5 text-muted-foreground">
+        <span className="text-xs" aria-hidden>
+          {t("notCompared")}
+        </span>
+        <span className="text-[10px] leading-tight" aria-hidden>
+          {t("unrecordedShort", { count: cell.unrecordedPupils })}
+        </span>
+        <span className="sr-only">{t("cellLineNotCompared", { subject: name, unrecorded: cell.unrecordedPupils })}</span>
+      </div>
+    );
+  }
   return (
     <div
       className={cn(
@@ -450,8 +465,8 @@ function StageDrillDown({ yearId, groupId, name, subjectName, pupilName, gradeNa
 function ClassStageTable({ row, subjectName }: { row: ClassStageSummary; subjectName: (code: string) => string }) {
   const t = useTranslations("timplanCoverage.stage");
   const hours = useHours();
-  const stats = (s: { min: number; median: number; max: number }) =>
-    `${hours(s.min)} / ${hours(s.median)} / ${hours(s.max)}`;
+  const stats = (s: { min: number; median: number; max: number } | null) =>
+    s === null ? t("notCompared") : `${hours(s.min)} / ${hours(s.median)} / ${hours(s.max)}`;
   return (
     <div className="space-y-1">
       <h3 className="text-sm font-semibold">

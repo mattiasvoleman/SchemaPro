@@ -158,6 +158,21 @@ describe("CoverageStageTab", () => {
     expect(state.asked).toEqual(["stage:y-1:"]);
   });
 
+  it("sets only compared pupils' figures beside the national hours, and says 'ej jämförd' when no pupil is", () => {
+    // Case 14: 6A's mellanstadium, one pupil complete (413 h projected
+    // matematik), one not. Case 5: 7A's högstadium, nobody complete.
+    const complete = byName("14.").coverage.pupils.find((entry) => entry.stages.some((stage) => stage.stage === "MELLAN" && stage.complete))!;
+    const ma = complete.stages.find((stage) => stage.stage === "MELLAN")!.cells.find((cell) => cell.code === "MA")!;
+    state.stages[""] = { ...responses().overview, classes: [...byName("14.").classes, ...byName("5.").classes] };
+    render(<CoverageStageTab {...props()} />);
+    const mellan = screen.getByRole("region", { name: "timplanCoverage.stage.stageTitle(MELLAN)" });
+    const row6a = within(mellan).getByRole("row", { name: /^6A/ });
+    expect(within(row6a).getByText(`${String(ma.projectedHours).replace(".", ",")} h / 410 h`)).toBeInTheDocument();
+    const hog = screen.getByRole("region", { name: "timplanCoverage.stage.stageTitle(HOG)" });
+    expect(within(hog).queryByText(/\/ 400 h/)).not.toBeInTheDocument();
+    expect(within(hog).getAllByText("timplanCoverage.stage.notCompared").length).toBeGreaterThan(0);
+  });
+
   it("counts pupils per finding, the within-cap notices apart from the warnings", () => {
     state.stages[""] = responses().overview;
     render(<CoverageStageTab {...props()} />);
