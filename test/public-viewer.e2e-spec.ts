@@ -63,6 +63,10 @@ describe('the public viewer (e2e)', () => {
       '/public/v1/timetables/short', // malformed: never asked
       `/public/v1/timetables/${TOKEN}?target=not-a-uuid`,
       `/public/v1/timetables/${TOKEN}?date=2026-13-45`,
+      // Days V8 rolls over and Postgres refuses (22008): never asked, never a 500.
+      `/public/v1/timetables/${TOKEN}?date=2026-02-30`,
+      `/public/v1/timetables/${TOKEN}?date=2026-04-31`,
+      `/public/v1/timetables/${TOKEN}?date=0000-01-01`,
     ]) {
       answers.push(await request(http()).get(path).expect(404));
     }
