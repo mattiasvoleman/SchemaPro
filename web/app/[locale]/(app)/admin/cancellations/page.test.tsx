@@ -187,9 +187,15 @@ describe("/admin/cancellations", () => {
     post.mockImplementation(async (path: string) => {
       if (path.endsWith("/reapply")) return { batch: BATCH, added: 4 };
       if (path.endsWith("/reverse/preview")) {
-        return { reinstate: 330, skippedRoomTaken: [{ lessonId: "cl-9", date: "2026-10-20", roomId: "r-12", by: "BOOKING" }], notReinstatable: 6, creditsDeleted: 1 };
+        return {
+          reinstate: 330,
+          skippedRoomTaken: [{ lessonId: "cl-9", date: "2026-10-20", roomId: "r-12", by: "BOOKING" }],
+          removedTemplateMoved: [{ lessonId: "cl-11", date: "2026-10-19" }],
+          notReinstatable: 6,
+          creditsDeleted: 1,
+        };
       }
-      return { reinstate: 330, skippedRoomTaken: [], notReinstatable: 6, creditsDeleted: 1 };
+      return { reinstate: 330, skippedRoomTaken: [], removedTemplateMoved: [], notReinstatable: 6, creditsDeleted: 1 };
     });
     const user = userEvent.setup();
     renderPage();
@@ -204,6 +210,8 @@ describe("/admin/cancellations", () => {
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("330 lektioner återställs.")).toBeInTheDocument();
     expect(dialog).toHaveTextContent("2026-10-20 · Sal 12 · en lokalbokning");
+    expect(dialog).toHaveTextContent("1 lektion tas bort, eftersom schemat har flyttat lektionen sedan avbokningen");
+    expect(dialog).toHaveTextContent("2026-10-19");
     expect(dialog).toHaveTextContent("6 lektioner har börjat eller ändrats sedan");
     expect(dialog).toHaveTextContent("1 tillgodoräknad dag tas bort.");
     await user.click(within(dialog).getByRole("button", { name: "Ta tillbaka" }));

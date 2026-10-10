@@ -201,6 +201,16 @@ export function BatchesCard({
                   </ul>
                 </div>
               ) : null}
+              {plan.removedTemplateMoved.length > 0 ? (
+                <div className="space-y-1">
+                  <p>{t("reverseTemplateMoved", { count: plan.removedTemplateMoved.length })}</p>
+                  <ul className="list-disc pl-5 text-xs">
+                    {plan.removedTemplateMoved.map((row) => (
+                      <li key={row.lessonId}>{row.date}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               {plan.notReinstatable > 0 ? <p>{t("reverseHistory", { count: plan.notReinstatable })}</p> : null}
               {plan.creditsDeleted > 0 ? <p>{t("reverseCredits", { count: plan.creditsDeleted })}</p> : null}
             </div>

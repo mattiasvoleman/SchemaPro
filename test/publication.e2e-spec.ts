@@ -417,9 +417,23 @@ describe('Publicering (e2e)', () => {
       expect(list.body).toEqual([expect.objectContaining({ id: BATCH_ID, addedSince: 0 })]);
 
       harness.tx.cancellationBatchLesson.findMany.mockResolvedValue([
-        { previousNote: 'Ta med böcker', calendarLesson: { ...future(1), status: 'CANCELLED', cancelCause: 'EVENT', roomId: null } },
-        { previousNote: null, calendarLesson: { ...future(2), status: 'CANCELLED', cancelCause: 'EVENT', roomId: 'room' } },
+        { previousNote: 'Ta med böcker', calendarLesson: { ...future(1), masterLessonId: 'm1', status: 'CANCELLED', cancelCause: 'EVENT', roomId: null } },
+        { previousNote: null, calendarLesson: { ...future(2), masterLessonId: 'm2', status: 'CANCELLED', cancelCause: 'EVENT', roomId: 'room' } },
+        // Its lesson has moved to Thursday since the batch: the week has it there.
+        { previousNote: null, calendarLesson: { ...future(3), masterLessonId: 'm3', status: 'CANCELLED', cancelCause: 'EVENT', roomId: null } },
       ]);
+      // 1, 2 and 3 March 2099 are a Sunday, a Monday and a Tuesday; 08:00 in Stockholm.
+      const slot = (id: string, dayOfWeek: number) => ({
+        id,
+        isParked: false,
+        dayOfWeek,
+        startTime: new Date('1970-01-01T08:00:00.000Z'),
+        endTime: new Date('1970-01-01T09:00:00.000Z'),
+        recurrence: 'ALL_WEEKS',
+        startDate: null,
+        endDate: null,
+      });
+      harness.tx.masterLesson.findMany.mockResolvedValue([slot('m1', 7), slot('m2', 1), slot('m3', 4)]);
       harness.tx.calendarLesson.findFirst.mockResolvedValue({ id: 'someone-else' });
       const preview = await request(http())
         .post(`/api/v1/cancellation-batches/${BATCH_ID}/reverse/preview`)
@@ -427,11 +441,16 @@ describe('Publicering (e2e)', () => {
         .expect(200);
       expect(preview.body).toMatchObject({ reinstate: 1, notReinstatable: 0, creditsDeleted: 0 });
       expect(preview.body.skippedRoomTaken).toEqual([expect.objectContaining({ roomId: 'room', by: 'LESSON' })]);
+      expect(preview.body.removedTemplateMoved).toEqual([{ lessonId: future(3).id, date: '2099-03-03' }]);
 
       await request(http()).post(`/api/v1/cancellation-batches/${BATCH_ID}/reverse`).set('x-test-user', admin()).expect(200);
       expect(harness.tx.calendarLesson.updateMany).toHaveBeenCalledWith({
         where: { id: { in: [future(1).id] }, status: 'CANCELLED', cancelCause: 'EVENT' },
         data: { status: 'SCHEDULED', cancelCause: null, note: 'Ta med böcker' },
+      });
+      // The moved lesson's old slot goes, under the plan's own guard.
+      expect(harness.tx.calendarLesson.deleteMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({ id: { in: [future(3).id] }, status: 'CANCELLED', cancelCause: 'EVENT' }),
       });
 
       harness.tx.cancellationBatch.findUnique.mockResolvedValue({ ...stored, reversedAt: new Date() });

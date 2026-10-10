@@ -3112,6 +3112,7 @@
     "reverseBody": "Lessons the cancellation cancelled that lie ahead are restored, with their earlier note. Days that have begun are not touched.",
     "reverseReinstate": "{count, plural, one {# lesson is restored} other {# lessons are restored}}.",
     "reverseRoomTaken": "{count, plural, one {# lesson stays cancelled} other {# lessons stay cancelled}}, because the room was booked or given another lesson meanwhile:",
+    "reverseTemplateMoved": "{count, plural, one {# lesson is removed} other {# lessons are removed}}, because the timetable has moved the lesson since the cancellation and the week already has it where it runs now:",
     "takenBy": {
       "LESSON": "another lesson",
       "BOOKING": "a room booking"
