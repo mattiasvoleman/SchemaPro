@@ -183,6 +183,22 @@ describe("People page", () => {
     expect(rowNames()).toHaveLength(4);
   });
 
+  it("opens a pupil's guardians from ?guardians=, as the SS12000 review links them, and nobody else's", async () => {
+    window.history.replaceState(null, "", "/sv/admin/people?guardians=st-1");
+    try {
+      const { unmount } = render(<PeoplePage />);
+      expect(await screen.findByRole("dialog")).toHaveTextContent("guardiansTitle(Alma Berg)");
+      unmount();
+      // A member of staff has no guardians: the link opens nothing.
+      window.history.replaceState(null, "", "/sv/admin/people?guardians=t-1");
+      render(<PeoplePage />);
+      expect(rowNames()).toHaveLength(4);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
   it("searches by name", async () => {
     const user = userEvent.setup();
     render(<PeoplePage />);
