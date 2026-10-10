@@ -16,7 +16,11 @@ export async function proxy(request: NextRequest) {
   //    is the secret: noindex and no-referrer keep it out of search engines
   //    and out of the Referer of a link followed off the page.
   if (request.nextUrl.pathname.startsWith("/v/")) {
-    const response = NextResponse.next();
+    // The page's language for the layout's <html lang> (app/v/layout.tsx);
+    // always set here, so whatever a browser sent under that name is replaced.
+    const forwarded = new Headers(request.headers);
+    forwarded.set("x-viewer-lang", request.nextUrl.searchParams.get("lang") === "en" ? "en" : "sv");
+    const response = NextResponse.next({ request: { headers: forwarded } });
     response.headers.set("X-Robots-Tag", "noindex, nofollow");
     response.headers.set("Referrer-Policy", "no-referrer");
     return response;

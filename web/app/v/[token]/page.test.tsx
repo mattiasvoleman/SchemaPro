@@ -87,15 +87,20 @@ describe("/v/[token]", () => {
     expect(screen.getByText("Vecka 42 · 12 okt. – 18 okt.", { exact: false })).toBeInTheDocument();
     // Twice each: the phone's list and the wide screen's (and paper's) grid.
     expect(screen.getAllByText("Matematik")).toHaveLength(2);
-    expect(screen.getAllByText("7A · Sal 12 · AB")).toHaveLength(2);
+    // The class's own name is the page's title, not repeated; the room first.
+    expect(screen.getAllByText("Sal 12 · AB")).toHaveLength(2);
     // The small group is "Grupp"; the cancelled lesson says so, struck through.
-    expect(screen.getAllByText("7A, Grupp")).toHaveLength(2);
+    expect(screen.getAllByText("Grupp")).toHaveLength(2);
     expect(screen.getAllByText("· Inställd", { exact: false })).toHaveLength(2);
     for (const svenska of screen.getAllByText("Svenska")) expect(svenska).toHaveClass("line-through");
     expect(screen.getByText("Lunch 11:00–11:30")).toBeInTheDocument();
     // Only Monday to Friday, in both: the weekend is empty.
     const weekdays = ["Måndag 12 okt.", "Tisdag 13 okt.", "Onsdag 14 okt.", "Torsdag 15 okt.", "Fredag 16 okt."];
     expect(screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([...weekdays, ...weekdays]);
+    expect(document.title).toBe("7A – Vecka 42");
+    // Each day's lessons in the grid are labelled by their day's heading.
+    expect(container.querySelector('ol[aria-labelledby="day-2026-10-12"]')).not.toBeNull();
+    expect(container.querySelector("#day-2026-10-12")).toHaveTextContent("Måndag 12 okt.");
     expect(container.textContent).not.toContain("Ahmed");
     expect(container.textContent).not.toContain("sjuk");
     // The week moves by Monday, and the language by a link.
@@ -121,6 +126,37 @@ describe("/v/[token]", () => {
     });
     const { container } = await renderPage();
     expect(container.textContent).not.toContain("Inställd");
+  });
+
+  it("draws a lesson that overlaps nothing full width beside a språkval, and a room's week without the room", async () => {
+    const lesson = (start: string, end: string, subject: string, groups: string[]) => ({
+      start, end, subject, groups, room: "Sal 12", teachers: ["AB"], cancelled: false,
+    });
+    respond(200, {
+      ...WEEK,
+      days: [
+        {
+          date: "2026-10-12",
+          lessons: [
+            lesson("08:00", "08:50", "Matematik", ["7A"]),
+            lesson("10:50", "11:40", "Spanska", ["7ABC-spanska"]),
+            lesson("10:50", "11:40", "Tyska", ["7ABC-tyska"]),
+          ],
+        },
+        ...WEEK.days.slice(1),
+      ],
+    });
+    const { container } = await renderPage();
+    const block = (subject: string) =>
+      [...container.querySelectorAll<HTMLElement>("li.viewer-block")].find((item) => item.textContent?.includes(subject))!;
+    expect(block("Matematik").style.width).toBe("100%");
+    expect(block("Spanska").style.width).toBe("50%");
+    expect(block("Tyska").style.left).toBe("50%");
+    expect(screen.getAllByText("Sal 12 · AB · 7ABC-spanska")).toHaveLength(2);
+
+    respond(200, { ...WEEK, kind: "ROOM", title: "Sal 12" });
+    await renderPage();
+    expect(screen.getAllByText("7A · AB").length).toBeGreaterThan(0);
   });
 
   it("lists an index's classes as links on the same token, in English when asked", async () => {
