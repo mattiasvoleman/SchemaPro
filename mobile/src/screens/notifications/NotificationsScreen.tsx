@@ -9,36 +9,30 @@ import {
   View,
   SafeAreaView,
 } from 'react-native';
-import { getSupabase } from '../../services/supabase';
+import { fetchNotifications, markAllRead as markOwnRead } from '../../services/notifications';
 import { notificationText } from '../../services/notificationText';
+import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/LocaleContext';
 import { formatDateTime } from '../../i18n/format';
 import type { NotificationRow } from '../../types';
 
-async function fetchNotifications(): Promise<NotificationRow[]> {
-  const { data, error } = await getSupabase()
-    .from('Notifications')
-    .select('id, type, meta, readAt, createdAt')
-    .order('createdAt', { ascending: false })
-    .limit(50);
-  if (error) throw new Error(error.message);
-  return (data ?? []) as NotificationRow[];
-}
-
 /**
- * In-app notification inbox (RLS: own rows only), for every role — the tab a
- * push opens. Each row is worded by services/notificationText.ts, all nine
+ * In-app notification inbox, the signed-in person's own rows only
+ * (services/notifications.ts: an admin's RLS reaches the whole school's), for
+ * every role — the tab a push opens. Each row is worded by services/notificationText.ts, all nine
  * types in the reader's language.
  */
 export function NotificationsScreen(): React.JSX.Element {
   const { t, locale } = useI18n();
+  const { authState } = useAuth();
+  const userId = authState.teacherId;
   const [rows, setRows] = useState<NotificationRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const load = useCallback(async () => {
-    setRows(await fetchNotifications());
-  }, []);
+    setRows(userId ? await fetchNotifications(userId) : []);
+  }, [userId]);
 
   useEffect(() => {
     void load()
@@ -53,12 +47,9 @@ export function NotificationsScreen(): React.JSX.Element {
   }, [load]);
 
   const markAllRead = useCallback(async () => {
-    await getSupabase()
-      .from('Notifications')
-      .update({ readAt: new Date().toISOString() })
-      .is('readAt', null);
+    if (userId) await markOwnRead(userId).catch(() => undefined);
     await load().catch(() => undefined);
-  }, [load]);
+  }, [load, userId]);
 
   const unread = rows.filter((entry) => entry.readAt === null).length;
 

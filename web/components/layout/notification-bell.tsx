@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { Link } from "@/i18n/navigation";
+import { useProfile } from "@/components/profile-context";
 
 interface NotificationRow {
   id: string;
@@ -31,11 +32,15 @@ interface NotificationRow {
   createdAt: string;
 }
 
-/** In-app notification inbox. Reads own rows under RLS; marking read is a
- * single own-row column update, also RLS-guarded. Polls every 60s. */
+/** In-app notification inbox. Reads the signed-in person's own rows: RLS
+ * alone does not, since an admin's notifications_admin_select reaches every
+ * notice of the school, so both the read and the write name the recipient.
+ * Marking read is a single own-row column update, also RLS-guarded. Polls
+ * every 60s. */
 export function NotificationBell() {
   const t = useTranslations("notifications");
   const queryClient = useQueryClient();
+  const { profile } = useProfile();
 
   const { data: notifications } = useQuery({
     queryKey: ["notifications"],
@@ -45,6 +50,7 @@ export function NotificationBell() {
       const { data, error } = await supabase
         .from("Notifications")
         .select("id, type, meta, readAt, createdAt")
+        .eq("userId", profile.id)
         .order("createdAt", { ascending: false })
         .limit(20);
       if (error) throw new Error(error.message);
@@ -58,6 +64,7 @@ export function NotificationBell() {
       const { error } = await supabase
         .from("Notifications")
         .update({ readAt: new Date().toISOString() })
+        .eq("userId", profile.id)
         .is("readAt", null);
       if (error) throw new Error(error.message);
     },

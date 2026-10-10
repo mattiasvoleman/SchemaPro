@@ -41,7 +41,7 @@ vi.mock("@/utils/supabase/client", () => ({
       supabaseState.calls.push({ method: "from", args: [table] });
       let mode: "select" | "update" = "select";
       const builder: Record<string, unknown> = {};
-      for (const method of ["select", "order", "limit", "update", "is"]) {
+      for (const method of ["select", "eq", "order", "limit", "update", "is"]) {
         builder[method] = (...args: unknown[]) => {
           supabaseState.calls.push({ method, args });
           if (method === "update") mode = "update";
@@ -60,6 +60,11 @@ vi.mock("@/utils/supabase/client", () => ({
       return builder;
     },
   }),
+}));
+
+// The signed-in person, whose own rows the inbox reads.
+vi.mock("@/components/profile-context", () => ({
+  useProfile: () => ({ profile: { id: "me-1" }, school: null }),
 }));
 
 // next-intl's Link needs the intl provider; an anchor is what it renders.
@@ -162,6 +167,13 @@ describe("NotificationBell badge", () => {
     expect(argsFor("limit")).toEqual([[20]]);
 
     expect(within(bellButton()).queryByText(/^\d+\+?$/)).not.toBeInTheDocument();
+  });
+
+  it("reads only the signed-in person's own rows, though an admin's RLS reaches the whole school's", async () => {
+    supabaseState.selectResults.push(ok([]));
+    renderBell();
+    await waitFor(() => expect(argsFor("select")).toHaveLength(1));
+    expect(argsFor("eq")).toEqual([["userId", "me-1"]]);
   });
 
   it("counts only unread rows on the badge", async () => {
@@ -418,6 +430,8 @@ describe("NotificationBell mark all read", () => {
       ],
     ]);
     expect(argsFor("is")).toEqual([["readAt", null]]);
+    // The read and the write both name the recipient: two reads, one write.
+    expect(argsFor("eq")).toEqual([["userId", "me-1"], ["userId", "me-1"], ["userId", "me-1"]]);
 
     await waitFor(() => {
       expect(within(bellButton()).queryByText("2")).not.toBeInTheDocument();
