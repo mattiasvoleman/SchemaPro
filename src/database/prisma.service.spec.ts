@@ -261,6 +261,94 @@ describe('PrismaService', () => {
     });
   });
 
+  describe('after the commit', () => {
+    const turn = () => new Promise((resolve) => setImmediate(resolve));
+
+    it('runs a withRls transaction’s hooks after it resolves, on a later turn, in order', async () => {
+      const order: string[] = [];
+      await service.withRls(testUser(), async (client) => {
+        expect(service.onCommit(client, async () => void order.push('first'))).toBe(true);
+        service.onCommit(client, async () => void order.push('second'));
+        order.push('body');
+        return null;
+      });
+      order.push('resolved');
+      expect(order).toEqual(['body', 'resolved']);
+      await turn();
+      await turn();
+      expect(order).toEqual(['body', 'resolved', 'first', 'second']);
+    });
+
+    it('drops the hooks of a transaction that rolls back', async () => {
+      const hook = jest.fn().mockResolvedValue(undefined);
+      await expect(
+        service.withRls(testUser(), async (client) => {
+          service.onCommit(client, hook);
+          throw new Error('rolled back');
+        }),
+      ).rejects.toThrow('rolled back');
+      await turn();
+      expect(hook).not.toHaveBeenCalled();
+    });
+
+    it('swallows a failing hook, sync or async, and still runs the next', async () => {
+      const next = jest.fn().mockResolvedValue(undefined);
+      await service.withRls(testUser(), async (client) => {
+        service.onCommit(client, () => {
+          throw new TypeError('sync');
+        });
+        service.onCommit(client, () => Promise.reject(new RangeError('async')));
+        service.onCommit(client, next);
+        return null;
+      });
+      await turn();
+      await turn();
+      expect(next).toHaveBeenCalledTimes(1);
+    });
+
+    it('answers false, and keeps nothing, for a client withRls did not open', async () => {
+      const hook = jest.fn();
+      expect(service.onCommit(tx as unknown as PrismaClient, hook)).toBe(false);
+      expect(service.commitLocal(tx as unknown as PrismaClient, {}, () => 1)).toBeUndefined();
+      await service.withServicePrincipal(SCHOOL_ID, async (client) => {
+        expect(service.onCommit(client, hook)).toBe(false);
+        return null;
+      });
+      await turn();
+      expect(hook).not.toHaveBeenCalled();
+    });
+
+    it('keeps state per transaction under a key, made once', async () => {
+      const key = {};
+      const init = jest.fn(() => ['made']);
+      await service.withRls(testUser(), async (client) => {
+        const first = service.commitLocal(client, key, init);
+        const second = service.commitLocal(client, key, init);
+        expect(first).toBe(second);
+        return null;
+      });
+      // A second transaction (a fresh client) starts over.
+      const other = { $executeRaw: jest.fn().mockResolvedValue(0) };
+      transaction.mockImplementationOnce((fn: (client: PrismaClient) => Promise<unknown>) => fn(other as unknown as PrismaClient));
+      await service.withRls(testUser(), async (client) => {
+        service.commitLocal(client, key, init);
+        return null;
+      });
+      expect(init).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('withDeliveryService', () => {
+    it('sets no principal, a 5 s statement timeout, and a 10 s transaction', async () => {
+      const fn = jest.fn().mockResolvedValue('done');
+      await expect(service.withDeliveryService(fn)).resolves.toBe('done');
+      expect(fn).toHaveBeenCalledWith(tx);
+      expect(executeRaw).toHaveBeenCalledTimes(1);
+      expect(rawSql(executeRaw.mock.calls[0])).toBe("SET LOCAL statement_timeout = '5s'");
+      expect(transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 10_000 });
+    });
+  });
+
   describe('lifecycle', () => {
     /** The privilege probe result for a correctly configured deployment. */
     const leastPrivilege = {
